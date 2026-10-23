@@ -2,12 +2,14 @@
 // 任务房间里那个任务。房间头部、右侧面板、对话栏、@ 候选读的是同一份。
 import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
+import type { ChapterRow } from '@/types/chapters'
 import type { TopicEnvironment } from '@/types/compute'
 import type { Thread, ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
 import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
+import { listChapters } from '@/api/chapters'
 import { listPins } from '@/api/pins'
 import { getThread, listThreads } from '@/api/threads'
 import { prefetchNewestBlocks } from '@/query/blocks'
@@ -37,6 +39,16 @@ export function pinsQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomPins(roomId),
     queryFn: (): Promise<ChannelPin[]> => fromSnapshot(keys.roomPins(roomId), () => listPins(roomId)),
+  })
+}
+
+/** 一段对话的章节：概览里那一块和主线里消息的 ⋯ 读同一份。键是那段对话的 id ——
+ *  频道是频道本身，任务是任务的 id。 */
+export function chaptersQuery(conversationId: string) {
+  return queryOptions({
+    queryKey: keys.roomChapters(conversationId),
+    queryFn: (): Promise<ChapterRow[]> =>
+      fromSnapshot(keys.roomChapters(conversationId), () => listChapters(conversationId)),
   })
 }
 

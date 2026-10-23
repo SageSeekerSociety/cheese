@@ -1,0 +1,81 @@
+name: Integration coverage map
+
+# Publishes the map a pull request's integration selection reads
+# (.github/scripts/coverage_map.py): which test files executed each function
+# under backend/app and backend/scripts. It traces the whole integration layer
+# at the commit `main-green` names — the last one the post-submit gate passed —
+# under coverage.py, one context per test. A traced run is about 37% slower
+# than a plain one (measured 2026-10-20), which is why it runs here, on its own
+# clock, rather than in any run someone waits on.
+#
+# Required CI's scope reads the newest successful run's artifact. A run with a
+# shard missing fails at the merge and publishes nothing, so scope keeps the
+# previous map; with no map at all a pull request runs the whole layer.
+on:
+  schedule:
+    - cron: "40 1,13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-map
+  cancel-in-progress: false
+
+jobs:
+  anchor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.anchor.outputs.sha }}
+    steps:
+      - id: anchor
+        env:
+          REPO: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          sha="$(git ls-remote "$REPO" refs/heads/main-green | cut -f1)"
+          if [ -z "$sha" ]; then
+            echo "::error::refs/heads/main-green does not exist yet"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  trace:
+    needs: anchor
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.anchor.outputs.sha }}
+      trace-coverage: true
+      coverage-job: false
+
+  merge:
+    needs: [anchor, trace]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.anchor.outputs.sha }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: coverage-shard-*
+          path: ${{ runner.temp }}/shards
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: backend-integration-*
+          path: ${{ runner.temp }}/selection
+      - name: Merge the shards' maps
+        env:
+          SHA: ${{ needs.anchor.outputs.sha }}
+        run: >-
+          python3 .github/scripts/coverage_map.py merge
+          "$RUNNER_TEMP"/shards/*/shard.json
+          --selection "$RUNNER_TEMP/selection"
+          --commit "$SHA" --out "$RUNNER_TEMP/map.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integration-coverage-map
+          path: ${{ runner.temp }}/map.json
+          if-no-files-found: error
+          retention-days: 7

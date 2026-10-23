@@ -4,11 +4,35 @@ API's OpenAPI document and the frontend types generated from it."""
 from pydantic import BaseModel
 
 
+class SandboxUsageOut(BaseModel):
+    memory_bytes: int | None
+    memory_peak_bytes: int | None
+    memory_read_at: str | None
+    disk_bytes: int | None
+    disk_inodes: int | None
+    disk_read_at: str | None
+
+
+class HostUsageOut(BaseModel):
+    read_at: str
+    disk_bytes: int
+    disk_used_bytes: int
+    inodes: int | None
+    inodes_used: int | None
+    memory_bytes: int | None
+    memory_used_bytes: int | None
+    cpu_busy: float | None
+    load1: float | None
+    sandboxes: int | None
+    memory_history: list[float | None]
+    cpu_history: list[float | None]
+
+
 class MachineSandboxOut(BaseModel):
     id: str
     spec: str
     state: str
-    project_id: str
+    project_id: str | None
     project: str | None
     room_id: str
     room: str | None
@@ -17,6 +41,7 @@ class MachineSandboxOut(BaseModel):
     active_at: str | None
     stopped_at: str | None
     idle_deadline: str | None
+    usage: SandboxUsageOut | None
 
 
 class MachineHostOut(BaseModel):
@@ -43,6 +68,7 @@ class MachineHostOut(BaseModel):
     released_at: str | None
     enroll_attempts: int
     enroll_error: str | None
+    usage: HostUsageOut | None
     sandboxes: list[MachineSandboxOut]
 
 
@@ -50,6 +76,10 @@ class WarmMachineOut(BaseModel):
     id: str
     state: str
     machine_id: int | None
+    hostname: str | None
+    cores: int | None
+    memory_mb: int | None
+    disk_gb: int | None
     ip: str | None
     online: bool
     created_at: str | None
@@ -84,6 +114,12 @@ class MachineConfigOut(BaseModel):
     sandbox_idle_s: int
     host_idle_hold_s: int
     vm_idle_s: int
+    sandbox_disk_budget_gb: int
+    sandbox_inode_budget: int
+    near_cap: float
+    check_s: int
+    alert_used: dict[str, float]
+    history_step_s: int
 
 
 class MachineHistoryOut(BaseModel):

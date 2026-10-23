@@ -31,6 +31,12 @@ services:
       # (see db_pool_size in app/core/config.py).
       - DB_POOL_SIZE=5
       - DB_MAX_OVERFLOW=5
+      # One process, pinned: the command list below overrides the image's CMD
+      # and names no --workers, so uvicorn's own default of one applies — and
+      # the app divides a container's pool by BACKEND_WORKERS, so a box that
+      # raises the backend's in the shared env file would otherwise cut this
+      # owner's pool to a fifth without touching its worker count.
+      - BACKEND_WORKERS=1
     # The backend's env file carries SANDBOX_API_BASE pointing at
     # host.docker.internal:8081 — the host nginx that deploy-docker.sh moves
     # between backends on a box that deploys without downtime (the frontend's
@@ -89,6 +95,10 @@ services:
       # the check, and it counts every owner.
       - DB_POOL_SIZE=3
       - DB_MAX_OVERFLOW=2
+      # Same pin as the device owner: this service's command names --workers 1
+      # on its own, and this keeps the pool division above it reading the same
+      # number even if a box sets BACKEND_WORKERS for the backend.
+      - BACKEND_WORKERS=1
       # Content hosts read the selected artifact's files from the workspace
       # (library/service.py) and the room files beside them — the same host paths
       # the backend mounts. Uploads and a writable HOME are carried too so the
@@ -156,6 +166,17 @@ services:
       # the same weakness, so this must stay a constant with no ${...} in it.
       - DEPLOYED_VIA_COMPOSE=1
       - DEVICE_CONNECTION_URL=http://device-connection:8082
+      # How many worker processes this backend runs (backend/Dockerfile passes
+      # it to uvicorn's --workers). 1 is the single process every deployment has
+      # run so far. Each worker is its own process with its own database pool,
+      # and the app divides the container's pool budget (db_pool_size in
+      # app/core/config.py, 2 x (35 + 1) of the server's 97) by this number, so
+      # the server sees the same total either way. What a worker is NOT free to
+      # raise is everything that has not crossed a process boundary yet: the
+      # turn context, the live-frame fan-out (InProcessBroker), the periodic
+      # jobs and the pool. See docs/plans/2026-10-14-retire-the-global-lock-design.md
+      # — its steps 3 and 4 are the two still open.
+      - BACKEND_WORKERS=${BACKEND_WORKERS:-1}
       # The preview-connection owner below owns the machine preview tunnels and
       # the preview content hosts. PREVIEW_CONNECTION_MODE=owner makes this
       # backend hand the tunnels to it and stop mounting the preview host policy
@@ -221,6 +242,13 @@ services:
       # The pi builds, cached for exactly the same reason and thrown away by
       # exactly the same deploy — and this archive is ~40MB per platform too.
       - ${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}:/app/connector-dist/pi-cache
+      # What a connector places on a machine it enrols — Python and Git for
+      # Windows, a newer Python elsewhere, tmux, git and bubblewrap on Linux.
+      # Cached for the third time for the third time's same reason, and the
+      # largest of the three: Python and Git for Windows alone are ~70MB, and
+      # the machine on the other end waits for the backend's fetch of them from
+      # GitHub in the foreground, where a slow fetch and a hung one look alike.
+      - ${TOOLCHAIN_CACHE_HOST_PATH:-/home/nictheboy/cheese-toolchain-cache}:/app/connector-dist/toolchain-cache
     # Loopback only. A box using this file fronts :8081 with api-front
     # (deploy/llm-tunnel/up.sh), and nothing reaches the backend except through
     # it, on the host's loopback. A request that skipped the proxies would

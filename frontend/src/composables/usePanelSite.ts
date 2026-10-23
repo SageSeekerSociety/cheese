@@ -1,6 +1,5 @@
 // 「现场」那一格的取数：这一窗 transcript（读最近一页、往上翻、socket 上来的一行
-// 落到哪儿）、按队友筛的那排名册、每一轮的起始时间、贴在顶上那条会话栏，以及摊开
-// 一步之后它打印了什么。
+// 落到哪儿）、按队友筛的那排名册、每一轮的起始时间、贴在顶上那条会话栏。
 //
 // 和画的那一半（`components/panels/PanelSite.vue`）分家，理由和别处一样：场景棘轮
 // 认的「场景」是 `components/panels/**` 下每个 SFC，A 档的意思是「给一组 props 就
@@ -10,13 +9,12 @@
 // 外壳（`components/work/PanelSiteHost.vue`）调这一次，整包递给展示组件。
 import type { AgentControlState, Block } from '../cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
-import { getStepOutput } from '../api'
-import { isNarration } from '../lib/siteLog'
+import { sessionRecordImageUrl } from '../api'
+import { storageGet, storageSet } from '../lib/browserStorage'
 
 import { useSessionInspector } from './useSessionInspector'
-import { useSiteClamp } from './useSiteClamp'
 import { useSiteTranscript } from './useSiteTranscript'
 import { useStickToBottom } from './useStickToBottom'
 
@@ -34,6 +32,11 @@ export interface PanelSiteScope {
 }
 
 export function usePanelSite(scope: PanelSiteScope) {
+  const viewMode = ref<'overview' | 'raw'>(storageGet('cheese.site.view') === 'raw' ? 'raw' : 'overview')
+  function selectView(mode: 'overview' | 'raw') {
+    viewMode.value = mode
+    storageSet('cheese.site.view', mode)
+  }
   // 每一轮从什么时候开始（毫秒），读到的每一页都带着它那几轮的。组头的用时从这里算起。
   const turnStarts = ref<Record<string, number>>({})
 
@@ -48,11 +51,8 @@ export function usePanelSite(scope: PanelSiteScope) {
   // with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
   // above the thing they came to see.
   const scrollRef = ref<HTMLElement | null>(null)
-  useStickToBottom(scrollRef, 48)
-  // Which entries are long enough to clamp. The measurement — together with the
-  // ResizeObserver that re-reads it when the panel's own width changes — lives in
-  // useSiteClamp; 每次渲染之后再读一次的时机在展示组件那一边（它的 onUpdated）。
-  const { overflowing, measured, schedule: measureClamp } = useSiteClamp(scrollRef)
+  // 这一窗停在哪、跟不跟新行：由读者自己的滚动维护，见 useStickToBottom。
+  const stick = useStickToBottom(scrollRef, 48)
 
   // ---- 按队友看 ----
   // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
@@ -70,7 +70,7 @@ export function usePanelSite(scope: PanelSiteScope) {
     const next = agents.value.slice()
     for (const b of blocks) {
       if (b.author_type !== 'participant' || seen.has(b.author)) continue
-      if (!b.meta?.tool && !isNarration(b.meta)) continue
+      if (!b.meta?.record) continue
       seen.add(b.author)
       next.push(b.author)
       grew = true
@@ -91,6 +91,10 @@ export function usePanelSite(scope: PanelSiteScope) {
     topicId: scope.topicId,
     viewing: () => viewing.value,
     scrollRef,
+    following: stick.following,
+    scrollToTail: stick.scrollToTail,
+    captureAnchor: stick.captureAnchor,
+    restoreAnchor: stick.restoreAnchor,
     noteAgents,
     noteStarts,
   })
@@ -113,6 +117,13 @@ export function usePanelSite(scope: PanelSiteScope) {
     },
     { immediate: true }
   )
+
+  // Journal records are immutable and arrive independently of conversation
+  // messages. Refresh only while this panel is visible.
+  const refresh = setInterval(() => {
+    if (scope.active()) void load()
+  }, 3000)
+  onUnmounted(() => clearInterval(refresh))
 
   // 一轮刚结束：开着的这一栏安静地重读一遍。
   watch(
@@ -141,19 +152,15 @@ export function usePanelSite(scope: PanelSiteScope) {
     pushed: scope.agentControl,
   })
 
-  /** 摊开的那一步打印了什么。第一次点开才取（见 `SiteStepOutput.vue`）。 */
-  async function loadStepOutput(blockId: string): Promise<string> {
+  async function loadImage(digest: string): Promise<string> {
     const topicId = scope.topicId()
     if (!topicId) return ''
-    return (await getStepOutput(topicId, blockId)).output
+    return sessionRecordImageUrl(topicId, digest)
   }
 
   return {
     turnStarts,
     scrollRef,
-    overflowing,
-    measured,
-    measureClamp,
     agents,
     viewing,
     transcript,
@@ -165,7 +172,9 @@ export function usePanelSite(scope: PanelSiteScope) {
     receive,
     selectAgent,
     inspector,
-    loadStepOutput,
+    loadImage,
+    viewMode,
+    selectView,
   }
 }
 

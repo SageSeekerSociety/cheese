@@ -12,7 +12,8 @@ import time
 import pytest
 from sqlalchemy import text
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.feedback.proposals import ProposalService
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind

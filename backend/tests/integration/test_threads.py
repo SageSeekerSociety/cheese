@@ -6,8 +6,10 @@ A person calling 芝士 in a channel's main line is answered in that message's
 told of new replies, and only of what people said there.
 """
 
-import time
+import asyncio
+import uuid
 
+from app.domain.agent.models import AgentTurn
 from tests.integration.conftest import (
     join_project_team,
     post_message,
@@ -15,6 +17,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import assistant_texts, records, wait_for_record
 
 
 def _channel(client, owner: str = "alice") -> tuple[str, str]:
@@ -41,23 +44,31 @@ def _open(client, block_id: str, handle: str = "alice") -> dict:
     return r.json()["data"]
 
 
-def _answer(blocks: list[dict], question: dict) -> list[dict]:
-    """What 芝士 did and said answering ``question``: the blocks of its turn."""
-    return [
-        b
-        for b in blocks
-        if b["turn_id"] == question["id"] and b["id"] != question["id"]
-    ]
+def test_calling_cheese_in_the_main_line_runs_in_that_messages_thread(
+    client,
+):
+    _project, room = _channel(client)
+    asked = post_message(client, room, "alice", {"content": "@芝士 首页要改哪些地方？"})
 
+    # The question has a 支线, and the session runs in it.
+    thread = _open(client, asked["id"])
+    output = wait_for_record(
+        client, thread["id"], lambda record: record.get("type") == "assistant"
+    )
+    assert assistant_texts(records(client, thread["id"])) == ["Hello world"]
 
-def _wait_for(predicate, timeout: float = 30.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        found = predicate()
-        if found:
-            return found
-        time.sleep(0.2)
-    raise AssertionError("timed out")
+    # The main line carries the question, not the answer.
+    main = _blocks(client, room)
+    assert [b["id"] for b in main] == [asked["id"]]
+
+    async def replied_to() -> str:
+        async with client.test_factory() as session:
+            turn = await session.get(AgentTurn, uuid.UUID(output["turn_id"]))
+            assert turn is not None
+            return str(turn.reply_to)
+
+    assert asyncio.run(replied_to()) == asked["id"]
+    assert records(client, room) == []
 
 
 def _until(ws, predicate) -> dict:
@@ -66,21 +77,6 @@ def _until(ws, predicate) -> dict:
         frame = ws.receive_json()
         if predicate(frame):
             return frame
-
-
-def test_calling_cheese_in_the_main_line_is_answered_in_that_messages_thread(
-    client,
-):
-    _project, room = _channel(client)
-    asked = post_message(client, room, "alice", {"content": "@芝士 首页要改哪些地方？"})
-
-    # The question has a 支线, and the answer is in it.
-    thread = _open(client, asked["id"])
-    _wait_for(lambda: _answer(_blocks(client, thread["id"]), asked))
-
-    # The main line carries the question, not the answer.
-    main = _blocks(client, room)
-    assert [b["id"] for b in main] == [asked["id"]]
 
 
 def test_the_main_line_is_told_it_is_answering_the_moment_the_thread_opens(client):

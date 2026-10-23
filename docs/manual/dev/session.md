@@ -15,7 +15,7 @@ covers:
 
 # 会话与轮次 {#session}
 
-会话是「一个 AI 队友在一段对话里的上下文」，一段对话是一个话题，或话题里的一条任务；轮次是「一次投喂到它停下来之间的那段区间」。这一页讲这两样东西在库里长什么样、后台由谁推着走、进程换人以后怎么接上。
+会话是「一个 AI 队友在一段对话里的上下文」，一段对话是一个频道，或频道里的一条任务；轮次是「一次投喂到它停下来之间的那段区间」。这一页讲这两样东西在库里长什么样、后台由谁推着走、进程换人以后怎么接上。
 
 > 讲：会话与轮次的数据模型、后台运行者、派发记录、发版交接。不讲：一条消息怎么一步步变成一轮，见[一条消息怎么变成芝士的一轮](/dev/turn)；机器怎么接进来，见[设备与机器接入](/dev/machines)。
 
@@ -27,11 +27,11 @@ covers:
 | --- | --- | --- |
 | 类型 | （出厂设置） | 这个 agent 是什么 |
 | 实例 | `agent_instances` | 它在这个项目里是谁、在这里学到了什么 |
-| 会话 | `agent_sessions` | 一段对话（话题或任务）里的会话，可以随时丢掉 |
+| 会话 | `agent_sessions` | 一段对话（频道或任务）里的会话，可以随时丢掉 |
 
-`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
+`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room`、`task` 或 `thread`，id 就是频道、任务或支线自己的 id，由数据库触发器在它们插入和删除时维护，应用不写它。支线原地转成任务时任务沿用支线的 id，这一行只把 `kind` 改成 `task`，会话照旧挂在它上面（见[任务与工作目录](/dev/tasks)）。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<频道十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把频道交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
-任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证带 `scratch`：改动留不下（见[支线与未开始的任务](#scratch)），启动环境里是 `CHEESE_TASK` 和 `CHEESE_KEEPS_NOTHING`，开始之后空闲的会话带着改动留得下的凭证重开。broker 上任务的频道就是任务 id。
+任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions/`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；支线的会话凭证带 `scratch`：改动留不下（见[支线的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；支线转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
 
 ## 一轮是一个区间 {#turn}
 
@@ -48,22 +48,22 @@ covers:
 
 `AgentSession.runtime_location` 是这条会话的进程落在哪台会话机上，连同开它的通道和骨架自己的运行状态（平台不解析）；`place()` 是读它的唯一入口，没有它就没有地点，下一轮重新租，而不是去猜房间上记着什么。`placed_at` 排的是「谁最后开的屏」——不能拿 `updated_at` 排：那一列每轮存 `resume_token` 时也在动，「最后开屏的」会变成「最后说过话的」。
 
-`work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一话题里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
+`work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一频道里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
 
-### 支线与未开始的任务 {#scratch}
+### 支线的会话 {#scratch}
 
-支线的会话，和负责人还没「开始」的任务的会话，改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
+支线的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
 
 - 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
 - 不在自己的沙箱里（直接跑在一台人自己的电脑上）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
 
 执行路由由设备连接的属主服务，发布应用时属主留在旧镜像上；所以这张凭证同时带 `ro`，认不得 `scratch` 的旧属主照只读处理，换成新属主后才按上面两种走。
 
-这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。支线里例行任务执行的那一轮同样只读仓库：它留得下的是交回的结果和房间里的文件，改代码要提议任务。
+这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌外加 `actions: write`，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。支线里例行任务执行的那一轮同样只读仓库，但在 GitHub 上能重跑、取消 CI，所以值守部署的例行任务遇到偶发失败可以自己重跑；`actions: write` 也让它能手动触发（`workflow_dispatch`）仓库里任何一条声明了这个触发方式的 workflow，那一次运行走仓库自己的流水线和闸门。它留得下的是交回的结果和房间里的文件，改代码要提议任务。
 
 ## 后台的 runner 与 broker {#background}
 
-后台有两个进程内的东西：`agent/realtime/broker.py` 里的 `InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`agent/runtime.py` 里的 `AgentWorkRunner` 接收消息，管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一话题的轮次在 `ChatService` 的话题锁上排队。
+后台有两个进程内的东西：`agent/realtime/broker.py` 里的 `InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`agent/runtime.py` 里的 `AgentWorkRunner` 接收消息，管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一频道的轮次在 `ChatService` 的频道锁上排队。
 
 `submit()` 没有一个参数说「跑一轮」——一轮是 agent 那一档收件人的到达形态，调用点只能点名，跑不跑由 `_a_turn_was_addressed` 从寻址结果读出来。跑着的一轮记在 `_live` 里，记的是那个 `asyncio.Task` 而不只是 id：一轮也可能在里面而卡住了（子容器死了、流永远不结束），认领它得先取消它。`_last_frame_at` 记每个活轮最后一次发帧的时刻，帧包含不落块的工具调用，所以数据库看不见的动静它看得见。
 
@@ -72,9 +72,9 @@ covers:
 ## 扫底：孤儿、卡住的轮、丢了的消息 {#sweep}
 
 - `sweep_orphans` 收拾还开着的区间。`SWEEP_MIN_AGE_S`（60 秒）挡掉刚出现、可能正被别的路径处理的那些；启动时用 `resume_orphans` 跑同一个函数，把这道门关掉（`min_age_s=0.0`）——那一刻开着的区间全属于上一任，没有东西在跟它赛跑。
-- `_wedged_turns` 找**两个**信号都安静了的轮：话题里最新块的时间，以及这个进程为它发过的最后一帧；阈值 `SILENT_TURN_S`（1800 秒）。启动时不传 `last_activity`，这个探针整个跳过。
+- `_wedged_turns` 找**两个**信号都安静了的轮：频道里最新块的时间，以及这个进程为它发过的最后一帧；阈值 `SILENT_TURN_S`（1800 秒）。启动时不传 `last_activity`，这个探针整个跳过。
 - 一轮算不算被接着做（`_adopted`）问的是**这一轮自己那个席位**的会话还在不在，不是房间里有没有哪个会话还在：同房间另一个队友还在干活，不能让一个会话已经没了的队友那一轮一直开着。
-- `resume_lost_messages` 补上重启丢掉的排队：项目级并发闸是纯 asyncio 的，进程一换就没了。它按席位判：点名的那个队友没有轮次在跑就起一轮，每个队友最多一轮；别的队友在跑不挡它，因为那一轮不会读一条不是点给它的消息。还没组装、说不出是谁的一轮，按整间房在忙算。它不只在接手时跑：一轮结束时它的完成、空闲和 Stop 各唤醒一次（Stop 是关掉这一轮区间的那一下，排在它后面的消息要等它），另有每 10 秒一次的兜底扫描（`queued_message_sweep_interval_s`），读的是部分索引 `ix_blocks_queued_messages`，所以一次唤醒漏了，消息最多再等一个间隔。
+- `resume_lost_messages` 补上重启丢掉的排队：项目级并发闸是纯 asyncio 的，进程一换就没了。它按席位判：点名的那个队友没有轮次在跑就起一轮，每个队友最多一轮；别的队友在跑不挡它，因为那一轮不会读一条不是点给它的消息。还没组装、说不出是谁的一轮，按整间房在忙算。它不只在接手时跑：这个进程跑完一件活时、runner 报告会话空闲或退出（或者一条写进去没读的输入被放掉）时、Stop 关掉这一轮区间时各唤醒一次（排在 Stop 后面的消息要等它），另有每 10 秒一次的兜底扫描（`queued_message_sweep_interval_s`），读的是部分索引 `ix_blocks_queued_messages`，所以一次唤醒漏了，消息最多再等一个间隔。
 
 ## 派出去过什么 {#dispatch}
 
@@ -84,10 +84,12 @@ covers:
 
 `settle()` 第一笔算数，判重写在 `WHERE outcome IS NULL` 里，一条 UPDATE。理由是 `unknown` 写下时房间里已经有一条通知、有人正照着它去查那次改动落地没有；一个迟到的 `done` 把它抹平之后，留下的是一个仍然被要求确认的人，而没有人还记着他为什么被叫来。
 
-`unsettled()` 不按年龄过滤。它曾经按「比一次调用能在飞的时间（660 秒）还老」判，那在真实时序下整档落空：崩溃和属主重启通常发生在派发之后几秒到几分钟，启动扫底紧跟着就跑，每一行都还太年轻。分开「还没写回来」和「不会写回来」的不是时间，是**谁在读**：这张表只有一个读者，就是孤儿扫底里的重派路径，而送到它面前的话题屏幕已经没了、或者那条消息根本没送到屏幕——要这些调用的那一轮已经关了，所以无论那台机器后来怎么样，结果都到不了 agent 面前。调用方另给一个 `since`，取的是这几轮里最早的开始时刻。
+`unsettled()` 不按年龄过滤。它曾经按「比一次调用能在飞的时间（660 秒）还老」判，那在真实时序下整档落空：崩溃和属主重启通常发生在派发之后几秒到几分钟，启动扫底紧跟着就跑，每一行都还太年轻。分开「还没写回来」和「不会写回来」的不是时间，是**谁在读**：这张表只有一个读者，就是孤儿扫底里的重派路径，而送到它面前的频道屏幕已经没了、或者那条消息根本没送到屏幕——要这些调用的那一轮已经关了，所以无论那台机器后来怎么样，结果都到不了 agent 面前。调用方另给一个 `since`，取的是这几轮里最早的开始时刻。
 
 ## 发版时怎么交接 {#handover}
 
 属主换人时，进来的一侧先 `hold_turns()`：不是主人的进程不知道房间里在跑什么，而一轮是按「我知道什么在跑」起的。`let_go()` 停下手里的活，其中 `settle_deliveries()` 先等每一轮已经发出去的提示被会话收下——一条写进正在跑的会话的消息，要到会话的回执读回来才算消费掉；没等完就停读，下一轮会把它再发一遍。
 
-新主人这边 `ChatService.recover_sessions`（`chat.py`）重新监听活过这个进程的会话，并补上没人听的那段时间里它们说过的话。它分开做两件事：`recover` 确立「我们在听」，`replay` 交回尾巴。房间里已经显示过的是平台这一侧的（`_said()` 拿它避免同一条落两次），骨架自己还有哪些记录没落是骨架那一侧的。一台会话机够不着（`DeviceOffline`）或者回话说不行（`DeviceCallError`）都只记一行日志，下一次连接会做这件事。锁和超时的细节见[部署拓扑](/dev/topology#handover)。
+新主人这边 `ChatService.recover_sessions`（`chat.py`）重新监听活过这个进程的会话，并补上没人听的那段时间里它们说过的话。它分开做两件事：`recover` 确立「我们在听」，`replay` 交回尾巴。房间里已经显示过的是平台这一侧的（`_said()` 拿它避免同一条落两次），骨架自己还有哪些记录没落是骨架那一侧的。一台会话机够不着（`DeviceOffline`）或者回话说不行（`DeviceCallError`）都只记一行日志，下一次连接会做这件事。
+
+Claude Code 的会话不靠后端这一侧记的游标接上：它的 runner 把没确认的事件留在自己的发件箱里，新主人从上一任确认到的地方接着读，已经应用过的事件再到一次什么也不改（见[骨架的驱动层](/dev/harness#driven)）。不说这一版协议（`lifecycle.PROTOCOL`）的 runner，恢复时不读它，而是把它换掉：写给它却没读到的输入算放掉、消息重新排队，它正在跑的那一轮以 `runner_replaced` 结束（`runner_reports.replaced`）。这算平台打断而不是队友失败，续跑（`turn_resume`，`Policy.platform`）几秒后就接着这段对话跑，不占续跑次数，也不受次数上限挡。Codex 和 pi 仍按上面的游标重放。锁和超时的细节见[部署拓扑](/dev/topology#handover)。

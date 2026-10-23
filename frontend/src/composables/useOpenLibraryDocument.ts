@@ -41,7 +41,13 @@ export function useOpenLibraryDocument(
       try {
         const about = await docs.about(id)
         if (selectedDocId.value !== id) return
-        openDocument.value = { id: about.id, projectId: about.project_id, title: about.title ?? '' }
+        openDocument.value = {
+          id: about.id,
+          projectId: about.project_id ?? '',
+          title: about.title ?? '',
+          created_by: about.created_by,
+          drafted_by: about.drafted_by,
+        }
       } catch (e) {
         if (selectedDocId.value === id) failed(e instanceof Error ? e.message : String(e))
       }

@@ -42,30 +42,29 @@ async def test_native_read_image_remains_an_image(monkeypatch):
 
 @pytest.mark.anyio
 async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatch):
+    """Every page of the executor's tools is listed, and a picture a call
+    answers with reaches the model as one."""
     schema = {"type": "object", "properties": {"path": {"type": "string"}}}
     calls = []
 
     def call(method, params, **_):
         calls.append((method, params))
         if method == "mcp":
-            if params["server"] == "native":
+            assert params["server"] == "native"
+            if not params["params"]:
                 return {
                     "tools": [
                         {"name": "Bash", "inputSchema": schema},
                         {"name": "Agent", "inputSchema": schema},
-                    ]
+                    ],
+                    "nextCursor": "second",
                 }
-            if not params["params"]:
-                return {"tools": [], "nextCursor": "second"}
             assert params["params"] == {"cursor": "second"}
-            return {"tools": [{"name": "view", "inputSchema": schema}]}
+            return {"tools": [{"name": "Glob", "inputSchema": schema}]}
         return {
             "value": {
-                "content": [
-                    {"type": "text", "text": "caption"},
-                    {"type": "image", "mimeType": "image/png", "data": "aW1hZ2U="},
-                ],
-                "structuredContent": {"page": 2},
+                "type": "image",
+                "file": {"type": "image/png", "base64": "aW1hZ2U="},
             }
         }
 
@@ -73,31 +72,23 @@ async def test_schema_pages_and_multimodal_results_keep_their_content(monkeypatc
     monkeypatch.setattr(tools.client, "call", call)
     schemas = await tools.discover()
     names = [tool["name"] for tool in schemas]
-    assert names[:2] == ["Bash", "mcp__docs__view"]
+    assert names[:2] == ["Bash", "Glob"]
+    assert not [name for name in names if name.startswith("mcp__")], (
+        "Codex's own MCP client reaches the project's servers"
+    )
     assert all(tool["inputSchema"] == schema for tool in schemas[:2])
     result = await tools(
         "item/tool/call",
-        {
-            "tool": "mcp__docs__view",
-            "callId": "call-17",
-            "arguments": {"path": "中文"},
-        },
+        {"tool": "Glob", "callId": "call-17", "arguments": {"path": "中文"}},
     )
     assert calls[-1] == (
         "invoke",
-        {
-            "id": "call-17",
-            "server": "docs",
-            "tool": "view",
-            "args": {"path": "中文"},
-        },
+        {"id": "call-17", "server": "native", "tool": "Glob", "args": {"path": "中文"}},
     )
     assert result == {
         "success": True,
         "contentItems": [
-            {"type": "inputText", "text": "caption"},
             {"type": "inputImage", "imageUrl": "data:image/png;base64,aW1hZ2U="},
-            {"type": "inputText", "text": json.dumps({"page": 2})},
         ],
     }
 
@@ -138,6 +129,9 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     assert result["success"] is True
     assert requests[0]["path"] == "/projects/project/alerts"
     assert executor_calls == []
+    # Codex's runner reports no session lifecycle, so it names no run: its
+    # task-state reports carry none and always stand.
+    assert "run" not in requests[0]
 
 
 def test_runner_archive_launches_without_the_backend_environment(tmp_path):
@@ -174,3 +168,39 @@ def test_the_runner_archive_carries_the_platform_tool_table(tmp_path):
     )
     assert process.returncode == 0, process.stderr
     assert "chat_send" in process.stdout
+
+
+@pytest.mark.anyio
+async def test_task_stop_stops_a_monitor_by_its_id_and_a_command_by_its_own(
+    monkeypatch,
+):
+    """`TaskStop` is the one way to stop either: a monitor's id is the
+    monitor's, and every other id is the executor's background command."""
+    tools = RemoteTools({})
+    tools.routes = {"TaskStop": ("native", "TaskStop")}
+    stopped, sent = [], []
+
+    class Monitors:
+        async def stop(self, task):
+            stopped.append(task)
+            return f"Monitor {task} stopped"
+
+    tools.monitors = Monitors()
+    monkeypatch.setattr(
+        tools.client,
+        "call",
+        lambda method, params, **_: sent.append(params) or {"value": "stopped"},
+    )
+    answer = await tools(
+        "item/tool/call",
+        {"tool": "TaskStop", "callId": "1", "arguments": {"task_id": "monitor-abc"}},
+    )
+    assert answer["success"] is True
+    assert stopped == ["monitor-abc"] and sent == []
+
+    await tools(
+        "item/tool/call",
+        {"tool": "TaskStop", "callId": "2", "arguments": {"task_id": "b7k2"}},
+    )
+    assert stopped == ["monitor-abc"]
+    assert [params["args"] for params in sent] == [{"task_id": "b7k2"}]

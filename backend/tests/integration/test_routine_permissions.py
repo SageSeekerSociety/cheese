@@ -1,7 +1,9 @@
 """Who may see a rule, and who may act on one.
 
 看到一条周期任务 = 它所在房间名册上的人（含这个房间的 AI 队友）+ 项目管理员。
-操作 = 规则主人（``owner_handle``）或项目管理员；其余人 403，芝士只能起草和修改。
+改一条（改字段、暂停、恢复）= 看得到的人：规则是房间的，房间里的人都能收拾它。
+删一条 = 只有它的主人（``owner_handle``）或项目管理员，而且只能是人：把规则从
+房间里拿走是人的决定。
 
 「项目成员」这一档故意不够：项目里别的房间的成员不该看见这个房间设了什么规则。
 """
@@ -54,7 +56,7 @@ def test_a_person_on_the_project_team_but_not_in_the_room_sees_nothing(client):
     outsider = session_auth_headers(OUTSIDER)
     assert client.get(f"/routines/{rule['id']}", headers=outsider).status_code == 403
     assert _overview(client, project, outsider) == []
-    for action in ("confirm", "pause", "resume"):
+    for action in ("pause", "resume"):
         r = client.post(f"/routines/{rule['id']}/{action}", headers=outsider)
         assert r.status_code == 403, (action, r.status_code)
     assert client.delete(f"/routines/{rule['id']}", headers=outsider).status_code == 403
@@ -84,7 +86,8 @@ def test_a_stranger_sees_nothing_at_all(client):
     )
 
 
-def test_a_room_member_reads_the_rule_but_may_not_touch_it(client):
+def test_a_room_member_may_change_a_rule_but_not_delete_it(client):
+    """房间里的人收拾得了它；从房间里拿走是主人的事。"""
     project = _project(client)
     room = _room(client, project)
     _join(client, project, MEMBER)
@@ -94,38 +97,44 @@ def test_a_room_member_reads_the_rule_but_may_not_touch_it(client):
     member = session_auth_headers(MEMBER)
     seen = client.get(f"/routines/{rule['id']}", headers=member)
     assert seen.status_code == 200, seen.text
-    assert seen.json()["data"]["can_manage"] is False
+    assert seen.json()["data"]["can_delete"] is False
     assert client.get(f"/routines/{rule['id']}/runs", headers=member).status_code == 200
 
-    refused = client.post(f"/routines/{rule['id']}/pause", headers=member)
+    edited = client.patch(
+        f"/routines/{rule['id']}", json={"instructions": "多写一条阻碍"}, headers=member
+    )
+    assert edited.status_code == 200, edited.text
+    assert (
+        client.post(f"/routines/{rule['id']}/pause", headers=member).status_code == 200
+    )
+    assert (
+        client.post(f"/routines/{rule['id']}/resume", headers=member).status_code == 200
+    )
+
+    refused = client.delete(f"/routines/{rule['id']}", headers=member)
     assert refused.status_code == 403, refused.text
     assert OWNER in refused.json()["message"], refused.json()
-    edited = client.patch(
-        f"/routines/{rule['id']}", json={"title": "别人的规则"}, headers=member
-    )
-    assert edited.status_code == 403, edited.text
+    assert client.get(f"/routines/{rule['id']}", headers=member).status_code == 200
 
 
-def test_the_owner_can_manage_their_own_rule(client):
+def test_the_owner_can_delete_their_own_rule(client):
     project = _project(client)
     room = _room(client, project)
     rule = _weekly(client, room, headers=PERSON).json()["data"]
 
-    assert rule["can_manage"] is True
+    assert rule["can_delete"] is True
     assert (
         client.get(f"/routines/{rule['id']}", headers=PERSON).json()["data"][
-            "can_manage"
+            "can_delete"
         ]
         is True
     )
-    assert (
-        client.post(f"/routines/{rule['id']}/pause", headers=PERSON).status_code == 200
-    )
     rows = _overview(client, project, PERSON)
-    assert _rule_of(rows, rule["id"])["can_manage"] is True
+    assert _rule_of(rows, rule["id"])["can_delete"] is True
+    assert client.delete(f"/routines/{rule['id']}", headers=PERSON).status_code == 200
 
 
-def test_a_project_admin_manages_a_rule_of_a_room_they_are_not_in(client):
+def test_a_project_admin_may_delete_a_rule_of_a_room_they_are_not_in(client):
     project = _project(client)
     room = _room(client, project)
     _join(client, project, ADMIN, admin=True)
@@ -134,8 +143,8 @@ def test_a_project_admin_manages_a_rule_of_a_room_they_are_not_in(client):
 
     seen = client.get(f"/routines/{rule['id']}", headers=admin)
     assert seen.status_code == 200, seen.text
-    assert seen.json()["data"]["can_manage"] is True
-    assert _rule_of(_overview(client, project, admin), rule["id"])["can_manage"] is True
+    assert seen.json()["data"]["can_delete"] is True
+    assert _rule_of(_overview(client, project, admin), rule["id"])["can_delete"] is True
 
     assert (
         client.patch(
@@ -169,19 +178,19 @@ def test_the_project_overview_lists_only_the_rooms_the_caller_is_in(client):
     assert _rule_of(_overview(client, project, PERSON), in_theirs["id"])
 
 
-def test_a_teammate_drafting_for_a_person_leaves_the_buttons_to_that_person(client):
-    """芝士起草的规则属于它替的那个人：按钮在他手上，不在芝士手上。"""
+def test_a_teammate_creating_for_a_person_leaves_deleting_to_that_person(client):
+    """芝士替人建的规则属于它替的那个人：删除在他手上，不在芝士手上；改谁都能改。"""
     project = _project(client)
     room = _room(client, project)
-    drafted = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    assert drafted["state"] == "draft"
-    assert drafted["can_manage"] is False, "芝士替人起草，按钮不该画给芝士"
+    made = _weekly(client, room, owner_handle=OWNER).json()["data"]
+    assert made["state"] == "active"
+    assert made["can_delete"] is False, "芝士替人建的，删除不该画给芝士"
 
-    mine = client.get(f"/routines/{drafted['id']}", headers=PERSON).json()["data"]
-    assert mine["can_manage"] is True
-    confirmed = client.post(f"/routines/{drafted['id']}/confirm", headers=PERSON)
-    assert confirmed.status_code == 200, confirmed.text
-    # 芝士仍然能改：改了要重新确认。
-    edited = client.patch(f"/routines/{drafted['id']}", json={"title": "改个名"})
+    mine = client.get(f"/routines/{made['id']}", headers=PERSON).json()["data"]
+    assert mine["can_delete"] is True
+    # 芝士仍然能改，改完立刻生效。
+    edited = client.patch(f"/routines/{made['id']}", json={"title": "改个名"})
     assert edited.status_code == 200, edited.text
-    assert edited.json()["data"]["state"] == "draft"
+    assert edited.json()["data"]["state"] == "active"
+    refused = client.delete(f"/routines/{made['id']}")
+    assert refused.status_code == 403, refused.text

@@ -1,10 +1,10 @@
-"""A project invitation reaches the person invited, in the mail they can open.
+"""A project invitation reaches the person invited, where they can answer it.
 
-The invitee is not on the project's roster yet, so a notice filed in that
-project's inbox is one they have no way to read. What they do have is their own
-mail: the bell at the top of every page (``GET /notifications`` and its unread
-count). These pin that the invitation shows up there, and that once it is
-answered or withdrawn it stops asking for an answer.
+The invitee is not on the project's roster yet, so nothing inside the project is
+theirs to open. What they do have is their own 待办: the invitation waits in
+等你处理 (``GET /awaiting-me``) naming the project and who invited them, and
+once it is answered or withdrawn it is no longer there. The notice that called
+them back is not in the feed as well, and does not light its unread count.
 
 Every assertion reads what the invitee's browser would receive.
 """
@@ -57,17 +57,14 @@ def _unread(client) -> int:
     return r.json()["data"]["count"]
 
 
-def _invitations_in_the_bell(client) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "PROJECT_INVITE"},
-        headers=_headers(client, INVITEE),
-    )
+def _waiting(client) -> list[dict]:
+    r = client.get("/awaiting-me", headers=_headers(client, INVITEE))
     assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    return r.json()["data"]["data"]
 
 
 def _invite(client, project_id: str) -> str:
+    seed_user(client, INVITEE)
     r = client.post(
         f"/projects/{project_id}/invitations",
         json={"user_handle": INVITEE},
@@ -86,59 +83,46 @@ def _answer(client, invitation_id: str, *, accept: bool) -> None:
     assert r.status_code == 200, r.text
 
 
-def test_the_invitee_finds_the_invitation_in_their_bell(client):
+def test_the_invitee_finds_the_invitation_waiting_on_them(client):
     _give_a_name(client, OWNER, "Alice A.")
     pid, _ = _project(client, OWNER)
     before = _unread(client)
 
     invitation = _invite(client, pid)
 
-    assert _unread(client) == before + 1
-    [notice] = _invitations_in_the_bell(client)
-    assert notice["read"] is False
-    assert notice["contextMetadata"]["invitationId"] == invitation
-    assert notice["contextMetadata"]["projectName"] == "P"
-    assert "status" not in notice["contextMetadata"]
-    assert notice["entities"]["project"]["id"] == pid
-    assert notice["entities"]["inviter"]["handle"] == OWNER
-    assert notice["entities"]["inviter"]["name"] == "Alice A."
+    [row] = _waiting(client)
+    assert row["kind"] == "project_invite"
+    assert row["id"] == invitation
+    assert row["placeId"] == pid
+    assert row["place"]["name"] == "P"
+    assert row["person"]["handle"] == OWNER
+    assert row["person"]["name"] == "Alice A."
+    assert _unread(client) == before
 
 
-def test_an_accepted_invitation_stops_asking(client):
+def test_an_accepted_invitation_stops_waiting(client):
     pid, _ = _project(client, OWNER)
-    before = _unread(client)
     invitation = _invite(client, pid)
 
     _answer(client, invitation, accept=True)
 
-    assert _unread(client) == before
-    [notice] = _invitations_in_the_bell(client)
-    assert notice["read"] is True
-    assert notice["contextMetadata"]["status"] == "accepted"
+    assert _waiting(client) == []
 
 
-def test_a_declined_invitation_stops_asking(client):
+def test_a_declined_invitation_stops_waiting(client):
     pid, _ = _project(client, OWNER)
-    before = _unread(client)
     invitation = _invite(client, pid)
 
     _answer(client, invitation, accept=False)
 
-    assert _unread(client) == before
-    [notice] = _invitations_in_the_bell(client)
-    assert notice["read"] is True
-    assert notice["contextMetadata"]["status"] == "declined"
+    assert _waiting(client) == []
 
 
-def test_a_withdrawn_invitation_stops_asking(client):
+def test_a_withdrawn_invitation_stops_waiting(client):
     pid, _ = _project(client, OWNER)
-    before = _unread(client)
     invitation = _invite(client, pid)
 
     r = client.delete(f"/invitations/{invitation}", headers=_headers(client, OWNER))
     assert r.status_code == 200, r.text
 
-    assert _unread(client) == before
-    [notice] = _invitations_in_the_bell(client)
-    assert notice["read"] is True
-    assert notice["contextMetadata"]["status"] == "revoked"
+    assert _waiting(client) == []

@@ -18,6 +18,7 @@ import uuid
 import pytest
 
 from tests.conftest import seed_user, wait_work_idle
+from tests.integration.conftest import as_read, mail
 from tests.integration.test_accept_pr import (
     _accept,
     _approve,
@@ -74,13 +75,7 @@ def _events(client, topic_id: str, event_type: str) -> list[dict]:
 
 
 def _notices(client, token: str, event_type: str | None = None) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "ROOM_NOTICE"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 200, r.text
-    rows = r.json()["data"]["notifications"]
+    rows = mail(client, token, "ROOM_NOTICE")
     if event_type is None:
         return rows
     return [
@@ -92,7 +87,7 @@ def _notices(client, token: str, event_type: str | None = None) -> list[dict]:
 
 def _same_words(notice_row: dict, room_line: dict) -> bool:
     """通知里读到的和回房间看到的是同一句 —— 同一件事不许有两种说法。"""
-    return notice_row["contextMetadata"]["content"] == room_line["content"]
+    return notice_row["contextMetadata"]["content"] == as_read(room_line["content"])
 
 
 def test_the_reviewer_hears_when_the_checks_go_green(client, app_world):

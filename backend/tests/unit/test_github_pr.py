@@ -17,7 +17,6 @@ from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPRMergeBlocked,
     GitHubPRRateLimited,
-    parse_github_repo,
 )
 
 
@@ -60,27 +59,6 @@ def _client(handler) -> GitHubPRClient:
         cast(GitHubAppTokens, _FakeTokens()),
         transport=httpx.MockTransport(route),
     )
-
-
-# ---- parse_github_repo -------------------------------------------------------
-
-
-def test_parse_accepts_https_github_shapes():
-    assert parse_github_repo("https://github.com/acme/widgets") == ("acme", "widgets")
-    assert parse_github_repo("https://github.com/acme/widgets.git") == (
-        "acme",
-        "widgets",
-    )
-    assert parse_github_repo("https://github.com/acme/widgets/") == ("acme", "widgets")
-
-
-def test_parse_rejects_everything_else():
-    # SSH is excluded on purpose: installation tokens only work over https.
-    assert parse_github_repo("git@github.com:acme/widgets.git") is None
-    assert parse_github_repo("https://gitlab.com/acme/widgets") is None
-    assert parse_github_repo("/home/repos/widgets") is None
-    assert parse_github_repo(None) is None
-    assert parse_github_repo("") is None
 
 
 # ---- open_pr -----------------------------------------------------------------
@@ -266,6 +244,116 @@ async def test_open_pr_uses_the_app_identity():
     assert seen == [("POST", "ghs_write")]
 
 
+# ---- commit_subject ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_commit_subject_is_the_messages_first_line():
+    """What goes on a draft PR before it is marked ready: a commit's message is
+    its subject and then its body, and only the subject belongs in a title."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "commit": {
+                    "message": "fix(usage): a claim is answered once\n\nWhy it was not."
+                }
+            },
+        )
+
+    subject = await _client(handler).commit_subject("abc123")
+
+    assert subject == "fix(usage): a claim is answered once"
+    [request] = seen
+    assert request.url.path == "/repos/acme/widgets/commits/abc123"
+
+
+@pytest.mark.anyio
+async def test_commit_subject_refusals_raise_what_callers_catch():
+    """`GitHubPrError` (the older client's) and `GitHubPRError` are unrelated:
+    the ready path catches the pair below and nothing else, so a refusal here
+    in the other class would reach `mark_ready`'s caller as a 500 — including
+    the rate limit `pr_view` two methods up turns into an answer."""
+    rate_limited = lambda: _client(  # noqa: E731 — a transport, twice
+        lambda request: httpx.Response(
+            403, text="API rate limit exceeded for installation"
+        )
+    ).commit_subject("abc123")
+
+    with pytest.raises(GitHubPRRateLimited) as limited:
+        await rate_limited()
+    assert limited.value.args[0].key == "githubRefusedCommitRead"
+
+    with pytest.raises(GitHubPRError) as refused:
+        await _client(lambda request: httpx.Response(500, text="boom")).commit_subject(
+            "abc123"
+        )
+    assert type(refused.value) is GitHubPRError
+    assert refused.value.args[0].key == "githubRefusedCommitRead"
+
+
+# ---- commit_parents ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_commit_parents_are_the_parent_shas_in_order():
+    """A line that merged the base branch in ends on a two-parent commit; the
+    ready title has to walk the FIRST parent, and the order is what says which
+    one that is. The second parent is the base branch's history."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"parents": [{"sha": "task-tip"}, {"sha": "main-tip"}]}
+        )
+
+    parents = await _client(handler).commit_parents("abc123")
+
+    assert parents == ["task-tip", "main-tip"]
+    [request] = seen
+    assert request.url.path == "/repos/acme/widgets/commits/abc123"
+
+
+@pytest.mark.anyio
+async def test_commit_parents_of_a_root_commit_are_empty():
+    """A root commit has no parents, and a parent the forge left without a sha
+    is not one either: neither may crash the walk or produce a None sha the
+    next read would be addressed to."""
+    root = await _client(
+        lambda _request: httpx.Response(200, json={"commit": {"message": "first"}})
+    ).commit_parents("abc123")
+    shapeless = await _client(
+        lambda _request: httpx.Response(200, json={"parents": [{"sha": None}, {}]})
+    ).commit_parents("abc123")
+
+    assert root == []
+    assert shapeless == []
+
+
+@pytest.mark.anyio
+async def test_commit_parents_refusals_raise_what_callers_catch():
+    """The same two refusals `commit_subject` raises: the ready path catches
+    this pair and nothing else, so the quota has to reach it as the answer it
+    already knows how to give."""
+    with pytest.raises(GitHubPRRateLimited) as limited:
+        await _client(
+            lambda _request: httpx.Response(
+                403, text="API rate limit exceeded for installation"
+            )
+        ).commit_parents("abc123")
+    assert limited.value.args[0].key == "githubRefusedCommitRead"
+
+    with pytest.raises(GitHubPRError) as refused:
+        await _client(lambda _request: httpx.Response(500, text="boom")).commit_parents(
+            "abc123"
+        )
+    assert type(refused.value) is GitHubPRError
+
+
 # ---- unreachable GitHub ------------------------------------------------------
 
 
@@ -290,6 +378,35 @@ async def test_pr_view_distinguishes_installation_rate_limit_from_permission_403
     assert type(error.value) is GitHubPRError
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("spend_at", ["update_pr", "mark_ready_for_review"])
+@pytest.mark.parametrize("refusal", ["quota", "permission"])
+async def test_ready_writes_read_a_403_the_way_the_reads_do(spend_at, refusal):
+    """The ready hand-over is three calls against one installation quota, and
+    any of them can be the one that spends the last request.
+
+    `mark_ready` answers `GitHubPRRateLimited` with a retry sentence and lets
+    the parent class through as a 500, so a write that reported the quota as an
+    ordinary refusal would be wrong for exactly the case `pr_view` two calls up
+    was changed to handle. The two 403s are the same status and differ only by
+    the phrase, so both directions are pinned here."""
+
+    def transport(_request: httpx.Request) -> httpx.Response:
+        if refusal == "quota":
+            return httpx.Response(403, text="API rate limit exceeded for installation")
+        return httpx.Response(403, json={"message": "Resource not accessible"})
+
+    expected = GitHubPRRateLimited if refusal == "quota" else GitHubPRError
+    call = (
+        (lambda c: c.update_pr(7, title="fix(x): y"))
+        if spend_at == "update_pr"
+        else (lambda c: c.mark_ready_for_review("PR_node"))
+    )
+    with pytest.raises(expected) as error:
+        await call(_client(transport))
+    assert type(error.value) is expected
+
+
 def _unreachable(request: httpx.Request) -> httpx.Response:
     """api.github.com resolved but the TLS handshake never completed — the
     real 2026-08-17 failure, verbatim from the traceback."""
@@ -301,6 +418,8 @@ def _unreachable(request: httpx.Request) -> httpx.Response:
     "call",
     [
         lambda c: c.pr_view(7),
+        lambda c: c.commit_subject("abc123"),
+        lambda c: c.commit_parents("abc123"),
         lambda c: c.check_runs("abc123"),
         lambda c: c.merge_pr(7, title="t", message="m"),
         lambda c: c.open_pr(head="topic/1", base="main", title="t", body=""),

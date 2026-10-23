@@ -1,21 +1,25 @@
 <script setup lang="ts">
-// 定时与触发（项目总览）：这个项目里所有房间的规则，一条一行。
+// 例行事务（项目总览）：这个项目里所有房间的规则，一条一行。
 //
-// 芝士起草的规则停在「待确认」，只有人点「确认启用」才会开始跑：无人值守地动手，得先
-// 有人读过它要做什么、用哪些资料、结果放哪。一条规则归谁管是后端逐条说的（`can_manage`
-// ——规则主人或项目管理员），按钮照着它画，这一页不自己算权限。
+// 存下来就在跑，没有人再点一次确认。删不删得掉是后端逐条说的（`can_delete` —— 规则
+// 主人或项目管理员），那两颗按钮照着它画，这一页不自己算权限。
 //
-// 这一页只负责三件属于「页面」的事：把项目里有哪些房间查出来（新建时要选一个）、把
-// 地址里的 `?routine=` 翻成「展开这一条」，以及页头上那两颗命令。规则本身那一串和那张
-// 表单是 `components/routine/` 里的共用件 —— 房间右侧「定时与触发」那一格画的是同一份。
-import type { UserRefTarget } from '@/lib/userRef'
+// 这一页只负责几件属于「页面」的事：把项目里有哪些房间查出来（每条规则要写出它长在哪个
+// 房间）、把地址里的 `?routine=` 翻成「展开这一条」、把项目里存下来的模板接上（存在
+// 后端，见 `useRoutineTemplates`），以及页头上那颗「刷新」。规则那一串和改规则的那一页
+// 是 `components/routine/` 里的共用件 —— 房间右侧「例行事务」那一格画的是同一份。
+//
+// 这一页建不了规则：建只在房间右侧那一格。这里摆着全项目的规则，看得到、改得动。
+import type { RoutineInput } from '@/lib/routine'
+import type { RoutineTemplateInput } from '@/lib/routineTemplates'
 import type { Topic } from '../cx_types'
 
-import { computed, getCurrentInstance, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useProjectAgentName } from '@/composables/useProjectAgentName'
 import { useRoutineList } from '@/composables/useRoutineList'
+import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
 
 import { listTopics } from '../api'
 
@@ -24,34 +28,26 @@ import ProjectRoutinesViewView from './ProjectRoutinesViewView.vue'
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
 
-// 路由和 pinia 都从 app 上拿（和 composables/useUserRef 同一个理由）：这一页在单测里
-// 是孤立渲染的，那里没有路由、没有 store，照样画，只是人名不可点、画 handle。
-const app = getCurrentInstance()?.appContext.config.globalProperties
-const workspace = app?.$pinia ? useWorkspaceStore() : null
 const agentName = useProjectAgentName()
 
-/** 人名 → 显示名：行里的人名只画字（`UserRef`），名册在这里查一次。 */
-const userNames = computed(() =>
-  Object.fromEntries(
-    (workspace?.members ?? []).map((m) => [m.user_handle, m.name]).filter((e): e is [string, string] => Boolean(e[1]))
-  )
-)
-
-function go(target: UserRefTarget) {
-  void app?.$router?.push(target)
-}
-
 const rooms = ref<Topic[]>([])
+
+const {
+  templates,
+  add: addTemplate,
+  change: changeTemplate,
+  remove: removeTemplate,
+} = useRoutineTemplates(() => props.projectId)
 
 const {
   routines,
   runs,
   openId,
+  records,
   busy,
   loading,
   error,
@@ -64,15 +60,18 @@ const {
   act,
   remove,
   startEdit,
-  startNew,
   closeForm,
   submit,
+  openRecords,
+  closeRecords,
+  goRecordsPage,
+  setRecordsFailedOnly,
 } = useRoutineList({ projectId: props.projectId })
 
-// 新建时落在哪个房间：地址里点名了就用它（房间面板里的「新建」也是这么带过来的），
-// 否则第一个房间。
-const defaultRoom = computed(() => (typeof route.query.room === 'string' ? route.query.room : rooms.value[0]?.id ?? ''))
 const roomNames = computed(() => Object.fromEntries(rooms.value.map((r) => [r.id, r.title])))
+// 改一条已有的时，表单里「频道」那一行写的是它长在哪个房间：这一页建不了规则，这里
+// 没有可挑的频道。
+const editingRoomName = computed(() => (editing.value ? roomNames.value[editing.value.topic_id] ?? '' : ''))
 
 async function loadRooms() {
   const projectId = props.projectId
@@ -85,7 +84,8 @@ async function loadRooms() {
   }
 }
 
-// 从一条平台通知点进来（`?routine=<id>`）：那一条自己展开，滚到它跟前。
+// 地址点名了某一条（`?routine=<id>`）：那一条自己展开，滚到它跟前。芝士在频道里写的
+// 链接落在房间那一格上；指到这一页来的地址（书签、别处抄过来的）也照做。
 watch(
   routines,
   (rows) => {
@@ -110,6 +110,28 @@ watch(
   { immediate: true }
 )
 
+/** 表单存下去。勾了「存成模板」就把这张表也收成一条 —— 存规则失败时那一条不留下，
+ *  不然项目里会出现一条从没跑起来的表。模板和规则是两件事，两处各自会失败：规则
+ *  存下了、模板没存上要说一句，那一条不会自己冒出来，人下次也找不到它。 */
+async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }) {
+  const saved = await submit(payload)
+  if (!saved || !payload.keepAsTemplate) return
+  if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
+}
+
+/** 模板那页改了一条模板：和存一条规则一样，改上了把这一页收起来（列表里那一条已经
+ *  是新的了）；没改上就留在这张表上写一句，人再存一次不用重填。 */
+async function onUpdateTemplate(payload: { id: string; body: RoutineTemplateInput }) {
+  saving.value = true
+  formError.value = ''
+  try {
+    if (await changeTemplate(payload.id, payload.body)) formOpen.value = false
+    else formError.value = t('routines.template.saveFailed')
+  } finally {
+    saving.value = false
+  }
+}
+
 useCommands(() => [
   {
     id: 'routines.refresh',
@@ -120,14 +142,6 @@ useCommands(() => [
     header: {},
     run: reload,
   },
-  {
-    id: 'routines.new',
-    title: t('routines.action.new'),
-    icon: 'mdi-plus',
-    disabled: !rooms.value.length,
-    header: { primary: true, accent: true },
-    run: startNew,
-  },
 ])
 </script>
 
@@ -137,26 +151,30 @@ useCommands(() => [
     :routines="routines"
     :runs="runs"
     :open-id="openId"
+    :records="records"
     :busy="busy"
     :loading="loading"
     :error="error"
     :room-names="roomNames"
-    :user-names="userNames"
-    :rooms="rooms"
-    :default-room="defaultRoom"
+    :room-name="editingRoomName"
     :form-open="formOpen"
     :editing="editing"
     :saving="saving"
     :form-error="formError"
-    @navigate="go"
-    @confirm="(r) => act(r, 'confirm')"
+    :templates="templates"
     @pause="(r) => act(r, 'pause')"
     @resume="(r) => act(r, 'resume')"
     @run-now="(r) => act(r, 'run-now')"
     @edit="startEdit"
     @delete="remove"
     @toggle-runs="(r) => toggleRuns(r)"
+    @open-records="openRecords"
+    @records-back="closeRecords"
+    @records-page="goRecordsPage"
+    @records-failed-only="setRecordsFailedOnly"
     @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
-    @save="submit"
+    @save="onSubmit"
+    @update-template="(payload) => void onUpdateTemplate(payload)"
+    @delete-template="(tpl) => void removeTemplate(tpl.id)"
   />
 </template>

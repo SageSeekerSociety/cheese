@@ -10,11 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import ConflictError
 from app.core.sentences import say
 from app.domain.agent.turn.store.events import EventAuthorResolver
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
-from app.domain.block.queries import any_output_event_exists, last_turn_output
-from app.domain.block.schemas import BlockOut
+from app.domain.block.queries import (
+    any_output_event_exists,
+    last_turn_output,
+    message_reply_target,
+)
+from app.domain.block.schemas import BlockOut, reply_preview
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.topic.models import Topic
@@ -58,6 +63,27 @@ class StoredAssistant:
     payload: dict | None
     written: bool
     author: str | None
+    #: The attachment blocks written in the same transaction, in send order.
+    attachments: tuple[dict, ...] = ()
+
+
+async def stored_publication(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    topic_id: uuid.UUID,
+    author: str,
+    publication_id: str,
+) -> dict | None:
+    """The result a request with this id already stored, or None.
+
+    `chat_send`'s retry path asks before it reads or writes any attachment: a
+    retry of a message the room already has must not leave a second copy of
+    the bytes behind. The decision stays here, under the same key and the same
+    input rule `persist_assistant_message` applies.
+    """
+    key = action_key(topic_id, "chat-publish", author, publication_id)
+    async with sessions() as session:
+        return await idem.stored_result(session, key)
 
 
 async def persist_assistant_message(
@@ -80,15 +106,14 @@ async def persist_assistant_message(
     continuation_id: uuid.UUID | None = None,
     at: datetime | None = None,
     inner_id: uuid.UUID | None = None,
-    publish: bool = False,
     author: str | None = None,
     publication_id: str | None = None,
     own_output: bool = False,
     extra_meta: dict | None = None,
     closing: bool = False,
+    attachments: list[dict] | None = None,
 ) -> StoredAssistant:
-    as_progress = not publish
-    meta: dict | None = {"in_room": False, "progress": True} if as_progress else None
+    meta: dict | None = None
     if eid:
         meta = {**(meta or {}), "eid": eid}
     if len(eids) > 1:
@@ -103,6 +128,15 @@ async def persist_assistant_message(
         publication_input = {
             "text": text,
             "reply_to": str(reply_to) if reply_to else None,
+            # The pictures are part of what this request_id stands for: the
+            # same id with a different picture is a different publication, not
+            # a retry. The digest is stable across a retry; the stored path is
+            # not (each upload gets its own directory).
+            **(
+                {"attachments": [a.get("digest") for a in attachments]}
+                if attachments
+                else {}
+            ),
         }
         if publication_id is not None:
             publication_key = action_key(
@@ -141,7 +175,7 @@ async def persist_assistant_message(
         # disagree no matter where the process dies.
         if continuation_id is not None and not await idem.claim(
             session,
-            action_key(continuation_id, "progress" if as_progress else "message", text),
+            action_key(continuation_id, "message", text),
             action="message",
             scope_id=str(topic_id),
         ):
@@ -173,21 +207,55 @@ async def persist_assistant_message(
             author=author,
             author_type=AuthorType.participant,
             content=text,
-            kind=BlockKind.event if as_progress else BlockKind.message,
+            kind=BlockKind.message,
             reply_to=reply_to,
             turn_id=turn_id,
             meta=meta,
             created_at=at,
             own_output=own_output,
         )
+        # 图片随消息一起落库：每张图一块 `attachment`，和消息同一个事务、同一个
+        # turn。它们是这条消息的一部分（读者在气泡旁边直接看到），不是房间里另
+        # 摆出来的一份文件，所以 kind 是 attachment 而不是 artifact。
+        attachment_payloads: list[dict] = []
+        for attachment in attachments or []:
+            att_block = await append_output(
+                session,
+                project_id=landed.project_id,
+                conversation_id=landed.conversation_id,
+                author=author,
+                author_type=AuthorType.participant,
+                content=str(attachment.get("path") or ""),
+                kind=BlockKind.attachment,
+                mime_type=str(attachment.get("mime") or "") or None,
+                turn_id=block.id,
+                # 纯图片的一条消息也要守住回复线程（和人发图时同一条规矩）。
+                reply_to=None if text else reply_to,
+                created_at=at,
+                own_output=own_output,
+            )
+            attachment_payloads.append(
+                BlockOut.model_validate(att_block).model_dump(mode="json")
+            )
         # <@handle> mentions in 芝士's message → strong notify (the token is
         # the single source of truth: what's shown = who's notified).
         # Hallucinated handles get flagged in 现场, never silently no-op.
-        if topic is not None and not as_progress:
+        if topic is not None:
             await notify_mentions(
                 session, topic, block, author, roster, flag_unresolved=True
             )
         payload = BlockOut.model_validate(block).model_dump(mode="json")
+        # A reply carries a one-line preview of what it answers, so a reader
+        # whose timeline does not hold the parent still sees which line this is.
+        # The parent itself stays out of the page and out of the reader.
+        if reply_to is not None:
+            parent = await message_reply_target(session, reply_to)
+            if parent is not None and parent.conversation_id == landed.conversation_id:
+                preview = reply_preview(parent)
+                payload["reply_preview"] = preview
+                for attachment in attachment_payloads:
+                    if attachment.get("reply_to") is not None:
+                        attachment["reply_preview"] = preview
         if publication_key is not None:
             await idem.record_result(
                 session,
@@ -195,4 +263,4 @@ async def persist_assistant_message(
                 {"input": publication_input, "block": payload},
             )
         await session.commit()
-    return StoredAssistant(payload, True, author)
+    return StoredAssistant(payload, True, author, tuple(attachment_payloads))

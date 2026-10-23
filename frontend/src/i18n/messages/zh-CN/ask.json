@@ -1,4 +1,24 @@
 {
+  "group": {
+    "title": "{asker} 问你 {n} 个问题",
+    "titleBare": "问你 {n} 个问题",
+    "questionOf": "第 {n} 题，共 {total} 题",
+    "multiHint": "可多选，再次点击取消选择",
+    "otherLabel": "其他答案",
+    "previous": "上一题",
+    "next": "下一题",
+    "review": "确认答案",
+    "reviewAllAnswered": "已完成 {total} 题",
+    "reviewMissing": "有 {n} 题未作答，仍可提交",
+    "back": "返回修改",
+    "submit": "提交答案",
+    "submitted": "已提交",
+    "unanswered": "未作答",
+    "edit": "改答案",
+    "editNote": "重新打开整组，改完再提交",
+    "failed": "提交没成功，再试一次",
+    "listSeparator": "、"
+  },
   "replies": {
     "label": "快捷回复",
     "recommended": "推荐",
@@ -11,7 +31,7 @@
     "withdrawAria": "撤回你对「{text}」的回答",
     "withdrawTitle": "撤回这条回答？",
     "withdrawBody": "撤回后这道题重新等回答，谁都能再选一次。你发的那句话还留在房间里。",
-    "withdrawFailed": "撤回没成功，再试一次",
+    "withdrawFailed": "撤回失败，稍后重试",
     "skip": "跳过这道题",
     "skipped": "{name}：已跳过",
     "undoSkip": "撤销",

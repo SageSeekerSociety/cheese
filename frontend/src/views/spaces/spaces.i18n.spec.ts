@@ -6,9 +6,11 @@
 // 免得把数据里的中文误判成没翻译的界面文字。
 import type { Component } from 'vue'
 
+import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
+import { VApp } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -16,16 +18,22 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import i18n, { setLocale } from '@/i18n'
 
-const previewFromPdf = vi.fn()
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
 const listDomainGroups = vi.fn()
 
+vi.mock('@/api/taskDrafts', () => ({
+  TaskDraftsApi: {
+    list: vi.fn().mockResolvedValue([]),
+    start: vi.fn(),
+    read: vi.fn(),
+    save: vi.fn(),
+    publish: vi.fn(),
+  },
+}))
+
 vi.mock('@/api/taskBoard', () => ({
   TaskBoardApi: {
-    previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
-    confirmFromPdf: vi.fn(),
-    create: vi.fn(),
     list: vi.fn(),
   },
 }))
@@ -124,20 +132,6 @@ beforeEach(() => {
   spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
   listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
   listDomainGroups.mockResolvedValue({ groups: [] })
-  previewFromPdf.mockResolvedValue({
-    drafts: [
-      {
-        name: 'Find a segfault',
-        intro: 'Use gdb.',
-        description: 'A crash. ![fig](https://x.test/a.png)',
-        space: SPACE_ID,
-      },
-      { name: '', intro: 'Allocator.', description: '', space: SPACE_ID },
-    ],
-    templateUsed: {},
-    tokenUsed: 1200,
-    attachments: { pdf: { id: 1, name: 'hw.pdf', size: 10, contentType: 'application/pdf' }, images: [] },
-  })
 })
 
 afterEach(() => {
@@ -151,7 +145,9 @@ async function mountPublish() {
   await router.isReady()
   const pinia = createPinia()
   setActivePinia(pinia)
-  const view = render(PublishTask as Component, {
+  // 芝士的面板停在页面外框的右边（导航抽屉），外框要有。
+  const Page = defineComponent({ render: () => h(VApp, () => h(PublishTask as Component)) })
+  const view = render(Page, {
     global: { plugins: [createVuetify({ components, directives }), router, pinia, i18n] },
   })
   await waitFor(() => expect(view.container.querySelector('form')).not.toBeNull(), { timeout: 20_000 })
@@ -159,19 +155,9 @@ async function mountPublish() {
 }
 
 describe('spaces in English', () => {
-  it('the publish page has no Chinese, including the drafts read from a file', async () => {
+  it('the publish page has no Chinese, Cheese beside it included', async () => {
     const view = await mountPublish()
-    expect(view.container.textContent).not.toMatch(CJK)
-
-    const input = view.getByTestId('publish-import-input') as HTMLInputElement
-    Object.defineProperty(input, 'files', {
-      value: [new File([new Uint8Array(10)], 'hw.pdf', { type: 'application/pdf' })],
-      configurable: true,
-    })
-    await fireEvent.change(input)
-    await waitFor(() => expect(view.container.querySelector('[data-testid="publish-drafts"]')).not.toBeNull())
-
-    expect(view.container.textContent).not.toMatch(CJK)
+    expect(document.body.textContent).not.toMatch(CJK)
     const labels = Array.from(view.container.querySelectorAll('[aria-label],[title],[placeholder]')).map((el) =>
       ['aria-label', 'title', 'placeholder'].map((a) => el.getAttribute(a) ?? '').join(' ')
     )

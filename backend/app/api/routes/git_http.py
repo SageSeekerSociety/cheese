@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_agent
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -26,15 +27,12 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
-from app.domain.repository import identity
+from app.domain.review import credit
 from app.domain.review.services import AcceptService
 from app.domain.room_task import snapshots
-from app.domain.room_task.models import TaskSnapshot
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -68,7 +66,10 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     return task
 
 
-@router.put("/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}")
+@router.put(
+    "/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def save_task_snapshot(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -132,8 +133,8 @@ async def download_task_snapshot(
 ) -> Response:
 
     await _task_for(db, project_id, task_id, x_cheese_token)
-    row = await db.get(TaskSnapshot, snapshot_id)
-    if row is None or row.task_id != task_id:
+    row = await snapshots.get(db, task_id=task_id, snapshot_id=snapshot_id)
+    if row is None:
         raise NotFoundError(say("taskBackupNotFound"))
     return Response(
         await snapshots.download(row),
@@ -142,7 +143,7 @@ async def download_task_snapshot(
     )
 
 
-@router.post("/{project_id}/git/tasks/{task_id}")
+@router.post("/{project_id}/git/tasks/{task_id}", dependencies=[ROUTE_DECIDES])
 async def open_task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -186,21 +187,21 @@ async def task_workspace(
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
-    # The project changes only once the task's owner started it.
-    if task.started_at is None:
-        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))
 
     room = await TopicService(db).get_or_404(task.room_id)
-    who = await identity.attribution(db, room, task_id=task.id)
+    # Who the task's commits are by, and who they credit: the same rule the
+    # squash that lands them follows (`identity.Attribution`).
+    who = await credit.attribution(db, room, task_id=task.id)
+    author = who.commit_author
 
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
-    if who.author:
-        await ensure_author_email(project_id, db, who.author.email)
+    if author and binding.kind == "forgejo":
+        await ensure_author_email(project_id, db, author.email)
 
     # A queued PR's branch is locked by the forge until the queue merges or
     # drops it; a machine that pushes to it is refused. It is told here so it
@@ -210,8 +211,6 @@ async def task_workspace(
         announce=announce,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
-        seat_instance_id=seat_instance_id,
-        record_agent=record_agent,
         task_teammate=task_teammate,
         roster_team=project_team,
     ).merge_queued_pr(task.id)
@@ -229,7 +228,7 @@ async def task_workspace(
             "remote": binding.url,
             "forge_kind": binding.kind,
             "forge_repo": binding.repo,
-            "author": str(who.author) if who.author else None,
-            "coauthors": [str(person) for person in who.coauthors],
+            "author": str(author) if author else None,
+            "coauthors": [str(person) for person in who.commit_coauthors],
         }
     )

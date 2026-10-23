@@ -16,11 +16,39 @@ export type HostPhase =
 
 export type SandboxState = 'waiting' | 'working' | 'idle' | 'stopping'
 
+/** 一个沙箱最近一次的读数：内存每分钟读一次，家目录每次走盘（几分钟一次）读一次。 */
+export interface SandboxUsage {
+  memory_bytes: number | null
+  /** 沙箱起来以来内存用到的最多。 */
+  memory_peak_bytes: number | null
+  memory_read_at: string | null
+  disk_bytes: number | null
+  disk_inodes: number | null
+  disk_read_at: string | null
+}
+
+/** 一台宿主机最近一次读数，和之前几小时内存、CPU 每一段里的最高值（缺数为 null）。 */
+export interface HostUsage {
+  read_at: string
+  disk_bytes: number
+  disk_used_bytes: number
+  inodes: number | null
+  inodes_used: number | null
+  memory_bytes: number | null
+  memory_used_bytes: number | null
+  /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
+  cpu_busy: number | null
+  load1: number | null
+  sandboxes: number | null
+  memory_history: (number | null)[]
+  cpu_history: (number | null)[]
+}
+
 export interface MachineSandbox {
   id: string
   spec: string
   state: SandboxState
-  project_id: string
+  project_id: string | null
   project: string | null
   room_id: string
   room: string | null
@@ -30,6 +58,8 @@ export interface MachineSandbox {
   stopped_at: string | null
   /** 最早什么时候因空闲被回收（下限）。 */
   idle_deadline: string | null
+  /** 还没读到过时为 null。 */
+  usage: SandboxUsage | null
 }
 
 export interface MachineHost {
@@ -56,6 +86,8 @@ export interface MachineHost {
   released_at: string | null
   enroll_attempts: number
   enroll_error: string | null
+  /** 还没读到过（没注册、不在线、刚起来）时为 null。 */
+  usage: HostUsage | null
   sandboxes: MachineSandbox[]
 }
 
@@ -63,6 +95,10 @@ export interface WarmMachineRow {
   id: string
   state: string
   machine_id: number | null
+  hostname: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
   ip: string | null
   online: boolean
   created_at: string | null
@@ -99,6 +135,15 @@ export interface MachinesOverview {
     sandbox_idle_s: number
     host_idle_hold_s: number
     vm_idle_s: number
+    sandbox_disk_budget_gb: number
+    sandbox_inode_budget: number
+    /** 沙箱用到上限的这一份就标出来。 */
+    near_cap: number
+    /** 宿主机多久读一次、多久走一次盘（秒）。 */
+    check_s: number
+    /** 宿主机用过这一份就告警（两次读数都过）。 */
+    alert_used: Record<'disk' | 'inodes' | 'memory', number>
+    history_step_s: number
   }
   hosts: MachineHost[]
   warm: WarmMachineRow[]

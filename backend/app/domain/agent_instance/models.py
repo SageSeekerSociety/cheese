@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -23,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -82,35 +84,18 @@ class AgentInstance(UuidPk, Timestamps, Base):
     )
 
 
-class OwnCallers(enum.StrEnum):
-    """Who may set a member's own agent to work. Its owner decides; the
-    platform does not look at what the agent signs in with."""
-
-    #: Its owner alone.
-    owner = "owner"
-    #: Any person in the project, the owner included.
-    project = "project"
-
-
 class OwnAgent(Base):
-    """A project's agent that is one member's own coding agent (#2991): their
-    own Claude Code with one of their model connections — the login they gave
-    the platform on one of their machines (`cheesehost claude login`) — called
-    by whoever its owner lets call it (``callers``).
+    """A project teammate backed by a team connection.
 
-    It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
-    roster — and this row is what makes it someone's. A person may have one per
-    connection in a project; its owner adds it there and removes it.
-
-    Its connection is either a machine's login (``device_id``) or one its
-    owner's account holds (``account_connection_id``), never both.
+    The member owner supplies the prompt's ownership context. Connection access
+    follows the project's team, independent of that member's current membership.
     """
 
     __tablename__ = "own_agents"
     __table_args__ = (
         CheckConstraint(
-            "device_id IS NULL OR account_connection_id IS NULL",
-            name="ck_own_agents_one_connection",
+            "login_id IS NULL OR account_connection_id IS NULL",
+            name="ck_own_agents_login_connection",
         ),
     )
 
@@ -122,23 +107,19 @@ class OwnAgent(Base):
     )
     # Which harness it is: the coding agent the owner logged in on the machine.
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
-    # The model connection it runs on: the login on this machine
-    # (`DeviceClaudeLoginRow`, keyed by the machine). Its sessions run there and
-    # nowhere else — a subscription's login never leaves the machine it was
-    # given on. None once the machine is gone; then it has nothing to run on.
-    device_id: Mapped[str | None] = mapped_column(
+    # The credential device stays the model process's host; tools execute on
+    # the teammate's selected execution device.
+    login_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey(
-            "device.device_id",
+            "claude_logins.id",
             ondelete="SET NULL",
-            name="fk_own_agents_device_id_device",
+            name="fk_own_agents_login_id_claude_logins",
         ),
         nullable=True,
         index=True,
     )
-    # Or the model connection its owner's account holds (`AccountConnection`):
-    # an API key or a model service the platform keeps sealed. Its sessions run
-    # on the deployment's session host. None once its owner removed it.
+    # Or an encrypted team API key or model service, removed with its connection.
     account_connection_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "account_model_connections.id",
@@ -148,47 +129,37 @@ class OwnAgent(Base):
         nullable=True,
         index=True,
     )
-    callers: Mapped[OwnCallers] = mapped_column(
-        Enum(
-            OwnCallers,
-            native_enum=False,
-            length=16,
-            create_constraint=True,
-            name="ck_own_agents_callers",
-        ),
-        nullable=False,
-        default=OwnCallers.owner,
-        server_default=OwnCallers.owner.value,
-    )
 
 
 class AccountConnection(UuidPk, Timestamps, Base):
-    """A model connection a person's account holds rather than one of their
-    machines (#2991): an Anthropic API key, or another model service that
-    speaks Anthropic's API (its address, key and model). A member's own Claude
-    Code on it runs on the deployment's session host, as the project's own
-    agents do, and calls the model with this key.
+    """An encrypted team API key or Anthropic-compatible model service.
 
-    A Claude subscription is never one: its login may not be held by a third
-    party, so it stays on the machine it was given on (`DeviceClaudeLoginRow`),
-    and the kind's CHECK keeps it out of this table.
-
-    The key is sealed (`app.core.crypto`, `Purpose.MODEL_CONNECTION_KEY`, bound
-    to this row); only its last four characters are kept readable, for its
-    owner to tell keys apart.
+    Subscription credentials remain on their device. The platform stores only
+    a sealed key bound to this row and its last four readable characters.
     """
 
     __tablename__ = "account_model_connections"
-
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer,
+    owner_user_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "user.id",
             ondelete="CASCADE",
             name="fk_account_model_connections_owner_user_id_user",
         ),
+        nullable=True,
+        index=True,
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_account_model_connections_team_id_team",
+        ),
         nullable=False,
         index=True,
+    )
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     #: `ConnectionKind`'s ``api_key`` or ``model_service``.
     kind: Mapped[str] = mapped_column(
@@ -216,3 +187,49 @@ class AccountConnection(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PersonalModelResource(UuidPk, Base):
+    """A team's reference to a member's credential; never a copy of its secret."""
+
+    __tablename__ = "personal_model_resources"
+    __table_args__ = (
+        CheckConstraint(
+            "(login_id IS NULL) <> (account_connection_id IS NULL)",
+            name="ck_personal_model_resources_credential",
+        ),
+        UniqueConstraint(
+            "team_id", "login_id", name="uq_personal_model_resources_team_login"
+        ),
+        UniqueConstraint(
+            "team_id",
+            "account_connection_id",
+            name="uq_personal_model_resources_team_account",
+        ),
+    )
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_team_id_team",
+        ),
+        index=True,
+    )
+    login_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "claude_logins.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_login_id_claude_logins",
+        ),
+        nullable=True,
+        index=True,
+    )
+    account_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "account_model_connections.id",
+            ondelete="CASCADE",
+            name="fk_personal_model_resources_account_connection",
+        ),
+        nullable=True,
+        index=True,
+    )

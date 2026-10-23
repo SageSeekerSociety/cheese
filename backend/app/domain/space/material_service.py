@@ -38,7 +38,11 @@ from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend, generate_storage_key
 from app.domain.materials.models import Material
 from app.domain.materials.services import MaterialService
-from app.domain.space.models import SpaceMaterial, SpaceMaterialVisibility
+from app.domain.space.models import (
+    SpaceAdminRelation,
+    SpaceMaterial,
+    SpaceMaterialVisibility,
+)
 from app.domain.space.repositories import SpaceRepository
 
 _MIME_FAMILIES = (
@@ -208,32 +212,61 @@ class SpaceMaterialService:
         只是把「要么本就人人可读、要么这人正好是某块相关板子的管理员」两句话说
         完，判据本身与 ``member_readable_material_ids`` 共用，不各写一份。
         """
-        links = await self._links.list_live_by_material_ids(material_ids=[material_id])
-        if _readable_by_a_member([link.visibility for link in links]):
-            return True
-        for link in links:
-            if await is_space_admin(
-                self._session, space_id=link.space_id, user_id=user_id
-            ):
-                return True
-        return False
+        return material_id in await self.readable_material_ids(
+            material_ids=[material_id], user_id=user_id
+        )
 
     async def readable_material_ids(
         self, *, material_ids: Sequence[int], user_id: int
     ) -> set[int]:
         """这一批素材里，这个人在资料库这一侧读得到的是哪几个。
 
-        与 ``may_read_outside_space`` 是**同一句判据**，不多抄一份：一个素材包一次
-        带十几份，包一层循环只为让调用方少写一个 for。看不见的 id 从结果里消失，
-        调用方照它过滤（见 ``routes/materialbundles.py``）。
+        与 ``may_read_outside_space`` 是**同一句判据**，那边只是这里的一份特例。
+        一个素材包一次带十几份，所以按批查：关联行一条语句取回、按素材归堆，
+        非管理员那一半逐堆纯内存判（``_readable_by_a_member``）；剩下全在「仅
+        管理员」档的那几份，把涉及的板子收成一个集合，再用一条语句问这个人管
+        其中哪几块。整批固定两条查询，不随份数和板数增长。看不见的 id 从结果里
+        消失，调用方照它过滤（见 ``routes/materialbundles.py``）。
         """
+        links = await self._links.list_live_by_material_ids(material_ids=material_ids)
+        by_material: dict[int, list[SpaceMaterial]] = {}
+        for link in links:
+            by_material.setdefault(link.material_id, []).append(link)
+
         readable: set[int] = set()
+        admin_only: dict[int, set[int]] = {}
         for material_id in material_ids:
-            if await self.may_read_outside_space(
-                material_id=material_id, user_id=user_id
-            ):
+            group = by_material.get(material_id, [])
+            if _readable_by_a_member([link.visibility for link in group]):
                 readable.add(material_id)
+            else:
+                admin_only[material_id] = {link.space_id for link in group}
+        if admin_only:
+            managed = await self._managed_space_ids(
+                space_ids=set().union(*admin_only.values()), user_id=user_id
+            )
+            readable.update(
+                material_id
+                for material_id, space_ids in admin_only.items()
+                if space_ids & managed
+            )
         return readable
+
+    async def _managed_space_ids(
+        self, *, space_ids: set[int], user_id: int
+    ) -> set[int]:
+        """这些板子里，这个人是所有者或管理员的那几块 —— ``is_space_admin`` 的批量版。
+
+        判据与它逐字相同（管理员关系表里一条没软删的行），每次现查不缓存，撤权
+        立刻生效的口径也一样；只是一条语句问完一批板子。
+        """
+        stmt = select(SpaceAdminRelation.space_id).where(
+            SpaceAdminRelation.space_id.in_(list(space_ids)),
+            SpaceAdminRelation.user_id == user_id,
+            SpaceAdminRelation.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
 
     # ---- 写 ----
 
@@ -302,8 +335,9 @@ class SpaceMaterialService:
         await self._links.soft_delete(link)
 
     async def download(
-        self, *, space_id: int, user_id: int, material_id: int
+        self, *, space_id: int, user_id: int, material_id: int, counted: bool = True
     ) -> tuple[bytes, str, str]:
+        """取字节。``counted=False`` 是页面上的预览：判权限照旧，只是不记一次下载。"""
         await self._require_member(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
@@ -323,8 +357,9 @@ class SpaceMaterialService:
             raise NotFoundError("Material file not found in storage")
 
         # 计数在取到字节之后才加：文件取不出来时不该记一笔「有人下载过」。
-        link.download_count += 1
-        await self._links.save(link)
+        if counted:
+            link.download_count += 1
+            await self._links.save(link)
 
         return content, material.name, meta.get("mime") or "application/octet-stream"
 

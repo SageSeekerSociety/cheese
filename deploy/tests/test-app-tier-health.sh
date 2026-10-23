@@ -23,8 +23,10 @@ export FORGEJO_URL=https://cheese.example/forge/
 export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
 # And the pi build cache beside it.
 export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
+# And the enrolled machines' toolchain cache beside those two.
+export TOOLCHAIN_CACHE_HOST_PATH="$ROOT/.tmp/toolchain-cache-$$"
 export APPHOME_HOST_PATH="$ROOT/.tmp/apphome-$$"
-trap 'rm -rf "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
+trap 'rm -rf "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/toolchain-cache-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -1988,6 +1990,7 @@ ownership_run() {
     APPHOME_HOST_PATH="$run_dir/apphome" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
     PI_CACHE_HOST_PATH="$run_dir/pi-cache" \
+    TOOLCHAIN_CACHE_HOST_PATH="$run_dir/toolchain-cache" \
     HOME="$run_dir" \
     "$@"
 }
@@ -2061,6 +2064,7 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # unmarked path would make this "nothing moved" scenario move something.
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/pi-cache"; : > "$run_dir/pi-cache/.cheese-uid-1000"
+  mkdir -p "$run_dir/toolchain-cache"; : > "$run_dir/toolchain-cache/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \
@@ -2136,15 +2140,93 @@ PY
   rm -f "$parser"
 }
 
+# The green anchor the drift step measures against: a full sha whose first seven
+# characters are the tag the fake docker serves, because the step derives the
+# live tag from the anchor rather than from main's tip.
+DRIFT_ANCHOR="abc1234def5678901234567890123456789abcde"
+
+# Runs the drift step the way the workflow does: from the repository root, with
+# a gh that answers the anchor and the build-run queries, and GITHUB_REPOSITORY
+# in the environment. The step exits 0 both when it converged and when it could
+# not tell what to converge to, so the cases assert what it did — a match, a
+# re-dispatch of a named commit, or a refusal — never the bare exit status.
+run_drift_step() {
+  local script="$1"
+  shift
+  ( cd "$ROOT" && PATH="$FAKE_BIN:$PATH" \
+    GITHUB_REPOSITORY=example/cheese \
+    APP_TIER_ANCHOR_SHA="$DRIFT_ANCHOR" \
+    env "$@" bash -c "$script" )
+}
+
 test_workflow_rejects_stale_frontend() {
+  local script calls out rc=0
   script="$(workflow_script)"
-  if PATH="$FAKE_BIN:$PATH" \
+  mkdir -p "$ROOT/.tmp"
+  calls="$(mktemp "$ROOT/.tmp/drift-gh.XXXXXX")"
+  out="$(mktemp "$ROOT/.tmp/drift-out.XXXXXX")"
+
+  run_drift_step "$script" \
     APP_TIER_SCENARIO=frontend_stale \
     APP_TIER_MAIN_SHA=abc1234 \
-    bash -c "$script"; then
-    fail "workflow reported success with a stale frontend"
+    APP_TIER_BUILD_OK=1 \
+    APP_TIER_GH_CALLS="$calls" >"$out" 2>&1 || rc=$?
+
+  if grep -q 'live matches main-green' "$out"; then
+    cat "$out"
+    rm -f "$calls" "$out"
+    fail "workflow reported a stale frontend as current"
   fi
-  echo "PASS: workflow drift check rejects a stale frontend"
+  grep -q "workflow run deploy-dev.yml --ref main -f ref=$DRIFT_ANCHOR" "$calls" \
+    || { echo "drift step exit: $rc"; cat "$out"; cat "$calls"; rm -f "$calls" "$out"; fail "a stale frontend did not re-fire the green anchor's deploy"; }
+  rm -f "$calls" "$out"
+  echo "PASS: workflow drift check re-fires the green anchor for a stale frontend"
+}
+
+test_workflow_fails_on_a_failed_anchor_build() {
+  local script out
+  script="$(workflow_script)"
+  mkdir -p "$ROOT/.tmp"
+  out="$(mktemp "$ROOT/.tmp/drift-out.XXXXXX")"
+  if run_drift_step "$script" \
+    APP_TIER_SCENARIO=frontend_stale \
+    APP_TIER_MAIN_SHA=abc1234 \
+    APP_TIER_BUILD_FAILED=1 >"$out" 2>&1; then
+    cat "$out"
+    rm -f "$out"
+    fail "a failed build for the anchor left the drift check green"
+  fi
+  rm -f "$out"
+  echo "PASS: a failed build for the anchor keeps the drift check red"
+}
+
+test_workflow_does_not_guess_without_the_anchor() {
+  local script calls out rc=0
+  script="$(workflow_script)"
+  mkdir -p "$ROOT/.tmp"
+  calls="$(mktemp "$ROOT/.tmp/drift-gh.XXXXXX")"
+  out="$(mktemp "$ROOT/.tmp/drift-out.XXXXXX")"
+
+  run_drift_step "$script" \
+    APP_TIER_SCENARIO=frontend_stale \
+    APP_TIER_MAIN_SHA=abc1234 \
+    APP_TIER_ANCHOR=unreadable \
+    APP_TIER_GH_CALLS="$calls" >"$out" 2>&1 || rc=$?
+
+  if grep -q 'live matches main-green' "$out"; then
+    cat "$out"
+    rm -f "$calls" "$out"
+    fail "an unreadable anchor was reported as live matches"
+  fi
+  if grep -q 'workflow run' "$calls"; then
+    cat "$calls"
+    rm -f "$calls" "$out"
+    fail "guessed a release to fire without the green anchor"
+  fi
+  grep -q 'could not read refs/heads/main-green' "$out" \
+    || { echo "drift step exit: $rc"; cat "$out"; rm -f "$calls" "$out"; fail "an unreadable anchor was skipped without saying so"; }
+  rm -f "$calls" "$out"
+  echo "PASS: an unreadable anchor is named and nothing is guessed"
 }
 
 test_healthy_current_pair_passes() {
@@ -2292,6 +2374,8 @@ case "$CASE" in
   operator) test_operator_rejects_stale_frontend ;;
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
+  workflow-build-failed) test_workflow_fails_on_a_failed_anchor_build ;;
+  workflow-no-anchor) test_workflow_does_not_guess_without_the_anchor ;;
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_switches_once ;;
@@ -2366,6 +2450,8 @@ case "$CASE" in
     test_operator_rejects_stale_frontend
     test_operator_uses_registry_sha_width
     test_workflow_rejects_stale_frontend
+    test_workflow_fails_on_a_failed_anchor_build
+    test_workflow_does_not_guess_without_the_anchor
     test_healthy_current_pair_passes
     test_rollout_switches_once
     test_rollout_moves_running_work_with_the_traffic

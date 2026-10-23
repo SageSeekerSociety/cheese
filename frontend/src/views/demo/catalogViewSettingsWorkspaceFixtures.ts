@@ -11,12 +11,12 @@
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。
  */
-import type { ProjectArtifact } from '@/api'
+import type { AssistantActivityItem, AssistantMemory, AssistantRoutine, AssistantRules, ProjectArtifact } from '@/api'
 import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
-import type { AccountConnection, ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type { AccountConnection, ModelConnection } from '@/types/modelConnections'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { User } from '@/types/users'
 import type RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -74,6 +74,7 @@ export const NOTIF_PREFS: NotificationPreferences = {
     invitation: { inApp: true, push: false, email: true },
     announcement: { inApp: true, push: false, email: false },
     billing: { inApp: true, push: false, email: true },
+    assistant: { inApp: true, push: true, email: true },
   },
 }
 
@@ -138,7 +139,7 @@ export const SECURITY_PASSKEYS: PasskeyInfo[] = [
   { id: 'pk-1', createdAt: new Date(NOW - 30 * DAY), deviceType: 'multiDevice', backedUp: true },
 ]
 
-/** 一个已关联的第三方账号。 */
+/** 已关联的第三方账号：学校账号和 GitHub。 */
 const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connections'] = [
   {
     id: 1,
@@ -147,6 +148,16 @@ const SECURITY_CONNECTIONS: InstanceType<typeof SecurityView>['$props']['connect
     providerUserId: '2023010101',
     connectedAt: ago(90 * DAY),
     login: 'wangxiaoming@school.edu',
+    tokenExpires: ago(-DAY),
+    hasRefreshToken: true,
+  },
+  {
+    id: 2,
+    providerId: 'github_app',
+    providerName: 'GitHub',
+    providerUserId: '583231',
+    connectedAt: ago(60 * DAY),
+    login: 'wangxiaoming',
     tokenExpires: ago(-DAY),
     hasRefreshToken: true,
   },
@@ -180,6 +191,9 @@ const SECURITY_SESSIONS: SessionInfo[] = [
 
 /** 两步验证那一屏的两个登录方式摘要 + 三块清单。 */
 export const SECURITY_PROPS = {
+  username: 'wangxiaoming',
+  closingAccount: false,
+  closeError: '',
   webAuthnSupported: true,
   passkeys: SECURITY_PASSKEYS,
   addingPasskey: false,
@@ -206,6 +220,7 @@ export const SECURITY_PROPS = {
 export const SECURITY_DIALOGS = {
   showChangePassword: false,
   showTotp: false,
+  showCloseAccount: false,
   setupStep: 'qr' as const,
   verificationCode: '',
 }
@@ -220,9 +235,45 @@ export const DEVICE_TEAMS: MyTeam[] = [
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
 
-/** 三种连接各一份：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key。 */
+/** A full platform pool: names as the gateway labels them, a few carrying a trailing note. */
+export const PLATFORM_MODELS: { id: string; label: string }[] = [
+  'Claude Opus 4.8',
+  'Claude Sonnet 4.8',
+  'Claude Haiku 4.6',
+  'GPT-5.5',
+  'GPT-5.5 mini',
+  'Gemini 4 Pro',
+  'Gemini 4 Argon',
+  'Gemini 4 Flash',
+  'DeepSeek V4.1',
+  'DeepSeek V4.1 Flash',
+  'GLM-5.2',
+  'GLM-5.2 Air',
+  'Kimi K3',
+  'Kimi K3 Turbo',
+  'MiMo V2.6 Pro',
+  'MiMo V2.6 Flash（免费·限时，请求可能用于训练）',
+  'Qwen 4 Max',
+  'Qwen 4 Coder',
+  'Qwen 4 Coder Flash（免费·限时）',
+  'MiniMax M3',
+  'MiniMax M3 Lightning（免费·限时，请求可能用于训练）',
+  'Doubao Seed 2.5 Pro',
+  'Doubao Seed 2.5 Lite',
+  'Step 4',
+  'Hunyuan T2',
+  'ERNIE 5.5',
+  'Grok 5（免费·限时，请求可能用于训练）',
+].map((label) => ({ id: label.toLowerCase().replace(/[^a-z0-9.]+/g, '-'), label }))
+
+/** Team and personal subscriptions, including an offline storage computer. */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
   {
+    id: 'dev-desk',
+    can_manage: true,
+    can_remove: false,
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-desk',
     device_name: '工作站',
     online: true,
@@ -230,56 +281,77 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     logged_in: true,
     auth_method: 'claude.ai',
     subscription_type: 'max',
-    model: null,
-    service_host: null,
     name: null,
     checked_at: ago(HOUR / 4),
     last_used_at: ago(2 * HOUR),
     revoking: false,
   },
   {
+    id: 'dev-laptop',
+    can_manage: false,
+    can_remove: true,
+    owner_user_id: 42,
+    owner_name: '王小明',
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-laptop',
-    device_name: '王小明的 MacBook',
+    device_name: 'credential-host-7c821a',
     online: true,
     installed: true,
     logged_in: true,
-    auth_method: 'model_service',
-    subscription_type: null,
-    model: 'kimi-k2',
-    service_host: 'api.moonshot.cn',
-    name: 'Kimi',
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    name: '王小明的 Claude',
     checked_at: ago(HOUR),
     last_used_at: null,
     revoking: false,
   },
   {
+    id: 'dev-lab',
+    can_manage: true,
+    can_remove: false,
+    local_id: 'default',
+    allowed_models: ['sonnet', 'opus'],
     device_id: 'dev-lab',
     device_name: '实验室服务器',
     online: false,
     installed: true,
     logged_in: true,
-    auth_method: 'console',
-    subscription_type: null,
-    model: null,
-    service_host: null,
+    auth_method: 'claude.ai',
+    subscription_type: 'max',
     name: null,
     checked_at: ago(3 * DAY),
     last_used_at: ago(3 * DAY),
     revoking: false,
   },
-]
-
-/** 能改用自定义模型服务的设备：在线的那两台。 */
-export const MODEL_SERVICE_DEVICES: ModelServiceDevice[] = [
-  { device_id: 'dev-desk', name: '工作站' },
-  { device_id: 'dev-laptop', name: '王小明的 MacBook' },
+  {
+    id: 'login-desk-pro',
+    can_manage: true,
+    can_remove: false,
+    allowed_models: ['sonnet', 'opus', 'haiku'],
+    local_id: 'K3V7Q2M8XWZ4TN6PRJ5BHD2C7A',
+    device_id: 'dev-desk',
+    device_name: '工作站',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'claude.ai',
+    subscription_type: 'pro',
+    name: '实验室的 Pro',
+    checked_at: ago(HOUR / 4),
+    last_used_at: null,
+    revoking: false,
+  },
 ]
 
 /** 保存在账号里的两份：一个起了名字的 API key，一个自定义模型服务。 */
 export const MODEL_HELD: AccountConnection[] = [
   {
     id: 'held-key',
+    can_manage: true,
+    can_remove: false,
     kind: 'api_key',
+    allowed_models: ['sonnet', 'opus'],
     name: '工作用',
     key_last4: 'Q7zK',
     service_host: null,
@@ -290,7 +362,10 @@ export const MODEL_HELD: AccountConnection[] = [
   },
   {
     id: 'held-glm',
+    can_manage: true,
+    can_remove: false,
     kind: 'model_service',
+    allowed_models: ['kimi-k2'],
     name: null,
     key_last4: '9f2c',
     service_host: 'open.bigmodel.cn',
@@ -415,8 +490,8 @@ export const PROJECT_TASKS: RoomTask[] = [
   task({
     id: 'task-idea',
     title: '换一门课的题目板',
-    column: 'not_started',
-    phrase: 'discussing',
+    column: 'building',
+    phrase: 'started',
     owner_handle: 'linxia',
   }),
 ]
@@ -557,3 +632,111 @@ export function artifactApi(over: Partial<WorkspaceArtifactApi> = {}): Workspace
     ...over,
   }
 }
+
+/** 「芝士」设置页的示例数据，照后端写出的样子。 */
+export const ASSISTANT_RULES: AssistantRules = {
+  ask: ['remove_member', 'lower_role', 'delete'],
+  askItems: ['发给老师的消息'],
+  allowItems: ['在我负责的频道里回答问题', '在项目「机器学习课程」的频道「综合」发消息'],
+  categories: [
+    { code: 'remove_member', label: '移除成员' },
+    { code: 'lower_role', label: '降低成员的角色' },
+    { code: 'delete', label: '删除内容' },
+    { code: 'to_everyone', label: '在综合频道发消息' },
+  ],
+}
+
+export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
+  {
+    id: 'r1',
+    title: '每日待办',
+    note: '列出用户的待办',
+    when: '每天 08:00（Asia/Shanghai）',
+    state: 'active',
+    paused: '',
+    nextRunAt: '2026-10-23T00:00:00Z',
+    lastRun: { status: 'done', at: '2026-10-22T00:00:40Z', asked: 0, conversationId: 'c1' },
+    weekCredits: 4.6,
+  },
+  {
+    id: 'r2',
+    title: '有人找我',
+    note: '有人 @ 用户时读消息，起草回复',
+    when: '有人 @ 你或回复你的支线时',
+    state: 'active',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:18Z', asked: 1, conversationId: 'c2' },
+    weekCredits: 12,
+  },
+  {
+    id: 'r3',
+    title: '周一交周报',
+    note: '提醒用户交周报',
+    when: '每周 周一 09:00（Asia/Shanghai）',
+    state: 'paused',
+    paused: 'credits',
+    nextRunAt: null,
+    lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
+    weekCredits: 0,
+  },
+  {
+    id: 'r4',
+    title: '提醒交开题报告',
+    note: '提醒用户把开题报告发给导师',
+    when: '10月22日 17:00 运行一次',
+    state: 'done',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:20Z', asked: 0, conversationId: 'c4' },
+    weekCredits: 0.2,
+  },
+]
+
+export const ASSISTANT_MEMORY: AssistantMemory = {
+  enabled: true,
+  items: [
+    {
+      name: 'ta-os-course',
+      description: '在带「操作系统（2026 秋）」助教课，负责第 3、4 次实验',
+      type: 'user',
+      text: '本学期是操作系统课的助教，负责第 3、4 次实验的答疑和批改，助教频道在项目「操作系统（2026 秋）助教」里。',
+      updatedAt: '2026-10-20T08:00:00Z',
+    },
+    {
+      name: 'formal-to-teachers',
+      description: '给老师写东西用书面语',
+      type: 'feedback',
+      text: '给老师的消息和邮件用书面语，不用「哈」「呀」，称呼用「老师」。她纠正过一次。',
+      updatedAt: '2026-10-21T02:00:00Z',
+    },
+    {
+      name: 'midterm-defense',
+      description: '中期答辩定在 11 月 12 日',
+      type: 'project',
+      text: '课题组中期答辩定在 11 月 12 日（周四），PPT 和中期报告要在那之前给李老师过一遍。',
+      updatedAt: '2026-10-22T09:30:00Z',
+    },
+  ],
+}
+
+export const ASSISTANT_RECENT: AssistantActivityItem[] = [
+  {
+    id: 12,
+    kind: 'message',
+    summary: '在频道「综合」（项目「机器学习课程」，全体成员都会看到）发消息：\n@李老师 演示视频我来负责',
+    verdict: 'asked',
+    stage: 'rule',
+    reason: '你设置了「在综合频道发消息」需要确认',
+    at: '2026-10-22T09:00:12Z',
+  },
+  {
+    id: 11,
+    kind: 'channel',
+    summary: '在项目「机器学习课程」新建频道「论文阅读」',
+    verdict: 'allowed',
+    stage: 'low',
+    reason: '',
+    at: '2026-10-21T14:20:00Z',
+  },
+]

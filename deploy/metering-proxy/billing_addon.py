@@ -77,6 +77,7 @@ from cheese_billing_core import (  # noqa: E402
     MODEL_REWRITE_LIMIT,
     NO_CREDENTIAL,
     NO_LOGIN_PLACEHOLDER,
+    UNAVAILABLE,
     AdmissionGate,
     ChatGPTAccounts,
     ChatGPTUsageLimits,
@@ -125,11 +126,12 @@ ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
 DEFER_BODY_LIMIT = int(os.environ.get("CHEESE_DEFER_BODY_LIMIT", str(8 * 1024 * 1024)))
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
-# Where the API-key pool lives (LiteLLM). A project whose supply decision says
-# `gateway` is rewritten to this base instead of going out to Anthropic —
-# same interception point, different destination (#243). Empty = this
-# deployment has no API-key pool, and such a project is refused rather than
-# silently served from the subscription it did not ask for.
+# Where the API-key pool lives (LiteLLM). A request whose admission supply says
+# `gateway` (the pool serving the model it is bound to) is rewritten to this
+# base instead of going out to Anthropic — same interception point, different
+# destination (#243). Empty = this deployment has no API-key pool, and such a
+# request is refused rather than silently served from the subscription it did
+# not ask for.
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
 # fds of the single-writer lock, held open for the process's life so the flock
@@ -202,7 +204,7 @@ def load(loader):
     CLAUDE_ACCOUNTS.snapshot()
 
 
-def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
+def _record_usage(project_id, topic_id, usage, model, kind="", account="", work_id=""):
     """Meter a turn, then refresh the pool the board reads.
 
     The two belong together: the snapshot's `retry_after` is a countdown, so it
@@ -210,7 +212,7 @@ def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
     happens on every served turn. Cooldown changes publish on their own (every
     state change writes through `ClaudeAccounts._save`).
     """
-    METER.record(project_id, topic_id, usage, model, kind, account)
+    METER.record(project_id, topic_id, usage, model, kind, account, work_id)
     CLAUDE_ACCOUNTS.snapshot()
 
 
@@ -604,8 +606,8 @@ _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 # the seat its whole reply and needed a person to wake the room (2026-10-12,
 # #1451). The cost of waiting is that the room stays quiet until the turn either
 # answers or runs out of retry budget; that trade is deliberate.
-# The backend recognises the phrase "subscription egress is offline" and shows
-# its own notice for it (`platform_failures`), which takes only short lines:
+# The backend recognises the phrase "subscription egress is offline" and
+# schedules a bounded resume if the CLI gives up (`resumable_failures`).
 # Claude Code prints this inside the JSON error body.
 EGRESS_OFFLINE_MESSAGE = (
     "cheese: the subscription egress is offline, so no model call was made. "
@@ -1072,16 +1074,10 @@ def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
 
 
 def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
-    """Send the backend's refusal back as the KIND of refusal it is.
-
-    Both exits used to read "cheese project budget: …" with a 429, from the days
-    when a spent budget was the only way a turn was ever refused. It is not any
-    more: a card bound to a model this project's catalogue cannot serve is
-    refused at admission too (I27 — answer or refuse, never swap the pool), and
-    dressing that as an exhausted quota sends the user to top up an account that
-    is fine while the card stays broken. A 429 also tells the client to back
-    off and try again, which for a binding is a retry that can only fail.
-    """
+    """Preserve each refusal's meaning and retry policy."""
+    if verdict.reason_kind == UNAVAILABLE:
+        _refuse(flow, 503, "api_error", verdict.reason)
+        return
     if verdict.reason_kind == BINDING:
         _refuse(flow, 400, "invalid_request_error", verdict.reason)
         return
@@ -1217,10 +1213,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
 async def _admit(
     flow, project_id, topic_id, bearer, *, subagent, requested_model="", child_model=""
 ):
-    """One admission call, off the event loop and timed.
-
-    Cheap: verdicts are cached per (project, topic).
-    """
+    """Admit off-loop, with a fresh execution identity for task requests."""
     # Off-loop: urllib blocks, and one slow admission call must not stall
     # every other flow through the proxy.
     admission_started = time.perf_counter()
@@ -1249,6 +1242,7 @@ async def _admit(
     # Read back when the response is metered: the kind admission named for
     # this call (`Verdict.usage_kind`), the dream's while one runs.
     flow.metadata["cheese_usage_kind"] = verdict.usage_kind
+    flow.metadata["cheese_work_id"] = verdict.work_id
     flow.metadata["cheese_admission_ms"] = (
         admission_finished - admission_started
     ) * 1000
@@ -1714,6 +1708,7 @@ def _meter_subscription_stream(
             extractor.model,
             flow.metadata.get("cheese_usage_kind", ""),
             flow.metadata.get("cheese_claude_account", ""),
+            flow.metadata.get("cheese_work_id", ""),
         )
         if interrupted:
             logger.warning(
@@ -2078,6 +2073,44 @@ def _report_gateway_failure(flow: http.HTTPFlow) -> None:
     )
 
 
+#: The response header the gateway names, "; "-separated, the rows whose
+#: provider account refused a request for lack of credit
+#: (`deploy/gateway/provider_credit.py`). It is set on the answer to the
+#: request that met the refusal, whether a later row answered it or not.
+_OUT_OF_CREDIT_ROWS = "x-cheese-upstream-out-of-credit"
+
+
+def _report_out_of_credit_rows(flow: http.HTTPFlow) -> None:
+    """Tell the administrators which gateway rows ran out of credit.
+
+    Only the platform can top up a provider account, and the gateway names a
+    row once per cooldown (about ten minutes) while it stays empty, so each
+    name goes to the error intake as its own record: the backend alerts once
+    per row (`backend_log`), not once per failed turn.
+    """
+    resp = flow.response
+    named = resp.headers.get(_OUT_OF_CREDIT_ROWS) if resp is not None else None
+    if not named or not _is_message_call(flow.request.path):
+        return
+    records = [
+        {
+            "message": f"The provider account behind gateway row {row.strip()} is out of credit",
+            "exc_type": "GatewayUpstreamOutOfCredit",
+            "where": f"model gateway: {row.strip()}"[:300],
+            "request_id": _answer_request_id(flow),
+            "upstream_failure": "provider_credit",
+            "ended_by": "upstream",
+        }
+        for row in named.split(";")
+        if row.strip()
+    ][:10]
+    if not records:
+        return
+    logger.warning("gateway rows out of credit: %s (flow=%s)", named, flow.id)
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    _post_backend_errors(project, topic, records)
+
+
 def _report_subscription_refusal(flow: http.HTTPFlow) -> None:
     """Record a subscription turn that never reached the model, or that the
     upstream refused.
@@ -2298,6 +2331,7 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+        _report_out_of_credit_rows(flow)
         if _answer_a_reached_gateway_cap(flow):
             return
         _report_gateway_failure(flow)
@@ -2333,4 +2367,5 @@ def response(flow: http.HTTPFlow) -> None:
     if usage:
         kind = flow.metadata.get("cheese_usage_kind", "")
         account = flow.metadata.get("cheese_claude_account", "")
-        _record_usage(project_id, topic_id, usage, model, kind, account)
+        work_id = flow.metadata.get("cheese_work_id", "")
+        _record_usage(project_id, topic_id, usage, model, kind, account, work_id)

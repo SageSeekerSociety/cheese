@@ -16,6 +16,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team, place_in_project_team
 
 OWNER = 1
 
@@ -36,8 +37,11 @@ async def _device_on_project(
         code,
         owner_user_id=OWNER,
         supply=supply,
+        team_id=await enrollment_team(service, OWNER),
     )
-    await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
+    await place_in_project_team(
+        service, device.device_id, project_id, actor_user_id=OWNER
+    )
     return device.device_id
 
 

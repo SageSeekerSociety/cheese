@@ -12,7 +12,8 @@ import math
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
@@ -24,6 +25,7 @@ from app.domain.usage.models import (
     ComputeGrant,
     CreditAdminAudit,
     GrantSource,
+    OverseasModelApproval,
     Plan,
 )
 from app.domain.user.services import (
@@ -158,6 +160,23 @@ class PlanService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def published_plans(self) -> list[dict]:
+        """Terms available to members, excluding administrator-only plans."""
+        rows = await self._session.scalars(
+            select(Plan).where(Plan.admin_only.is_(False)).order_by(Plan.rank, Plan.key)
+        )
+        fields = (
+            "key",
+            "name",
+            "audience",
+            "credits_per_period",
+            "period",
+            "windows",
+            "model_tiers",
+            "unlimited",
+        )
+        return [{key: plan[key] for key in fields} for plan in map(plan_out, rows)]
+
     async def plans(self) -> list[dict]:
         """Every plan, with how many teams are on it and whether new teams start
         on it."""
@@ -281,6 +300,48 @@ class PlanService:
         await self._audit(handle, "team.grant", str(team_id), None, out)
         return out
 
+    async def set_overseas_access(
+        self, *, handle: str, team_id: int, approved: bool
+    ) -> dict:
+        """Let a team use overseas models (Claude, GPT, Gemini), or stop it."""
+
+        if await team_service(self._session).get_team(team_id) is None:
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
+        # One statement each way, so two administrators acting at once both
+        # succeed and each audit line says what that write found.
+        if approved:
+            now = datetime.now(UTC)
+            changed = await self._session.scalar(
+                pg_insert(OverseasModelApproval)
+                .values(
+                    team_id=team_id, approved_by=handle, created_at=now, updated_at=now
+                )
+                .on_conflict_do_nothing(index_elements=["team_id"])
+                .returning(OverseasModelApproval.team_id)
+            )
+        else:
+            changed = await self._session.scalar(
+                delete(OverseasModelApproval)
+                .where(OverseasModelApproval.team_id == team_id)
+                .returning(OverseasModelApproval.team_id)
+            )
+        before = {"approved": approved if changed is None else not approved}
+        await self._session.flush()
+        await self._audit(
+            handle, "team.overseas", str(team_id), before, {"approved": approved}
+        )
+        return {"team_id": team_id, "overseas_approved": approved}
+
+    async def _overseas_approved(self, team_ids: list[int]) -> set[int]:
+        if not team_ids:
+            return set()
+        rows = await self._session.execute(
+            select(OverseasModelApproval.team_id).where(
+                OverseasModelApproval.team_id.in_(team_ids)
+            )
+        )
+        return set(rows.scalars())
+
     async def teams(
         self,
         *,
@@ -317,6 +378,7 @@ class PlanService:
         members = await teams_svc.member_counts(
             [t.id for t in teams if not t.personal_owner_user_id]
         )
+        approved = await self._overseas_approved([t.id for t in teams])
         items = []
         for team in teams:
             held = packs.get(team.id, [])
@@ -335,6 +397,7 @@ class PlanService:
                     ),
                     "member_count": None if owner else members.get(team.id, 0),
                     "plan_key": team.plan_key,
+                    "overseas_approved": team.id in approved,
                     "period": _period(held),
                     "packs": [pack_out(p) for p in held],
                 }
@@ -368,6 +431,7 @@ class PlanService:
             ),
             "member_count": None if owner else members.get(team.id, 0),
             "plan": plan_out(plan),
+            "overseas_approved": team.id in await self._overseas_approved([team.id]),
             "period": _period(held),
             "packs": [pack_out(p) for p in held],
         }

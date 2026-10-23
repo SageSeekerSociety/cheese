@@ -7,9 +7,9 @@
 和 `topic/ports.py` 的 `RoomTeammate`、`project/ports.py` 的 `DefaultTeammate` 同一
 条规矩：口子按消费者分开写，实现按提供者放。
 
-递回来的行本包认得，因为是本包自己声明的（``TeammateSeat``）；交回来的**列**由那个
-包筛过 —— 一个关了「成员自带 agent」的项目，成员自己的那几位不再在项目里，「启用与
-否」也是那边的一行属性。名册只回答「谁在这张表上」，谁该在由这个口子背后那一位定。
+The provider returns rows declared here (``TeammateSeat``), with activity and
+member provenance attached. Provenance supplies prompt context; it does not
+hide teammates from the roster.
 
 口子上的列写的是「一列东西」（``Sequence[object]``），不是 ``list[TeammateSeat]``：
 `topic` 和 `topic_membership` 各写了一份同名同形的口子，三份之间只递不读，写死行类型
@@ -47,18 +47,16 @@ class TeammateSeat:
     #: 是不是这个项目的默认队友：一间没有 AI 席位的老房间会落到谁身上（见
     #: `roster.py` 的 ``Member.project_default``）。
     is_default: bool = False
-    #: 成员自己的 agent（#2991）：归谁，谁能叫它。
+    #: 成员自己的 agent（#2991）：归谁。
     owner_handle: str | None = None
-    callers: str | None = None
 
 
 class ProjectTeam(Protocol):
     """这个项目里坐着的队友，按出生先后排好。
 
-    已经被这个项目的规矩筛过一遍：关了「成员自带 agent」的那些不再在列（项目把它
-    们收回了），成员的 agent 停用了也一样；项目自己的队友无论如何都在，``active``
-    照实说。筛在提供者那一侧，因为那条规矩的两个输入 —— 项目设置、谁是谁的 agent
-    —— 都是那个包的一行。
+    The provider omits inactive member-owned teammates. Other project teammates
+    retain their activity state for existing rooms. Member provenance travels
+    with each row as prompt context.
     """
 
     async def __call__(

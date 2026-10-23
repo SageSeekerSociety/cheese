@@ -4,6 +4,6 @@
   "environment": "Environment",
   "memory": "Memory",
   "queue": "Queue",
-  "retry": "Retry",
-  "wakeWatch": "Wake"
+  "recovery": "Recovery",
+  "retry": "Retry"
 }

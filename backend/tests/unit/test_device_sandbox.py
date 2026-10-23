@@ -20,7 +20,11 @@ import pytest
 
 from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
+from app.domain.agent.harness.claude_code.remote_execution import (
+    bootstrap,
+    confinement,
+    runtime,
+)
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.support import bubblewrap
 
@@ -216,12 +220,31 @@ def test_a_session_on_a_persons_machine_sees_the_system_and_none_of_their_home(
         ), hidden
     path = f"{owner}/.local/bin:{owner}/.cargo/bin:$PATH"
     assert room.bash(f'PATH="{path}"; command -v mytool || echo missing') == "missing"
-    for mount in bootstrap.HIDDEN_MOUNTS:
+    for mount in confinement.HIDDEN_MOUNTS:
         if Path(mount).is_dir():
             assert room.bash(f'ls -A "{mount}" | wc -l') == "0", mount
     # Its own home is there, and writable.
     assert room.bash('touch "$HOME/mine" && echo ok') == "ok"
     assert (room.home / "mine").exists()
+
+
+@sandboxed
+def test_a_room_runs_the_git_cheesehost_placed_and_nothing_else_it_placed(owner, rooms):
+    """On a machine whose own git was missing or too old, cheesehost placed one
+    under the owner's home (`cli/internal/devenv`): a room's turn needs it. The
+    rest of what it placed there is the connector's, not the room's."""
+    runtime = owner / ".cheese/runtime"
+    for tool in ("git", "tmux"):
+        path = runtime / tool / "bin" / tool
+        path.parent.mkdir(parents=True)
+        path.write_text(f"#!/bin/sh\necho placed {tool}\n")
+        path.chmod(0o755)
+
+    room = rooms()
+
+    path = f"{runtime}/git/bin:{runtime}/tmux/bin:$PATH"
+    assert room.bash(f'PATH="{path}"; git') == "placed git"
+    assert room.bash(f'ls "{runtime}/tmux" >/dev/null 2>&1 || echo hidden') == "hidden"
 
 
 @sandboxed

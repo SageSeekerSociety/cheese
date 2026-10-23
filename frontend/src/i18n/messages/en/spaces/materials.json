@@ -1,0 +1,45 @@
+{
+  "actionsOf": "Actions for {name}",
+  "backToList": "Back to library",
+  "clearFilters": "Clear filters",
+  "close": "Close",
+  "download": "Download",
+  "downloads": "{n} downloads",
+  "empty": "No files yet",
+  "file": "File",
+  "hint": {
+    "admins": "Hidden from members and from the AI teammates in their projects",
+    "members": "Everyone in this space can view and download it"
+  },
+  "makeAdmins": "Make admins only",
+  "makeMembers": "Make visible to all members",
+  "noMatch": "No matching files",
+  "remove": "Remove",
+  "removeBody": "This cannot be undone",
+  "removeBodyUsed": "Guidance settings in {n} places list this file. Once it is removed, the AI teammate can no longer read it",
+  "removeTitle": "Remove “{name}”",
+  "search": "Search by name",
+  "submit": "Upload",
+  "title": "Library",
+  "toast": {
+    "downloadFailed": "Download failed",
+    "loadFailed": "Could not load the library",
+    "madeVisible": {
+      "admins": "Now visible to admins only",
+      "members": "Now visible to all members"
+    },
+    "removeFailed": "Could not remove it",
+    "removed": "Removed",
+    "uploadFailed": "Upload failed",
+    "uploaded": "Uploaded",
+    "visibilityFailed": "Could not change who can see it"
+  },
+  "unused": "Not listed in any guidance settings",
+  "upload": "Upload",
+  "usedBy": "Listed in {n} guidance settings",
+  "visibility": "Who can see it",
+  "visibilityValue": {
+    "admins": "Admins only",
+    "members": "All members"
+  }
+}

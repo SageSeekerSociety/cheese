@@ -1,0 +1,11 @@
+{
+  "collapse": "收起书签",
+  "expand": "展开书签",
+  "menu": "书签的操作",
+  "rename": "重命名",
+  "renameHint": "书签名字",
+  "title": "书签 · {count}",
+  "untitled": "（没有字的书签）",
+  "unpin": "取消书签",
+  "unpinFailed": "取消书签失败"
+}

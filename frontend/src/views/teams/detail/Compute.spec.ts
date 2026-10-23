@@ -1,36 +1,35 @@
-import type { MyDevice } from '@/cx_types'
-
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeAll, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import Compute from './Compute.vue'
 
-import { listMyDevices, listTeamDevices } from '@/api'
+import { listTeamDevices, renameMyDevice, unbindMyDevice } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { handle: 'crew' } }) }))
-vi.mock('@/api', () => ({
-  listMyDevices: vi.fn(async () => ({ devices: [] })),
-  listTeamDevices: vi.fn(async () => ({ devices: [] })),
-  registerDeviceForTeam: vi.fn(),
-  unregisterDeviceFromTeam: vi.fn(),
+const { confirm } = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/api', () => ({ listTeamDevices: vi.fn(), renameMyDevice: vi.fn(), unbindMyDevice: vi.fn() }))
+vi.mock('@/lib/desktop', () => ({
+  desktopBridge: () => null,
+  requestConnecting: vi.fn(),
+  deviceFlow: { stage: 'ask' },
 }))
-vi.mock('@/api/teams', () => ({
-  TeamsApi: { getComputeProfile: vi.fn(async () => ({ current: 'cloud', profiles: [] })) },
-}))
-// 确认框一律说「是」，这样点主操作就直接往下走。
-vi.mock('@/plugins/dialog', () => ({
-  useDialog: () => ({ confirm: () => ({ wait: async () => true }), custom: vi.fn() }),
-}))
-
-beforeAll(() => {
-  setLocale('zh-CN')
-  vi.stubGlobal('devicePixelRatio', 1)
+vi.mock('@/plugins/dialog', () => ({ useDialog: () => ({ confirm }) }))
+const device = { device_id: 'team-computer', name: 'Lab computer', online: true, team_id: 7, screens: [] }
+function mount() {
+  return render(Compute, {
+    global: {
+      plugins: [createVuetify({ components, directives }), i18n],
+      provide: { [teamDataInjectionKey as symbol]: ref({ id: 7, personal: false }) },
+    },
+  })
+}
+beforeEach(() => {
+  // The rename dialog is a VOverlay, and happy-dom has no visualViewport to place it with.
   vi.stubGlobal('visualViewport', {
     width: 1024,
     height: 768,
@@ -39,189 +38,79 @@ beforeAll(() => {
     addEventListener() {},
     removeEventListener() {},
   })
-  vi.stubGlobal(
-    'ResizeObserver',
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-  )
+  vi.clearAllMocks()
+  setLocale('zh-CN')
+  vi.mocked(listTeamDevices).mockResolvedValue({ devices: [device], can_manage: true })
+  confirm.mockReturnValue({ wait: async () => true })
 })
-afterEach(cleanup)
-
-it('shows only self-hosted devices: no cloud machines, no machine quota, no live feed', async () => {
-  const opened = vi.fn()
-  vi.stubGlobal('WebSocket', opened)
-  vi.mocked(listTeamDevices).mockResolvedValueOnce({
-    devices: [{ device_id: 'lab', name: 'lab', online: true, project_ids: [], team_ids: [1], screens: [] }],
-  })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
-    },
-  })
-  expect(await view.findByText('1 台设备 · 1 台在线')).toBeTruthy()
-  expect(view.queryByText(/云端|额度|名额/)).toBeNull()
-  expect(opened).not.toHaveBeenCalled()
+afterEach(() => {
+  cleanup()
   vi.unstubAllGlobals()
 })
 
-it('shows the owner who is on each of their machines, and nobody else', async () => {
-  const device = (id: string, inUse: MyDevice['in_use']): MyDevice => ({
-    device_id: id,
-    name: id,
-    online: true,
-    project_ids: [],
-    team_ids: [1],
-    screens: [],
-    in_use: inUse,
-  })
-  vi.mocked(listTeamDevices).mockResolvedValueOnce({
-    devices: [
-      device('mine', [
-        {
-          project_id: 'p1',
-          project_name: 'Orchard',
-          topic_id: 't1',
-          topic_title: 'Pricing',
-          agent_handle: 'cedar',
-          agent_name: 'Cedar',
-        },
-      ]),
-      device('theirs', null),
-    ],
-  })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
-    },
-  })
-
-  // 用的那一位是一颗 @chip，点得到它的成员页。
-  await vi.waitFor(() => expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/))
-  expect(view.container.querySelector('.device-user .mention')?.textContent).toBe('@Cedar')
-  expect(view.getAllByText(/正在用/)).toHaveLength(1)
+it('lets an admin rename a team device enrolled by any member', async () => {
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  const input = await screen.findByRole('textbox', { name: '设备名称' })
+  await fireEvent.update(input, 'Team computer')
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(renameMyDevice).toHaveBeenCalledWith('team-computer', 'Team computer'))
 })
 
-it("lists a device attached only to a project, with the project and its owner's in-use line", async () => {
-  vi.mocked(listMyDevices).mockResolvedValueOnce({
-    devices: [{ device_id: 'dev-box', name: 'dev-box', online: true, project_ids: ['p1'], team_ids: [], screens: [] }],
-  })
-  vi.mocked(listTeamDevices).mockResolvedValueOnce({
-    devices: [
-      {
-        device_id: 'dev-box',
-        name: 'dev-box',
-        online: true,
-        project_ids: ['p1'],
-        team_ids: [],
-        screens: [],
-        attached_projects: [
-          { id: 'p1', name: 'Orchard' },
-          { id: 'p2', name: 'Atlas' },
-        ],
-        in_use: [
-          {
-            project_id: 'p1',
-            project_name: 'Orchard',
-            topic_id: 't1',
-            topic_title: 'Pricing',
-            agent_handle: 'cedar',
-            agent_name: 'Cedar',
-          },
-        ],
-      },
-    ],
-  })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
-    },
-  })
-
-  expect(await view.findByText('仅供 Orchard、Atlas 使用')).toBeTruthy()
-  expect(view.getByText('1 台设备 · 1 台在线')).toBeTruthy()
-  expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/)
-  // It was never added to the team, so there is nothing to take it out of.
-  expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
+it('a failed rename says why in the dialog, and a retry that succeeds closes it', async () => {
+  vi.mocked(renameMyDevice)
+    .mockRejectedValueOnce(new Error('Name taken'))
+    .mockResolvedValueOnce(undefined as never)
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  await fireEvent.update(await screen.findByRole('textbox', { name: '设备名称' }), 'Team computer')
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(screen.getAllByText('Name taken').length).toBeGreaterThan(0))
+  const dialog = screen.getByRole('textbox', { name: '设备名称' }).closest('.v-overlay__content')
+  expect(dialog?.textContent).toContain('Name taken')
+  await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: '设备名称' })).toBeNull())
+  expect(renameMyDevice).toHaveBeenCalledTimes(2)
 })
 
-it('读失败时说没读出来，不画「还没有自有设备」；重试能把它读回来', async () => {
-  vi.mocked(listTeamDevices).mockRejectedValueOnce({ status: 500, message: '服务端打盹了' })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
-    },
-  })
-
-  // 原来这里是一条可关的红条，关掉之后屏幕上只剩空态 —— 两种都读成「这台小队没有机器」。
-  expect(await view.findByText('加载设备失败')).toBeTruthy()
-  expect(view.getByText('服务端打盹了')).toBeTruthy()
-  expect(view.queryByText('还没有自有设备')).toBeNull()
-
-  vi.mocked(listTeamDevices).mockResolvedValueOnce({ devices: [] })
-  await fireEvent.click(view.getByText('重试'))
-  expect(await view.findByText('还没有自有设备')).toBeTruthy()
-  expect(view.queryByText('加载设备失败')).toBeNull()
+it('a rename dialog opened after an earlier failure does not show that old error', async () => {
+  vi.mocked(unbindMyDevice).mockRejectedValueOnce(new Error('Remove failed'))
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '移除' }))
+  await waitFor(() => expect(view.getByText('Remove failed')).toBeTruthy())
+  await fireEvent.click(view.getByRole('button', { name: '重命名' }))
+  const dialog = (await screen.findByRole('textbox', { name: '设备名称' })).closest('.v-overlay__content')
+  expect(dialog?.textContent).not.toContain('Remove failed')
 })
 
-it('403 说没权限，不摆重试', async () => {
-  vi.mocked(listTeamDevices).mockRejectedValueOnce({ status: 403 })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'MEMBER' }) },
-    },
-  })
-
-  expect(await view.findByText('你没有权限查看')).toBeTruthy()
-  expect(view.queryByText('重试')).toBeNull()
+it('closing the rename dialog without saving keeps the device name', async () => {
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '重命名' }))
+  await fireEvent.update(await screen.findByRole('textbox', { name: '设备名称' }), 'Team computer')
+  await fireEvent.click(screen.getByRole('button', { name: '取消' }))
+  expect(renameMyDevice).not.toHaveBeenCalled()
 })
 
-it('names the agent behind each running screen, falling back to its handle', async () => {
-  vi.mocked(listTeamDevices).mockResolvedValueOnce({
-    devices: [
-      {
-        device_id: 'lab',
-        name: 'lab',
-        online: true,
-        project_ids: [],
-        team_ids: [1],
-        screens: [
-          {
-            sid: 's1',
-            agent_handle: 'cheese-kimi',
-            agent_user_id: 'u1',
-            project_id: 'p1',
-            topic_id: 't1',
-            agent_name: 'Kimi',
-            agent_name_source: 'human',
-          },
-          {
-            sid: 's2',
-            agent_handle: 'room-agent-1',
-            agent_user_id: 'u2',
-            project_id: null,
-            topic_id: null,
-            agent_name: null,
-            agent_name_source: null,
-          },
-        ],
-      },
-    ],
-  })
-  const view = render(Compute, {
-    global: {
-      plugins: [createVuetify({ components, directives }), i18n],
-      provide: { [teamDataInjectionKey as symbol]: ref({ id: 1, handle: 'crew', role: 'OWNER' }) },
-    },
-  })
-  expect(await view.findByText('运行中 · @Kimi')).toBeTruthy()
-  expect(view.getByText('运行中 · @room-agent-1')).toBeTruthy()
-  expect(view.queryByText(/@cheese-kimi/)).toBeNull()
+it('cancelling removal leaves the enrollment working', async () => {
+  confirm.mockReturnValue({ wait: async () => false })
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '移除' }))
+  expect(confirm).toHaveBeenCalled()
+  expect(unbindMyDevice).not.toHaveBeenCalled()
+})
+
+it('removes a device only after confirmation', async () => {
+  const view = mount()
+  await fireEvent.click(await view.findByRole('button', { name: '移除' }))
+  await waitFor(() => expect(unbindMyDevice).toHaveBeenCalledWith('team-computer'))
+})
+
+it('members can see the team device but cannot change its enrollment', async () => {
+  vi.mocked(listTeamDevices).mockResolvedValue({ devices: [device], can_manage: false })
+  const view = mount()
+  await view.findByText('Lab computer')
+  expect(view.queryByRole('textbox')).toBeNull()
+  expect(view.queryByRole('button', { name: '重命名' })).toBeNull()
+  expect(view.queryByRole('button', { name: '移除' })).toBeNull()
+  expect(view.queryByRole('button', { name: '添加设备' })).toBeNull()
 })

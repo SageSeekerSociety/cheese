@@ -10,14 +10,15 @@ An environment is one of two things:
 - a sandbox, ``{"kind": "sandbox", "spec": ...}``. The spec names the kind of
   machine the sandbox needs, and every spec is a peer of the others, as resource
   classes are: ``standard`` and ``vm`` are the platform's machines, and
-  ``devices_of:<user id>`` is one person's own enrolled computers. The platform
+  ``team_devices`` is the team's enrolled computers. The platform
   places the sandbox on a device that offers its spec; a sandbox never names a
   device, and nobody is shown which one it is on.
 - a self-hosted machine, ``{"kind": "self_hosted", "device_id": ...}``: the one
   case where a session must use one particular enrolled computer. It runs
-  there without isolation, so only that computer's owner may choose it.
+  there without isolation, so only the device's team administrators may choose it.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -29,16 +30,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.agent.models import AgentTurn
+from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
-from app.domain.user.models import User as UserRow
 
 #: The platform's machines, the default for a new agent.
 STANDARD = "standard"
 #: A whole virtual machine of the platform's for the sandbox: Docker, KVM,
 #: kernel modules, root.
 VM = "vm"
-#: One person's own enrolled computers: ``devices_of:<user id>``.
-DEVICES_OF = "devices_of:"
+#: The devices enrolled into the project's team.
+TEAM_DEVICES = "team_devices"
+
+
+async def room_is_busy(session: AsyncSession, room_id: uuid.UUID) -> bool:
+    """An open turn anywhere in the room keeps its environment in use."""
+    active = await session.scalar(
+        select(AgentTurn.id)
+        .where(
+            of_room(AgentTurn.conversation_id, room_id),
+            AgentTurn.stopped_at.is_(None),
+        )
+        .limit(1)
+    )
+    return active is not None
 
 
 class Sandbox(BaseModel):
@@ -81,14 +96,17 @@ def dump(environment: Sandbox | SelfHosted | None) -> dict | None:
 @dataclass(frozen=True)
 class Spec:
     """What a sandbox spec is: who supplies its devices, whether running on
-    them costs the project credits, and how long an idle sandbox is kept."""
+    them costs the project credits, how long an idle sandbox is kept, and how
+    long a command still running for the session keeps it up."""
 
     name: str
-    #: The platform's machines (``standard``, ``vm``), as against a person's.
+    #: The platform's machines (``standard``, ``vm``), as against a team's.
     platform: bool
     idle_s: float
-    #: The person whose computers ``devices_of:<id>`` places on.
-    owner_user_id: int | None = None
+    #: How long a command the executor still runs for the session keeps an
+    #: idle sandbox up, counted from the session's last activity. A whole VM's
+    #: idle release is longer than a sandbox's, so its cap is longer too.
+    background_cap_s: float
 
     @property
     def paid(self) -> bool:
@@ -98,23 +116,27 @@ class Spec:
 def spec_of(name: str) -> Spec | None:
     """The spec ``name`` names, or None for one that does not exist."""
     if name == STANDARD:
-        return Spec(STANDARD, platform=True, idle_s=settings.cloud_sandbox_idle_stop_s)
+        return Spec(
+            STANDARD,
+            platform=True,
+            idle_s=settings.cloud_sandbox_idle_stop_s,
+            background_cap_s=settings.cloud_sandbox_background_cap_s,
+        )
     if name == VM:
-        return Spec(VM, platform=True, idle_s=settings.cloud_vm_idle_release_s)
-    if name.startswith(DEVICES_OF):
-        owner = name.removeprefix(DEVICES_OF)
-        if owner.isdigit():
-            return Spec(
-                name,
-                platform=False,
-                idle_s=settings.cloud_sandbox_idle_stop_s,
-                owner_user_id=int(owner),
-            )
+        return Spec(
+            VM,
+            platform=True,
+            idle_s=settings.cloud_vm_idle_release_s,
+            background_cap_s=settings.cloud_vm_background_cap_s,
+        )
+    if name == TEAM_DEVICES:
+        return Spec(
+            name,
+            platform=False,
+            idle_s=settings.cloud_sandbox_idle_stop_s,
+            background_cap_s=settings.cloud_sandbox_background_cap_s,
+        )
     return None
-
-
-def devices_of(user_id: int) -> str:
-    return f"{DEVICES_OF}{user_id}"
 
 
 def default_environment() -> Sandbox:
@@ -132,18 +154,9 @@ async def works_tasks_of(
 ) -> bool:
     """Whether a device may work a task owned by ``owner_handle``.
 
-    A device shared with the project's team is the team's, and works anyone's
-    tasks. Any other device in the project is a person's own computer, and
-    works only its owner's tasks."""
+    A device belongs to the project's team and works any member's tasks."""
     devices = sql_device_service(session)
     device = await devices.get_device(device_id)
     if device is None:
         return False
-    if project.team_id in await devices.list_teams(device_id):
-        return True
-    owner = (
-        await session.scalar(select(UserRow).where(UserRow.username == owner_handle))
-        if owner_handle
-        else None
-    )
-    return owner is not None and owner.id == device.owner_user_id
+    return device.team_id == project.team_id

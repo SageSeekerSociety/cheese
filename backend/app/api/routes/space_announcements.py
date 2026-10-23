@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.response import ok
 from app.api.space_deps import _ensure_space_visible, require_reviewed_space
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -150,6 +151,7 @@ async def list_announcements(
     "/{spaceId}/announcements",
     summary="Publish an announcement",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def publish_announcement(
     space_id: SpaceId,
@@ -171,7 +173,9 @@ async def publish_announcement(
 
 
 @router.patch(
-    "/{spaceId}/announcements/{announcementId}", summary="Update an announcement"
+    "/{spaceId}/announcements/{announcementId}",
+    summary="Update an announcement",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_announcement(
     space_id: SpaceId,
@@ -198,6 +202,7 @@ async def patch_announcement(
     "/{spaceId}/announcements/{announcementId}",
     summary="Delete an announcement",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_announcement(
     space_id: SpaceId,

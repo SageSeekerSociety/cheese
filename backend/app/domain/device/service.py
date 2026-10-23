@@ -95,6 +95,7 @@ class DeviceService:
         code_value: str,
         *,
         owner_user_id: int,
+        team_id: int,
         supply: Supply,
         name: str | None = None,
     ) -> Device:
@@ -117,6 +118,11 @@ class DeviceService:
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
             if existing is not None:
+                if (
+                    existing.team_id != team_id
+                    or existing.owner_user_id != owner_user_id
+                ):
+                    raise ForbiddenError("Device code already approved")
                 return existing
         chosen = (name or "").strip() or entry.device_name
         device = Device(
@@ -124,6 +130,7 @@ class DeviceService:
             name=chosen,
             token=secrets.token_urlsafe(24),
             owner_user_id=owner_user_id,
+            team_id=team_id,
             created_at=self._now(),
             supply=supply,
         )
@@ -159,6 +166,11 @@ class DeviceService:
     async def get_device(self, device_id: str) -> Device | None:
         return await self._repo.get_device(device_id)
 
+    async def get_devices(self, device_ids: Sequence[str]) -> dict[str, Device]:
+        """Several machines at once — what a page showing a dozen of them asks
+        for, instead of ``get_device`` in a loop."""
+        return await self._repo.get_devices(device_ids)
+
     async def get_hosted_device(self, device_id: str) -> Device | None:
         return await self._repo.get_hosted_device(device_id)
 
@@ -168,16 +180,16 @@ class DeviceService:
         entry = await self._repo.get_code(code_value)
         return entry.device_name if entry is not None else None
 
-    async def list_owned(self, owner_user_id: int) -> list[Device]:
-        return await self._repo.list_devices_by_owner(owner_user_id)
+    async def list_enrolled_by(self, owner_user_id: int) -> list[Device]:
+        return await self._repo.list_enrolled_by(owner_user_id)
 
-    async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
+    async def remove(self, device_id: str, *, actor_user_id: int) -> None:
         """The HUMAN's door: an owner removing their hosted machine."""
-        await self._require_hosted_owned(device_id, actor_user_id)
+        await self._require_team_admin(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
 
     async def delete_platform_provisioned(
-        self, device_id: str, *, actor_user_id: int
+        self, device_id: str, *, actor_user_id: int | None
     ) -> None:
         """The PLATFORM's door: disposing of a machine cheese opened itself
         (#282 决定 2 的不变量).
@@ -204,69 +216,19 @@ class DeviceService:
         """Keep when the machine was last heard from."""
         await self._repo.note_last_seen(device_id, at)
 
-    async def rename_owned(
-        self, device_id: str, name: str, *, actor_user_id: int
-    ) -> Device:
+    async def rename(self, device_id: str, name: str, *, actor_user_id: int) -> Device:
         """Rename a device the caller owns. The name is a human label only (never a
         semantic/authorization key), so a plain non-empty check is all that's needed."""
-        device = await self._require_hosted_owned(device_id, actor_user_id)
+        device = await self._require_team_admin(device_id, actor_user_id)
         device.name = self._require_name(name)
         await self._repo.save_device(device)
         return device
 
-    # -- device ↔ project assignment (the owner manages) -------------------
-
-    async def assign_to_project(
-        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: int
-    ) -> None:
-        """Assign the device to a project. Only the device's owner may do this; the
-        caller separately checks the owner is a member of that project."""
-        await self._require_owned(device_id, actor_user_id)
-        await self._repo.assign_project(device_id, project_id)
-
-    async def unassign_from_project(
-        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: int
-    ) -> None:
-        await self._require_owned(device_id, actor_user_id)
-        await self._repo.unassign_project(device_id, project_id)
-
-    async def list_projects(self, device_id: str) -> list[uuid.UUID]:
-        return await self._repo.list_project_ids(device_id)
-
-    async def assign_to_team(
-        self, device_id: str, team_id: int, *, actor_user_id: int
-    ) -> None:
-        """Bind the device to a team (为团队注册设备, v4): every project of that team
-        may then run on it. Only the device's owner may bind; the caller separately
-        checks the owner is a member of that team."""
-        await self._require_owned(device_id, actor_user_id)
-        await self._repo.assign_team(device_id, team_id)
-
-    async def unassign_from_team(
-        self, device_id: str, team_id: int, *, actor_user_id: int
-    ) -> None:
-        await self._require_hosted_owned(device_id, actor_user_id)
-        await self._repo.unassign_team(device_id, team_id)
-
-    async def list_teams(self, device_id: str) -> list[int]:
-        return await self._repo.list_team_ids(device_id)
+    async def may_manage(self, device: Device, actor_user_id: int) -> bool:
+        return await self._repo.is_team_admin(device.team_id, actor_user_id)
 
     async def list_devices_for_team(self, team_id: int) -> list[Device]:
-        """The machines registered for a team (为团队注册设备, v4) — the team's compute.
-        Every project of the team may run on these."""
         return await self._repo.list_devices_by_team(team_id)
-
-    async def list_devices_attached_to_projects(
-        self, project_ids: list[uuid.UUID]
-    ) -> list[Device]:
-        """The machines attached directly to any of these projects, whatever team
-        they are registered for, each once."""
-        found: dict[str, Device] = {}
-        for project_id in project_ids:
-            for device in await self._repo.list_devices_by_project(project_id):
-                if project_id in device.project_ids:
-                    found.setdefault(device.device_id, device)
-        return list(found.values())
 
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether a project or its team currently shares this device."""
@@ -367,20 +329,12 @@ class DeviceService:
             SandboxCheck(device_id, isolates, reason, self._now())
         )
 
-    async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
-        device = await self._repo.get_device(device_id)
-        if device is None:
-            raise NotFoundError("Unknown device")
-        if device.owner_user_id != actor_user_id:
-            raise ForbiddenError("Only the device owner may manage this device")
-        return device
-
-    async def _require_hosted_owned(self, device_id: str, actor_user_id: int) -> Device:
+    async def _require_team_admin(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_hosted_device(device_id)
         if device is None:
             raise NotFoundError("Unknown device")
-        if device.owner_user_id != actor_user_id:
-            raise ForbiddenError("Only the device owner may manage this device")
+        if not await self.may_manage(device, actor_user_id):
+            raise ForbiddenError("Only team admins may manage this device")
         return device
 
     @staticmethod

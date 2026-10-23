@@ -16,8 +16,8 @@ host. A whole cloud VM runs from its creation to its release,
 since the platform pays for it all that time, priced by its size and charged
 to the project it was created for.
 
-When a project's payer has run out of credits, its running sandboxes are
-destroyed as soon as their room runs no turn: the turn that was running when the
+When a holder's payer has run out of credits (``holder``), its running
+sandboxes are destroyed as soon as it runs no turn: the turn that was running when the
 credits ran out finishes, as a model turn does, and no new sandbox or VM
 starts (``usage.compute.admit_start``, asked by ``HostPool.place``). A whole
 VM is not stopped for it; the VM sweep releases it once it is idle.
@@ -32,11 +32,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.models import AgentTurn
-from app.domain.conversation.services import of_rooms, room_column
+from app.domain.machine import holder as holders
 from app.domain.machine.models import GONE, CloudHost, SandboxHome
 from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
-from app.domain.usage.services import UsageService
+from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger("cheese.machine.metering")
 
@@ -84,17 +83,28 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
     runs = {run.subject: run for run in await meter.open_runs(VM)}
     opened = closed = 0
     live = set()
+    unopened = []
     for host in hosts:
         subject = vm_subject(host.id)
         if host.released_at is not None or host.status in GONE:
             continue
         live.add(subject)
-        if subject in runs:
-            continue
+        if subject not in runs:
+            unopened.append(host)
+    # One read for every VM still to open, not one per VM.
+    homes: dict[uuid.UUID, SandboxHome] = {}
+    if unopened:
+        for home in await session.scalars(
+            select(SandboxHome).where(
+                SandboxHome.host_id.in_([host.id for host in unopened])
+            )
+        ):
+            assert home.host_id is not None
+            homes.setdefault(home.host_id, home)
+    for host in unopened:
+        subject = vm_subject(host.id)
         assert host.project_id is not None
-        home = await session.scalar(
-            select(SandboxHome).where(SandboxHome.host_id == host.id)
-        )
+        home = homes.get(host.id)
         await meter.open(
             kind=VM,
             spec=vm_spec(int(host.cores), int(host.memory_mb)),
@@ -164,8 +174,8 @@ async def observe(session: AsyncSession) -> dict[str, int]:
 
 
 async def unpaid_sandboxes(session: AsyncSession) -> list:
-    """The running sandboxes whose project's payer has no credits left and
-    whose room runs no turn: those to destroy. Asked at most every
+    """The running sandboxes whose holder's payer has no credits left and
+    whose holder runs no turn: those to destroy. Asked at most every
     ``CREDIT_CHECK``. Commits."""
 
     global _checked_at
@@ -174,26 +184,9 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
         return []
     _checked_at = now
     rows = (await session.execute(_running().add_columns(CloudHost.device_id))).all()
-    usage = UsageService(session)
-    refused: dict[uuid.UUID, bool] = {}
-    for row in rows:
-        if row.project_id not in refused:
-            refused[row.project_id] = (
-                await usage.admit_project(row.project_id) is not None
-            )
-    due = [row for row in rows if refused[row.project_id]]
-    rooms = {row.topic_id for row in due}
-    busy = set()
-    if rooms:
-        busy = set(
-            await session.scalars(
-                select(room_column(AgentTurn.conversation_id))
-                .where(
-                    of_rooms(AgentTurn.conversation_id, rooms),
-                    AgentTurn.stopped_at.is_(None),
-                )
-                .distinct()
-            )
-        )
+    payers = await holders.payers(session, list({row.topic_id for row in rows}))
+    verdicts = await Ledger(session).admit_many(payers)
+    due = [row for row in rows if verdicts.get(row.topic_id) is not None]
+    busy = await holders.at_work(session, {row.topic_id for row in due})
     await session.commit()
     return [row for row in due if row.topic_id not in busy]

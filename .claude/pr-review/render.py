@@ -16,6 +16,11 @@ PR touches, not by the reviewer, so it says what kind of change this is rather t
 someone looked at it. Exits 1, printing why, when the result does not match the schema or
 names a different commit than the one pinned: a review of the wrong tree is never rendered as
 if it were the right one.
+
+The schema is where "only what must be fixed" is enforced: a finding is a `blocker` or a
+`major` at evidence rung 4 or higher, and a result naming a `minor`, or a candidate nobody
+could prove, is refused rather than rendered. The refuters and the coordinator count those
+in `candidates_refuted` instead; what reaches the author is only what somebody has to change.
 """
 
 import json
@@ -24,7 +29,7 @@ import sys
 from pathlib import Path
 
 SCHEMA = json.loads((Path(__file__).parent / "schema.json").read_text())
-SEVERITY_ORDER = {"blocker": 0, "major": 1, "minor": 2}
+SEVERITY_ORDER = {"blocker": 0, "major": 1}
 SHA = re.compile(r"[0-9a-f]{40}")
 TIER = re.compile(r"[A-G]")
 #: The first line of a rendered review, as orchestrator_sweep.py and
@@ -81,10 +86,11 @@ def problems(value, schema, at="result"):
 
 
 def card_line(result: dict, sha: str, since: str = "", tier: str = "") -> str:
-    """The one line of the review the card shows. Blockers and majors are what it counts;
-    the tier says what kind of change it is, in the same breath as the verdict, so the
-    board shows both without a second place to look."""
-    serious = sum(f["severity"] != "minor" for f in result["findings"])
+    """The one line of the review the card shows. Every finding is a blocker or a major —
+    the schema refuses anything lighter — so the count is the finding count; the tier says
+    what kind of change it is, in the same breath as the verdict, so the board shows both
+    without a second place to look."""
+    serious = len(result["findings"])
     scope = f"（增量自 {since[:8]}）" if since else " "
     verdict = f"有 {serious} 条" if serious else "无 blocker/major"
     suffix = f"｜档位 {tier}" if tier else ""
@@ -92,7 +98,11 @@ def card_line(result: dict, sha: str, since: str = "", tier: str = "") -> str:
 
 
 def render(result: dict, sha: str, method_rev: str, since: str = "", tier: str = "") -> str:
-    findings = sorted(result["findings"], key=lambda f: SEVERITY_ORDER[f["severity"]])
+    # A severity the schema does not know never reaches here, because main() validates
+    # first; sorting one last instead of raising keeps a schema that drifted from the
+    # renderer a failed self-test rather than a traceback on somebody's review.
+    findings = sorted(result["findings"],
+                      key=lambda f: SEVERITY_ORDER.get(f["severity"], len(SEVERITY_ORDER)))
     span = f"`{since[:12]}..{sha[:12]}`" if since else f"`{sha[:12]}`"
     lines = [
         card_line(result, sha, since, tier),
@@ -107,18 +117,15 @@ def render(result: dict, sha: str, method_rev: str, since: str = "", tier: str =
         ),
     ]
     for i, f in enumerate(findings, 1):
-        verified = "verified" if f["rung"] >= 4 else "unverified"
         lines += [
             "",
             f"### {i}. [{f['severity']}] {f['title'].strip()}",
-            f"`{f['file']}:{f['line']}` · {f['kind']} · evidence rung {f['rung']} ({verified})",
+            f"`{f['file']}:{f['line']}` · {f['kind']} · evidence rung {f['rung']}",
             "",
             f"Failure: {f['failure'].strip()}",
             "",
             f"Evidence: {f['evidence'].strip()}",
         ]
-        if f["confirm_with"].strip():
-            lines += ["", f"Confirm with: {f['confirm_with'].strip()}"]
     if result["not_covered"]:
         lines += ["", "**Not covered**", ""]
         lines += [f"- {item.strip()}" for item in result["not_covered"]]
@@ -126,19 +133,19 @@ def render(result: dict, sha: str, method_rev: str, since: str = "", tier: str =
         "",
         (
             "<sub>Evidence rungs: 1 stated · 2 code read · 3 related test run · "
-            "4 a loud-failing command run · 5 reproduced live. Below 4 a finding still needs "
-            "its confirm command run before it counts.</sub>"
+            "4 a loud-failing command run · 5 reproduced live. Only rung 4 and above is "
+            "filed: a candidate below it is dropped, not rendered.</sub>"
         ),
     ]
     return "\n".join(lines) + "\n"
 
 
 def self_test() -> int:
-    """Offline: the guards in main() — a result naming another commit, an unverified
-    finding with no command to confirm it, a field the schema does not know — and the
-    grammar the card line and its readers have to agree on. `post` runs this file on every
-    review, so a guard that quietly stopped guarding would show up as a review rendered
-    anyway, on a line three other programs read back."""
+    """Offline: the guards in main() — a result naming another commit, a minor or an
+    unproven finding, a field the schema does not know — and the grammar the card line and
+    its readers have to agree on. `post` runs this file on every review, so a guard that
+    quietly stopped guarding would show up as a review rendered anyway, on a line three
+    other programs read back."""
     import io
     import tempfile
     from contextlib import redirect_stderr, redirect_stdout
@@ -155,8 +162,8 @@ def self_test() -> int:
 
     def finding(**over):
         f = {
-            "severity": "minor", "kind": "test", "file": "a.py", "line": 1, "title": "t",
-            "failure": "f", "evidence": "e", "rung": 4, "confirm_with": "",
+            "severity": "major", "kind": "test", "file": "a.py", "line": 1, "title": "t",
+            "failure": "f", "evidence": "e", "rung": 4,
         }
         f.update(over)
         return f
@@ -188,10 +195,17 @@ def self_test() -> int:
     check("干净的 result 渲染出结论行", (code, out.splitlines()[0]),
           (0, f"独立 review：head {sha[:8]} 结论 无 blocker/major"))
     check("审查看的是另一个提交，拒", run(result(reviewed_sha=other), sha, rev)[0], 1)
-    check("rung 不到 4 的 finding 没给确认命令，拒",
+    # The deliberate violation: a minor in findings must not render. 88% of the minors this
+    # method filed were never acted on (#1936), so the result is only what must be fixed.
+    minor = run(result(findings=[finding(severity="minor")]), sha, rev)
+    check("minor 进 findings，拒", minor[0], 1)
+    check("拒的时候说清楚是 minor 不行", "minor" in minor[2], True)
+    # The same bar for evidence: a candidate nobody could prove is not a finding either.
+    check("证据只到第 2 档的 finding，拒",
           run(result(findings=[finding(rung=2)]), sha, rev)[0], 1)
-    check("rung 不到 4 的 finding 给了确认命令，放行",
-          run(result(findings=[finding(rung=2, confirm_with="pytest -q a")]), sha, rev)[0], 0)
+    check("证据只到第 3 档、写再多说明也拒",
+          run(result(findings=[finding(rung=3, evidence="code read")]), sha, rev)[0], 1)
+    check("第 5 档的 finding 放行", run(result(findings=[finding(rung=5)]), sha, rev)[0], 0)
     check("多一个 schema 不认的字段，拒", run({**result(), "extra": 1}, sha, rev)[0], 1)
     check("档位写进结论行末尾",
           run(result(), sha, rev, "--tier", "A")[1].splitlines()[0].endswith("｜档位 A"), True)
@@ -242,13 +256,10 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as e:
         print(f"{path}: {e}", file=sys.stderr)
         return 1
+    # Every finding rule lives in schema.json: severity is blocker or major, and the rung
+    # is 4 or 5. A minor, or a candidate nobody could prove, is a schema error here rather
+    # than a finding the card carries, which is what keeps 88%-ignored minors off it.
     errors = problems(result, SCHEMA)
-    if not errors:
-        errors = [
-            f"result.findings[{i}]: rung {f['rung']} is unverified and needs confirm_with"
-            for i, f in enumerate(result["findings"])
-            if f["rung"] < 4 and not f["confirm_with"].strip()
-        ]
     if not errors and result["reviewed_sha"].strip() != sha:
         errors = [f"the review saw {result['reviewed_sha']!r}, but {sha} was pinned"]
     if errors:

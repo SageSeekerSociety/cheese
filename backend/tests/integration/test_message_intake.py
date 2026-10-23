@@ -13,10 +13,12 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.repositories import BlockRepository
+from app.domain.session_record import service as session_records
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
+from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
@@ -38,7 +40,7 @@ def _chat(factory, tmp_path, runner, channel=None):
     return ChatService(
         work_runner=runner,
         session_factory=factory,
-        compute=stub_compute(channel or StubChannel()),
+        compute=stub_compute(channel or StubChannel(), sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "workspace"),
     )
@@ -170,15 +172,20 @@ async def test_disconnect_during_work_does_not_lose_output_or_leave_the_turn_ope
         await finish_turn(chat, topic)
         async with factory() as independent:
             history = await BlockRepository(independent).list_for_topic(topic)
+            output = await session_records.read(independent, topic)
             turns = list(
                 await independent.scalars(
                     select(AgentTurn).where(AgentTurn.conversation_id == topic)
                 )
             )
-        assert any(
-            block.content == "Completed after the browser left" for block in history
-        )
+        assert assistant_texts(output.items) == ["Completed after the browser left"]
+        assert all(block.author == "alice" for block in history)
         assert turns
+        assert {
+            item["turn_id"]
+            for item in output.items
+            if item["record"].get("type") == "assistant"
+        } == {str(turn.id) for turn in turns}
         assert all(turn.delivered_at is not None for turn in turns)
         assert all(turn.stopped_at is not None for turn in turns)
     finally:

@@ -4,18 +4,36 @@
 Installed on a Cloud machine as `bootstrap.SANDBOX_HOST` and run by the
 machine's connector user through `sudo -n`, once when a sandbox starts and
 once when it goes. Everything else about a sandbox is unprivileged
-bubblewrap; these two things are not: a network namespace that reaches the
+bubblewrap; these things are not: a network namespace that reaches the
 internet needs a veth pair, NAT and filter rules in the machine's own tables,
-and a memory or CPU limit needs a cgroup only root can create.
+a memory or CPU limit needs a cgroup only root can create, and a disk limit
+needs a project quota only root can set.
 
-    up NAME PID --memory-mb N --swap-mb N --cpus N --pids N [--forward PORT]...
-             [--site PORT]
+    up NAME PID --home PATH --memory-mb N --swap-mb N --cpus N --pids N
+             --disk-mib N --inodes N [--forward PORT]... [--site PORT]
     down NAME
+    reclaim NAME...
 
 `PID` is the sandbox's first process, created by bubblewrap with a network
 namespace of its own and still waiting to start the session's program. `up`
 creates a veth pair with one end in that namespace and puts the process in a
-cgroup with the given limits. The sandbox may reach the machine's DNS
+cgroup with the given limits.
+
+`PATH` is the sandbox's home, which must be on an XFS filesystem mounted with
+project quotas (a platform host's data disk, `/data`, set up when the host
+enrolls: `enrollment.bootstrap_script`); a sandbox whose home is anywhere else
+is refused, never run without a disk limit. `up` gives the home a project of
+its own, inherited by everything made in it, limited to `--disk-mib` and
+`--inodes`; the executor's state inside it (`STATE_DIR`) a second, small one,
+so a sandbox that filled its home can still report that it did; and its
+project's package store, shared by the project's sandboxes on this machine,
+a third with the same limits as a home. Inside its sandbox a session cannot
+change a file's project or take the inheritance off a directory: the kernel
+allows that only from the machine's own user namespace. `down` lifts the
+home's and the state's limits; the store keeps its own. `reclaim` asks the
+kernel to give back the page cache of sandboxes the platform found idle
+(`disk_guard`), which on a VM host is memory the hypervisor can then take
+back from the machine. The sandbox may reach the machine's DNS
 resolvers on port 53 and the public internet; nothing in a private range, not
 the machine itself, and not another sandbox. `--forward` lets it reach one TCP
 port of the machine's own loopback as the same port on its own: a machine
@@ -27,8 +45,9 @@ over TLS, which the sandbox's /etc/hosts gives the site's name
 
 The caller is trusted with nothing but its own processes. Arguments are
 checked to the character, the process must be the caller's, and the only
-programs run are `ip`, `iptables-save` and `iptables-restore` from the
-system's own directories. A sandbox whose processes are gone is cleaned up by
+programs run are root's copies of the platform's own static `ip`, iptables
+(its nf_tables build, as every current distribution's is) and `xfs_quota`, in
+`TOOLS` (`bootstrap.sandbox_tools`), never whatever the system has. A sandbox whose processes are gone is cleaned up by
 the next `up`, so one that died without its `down` leaves nothing for long.
 
 The filter rules name no sandbox: every sandbox's link is `chs<n>` and they
@@ -41,6 +60,7 @@ Standard library only: this runs as root, from a copy outside every release.
 """
 
 import ctypes
+import errno
 import fcntl
 import hashlib
 import ipaddress
@@ -48,12 +68,17 @@ import json
 import os
 import re
 import signal
+import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 STATE = Path("/run/cheese-sandbox")
+# Which project quota each home, executor state and store has, by name. On the
+# machine's own disk, not in /run: the projects are on files that outlive a
+# reboot, and a home started again after one keeps its project.
+PROJECTS = Path("/var/lib/cheese-sandbox/projects.json")
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 CGROUP = CGROUP_ROOT / "cheese-sandboxes"
 # One /30 per sandbox: the machine's end, then the sandbox's.
@@ -79,6 +104,13 @@ CHAINS = {
 NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 CLONE_NEWNET = 0x40000000
 SYSTEM_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+# A copy of `bootstrap.SANDBOX_TOOLS`, held to it by test_footprint_root.py.
+TOOLS = "/usr/local/libexec/cheese-sandbox-tools"
+IP = f"{TOOLS}/ip"
+XFS_QUOTA = f"{TOOLS}/xfs_quota"
+# One binary for every iptables command, which it takes as its first argument.
+IPTABLES_SAVE = (f"{TOOLS}/xtables-nft-multi", "iptables-save")
+IPTABLES_RESTORE = (f"{TOOLS}/xtables-nft-multi", "iptables-restore", "--noflush")
 # Where a sandbox dials the site, inside its own loopback range and apart
 # from 127.0.0.1, so a server of the room's own on 127.0.0.1:443 is left
 # alone. A copy is in `confinement.SITE_ADDRESS`, held to this by
@@ -104,7 +136,7 @@ def addresses(index):
 # Where a sandbox's name servers are listed: the machine's own resolv.conf,
 # or, when that names only a loopback stub such as systemd-resolved's, the
 # upstream list the stub reads. The sandbox reads the same file
-# (`bootstrap.sandbox_argv`), held to this by test_footprint_root.py.
+# (`confinement.sandbox_argv`), held to this by test_footprint_root.py.
 RESOLV_CONFS = ("/etc/resolv.conf", "/run/systemd/resolve/resolv.conf")
 
 
@@ -166,27 +198,36 @@ def restore(wanted, saved):
     or "" when `saved` (what `iptables-save` printed) shows they already do.
 
     Each chain is declared, which with `--noflush` empties it first, so the
-    same text written twice leaves the same rules. A chain of ours not yet
-    jumped to is put first in its built-in chain: Docker sets FORWARD's
+    same text written twice leaves the same rules. The jump to each chain of
+    ours is the first rule of its built-in chain: Docker sets FORWARD's
     policy to DROP and ufw INPUT's, and first means neither decides for a
-    sandbox. Whether the tables hold `wanted` is judged by the digest of what
+    sandbox. A jump something else has since put a rule ahead of is moved
+    back to the top: Docker inserts its own at the top of FORWARD and
+    POSTROUTING each time its daemon starts, and a sandbox behind them could
+    reach a container's published port and be reached from it. Whether the tables hold `wanted` is judged by the digest of what
     was last written, kept as a rule comment in our own chain, and the number
     of rules in each chain, so a flush by something else is noticed."""
     digest = hashlib.sha256(json.dumps(wanted, sort_keys=True).encode()).hexdigest()
     marker = f'-m comment --comment "cheese-sandbox {digest[:16]}" -j RETURN'
-    table, counts, present = None, {}, set()
+    table, counts, present, first = None, {}, {}, {}
     for line in saved.splitlines():
         if line.startswith("*"):
             table = line[1:]
         elif line.startswith("-A "):
-            present.add((table, line))
+            present[table, line] = present.get((table, line), 0) + 1
             chain = line.split()[1]
             counts[chain] = counts.get(chain, 0) + 1
+            first.setdefault((table, chain), line)
     jumps = {
         table: [
-            f"-I {parent} 1 -j {chain}"
+            edit
             for chain, parent in chains
-            if (table, f"-A {parent} -j {chain}") not in present
+            if first.get((table, parent)) != f"-A {parent} -j {chain}"
+            for edit in [
+                *[f"-D {parent} -j {chain}"]
+                * present.get((table, f"-A {parent} -j {chain}"), 0),
+                f"-I {parent} 1 -j {chain}",
+            ]
         ]
         for table, chains in CHAINS.items()
     }
@@ -326,7 +367,7 @@ def release(name, record):
     host, _ = links(record["index"])
     if Path("/sys/class/net", host).exists():
         subprocess.run(
-            ["ip", "link", "del", host], capture_output=True, env={"PATH": SYSTEM_PATH}
+            [IP, "link", "del", host], capture_output=True, env={"PATH": SYSTEM_PATH}
         )
     (STATE / f"{name}.json").unlink(missing_ok=True)
 
@@ -345,10 +386,10 @@ def write_rules(records):
             for port in [*record["forward"], *filter(None, [record.get("site")])]
         }
     )
-    saved = run(["iptables-save", "-t", "filter"]) + run(["iptables-save", "-t", "nat"])
+    saved = run([*IPTABLES_SAVE, "-t", "filter"]) + run([*IPTABLES_SAVE, "-t", "nat"])
     text = restore(rules(servers, ports), saved)
     if text:
-        run(["iptables-restore", "--noflush"], text)
+        run([*IPTABLES_RESTORE], text)
 
 
 def enable(directory):
@@ -403,7 +444,7 @@ def connect(index, pid, forward, site=None):
     it costs two."""
     host, peer = links(index)
     gateway, _ = addresses(index)
-    run(["ip", "link", "add", host, "type", "veth", "peer", peer, "netns", str(pid)])
+    run([IP, "link", "add", host, "type", "veth", "peer", peer, "netns", str(pid)])
     sysctl(f"net.ipv6.conf.{host}.disable_ipv6", 1)
     # Strict reverse-path filtering: a packet from the link must carry the
     # sandbox's own address, so no rule has to name it.
@@ -411,9 +452,7 @@ def connect(index, pid, forward, site=None):
     if forward or site:
         sysctl(f"net.ipv4.conf.{host}.route_localnet", 1)
     sysctl("net.ipv4.ip_forward", 1)
-    run(
-        ["ip", "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n"
-    )
+    run([IP, "-batch", "-"], f"addr add {gateway}/30 dev {host}\nlink set {host} up\n")
     machine = os.open("/proc/self/ns/net", os.O_RDONLY)
     sandbox = os.open(f"/proc/{pid}/ns/net", os.O_RDONLY)
     try:
@@ -423,17 +462,249 @@ def connect(index, pid, forward, site=None):
         sysctl("net.ipv6.conf.all.disable_ipv6", 1)
         sysctl("net.ipv6.conf.default.disable_ipv6", 1)
         link, nat = inside(index, forward, site)
-        run(["ip", "-batch", "-"], link)
+        run([IP, "-batch", "-"], link)
         if nat:
             sysctl(f"net.ipv4.conf.{peer}.route_localnet", 1)
-            run(["iptables-restore", "--noflush"], nat)
+            run([*IPTABLES_RESTORE], nat)
     finally:
         enter(machine)
         os.close(machine)
         os.close(sandbox)
 
 
-def up(name, pid, limits, forward, site=None):
+# The executor's state inside a sandbox's home, which has a project and a
+# limit of its own: a session that fills its home leaves its executor room
+# to answer, and to say the disk is full. A copy of `bootstrap.PLATFORM_DIR`
+# and its `executor`, held to it by test_footprint_root.py.
+STATE_DIR = ".cheese/executor"
+# What the state may hold: the executor's journal and every command's output
+# (`runtime_commands`), which a build log can make large, in a share of a
+# home's limit.
+STATE_DISK_MIB = 1024
+STATE_INODES = 50_000
+FS_IOC_FSGETXATTR = 0x801C581F
+FS_IOC_FSSETXATTR = 0x401C5820
+FS_XFLAG_PROJINHERIT = 0x200
+# struct fsxattr: xflags, extsize, nextents, projid, cowextsize, pad[8].
+FSXATTR = struct.Struct("IIIII8s")
+
+
+def open_directory(path, uid):
+    """`path`, an absolute directory of `uid`'s, opened without following a
+    link anywhere along it: a session writes its own home, and a link it
+    left there must not have root tag or limit anything else."""
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in Path(path).parts[1:]:
+            following = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+            )
+            os.close(descriptor)
+            descriptor = following
+        if os.fstat(descriptor).st_uid != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"{path} is not the caller's")
+    except OSError as error:
+        os.close(descriptor)
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"{path} is not a directory: {error.strerror}") from None
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def open_beneath(descriptor, relative, uid):
+    """`relative` under the directory open at `descriptor`, opened as
+    `open_directory` opens a path, or None where it is not there."""
+    current = os.dup(descriptor)
+    try:
+        for part in relative.split("/"):
+            following = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
+            )
+            os.close(current)
+            current = following
+        if os.fstat(current).st_uid != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"{relative} is not the caller's")
+    except FileNotFoundError:
+        os.close(current)
+        return None
+    except OSError as error:
+        os.close(current)
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"{relative} is not a directory: {error.strerror}") from None
+    except BaseException:
+        os.close(current)
+        raise
+    return current
+
+
+def quota_mount(descriptor):
+    """Where the filesystem holding `descriptor` is mounted, when it is XFS
+    with project quotas enforced; refused otherwise."""
+    device = os.fstat(descriptor).st_dev
+    wanted = f"{os.major(device)}:{os.minor(device)}"
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        before, _, after = line.partition(" - ")
+        fields, rest = before.split(), after.split()
+        if (
+            fields[2] == wanted
+            and fields[3] == "/"
+            and rest[0] == "xfs"
+            and {"prjquota", "pquota"} & set(rest[2].split(","))
+        ):
+            return fields[4].replace("\\040", " ")
+    # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+    raise Refused("the sandbox's home is not on a disk with project quotas")
+
+
+def project_of(descriptor):
+    """A file's project and whether it is inherited by what is made in it."""
+    fields = FSXATTR.unpack(fcntl.ioctl(descriptor, FS_IOC_FSGETXATTR, bytes(28)))
+    return fields[3], bool(fields[0] & FS_XFLAG_PROJINHERIT)
+
+
+def set_project(descriptor, project, directory):
+    fields = list(FSXATTR.unpack(fcntl.ioctl(descriptor, FS_IOC_FSGETXATTR, bytes(28))))
+    fields[3] = project
+    if directory:
+        fields[0] |= FS_XFLAG_PROJINHERIT
+    fcntl.ioctl(descriptor, FS_IOC_FSSETXATTR, FSXATTR.pack(*fields))
+
+
+def tag(descriptor, project):
+    """Put the tree open at `descriptor` in `project`, the directory itself
+    last, so a directory that has it was tagged whole. A tree already tagged
+    is left alone: whatever is made in it inherits."""
+    if project_of(descriptor) == (project, True):
+        return
+    for _, _, files, directory in os.fwalk(
+        ".", dir_fd=descriptor, topdown=False, follow_symlinks=False
+    ):
+        for name in files:
+            try:
+                file = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY,
+                    dir_fd=directory,
+                )
+            except OSError:
+                # A link or a socket: nothing to charge.
+                continue
+            try:
+                set_project(file, project, directory=False)
+            finally:
+                os.close(file)
+        set_project(directory, project, directory=True)
+
+
+def limit_project(mount, project, disk_mib, inodes):
+    """Set a project's limits; 0 for both lifts them."""
+    run(
+        [
+            XFS_QUOTA,
+            "-x",
+            "-c",
+            f"limit -p bhard={disk_mib}m ihard={inodes} {project}",
+            mount,
+        ]
+    )
+
+
+def projects():
+    try:
+        return json.loads(PROJECTS.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def keep_projects(table):
+    PROJECTS.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = PROJECTS.with_suffix(".next")
+    temporary.write_text(json.dumps(table, sort_keys=True))
+    temporary.replace(PROJECTS)
+
+
+def project_for(table, key, uid, mount, path):
+    """The project `key` has on the filesystem at `mount`, or the lowest one
+    nothing has there."""
+    if table.get(key, {}).get("mount") != mount:
+        used = {entry["id"] for entry in table.values() if entry["mount"] == mount}
+        table[key] = {
+            "id": next(n for n in range(1, 1 << 31) if n not in used),
+            "uid": uid,
+            "mount": mount,
+            "path": path,
+        }
+    return table[key]["id"]
+
+
+def forget_gone(table):
+    """Forget the projects whose directory is gone, lifting their limits: a
+    home deleted without its `down`, a store of a machine's project that
+    ended. Whatever they held went with the directory."""
+    for key, entry in list(table.items()):
+        if not os.path.isdir(entry["path"]):
+            if os.path.isdir(entry["mount"]):
+                limit_project(entry["mount"], entry["id"], 0, 0)
+            del table[key]
+
+
+def disk(name, uid, home, limits):
+    """Give a sandbox's home, its executor's state and its project's store
+    each a project quota (see the module's text)."""
+    home_fd = open_directory(home, uid)
+    opened = [home_fd]
+    try:
+        mount = quota_mount(home_fd)
+        project = Path(home).parent.name
+        store = str(Path(home).parents[2] / "store" / project)
+        store_fd = open_directory(store, uid)
+        opened.append(store_fd)
+        table = projects()
+        forget_gone(table)
+        ids = {
+            kind: project_for(table, key, uid, mount, path)
+            for kind, key, path in (
+                ("home", "home:" + name, home),
+                ("state", "state:" + name, str(Path(home) / STATE_DIR)),
+                ("store", "store:" + project, store),
+            )
+        }
+        keep_projects(table)
+        tag(home_fd, ids["home"])
+        state_fd = open_beneath(home_fd, STATE_DIR, uid)
+        if state_fd is not None:
+            opened.append(state_fd)
+            tag(state_fd, ids["state"])
+        tag(store_fd, ids["store"])
+        limit_project(mount, ids["home"], limits["disk_mib"], limits["inodes"])
+        limit_project(mount, ids["state"], STATE_DISK_MIB, STATE_INODES)
+        limit_project(mount, ids["store"], limits["disk_mib"], limits["inodes"])
+    finally:
+        for descriptor in opened:
+            os.close(descriptor)
+
+
+def free_disk(name, uid):
+    """Lift the limits of a sandbox's home and state; its home is deleted
+    next. Their projects stay taken until it is (`forget_gone`): a project
+    handed to another sandbox while the files are still there would count
+    them against it. The store keeps its own."""
+    table = projects()
+    for key in ("home:" + name, "state:" + name):
+        entry = table.get(key)
+        if entry is None:
+            continue
+        if entry["uid"] != uid:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused("sandbox is another user's")
+        limit_project(entry["mount"], entry["id"], 0, 0)
+
+
+def up(name, pid, home, limits, forward, site=None):
     uid = caller()
     if owner_of(pid) != uid:
         raise Refused("process is not the caller's")
@@ -463,6 +734,7 @@ def up(name, pid, limits, forward, site=None):
         (STATE / f"{name}.json").write_text(json.dumps(record))
         try:
             records[name] = record
+            disk(name, uid, home, limits)
             write_rules(records)
             connect(index, pid, forward, site)
             limit(name, pid, limits)
@@ -475,17 +747,44 @@ def up(name, pid, limits, forward, site=None):
 
 def down(name):
     uid = caller()
-    if not STATE.is_dir():
-        return {}
+    STATE.mkdir(mode=0o700, exist_ok=True)
     with open(STATE / "lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = load().get(name)
-        if record is None:
-            return {}
-        if record["uid"] != uid:
-            raise Refused("sandbox is another user's")
-        release(name, record)
+        if record is not None:
+            if record["uid"] != uid:
+                raise Refused("sandbox is another user's")
+            release(name, record)
+        # Whether or not its processes are still recorded: a machine that
+        # rebooted has lost /run, and not the limits on its disk.
+        free_disk(name, uid)
     return {}
+
+
+def reclaim(names):
+    """Have each named sandbox of the caller's give back what of its memory
+    the kernel can take without killing anything: its page cache, since a
+    sandbox has no swap. Answers how much each gave back."""
+    uid = caller()
+    given = {}
+    if not STATE.is_dir():
+        return {"reclaimed": given}
+    records = load()
+    for name in names:
+        record = records.get(name)
+        group = CGROUP / name
+        if record is None or record["uid"] != uid or not group.is_dir():
+            continue
+        before = int((group / "memory.current").read_text())
+        try:
+            (group / "memory.reclaim").write_text(str(before))
+        except OSError as error:
+            # EAGAIN: it could not give back all that was asked, which with
+            # anonymous memory in it is always so; what it did give is kept.
+            if error.errno != errno.EAGAIN:
+                raise
+        given[name] = max(0, before - int((group / "memory.current").read_text()))
+    return {"reclaimed": given}
 
 
 def number(text, low, high):
@@ -499,22 +798,53 @@ LIMITS = {
     "--swap-mb": ("swap_mb", 0, 1 << 20),
     "--cpus": ("cpus", 1, 1024),
     "--pids": ("pids", 16, 1 << 22),
+    "--disk-mib": ("disk_mib", 64, 1 << 30),
+    "--inodes": ("inodes", 1000, 1 << 31),
 }
+# A home's absolute path: no `..`, no empty part, nothing a shell or the
+# quota tool's command line would read as more than one word.
+HOME_PATH = re.compile(r"(/[A-Za-z0-9._-]+)+")
+
+
+def home_path(text, name):
+    """A sandbox's home as `up` takes it: absolute, plain, and named after
+    the sandbox, inside a directory named after its project."""
+    parts = text.split("/")
+    if (
+        not HOME_PATH.fullmatch(text)
+        or any(part in {".", ".."} for part in parts)
+        or parts[-1] != name
+        or not NAME.fullmatch(parts[-2])
+    ):
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"{text!r} is not a sandbox's home")
+    return text
 
 
 def parse(argv):
     """The command line, checked to the character: (command, arguments)."""
     if len(argv) == 2 and argv[0] == "down" and NAME.fullmatch(argv[1]):
         return "down", {"name": argv[1]}
+    if (
+        2 <= len(argv) <= 65
+        and argv[0] == "reclaim"
+        and all(NAME.fullmatch(name) for name in argv[1:])
+    ):
+        return "reclaim", {"names": argv[1:]}
     if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
-        raise Refused("usage: up NAME PID --memory-mb N ... | down NAME")
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(
+            "usage: up NAME PID --home PATH ... | down NAME | reclaim NAME..."
+        )
     pid = number(argv[2], 2, 1 << 22)
-    limits, forward, site = {}, [], None
+    limits, forward, site, home = {}, [], None, None
     options = argv[3:]
     if len(options) % 2:
         raise Refused("every option takes a value")
     for option, value in zip(options[::2], options[1::2], strict=True):
-        if option == "--forward" and len(forward) < 4:
+        if option == "--home" and home is None:
+            home = home_path(value, argv[1])
+        elif option == "--forward" and len(forward) < 4:
             port = number(value, 1, 65535)
             if port not in forward:
                 forward.append(port)
@@ -525,11 +855,13 @@ def parse(argv):
             limits[key] = number(value, low, high)
         else:
             raise Refused(f"unexpected option {option}")
-    if len(limits) != len(LIMITS):
-        raise Refused("every limit is required")
+    if len(limits) != len(LIMITS) or home is None:
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused("the home and every limit are required")
     return "up", {
         "name": argv[1],
         "pid": pid,
+        "home": home,
         "limits": limits,
         "forward": forward,
         "site": site,
@@ -540,7 +872,9 @@ def main(argv):
     started = time.monotonic()
     try:
         command, arguments = parse(argv)
-        answer: dict = (up if command == "up" else down)(**arguments)
+        answer: dict = {"up": up, "down": down, "reclaim": reclaim}[command](
+            **arguments
+        )
     except Refused as refusal:
         print(f"cheese-sandbox: {refusal}", file=sys.stderr)
         return 2

@@ -17,7 +17,8 @@ be read.
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     join_project_team,
     post_message,
@@ -54,7 +55,7 @@ def _history(client, topic, who="alice", **params):
     return response.json()["data"]
 
 
-def _attach_with(client, project, root, name, content):
+def _attach_with(client, project, root, name, content, mime="application/pdf"):
     """A file sent with the main-line message, the way a send stores it: an
     attachment block in the same conversation under the sender's turn."""
 
@@ -71,13 +72,19 @@ def _attach_with(client, project, root, name, content):
                     content=content,
                     reply_to=uuid.UUID(root["id"]),
                     turn_id=uuid.UUID(root["id"]),
-                    mime_type="application/pdf",
+                    mime_type=mime,
                     meta={"filename": name, "size": 500},
                 )
             )
             await session.commit()
 
     asyncio.run(write())
+
+
+def _thread_read(client, thread, who="alice"):
+    response = client.get(f"/topics/{thread}/thread", headers=session_auth_headers(who))
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 def test_the_newest_page_opens_with_the_message_it_hangs_under(client):
@@ -104,6 +111,20 @@ def test_the_files_sent_with_it_read_with_it(client):
         "微信里打不开预览",
         "uploads/spec.pdf",
     ]
+
+
+def test_the_thread_pane_reads_the_files_sent_with_its_message(client):
+    project, channel = _channel(client)
+    root = post_message(client, channel, "alice", {"content": "微信里打不开预览"})
+    _attach_with(
+        client, project, root, "shot.png", "uploads/shot.png", mime="image/png"
+    )
+    thread = _thread(client, root["id"])
+
+    read = _thread_read(client, thread)
+
+    assert read["root"]["content"] == "微信里打不开预览"
+    assert [b["content"] for b in read["files"]] == ["uploads/shot.png"]
 
 
 def test_it_reads_by_id_from_the_thread(client):

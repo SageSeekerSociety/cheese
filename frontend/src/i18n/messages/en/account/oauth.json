@@ -1,0 +1,74 @@
+{
+  "app": {
+    "backLede": "If the Cheese app did not open, use the button below. You can close this page afterwards.",
+    "backTitle": "Back to the Cheese app",
+    "cancel": "Cancel",
+    "confirm": "Continue",
+    "confirmLede": "You will be signed in to the Cheese app as {name} ({handle}). If you did not just start this in the app, click Cancel.",
+    "confirmTitle": "Sign in to the Cheese app",
+    "expired": "This sign-in has expired. Sign in again.",
+    "handOffFailed": "This sign-in could not be handed to the Cheese app. Sign in again in the app.",
+    "open": "Open Cheese",
+    "switchAccount": "Use another account"
+  },
+  "complete": {
+    "bind": "Link an account",
+    "bindSubmit": "Link and sign in",
+    "create": "New account",
+    "emailBelongsToAccount": "This email is used by an existing account",
+    "lede": "You have signed in with {provider}. Create a new account, or link one you already have.",
+    "pageTitle": "Choose an account",
+    "setPassword": "Also set a password",
+    "setPasswordHint": "You can then sign in with your username and password too",
+    "title": "Welcome, {name}",
+    "unavailable": "Cannot continue signing in"
+  },
+  "error": {
+    "accountMismatch": "This GitHub account is not linked to the Cheese account that started authorization. Switch GitHub accounts, then start again from Cheese.",
+    "alreadyLinked": "This account is already linked to another user",
+    "bindingFailed": "Couldn't link the account. Please try again.",
+    "consentRequired": "Read and agree to the Terms of Service and Privacy Policy before creating the account",
+    "creationFailed": "Couldn't create the account. Please try again.",
+    "emailTaken": "This email is already registered",
+    "emailUnverified": "Verify your email address first",
+    "githubConnectSignedOut": "This browser is not signed in to the Cheese account that started connecting GitHub. Sign in to that account here, then connect GitHub again from Cheese.",
+    "githubPasswordVerificationFailed": "This account could not be verified with a password. If it has no password yet, sign in to Cheese the way you usually do and connect GitHub under Project settings → Repository and credit (shown when commits are credited to the task owner), or set a password in Account Security and sign in with GitHub again.",
+    "invalidCredentials": "Wrong username or password",
+    "invalidInviteCode": "This invitation code is invalid or no longer active",
+    "invalidNickname": "This display name is not allowed",
+    "invalidPassword": "Wrong password",
+    "inviteCodeRequired": "Invitation code is required",
+    "retry": "Try {provider} again",
+    "sessionExpired": "The sign-in session expired. Please start again.",
+    "startFailed": "Could not start GitHub authorization. Please try again.",
+    "title": "Couldn't sign in",
+    "tooManyAttempts": "Too many attempts. Please try again later.",
+    "usernameReserved": "This username is reserved. Please choose another.",
+    "usernameTaken": "This username is taken",
+    "verificationFailed": "Verification failed. Please try again."
+  },
+  "provider": {
+    "ruc": "RUC",
+    "wechat": "WeChat",
+    "weibo": "Weibo"
+  },
+  "success": {
+    "done": "Signed in",
+    "doneLede": "Redirecting",
+    "failed": "Couldn't sign in. Please try again.",
+    "incomplete": "Sign-in details are incomplete. Please sign in again.",
+    "linked": "{provider} account linked",
+    "processing": "Signing in",
+    "processingLede": "Finishing sign-in with {provider}",
+    "signedIn": "Signed in with {provider}"
+  },
+  "verify": {
+    "failed": "Couldn't verify. Please try again.",
+    "incomplete": "Verification details are incomplete. Please sign in again.",
+    "lede": "Enter the password for the account with {email} to link it",
+    "passwordRequired": "Password is required",
+    "submit": "Verify and link",
+    "title": "Link account",
+    "wrongPassword": "Wrong password. Please try again."
+  }
+}

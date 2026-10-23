@@ -54,6 +54,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Transition name="doc-menu">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Enter and Escape bubble here from the search field and the bar's buttons -->
     <div v-if="open" class="doc-find" role="search" :aria-label="t('work.room.doc.find')" @keydown="onKeydown">
       <v-icon size="18" class="doc-find__icon">mdi-magnify</v-icon>
       <input

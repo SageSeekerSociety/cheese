@@ -179,6 +179,10 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       error: null,
       gone: false,
       statusLadder: STATUS_LADDER,
+      // 附件的地址由容器取回来再传下来；预览站里给一份空的（没有图就画成「读不到」，
+      // 那一行仍然说得出名字和大小）。
+      attachmentUrls: {},
+      downloadingAttachment: null,
       moreCommentsLoading: false,
       moreRepliesLoading: {},
       deleting: false,
@@ -198,6 +202,7 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       share: noop,
       'change-claim': noop,
       'delete-confirm': noop,
+      'download-attachment': noop,
     },
     states: [
       {

@@ -3,17 +3,27 @@
 Load with ``-p scripts.ci_shard --ci-shard=0/4``. xdist still schedules the
 assigned cases within each runner; every worker derives the same partition.
 
+``--ci-integration-files=PATH`` names a JSON file holding either ``"all"`` or a
+list of test files (relative to backend/): integration-layer cases outside
+those files are deselected before partitioning, the same way on the collection
+that plans a run and on every shard that executes it.
+
 The assigned cases are then ordered module by module, the longest module first
 by ``tests/module_durations.json`` (refreshed with ``scripts.test_durations``),
 each module's cases kept together in their collected order. Under
 ``--dist loadfile --no-loadscope-reorder`` a worker takes the next module from
 the head of that order whenever it runs low, so the run ends on short modules
 instead of one worker finishing a long one alone.
+
+Query recorded test durations without running pytest:
+``python -m scripts.ci_shard --top-tests 20`` prints nodeid and seconds as TSV.
 """
 
+import argparse
 import hashlib
 import json
 import statistics
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +33,24 @@ def pytest_addoption(parser):
     group = parser.getgroup("cheese-ci")
     group.addoption("--ci-shard", default="0/1", help="zero-based index/count")
     group.addoption("--ci-selection-output", type=Path)
+    group.addoption(
+        "--ci-integration-files",
+        type=Path,
+        help='JSON: "all" or the test files whose integration cases run',
+    )
+
+
+def integration_files(config):
+    """The test files whose integration cases run, or None for every file."""
+    path = config.getoption("--ci-integration-files")
+    if path is None:
+        return None
+    files = json.loads(path.read_text())
+    if files == "all":
+        return None
+    if not isinstance(files, list):
+        raise pytest.UsageError('--ci-integration-files must hold "all" or a list')
+    return set(files)
 
 
 def shard_spec(value):
@@ -43,6 +71,17 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     # Finish layer assignment and normal -m/-k filtering before partitioning.
     result = yield
+    allowed = integration_files(config)
+    if allowed is not None:
+        kept, dropped = [], []
+        for item in items:
+            keep = (
+                _layer(item) != "integration" or item.nodeid.split("::")[0] in allowed
+            )
+            (kept if keep else dropped).append(item)
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+            items[:] = kept
     index, count = shard_spec(config.getoption("--ci-shard"))
     selected = [item.nodeid for item in items]
     assigned, deselected = [], []
@@ -109,3 +148,27 @@ def _longest_module_first(items):
 
     order = sorted(modules.items(), key=lambda kv: -estimate(*kv))
     return [item for _, cases in order for item in cases]
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--top-tests", type=int, help="print N slowest recorded tests")
+    args = parser.parse_args(argv)
+    if args.top_tests is None:
+        return 0
+    if args.top_tests <= 0:
+        parser.error("--top-tests must be positive")
+    recorded = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+    tests = recorded.get("tests", {})
+    if not tests:
+        print("no test durations; refresh with scripts.test_durations", file=sys.stderr)
+        return 1
+    for nodeid, seconds in sorted(tests.items(), key=lambda kv: (-kv[1], kv[0]))[
+        : args.top_tests
+    ]:
+        print(f"{nodeid}\t{seconds:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -23,8 +23,9 @@ from tests.integration.conftest import (
     post_project,
     room_socket,
 )
-from tests.integration.test_claude_session_records import StillWorking, _until
+from tests.integration.test_claude_session_records import StillWorking
 from tests.integration.test_native_batch_ownership import _blocks
+from tests.support.session_records import wait_for_record
 
 
 def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(client):
@@ -41,22 +42,17 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(channel.root / "workspace"),
-            compute=stub_compute(channel),
+            compute=stub_compute(channel, sessions=client.test_request_factory),
         )
 
     before = StillWorking()
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
-    with room_socket(client, str(topic), "alice") as ws:
+    with room_socket(client, str(topic), "alice"):
         # 这个 socket 只推不收（`test_chat_ws_auth` 钉的就是那条拒绝）；
         # 说话走 POST。
         post_message(client, str(topic), "alice", {"content": "@芝士 等待回答"})
-        _until(
-            ws,
-            lambda frame: (
-                frame["type"] == "event_block" and "sleep 600" in str(frame["block"])
-            ),
-        )
+        wait_for_record(client, str(topic), lambda record: "sleep 600" in str(record))
     runner = before._session_for(topic)
     native = runner.session_id
     work = uuid.UUID(runner.work)
@@ -79,7 +75,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
     async def continue_and_verify():
         factory = client.test_request_factory
         ids = await _blocks(factory, project_id, topic)
-        assert await recovered.notify_running_turn(
+        assert await recovered.notify_running_session(
             topic, "原答者提交了回答", blocks=ids
         )
         await settle_turn(recovered, topic)

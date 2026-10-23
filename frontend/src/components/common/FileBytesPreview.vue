@@ -15,12 +15,19 @@ import PreviewSlides from '@/components/panels/preview/PreviewSlides.vue'
 import { t } from '@/i18n'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '@/lib/fileKind'
 
-const props = defineProps<{
-  filename: string
-  /** 换了这个值就重新读：同一个名字被替换成新版本时也要换。 */
-  source: string
-  read: (asPdf: boolean) => Promise<ArrayBuffer>
-}>()
+const props = withDefaults(
+  defineProps<{
+    filename: string
+    /** 换了这个值就重新读：同一个名字被替换成新版本时也要换。 */
+    source: string
+    read: (asPdf: boolean) => Promise<ArrayBuffer>
+    /** 字节的来处能不能把 Office 文档转成 PDF。不能（空间资料库）就不去读，直接说只能下载。 */
+    convertible?: boolean
+  }>(),
+  // An absent boolean prop is cast to false, which would make every caller
+  // that never mentions it unable to convert.
+  { convertible: true }
+)
 
 const data = ref<ArrayBuffer | null>(null)
 const imageUrl = ref('')
@@ -31,6 +38,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const suffix = computed(() => suffixOf(props.filename))
 const view = computed(() => DOCUMENT_TYPES[suffix.value]?.view)
+const downloadOnly = computed(() => !props.convertible && NEEDS_CONVERSION.has(suffix.value))
 let generation = 0
 
 function clear() {
@@ -47,6 +55,7 @@ async function load() {
   const current = ++generation
   clear()
   error.value = null
+  if (downloadOnly.value) return
   loading.value = true
   try {
     const bytes = await props.read(NEEDS_CONVERSION.has(suffix.value))
@@ -84,7 +93,8 @@ onBeforeUnmount(() => {
     <!-- 内容在路上就先画出「一页内容」的形状：慢网下一份预览要几十秒，一行
          「正在读取」消失之后就是一片空白，看起来像坏了。骨架一直在，直到字节到
          货为止；LoadingSkeleton 自己带 role="status"。 -->
-    <LoadingSkeleton v-if="loading" variant="doc" />
+    <p v-if="downloadOnly" class="file-preview__note t-body c-muted">{{ t('work.library.downloadOnly') }}</p>
+    <LoadingSkeleton v-else-if="loading" variant="doc" />
     <!-- 读失败就地换成原因加一条重试的路，而不是把用户留在一扇空窗前面。 -->
     <BaseLoadError v-else-if="error !== null" :title="t('work.library.previewError')" :error="error" @retry="load" />
     <template v-else-if="data">

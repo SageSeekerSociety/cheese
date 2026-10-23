@@ -50,6 +50,7 @@ def _make_task(**overrides):
         "reject_reason": "",
         "team_locking_policy": "NO_LOCK",
         "access_control_enabled": False,
+        "rubric_public": True,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,
@@ -489,6 +490,15 @@ class TestListGroupIdsByTaskIds:
 
 
 class TestEnrichTaskModelsAccessDomainGroups:
+    @pytest.fixture(autouse=True)
+    def _no_mentors(self):
+        # These tasks name no mentors (#3830); the enrichment reads that too.
+        with patch(
+            "app.api.task_serialization.TaskMentorRepository",
+            return_value=SimpleNamespace(for_tasks=AsyncMock(return_value={})),
+        ):
+            yield
+
     @pytest.mark.anyio
     async def test_enriches_task_with_access_domain_group_ids(self):
         from app.api.task_serialization import _enrich_task_models

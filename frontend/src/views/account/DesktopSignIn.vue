@@ -52,7 +52,8 @@ async function open() {
   }
   busy.value = true
   try {
-    url.value = await signInInBrowser(entry.value, postLoginTarget(route.query))
+    const invite = typeof route.query.invite === 'string' ? route.query.invite : ''
+    url.value = await signInInBrowser(entry.value, postLoginTarget(route.query), invite)
   } catch {
     errorMessage.value = t('account.appSignIn.failed')
   } finally {

@@ -9,7 +9,6 @@ beforeEach(() => setLocale('zh-CN'))
 describe('columnLabel', () => {
   it('每一列各有名字，包括板面上不出现的那两列', () => {
     // done 在折叠行上、archived 在房间上，两者都要有名字可写。
-    expect(columnLabel('not_started')).toBe('未开始')
     expect(columnLabel('building')).toBe('进行中')
     expect(columnLabel('delivering')).toBe('检查中')
     expect(columnLabel('needs_you')).toBe('待处理')

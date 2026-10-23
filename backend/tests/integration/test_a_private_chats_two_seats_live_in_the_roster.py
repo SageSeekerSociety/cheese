@@ -15,8 +15,9 @@ import uuid
 import sqlalchemy as sa
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import seed_user
@@ -86,8 +87,8 @@ def _badge(client, project_id: str, user: str) -> dict:
 
 
 def _seat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接加一行。私聊在队友有自己的席位之前就坐着房间派生的替身，
-    ``POST /topics/{topic_id}/members`` 今天也往私聊里加得进第三个人。"""
+    """名册上直接加一行：私聊在队友有自己的席位之前就坐着房间派生的替身，
+    这样的名册是旧数据留下的，路由已经不让私聊多出第三席。"""
 
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -135,6 +136,7 @@ def test_a_dm_badge_is_keyed_by_the_other_seat(client):
     project_id = _project(client)
     # 徽章图是项目的读路由，先过项目的门 —— 说话的人本来就在名册上。
     join_project_team(client, project_id, "user-1")
+    join_project_team(client, project_id, "mentor-1")
     _add_agent(client, project_id, "reviewer", "评审")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
@@ -150,6 +152,8 @@ def test_a_dm_badge_is_keyed_by_the_other_seat(client):
 def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
     """再打开是同一间房，认的是名册上的两席。"""
     project_id = _project(client)
+    join_project_team(client, project_id, "user-1")
+    join_project_team(client, project_id, "mentor-1")
     _add_agent(client, project_id, "reviewer", "评审")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
@@ -239,6 +243,8 @@ def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
     一间，A 和他之间的对话就落在另一间房里，而那间房在界面上没有别的入口。
     """
     project_id = _project(client)
+    join_project_team(client, project_id, "user-1")
+    join_project_team(client, project_id, "mentor-1")
     _add_agent(client, project_id, "reviewer", "评审")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
     with_mentor = _dm(client, project_id, "user-1", peer_handle="mentor-1")

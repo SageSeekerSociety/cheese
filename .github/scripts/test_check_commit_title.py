@@ -37,6 +37,40 @@ class CommitTitleTest(unittest.TestCase):
                 result = run(title)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_the_platforms_placeholder_is_named_and_answered(self):
+        """The platform's own title reads as that, and comes with the way out:
+        set it in the PR title over REST, and the edit checks it again on its
+        own, so no new commit is needed."""
+        result = run("WIP: 记忆改造")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
+        self.assertIn("pr-title.yml", result.stdout)
+        self.assertIn("no new commit", result.stdout)
+
+    def test_an_ordinary_mistake_is_not_answered_as_a_placeholder(self):
+        result = run("update stuff")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn("placeholder", result.stdout)
+
+    def test_a_title_that_merely_starts_with_wip_is_not_the_placeholder(self):
+        result = run("WIPped up the docs")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn("placeholder", result.stdout)
+
+    def test_wrapping_a_valid_title_in_the_placeholder_does_not_pass_it(self):
+        """Recognising the platform's title must not become a way past the
+        convention: the same words under `WIP:` are still refused."""
+        result = run("WIP: fix(chat): the pane keeps following")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("::error::", result.stdout)
+
+    def test_a_placeholder_among_other_titles_is_answered_too(self):
+        result = run(stdin="fix: one (#1)\nWIP: 记忆改造 (#2)\n")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
+
     def test_refuses_titles_outside_the_convention(self):
         for title in [
             "修一下分页的 bug",
@@ -68,6 +102,25 @@ class CommitTitleTest(unittest.TestCase):
     def test_no_title_at_all_is_a_failure(self):
         self.assertEqual(run(stdin="").returncode, 1)
 
+    def test_warn_only_reports_the_same_findings_without_failing(self):
+        """Post-submit Required CI reads titles that already landed: it reports
+        them as warnings and lets the gate through."""
+        result = run("--warn-only", stdin="update stuff\nfix: fine\n")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("::warning::", result.stdout)
+        self.assertIn("update stuff", result.stdout)
+        self.assertNotIn("::error::", result.stdout)
+        self.assertIn("already on main", result.stdout)
+
+    def test_warn_only_still_fails_on_nothing_to_check(self):
+        # A warnings-only mode is not a silent pass when the input never
+        # arrived: an empty check would report nothing about anything. The
+        # message is asserted too — without --warn-only being stripped, the
+        # flag itself was taken as a title and failed for the wrong reason.
+        result = run("--warn-only", stdin="")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no title to check", result.stderr)
+
     def test_a_draft_pull_requests_placeholder_title_is_not_judged(self):
         draft = pull_request(title="WIP: 回复变长时对话栏不再贴住最下端", draft=True)
         result = run("--pull-request", draft)
@@ -79,6 +132,10 @@ class CommitTitleTest(unittest.TestCase):
         result = run("--pull-request", ready)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("::error::", result.stdout)
+        # Whose title it is decides the answer: the platform's placeholder is
+        # not the author's format slip, so it is named and answered as such.
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
         retitled = pull_request(
             title="fix(chat): the pane keeps following when the rows above it shrink",
             draft=False,

@@ -35,9 +35,15 @@ vi.mock('../../api', async () => {
   }
 })
 
+vi.mock('../../api/people', () => ({
+  listClosedAccounts: vi.fn().mockResolvedValue({ handles: [] }),
+}))
+
+import { listClosedAccounts } from '../../api/people'
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
@@ -107,6 +113,8 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+beforeAll(loadMarkdownReader)
+
 describe('消息头上的作者名', () => {
   it('名册里有这个 handle → 显示昵称，不显示 handle', async () => {
     const id = freshRoom()
@@ -125,6 +133,16 @@ describe('消息头上的作者名', () => {
     await flush()
 
     expect(container.querySelector('.im-name')!.textContent?.trim()).toBe('ghost')
+  })
+
+  it('名册里没有、账号已注销的作者 → 显示「已注销用户」，不显示他留下的 handle', async () => {
+    vi.mocked(listClosedAccounts).mockResolvedValueOnce({ handles: ['ghost'] })
+    const id = freshRoom()
+    const { container } = mountPanel(id, 'ghost', [{ user_handle: 'wangchangxin', role: 'member', name: 'fulu' }])
+    await flush()
+
+    expect(listClosedAccounts).toHaveBeenCalledWith(['ghost'])
+    expect(container.querySelector('.im-name')!.textContent?.trim()).toBe('已注销用户')
   })
 
   // mentionNames 那张表额外塞了 all/here 两个保留键（渲染成「所有人」「在线成员」），

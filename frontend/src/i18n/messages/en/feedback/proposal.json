@@ -1,0 +1,15 @@
+{
+  "byline": "{name} thinks this is a platform problem, not the way you're using it",
+  "collapse": "Hide details",
+  "dismiss": "Not now",
+  "expand": "Show details",
+  "logs": "Logs",
+  "logsAttached": "Attached ({n} characters); submitted along with the feedback",
+  "progress": "You can follow its progress in the feedback center.",
+  "submit": "Submit feedback",
+  "submitted": "Submitted",
+  "userSaid": "What you said at the time",
+  "userSaidNothing": "The user didn't say anything about this ({name} noticed it on their own)",
+  "view": "View this feedback",
+  "why": "Why (and why this isn't the way you're using it)"
+}

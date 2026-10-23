@@ -37,9 +37,24 @@ export default {
           component: () => import('@/views/teams/detail/Members.vue'),
         },
         {
-          path: 'knowledge',
-          name: 'TeamsDetailKnowledge',
-          component: () => import('@/views/teams/detail/Knowledge.vue'),
+          // 团队的文档（#3774）：只属于团队、不属于哪个项目的那些。个人名下的就是自己的文档。
+          // 打开的一份挂在它下面，侧栏的「文档」也就亮着。
+          path: 'docs',
+          component: RouterPassThrough,
+          children: [
+            {
+              path: '',
+              name: 'TeamsDetailDocs',
+              component: () => import('@/views/teams/detail/Documents.vue'),
+            },
+            {
+              // 其中一份，整页打开：不套团队页的外框，页头写「某团队的文档 / 标题」。
+              path: ':docId',
+              name: 'TeamsDocument',
+              component: () => import('@/views/teams/TeamDocument.vue'),
+              props: true,
+            },
+          ],
         },
         {
           path: 'compute',
@@ -47,7 +62,12 @@ export default {
           component: () => import('@/views/teams/detail/Compute.vue'),
         },
         {
-          // 团队本月的额度用了多少；个人团队没有这一页，个人的在个人设置里。
+          path: 'models',
+          name: 'TeamsDetailModels',
+          component: () => import('@/views/teams/detail/Models.vue'),
+        },
+        {
+          // Credits belong to the team, including the personal team.
           path: 'credits',
           name: 'TeamsDetailCredits',
           component: () => import('@/views/teams/detail/Credits.vue'),

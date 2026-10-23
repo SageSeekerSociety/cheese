@@ -10,6 +10,8 @@
 import type { NavigationGuardWithThis } from 'vue-router'
 import type { BrowserSignInEntry } from '@/lib/desktopApp'
 
+import { inviteCodeFor } from './inviteCode'
+
 import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { desktopCan } from '@/lib/desktopApp'
 
@@ -45,12 +47,21 @@ export const ENTRY_PAGE: Record<BrowserSignInEntry, string> = {
   recover: 'RecoverPasswordRequest',
 }
 
-/** In the app, a page a sign-in starts from leads to the browser instead (DesktopSignIn.vue). */
+/**
+ * In the app, a page a sign-in starts from leads to the browser instead (DesktopSignIn.vue).
+ * A friend's invite code (`?code=`) goes along, so the account made in the browser is credited.
+ */
 export const signInHappensInBrowser: NavigationGuardWithThis<undefined> = (to) => {
   if (!desktopCan('links')) return true
+  // Only the sign-up page reads `?code=` as an invite code; the others still pass on one an earlier page brought.
+  const invite = inviteCodeFor(to.name === 'SignUpStart' ? to.query.code : undefined)
   return {
     name: 'DesktopSignIn',
-    query: { entry: ENTRY_OF[String(to.name)] ?? 'signin', redirect: to.query.redirect },
+    query: {
+      entry: ENTRY_OF[String(to.name)] ?? 'signin',
+      redirect: to.query.redirect,
+      ...(invite ? { invite } : {}),
+    },
   }
 }
 

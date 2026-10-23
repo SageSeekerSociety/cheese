@@ -31,7 +31,9 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     project_id = _make_project(client)
     checked_out = []
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         status = pool_status(client.test_app_engine)
         assert status is not None
         checked_out.append(status["checked_out"])
@@ -54,7 +56,9 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     goes to a caller that also presents the proxy's own credential."""
     from app.domain.agent.chat import ChatService
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "project-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
@@ -135,7 +139,9 @@ def _pool(monkeypatch):
 
 @pytest.fixture
 def _project_key(monkeypatch):
-    async def fake_key(self, project_id, *, dream=False):  # noqa: ANN001
+    async def fake_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
     monkeypatch.setattr(
@@ -202,7 +208,9 @@ def test_no_pool_configured_is_refused(client, monkeypatch, _project_key):
 def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
-    async def no_key(self, project_id, *, dream=False):  # noqa: ANN001
+    async def no_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return None
 
     monkeypatch.setattr("app.domain.agent.chat.ChatService.project_gateway_key", no_key)
@@ -427,8 +435,8 @@ async def test_admission_refusal_posts_nothing_with_no_turn_running(client):
 @pytest.mark.anyio
 async def test_admission_says_which_pool_serves_the_project(client, monkeypatch):
     """The proxy asks once and learns both things: may it run, and where does
-    it go (#243). Where it goes is a project setting, so supply can change
-    without touching the proxy or restarting the sandbox."""
+    it go (#243). Where it goes follows the model the project picked, so it
+    can change without touching the proxy or restarting the sandbox."""
     from app.core.config import settings as app_settings
     from app.domain.project.repositories import ProjectRepository
 
@@ -450,7 +458,7 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     async with client.test_factory() as session:
         project = await ProjectRepository(session).get(uuid.UUID(pid))
         assert project is not None
-        project.settings = {"supply": "subscription"}
+        project.settings = {"default_model": "sonnet"}
         await session.commit()
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
@@ -468,19 +476,13 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     resolved is refused, in the resolver's own words, and never quietly served
     from the other pool."""
     from app.domain.agent import gateway_catalog
-    from app.domain.project.repositories import ProjectRepository
 
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
     headers = {"Authorization": f"Bearer {token}"}
 
-    async with client.test_factory() as session:
-        project = await ProjectRepository(session).get(uuid.UUID(pid))
-        assert project is not None
-        # A project on the pool, on a deployment whose pool serves nothing —
-        # an operator pulling the last model out of the catalogue does this.
-        project.settings = {"supply": "gateway"}
-        await session.commit()
+    # A project with no model of its own, on a deployment whose pool serves
+    # nothing — an operator pulling the last model out of the catalogue does this.
     monkeypatch.setattr(gateway_catalog, "offerable", lambda: [])
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
@@ -525,7 +527,9 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
     from app.domain.agent.chat import ChatService
     from app.domain.memory import dream
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "dream-key" if dream else "room-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
@@ -565,7 +569,9 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
     metering proxy: the same rule picks the key here."""
     from app.domain.agent.chat import ChatService
 
-    async def gateway_key(self, project_id, *, dream=False):
+    async def gateway_key(
+        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+    ):
         return "dream-key" if dream else "room-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)

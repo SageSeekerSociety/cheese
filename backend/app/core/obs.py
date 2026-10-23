@@ -177,7 +177,7 @@ def _what_the_server_answered(exc: BaseException | None) -> list[str]:
         lines.append(f"状态：{status}")
     try:
         body = response.text
-    except Exception:  # noqa: BLE001 — a body that will not read is not the news
+    except Exception:  # a body that will not read is not the news
         return lines
     if not isinstance(body, str) or not body.strip():
         return lines
@@ -216,6 +216,20 @@ _AN_ID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{12,}\b",
     re.IGNORECASE,
 )
+# What else varies between occurrences of one problem and so must not decide
+# whether it has been reported: a count, a duration, a port, an object's address.
+# "unable to reach the network for 3 ticks in a row" and "… for 34 ticks" are the
+# same outage, and keyed on the text they were 32 alerts in one afternoon
+# (2026-10-15), one per tick; an asyncpg connection's `at 0x7f…` made each
+# "Exception closing connection" a problem of its own. Only the key is
+# normalised; the alert still carries the text as logged.
+_A_VARYING_NUMBER_RE = re.compile(r"0x[0-9a-f]+|\d+", re.IGNORECASE)
+
+
+def _same_problem(text: str) -> str:
+    return _A_VARYING_NUMBER_RE.sub("N", _AN_ID_RE.sub("<id>", text))
+
+
 # Written onto an exception once it has been reported. One unhandled exception
 # is logged three times on the way out — the request middleware, the catch-all
 # handler, and uvicorn re-raising past both — and three alerts for one failure
@@ -290,7 +304,7 @@ def _cut_by_release(record: logging.LogRecord) -> bool:
         return isinstance(exc, asyncio.CancelledError) and _SHUTDOWN_CUT in str(exc)
     try:
         return _SHUTDOWN_CUT in record.getMessage()
-    except Exception:  # noqa: BLE001 — a bad format string is not our bug
+    except Exception:  # a bad format string is not our bug
         return False
 
 
@@ -338,7 +352,7 @@ class AlertOnError(logging.Handler):
         else:
             try:
                 title = record.getMessage()
-            except Exception:  # noqa: BLE001 — a bad format string is not our bug
+            except Exception:  # a bad format string is not our bug
                 title = str(event)
         title = title or record.name
         lines = [
@@ -372,9 +386,9 @@ class AlertOnError(logging.Handler):
         key = "|".join(
             [
                 record.name,
-                _AN_ID_RE.sub("<id>", title),
+                _same_problem(title),
                 kind,
-                _AN_ID_RE.sub("<id>", str(context.get("path", ""))),
+                _same_problem(str(context.get("path", ""))),
             ]
         )
         return title, lines, key
@@ -391,7 +405,7 @@ class AlertOnError(logging.Handler):
                 return
             title, lines, key = self._summary(record)
             alerting.send(f"后端报错：{title}", lines, key=key, when=record.created)
-        except Exception:  # noqa: BLE001 — logging must never raise into a caller
+        except Exception:  # logging must never raise into a caller
             pass
 
 
@@ -467,7 +481,7 @@ def configure_logging() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def get_logger(name: str):  # noqa: ANN201 — structlog's own typing
+def get_logger(name: str):  # structlog's own typing
     return structlog.get_logger(name)
 
 
@@ -510,10 +524,10 @@ class ResponseIntegrityAudit:
     is nothing declared to compare against.
     """
 
-    def __init__(self, app) -> None:  # noqa: ANN001 — ASGI app
+    def __init__(self, app) -> None:  # ASGI app
         self.app = app
 
-    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+    async def __call__(self, scope, receive, send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
@@ -524,7 +538,7 @@ class ResponseIntegrityAudit:
         status: int | None = None
         started = False
 
-        async def _send(message) -> None:  # noqa: ANN001 — ASGI message
+        async def _send(message) -> None:  # ASGI message
             nonlocal declared, sent, status, started
             if message["type"] == "http.response.start":
                 started = True

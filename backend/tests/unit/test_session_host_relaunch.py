@@ -105,9 +105,6 @@ class Driver:
     def conversation(self, status):
         return "conversation"
 
-    def takes_inputs(self, status):
-        return True
-
     async def launch(self, wire, host, ref, spec, access, known):
         if self.machine.launches:
             await self.relaunch()

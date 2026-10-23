@@ -12,10 +12,13 @@
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
+from app.domain.room_task.models import Task, TaskStatus
 from tests.conftest import wait_work_idle
+from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     join_project_team,
     open_task,
@@ -158,6 +161,69 @@ def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
     assert f"停止跟进 PR #{number}" in room_text(card_line)
     room_line = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert f"停止跟进 PR #{number}" not in room_text(room_line)
+
+
+def test_closing_a_task_revokes_its_card_and_the_poller_stops_touching_it(
+    client, app_world
+):
+    """活关掉了，卡跟着结束：关任务那条路当场收，轮询器也不再碰它的 PR。
+
+    这一条钉的是「关了的活别再亮绿灯」的写侧。读侧另有一条：已关任务的卡
+    不让房间 `moving`（`tests/integration/test_rail_lights.py`）。
+    """
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
+    task_id = delivery_task_id(client, tid)
+
+    r = client.post(
+        f"/topics/{task_id}/close", json={}, headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "revoked"
+    assert "任务已关闭" in card["note"]
+    assert f"#{number}" in card["note"]
+
+    # 再跑一跳：这张卡已经不在轮询名单里了，GitHub 一次都不该被打。
+    fake.status_calls.clear()
+    result = _poll(client)
+    assert result["cards_checked"] == 0
+    assert fake.status_calls == []
+    assert fake.prs[number]["state"] == "open"
+
+
+def test_a_poll_converges_a_card_left_on_a_task_closed_behind_the_api(
+    client, app_world
+):
+    """第二道锁：活从别的路径关掉，卡漏在 pending 上，轮询器下一跳把它收掉。
+
+    这条是给修复之前就停在那里的行兜底的（测试频道那两张卡：10-12 关的活，
+    10-17 还 pending），所以这里直接改库把活设成 closed，不走关任务那条路。
+    """
+    fake = app_world["fake"]
+    _pid, tid, _cid, number, _head = _ready_card(client, app_world)
+    task_id = delivery_task_id(client, tid)
+
+    async def close_behind_the_api() -> None:
+        async with client.test_factory() as session:
+            task = await session.get(Task, uuid.UUID(str(task_id)))
+            assert task is not None
+            task.status = TaskStatus.closed
+            task.closed_at = datetime.now(UTC)
+            await session.commit()
+
+    asyncio.run(close_behind_the_api())
+
+    fake.status_calls.clear()
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "revoked"
+    assert "任务已关闭" in card["note"]
+    assert f"#{number}" in card["note"]
+    assert fake.status_calls == []
+    assert fake.prs[number]["state"] == "open"
 
 
 def test_archiving_after_a_pr_was_closed_does_not_ask_anyone_to_close_it(
@@ -355,7 +421,10 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, app_wo
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422, r.text
-    assert "dirty" in r.json()["message"]
+    # 这句话要说清是冲突：旧的「现在不能采纳（合并态：dirty）」把判据说给读者
+    # 听，读不出下一步该做什么（2026-10-16）。
+    assert "冲突" in r.json()["message"]
+    assert "现在不能采纳" not in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert fake.merge_calls == []
 

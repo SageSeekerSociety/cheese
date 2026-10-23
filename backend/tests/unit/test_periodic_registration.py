@@ -11,10 +11,9 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
+from app.domain.block.queries import turn_starts
 from app.domain.delivery.agent import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
@@ -32,23 +31,27 @@ pytestmark = pytest.mark.anyio
 _EXPECTED_PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
-    "seat_instance_id": seat_instance_id,
-    "record_agent": record_agent,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
 }
+
+#: 接线时从设置里现读的口子：只有草稿扫描的窗口是这种。写成模块级常量会让它与
+#: 未改过的默认值相等，于是把 `periodic.py` 改成写死 7200 也照样绿。
+_LIVE_PORTS = {
+    "quiet_window_s": lambda: settings.draft_pr_sweep_activity_window_s,
+}
+
+
 _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
         "record_instruction",
-        "seat_instance_id",
-        "record_agent",
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "landing watch": ("record_instruction", "task_teammate", "machines"),
-    "draft pr sweep": ("dispatch_pending", "record_instruction"),
+    "task closing": ("record_instruction", "task_teammate", "machines"),
+    "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
 }
 
 
@@ -59,8 +62,7 @@ def _world():
         session_factory=chat_sessions,
         work_runner=Mock(name="the chat's work runner"),
         stop_work_in_closed_tasks=AsyncMock(),
-        remind_silent_turns=AsyncMock(),
-        remind_stale_checklists=AsyncMock(),
+        compute=SimpleNamespace(working_conversations=Mock(return_value=set())),
         sweep_memory_dreams=AsyncMock(),
     )
     runner = SimpleNamespace(
@@ -113,13 +115,20 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
+        (
+            "task deadline reminder",
+            "task_notices.sweep.remind_deadlines",
+            "sessions",
+        ),
         ("pr poll", "review.pr_poll.poll_open_prs", ("chat", "announce")),
         ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", ("chat", "announce")),
-        ("landing watch", "review.pr_poll.watch_landings", ("chat", "announce")),
+        ("task closing", "review.pr_poll.sweep_closings", ("chat", "announce")),
         ("draft pr sweep", "review.pr_poll.open_draft_prs", ("chat", "announce")),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
         ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
+        ("session record seal", "session_record.service.seal", "sessions"),
+        ("session record retention", "session_record.retention.sweep", "sessions"),
         (
             "notification email drain",
             "notification.maintenance.drain_email_queue",
@@ -147,7 +156,7 @@ def _world():
             "task.deadline_scheduler.sweep_expired_deadlines",
             "sessions",
         ),
-        ("ratchet ingest", "ratchet.ingest.ingest_snapshots", "sessions"),
+        ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )
 async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
@@ -158,11 +167,16 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     _world()
     work = AsyncMock(return_value={"did": 1})
     monkeypatch.setattr(f"app.domain.{target}", work)
+    # 一个和默认值不一样的窗口：写死 7200 的接线过不了这一条。
+    monkeypatch.setattr(settings, "draft_pr_sweep_activity_window_s", 4242)
     world = _world()
     assert world.get_runner.call_count == 0, "registration ran work before a tick"
     assert await world.jobs[name]._job() == {"did": 1}
     handed = argument if isinstance(argument, tuple) else (argument,)
-    ports = {port: _EXPECTED_PORTS[port] for port in _KEYWORD_PORTS.get(name, ())}
+    ports = {
+        port: (_LIVE_PORTS[port]() if port in _LIVE_PORTS else _EXPECTED_PORTS[port])
+        for port in _KEYWORD_PORTS.get(name, ())
+    }
     work.assert_awaited_once_with(*(getattr(world, one) for one in handed), **ports)
 
 
@@ -181,6 +195,39 @@ async def test_the_draft_sweep_hands_a_pump_bound_to_this_chat(monkeypatch):
     pump.assert_awaited_once_with(
         world.chat_sessions, chat=world.chat, runner=world.chat.work_runner
     )
+
+
+async def test_the_draft_sweep_clock_hands_its_window_down(monkeypatch):
+    """`open_draft_prs` 是周期那一拍和补扫共用的那道门。
+
+    周期递进来的窗口要原样交给扫描；补扫不递，就是「不设窗口」。少了这一句，
+    周期这一拍会悄悄变回扫全部 —— 正是这个 PR 要省掉的那笔 GitHub 请求。
+    """
+    from app.domain.review import pr_poll
+
+    sweep = AsyncMock(return_value={"opened": 0})
+    monkeypatch.setattr(pr_poll.pr_publish, "sweep_draft_prs", sweep)
+    monkeypatch.setattr(pr_poll, "deliver_dependency_notices", AsyncMock())
+    chat = SimpleNamespace(session_factory=Mock(name="the chat's sessions"))
+    pending = Mock(name="dispatch_pending")
+
+    await pr_poll.open_draft_prs(
+        chat,
+        announce,
+        dispatch_pending=pending,
+        record_instruction=record_task_instruction,
+        quiet_window_s=7211,
+    )
+    assert sweep.await_args.kwargs["quiet_window_s"] == 7211
+
+    sweep.reset_mock()
+    await pr_poll.open_draft_prs(
+        chat,
+        announce,
+        dispatch_pending=pending,
+        record_instruction=record_task_instruction,
+    )
+    assert sweep.await_args.kwargs["quiet_window_s"] is None
 
 
 @pytest.mark.parametrize(
@@ -203,8 +250,6 @@ async def test_machine_clocks_call_the_explicitly_supplied_sweeper(name, collabo
     ("name", "method"),
     [
         ("closed task stop", "stop_work_in_closed_tasks"),
-        ("chat progress reminder", "remind_silent_turns"),
-        ("checklist reminder", "remind_stale_checklists"),
         ("memory dream", "sweep_memory_dreams"),
     ],
 )
@@ -212,6 +257,13 @@ async def test_chat_clocks_call_the_supplied_chat(name, method):
     world = _world()
     await world.jobs[name]._job()
     getattr(world.chat, method).assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("name", ["chat progress reminder", "checklist reminder"])
+async def test_reminder_clocks_ask_the_supplied_chats_sessions(name):
+    world = _world()
+    await world.jobs[name]._job()
+    world.chat.compute.working_conversations.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -319,7 +371,10 @@ async def test_subscription_ingestion_is_disabled_or_uses_the_trimmed_path(
     assert job.interval_seconds == (23 if log_path.strip() else 0)
     if log_path.strip():
         assert await job._job() == 5
-        ingest.assert_awaited_once_with(world.sessions, Path("/tmp/usage.jsonl"))
+        # `block` 那个读是接线时递的，递的就是它本身（`app.periodic_jobs`）。
+        ingest.assert_awaited_once_with(
+            world.sessions, Path("/tmp/usage.jsonl"), turn_starts=turn_starts
+        )
     else:
         ingest.assert_not_awaited()
 
@@ -392,9 +447,11 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "delivery_overdue_check_interval_s",
         "task_deadline_sweep_interval_s",
         "memory_dream_sweep_interval_s",
-        "ratchet_ingest_interval_s",
-        "wake_watch_interval_s",
         "sandbox_disk_check_s",
+        "draft_pr_sweep_interval_s",
+        "ci_activity_sweep_interval_s",
+        "platform_model_roles_refresh_interval_s",
+        "model_spend_cap_alert_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -405,36 +462,60 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("forge credential cache cleanup", 3600),
         ("forge orphan account sweep", 3600),
         ("quiet task reminder", 3600),
+        ("task deadline reminder", 3600),
         ("pr poll", 101),
         ("task pr poll", 101),
-        ("landing watch", 101),
-        ("draft pr sweep", 101),
+        ("task closing", 101),
+        ("draft pr sweep", 119),
         ("orphan sweep", 102),
         ("closed task stop", 103),
         ("queued message sweep", 104),
         ("chat progress reminder", 105),
         ("checklist reminder", 105),
+        ("task state reminder", 105),
         ("gate sweep", 106),
         ("cloud host pool sweep", 107),
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
-        ("sandbox disk guard", 120),
+        ("sandbox disk guard", 118),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
         ("run record expiry", 110),
+        ("session record seal", 60),
+        ("session record retention", 600),
+        ("retired site archive", 60),
         ("notification email drain", 111),
         ("notification push drain", 112),
         ("notification digest", 113),
         ("delivery resend", 114),
         ("docs question retention", 86400),
+        ("turn resumes", 30),
+        ("failed turn resume deliveries", 30),
         ("timed deliveries", 30),
         ("overdue deliveries", 115),
         ("routines", 30),
+        ("assistant routines", 30),
+        ("assistant memory tidy", 3600),
         ("task deadline sweep", 116),
         ("memory dream", 117),
-        ("ratchet ingest", 118),
-        ("wake watch", 119),
+        ("platform model roles refresh", 121),
+        ("model spend cap alert", 122),
+        ("ci activity sweep", 300),
     ]
-    assert all(job.owner_only for job in world.jobs.values())
+    # Every process serves requests that read the platform model roles, so that
+    # one refresh runs everywhere; every other clock only on the lock holder.
+    assert [name for name, job in world.jobs.items() if not job.owner_only] == [
+        "platform model roles refresh"
+    ]
     world.get_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"), [(0, 0), (60, 300), (300, 300), (900, 900)]
+)
+def test_ci_reporting_never_polls_faster_than_five_minutes(
+    monkeypatch, interval, expected
+):
+    monkeypatch.setattr(settings, "ci_activity_sweep_interval_s", interval)
+    assert _world().jobs["ci activity sweep"].interval_seconds == expected

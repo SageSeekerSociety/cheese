@@ -1,10 +1,10 @@
 """守卫：产生事件的调用点必须从 `landing()` 取落点，不许就地挑一个 `conversation_id`。
 
-和 ``test_author_type_two_values.py`` / ``test_no_adhoc_auth_helpers.py`` 一样，
+和 ``test_author_type_two_values.py`` 一样，
 这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 AGENTS.md 那条
 「测行为、不读源码」的例外。
 
-它守的是这次改动唯一守不住自己的一半。封闭表（``block/about.py``）只在被调用时才
+它守的是这次改动唯一守不住自己的一半。封闭表（``event_about.py``）只在被调用时才
 起作用：下一个人写事件时照旧写 ``conversation_id=topic.id``，代码跑得好好的，事件也确实
 写进了某个房间 —— 只是落错地方的事件从来不报错，只是在该读到它的那张卡上再也读不
 到。一次都不会响，而这正是这张表本来要消灭的那种自由。
@@ -115,15 +115,24 @@ def _picked_in_place(call: ast.Call, landing_names: set[str]) -> list[str]:
 
 def _failure_message(offenders: list[str]) -> str:
     return (
-        "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
+        "这些事件的落点是调用点自己挑的，不是从 event_about.py 的 landing() 取的：\n"
         + "\n".join(offenders)
         + "\n改法：在事件写入前用 landed = landing(EventAbout.<档>, ...) 取落点，"
         "再给 blocks.add(...) 传 project_id=landed.project_id、"
         "conversation_id=landed.conversation_id；两个字段都从同一返回值取。\n"
         "按事件关于 task/thread/room/project 哪一档选择 EventAbout，并补齐该档 id。"
-        "规则和四档表：backend/app/domain/block/about.py 的模块说明与 landing()。\n"
+        "规则和四档表：backend/app/domain/event_about.py 的模块说明与 landing()。\n"
         "复查：cd backend && uv run pytest tests/unit/test_event_landing_guard.py -q"
     )
+
+
+def test_scanned_roots_all_exist():
+    missing = [root for root in SCANNED if not (REPO_ROOT / root).is_dir()]
+    assert not missing, f"事件落点守卫的扫描目录不存在：{missing}"
+
+
+def test_sources_is_not_empty():
+    assert _sources(), "事件落点守卫没有扫描到任何 Python 文件"
 
 
 def test_every_event_takes_its_landing_from_the_closed_table():
@@ -146,7 +155,7 @@ def test_failure_text_contains_the_landing_repair_recipe():
     assert "landed = landing(EventAbout.<档>" in message
     assert "project_id=landed.project_id" in message
     assert "conversation_id=landed.conversation_id" in message
-    assert "backend/app/domain/block/about.py" in message
+    assert "backend/app/domain/event_about.py" in message
     assert "test_event_landing_guard.py" in message
 
 

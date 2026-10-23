@@ -19,6 +19,9 @@ from app.domain.oauth.services import (
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 
+#: provider 的实现住在 `oauth/services/providers.py`，所以 patch 点也在这个子模块上。
+HTTPX_CLIENT = "app.domain.oauth.services.providers.httpx.AsyncClient"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,6 +63,7 @@ def _connection(**overrides):
         "created_at": NOW,
         "raw_profile": None,
         "token_expires": None,
+        "refresh_token_expires": None,
         "refresh_token": None,
     }
     defaults.update(overrides)
@@ -199,9 +203,7 @@ class TestGitHubProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("my-code")
 
         assert result == {"access_token": "tok123"}
@@ -233,9 +235,7 @@ class TestGitHubProviderRefreshAccessToken:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.refresh_access_token("old-refresh")
 
         assert result["access_token"] == "new-tok"
@@ -287,7 +287,7 @@ async def _github_info(profile_email, emails_status, emails) -> OAuthUserInfo:
             _GH_EMAILS: (emails_status, emails),
         }
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GitHubProvider(_github_config()).get_user_info("token123")
 
 
@@ -361,9 +361,7 @@ class TestGoogleProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("goog-code")
 
         assert result == {"access_token": "goog-tok"}
@@ -381,7 +379,7 @@ async def _google_info(profile: dict) -> OAuthUserInfo:
     client = _routed_client(
         {"https://www.googleapis.com/oauth2/v2/userinfo": (200, profile)}
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GoogleProvider(_google_config()).get_user_info("goog-token")
 
 
@@ -460,9 +458,7 @@ class TestRUCProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("ruc-code")
 
         assert result == {"access_token": "ruc-tok"}
@@ -494,9 +490,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         # uid coerced to str; primary identity's stno used as username
@@ -519,9 +513,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         assert info.id == "u-9"
@@ -542,9 +534,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(
-                "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-            ),
+            patch(HTTPX_CLIENT, return_value=mock_client),
             pytest.raises(BadRequestError),
         ):
             await provider.get_user_info("ruc-token")
@@ -576,15 +566,15 @@ class TestOAuthServiceInitialize:
     def test_initialize_with_github_provider(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_enabled_providers = "github"
-            mock_settings.oauth_github_client_id = "gh-cid"
-            mock_settings.oauth_github_client_secret = "gh-sec"
-            mock_settings.oauth_github_redirect_url = (
+            mock_settings.oauth_enabled_providers = "github_app"
+            mock_settings.oauth_github_app_client_id = "gh-cid"
+            mock_settings.oauth_github_app_client_secret = "gh-sec"
+            mock_settings.oauth_github_app_redirect_url = (
                 "https://example.com/callback/github"
             )
             svc._initialize()
-        assert "github" in svc._providers
-        assert isinstance(svc._providers["github"], GitHubProvider)
+        assert "github_app" in svc._providers
+        assert isinstance(svc._providers["github_app"], GitHubProvider)
 
     def test_initialize_with_google_provider(self):
         svc, _repo = _make_service()
@@ -602,10 +592,10 @@ class TestOAuthServiceInitialize:
     def test_initialize_with_multiple_providers(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_enabled_providers = "github, google"
-            mock_settings.oauth_github_client_id = "gh-cid"
-            mock_settings.oauth_github_client_secret = "gh-sec"
-            mock_settings.oauth_github_redirect_url = (
+            mock_settings.oauth_enabled_providers = "github_app, google"
+            mock_settings.oauth_github_app_client_id = "gh-cid"
+            mock_settings.oauth_github_app_client_secret = "gh-sec"
+            mock_settings.oauth_github_app_redirect_url = (
                 "https://example.com/callback/github"
             )
             mock_settings.oauth_google_client_id = "goog-cid"
@@ -619,11 +609,11 @@ class TestOAuthServiceInitialize:
     def test_initialize_skips_incomplete_config(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_enabled_providers = "github"
-            mock_settings.oauth_github_client_id = "gh-cid"
+            mock_settings.oauth_enabled_providers = "github_app"
+            mock_settings.oauth_github_app_client_id = "gh-cid"
             # Missing client_secret and redirect_url
-            del mock_settings.oauth_github_client_secret
-            del mock_settings.oauth_github_redirect_url
+            del mock_settings.oauth_github_app_client_secret
+            del mock_settings.oauth_github_app_redirect_url
             svc._initialize()
         assert svc._providers == {}
 
@@ -661,15 +651,16 @@ class TestGetProviderConfig:
     def test_github_config(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_github_client_id = "cid"
-            mock_settings.oauth_github_client_secret = "csec"
-            mock_settings.oauth_github_redirect_url = "https://redirect.com"
-            config = svc._get_provider_config("github")
+            mock_settings.oauth_github_app_client_id = "cid"
+            mock_settings.oauth_github_app_client_secret = "csec"
+            mock_settings.oauth_github_app_redirect_url = "https://redirect.com"
+            config = svc._get_provider_config("github_app")
         assert config is not None
-        assert config.id == "github"
+        assert config.id == "github_app"
         assert config.name == "GitHub"
         assert config.client_id == "cid"
-        assert "read:user" in config.scope
+        assert config.scope == []
+        assert "scope=" not in GitHubProvider(config).get_authorization_url()
 
     def test_google_config(self):
         svc, _repo = _make_service()
@@ -695,28 +686,28 @@ class TestGetProviderConfig:
     def test_missing_client_id_returns_none(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            del mock_settings.oauth_github_client_id
-            mock_settings.oauth_github_client_secret = "csec"
-            mock_settings.oauth_github_redirect_url = "https://redirect.com"
-            config = svc._get_provider_config("github")
+            del mock_settings.oauth_github_app_client_id
+            mock_settings.oauth_github_app_client_secret = "csec"
+            mock_settings.oauth_github_app_redirect_url = "https://redirect.com"
+            config = svc._get_provider_config("github_app")
         assert config is None
 
     def test_missing_client_secret_returns_none(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_github_client_id = "cid"
-            del mock_settings.oauth_github_client_secret
-            mock_settings.oauth_github_redirect_url = "https://redirect.com"
-            config = svc._get_provider_config("github")
+            mock_settings.oauth_github_app_client_id = "cid"
+            del mock_settings.oauth_github_app_client_secret
+            mock_settings.oauth_github_app_redirect_url = "https://redirect.com"
+            config = svc._get_provider_config("github_app")
         assert config is None
 
     def test_missing_redirect_url_returns_none(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
-            mock_settings.oauth_github_client_id = "cid"
-            mock_settings.oauth_github_client_secret = "csec"
-            del mock_settings.oauth_github_redirect_url
-            config = svc._get_provider_config("github")
+            mock_settings.oauth_github_app_client_id = "cid"
+            mock_settings.oauth_github_app_client_secret = "csec"
+            del mock_settings.oauth_github_app_redirect_url
+            config = svc._get_provider_config("github_app")
         assert config is None
 
 
@@ -952,6 +943,7 @@ class TestCreateConnection:
             access_token=None,
             refresh_token=None,
             token_expires=None,
+            refresh_token_expires=None,
         )
         assert result["id"] == 1
 
@@ -997,7 +989,7 @@ class TestUpdateConnectionTokens:
         # 刷 token 的调用方根本没跟 provider 要过用户信息，要是顺手把 profile 覆盖
         # 成空，设置页上那行「已连接 <名字>」就会莫名其妙退回一串数字 id。
         repo.update_tokens.assert_awaited_once_with(
-            7, None, None, None, raw_profile=None
+            7, None, None, None, raw_profile=None, refresh_token_expires=None
         )
 
 
@@ -1088,11 +1080,10 @@ class TestGetGithubUserToken:
         with patch.object(
             svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
         ) as mock_refresh:
-            token, reason = await svc.get_github_user_token_with_reason(42)
+            token = await svc.get_github_user_token(42)
 
         mock_refresh.assert_awaited_once_with(7, "github_app")
         assert token == "fresh-token"
-        assert reason is None
 
     @pytest.mark.anyio
     async def test_soon_to_expire_token_also_delegates_to_refresh(self):
@@ -1114,7 +1105,7 @@ class TestGetGithubUserToken:
         assert result == "fresh-token"
 
     @pytest.mark.anyio
-    async def test_refresh_failure_is_forwarded_as_none_with_reason(self):
+    async def test_refresh_failure_is_forwarded_as_none(self):
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
@@ -1126,10 +1117,7 @@ class TestGetGithubUserToken:
         with patch.object(
             svc, "_refresh_and_persist_token", new=AsyncMock(return_value=None)
         ):
-            token, reason = await svc.get_github_user_token_with_reason(42)
-
-        assert token is None
-        assert reason == "refresh_failed"
+            assert await svc.get_github_user_token(42) is None
 
     @pytest.mark.anyio
     async def test_undecryptable_access_token_degrades_to_none_and_logs(self, caplog):
@@ -1144,10 +1132,25 @@ class TestGetGithubUserToken:
             refresh_token=None,
         )
 
-        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+        with caplog.at_level(logging.WARNING):
             assert await svc.get_github_user_token(42) is None
 
-        assert "could not be" in caplog.text
+        # 判的是这条记录自己的 logger 名，不只看文本。caplog 的 handler 挂在根上，
+        # 记录会一路传上来，所以 `at_level(logger=...)` 里写哪个名字都是绿的 —— 真正
+        # 钉住「这句话是从 `services/tokens.py` 发出来的」的是下面这一条：这条日志跟着
+        # `_decrypt_stored_token` 搬了家，名字对不上就红。
+        #
+        # 挑记录用的 `could not be` 同时也把这句日志的措辞固定住了：改措辞也会红，报
+        # 错信息看着像 logger 名不对。两条一起固定是有意的 —— 这句是给运维看的降级
+        # 说明，`test_a_refusal_is_said_with_a_key.py` 按同一句话数着它的语料。
+        logs = [
+            record.name
+            for record in caplog.records
+            if "could not be" in record.getMessage()
+        ]
+        assert logs == ["app.domain.oauth.services.tokens"], (
+            f"降级日志的来源/措辞变了：{logs}；期望 tokens 子模块里那一句"
+        )
 
     # "an undecryptable stored refresh_token degrades cleanly, without
     # writing" is covered against a real database in
@@ -1156,7 +1159,7 @@ class TestGetGithubUserToken:
     @pytest.mark.anyio
     async def test_expiring_token_with_unconfigured_provider_returns_none(self):
         """github_app not in oauth_enabled_providers → get_provider() raises
-        NotFoundError. That must not escape into the accept flow."""
+        NotFoundError. That must not escape into the caller."""
         svc, repo = _make_service()
         repo.get_by_user_and_provider.return_value = _connection(
             id=7,
@@ -1222,7 +1225,7 @@ class TestListUserConnections:
     async def test_returns_formatted_list(self):
         svc, repo = _make_service()
         conns = [
-            _connection(id=1, provider_id="github", provider_user_id="gh-1"),
+            _connection(id=1, provider_id="github_app", provider_user_id="gh-1"),
             _connection(id=2, provider_id="google", provider_user_id="goog-1"),
         ]
         repo.list_by_user.return_value = conns
@@ -1232,7 +1235,7 @@ class TestListUserConnections:
         repo.list_by_user.assert_awaited_once_with(42)
         assert len(result) == 2
         assert result[0]["id"] == 1
-        assert result[0]["providerId"] == "github"
+        assert result[0]["providerId"] == "github_app"
         assert result[0]["providerName"] == "GitHub"
         assert result[0]["providerUserId"] == "gh-1"
         assert result[0]["connectedAt"] == NOW.isoformat()
@@ -1276,7 +1279,7 @@ class TestListUserConnections:
             id=1,
             raw_profile={"login": "octocat", "id": 583231},
             token_expires=NOW,
-            refresh_token="rt-secret",
+            refresh_token=_sealed("rt-secret", "refresh_token"),
             access_token="at-secret",
         )
         repo.list_by_user.return_value = [conn]
@@ -1315,9 +1318,9 @@ class TestListUserConnections:
 
 
 class TestSignInProviderList:
-    def test_the_account_link_provider_is_never_offered_as_a_way_to_sign_in(self):
-        # Both providers are enabled and fully configured, exactly as a
-        # deployment that supports RUC sign-in AND GitHub account linking is.
+    def test_github_is_offered_as_a_way_to_sign_in(self):
+        """cheesex-app's authorization signs people in as well as linking
+        their account: one GitHub, not a login app beside a linking one."""
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
             mock_settings.oauth_enabled_providers = "ruc,github_app"
@@ -1332,8 +1335,8 @@ class TestSignInProviderList:
                 "https://example.com/api/users/me/github-account/callback"
             )
             offered = svc.get_providers_config()
-            # Linking still resolves it; only the sign-in list leaves it out.
-            link_provider = svc.get_provider("github_app")
 
-        assert [p["id"] for p in offered] == ["ruc"]
-        assert isinstance(link_provider, GitHubProvider)
+        assert [(p["id"], p["name"]) for p in offered] == [
+            ("ruc", "微人大"),
+            ("github_app", "GitHub"),
+        ]

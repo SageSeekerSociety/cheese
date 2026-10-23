@@ -32,7 +32,7 @@ export interface Plan {
   is_default: boolean
 }
 
-export type PackSource = 'plan_period' | 'task_earmark' | 'purchase' | 'admin_grant'
+export type PackSource = 'plan_period' | 'task_earmark' | 'purchase' | 'admin_grant' | 'reward'
 
 export interface CreditPack {
   id: string
@@ -70,6 +70,8 @@ export interface CreditTeamRow {
   plan_key: string
   period: CreditPeriod
   packs: CreditPack[]
+  /** 管理员开通了需开通才能用的模型（Claude / GPT / Gemini）。 */
+  overseas_approved: boolean
 }
 
 export interface CreditTeamPage {
@@ -89,6 +91,7 @@ export interface CreditTeamDetail {
   plan: Plan
   period: CreditPeriod
   packs: CreditPack[]
+  overseas_approved: boolean
 }
 
 export interface CreditAudit {

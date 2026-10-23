@@ -51,6 +51,8 @@ class Purpose(StrEnum):
     MCP_OAUTH_STATE = "mcp-oauth-state"
     MCP_SECRET = "mcp-secret"
     MODEL_CONNECTION_KEY = "model-connection-key"
+    #: An upload address this backend hands a browser (`app.core.blob_store`).
+    FILE_UPLOAD = "file-upload"
 
 
 class DecryptionError(InternalServerError):

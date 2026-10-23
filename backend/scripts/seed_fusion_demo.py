@@ -8,6 +8,7 @@ migration, 芝士 from boot).
 Idempotent: keyed on the project name, so re-running never duplicates.
 """
 
+import argparse
 import asyncio
 
 from sqlalchemy import delete, select
@@ -49,7 +50,7 @@ DEMO_PROJECTS = [
 ]
 
 
-async def seed() -> None:
+async def seed(*, repository: bool = True) -> None:
     async with async_session_factory() as s:
         for name, team_id, first_topic in DEMO_PROJECTS:
             # Idempotent: drop any prior instance (cascades to topics/members).
@@ -112,14 +113,15 @@ async def seed() -> None:
             # seeded here: its creator and 芝士. 综合 seats nobody by name —
             # everyone in the project is in it.
             await TopicMemberService(s).seed(work.id, owner_handle=OWNER)
-            # ponytail: 本地没配 Forgejo 时种子项目不带仓库，别让演示种子整体失败。
-            from app.core.config import settings
-
-            if settings.forgejo_url:
+            if repository:
                 await provision_repository(project.id, s)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    # A stack with no forge (`task dev:sandbox`) cannot host the repositories;
+    # its projects then have none, and whatever needs one says so in the page.
+    parser.add_argument("--without-repository", action="store_true")
+    asyncio.run(seed(repository=not parser.parse_args().without_repository))

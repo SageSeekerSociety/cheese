@@ -15,6 +15,7 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
+    approve_overseas,
     post_project,
     put_on_plan,
     session_auth_headers,
@@ -44,6 +45,7 @@ def create(client):
     async def reserve() -> None:
         async with client.test_request_factory() as session:  # type: ignore[attr-defined]
             await put_on_plan(session, project["team_id"], "reserve")
+            await approve_overseas(session, project["team_id"])
             await session.commit()
 
     client.portal.call(reserve)  # type: ignore[union-attr]
@@ -147,11 +149,11 @@ async def test_a_removed_teammate_model_is_refused_without_switching_pool(
         f"/projects/{pid}/agents/{teammate['id']}",
         json={"configuration": {"model": "opus"}},
     )
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )
@@ -179,11 +181,11 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
         == 200
     )
     from app.core.errors import ValidationError
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )
@@ -292,8 +294,8 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
         },
     ).json()["data"]
     assert result["supply"]["model"] == "deepseek-flash"
-    # 换到订阅池：claude-opus-5 在目录里（旧队友语义下没有队友绑它就吃拒
-    # 绝），目录语义直接绑得上 —— 但档位是 premium，过 tier 策略闸时被拒。
+    # 项目把分身默认配成订阅的 opus：claude-opus-5 由此可指定（供给跟着模型
+    # 走）—— 但档位是 premium，过 tier 策略闸时被拒。
     from app.domain.project.repositories import ProjectRepository
 
     async with client.test_factory() as session:
@@ -301,7 +303,7 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
         assert orm_project is not None
         orm_project.settings = {
             **(orm_project.settings or {}),
-            "supply": "subscription",
+            "default_subagent_model": "opus",
         }
         await session.commit()
     premium = client.post(
@@ -409,9 +411,9 @@ async def test_a_subagent_naming_the_parents_model_runs_on_it(client):
 async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_pools(
     client,
 ):
-    """父会话是绑了订阅模型的队友，项目在网关池：分身指定同一个模型照样绑上。
+    """父会话是绑了订阅模型的队友：分身指定同一个模型照样绑上。
 
-    这个模型本来不在项目池的可指定范围里，但父会话此刻就在这个席位上跑着
+    订阅模型本来不在可随意指定的范围里（那里只有平台池的模型），但父会话此刻就在这个席位上跑着
     它 —— 「让分身和我同模型」不该被拒，更不该被悄悄换成分身默认。"""
     project = create(client)
     pid = project["id"]
@@ -441,7 +443,7 @@ async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_po
 async def test_a_subagent_asking_outside_the_projects_pool_is_refused_by_name(
     client,
 ):
-    """目录里有、但不在本项目池里的模型：可指定范围按池算，跨池吃拒绝。"""
+    """目录里有、但不在可指定范围里的订阅模型：没被项目或席位选中就吃拒绝。"""
     project = create(client)
     pid = project["id"]
     body = client.post(
@@ -516,11 +518,11 @@ def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
     pid = create(client)["id"]
     route = f"/projects/{pid}/default-model"
     assert client.put(route, json={"model": "opus"}).status_code == 200
-    from app.domain.agent_instance import configuration
+    from app.domain.agent import model_catalog
 
-    available = configuration.subscription_model_listings()
+    available = model_catalog.subscription_model_listings()
     monkeypatch.setattr(
-        configuration,
+        model_catalog,
         "subscription_model_listings",
         lambda: [item for item in available if item.id != "opus"],
     )
@@ -529,3 +531,81 @@ def test_the_picker_reports_a_main_model_that_left_the_catalog_as_saved(
     assert state["model"] == "opus"
     assert client.put(route, json={"model": "deepseek-flash"}).status_code == 200
     assert client.get(route).json()["data"]["model"] == "deepseek-flash"
+
+
+def test_a_subagent_naming_no_model_is_refused_a_model_its_team_lost(client):
+    """A subagent default saved while the team was approved is refused once the
+    approval is withdrawn, whether the subagent names the model or not."""
+    project = create(client)
+    pid = project["id"]
+    response = client.put(
+        f"/projects/{pid}/default-model",
+        json={"model": "deepseek-flash", "subagent_model": "sonnet"},
+    )
+    assert response.status_code == 200, response.text
+
+    async def withdraw() -> None:
+        from sqlalchemy import delete
+
+        from app.domain.usage.models import OverseasModelApproval
+
+        async with client.test_request_factory() as session:  # type: ignore[attr-defined]
+            await session.execute(
+                delete(OverseasModelApproval).where(
+                    OverseasModelApproval.team_id == project["team_id"]
+                )
+            )
+            await session.commit()
+
+    client.portal.call(withdraw)  # type: ignore[union-attr]
+    token = mint_scoped_token(project_id=pid, topic_id=project["root_topic_id"])
+    headers = {"Authorization": f"Bearer {token}", "X-Cheese-Subagent": "1"}
+    main = client.post(
+        "/llm/admission", headers={"Authorization": f"Bearer {token}"}
+    ).json()["data"]
+    assert main["allow"] is True
+    for extra in ({}, {"X-Cheese-Child-Model": "sonnet"}):
+        child = client.post("/llm/admission", headers={**headers, **extra}).json()[
+            "data"
+        ]
+        assert child["allow"] is False, (extra, child)
+
+
+def test_a_turn_on_a_model_its_team_lost_is_refused_before_it_runs(client, tmp_path):
+    """A main model saved while the team was approved stops the turn once the
+    approval is withdrawn: it is not run, and not swapped for another model."""
+    from sqlalchemy import delete
+
+    from app.domain.policy.gate import OverseasNotApproved
+    from app.domain.usage.models import OverseasModelApproval
+
+    project = create(client)
+    pid = project["id"]
+    response = client.put(f"/projects/{pid}/default-model", json={"model": "sonnet"})
+    assert response.status_code == 200, response.text
+
+    async def withdraw() -> None:
+        async with client.test_request_factory() as session:  # type: ignore[attr-defined]
+            await session.execute(
+                delete(OverseasModelApproval).where(
+                    OverseasModelApproval.team_id == project["team_id"]
+                )
+            )
+            await session.commit()
+
+    client.portal.call(withdraw)  # type: ignore[union-attr]
+    chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=client.test_request_factory,
+        compute=stub_compute(),
+        base_system_prompt="Test",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    with pytest.raises(OverseasNotApproved):
+        client.portal.call(
+            lambda: chat._model_kwargs(
+                uuid.UUID(pid),
+                RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost()),
+                uuid.UUID(project["root_topic_id"]),
+            )
+        )

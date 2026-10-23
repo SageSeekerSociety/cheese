@@ -1,0 +1,11 @@
+{
+  "analytics": "数据",
+  "announcements": "公告",
+  "audit": "待审核",
+  "back": "回到首页",
+  "manage": "管理",
+  "members": "成员",
+  "settings": "设置",
+  "tasks": "题目",
+  "newTasks": "上次查看后新发布 {n} 道题目"
+}

@@ -1,0 +1,61 @@
+{
+  "action": {
+    "share": "Share",
+    "support": "Support this feedback",
+    "supported": "Supported"
+  },
+  "attachments": {
+    "download": "Download",
+    "open": "View {name} larger",
+    "title": "Attachments"
+  },
+  "aside": {
+    "comments": "Comments",
+    "progress": "Progress",
+    "source": "Source",
+    "supports": "Supporters",
+    "topic": "Found in a conversation in a channel"
+  },
+  "back": "Feedback",
+  "claim": {
+    "claim": "Claim",
+    "nobody": "Nobody has claimed it yet",
+    "release": "Release",
+    "title": "Owner"
+  },
+  "comments": {
+    "desc": "Nobody has replied yet.",
+    "title": "No comments yet"
+  },
+  "commentsLabel": "Comments {n}",
+  "composer": {
+    "open": "Write a comment…",
+    "placeholder": "Add what you ran into, or why this change matters to you",
+    "submit": "Post comment"
+  },
+  "context": "Context",
+  "copied": "Link copied",
+  "delete": {
+    "ask": "Delete this report?",
+    "askWithComments": "Delete this report and its {n} comments?",
+    "cancel": "Cancel",
+    "confirm": "Delete it",
+    "label": "Delete"
+  },
+  "error": {
+    "desc": "Check your connection and try again.",
+    "title": "Couldn't load the details"
+  },
+  "evidence": "Evidence",
+  "expectation": "What was expected",
+  "missing": {
+    "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the channel when it was filed can see it.",
+    "title": "This feedback doesn't exist"
+  },
+  "missingBack": "Back to feedback center",
+  "problem": "Problem",
+  "repro": "Repro steps",
+  "submittedBy": "Submitted by {handle}",
+  "whatHappened": "What happened",
+  "why": "Why it matters"
+}

@@ -21,20 +21,20 @@ Notion 通过 MCP 连接。MCP 是一种让 AI 调用外部服务的通用接口
 在项目根目录加一个 .mcp.json，声明 Notion 的远程 MCP 服务：名字叫 notion，type 为 http，url 为 https://mcp.notion.com/mcp。只加这一个文件。
 ```
 
-芝士创建一个任务，建好就开始。等芝士提交后，在「改动」中确认只新增了 `.mcp.json`，点「采纳并完成任务」。交给芝士、开始任务和采纳的步骤见[把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)。
+芝士把这条支线转为任务，接着动手。等芝士提交后，在「改动」中确认只新增了 `.mcp.json`，点「采纳并完成任务」。交给芝士、跟进任务和采纳的步骤见[把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)。
 
 平台只读取项目已采纳的版本，所以采纳之后 notion 才出现在项目设置里。
 
 ## 连接 Notion {#connect}
 
-项目里的任何成员都能连接。连接属于整个项目，之后芝士以授权人的 Notion 账号读取页面。
+有「配置 AI 队友」权限的成员能连接。连接属于整个项目，之后芝士以授权人的 Notion 账号读取页面。
 
 :::walk
 1. 点左侧栏顶部的项目名，在项目菜单中点「项目设置」。
-2. 点左侧的「MCP 服务器」。notion 这一行写着「来自项目的 .mcp.json」和「未连接」。
-3. 点「连接」。浏览器打开 Notion 的授权页 Connect with Notion MCP。
+2. 点左侧的「MCP 服务器」。notion 在「远程」一组，写着「未连接」。
+3. 点「连接」，在确认框里点「去授权」。浏览器打开 Notion 的授权页 Connect with Notion MCP。
 4. 在授权页上确认工作区，勾选 I recognize and trust this URL，点 Continue。
-5. 页面回到「MCP 服务器」，提示「notion 已连接」，这一行写着「已连接（由 … 授权，…）」。
+5. 页面回到「MCP 服务器」，提示「notion 已连接」，这一行写着「已连接」和授权人。
 
 ```demo-panel
 title: 在项目设置中连接 Notion
@@ -69,7 +69,7 @@ parts:
     until: 3
   - kind: row
     title: notion
-    sub: mcp.notion.com · 来自项目的 .mcp.json
+    sub: mcp.notion.com
     status: 未连接
     button: 连接
     press: 3
@@ -97,8 +97,8 @@ parts:
     at: 5
   - kind: row
     title: notion
-    sub: mcp.notion.com · 来自项目的 .mcp.json
-    status: 已连接（由 @lin 授权，刚刚）
+    sub: mcp.notion.com
+    status: 已连接
     at: 5
 ```
 :::

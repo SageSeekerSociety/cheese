@@ -4,7 +4,7 @@
 管理后台的第五块（前四块在 `admin_members.py` / `admin_feedback.py` / `admin_stats.py` /
 `admin_spaces.py`），管的还是平台自己的东西：哪些模型在上架、各自烧了多少、项目的刹车值
 设在哪。这些字在反馈功能删掉之后仍然成立，所以门是共用的 `PlatformAdminDep`，
-服务是 `domain/agent/gateway_models.py`，两者都不从反馈那边借。
+服务是 `domain/agent/gateway_models/`（按职责拆开的包），两者都不从反馈那边借。
 
 **失败要看得见**：这一页的动作是人点出来的，网关不可达、网关拒绝了这次写、想改的是
 config.yaml 里的模型，都得在页面上有一句能读的原因。分两处翻，因为两处各答得上一半：
@@ -54,6 +54,9 @@ from app.domain.agent.schemas import (
     GatewayModelWriteOut,
     ModelCreate,
     ModelUpdate,
+    PlatformRoleOut,
+    PlatformRolesOut,
+    RoleUpdate,
     SourceCreate,
     SourceOrder,
     SourceUpdate,
@@ -140,7 +143,7 @@ async def model_detail(
     return ok(await _answered(service.detail(name=name, days=days)))
 
 
-@router.post("/models")
+@router.post("/models", dependencies=[ROUTE_DECIDES])
 async def create_model(
     payload: ModelCreate,
     service: ModelsServiceDep,
@@ -154,7 +157,7 @@ async def create_model(
     return ok(await _answered(service.add(handle=handle, payload=payload)))
 
 
-@router.patch("/models/{name}")
+@router.patch("/models/{name}", dependencies=[ROUTE_DECIDES])
 async def update_model(
     name: str,
     payload: ModelUpdate,
@@ -171,7 +174,7 @@ async def update_model(
     )
 
 
-@router.delete("/models/{name}")
+@router.delete("/models/{name}", dependencies=[ROUTE_DECIDES])
 async def delete_model(
     name: str,
     service: ModelsServiceDep,
@@ -181,7 +184,7 @@ async def delete_model(
     return ok(await _answered(service.delete(handle=handle, name=name)))
 
 
-@router.post("/models/{name}/blocked")
+@router.post("/models/{name}/blocked", dependencies=[ROUTE_DECIDES])
 async def set_model_blocked(
     name: str,
     payload: BlockedUpdate,
@@ -309,6 +312,30 @@ async def set_source_blocked(
     )
 
 
+# ---- 平台模型角色 ----
+
+
+@router.get("/roles", **typed_response(PlatformRolesOut))
+async def list_roles(service: ModelsServiceDep, handle: PlatformAdminDep) -> dict:
+    """每个平台模型角色（默认模型、语音输入、话题命名……）现在跑在哪个网关模型上。"""
+    return ok(await _answered(service.roles()))
+
+
+@router.put(
+    "/roles/{role}", dependencies=[ROUTE_DECIDES], **typed_response(PlatformRoleOut)
+)
+async def set_role(
+    role: str,
+    payload: RoleUpdate,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """把一个角色指到一个网关模型；`model: null` 回到部署的默认值。立即生效，有审计。"""
+    return ok(
+        await _answered(service.set_role(handle=handle, role=role, model=payload.model))
+    )
+
+
 # ---- 项目额度 ----
 
 
@@ -326,7 +353,7 @@ async def list_projects(
     return ok(await _answered(service.projects(days=days)))
 
 
-@router.put("/projects/{project_id}/budget")
+@router.put("/projects/{project_id}/budget", dependencies=[ROUTE_DECIDES])
 async def set_project_budget(
     project_id: uuid.UUID,
     payload: BudgetUpdate,

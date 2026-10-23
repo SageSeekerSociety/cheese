@@ -1,13 +1,14 @@
 /**
  * 机器这一屏：provider 连续失败、平台在拒绝新会话时，页面要说出来；点开一台宿主机就看见
- * 它上面的沙箱；接口读失败不画成「一台宿主机都没有」。
+ * 它上面的沙箱；接口读失败不画成「一台宿主机都没有」；每台宿主机用了多少内存、读数多旧
+ * 看得见，旧到不能当此刻看的要说出来；每个沙箱的内存和它的上限放在一起。
  */
-import type { MachineHost, MachinesOverview } from '@/views/admin/machinesApi'
+import type { HostUsage, MachineHost, MachinesOverview, WarmMachineRow } from '@/views/admin/machinesApi'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, within } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import AdminMachinesPageView from './AdminMachinesPageView.vue'
@@ -41,6 +42,7 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     released_at: null,
     enroll_attempts: 1,
     enroll_error: null,
+    usage: null,
     sandboxes: [
       {
         id: 's1',
@@ -55,13 +57,37 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
         active_at: '2026-10-12T09:59:30Z',
         stopped_at: null,
         idle_deadline: null,
+        usage: null,
       },
     ],
     ...fields,
   }
 }
 
-function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]): MachinesOverview {
+function warm(fields: Partial<WarmMachineRow> = {}): WarmMachineRow {
+  return {
+    id: 'w1',
+    state: 'ready',
+    machine_id: 88,
+    hostname: 'warm-spare',
+    cores: 4,
+    memory_mb: 16384,
+    disk_gb: 40,
+    ip: null,
+    online: true,
+    created_at: '2026-10-12T09:30:00Z',
+    enrolled_at: '2026-10-12T09:32:00Z',
+    attempts: 0,
+    error: null,
+    ...fields,
+  }
+}
+
+function overview(
+  pool: Partial<MachinesOverview['pool']> = {},
+  hosts = [host()],
+  warmRows: WarmMachineRow[] = []
+): MachinesOverview {
   return {
     configured: true,
     now: NOW,
@@ -91,9 +117,15 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
       sandbox_idle_s: 600,
       host_idle_hold_s: 1800,
       vm_idle_s: 1800,
+      sandbox_disk_budget_gb: 12,
+      sandbox_inode_budget: 600000,
+      near_cap: 0.8,
+      check_s: 60,
+      alert_used: { disk: 0.85, inodes: 0.9, memory: 0.9 },
+      history_step_s: 300,
     },
     hosts,
-    warm: [],
+    warm: warmRows,
     history: {
       since: '2026-10-11T10:00:00Z',
       prepared: 0,
@@ -114,6 +146,26 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
   }
 }
 
+const GIB = 2 ** 30
+
+function usage(fields: Partial<HostUsage> = {}): HostUsage {
+  return {
+    read_at: '2026-10-12T09:59:30Z',
+    disk_bytes: 40e9,
+    disk_used_bytes: 10e9,
+    inodes: 2_600_000,
+    inodes_used: 300_000,
+    memory_bytes: 16 * GIB,
+    memory_used_bytes: 6 * GIB,
+    cpu_busy: 0.25,
+    load1: 1.2,
+    sandboxes: 1,
+    memory_history: [0.3, 0.35, null, 0.375],
+    cpu_history: [0.1, 0.2, null, 0.25],
+    ...fields,
+  }
+}
+
 function mount(props: Record<string, unknown>) {
   return render(AdminMachinesPageView, {
     props,
@@ -126,7 +178,7 @@ function mount(props: Record<string, unknown>) {
 
 describe('机器', () => {
   it('provider 连续失败、平台在拒绝新会话时，页面说出来', () => {
-    const refusing = /Refusing new sessions now|此刻在拒绝新会话/
+    const refusing = /Not starting new AI teammates now|此刻不再接新的 AI 队友/
     const calm = mount({ overview: overview() })
     expect(calm.queryByText(refusing)).toBeNull()
     calm.unmount()
@@ -143,6 +195,16 @@ describe('机器', () => {
     expect(queryByText(/Launch room/)).not.toBeNull()
   })
 
+  it('个人芝士对话的沙箱只写「个人对话」，不链到任何项目', async () => {
+    const [mine] = host().sandboxes
+    const personal = host({ sandboxes: [{ ...mine, project_id: null, project: null, room: null }] })
+    const { getByText, queryByRole } = mount({ overview: overview({}, [personal]) })
+    await fireEvent.click(getByText('pool-a'))
+    const named = i18n.global.t('admin.machines.personal')
+    expect(getByText(named).tagName).not.toBe('A')
+    expect(queryByRole('link', { name: named })).toBeNull()
+  })
+
   it('宿主机数和上限放在一起比时，整机虚拟机也算进去：上限就是这样数的', () => {
     const { getByText } = mount({ overview: overview({ hosts: 1, vms: 3, max_hosts: 4, at_cap: true }) })
     expect(getByText('4 / 4')).toBeTruthy()
@@ -154,5 +216,55 @@ describe('机器', () => {
     expect(empty.queryByText(none)).not.toBeNull()
     empty.unmount()
     expect(mount({ overview: null, failed: true }).queryByText(none)).toBeNull()
+  })
+
+  it('每台宿主机的内存用了多少、对总量多少，读数多久前读到', () => {
+    const { getByText, queryByText } = mount({ overview: overview({}, [host({ usage: usage() })]) })
+    expect(getByText('6.0 / 16.0 GiB')).toBeTruthy()
+    expect(queryByText(/Stale|已过期/)).toBeNull()
+  })
+
+  it('读数旧过三次巡检，页面说它过期了，不当此刻的数', () => {
+    const old = usage({ read_at: '2026-10-12T09:50:00Z' })
+    const { queryByText } = mount({ overview: overview({}, [host({ usage: old })]) })
+    expect(queryByText(/Stale|已过期/)).not.toBeNull()
+  })
+
+  it('点开宿主机，每个沙箱的内存和它的 3 GiB 上限放在一起', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.7 * GIB,
+        memory_peak_bytes: 2.9 * GIB,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText, queryByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/2\.7 \/ 3\.0 GiB/)).not.toBeNull()
+    expect(queryByText(/4\.0 \/ 12 GB/)).not.toBeNull()
+  })
+
+  it('还没被领走的温机也在宿主机表里，带着它此刻的阶段：在跑的机器一台都不漏', () => {
+    const { getByRole } = mount({
+      overview: overview({}, [host()], [warm(), warm({ id: 'w2', state: 'preparing', hostname: 'warm-booting' })]),
+    })
+    const table = within(getByRole('table'))
+    const spare = table.getByText('warm-spare').closest('[role="row"]') as HTMLElement
+    expect(within(spare).queryByText(/Unclaimed|待领用/)).not.toBeNull()
+    const booting = table.getByText('warm-booting').closest('[role="row"]') as HTMLElement
+    expect(within(booting).queryByText(/Warming up|预热中/)).not.toBeNull()
+  })
+
+  it('只有温机、还没有宿主机时，不说「一台宿主机都没有」', () => {
+    const none = i18n.global.t('admin.machines.noHosts')
+    const { queryByText } = mount({ overview: overview({}, [], [warm()]) })
+    expect(queryByText(none)).toBeNull()
+    expect(queryByText('warm-spare')).not.toBeNull()
   })
 })

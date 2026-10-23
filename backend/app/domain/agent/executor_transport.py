@@ -1,6 +1,7 @@
 """Room executor transport shared by agent harnesses."""
 
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -15,7 +16,16 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
+
+# The task checkout this session starts in. Shipped beside this module in a
+# session host's bundle, where it is found by its bare name (`release.sources`).
+if __package__:
+    from app.domain.agent.task_checkout import names_a_directory, task_checkout
+else:
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from task_checkout import names_a_directory, task_checkout
 
 # How long a request waits out a platform endpoint that is not listening.
 # An app deploy recreates the backend container, and the central session reaches
@@ -50,6 +60,12 @@ MACHINE_OUT_OF_REACH = (
 # 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
 # agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+# How long after the platform handed out a session's hands a Bash command's
+# start goes on that admission (`RemoteClient.call`). Its permission check
+# takes them a moment before the build starts the command; this only has to
+# outlast that gap, and is short so a start never runs on an admission another
+# call's failure has since put in doubt.
+ADMISSION_REUSE_S = 10
 # The connection owner's mark on a call it turned away because it is being
 # released (`device_connection_app.DRAINING_HEADER`): like a refused connect,
 # nothing was dispatched, so the same call is sent again.
@@ -67,14 +83,14 @@ READ_ONLY_REFUSED = (
     "这不是故障，重试结果一样。"
 )
 
-# 这次会话的改动留不下（支线、还没开始的任务，`sandbox_auth` 的 ``scratch``），
+# 这次会话的改动留不下（支线，`sandbox_auth` 的 ``scratch``），
 # 而这一次要把改动带出机器（同步、项目的 MCP 服务），或者机器不归它独占、它只能读
 # （`routes/execution.py`）。两种都不是故障。
 SCRATCH_REFUSED = (
-    "这个会话在支线或还没开始的任务里，改动留不下：不能同步改动，也不能用项目的 MCP "
-    "服务；工作机器不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。"
-    "这由会话所在的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；要改项目，"
-    "创建一个任务。"
+    "这个会话在支线里，改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器"
+    "不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这由会话所在"
+    "的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；有人要做这件事时，"
+    "用 cheese_task 把支线转为任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -84,6 +100,138 @@ LINK_INTERRUPTED = (
     "执行中与机器的连接断了一下，这次操作可能已经执行，也可能没有；"
     "先查看结果，再决定要不要重做。其他工具照常可用。"
 )
+
+
+# 这个会话的凭证不再归它所有：拿机器那一步（`acquire`）被拒，理由是凭证不认这个
+# 会话（`session_work._attempt`），或者会话已经属于另一段对话（`routes/execution.py`）。
+# 房间改成任务、会话换了房间时就是这样。凭证里的声明是签死的，新凭证又只能从同一个
+# 被拒的请求里拿，所以这个进程里以后每一次都会被拒 —— 10-05 一个房间里的会话照旧
+# 每两秒重试一次，连拒几个小时。说「可以重试」是假话，所以这句话叫它停。
+SESSION_ENDED = (
+    "平台已经收回了这个会话用机器的凭证（它所在的房间或任务换了归属）："
+    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，这次就到这里。"
+)
+_DEAD_CREDENTIAL = (
+    "Execution credential does not own this session",
+    "This credential works another conversation",
+)
+#: The same refusal said as a catalog sentence. Its words are the reader's
+#: language, and this bundle runs on a machine that may speak none of ours; the
+#: key beside them does not change with it (`app/core/errors.py` writes
+#: `error.i18n`). A task's credential reaching another conversation is said
+#: this way (`api/auth/resolver.py`), and is just as dead on the lease path.
+_DEAD_CREDENTIAL_KEYS = frozenset({"taskCredentialOtherConversation"})
+
+# 平台的一个接口接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个
+# 会话对拿机器那一步连着 376 次）。同一个接口（方法加路径）连续 `BREAKER_AFTER` 次之
+# 后，这段时间内发给它的请求不发出去，直接给这句话；时间从 `BREAKER_WINDOW_S[0]` 秒
+# 起，每再断一次翻倍，到 `BREAKER_WINDOW_S[1]` 为止。这个接口任何一个不是 5xx 的应答
+# 都把它清掉。按接口算，不按整个平台：一个接口可以照常地答 503（比如它要的沙箱已经
+# 收回），那不该让别的工具也停下。504 不算：那是前面一跳等不及，平台还在准备机器
+# （`acquire`）。
+PLATFORM_FAILING = (
+    "平台的这个接口接连出错，这个会话 {seconds} 秒内不再向它发请求：现在重试结果一样，"
+    "{seconds} 秒后再试。"
+)
+BREAKER_AFTER = 3
+BREAKER_WINDOW_S = (30, 300)
+_BREAKER_STATUSES = frozenset({500, 502, 503})
+
+
+def _fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def _dead_credential(error) -> bool:
+    """Whether a refused lease says this credential can never take its machine."""
+    if error.status != 403:
+        return False
+    try:
+        body = json.loads(error.body)
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    detail = body.get("error")
+    if not isinstance(detail, dict):
+        detail = {}
+    # The platform says it in `error.retryable` (`format_error_response`).
+    if detail.get("retryable") is True or body.get("retryable") is True:
+        return False
+    message = f"{body.get('message', '')} {detail.get('message', '')}"
+    if any(text in message for text in _DEAD_CREDENTIAL):
+        return True
+    i18n = detail.get("i18n")
+    return isinstance(i18n, dict) and i18n.get("key") in _DEAD_CREDENTIAL_KEYS
+
+
+class PlatformHealth:
+    """What this session has learned about the platform: a credential it
+    refused for good (``dead``, by fingerprint) and, per route, its run of
+    5xx answers (``routes``).
+
+    A Claude Code session starts one process per command, so the state lives
+    in a file beside the session's target (`target_file`) when there is one;
+    a harness that keeps one client for the session (Codex, pi) holds it in
+    memory. Writers race only to lose a count, never to corrupt the file
+    (`_replace_file`)."""
+
+    def __init__(self, config):
+        target = config.get("target_file")
+        self.path = Path(target).with_name("platform-health.json") if target else None
+        self.memory = {}
+
+    def read(self):
+        if self.path is None:
+            return dict(self.memory)
+        try:
+            state = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return {}
+        return state if isinstance(state, dict) else {}
+
+    def write(self, state):
+        if self.path is None:
+            self.memory = dict(state)
+        else:
+            _replace_file(self.path, json.dumps(state))
+
+    def check(self, token=None, route=None):
+        """Raise instead of sending, while the platform is known to refuse."""
+        state = self.read()
+        if token is not None and state.get("dead") == _fingerprint(token):
+            raise RuntimeError(SESSION_ENDED)
+        failing = (state.get("routes") or {}).get(route) or {}
+        wait = failing.get("until", 0) - time.time()
+        if wait > 0:
+            raise RuntimeError(PLATFORM_FAILING.format(seconds=math.ceil(wait)))
+
+    def answered(self, route, status):
+        state = self.read()
+        kept = state.get("routes")
+        routes: dict = kept if isinstance(kept, dict) else {}
+        if status not in _BREAKER_STATUSES:
+            if route in routes:
+                del routes[route]
+                state["routes"] = routes
+                self.write(state)
+            return
+        failing = routes.get(route) or {}
+        failing["failures"] = failing.get("failures", 0) + 1
+        if failing["failures"] >= BREAKER_AFTER:
+            failing["trips"] = failing.get("trips", 0) + 1
+            first, most = BREAKER_WINDOW_S
+            failing["until"] = time.time() + min(
+                first * 2 ** (failing["trips"] - 1), most
+            )
+        routes[route] = failing
+        state["routes"] = routes
+        self.write(state)
+
+    def refused_for_good(self, token):
+        state = self.read()
+        state["dead"] = _fingerprint(token)
+        self.write(state)
 
 
 def _device_is_offline(response) -> bool:
@@ -118,8 +266,8 @@ def _claimed(token: str, claim: str) -> bool:
 
 
 def keeps_nothing(token: str) -> bool:
-    """Whether this execution credential's work stays on its machine: a 支线's,
-    or a task's its owner has not started."""
+    """Whether this execution credential's work stays on its machine: a
+    支线's."""
     return _claimed(token, "scratch")
 
 
@@ -179,6 +327,15 @@ class MachineOutOfReach(RuntimeError):
 # Where a session started before its machine was rented sees the project: the
 # machine, and so the path it holds the project at, does not exist yet.
 DEFERRED_WORKSPACE = "/unavailable-project"
+
+#: The name a session's working directory also goes by (`remote_execution.client`
+#: `prepare`): a fixed name, the same in every session, whose value is the
+#: project that session sees. It never enters a command's environment — a build
+#: running natively on the executor has no such variable, and a room's command
+#: must see exactly what that one sees. The shell prefix binds it in the
+#: command's own shell instead, and the value crosses as part of `body`, so the
+#: transport respells it where it respells every other path a body names.
+WORKING_DIRECTORY = "T"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
@@ -294,6 +451,38 @@ def read_file_on_the_machine(invoke, path, request_id):
     return data
 
 
+def tool_answer(outcome: dict, receipts: Path, pictures=()) -> dict:
+    """A tool call's outcome as the MCP answer the plugin (`proxy.js`) reads:
+    the outcome as JSON in one text block, then pictures as image blocks.
+
+    A native Read of an image keeps its metadata in the text and its pixels in
+    an image block: base64 in text hits Claude Code's MCP text-output limit.
+    MCP replaces large text with prose, and the plugin needs the original
+    receipt, including API JSON and Edit state, so a large outcome is written
+    under ``receipts`` and the text names the file. ``pictures`` are the ones
+    a platform tool hands back (`sandbox/cheese`'s `Said`), after its text.
+    """
+    pictures = list(pictures)
+    result = outcome.get("result", {})
+    if isinstance(result, dict) and result.get("type") == "image":
+        image = result["file"]
+        metadata = {k: v for k, v in image.items() if k != "base64"}
+        outcome = {"result": {**result, "file": metadata}}
+        pictures.insert(0, {"data": image["base64"], "mimeType": image["type"]})
+    encoded = json.dumps(outcome)
+    if len(encoded) > 32_000:
+        receipts.mkdir(exist_ok=True, mode=0o700)
+        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
+        receipt_path.write_text(encoded)
+        receipt_path.chmod(0o600)
+        encoded = json.dumps({"receipt_path": str(receipt_path)})
+    images = [
+        {"type": "image", "data": p["data"], "mimeType": p["mimeType"]}
+        for p in pictures
+    ]
+    return {"content": [{"type": "text", "text": encoded}, *images]}
+
+
 class PlatformHost:
     """What a platform tool (`PLATFORM_TOOLS` in `sandbox/cheese`) runs against
     when the session is not on the machine (结论 63).
@@ -304,14 +493,26 @@ class PlatformHost:
     breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
-    def __init__(self, client, invoke, call_id, doc_versions):
+    def __init__(self, client, invoke, call_id, doc_versions, run, compact=None):
         self.client = client
         self.invoke = invoke
         self.call_id = call_id
         self.doc_versions = doc_versions
         self.environ = dict(os.environ)
+        #: Which run of its session this call is made in, as the session's
+        #: runner names it (``harness/epoch/seq`` of the ``running`` event that
+        #: began it), or None for a harness whose runner names no runs. Every
+        #: platform request carries it (``X-Cheese-Run``), so what the agent
+        #: reports is known to be that run's (`presentation.task_presentation`).
+        self.run = run
+        #: Ask this session's harness to compact its context, for the one
+        #: tool that does (`cheese_compact`); a session with none refuses.
+        self.compact = compact
 
     def request(self, plan):
+        run = self.run()
+        if run:
+            plan = {**plan, "run": run}
         stdout = self.client.platform_request(plan)["value"]["stdout"]
         return json.loads(stdout) if stdout else {}
 
@@ -330,6 +531,13 @@ class PlatformHost:
             f"{self.call_id}-sync",
             timeout_ms=600000,
         )
+
+
+def no_run():
+    """The run source of a harness whose runner names no runs: it reports no
+    lifecycle (`Harness.reports_lifecycle`), so its sessions have no state on
+    the platform for a run to be compared with, and its reports always stand."""
+    return None
 
 
 def _replace_file(path, text):
@@ -351,6 +559,10 @@ def _replace_file(path, text):
 #: helpers reach the runner there, never the agent, whose commands run on the
 #: room's machine.
 SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
+#: The header a platform request names its session's run in (`PlatformHost.run`).
+#: The same name as `room_task.progress.RUN_HEADER`, which reads it: this file
+#: ships alone and imports nothing of it.
+RUN_HEADER = "X-Cheese-Run"
 
 
 def dial_runner(path: str, timeout: float):
@@ -398,12 +610,7 @@ def register_project_hooks(config, hooks):
             "This session cannot take up the project's tool hooks: "
             "it was started without its runner's socket"
         )
-    request = {
-        "method": "control",
-        "params": {
-            "request": {"subtype": "apply_flag_settings", "settings": {"hooks": hooks}}
-        },
-    }
+    request = {"method": "apply_hooks", "params": {"hooks": hooks}}
     with dial_runner(path, 60) as connection:
         connection.sendall(json.dumps(request).encode() + b"\n")
         answer = json.loads(connection.makefile("rb").readline())
@@ -417,34 +624,41 @@ def register_project_hooks(config, hooks):
     return True
 
 
+#: Starts the error the executor refuses to start a local server with, on a
+#: member's computer whose owner has not allowed its command (`runtime.py`).
+APPROVAL_REQUIRED = "MCP_APPROVAL_REQUIRED "
+
+
 def _remote_servers(target: dict) -> list[str]:
     return list((target.get("remote_mcp") or {}).get("servers", []))
 
 
-def agent_servers(target: dict) -> list[str]:
-    """The teammate's type's own stdio servers (`agent_mcp`): they run on the
-    room's machine, which is handed each one's definition with the call. A name
-    the checkout's `.mcp.json` or a remote server already uses stays that
-    server's, as committed configuration decides."""
+def command_servers(target: dict) -> list[str]:
+    """The commands added in project settings and the teammate's type's own
+    (`mcp_commands`): they run on the room's machine, which is handed each
+    one's definition with the call. A name the checkout's `.mcp.json` or a
+    remote server already uses stays that server's, as committed configuration
+    decides."""
     taken = {*target.get("mcp_servers", []), *_remote_servers(target)}
-    return [name for name in target.get("agent_mcp") or {} if name not in taken]
+    return [name for name in target.get("mcp_commands") or {} if name not in taken]
 
 
 def session_servers(target: dict) -> list[str]:
     """Every MCP server a session lists: the machine's stdio servers and the
-    type's, once the session is on the machine, and the remote ones.
+    commands handed to it, once the session is on the machine, and the remote
+    ones.
 
-    Before then (a session at the placeholder) it lists no stdio server at all,
-    the checkout's or the type's: listing one would take the machine for a turn
-    that may never need it. The session is relaunched onto the machine once it
-    has one, and lists them then."""
+    Before then (a session at the placeholder) it lists no stdio server at
+    all: listing one would take the machine for a turn that may never need it.
+    The session is relaunched onto the machine once it has one, and lists them
+    then."""
     on_machine = not (
         target.get("kind") == "deferred"
         and target.get("workspace") == DEFERRED_WORKSPACE
     )
     return [
         *(
-            [*target.get("mcp_servers", []), *agent_servers(target)]
+            [*target.get("mcp_servers", []), *command_servers(target)]
             if on_machine
             else []
         ),
@@ -461,6 +675,13 @@ class RemoteClient:
         self.publication = None
         self.platform_lock = threading.Lock()
         self.platform = None
+        self.health = PlatformHealth(config)
+        # One session's tool calls run on several threads (`transport`): the
+        # working directory is resolved once, under this lock, and a thread
+        # that is already inside the resolve (the call it makes to ask the
+        # machine) must not wait for itself.
+        self.working_directory_lock = threading.RLock()
+        self.resolving_working_directory = threading.local()
 
     def execution_token(self):
         if self.config.get("execution_token"):
@@ -470,6 +691,15 @@ class RemoteClient:
             with open(token_file) as stream:
                 return stream.read().strip()
         return os.environ["CHEESE_TOKEN"]
+
+    def platform_token(self):
+        # A session answering someone's question calls the platform with the
+        # credential minted for that question, never the one it started with.
+        return self.config.get("platform_token") or (
+            self.execution_token()
+            if self.config.get("token_file")
+            else os.environ.get("CHEESE_TOKEN", "")
+        )
 
     def platform_request(self, args):
         method = args.get("method", "GET").upper()
@@ -484,15 +714,11 @@ class RemoteClient:
         ):
             raise ValueError("Platform requests require a relative API path and method")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
-        # A session answering someone's question calls the platform with the
-        # credential minted for that question, never the one it started with.
-        token = self.config.get("platform_token") or (
-            self.execution_token()
-            if self.config.get("token_file")
-            else os.environ.get("CHEESE_TOKEN", "")
-        )
+        token = self.platform_token()
         if not api or not token:
             raise RuntimeError("Platform requests require room credentials")
+        route = f"{method} {parsed.path}"
+        self.health.check(route=route)
         with self.platform_lock:
             if self.platform is None or self.platform.config["url"] != api:
                 if self.platform is not None:
@@ -516,10 +742,17 @@ class RemoteClient:
                             if os.environ.get("CHEESE_TURN")
                             else {}
                         ),
+                        # What a person's 芝士 does for them once its gate let
+                        # it (`assistant.passes`).
+                        **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
+                        # The run of the session this call is made in
+                        # (`PlatformHost.run`).
+                        **({RUN_HEADER: args["run"]} if args.get("run") else {}),
                     },
                 )
                 response = connection.getresponse()
                 body = response.read().decode()
+                self.health.answered(route, response.status)
                 if not 200 <= response.status < 300:
                     raise PlatformHTTPError(response.status, body)
             except Exception:
@@ -593,8 +826,9 @@ class RemoteClient:
             return self._publish_message(payload, args)
 
     def _publish_message(self, payload, args):
-        content = args.get("content")
-        if not isinstance(content, str) or not content.strip():
+        content = args.get("content") or ""
+        attachments = args.get("attachments") or []
+        if not isinstance(content, str) or (not content.strip() and not attachments):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")
@@ -619,6 +853,7 @@ class RemoteClient:
                 "content": content,
                 "request_id": publication_id,
                 **({"reply_to": args["reply_to"]} if args.get("reply_to") else {}),
+                **({"attachments": attachments} if attachments else {}),
             }
         ).encode()
         deadline = time.monotonic() + CONNECT_RETRY_WINDOW_S
@@ -685,10 +920,8 @@ class RemoteClient:
                 f"Chat publication failed; request_id={publication_id}: {exc}"
             ) from exc
 
-    def command(self, mode, server=None):
+    def command(self, mode):
         command = [*self.config["command"], mode, "--state", self.config["state"]]
-        if server:
-            command.extend(["--server", server])
         # SSH joins all arguments after the host with spaces. Quote the remote
         # command once, rather than letting workspace names become shell syntax.
         if self.config.get("ssh"):
@@ -717,6 +950,51 @@ class RemoteClient:
             return False
         return True
 
+    def working_directory(self, *, notice=True):
+        """Where this session's commands start, and what `$T` stands for: its
+        task's checkout once the machine is at hand, else the project view.
+
+        Resolved once and kept — in this client and in the target file beside
+        it, so the command processes after this one read it rather than asking
+        the machine again. Only a real answer is kept: a machine that could not
+        be asked (``task_checkout`` raising) is asked again at the next call,
+        instead of the session's directory being fixed to the project forever.
+        ``notice``: whether a failure is said on stderr (a launch says so; a
+        command's stderr is the agent's)."""
+        known = self.config.get("working_directory")
+        if names_a_directory(known):
+            return known
+        topic = os.environ.get("CHEESE_TOPIC", "")
+        if not topic or self.config.get("kind") == "private":
+            return self.config.get("workspace")
+        if getattr(self.resolving_working_directory, "yes", False):
+            return self.config.get("workspace")  # asked from inside the resolve
+        with self.working_directory_lock:
+            known = self.config.get("working_directory")
+            if names_a_directory(known):
+                return known
+            self.resolving_working_directory.yes = True
+            try:
+                checkout = task_checkout(self, topic, notice=notice)
+            except Exception:  # not kept: the next call asks again
+                self.config["checkout_pending"] = True
+                self._save_target()
+                return self.config.get("workspace")
+            finally:
+                self.resolving_working_directory.yes = False
+            self.config.pop("checkout_pending", None)
+            self.config["working_directory"] = checkout or self.config.get("workspace")
+            self.config["working_directory_lease"] = self.config.get("generation")
+            self._save_target()
+            return self.config["working_directory"]
+
+    def _save_target(self):
+        """Write this client's config back to the target file, whole and atomically
+        (`_replace_file`): the next command is a process of its own."""
+        target_file = self.config.get("target_file")
+        if target_file:
+            _replace_file(target_file, json.dumps(self.config))
+
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
         machine the lease names becomes where its calls go, and the credential
@@ -734,6 +1012,8 @@ class RemoteClient:
         # request answers "preparing" only after the platform's bounded wait,
         # and the wait is exactly when the caller would otherwise hear nothing.
         told = preparing is None
+        token = self.platform_token()
+        self.health.check(token)
         while True:
             remaining = deadline - time.monotonic()
             try:
@@ -750,6 +1030,9 @@ class RemoteClient:
                 )
                 result = json.loads(response["value"]["stdout"])["data"]
             except PlatformHTTPError as error:
+                if _dead_credential(error):
+                    self.health.refused_for_good(token)
+                    raise RuntimeError(SESSION_ENDED) from error
                 # A front that gave up on the request before the platform
                 # answered says nothing about the machine: it is still being
                 # prepared as far as anyone knows, so this asks again. Handed
@@ -783,7 +1066,18 @@ class RemoteClient:
         if result.get("notice") and preparing is not None:
             print(result["notice"], file=preparing, flush=True)
         changed_lease = self.config.get("generation") != target.get("generation")
+        if "working_directory" in self.config and (
+            # Another lease: a checkout resolved on the machine before is not
+            # this one's, even when it holds the project at the same path.
+            target.get("generation") != self.config.get("working_directory_lease")
+            or target.get("workspace") != self.config.get("workspace")
+        ):
+            self.config.pop("working_directory", None)
+            self.config.pop("working_directory_lease", None)
         self.config.update(target)
+        # Wall-clock, beside the target: the command start this admits runs in
+        # another process (`shell_prefix`), which reads it from there (`call`).
+        self.config["admitted_at"] = time.time()
         token_file = self.config.get("token_file")
         if token_file:
             _replace_file(token_file, result["token"])
@@ -829,10 +1123,10 @@ class RemoteClient:
     def remote_call_with_hooks(self, call_id, server, tool, args, preparing=None):
         """A remote server's tool call with the project's PreToolUse and
         PostToolUse hooks around it, for a harness that does not fire them
-        itself (Codex; pi). Claude Code fires them itself, so its bridge calls
-        `call("invoke", …)` without this. The hooks run on the room's machine,
-        which is taken for it; a PreToolUse deny, or a machine out of reach,
-        means the call is not made. Returns what `call("invoke", …)` does."""
+        itself (Codex, at its gateway: `codex/tools.py`). The hooks run on the
+        room's machine, which is taken for it; a PreToolUse deny, or a machine
+        out of reach, means the call is not made. Returns what
+        `call("invoke", …)` does."""
         name = f"mcp__{server}__{tool}"
         before = self.control(
             {
@@ -892,8 +1186,104 @@ class RemoteClient:
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
-    def agent_servers(self):
-        return agent_servers(self.config)
+    # --- the project's local servers -------------------------------------------
+    #
+    # A local server — a command the checkout's `.mcp.json`, the project's
+    # settings or the teammate's type names — is started by the machine's
+    # executor from the checkout's definition or the one handed with the call
+    # (`mcp_commands`). Before its first call this session asks the platform two
+    # things to hand it with each call (`mcp_path`/<name>/start): the values of
+    # the project secrets the default branch's definition names, and, on a
+    # member's own computer, the fingerprints of the commands its owner lets
+    # run there; the executor checks the command it is about to run against
+    # those. How the server fared is said back (`report_local`) for the
+    # project's settings page. A session started without `mcp_path` (a
+    # member's own Claude Code, on their own computer) asks nothing.
+
+    def local(self, server):
+        return (
+            isinstance(server, str)
+            and server != "native"
+            and server not in self.remote_servers()
+        )
+
+    def _local_start(self, server):
+        if not self.config.get("mcp_path"):
+            return {}
+        cache = self.__dict__.setdefault("local_starts", {})
+        if server not in cache:
+            response = self.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"{self.config['mcp_path']}/{quote(server, safe='')}/start",
+                    "body": {"device_id": self.config.get("device_id")},
+                }
+            )
+            cache[server] = json.loads(response["value"]["stdout"])["data"]
+        return cache[server]
+
+    def report_local(self, server, state, **more):
+        """Say how a local server fared; never fails the call it is about."""
+        if not self.config.get("mcp_path") or not self.local(server):
+            return
+        try:
+            self.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"{self.config['mcp_path']}/{quote(server, safe='')}/run",
+                    "body": {
+                        "state": state,
+                        "device_id": self.config.get("device_id"),
+                        **more,
+                    },
+                }
+            )
+        except Exception:  # a report is not worth a failed call
+            pass
+
+    def local_outcome(self, server, error):
+        """How a local server's first list of its tools went, said back once
+        per change; answers with what to tell the session instead of the
+        executor's own words, when there is something better to say."""
+        if not self.local(server):
+            return None
+        said = self.__dict__.setdefault("local_said", {})
+        if error is None:
+            if said.get(server) != "running":
+                said[server] = "running"
+                self.report_local(server, "running")
+            return None
+        if APPROVAL_REQUIRED in error:
+            # Wherever the transport put it in its own words, on its own line.
+            line = error[error.index(APPROVAL_REQUIRED) + len(APPROVAL_REQUIRED) :]
+            asked = json.loads(line.splitlines()[0])
+            if said.get(server) != "awaiting":
+                said[server] = "awaiting"
+                self.report_local(
+                    server,
+                    "awaiting",
+                    fingerprint=asked["fingerprint"],
+                    command=asked["command"],
+                )
+            # The cached answer had none of what the owner may since allow.
+            self.__dict__.get("local_starts", {}).pop(server, None)
+            return (
+                f"{server} waits for the owner of this computer to allow its "
+                "command to run here. Nothing about it can be done from this "
+                "session."
+            )
+        said[server] = "failed"
+        self.report_local(server, "failed", log=error.splitlines()[-12:])
+        return None
+
+    def local_closed(self):
+        """The session is going: the servers it said were running are not."""
+        for server, state in list(self.__dict__.get("local_said", {}).items()):
+            if state == "running":
+                self.report_local(server, "idle")
+
+    def command_servers(self):
+        return command_servers(self.config)
 
     def session_servers(self):
         return session_servers(self.config)
@@ -902,27 +1292,40 @@ class RemoteClient:
         """``abandoned`` says the caller has given the operation up (a cancelled
         tool call). Acquiring hands can wait for a machine being prepared; an
         operation given up during that wait is never started. ``preparing`` is
-        the text stream told when that wait starts (`acquire`)."""
+        the text stream told when that wait starts (`acquire`).
+
+        A Bash command's start right after the hands were taken — for its own
+        permission check, which `proxy.js` makes just before (`permission`) —
+        goes on that admission instead of asking the platform again. Should it
+        fail for any reason, the hands are taken again and the start is sent
+        once more: the command id makes a repeated start the same start."""
+        admitted = self.config.get("admitted_at")
+        if (
+            self.config.get("lease_path")
+            and self.config.get("kind") == "device"
+            and method == "control"
+            and (params or {}).get("subtype") == "shell"
+            and (params or {}).get("operation") == "start"
+            and (params or {}).get("kind") == "bash"
+            and isinstance(admitted, (int, float))
+            and 0 <= time.time() - admitted < ADMISSION_REUSE_S
+        ):
+            try:
+                return self._call(method, params, admitted=True)
+            except Exception:  # Any failure: retried below on new hands.
+                self.config.pop("admitted_at", None)
+        return self._call(method, params, abandoned=abandoned, preparing=preparing)
+
+    def _call(
+        self, method, params=None, *, abandoned=None, preparing=None, admitted=False
+    ):
         asked = params or {}
         if asked.get("server") in self.remote_servers():
             if method in {"invoke", "mcp"}:
                 return self.remote_mcp(method, asked)
-            if method == "project_tools":
-                if asked.get("name"):
-                    return self.remote_mcp(
-                        "invoke",
-                        {
-                            "server": asked["server"],
-                            "tool": asked["name"],
-                            "args": asked.get("arguments", {}),
-                        },
-                    )
-                return self.remote_mcp(
-                    "mcp", {"server": asked["server"], "method": "tools/list"}
-                )
         operation_deadline = time.monotonic() + 660
         if self.config.get("lease_path") and (
-            method in {"invoke", "mcp", "project_tools"}
+            method in {"invoke", "mcp", "take"}
             # Starting a command acquires hands; reading one that runs does not.
             or (
                 method == "control"
@@ -944,10 +1347,26 @@ class RemoteClient:
             original_workspace = self.config.setdefault(
                 "virtual_workspace", self.config["workspace"]
             )
-            changed_lease = self.acquire(
+            # A start on an admission just taken does not take the hands again
+            # (`call`); its paths are still spelled the machine's way below.
+            changed_lease = not admitted and self.acquire(
                 deadline=operation_deadline, abandoned=abandoned, preparing=preparing
             )
             workspace = self.config["workspace"]
+            if original_workspace != workspace or self.config.get("checkout_pending"):
+                # The session started somewhere else — before its machine was
+                # rented — or could not ask for its checkout then; its short
+                # name is spelled the machine's way here, into its task's
+                # checkout when it works one (`working_directory`).
+                workspace = self.working_directory()
+            elif (working := self.config.get("working_directory")) and (
+                working != workspace
+            ):
+                # The session works somewhere else than the project view (a
+                # task's checkout), and names paths from there: spell the view's
+                # own path into it for every call, not only the one that
+                # resolved. A room's session has the two equal.
+                original_workspace, workspace = workspace, working
             if params and method == "invoke":
                 params = {**params, "args": dict(params.get("args", {}))}
                 for field in ("file_path", "path", "notebook_path", "command"):
@@ -992,6 +1411,10 @@ class RemoteClient:
                             else "The project's tool hooks now apply; issue it again."
                         )
                     )
+        if method == "take":
+            # Only the hands: whoever asked (pi's `Machine.take`) reads the
+            # project's instructions itself.
+            return {}
         if self.config.get("kind") == "deferred":
             operation = (params or {}).get("operation")
             if method == "context_fs" and operation == "tree":
@@ -1008,36 +1431,14 @@ class RemoteClient:
             raise MachineOutOfReach
         if self.config.get("kind") == "unavailable":
             raise MachineOutOfReach
-        if method == "project_tools":
-            params = params or {}
-            server = params.get("server")
-            if not server:
-                return {"servers": self.session_servers()}
-            if server not in [
-                *self.config.get("mcp_servers", []),
-                *self.agent_servers(),
-            ]:
-                raise ValueError("Unknown project MCP server")
-            tool = params.get("name")
-            method = "mcp"
-            params = {
-                "server": server,
-                "method": "tools/call" if tool else "tools/list",
-                "params": {"name": tool, "arguments": params.get("arguments", {})}
-                if tool
-                else {},
-                **(
-                    {"id": params["id"], "tool": f"mcp__{server}__{tool}"}
-                    if tool
-                    else {}
-                ),
-            }
         if (
             method in {"invoke", "mcp"}
             and params
-            and params.get("server") in self.agent_servers()
+            and params.get("server") in self.command_servers()
         ):
-            params = {**params, "spec": self.config["agent_mcp"][params["server"]]}
+            params = {**params, "spec": self.config["mcp_commands"][params["server"]]}
+        if method in {"invoke", "mcp"} and params and self.local(params.get("server")):
+            params = {**params, **self._local_start(params["server"])}
         if self.config.get("kind") == "device":
             deadline = min(
                 operation_deadline, time.monotonic() + CONNECT_RETRY_WINDOW_S
@@ -1142,14 +1543,21 @@ class RemoteClient:
     def control(self, request, preparing=None):
         return self.call("control", dict(request), preparing=preparing)
 
-    def checkpoint(self, request_id):
+    def checkpoint(self, request_id, turn=None):
         """A turn's Stop checkpoint: its work synced into the project. A
-        session whose work is not kept (a 支线, a task not yet started) has none
+        session whose work is not kept (a 支线) has none
         to sync, and the executor route would refuse it. Nor does a session
         that never held a sandbox: its turn did nothing on a machine. (One
-        whose sandbox was destroyed while idle is the route's to answer.)"""
+        whose sandbox was destroyed while idle is the route's to answer.)
+
+        `turn` is the work id of the turn that ended. The machine runs its
+        sync with it (``CHEESE_TURN``), so a push failure is filed under that
+        turn instead of being guessed from whatever is newest later."""
         if self.config.get("kind") == "deferred" or keeps_nothing(
             self.execution_token()
         ):
             return {}
-        return self.control({"subtype": "checkpoint", "request_id": request_id})
+        request = {"subtype": "checkpoint", "request_id": request_id}
+        if turn:
+            request["turn"] = str(turn)
+        return self.control(request)

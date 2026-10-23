@@ -11,16 +11,19 @@ other (`announce.answer_questions` does the addressing).
 import uuid
 
 from app.core.errors import UnprocessableEntityError
+from app.core.live_frames import show_once_committed
 from app.core.sentences import say
 from app.domain.agent.announce import (
     instance_of_seat,
     notices_now_answered,
     notify_question,
+    who_started_the_open_turn,
 )
 from app.domain.agent.mentions import MENTION_ALL
 from app.domain.agent.realtime.broker import get_broker
-from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent_instance.adapters import project_team
+from app.domain.agent_instance.adapters import named_teammate, project_team
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.own import owned_by_seat, owner_of
 from app.domain.block.asked import SKIPPED, asked_of, skipped_by_all
 from app.domain.block.models import Block
 from app.domain.block.questions import (
@@ -33,8 +36,9 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.ledger import settle, settle_for
 from app.domain.delivery_events import DeliveryEvent
-from app.domain.identity.handles import names_a_person
 from app.domain.notification.models import NotificationType
+from app.domain.room_task.place import Place
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -48,9 +52,26 @@ async def ask(session, *, place, seat, body) -> list:
     particular.
     """
     questions = parse_questions(body)
+    if body.get("to_owner") is True:
+        owned = await owned_by_seat(session, place.project_id, seat)
+        owner = await owner_of(session, owned.instance_id) if owned else None
+        if owned is None or owner is None:
+            raise UnprocessableEntityError(say("ownAgentHasNoOwner"))
+        instance = await session.get(AgentInstance, owned.instance_id)
+        assert instance is not None
+        private = await TopicService(session).get_or_create_private(
+            project_id=place.project_id,
+            user_handle=owner[0],
+            agent_handle=instance.handle,
+            named_teammate=named_teammate,
+        )
+        place = Place(room=private)
+        body = {**body, "to": [owner[0]]}
     to = body.get("to")
     if to is None:
-        starter = await _who_started_the_open_turn(session, place, seat)
+        starter = await who_started_the_open_turn(
+            session, place.project_id, place.conversation_id, seat
+        )
         asked, everyone = ((starter,) if starter else ()), False
     else:
         asked, everyone = await _addressees(session, place.room, to)
@@ -74,6 +95,15 @@ async def ask(session, *, place, seat, body) -> list:
         asker=seat,
         asked=asked_of(rows[0].meta),
     )
+    for row in rows:
+        show_once_committed(
+            session,
+            row.conversation_id,
+            {
+                "type": "assistant_block",
+                "block": BlockOut.model_validate(row).model_dump(mode="json"),
+            },
+        )
     return rows
 
 
@@ -103,23 +133,6 @@ async def _addressees(session, room, to) -> tuple[tuple[str, ...], bool]:
             say("askToNotInChannel", handles=", ".join(unknown))
         )
     return handles, False
-
-
-async def _who_started_the_open_turn(session, place, seat) -> str | None:
-    """The person whose message opened ``seat``'s running turn, if a person did.
-
-    A turn row names the agent by its instance's handle (the conversation it
-    runs in), a seat by the instance's id; either may be on the row.
-    """
-    instance = await instance_of_seat(session, place.project_id, seat)
-    turns = AgentTurnRepository(session)
-    for handle in (seat, *((instance.handle,) if instance is not None else ())):
-        author = await turns.open_turn_author_for_topic(
-            place.conversation_id, agent_handle=handle
-        )
-        if author is not None:
-            return author if names_a_person(author) else None
-    return None
 
 
 #: 撤回一次答复叫醒提问那位时，投递 `payload.eventType` 上的名字。它不叫

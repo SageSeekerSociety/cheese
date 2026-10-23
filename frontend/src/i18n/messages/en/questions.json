@@ -1,7 +1,7 @@
 {
   "ask": {
     "buttons": {
-      "createTopic": "Create {name} topic"
+      "createTopic": "Create {name} tag"
     },
     "titleLabel": "Question title",
     "addBounty": "Add bounty",
@@ -18,7 +18,7 @@
     "errors": {
       "titleRequired": "Enter a question title",
       "titleQuestionMark": "End the title with a question mark",
-      "topicRequired": "Choose at least one topic"
+      "topicRequired": "Choose at least one tag"
     },
     "success": "Question posted"
   },
@@ -63,7 +63,7 @@
     },
     "errors": {
       "inviteFailed": "Couldn't invite: {reason}",
-      "loadFailed": "Could not load who you can invite."
+      "loadFailed": "Could not load who you can invite"
     }
   },
   "answer": {

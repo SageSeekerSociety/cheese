@@ -65,6 +65,8 @@ vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.
   getTopicEnvironment: vi.fn(() => new Promise(() => {})),
+  // 名册打开时读一份项目，看我能不能加人：这几条测试不看它。
+  getProject: vi.fn(() => new Promise(() => {})),
   // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
   getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
@@ -86,6 +88,12 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
+vi.mock('@/api/chapters', () => ({
+  listChapters: async () => [],
+  addChapter: vi.fn(),
+  removeChapter: vi.fn(),
+  renameChapter: vi.fn(),
+}))
 
 // Neighbours of what this test is about; each owns its own loading and is not
 // what carries a proposal card or a roster.

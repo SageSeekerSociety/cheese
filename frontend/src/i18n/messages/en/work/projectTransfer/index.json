@@ -1,16 +1,10 @@
 {
-  "back": "Back",
   "cancel": "Cancel",
-  "confirm": "Confirm transfer",
   "failed": "Couldn't transfer the project",
-  "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
+  "intro": "Pick someone in the project. Once they accept, the project is theirs and you become an admin",
   "loadFailed": "Couldn't load members",
-  "lookupFailed": "No account found",
-  "lookupLabel": "Full username or email",
-  "lookupOwn": "Enter the new owner's username or email:",
-  "lookupTeam": "No one on the team to hand it to? Find a person directly:",
-  "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its channels.",
-  "noCandidates": "No members can take it over",
-  "submit": "Transfer",
+  "noCandidates": "No one can take it over",
+  "ownMoves": "This is your personal project; it moves to their name once transferred",
+  "submit": "Send transfer",
   "title": "Transfer project"
 }

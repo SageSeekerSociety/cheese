@@ -101,50 +101,23 @@ describe("平台工具", () => {
 
 describe("项目的 MCP 服务器", () => {
   const TRACKER = {
-    name: "mcp__tracker__whoami",
-    description: "Say which credential reached the server.",
-    inputSchema: { type: "object", properties: { note: { type: "string" } } },
+    url: "http://127.0.0.1:4100/mcp/tracker",
+    headers: { "X-Cheese-Gateway": "${CHEESE_MCP_SECRET}" },
+    timeout: 300,
   };
 
-  it("runner 列出的每个工具都注册成 pi 的工具，调用送回 runner 的 mcp", async () => {
-    const socket = await runner(() => ({
-      result: { content: [{ type: "text", text: "reached" }], isError: false },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+  it("runner 给的每个服务器都交给 pi 自己的 MCP 客户端，地址就是会话的网关", async () => {
+    const { pi } = await load({ mcp: { tracker: TRACKER } });
 
-    assert.deepEqual(pi.tools.get(TRACKER.name).parameters, TRACKER.inputSchema);
-    const answer = await pi.call(TRACKER.name, { note: "hi" });
-    assert.deepEqual(answer.content, [{ type: "text", text: "reached" }]);
-    assert.deepEqual(socket.asked, [
-      {
-        method: "mcp",
-        params: { id: "call-1", tool: TRACKER.name, arguments: { note: "hi" } },
-      },
-    ]);
-    socket.close();
-  });
-
-  it("服务器说失败的调用抛出去，pi 才会把它标成错误", async () => {
-    // pi 0.85.1 sets a tool result's error flag only when `execute` throws; a
-    // returned `isError` is ignored, and the model would read a failure as an
-    // answer.
-    const socket = await runner(() => ({
-      result: { content: [{ type: "text", text: "no such issue" }], isError: true },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
-
-    await assert.rejects(pi.call(TRACKER.name, {}), /no such issue/);
-    socket.close();
+    assert.deepEqual([...pi.mcpServers.entries()], [["tracker", TRACKER]]);
+    assert.ok(
+      ![...pi.tools.keys()].some((name) => name.startsWith("mcp__")),
+      "a server's tools are pi's MCP client's, not the extension's",
+    );
   });
 });
 
 describe("项目的 hooks 管着 pi 自己的工具", () => {
-  const TRACKER = {
-    name: "mcp__tracker__whoami",
-    description: "Say which credential reached the server.",
-    inputSchema: { type: "object", properties: {} },
-  };
-
   it("PreToolUse 拒了的命令不会跑，模型读到的是 hook 给的理由", async () => {
     const socket = await runner(() => ({ result: { denied: "PROJECT_POLICY: no" } }));
     const { pi } = await load({ socket: socket.address, workspace: "/work" });
@@ -247,17 +220,21 @@ describe("项目的 hooks 管着 pi 自己的工具", () => {
     socket.close();
   });
 
-  it("平台工具和 MCP 工具不在这里问：前者不跑 hooks，后者由 runner 在调用两边跑", async () => {
-    const socket = await runner(() => ({
-      result: { status: 0, stdout: "ok", stderr: "" },
-    }));
-    const { pi } = await load({ socket: socket.address, mcp: [TRACKER] });
+  it("平台工具不在这里问，MCP 工具和 pi 自己的工具一样问", async () => {
+    const socket = await runner(() => ({ result: { input: {} } }));
+    const { pi } = await load({ socket: socket.address });
 
-    for (const name of ["chat_send", TRACKER.name]) {
+    for (const name of ["chat_send", "mcp__tracker__whoami"]) {
       await pi.run(name, {}, () => ({ content: [{ type: "text", text: "ok" }] }));
     }
 
-    assert.deepEqual(socket.asked, []);
+    assert.deepEqual(
+      socket.asked.map((request) => [request.params.tool, request.params.event]),
+      [
+        ["mcp__tracker__whoami", "PreToolUse"],
+        ["mcp__tracker__whoami", "PostToolUse"],
+      ],
+    );
     socket.close();
   });
 });
@@ -339,6 +316,45 @@ describe("没有手的那条路：人自己的芝士，没有机器", () => {
     // that it has none. The rendered prompt is checked against the real binary
     // in tests/unit/test_personal_sessions.py.
     assert.equal(event.systemPromptOptions.cwd, "");
+  });
+
+  it("同一个调用第三次不执行，告诉模型换个做法；下一个问题重新算", async () => {
+    const { pi } = await load({ hands: false, workspace: "" });
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    let ran = 0;
+    const read = () => {
+      ran += 1;
+      return { content: [{ type: "text", text: "频道内容" }] };
+    };
+
+    for (let i = 0; i < 2; i++) {
+      // The same input with its keys in another order is the same call.
+      const input = i ? { page: 1, ref: "p/channels/3" } : { ref: "p/channels/3", page: 1 };
+      assert.equal((await pi.run("cheese_read", input, read)).isError, false);
+    }
+    const third = await pi.run("cheese_read", { ref: "p/channels/3", page: 1 }, read);
+    const other = await pi.run("cheese_read", { ref: "p/channels/3", page: 2 }, read);
+
+    assert.equal(third.isError, true);
+    assert.match(third.content[0].text, /同样的参数.*换个做法/);
+    assert.equal(other.isError, false);
+    assert.equal(ran, 3);
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    assert.equal((await pi.run("cheese_read", { ref: "p/channels/3", page: 1 }, read)).isError, false);
+  });
+
+  it("一个问题里调用到上限之后不再调用，告诉模型停下来说明进展", async () => {
+    const { pi } = await load({ hands: false, workspace: "" });
+    await pi.emit("before_agent_start", beforeAgentStart(""));
+    const search = () => ({ content: [{ type: "text", text: "没有搜到" }] });
+
+    for (let i = 0; i < 200; i++) {
+      assert.equal((await pi.run("cheese_find", { query: `词${i}` }, search)).isError, false);
+    }
+    const over = await pi.run("cheese_find", { query: "再一个" }, search);
+
+    assert.equal(over.isError, true);
+    assert.match(over.content[0].text, /200 次.*「继续」/);
   });
 });
 

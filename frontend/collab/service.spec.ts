@@ -8,6 +8,8 @@ import { createServer, type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
+import { Transform } from '@tiptap/pm/transform'
+import { updateYFragment } from '@tiptap/y-tiptap'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
@@ -17,8 +19,10 @@ import {
   DOC_SCHEMA_PARAM,
   DOC_SCHEMA_VERSION,
   exportMarkdown,
+  FIELD,
   liveNode,
   liveSuggestions,
+  suggestionId,
   writeMarkdown,
 } from '../src/lib/docSchema'
 
@@ -40,7 +44,6 @@ interface StoreSent {
   content: string | null
   actors: string[]
   suggestions: { id: string; author: string; old: string; new: string }[]
-  requested_by?: string | null
   edits?: { old: string; new: string; suggestion_id?: string }[] | null
   suggested?: boolean
 }
@@ -93,10 +96,17 @@ class FakeBackend {
   }
 }
 
-function ticket(sub: string, opts: { ro?: boolean; doc?: string; key?: string } = {}): string {
+function ticket(sub: string, opts: { ro?: boolean; sg?: boolean; doc?: string; key?: string } = {}): string {
   const enc = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url')
   const head = enc({ alg: 'HS256', typ: 'JWT' })
-  const body = enc({ doc: opts.doc ?? DOC, sub, agent: false, ro: !!opts.ro, exp: Date.now() / 1000 + 60 })
+  const body = enc({
+    doc: opts.doc ?? DOC,
+    sub,
+    agent: false,
+    ro: !!opts.ro,
+    sg: !!opts.sg,
+    exp: Date.now() / 1000 + 60,
+  })
   const sig = createHmac('sha256', opts.key ?? deriveKey(SECRET, 'ticket'))
     .update(`${head}.${body}`)
     .digest('base64url')
@@ -276,6 +286,24 @@ describe('the live document', () => {
     expect(exportMarkdown(writer.doc)).not.toContain('只读者写的')
   })
 
+  it('takes a mentor’s own suggestion and drops a change they make to the text', async () => {
+    const { backend, url } = await setup('原文。\n')
+    const mentor = client(url, ticket('mentor', { sg: true }))
+    const writer = client(url, ticket('xiaowang'))
+    await until(() => exportMarkdown(mentor.doc).includes('原文') && exportMarkdown(writer.doc).includes('原文'))
+    writeMarkdown(mentor.doc, '原文。\n\n导师直接改的。\n')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(exportMarkdown(writer.doc)).not.toContain('导师直接改的')
+
+    // The first connection is now ahead of the document with the refused change; a fresh one suggests.
+    const suggested = suggestedCopy(writer.doc, '导师建议的。', suggestionId('mentor'))
+    const fresh = client(url, ticket('mentor', { sg: true }))
+    await until(() => exportMarkdown(fresh.doc).includes('原文'))
+    Y.applyUpdate(fresh.doc, Y.encodeStateAsUpdate(suggested, Y.encodeStateVector(fresh.doc)))
+    await until(() => liveSuggestions(writer.doc).some((item) => item.new.includes('导师建议的')))
+    expect(backend.content).not.toContain('导师直接改的')
+  })
+
   it('keeps a backend write when the live document stores again, together with typing that came after', async () => {
     const { backend, url, http } = await setup('第一段。\n')
     const a = client(url, ticket('xiaowang'))
@@ -409,7 +437,6 @@ describe('the live document', () => {
 interface EditBody {
   edits: { old: string; new: string }[]
   actor: string
-  requested_by?: string | null
   mode: 'direct' | 'suggest'
   reason?: string | null
   editor_is_agent?: boolean
@@ -464,19 +491,18 @@ async function opened(seed = TWO) {
 }
 
 describe('an edit to part of the live document', () => {
-  it('changes that passage, stores it as the writer and for whoever asked, and reaches every editor', async () => {
+  it('changes that passage, stores it as the writer with the passages, and reaches every editor', async () => {
     const { backend, http, a } = await opened()
     const response = await edit(http, {
       edits: [{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }],
       actor: 'cheese-agent',
-      requested_by: 'teacher',
       mode: 'direct',
     })
     expect(response.status).toBe(200)
     expect((await response.json()).edits).toEqual([{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }])
     expect(backend.content).toBe('第一段讲目标。\n\n第二段讲范围和不做的事。')
     expect(backend.versions.at(-1)?.actors).toEqual(['cheese-agent'])
-    expect(backend.sent.at(-1)?.requested_by).toBe('teacher')
+    expect(backend.sent.at(-1)?.edits).toEqual([{ old: '第二段讲范围。', new: '第二段讲范围和不做的事。' }])
     await until(() => exportMarkdown(a.doc).includes('不做的事'))
   })
 
@@ -553,6 +579,29 @@ describe('an edit to part of the live document', () => {
     expect(last.suggestions).toEqual([{ id: applied.suggestion_id, author: 'cheese-agent', old: '范围', new: '边界' }])
     await until(() => liveSuggestions(a.doc).length === 1)
     expect(exportMarkdown(a.doc)).toBe(TWO)
+  })
+
+  it('as a suggestion of a whole new paragraph, reaches every editor and is still pending when the document is opened again', async () => {
+    const { backend, http, a } = await opened()
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围。\n\n第三段讲排期。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    expect(response.status).toBe(200)
+    const pending = [
+      { id: (await response.json()).edits[0].suggestion_id, author: 'cheese-agent', old: '', new: '第三段讲排期。' },
+    ]
+    expect(backend.content).toBe(TWO)
+    expect(backend.sent.at(-1)!.suggestions).toEqual(pending)
+    await until(() => liveSuggestions(a.doc).length === 1)
+    expect(liveSuggestions(a.doc)).toEqual(pending)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+    // Opened again: from what was stored.
+    const reopened = new Y.Doc()
+    Y.applyUpdate(reopened, backend.state!)
+    expect(liveSuggestions(reopened)).toEqual(pending)
+    expect(exportMarkdown(reopened)).toBe(TWO)
   })
 
   it('applied directly, leaves somebody else’s pending suggestion where it was', async () => {
@@ -636,15 +685,17 @@ describe('an edit to part of the live document', () => {
     expect(exportMarkdown(a.doc)).toBe(TWO)
   })
 
-  it('cannot suggest reshaping paragraphs, and changes nothing', async () => {
-    const { backend, http, a } = await opened()
+  it('cannot suggest a row added to a table, and changes nothing', async () => {
+    const { backend, http, a } = await opened(`${TWO}\n\n| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |`)
     const versions = backend.versions.length
-    for (const change of ['- 第二段讲范围。', '第一段讲目标。第二段讲范围。']) {
-      const old = change.startsWith('-') ? '第二段讲范围。' : TWO
-      const response = await edit(http, { edits: [{ old, new: change }], actor: 'cheese-agent', mode: 'suggest' })
-      expect(response.status).toBe(422)
-      expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
-    }
+    const row = exportMarkdown(a.doc).trimEnd().split('\n').at(-1)!
+    const response = await edit(http, {
+      edits: [{ old: row, new: `${row}\n${row.replace('一', '二')}` }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
     expect(backend.versions.length).toBe(versions)
     expect(backend.sent.some((sent) => sent.suggested || sent.suggestions.length)).toBe(false)
     expect(liveSuggestions(a.doc)).toEqual([])
@@ -667,3 +718,17 @@ describe('an edit to part of the live document', () => {
     expect(backend.sent.at(-1)?.suggestions).toEqual([expect.objectContaining({ author: 'cheese-agent' })])
   })
 })
+
+/** A copy of `doc` with `text` inserted after the first paragraph, marked as a suggestion by `id`. */
+function suggestedCopy(doc: Y.Doc, text: string, id: string): Y.Doc {
+  const copy = new Y.Doc()
+  Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
+  const node = liveNode(copy)
+  const at = 1 + (node.firstChild?.content.size ?? 0)
+  const mark = node.type.schema.marks.insertion.create({ id })
+  const next = new Transform(node).insert(at, node.type.schema.text(text, [mark])).doc
+  copy.transact(() =>
+    updateYFragment(copy, copy.getXmlFragment(FIELD), next, { mapping: new Map(), isOMark: new Map() })
+  )
+  return copy
+}

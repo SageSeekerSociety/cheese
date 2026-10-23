@@ -1,17 +1,18 @@
-"""A task made from a discussion starts with its AI teammate drafting the
-document. While the document is empty, whoever opens the task is told where
-that is, and when it failed they can have it tried again.
+"""A task made from a discussion — one of several laid out in a 支线 — starts
+with its AI teammate setting to work from it. While the task's document is
+still empty, whoever opens the task is told where that first instruction is,
+and when it failed they can have it tried again.
 
 The rules, stated before the code:
 
-- right after the task is made, it is being drafted;
+- right after the task is made, its first instruction is under way;
 - once the first instruction gave up, the task says it failed, and someone
   working the task can try again, which gives the same instruction again;
 - only someone working the task tries again, and only after a failure;
-- while the first turn runs, the task is being drafted, even before the
-  session's receipt for the instruction is recorded; it failed only when that
-  turn ended having said nothing;
-- a task created empty has no such first turn;
+- written to the session and not read yet, it is under way; read, it is under
+  way while the session that read it is at work; it failed when the work it
+  was read into failed, or when that session stopped having said nothing;
+- a task created empty has no such first instruction;
 - an instruction that has not started half an hour after it was given gives up
   instead of trying for ever;
 - a page already showing the task hears when the instruction gives up, and
@@ -48,7 +49,11 @@ def _task_from_message(client):
         headers=session_auth_headers("alice"),
     )
     channel = r.json()["data"]["id"]
-    said = post_message(client, channel, "alice", {"content": "微信里打不开预览"})
+    root = post_message(client, channel, "alice", {"content": "预览有两个问题"})
+    thread = client.post(
+        f"/blocks/{root['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    said = post_message(client, thread, "alice", {"content": "微信里打不开预览"})
     r = client.post(
         f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
     )
@@ -202,40 +207,88 @@ def test_a_page_showing_the_task_hears_its_first_instruction_give_up(client):
     assert _opening(client, task) == "failed"
 
 
-def test_a_running_first_turn_is_drafting_until_it_ends_having_said_nothing(client):
-    from app.domain.agent.models import AgentTurn
-    from app.domain.delivery.models import Delivery
+def _opening_handed_over(client, task: str, *, read: bool, failed: bool = False):
+    """The first instruction was written to the task's session; ``read``: the
+    session read it (its echo settles the row as ``received``); ``failed``: the
+    work it was read into then failed."""
+    from app.domain.delivery.models import Delivery, NativeInput
+    from app.domain.room_task.models import Task
 
-    _, task = _task_from_message(client)
-    turn_id = uuid.uuid4()
-
-    async def _sent_without_receipt():
-        # The send returned and the receipt is not in yet: the ledger row reads
-        # `uncertain` while the turn it started is running.
+    async def _hand_over():
         async with client.test_factory() as session:
-            session.add(
-                AgentTurn(
-                    id=turn_id,
-                    continuation_id=turn_id,
-                    conversation_id=uuid.UUID(task),
-                    author="system",
-                    started_at=datetime.now(UTC),
+            row = await session.scalar(
+                select(Delivery).where(
+                    Delivery.conversation_id == uuid.UUID(task),
+                    Delivery.payload["purpose"].astext == "opening",
                 )
             )
-            await session.execute(
-                update(Delivery)
-                .where(Delivery.conversation_id == uuid.UUID(task))
-                .values(state="uncertain", attempt_id=turn_id, attempts=1)
+            attempt = uuid.uuid4()
+            now = datetime.now(UTC)
+            row.state = "received" if read else "uncertain"
+            row.attempt_id = attempt
+            row.attempts = 1
+            task_row = await session.get(Task, uuid.UUID(task))
+            session.add(
+                NativeInput(
+                    project_id=task_row.project_id,
+                    conversation_id=uuid.UUID(task),
+                    recipient_handle=row.recipient_handle,
+                    harness="claude-code",
+                    native_session_id="sess-opening",
+                    input_id=uuid.uuid4(),
+                    work_id=attempt,
+                    delivery_id=row.id,
+                    attempt_id=attempt,
+                    registered_at=now,
+                    accepted_at=now,
+                    echoed_at=now if read else None,
+                    failed_at=now if failed else None,
+                    failure="error" if failed else None,
+                )
             )
             await session.commit()
 
-    asyncio.run(_sent_without_receipt())
-    assert _opening(client, task) == "drafting"
+    asyncio.run(_hand_over())
 
-    async def _turn_ends():
+
+def _session_declares(client, task: str, status: str):
+    from app.domain.agent import session_state
+
+    key = session_state.SeatKey(uuid.UUID(task), "cheese", "claude-code")
+
+    async def _declare():
+        await session_state.register(client.test_factory, key)
         async with client.test_factory() as session:
-            (await session.get(AgentTurn, turn_id)).stopped_at = datetime.now(UTC)
+            await session_state.declare(session, key, status)
             await session.commit()
 
-    asyncio.run(_turn_ends())
+    asyncio.run(_declare())
+
+
+def test_an_opening_written_and_not_yet_read_is_under_way(client):
+    _, task = _task_from_message(client)
+
+    _opening_handed_over(client, task, read=False)
+
+    assert _opening(client, task) == "drafting"
+
+
+def test_a_read_opening_is_under_way_until_its_session_stops_having_said_nothing(
+    client,
+):
+    _, task = _task_from_message(client)
+
+    _opening_handed_over(client, task, read=True)
+    _session_declares(client, task, "running")
+    assert _opening(client, task) == "drafting"
+
+    _session_declares(client, task, "idle")
+    assert _opening(client, task) == "failed"
+
+
+def test_an_opening_read_into_work_that_failed_is_failed(client):
+    _, task = _task_from_message(client)
+
+    _opening_handed_over(client, task, read=True, failed=True)
+
     assert _opening(client, task) == "failed"

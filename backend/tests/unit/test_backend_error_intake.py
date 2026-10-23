@@ -5,6 +5,7 @@ on whether the channel works — 「宁可漏报也不能刷屏：房间是对�
 So the flood assertion below is the acceptance criterion in executable form.
 """
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -26,19 +27,10 @@ from app.domain.backend_log import (
 
 
 @pytest.mark.parametrize("kind", ["GatewayHTTPError", "GatewayStreamError"])
-async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
-    from app.core import alerting
-    from app.domain import backend_log
-
-    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
-    monkeypatch.setattr(
-        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
-    )
-    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
-    added = AsyncMock()
-    monkeypatch.setattr(backend_log, "keep_record", added)
-    alerts = []
-    monkeypatch.setattr(alerting, "send", lambda *args, **kw: alerts.append((args, kw)))
+async def test_one_failed_model_call_is_kept_without_alarming(monkeypatch, kind):
+    """Upstream overload fails about one call in 130 on an ordinary day, and the
+    caller retries it. Each one is recorded; none of them is news."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
     error = BackendErrorIn(
         message="Model response stream failed before completion",
         exc_type=kind,
@@ -50,9 +42,119 @@ async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
             None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
         )
     assert added.await_count == 1
+    assert alerts == []
+
+
+async def _fail(backend_log, topic, kind, n=1, where="model gateway", **kw):
+    for _ in range(n):
+        error = BackendErrorIn(
+            message="The model was never reached",
+            exc_type=kind,
+            where=where,
+            request_id=f"call-{uuid.uuid4().hex[:8]}",
+            **kw,
+        )
+        await backend_log.record(
+            None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+        )
+
+
+def _bursts(alerts):
+    return [a for a in alerts if str(a[1].get("key")).startswith("model-failure-burst")]
+
+
+async def test_a_burst_of_model_failures_alerts_with_the_counts(monkeypatch):
+    """What a person can act on is the model path going down: many failures in
+    a few minutes, of whatever kind. That is told with how many of each."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "GatewayUnreachable", 40)
+    await _fail(backend_log, topic, "GatewayHTTPError", 40)
+    told = _bursts(alerts)
+    assert told
+    last = " ".join(told[-1][0][1])
+    assert "GatewayUnreachable 40" in last and "GatewayHTTPError 40" in last
+
+
+async def test_failures_spread_over_an_ordinary_day_do_not_alert(monkeypatch):
+    """A failure a minute is a busy upstream, not an outage."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(backend_log.time, "time", lambda: clock[0])
+    for _ in range(120):
+        await _fail(backend_log, topic, "GatewayHTTPError")
+        clock[0] += 60
+    assert _bursts(alerts) == []
+
+
+async def test_an_outage_that_goes_on_keeps_being_reported(monkeypatch):
+    """An outage that goes on for half an hour is still handed to the alerting
+    module after its first minutes, which decides when it is news again. Told
+    only at the moment the threshold was crossed, an outage that began inside
+    the repeat window of an earlier spike was never reported at all."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(backend_log.time, "time", lambda: clock[0])
+    for _ in range(10 * 60):
+        await _fail(backend_log, topic, "GatewayUnreachable")
+        clock[0] += 1
+    early = len(_bursts(alerts))
+    for _ in range(20 * 60):
+        await _fail(backend_log, topic, "GatewayUnreachable")
+        clock[0] += 1
+    assert len(_bursts(alerts)) > early
+
+
+async def test_only_model_failures_count_toward_the_burst(monkeypatch):
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "ValueError", 80)
+    await _fail(backend_log, topic, "ClientAbandonedTurn", 80)
+    assert _bursts(alerts) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "category"),
+    [
+        ("SubscriptionHTTPError", "http_auth"),
+        ("GatewayHTTPError", "http_auth"),
+        ("SubscriptionEgressOffline", "egress_offline"),
+        ("GatewayUpstreamOutOfCredit", "provider_credit"),
+    ],
+)
+async def test_a_failure_someone_can_fix_is_told_at_once(monkeypatch, kind, category):
+    """A refused credential, an offline egress or a provider account out of
+    credit fails every turn of a quiet deployment, far below any burst
+    threshold; it is told the first time."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(
+        backend_log, topic, kind, where="model subscription", upstream_failure=category
+    )
     assert len(alerts) == 1
-    assert alerts[0][1]["key"] == f"model-gateway:{kind}"
-    assert any("call-1" in line for line in alerts[0][0][1])
+    assert alerts[0][1]["key"] != "model-failure-burst"
+
+
+async def test_each_empty_provider_account_is_its_own_alert(monkeypatch):
+    """Two rows out of credit are two accounts to top up: the second must not
+    be held back as a repeat of the first, while the same row named again is
+    the same alert (`alerting` tells a key once per repeat window)."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    for row in (
+        "deepseek-flash deepseek/deepseek-chat 1a2b3c4d",
+        "glm-5.3 anthropic/glm-5.3 5e6f7a8b",
+    ):
+        for _ in range(2):
+            error = BackendErrorIn(
+                message=f"The provider account behind gateway row {row} is out of credit",
+                exc_type="GatewayUpstreamOutOfCredit",
+                where=f"model gateway: {row}",
+                upstream_failure="provider_credit",
+            )
+            await backend_log.record(
+                None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+            )
+    keys = [kw["key"] for _args, kw in alerts]
+    assert len(keys) == 4 and len(set(keys)) == 2, keys
+    told = [" ".join(args[1]) for args, _kw in alerts]
+    assert "deepseek/deepseek-chat" in told[0] and "anthropic/glm-5.3" in told[-1], told
 
 
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
@@ -116,6 +218,7 @@ def _recorded(monkeypatch):
         backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
     )
     monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    monkeypatch.setattr(backend_log, "model_failures", backend_log._ModelFailureRate())
     added = AsyncMock()
     monkeypatch.setattr(backend_log, "keep_record", added)
     alerts = []
@@ -124,26 +227,27 @@ def _recorded(monkeypatch):
 
 
 async def test_a_subscription_lane_failure_alerts_like_a_gateway_one(monkeypatch):
-    """The lane is not what makes a failure: before this, only
-    `where == "model gateway"` alerted, so a stalled subscription room paged
-    nobody — and the record itself was missing entirely (#1447)."""
+    """The lane is not what makes a failure: before #1447 only
+    `where == "model gateway"` alerted, so a stalled subscription lane paged
+    nobody — and the record itself was missing entirely."""
     backend_log, topic, added, alerts = _recorded(monkeypatch)
-    error = BackendErrorIn(
-        message="Model response stream was cut before the upstream ended it",
-        exc_type="SubscriptionStreamError",
-        where="model subscription",
-        request_id="req-1",
-        received_events=0,
-        upstream_failure="timeout",
-        ended_by="upstream",
-    )
-    await backend_log.record(
-        None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
-    )
+    for i in range(80):
+        error = BackendErrorIn(
+            message="Model response stream was cut before the upstream ended it",
+            exc_type="SubscriptionStreamError",
+            where="model subscription",
+            request_id=f"req-{i}",
+            received_events=0,
+            upstream_failure="timeout",
+            ended_by="upstream",
+        )
+        await backend_log.record(
+            None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+        )
     assert added.await_count == 1
-    assert len(alerts) == 1
-    assert alerts[0][1]["key"] == "model-gateway:SubscriptionStreamError"
+    assert _bursts(alerts)
     lines = " ".join(alerts[0][0][1])
+    assert "SubscriptionStreamError" in lines
     assert "events: 0" in lines and "upstream: timeout" in lines
 
 
@@ -411,3 +515,83 @@ def test_room_from_path_ignores_paths_that_name_no_room() -> None:
     assert room_from_path("/users/me") == (None, None)
     assert room_from_path("/projects/by-task/abc") == (None, None)
     assert room_from_path("/health") == (None, None)
+
+
+@pytest.fixture
+def delivered(monkeypatch):
+    """What actually reaches the channel through the real alerting module, its
+    repeat rules included, on a clock the test turns."""
+    import time as clock_module
+
+    from app.core import alerting
+    from app.domain import backend_log
+
+    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    monkeypatch.setattr(
+        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
+    )
+    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    monkeypatch.setattr(backend_log, "model_failures", backend_log._ModelFailureRate())
+    monkeypatch.setattr(backend_log, "keep_record", AsyncMock())
+    monkeypatch.setattr(
+        alerting.settings, "feishu_alert_webhook", "https://example/hook"
+    )
+    monkeypatch.setattr(alerting, "budget", alerting._Budget())
+    monkeypatch.setattr(alerting, "_asked", {})
+    monkeypatch.setattr(
+        alerting, "REPEAT_KEY_PREFIX", f"cheese:alert:test:{uuid.uuid4().hex}:"
+    )
+    now = [1_000_000.0]
+    monkeypatch.setattr(clock_module, "time", lambda: now[0])
+    posted: list[tuple[float, str]] = []
+
+    async def capture(text: str) -> None:
+        posted.append((now[0], text))
+
+    monkeypatch.setattr(alerting, "_post", capture)
+
+    async def fail(kind: str, n: int, every_s: float) -> None:
+        for _ in range(n):
+            await _fail(backend_log, topic, kind)
+            while alerting._running:
+                await asyncio.gather(*list(alerting._running), return_exceptions=True)
+            now[0] += every_s
+
+    return SimpleNamespace(fail=fail, posted=posted, now=now)
+
+
+async def test_a_gateway_outage_right_after_an_overload_spike_is_told(delivered):
+    """An ordinary upstream-overload spike, quiet, then our gateway going down
+    for two minutes: the outage reaches the channel, not only the spike."""
+    await delivered.fail("GatewayStreamError", 35, 8)
+    delivered.now[0] += 15 * 60
+    outage_starts = delivered.now[0]
+    await delivered.fail("GatewayUnreachable", 100, 1.2)
+
+    during = [text for at, text in delivered.posted if at >= outage_starts]
+    assert during and "GatewayUnreachable" in during[0], delivered.posted
+
+
+@pytest.mark.parametrize("category", ["http_error", "rate_limit", "timeout"])
+async def test_an_upstream_that_is_busy_is_not_told_at_once(monkeypatch, category):
+    """Overload, rate limits and timeouts are the upstream's, retried by the
+    caller; one of them is not news, whatever lane it came from."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(
+        backend_log,
+        topic,
+        "SubscriptionHTTPError",
+        where="model subscription",
+        upstream_failure=category,
+    )
+    assert alerts == []
+
+
+async def test_the_burst_threshold_is_where_it_says(monkeypatch):
+    from app.domain.backend_log import MODEL_FAILURE_BURST
+
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "GatewayUnreachable", MODEL_FAILURE_BURST - 1)
+    assert _bursts(alerts) == []
+    await _fail(backend_log, topic, "GatewayUnreachable")
+    assert len(_bursts(alerts)) == 1

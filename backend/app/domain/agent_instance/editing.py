@@ -41,7 +41,7 @@ async def holder(agent_id: uuid.UUID) -> str | None:
         return None
     try:
         value = await client.get(_key(agent_id))
-    except Exception:  # noqa: BLE001 — a courtesy must never fail its caller
+    except Exception:
         return None
     if value is None:
         return None
@@ -68,7 +68,7 @@ async def take(agent_id: uuid.UUID, handle: str) -> bool:
             await client.set(_key(agent_id), handle, ex=LEASE_SECONDS)
             return True
         return False
-    except Exception:  # noqa: BLE001
+    except Exception:
         return True
 
 
@@ -80,5 +80,5 @@ async def released(agent_id: uuid.UUID, handle: str) -> None:
     try:
         if await holder(agent_id) == handle:
             await client.delete(_key(agent_id))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return

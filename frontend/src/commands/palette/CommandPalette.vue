@@ -3,6 +3,9 @@
 // 此刻能做的事。桌面上是浮在页面上方的一块；手机上是一整页，从话题列表顶栏的搜索
 // 图标进来。
 //
+// 这个文件是壳和键盘：开着没有、焦点在哪儿、哪个键归谁。画的部分在四件子组件里
+// （顶栏 PaletteInput、结果 PaletteResults、操作清单 PaletteActions、底栏
+// PaletteFoot），找什么在 usePaletteSearch，一条结果能做什么在 usePaletteActions。
 // 面板里的东西全部来自数据源（sources.ts）和命令表（@/commands），这里只管输入、
 // 选择和打开。整个应用只挂一个，在 App 里。
 //
@@ -10,26 +13,25 @@
 // （复制链接、重命名……），手机上没有 Tab，长按一行升起同一份清单。
 import type { MenuCommand } from '@/commands'
 import type { ResultRow } from './results'
-import type { PaletteItem, SourceContext } from './sources'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { useLongPress } from '@/composables/useLongPress'
-
+import { actionId, optionId } from './ids'
+import PaletteActions from './PaletteActions.vue'
+import PaletteFoot from './PaletteFoot.vue'
+import PaletteInput from './PaletteInput.vue'
+import PaletteResults from './PaletteResults.vue'
 import { readRecents, recordVisit } from './recents'
-import { buildResults, remoteSources, splitPrefix } from './results'
 import { paletteSources } from './sources'
 import { paletteAsk, paletteOpen } from './state'
+import { usePaletteActions } from './usePaletteActions'
+import { usePaletteSearch } from './usePaletteSearch'
 
 import { defineCommands, menuActionOf } from '@/commands'
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
-import { routeIds } from '@/lib/addresses'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
 const route = useRoute()
@@ -38,78 +40,85 @@ const { mdAndUp } = useDisplay()
 const input = ref('')
 const selected = ref(0)
 const recents = ref(readRecents())
-const field = ref<HTMLInputElement | null>(null)
-let returnFocus: HTMLElement | null = null
+const bar = ref<InstanceType<typeof PaletteInput> | null>(null)
 
-// 在哪个项目里找。默认跟着当前页；空着按退格去掉范围（跨项目只找名字），在一个项目
-// 上按 Tab 进到那个项目里。每次打开都回到当前页所在的项目。
-const routeCtx = computed<SourceContext>(() => ({
-  projectId: routeIds(route.params).projectId ?? null,
+const { scope, ctx, scopeName, groups, rows, searching } = usePaletteSearch({
+  input,
+  recents,
+  open: paletteOpen,
+  route,
   router,
-}))
-const scope = ref<string | null | undefined>(undefined)
-const ctx = computed<SourceContext>(() =>
-  scope.value === undefined ? routeCtx.value : { projectId: scope.value, router }
-)
-const store = useWorkspaceStore()
-const scopeName = computed(() =>
-  ctx.value.projectId ? store.projects.find((project) => project.id === ctx.value.projectId)?.name : undefined
+})
+
+const { acting, actSelected, verbOf, hasMore, openActions, onRowContextMenu, openSheet, sheetOpen } = usePaletteActions(
+  { rows, selected, choose, mdAndUp }
 )
 
-function enterScope(projectId: string) {
-  scope.value = projectId
-  input.value = ''
-  acting.value = null
+const selectedRow = computed(() => rows.value[selected.value])
+
+function focusField() {
+  void nextTick(() => bar.value?.focus())
 }
 
-// 「最近去过」不列你现在就在的地方。
-const recentElsewhere = computed(() =>
-  recents.value.filter((entry) => {
-    try {
-      return router.resolve(entry.to).path !== route.path
-    } catch {
-      return false
-    }
-  })
-)
+// 返回手势 / 返回键关掉的是面板这一层，不是它底下那一页：开着的时候在历史里压一
+// 格（地址不变，只在 state 上做个记号），返回把它弹掉，这里听到就关。手机上从话题
+// 列表叫出面板、按返回却换了页，就是少了这一格。
+//
+// 用面板里的办法关掉（左上角、Esc、点空白）时，那一格得自己退掉，不在身后留一格
+// 空的——否则下一次返回什么也不做。正要选一条结果离开这一页时不退：那一格正好是
+// 「回到打开面板的地方」。
+const HISTORY_MARK = 'commandPalette'
+let historyPushed = false
 
-// 远程搜：停止打字一会儿再问，问回来时输入已经变了就扔掉。本地结果不等它。
-const SEARCH_DELAY_MS = 200
-const remote = ref(new Map<string, PaletteItem[]>())
-const searching = ref(false)
-let asked = 0
-let timer: ReturnType<typeof setTimeout> | undefined
-watch([input, () => ctx.value.projectId, paletteOpen], () => {
-  clearTimeout(timer)
-  const ask = ++asked
-  remote.value = new Map()
-  // 内容只在一个项目里搜。
-  const targets = paletteOpen.value && ctx.value.projectId ? remoteSources(input.value, paletteSources) : []
-  searching.value = targets.length > 0
-  if (!targets.length) return
-  const text = splitPrefix(input.value).query
-  timer = setTimeout(async () => {
-    const found = await Promise.all(
-      targets.map((source) => source.search!(text, ctx.value).catch(() => [] as PaletteItem[]))
-    )
-    if (ask !== asked) return
-    remote.value = new Map(targets.map((source, i) => [source.id, found[i]]))
-    searching.value = false
-  }, SEARCH_DELAY_MS)
-})
-onBeforeUnmount(() => clearTimeout(timer))
+function onPopState() {
+  if ((history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) return
+  historyPushed = false
+  close()
+}
 
-const groups = computed(() =>
-  paletteOpen.value ? buildResults(input.value, paletteSources, ctx.value, recentElsewhere.value, remote.value) : []
-)
-const rows = computed(() => groups.value.flatMap((group) => group.rows))
-const offsets = computed(() => {
-  let at = 0
-  return groups.value.map((group) => {
-    const start = at
-    at += group.rows.length
-    return start
-  })
+function pushHistory() {
+  if (historyPushed) return
+  history.pushState({ ...(history.state as object | null), [HISTORY_MARK]: true }, '')
+  historyPushed = true
+}
+
+function dropHistory() {
+  if (!historyPushed) return
+  historyPushed = false
+  if (!(history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) return
+  // 关掉之后这一轮里页面可能正要跳去别处（选中了一条结果）。等这一轮结束再看：
+  // 地址变了就把那一格留给「返回」，不要退掉它。
+  const href = location.href
+  setTimeout(() => {
+    if (location.href !== href) return
+    if ((history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) history.back()
+  }, 0)
+}
+
+onMounted(() => window.addEventListener('popstate', onPopState))
+onBeforeUnmount(() => window.removeEventListener('popstate', onPopState))
+
+// 这一栏钉在顶上：一打开、一问一答完、换了范围，光标都该回来。
+let returnFocus: HTMLElement | null = null
+watch(paletteOpen, async (open) => {
+  acting.value = null
+  paletteAsk.value = null
+  scope.value = undefined
+  if (open) {
+    pushHistory()
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    input.value = ''
+    selected.value = 0
+    recents.value = readRecents()
+    await nextTick()
+    bar.value?.focus()
+  } else {
+    // 底部那张操作清单是面板的一部分：面板关了，它不能自己留在页面上。
+    sheetOpen.value = false
+    dropHistory()
+    returnFocus?.focus?.()
+    returnFocus = null
+  }
 })
 
 watch(input, () => {
@@ -120,25 +129,14 @@ watch(rows, (next) => {
   if (selected.value >= next.length) selected.value = Math.max(next.length - 1, 0)
 })
 
-watch(paletteOpen, async (open) => {
-  acting.value = null
-  paletteAsk.value = null
-  scope.value = undefined
-  if (open) {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    input.value = ''
-    selected.value = 0
-    recents.value = readRecents()
-    await nextTick()
-    field.value?.focus()
-  } else {
-    returnFocus?.focus?.()
-    returnFocus = null
-  }
-})
-
 function close() {
   paletteOpen.value = false
+}
+
+function enterScope(projectId: string) {
+  scope.value = projectId
+  input.value = ''
+  acting.value = null
 }
 
 // ⌘K / Ctrl K：开着就关上。不进面板自己的列表——它就是面板本身。
@@ -158,7 +156,7 @@ onBeforeUnmount(
 onBeforeUnmount(
   router.afterEach((to) => {
     for (const source of paletteSources) {
-      const item = source.fromRoute?.(to, routeCtx.value)
+      const item = source.fromRoute?.(to, ctx.value)
       if (item) {
         recordVisit(item)
         return
@@ -173,54 +171,11 @@ function choose(item: ResultRow, newTab = false) {
     return
   }
   if (!item.remote) recordVisit(item)
+  // 要去别处了：历史里那一格留着，从那边返回时正好回到打开面板的地方。
+  if (item.to) historyPushed = false
   close()
   item.run?.()
   if (item.to) void router.push(item.to)
-}
-
-// ---- 更多操作 --------------------------------------------------------------
-
-function verbOf(row: ResultRow): string {
-  return row.verb ?? t(row.to ? 'navigation.palette.verbOpen' : 'navigation.palette.verbRun')
-}
-
-/** 一条结果能做的全部事：回车那一件在最前，然后是在新标签页打开，然后是它自己的。 */
-function actionsOf(row: ResultRow): MenuCommand[] {
-  const list: MenuCommand[] = [{ id: 'palette.primary', title: verbOf(row), icon: row.icon, run: () => choose(row) }]
-  // 手机上没有标签页可开。
-  if (row.to && mdAndUp.value)
-    list.push({
-      id: 'palette.newTab',
-      title: t('navigation.palette.newTab'),
-      icon: 'mdi-open-in-new',
-      run: () => choose(row, true),
-    })
-  if (row.scope)
-    list.push({ id: 'palette.scope', title: t('navigation.palette.searchIn'), icon: 'mdi-magnify', run: () => {} })
-  return [...list, ...(row.actions?.() ?? [])]
-}
-
-/** 只有回车那一件可做的（一条操作）不开清单。 */
-function hasMore(row: ResultRow | undefined): boolean {
-  return !!row && actionsOf(row).length > 1
-}
-
-const acting = ref<{ row: ResultRow; actions: MenuCommand[] } | null>(null)
-const actSelected = ref(0)
-
-function openActions(row: ResultRow | undefined) {
-  if (!hasMore(row)) return
-  acting.value = { row: row!, actions: actionsOf(row!) }
-  actSelected.value = 0
-}
-
-// 右键一行：打开的就是 Tab 那一栏「还能做什么」，对的是右键的那一行。
-function onRowContextMenu(event: MouseEvent, index: number) {
-  const row = rows.value[index]
-  if (!hasMore(row)) return
-  event.preventDefault()
-  selected.value = index
-  openActions(row)
 }
 
 async function runAction(action: MenuCommand) {
@@ -229,8 +184,7 @@ async function runAction(action: MenuCommand) {
   // 进到一个项目里搜：面板留着，换个范围接着打字。
   if (action.id === 'palette.scope' && row?.scope) {
     enterScope(row.scope)
-    await nextTick()
-    field.value?.focus()
+    focusField()
     return
   }
   action.run?.()
@@ -238,25 +192,17 @@ async function runAction(action: MenuCommand) {
   if (paletteAsk.value) {
     askText.value = paletteAsk.value.value
     await nextTick()
-    field.value?.focus()
-    field.value?.select()
+    bar.value?.focus()
+    bar.value?.select()
     return
   }
+  // 同 choose()：这一件要去别处，历史里那一格留给返回。
+  if (action.to) historyPushed = false
   close()
   if (action.to) void router.push(action.to)
 }
 
-// 手机上长按一行：同一份清单从底部升起。
-const list = ref<HTMLElement | null>(null)
-const sheetOpen = ref(false)
-useLongPress(list, (event) => {
-  const index = Number((event.target as HTMLElement | null)?.closest?.('[data-row]')?.getAttribute('data-row'))
-  const row = rows.value[index]
-  if (!hasMore(row)) return
-  selected.value = index
-  acting.value = { row: row!, actions: actionsOf(row!) }
-  sheetOpen.value = true
-})
+// 长按（`PaletteResults` 认出来的）升起的那一份，和桌面上的清单是同一批事。
 watch(sheetOpen, (open) => {
   if (!open && !paletteAsk.value) acting.value = null
 })
@@ -286,7 +232,7 @@ function onAskKeydown(event: KeyboardEvent) {
     // 不改了：回到刚才那张结果列表，输入的字还在。
     event.preventDefault()
     paletteAsk.value = null
-    void nextTick(() => field.value?.focus())
+    focusField()
   }
 }
 
@@ -342,198 +288,69 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function segments(row: ResultRow): { text: string; hit: boolean }[] {
-  if (!row.range) return [{ text: row.title, hit: false }]
-  const [from, to] = row.range
-  return [
-    { text: row.title.slice(0, from), hit: false },
-    { text: row.title.slice(from, to), hit: true },
-    { text: row.title.slice(to), hit: false },
-  ].filter((part) => part.text)
-}
-
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-function shortcutLabel(shortcut: string | undefined): string | undefined {
-  if (!shortcut) return undefined
-  return shortcut
-    .split('+')
-    .map((part) =>
-      part === 'mod' ? (isMac ? '⌘' : 'Ctrl') : part === 'shift' ? '⇧' : part === 'escape' ? 'Esc' : part.toUpperCase()
-    )
-    .join(isMac ? '' : ' ')
-}
-
 // A v-bottom-sheet's z-index prop is a number, so it cannot read the CSS token
 // (--z-menu, design-system §3.8). This is the one JS copy of that rung: the
 // sheet has to open above the palette layer (--z-overlay, 2400).
 const SHEET_Z = 2500
 
-const optionId = (index: number) => `palette-option-${index}`
-const actionId = (index: number) => `palette-action-${index}`
-
-const selectedRow = computed(() => rows.value[selected.value])
-const enterKey = isMac ? '⌘' : 'Ctrl'
+// 底下这一层要按同一套号码指过去：Tab 出来的清单开着时指清单，否则指选中的那一行。
+const activeDescendant = computed(() =>
+  acting.value ? actionId(actSelected.value) : rows.value.length ? optionId(selected.value) : undefined
+)
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="palette">
       <div v-if="paletteOpen" class="palette-layer" :class="{ 'palette-layer--page': !mdAndUp }">
+        <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking outside closes the palette; Escape closes it too, once it has cleared the query, the action list or ask mode -->
         <div v-if="mdAndUp" class="palette-scrim" @click="close" />
         <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
-          <div class="palette__input">
-            <BaseButton
-              v-if="!mdAndUp"
-              icon="mdi-arrow-left"
-              size="sm"
-              class="tap-target"
-              :aria-label="t('navigation.palette.close')"
-              @click="close"
-            />
-            <v-icon v-else icon="mdi-magnify" size="20" class="palette__glass" />
-            <template v-if="paletteAsk">
-              <span class="palette__asking">{{ paletteAsk.title }}</span>
-              <input
-                ref="field"
-                v-model="askText"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
-                :aria-label="paletteAsk.title"
-                :placeholder="paletteAsk.placeholder"
-                @keydown="onAskKeydown"
-              />
-            </template>
-            <button
-              v-if="!paletteAsk && scopeName"
-              type="button"
-              class="palette__asking palette__scope"
-              :title="t('navigation.palette.leaveScope')"
-              :aria-label="t('navigation.palette.leaveScope')"
-              @click="scope = null"
-            >
-              {{ scopeName }}<v-icon icon="mdi-chevron-right" size="14" />
-            </button>
-            <input
-              v-if="!paletteAsk"
-              ref="field"
-              v-model="input"
-              type="text"
-              role="combobox"
-              autocomplete="off"
-              spellcheck="false"
-              aria-autocomplete="list"
-              aria-controls="palette-results"
-              :aria-expanded="rows.length > 0"
-              :aria-activedescendant="acting ? actionId(actSelected) : rows.length ? optionId(selected) : undefined"
-              :aria-label="t('navigation.palette.open')"
-              :placeholder="t('navigation.palette.placeholder')"
-              @keydown="onKeydown"
-            />
-            <v-progress-linear
-              :active="searching"
-              indeterminate
-              absolute
-              location="bottom"
-              height="2"
-              color="primary"
-            />
-          </div>
-          <div
+          <PaletteInput
+            ref="bar"
+            v-model:input="input"
+            v-model:ask-text="askText"
+            :md-and-up="mdAndUp"
+            :ask="paletteAsk"
+            :scope-name="scopeName"
+            :searching="searching"
+            :expanded="rows.length > 0"
+            :active-descendant="activeDescendant"
+            @close="close"
+            @keydown="onKeydown"
+            @ask-keydown="onAskKeydown"
+            @leave-scope="scope = null"
+          />
+          <PaletteResults
             v-if="!paletteAsk"
-            id="palette-results"
-            ref="list"
-            class="palette__list"
-            role="listbox"
-            :aria-label="t('navigation.palette.open')"
-            @click.capture="acting && mdAndUp && (acting = null)"
-          >
-            <template v-for="(group, g) in groups" :key="group.key">
-              <div v-if="group.label" class="palette__group t-eyebrow-read" role="presentation">
-                {{ t(group.label) }}
-              </div>
-              <div
-                v-for="(row, i) in group.rows"
-                :id="optionId(offsets[g] + i)"
-                :key="`${group.key}:${row.id}`"
-                class="palette__row"
-                :class="{ 'palette__row--selected': offsets[g] + i === selected }"
-                role="option"
-                :aria-selected="offsets[g] + i === selected"
-                :data-row="offsets[g] + i"
-                :title="shortcutLabel(row.shortcut)"
-                @mousemove="selected = offsets[g] + i"
-                @click="choose(row, $event.metaKey || $event.ctrlKey)"
-                @contextmenu="onRowContextMenu($event, offsets[g] + i)"
-              >
-                <v-icon :icon="row.icon" size="18" class="palette__icon" />
-                <span class="palette__text">
-                  <span class="palette__title">
-                    <template v-for="(part, p) in segments(row)" :key="p">
-                      <mark v-if="part.hit" class="palette__hit">{{ part.text }}</mark>
-                      <template v-else>{{ part.text }}</template>
-                    </template>
-                  </span>
-                  <span v-if="row.subtitle" class="palette__subtitle">{{ row.subtitle }}</span>
-                </span>
-                <span
-                  v-if="row.badge"
-                  class="palette__badge"
-                  :class="row.badge.tone && `palette__badge--${row.badge.tone}`"
-                >
-                  {{ row.badge.text }}
-                </span>
-              </div>
-            </template>
-            <BaseEmptyState
-              v-if="input.trim() && input.trim() !== '?' && !rows.length && !searching"
-              size="inline"
-              align="center"
-              class="palette__empty"
-              :title="t('navigation.palette.empty')"
-            />
-          </div>
-          <!-- 底栏只在桌面上有：手机上没有这几个键。 -->
-          <div v-if="mdAndUp && (paletteAsk || selectedRow)" class="palette__foot">
-            <span class="palette__foot-main">
-              <template v-if="paletteAsk">{{ t('navigation.palette.save') }}</template>
-              <template v-else-if="acting">{{ acting.actions[actSelected].title }}</template>
-              <template v-else-if="selectedRow">{{ verbOf(selectedRow) }}</template>
-              <kbd>↵</kbd>
-            </span>
-            <span class="palette__keys">
-              <span v-if="paletteAsk || acting">{{ t('navigation.palette.back') }} <kbd>Esc</kbd></span>
-              <template v-else-if="selectedRow">
-                <span v-if="selectedRow.scope">{{ t('navigation.palette.searchIn') }} <kbd>Tab</kbd></span>
-                <span v-else-if="hasMore(selectedRow)">{{ t('navigation.palette.more') }} <kbd>Tab</kbd></span>
-                <span v-if="selectedRow.to">
-                  {{ t('navigation.palette.newTab') }} <kbd>{{ enterKey }}</kbd> <kbd>↵</kbd>
-                </span>
-              </template>
-            </span>
-          </div>
-          <div
+            :groups="groups"
+            :selected="selected"
+            :input="input"
+            :searching="searching"
+            :md-and-up="mdAndUp"
+            @select="selected = $event"
+            @choose="choose"
+            @contextmenu="onRowContextMenu"
+            @longpress="openSheet"
+            @dismiss="acting && mdAndUp && (acting = null)"
+          />
+          <PaletteFoot
+            v-if="mdAndUp && (paletteAsk || selectedRow)"
+            :asking="!!paletteAsk"
+            :action-title="acting?.actions[actSelected]?.title"
+            :verb="selectedRow ? verbOf(selectedRow) : undefined"
+            :can-search-in="!!selectedRow?.scope"
+            :has-more="hasMore(selectedRow)"
+            :has-target="!!selectedRow?.to"
+          />
+          <PaletteActions
             v-if="acting && mdAndUp"
-            class="palette__actions"
-            role="menu"
-            :aria-label="acting.row.title"
-            @mousedown.prevent
-          >
-            <div class="palette__actions-head">{{ acting.row.title }}</div>
-            <div
-              v-for="(action, i) in acting.actions"
-              :id="actionId(i)"
-              :key="action.id"
-              class="palette__action"
-              :class="{ 'palette__action--selected': i === actSelected, 'palette__action--danger': action.danger }"
-              role="menuitem"
-              @mousemove="actSelected = i"
-              @click="runAction(action)"
-            >
-              <v-icon :icon="action.icon" size="16" class="palette__icon" />
-              <span class="palette__title">{{ action.title }}</span>
-            </div>
-          </div>
+            :title="acting.row.title"
+            :actions="acting.actions"
+            :selected="actSelected"
+            @select="actSelected = $event"
+            @run="runAction"
+          />
         </div>
       </div>
     </Transition>
@@ -568,192 +385,9 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
 }
-.palette__input {
-  position: relative;
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  height: 52px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--line);
-}
-.palette__glass {
-  color: var(--faint);
-}
-.palette__input input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  border: 0;
-  outline: 0;
-  background: none;
-  color: var(--ink);
-  font-size: 15px;
-  line-height: var(--lh-15);
-}
-.palette__input input::placeholder {
-  color: var(--faint);
-}
-.palette__list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 6px 8px;
-}
-.palette__group {
-  padding: 10px 10px 4px;
-}
-.palette__row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  color: var(--text);
-  cursor: pointer;
-}
-.palette__row--selected {
-  background: var(--fill-2);
-  color: var(--ink);
-}
-.palette__icon {
-  flex: none;
-  color: var(--muted);
-}
-.palette__text {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-}
-.palette__title,
-.palette__subtitle {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.palette__subtitle {
-  color: var(--faint);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-.palette__hit {
-  background: none;
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.palette__badge {
-  flex: none;
-  padding: 0 8px;
-  border-radius: var(--radius-pill);
-  background: var(--fill-2);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-.palette__badge--warn {
-  background: var(--warn-wash);
-  color: var(--warn-ink);
-}
-.palette__badge--ok {
-  background: var(--ok-wash);
-  color: var(--ok-ink);
-}
-.palette__asking {
-  flex: none;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  background: var(--fill-2);
-  color: var(--ink);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  white-space: nowrap;
-}
-.palette__scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  border: 0;
-  cursor: pointer;
-}
-.palette__foot {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-.palette__foot-main {
-  color: var(--muted);
-}
-.palette__keys {
-  display: flex;
-  gap: 12px;
-}
-.palette__foot kbd {
-  display: inline-block;
-  margin-left: 4px;
-  min-width: 18px;
-  padding: 0 4px;
-  border: 1px solid var(--line-2);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  text-align: center;
-}
-.palette__actions {
-  position: absolute;
-  right: 10px;
-  bottom: 44px;
-  width: 260px;
-  padding: 4px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-}
-.palette__actions-head {
-  overflow: hidden;
-  padding: 6px 8px 4px;
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.palette__action {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  cursor: pointer;
-}
-.palette__action--selected {
-  background: var(--fill-2);
-  color: var(--ink);
-}
-.palette__action--danger {
-  color: var(--danger-ink);
-}
-.palette__empty {
-  padding: 24px 10px;
-}
 
-/* 手机上是一整页：高度扣掉键盘，输入框钉在顶上。 */
+/* 手机上是一整页：高度扣掉键盘，输入框钉在顶上。子组件里那几处随页变的尺寸各自按
+   `--page` 判，这里只管整块的框。 */
 .palette-layer--page {
   padding-top: env(safe-area-inset-top, 0px);
 }
@@ -764,20 +398,6 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
   border: 0;
   border-radius: 0;
   box-shadow: none;
-}
-.palette-layer--page .palette__input {
-  height: 56px;
-  padding: 0 8px;
-}
-.palette-layer--page .palette__row {
-  min-height: 48px;
-}
-/* 手机上这一页自己铺到底：最后几行结果落在 iPhone 那条 Home 横杠上点不中，给列表
-   末尾让出安全区，叠在 `.palette__list` 本来的 8px 底距上（`padding: 4px 6px 8px`）。
-   只写 `env()` 会把那 8px 一起抹掉——没有安全区的设备（安卓等）上 env 是 0，最后
-   一行就会贴着屏幕底。桌面同理，长度不变。 */
-.palette-layer--page .palette__list {
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
 .palette-enter-active {

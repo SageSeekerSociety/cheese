@@ -25,6 +25,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -37,7 +38,7 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 
 class GrantSource(StrEnum):
     """Where a credit pack came from; it decides when the pack lapses and where
-    it falls in the order a charge drains packs in (``usage.ledger``)."""
+    it falls in the order a charge drains packs in (``usage.balance``)."""
 
     # The team's plan, one per period; lapses when the period ends.
     PLAN_PERIOD = "plan_period"
@@ -45,6 +46,8 @@ class GrantSource(StrEnum):
     TASK_EARMARK = "task_earmark"
     PURCHASE = "purchase"
     ADMIN_GRANT = "admin_grant"
+    # A beta, feedback or invitation reward (``incentives.CreditIncentives``).
+    REWARD = "reward"
 
 
 class Plan(Timestamps, Base):
@@ -69,7 +72,7 @@ class Plan(Timestamps, Base):
     # A plan that issues no pack: at most ``credits`` within each window.
     # ``{"hours": 5, "credits": 100}`` starts at a team's first call and resets
     # that many hours later; ``{"calendar": "week" | "month", "credits": 100}``
-    # resets every Monday or every first of the month (``usage.ledger``).
+    # resets every Monday or every first of the month (``usage.windows``).
     windows: Mapped[list] = mapped_column(JSON, default=list)
     # The model tiers its teams may use, the subscription (Claude) models
     # included; NULL is every tier.
@@ -100,6 +103,76 @@ class PlanWindowUse(Base):
     window: Mapped[str] = mapped_column(String(16), primary_key=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class CreditReward(Timestamps, Base):
+    """One campaign participation, accepted feedback or invitation step can
+    issue one pack. ``points`` is the contribution score the same event earns:
+    it only ever adds up, and it is still recorded when no credits are paid.
+    Nobody is shown points yet: the team took them off every page until they
+    lead to something (a ranking, a perk), and keeps recording them so that
+    day starts from the full history."""
+
+    __tablename__ = "credit_rewards"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_credit_rewards_team_id_team"
+        ),
+        index=True,
+    )
+    credits: Mapped[int] = mapped_column(Integer)
+    points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reason: Mapped[str] = mapped_column(String(128))
+    actor_handle: Mapped[str] = mapped_column(String(64))
+
+
+class CreditRequest(UuidPk, Timestamps, Base):
+    """A team asks for a plan or top-up; no payment occurs on submission."""
+
+    __tablename__ = "credit_requests"
+    __table_args__ = (
+        Index(
+            "uq_credit_requests_pending",
+            "team_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_credit_requests_team_id_team"
+        ),
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    requester_handle: Mapped[str] = mapped_column(String(64))
+    handled_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class OverseasModelApproval(Timestamps, Base):
+    """A team a platform administrator has let use overseas models (Claude,
+    GPT, Gemini). A team without a row may not, whatever its plan allows; a
+    person is let in through their personal team. Withdrawing deletes the row,
+    and ``credit_admin_audit`` keeps who did either and when."""
+
+    __tablename__ = "overseas_model_approvals"
+
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_overseas_model_approvals_team_id_team",
+        ),
+        primary_key=True,
+    )
+    approved_by: Mapped[str] = mapped_column(String(64))
 
 
 class CreditAdminAudit(UuidPk, Timestamps, Base):
@@ -139,7 +212,8 @@ class ComputeGrant(UuidPk, Timestamps, Base):
             postgresql_where=text("source = 'plan_period'"),
         ),
         CheckConstraint(
-            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant')",
+            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant', "
+            "'reward')",
             name="ck_compute_grants_source",
         ),
     )
@@ -170,6 +244,106 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: The ``route`` of a usage row that charges cloud compute rather than a model
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
+#: The ``route`` of a usage row that charges web searches the platform asked
+#: for (`cheese_web_search`): like a compute charge, credits and no call. The
+#: searches are made on the caller's gateway key and drained with its model
+#: calls (``agent.gateway_spend``), which lands the gateway's search line
+#: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.
+SEARCH_ROUTE = "search"
+SEARCH_KIND = "web_search"
+#: The name the gateway gives its DeepSeek search tool's spend
+#: (deploy/gateway/deepseek_search.py, ``search_tools`` in config.yaml).
+GATEWAY_SEARCH_MODEL = "deepseek/search"
+#: The routes of rows that charge credits for something other than a model
+#: call.
+NOT_MODEL_CALLS = (COMPUTE_ROUTE, SEARCH_ROUTE)
+
+
+class ProjectCreditBudget(Timestamps, Base):
+    """A project's lifetime spending cap, independent of its team's balance."""
+
+    __tablename__ = "project_credit_budgets"
+    __table_args__ = (
+        CheckConstraint(
+            "credits_limit IS NULL OR "
+            "(credits_limit >= 0 AND credits_limit < 'Infinity'::float8)",
+            name="ck_project_credit_budgets_limit",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_credit_budgets_project_id_projects",
+        ),
+        primary_key=True,
+    )
+    credits_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MemberCreditBudget(Timestamps, Base):
+    """A member's task spending cap in one project; this issues no credits."""
+
+    __tablename__ = "member_credit_budgets"
+    __table_args__ = (
+        CheckConstraint(
+            "credits_limit >= 0 AND credits_limit < 'Infinity'::float8",
+            name="ck_member_credit_budgets_limit",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_member_credit_budgets_project_id_projects",
+        ),
+        primary_key=True,
+    )
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    credits_limit: Mapped[float] = mapped_column(Float)
+
+
+class WorkCreditOwner(Base):
+    """The task owner when a turn opened, kept for delayed usage settlement."""
+
+    __tablename__ = "work_credit_owners"
+
+    work_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_work_credit_owners_project_id_projects",
+        ),
+        index=True,
+    )
+    # Kept after the task is deleted so late provider receipts retain their owner.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    owner_handle: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TaskGatewayAccount(Base):
+    """One gateway meter for a task's human budget holder, retained after deletion."""
+
+    __tablename__ = "task_gateway_accounts"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_task_gateway_accounts_project_id_projects",
+        ),
+        index=True,
+    )
+    gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class ResourceUsage(UuidPk, Timestamps, Base):
@@ -189,6 +363,13 @@ class ResourceUsage(UuidPk, Timestamps, Base):
             "created_at",
             postgresql_include=["credits"],
         ),
+        Index(
+            "ix_resource_usage_project_owner_created",
+            "project_id",
+            "credit_owner_handle",
+            "created_at",
+            postgresql_include=["credits"],
+        ),
     )
 
     # NULL when the spend happened outside any project (see ``user_id``).
@@ -200,10 +381,19 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), nullable=True
     )
+    # A task's budget holder at execution time. Public project work and older
+    # rows stay NULL; changing a task's owner never rewrites settled spending.
+    credit_owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # The conversation the spend happened in, a room or a task; NULL when it
     # cannot be attributed at all.
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="SET NULL",
+            name="fk_resource_usage_conversation_id_conversations",
+        ),
+        nullable=True,
+        index=True,
     )
     # The human message or platform work id this spend belongs to. One attributed
     # unit can write more than one row because the metering proxy logs every
@@ -232,7 +422,8 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     kind: Mapped[str] = mapped_column(String(24), default="chat")
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
     # "subscription" (metering proxy), "native" (profile-pinned credentials);
-    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
+    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``), "search"
+    # for web searches the platform asked the gateway for (``SEARCH_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
     # The team that paid, and the credits charged for this row (#2397). Every
@@ -306,11 +497,19 @@ class ComputeRun(UuidPk, Timestamps, Base):
     # The price list entry: ``sandbox`` for a sandbox, the VM's spec name.
     spec: Mapped[str] = mapped_column(String(64))
     subject: Mapped[str] = mapped_column(String(64))
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    # None for a run of a conversation in no project: its person pays.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    # The conversation the sandbox ran for.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="SET NULL",
+            name="fk_compute_runs_topic_id_conversations",
+        ),
+        index=True,
+        nullable=True,
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

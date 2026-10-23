@@ -1,13 +1,12 @@
 <script setup lang="ts">
-// 一串规则：等确认的几条摆在前面，剩下的按后端给的顺序。项目总览页（整个项目）和房间
-// 右侧那一格（只这一个房间）画的是同一串，只是给进来的数组不同。
+// 一串规则，按后端给的顺序。项目总览页（整个项目）和房间右侧那一格（只这一个房间）
+// 画的是同一串，只是给进来的数组不同。
 //
 // 只吃 props、只往上抛动作：谁去调接口由调用方办。唯一自己做主的是「删之前问一句」——
 // 那是一次确认，不是一次请求。
 import type { Routine, RoutineRun } from '@/lib/routine'
-import type { UserRefTarget } from '@/lib/userRef'
 
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 
 import RoutineRow from './RoutineRow.vue'
 
@@ -33,8 +32,6 @@ const props = withDefaults(
     /** 结果文件那几行要不要整串指回规则所在的房间。项目总览页给 —— 那一页上没有能
      *  开文件的面板；房间右侧那一格不给，那里的每一份都当场点开。 */
     linkRooms?: boolean
-    /** 人名 → 显示名。名册查询在调用方，这一串只收结果。 */
-    userNames?: Record<string, string>
   }>(),
   {
     runs: () => ({}),
@@ -44,22 +41,20 @@ const props = withDefaults(
     error: '',
     roomNames: () => ({}),
     linkRooms: true,
-    userNames: () => ({}),
   }
 )
 
 const emit = defineEmits<{
-  (e: 'confirm', routine: Routine): void
   (e: 'pause', routine: Routine): void
   (e: 'resume', routine: Routine): void
   (e: 'run-now', routine: Routine): void
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 行里那三次看完，要看整页：换这一条的执行记录那一页来画（谁来换由调用方办）。 */
+  (e: 'open-records', routine: Routine): void
   /** 点了某次执行交回的一份结果文件。谁来开它由调用方办。 */
   (e: 'open-file', path: string): void
-  /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
-  (e: 'navigate', target: UserRefTarget): void
 }>()
 
 /** 房间名：项目总览页给的名册里查不到（房间已经没了），就写「已不在的房间」；
@@ -70,8 +65,6 @@ function roomNameOf(r: Routine): string | undefined {
   return props.linkRooms ? t('routines.goneRoom') : undefined
 }
 
-const drafts = computed(() => props.routines.filter((r) => r.state === 'draft'))
-const others = computed(() => props.routines.filter((r) => r.state !== 'draft'))
 // 删一条规则不可撤销（执行记录一起删），所以问一句再动手。问的这一条留在这里。
 const confirming = ref<Routine | null>(null)
 
@@ -96,27 +89,9 @@ function confirmDelete() {
     </div>
 
     <template v-else>
-      <section v-if="drafts.length" class="mb-6">
-        <h2 class="t-section mb-2">{{ t('routines.waiting') }}</h2>
-        <ul class="routine-list">
-          <RoutineRow
-            v-for="r in drafts"
-            :key="r.id"
-            :routine="r"
-            :busy="busy"
-            :room-name="roomNameOf(r)"
-            :user-names="userNames"
-            @confirm="emit('confirm', r)"
-            @edit="emit('edit', r)"
-            @delete="confirming = r"
-            @navigate="(t) => emit('navigate', t)"
-          />
-        </ul>
-      </section>
-
-      <ul v-if="others.length" class="routine-list">
+      <ul v-if="routines.length" class="routine-list">
         <RoutineRow
-          v-for="r in others"
+          v-for="r in routines"
           :key="r.id"
           :routine="r"
           :runs="runs[r.id]"
@@ -124,15 +99,14 @@ function confirmDelete() {
           :busy="busy"
           :room-name="roomNameOf(r)"
           :room-to="linkRooms ? routineRoomTarget(r) : undefined"
-          :user-names="userNames"
           @pause="emit('pause', r)"
           @resume="emit('resume', r)"
           @run-now="emit('run-now', r)"
           @edit="emit('edit', r)"
           @toggle-runs="emit('toggle-runs', r)"
+          @open-records="emit('open-records', r)"
           @open-file="(path) => emit('open-file', path)"
           @delete="confirming = r"
-          @navigate="(t) => emit('navigate', t)"
         />
       </ul>
 
@@ -154,12 +128,15 @@ function confirmDelete() {
 </template>
 
 <style scoped>
+/* 整串是一张卡片，行与行之间一条线（由 RoutineRow 画）：三条规则不该像三张各说各话的
+   小卡 —— 它们是同一件事的三条。 */
 .routine-list {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
 }
 </style>

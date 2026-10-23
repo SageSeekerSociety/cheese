@@ -7,14 +7,11 @@ its config, and the remote-execution plugin that sends its tools to the room's
 executor. None of it is a fact about running an agent.
 
 So the boundary is the point. ``tests/unit/test_harness_boundary.py`` holds it:
-outside this package you import from HERE, never from a submodule, and this
-file's export list is the ledger of everything that still crosses. The list is
-a ratchet — adding to it goes red, and so does forgetting to delete a line you
-paid off.
+outside this package you import from HERE, never from a submodule, and only a
+name this file's ``__all__`` lists. That list is everything that crosses.
 """
 
 from app.domain.agent.harness.claude_code import owner_login
-from app.domain.agent.harness.claude_code.backlog import control_state
 from app.domain.agent.harness.claude_code.behaviour import declaration
 from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_MIN_VERSION,
@@ -22,7 +19,7 @@ from app.domain.agent.harness.claude_code.device_launch import (
     DEVICE_TUNNEL_PROBE,
     ClaudeLaunch,
 )
-from app.domain.agent.harness.claude_code.protocol import accepts_inputs
+from app.domain.agent.harness.claude_code.events import Assembler
 from app.domain.agent.harness.claude_code.remote_execution import (
     launch as executor_launch,
 )
@@ -33,17 +30,14 @@ from app.domain.agent.harness.claude_code.remote_execution.private import (
     target as private_execution_target,
 )
 from app.domain.agent.harness.claude_code.runner import NEVER_STARTED, ended
-from app.domain.agent.harness.claude_code.subscription import Subscription
 
 __all__ = [
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
     "DEVICE_TUNNEL_PROBE",
     "NEVER_STARTED",
+    "Assembler",
     "ClaudeLaunch",
-    "Subscription",
-    "accepts_inputs",
-    "control_state",
     "declaration",
     "ended",
     "executor_launch",

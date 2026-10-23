@@ -188,9 +188,19 @@ def write_baseline(path: Path, sets: dict[str, set[str]]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def scan_scripts(root: Path, grade: Any) -> dict[str, Any]:
+def scan_scripts(
+    root: Path, grade: Any
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Scan every production source file once.
+
+    Returns the scanner's findings per file and the exact texts it was handed,
+    both keyed `frontend/`-relative. Callers that need a file's text reuse that
+    mapping: reading the same page again is one read of the same file per run
+    too many.
+    """
     src = grade.repo_src(root)
     files = []
+    sources: dict[str, str] = {}
     for file in sorted(src.rglob("*")):
         if not file.is_file() or file.suffix not in (
             ".vue",
@@ -207,7 +217,9 @@ def scan_scripts(root: Path, grade: Any) -> dict[str, Any]:
         ):
             continue
         text = file.read_text(encoding="utf-8")
-        files.append((file.relative_to(root / "frontend").as_posix(), text))
+        key = file.relative_to(root / "frontend").as_posix()
+        sources[key] = text
+        files.append((key, text))
     scanner = ROOT / "frontend/scripts/scene-debt-scan.mjs"
     run = subprocess.run(
         ["node", str(scanner)],
@@ -218,7 +230,7 @@ def scan_scripts(root: Path, grade: Any) -> dict[str, Any]:
     )
     if run.returncode:
         raise ValueError(run.stderr.strip() or "script scan did not complete")
-    return json.loads(run.stdout)
+    return json.loads(run.stdout), sources
 
 
 def collect(root: Path) -> dict[str, set[str]]:
@@ -232,7 +244,7 @@ def collect(root: Path) -> dict[str, set[str]]:
         pairs = scene.paired_views(root, pages, reach)
     except scene.Unjudgeable as exc:
         raise ValueError(str(exc)) from exc
-    scripts = scan_scripts(root, grade)
+    scripts, sources = scan_scripts(root, grade)
     actual: dict[str, set[str]] = {kind: set() for kind in KINDS}
     for key, scan in scripts.items():
         if scan["network"]:
@@ -245,7 +257,7 @@ def collect(root: Path) -> dict[str, set[str]]:
         scan = scripts[key]
         if scan["useRoute"]:
             actual["routes"].add(key)
-        text = (root / page).read_text(encoding="utf-8")
+        text = sources[key]
         rendered = scene.template_tags(grade, text) | set(scan["rendered"])
         for tag in rendered:
             for local in scene.resolve_names(tag):
@@ -358,7 +370,7 @@ def main() -> int:
                 print(f"cannot update baseline: {exc}", file=sys.stderr)
                 cannot_judge(check_id, str(exc))
     if as_json():
-        # --json (what ci:fast and the snapshot collector call) keeps stdout the
+        # --json (what the snapshot collector calls) keeps stdout the
         # one record line; on failure the fix report rides on stderr instead.
         if not ok:
             print(failure_text(new, expanded, raw), file=sys.stderr)

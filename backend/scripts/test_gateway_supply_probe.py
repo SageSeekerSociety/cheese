@@ -84,6 +84,21 @@ class ProbeTests(unittest.TestCase):
         )
         self.assertEqual(rows[1]["inference"], "not_checked")
 
+    def test_a_catalog_larger_than_a_small_body_is_still_ready(self):
+        # The live catalog carries every model's full litellm_params; 46 rows
+        # were already 290 KB. Its size says nothing about readiness.
+        rows = [
+            {"model_name": f"model-{i}", "litellm_params": {"pad": "x" * 8000}}
+            for i in range(60)
+        ]
+        catalog = json.dumps({"data": rows}).encode()
+        self.assertGreater(len(catalog), 262144)
+        code, out, _ = self.run_probe(
+            [Response(b'{"status":"healthy","db":"connected"}'), Response(catalog)]
+        )
+        self.assertEqual((code, out[-1]["phase"]), (0, "complete"), out[-1])
+        self.assertEqual(out[1]["models"], 60)
+
     def test_database_failure_is_not_green(self):
         code, rows, requests = self.run_probe([Response(b'{"db":"disconnected"}')])
         self.assertEqual(code, 1)
@@ -119,6 +134,24 @@ class ProbeTests(unittest.TestCase):
                     self.ready() + [error], ["--generate", "--model", "test-model"]
                 )
                 self.assertEqual((code, rows[-1]["category"]), (1, category))
+
+    def test_unparseable_readiness_body_is_described(self):
+        html = b"<html>\n<body>Bad Gateway secret-key</body></html>" + b"x" * 400
+        for body, head in (
+            (html, "<html> <body>Bad Gateway ***</body></html>"),
+            (b"x" * 262145, "x" * 300),
+        ):
+            with self.subTest(size=len(body)):
+                response = Response(body)
+                response.status = 502
+                response.headers["Content-Type"] = "text/html"
+                code, rows, _ = self.run_probe([response])
+                self.assertEqual((code, rows[-1]["category"]), (1, "invalid_response"))
+                received = rows[-1]["received"]
+                self.assertEqual(received["status"], 502)
+                self.assertEqual(received["content_type"], "text/html")
+                self.assertEqual(received["body_head"][:40], head[:40])
+                self.assertLessEqual(len(received["body_head"]), 300)
 
     def test_native_stream_requires_terminal_event(self):
         for terminal, stop, expected in (

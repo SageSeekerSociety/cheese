@@ -34,7 +34,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, column, or_, select, table, update
+from sqlalchemy import DateTime, String, column, exists, or_, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -410,7 +410,7 @@ async def retire_failed(
         async with session_factory() as session:
             await retire_failed_interval(session, turn_id=turn_id, at=at)
             await session.commit()
-    except Exception:  # noqa: BLE001 — the turn already failed
+    except Exception:  # the turn already failed
         logger.exception(
             "could not close the failed turn's interval (topic=%s, turn=%s)",
             topic_id,
@@ -477,11 +477,11 @@ async def stamp_delivery_fact(
         async with session_factory() as session:
             await stamp_delivered(session, turn_id=turn_id, at=at)
             await session.commit()
-    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
+    except Exception:  # bookkeeping must not kill a working turn
         logger.exception("could not stamp delivery for turn %s", turn_id)
 
 
-async def close_dead_turns(session_factory, turn_ids) -> None:
+async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
     """Close turns the orphan sweep found dead, and end the inputs they held.
 
     Nothing will ever report on those inputs: the session that took them is
@@ -492,9 +492,10 @@ async def close_dead_turns(session_factory, turn_ids) -> None:
     """
 
     async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
-        await terminate_inputs_of_dead_works(session, turn_ids, reason="orphaned")
+        claimed = await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
         await session.commit()
+        return claimed
 
 
 async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
@@ -503,7 +504,7 @@ async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
     The fact behind it is ``reads.Abandoned``, read from the seat that watched
     the session go: same remedy as :func:`close_dead_turns`, for the work no
     sweep reaches twice. A session that dies at its work reports neither a
-    completion nor a terminal — the runner that would have written one is the
+    read nor a drop for them — the runner that would have reported one is the
     process that is gone — and the death ends the turn's interval where the room
     heard it. ``open_turns`` reads open intervals only, so nothing left
     unfinished here holds its seat for good unless this ends it, and an
@@ -550,7 +551,9 @@ async def stop_work_in_closed_tasks(session_factory, compute: "ComputePool") -> 
     session: a close that lands on the backend taking over in a deploy, or on
     the one leaving, finds nothing to stop. The session's holder is the one
     that can, and the task's closed state is what it goes by, whoever closed
-    it and whenever."""
+    it and whenever. A turn begun after the close is someone asking about the
+    finished task, which its teammate answers changing nothing: that task's
+    session is left to it."""
     working = compute.working_conversations()
     if not working:
         return 0
@@ -562,6 +565,11 @@ async def stop_work_in_closed_tasks(session_factory, compute: "ComputePool") -> 
                     _tasks.c.id.in_(working),
                     _tasks.c.status == "closed",
                     or_(_tasks.c.closed_at.is_(None), _tasks.c.closed_at <= before),
+                    ~exists().where(
+                        AgentTurn.conversation_id == _tasks.c.id,
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > _tasks.c.closed_at,
+                    ),
                 )
             )
         )
@@ -580,7 +588,8 @@ async def open_turns(session_factory) -> dict:
     (`ChatService.stop_work_in_closed_tasks`) leaves its row as it is. Such a
     turn kept its room reading as busy, and its inputs refused the seat, for
     good. They are ended here and never handed to the
-    sweep, which would otherwise offer the work again.
+    sweep, which would otherwise offer the work again. A turn begun after the
+    close is not that work: someone asked about the finished task.
 
     Whether reading this can fail is the sweep's business, not this function's:
     it raises, and the callers that must survive a database blip say so where
@@ -591,10 +600,14 @@ async def open_turns(session_factory) -> dict:
         turns = AgentTurnRepository(session)
         ended = list(
             await session.scalars(
-                select(AgentTurn.id).where(
+                select(AgentTurn.id)
+                .join(_tasks, _tasks.c.id == AgentTurn.conversation_id)
+                .where(
                     AgentTurn.stopped_at.is_(None),
-                    AgentTurn.conversation_id.in_(
-                        select(_tasks.c.id).where(_tasks.c.status == "closed")
+                    _tasks.c.status == "closed",
+                    or_(
+                        _tasks.c.closed_at.is_(None),
+                        AgentTurn.started_at <= _tasks.c.closed_at,
                     ),
                 )
             )

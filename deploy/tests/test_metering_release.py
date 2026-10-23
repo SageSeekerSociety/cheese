@@ -442,6 +442,8 @@ class MeteringWorkflowTest(unittest.TestCase):
                     CALLS=str(calls),
                     TEST_SHA="c" * 40,
                     CI_STATUS=status,
+                    GITHUB_EVENT_NAME="workflow_run",
+                    REBUILT="",
                 )
                 result = subprocess.run(
                     ["/bin/bash", "-c", step["run"]],

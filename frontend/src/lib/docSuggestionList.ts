@@ -1,9 +1,10 @@
 // The suggestions waiting in the document, where each one sits, and the commands
 // that decide them — what the suggestion strip and card read and run.
 //
-// A suggestion is the insertion and deletion marks sharing one id (see
-// lib/docSchema/suggestions.ts). Accepting or rejecting one is an ordinary edit
-// of the shared document, so every reader sees the decision.
+// A suggestion is the insertion, deletion and modification marks sharing one
+// id, on text or on whole blocks (see lib/docSchema/suggestions.ts). Accepting
+// or rejecting one is an ordinary edit of the shared document, so every reader
+// sees the decision.
 
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorState, Transaction } from '@tiptap/pm/state'
@@ -25,7 +26,7 @@ export interface SuggestionRange {
   /** From the first character it touches to the last. */
   from: number
   to: number
-  /** Every run of text it marks. */
+  /** Every run of text, and every whole block, it marks. */
   spans: { from: number; to: number }[]
 }
 
@@ -33,7 +34,12 @@ export interface SuggestionRange {
 export function suggestionRanges(doc: PMNode): SuggestionRange[] {
   const byId = new Map<string, SuggestionRange>()
   doc.descendants((node, pos) => {
-    if (!node.isInline) return true
+    const marked = node.marks.some((mark) => MARKS.has(mark.type.name))
+    // A block's own text belongs to a suggestion on the block, unless that one
+    // only retypes it: then its text may carry suggestions of its own.
+    if (!node.isInline && !marked) return true
+    const descend =
+      !node.isInline && node.marks.every((mark) => !MARKS.has(mark.type.name) || mark.type.name === 'modification')
     for (const mark of node.marks) {
       if (!MARKS.has(mark.type.name)) continue
       const id = String(mark.attrs.id ?? '')
@@ -44,7 +50,7 @@ export function suggestionRanges(doc: PMNode): SuggestionRange[] {
       entry.spans.push({ from: pos, to: pos + node.nodeSize })
       byId.set(id, entry)
     }
-    return false
+    return descend
   })
   return [...byId.values()].sort((a, b) => a.from - b.from)
 }

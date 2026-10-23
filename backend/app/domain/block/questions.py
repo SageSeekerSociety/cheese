@@ -33,12 +33,17 @@ from app.domain.block.asked import (
     skipped_by,
     skipped_by_all,
 )
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 #: Codex's `request_user_input` caps one call at three questions of two or three
 #: options each; a longer list reads as a form, which is what this replaced.
 MAX_QUESTIONS = 3
+
+#: 题签上那个短标签的长度。Claude Code 的 `header` 也是 12 字；它画在组卡片的
+#: 题签栏里，单题的卡片不画。
+MAX_HEADER = 12
 
 
 def required_text(value, field):
@@ -51,6 +56,10 @@ def required_text(value, field):
 class Question:
     content: str
     options: list[dict]
+    #: 题签上的短标签。空 = 没有短标签，组卡片用题号顶上。
+    header: str = ""
+    #: 这道题可以选多项；默认单选。
+    multi_select: bool = False
 
     @classmethod
     def parse(cls, value):
@@ -73,7 +82,16 @@ class Question:
             options.append(option)
         if len({item["text"] for item in options}) != len(options):
             raise ValidationError(say("optionsDistinct"))
-        return cls(content, options)
+        header = value.get("header", "")
+        if not isinstance(header, str):
+            raise ValidationError(say("askFieldString", field="header"))
+        header = header.strip()
+        if len(header) > MAX_HEADER:
+            raise ValidationError(say("askHeaderTooLong", limit=MAX_HEADER))
+        multi_select = value.get("multi_select", False)
+        if not isinstance(multi_select, bool):
+            raise ValidationError(say("askFieldBoolean", field="multi_select"))
+        return cls(content, options, header, multi_select)
 
 
 def parse_questions(body) -> list[Question]:
@@ -132,6 +150,9 @@ async def post_questions(
                     "asked": list(asked),
                     "asked_all": asked_all,
                     "answer_log": [],
+                    **({"header": question.header} if question.header else {}),
+                    # 只写「能多选」这一种；缺省就是单选，老题读到的也是缺省。
+                    **({"multi_select": True} if question.multi_select else {}),
                     **({"ask_request": request_id} if request_id else {}),
                 },
                 # The agent's own words: it waits for a person to answer them,

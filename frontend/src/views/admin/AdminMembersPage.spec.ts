@@ -190,12 +190,12 @@ describe('成员管理', () => {
     expect(await findByText('安迪')).toBeTruthy()
     expect(await findByText('彭文博')).toBeTruthy()
     expect(await findByText('pengwenbo')).toBeTruthy()
-    expect(await findByText('andy')).toBeTruthy()
+    expect((await findAllByText('andy')).some((el) => !el.closest('[data-handle]'))).toBeTruthy()
     // `wangchangxin` 没有昵称（平台上没这个账号）：主行退回 handle，而且只画一次。
     expect(await findByText('wangchangxin')).toBeTruthy()
     // 页面上加的那一行带出处：谁加的、什么时候。
-    await vi.waitFor(() => expect(document.body.textContent).toMatch(/@andy\s*加的/))
-    expect(document.querySelectorAll('.am__dim .mention[data-handle="andy"]')).toHaveLength(1)
+    await vi.waitFor(() => expect(document.body.textContent).toMatch(/andy\s*加的/))
+    expect(document.querySelectorAll('.am__dim [data-handle="andy"]')).toHaveLength(1)
 
     // 整页只有一个「移出」，在 `pengwenbo` 那一行。根那三行（andy、wangchangxin、
     // cheese-bot）每个都画一个的话这里会是四个。
@@ -207,7 +207,8 @@ describe('成员管理', () => {
     expect(await findByText('安迪')).toBeTruthy()
     // 昵称和 handle 不同：昵称是主行，「安迪」不出现第二次。
     expect(await findAllByText('安迪')).toHaveLength(1)
-    expect(await findAllByText('andy')).toHaveLength(1)
+    // 「andy 加的」那一处是提到他的名字引用，不算这一行画的名字。
+    expect((await findAllByText('andy')).filter((el) => !el.closest('[data-handle]'))).toHaveLength(1)
 
     // 另一种「只有一个串可画」：昵称本来就是 handle。画两遍的话这里会是 2。
     listPlatformAdmins.mockResolvedValue({
@@ -230,7 +231,7 @@ describe('成员管理', () => {
 
   it('名单里的头像是装饰：对读屏不可见', async () => {
     const { container, findByText } = mountPage()
-    await findByText('andy')
+    await findByText('安迪')
 
     const avatars = container.querySelectorAll('.am__avatar')
     expect(avatars.length).toBeGreaterThan(0)
@@ -252,10 +253,10 @@ describe('成员管理', () => {
     // 或哪一行写死一个常量）在这两条里总有一条会红。
     const andyImg = rowOf('安迪')?.querySelector('img')
     expect(andyImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
-    expect(andyImg?.getAttribute('src')).toMatch(/\/avatars\/7$/)
+    expect(andyImg?.getAttribute('src')).toMatch(/\/avatars\/7(\?\S*)?$/)
     const pengImg = rowOf('彭文博')?.querySelector('img')
     expect(pengImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
-    expect(pengImg?.getAttribute('src')).toMatch(/\/avatars\/3$/)
+    expect(pengImg?.getAttribute('src')).toMatch(/\/avatars\/3(\?\S*)?$/)
 
     // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母 —— 一张所有人共用的
     // 默认脸，等于这一列分不出谁是谁。
@@ -315,7 +316,7 @@ describe('成员管理', () => {
     // agent 徽章：`is_agent` 的根行，who 列（第一格）里挂 chip-neutral，带 title
     // 解释「为什么这行权限用不上」。全表就这一枚 —— 画到正常行身上也是错。
     const chip = cellsOf('cheese-bot')?.[0].querySelector('.chip-neutral')
-    expect(chip?.textContent?.trim()).toBe('agent')
+    expect(chip?.textContent?.trim()).toBe('AI 队友')
     expect(chip?.getAttribute('title')).toBeTruthy()
     expect(container.querySelectorAll('tr.am__row .chip-neutral')).toHaveLength(1)
 

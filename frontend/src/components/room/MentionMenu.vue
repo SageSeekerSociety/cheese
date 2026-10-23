@@ -30,8 +30,9 @@ defineProps<{
   level: 'root' | 'library'
   /** 触摸屏上回车是换行，那条「Enter 挑这一项」的提示就不该出现。 */
   enterSends: boolean
-  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方。 */
-  at?: { top: number; left: number; width?: number } | null
+  /** 贴在这个位置（文档里的光标处），而不是浮在输入框上方：光标下面给 top，翻到
+   *  上面给 bottom；高出 maxHeight 的部分在菜单里滚。 */
+  at?: { top?: number; bottom?: number; left: number; width?: number; maxHeight?: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -64,7 +65,15 @@ defineExpose({ scrollActiveIntoView })
       class="mention-menu"
       :class="{ 'mention-menu--at': at }"
       :style="
-        at ? { top: `${at.top}px`, left: `${at.left}px`, width: at.width ? `${at.width}px` : undefined } : undefined
+        at
+          ? {
+              top: at.top === undefined ? undefined : `${at.top}px`,
+              bottom: at.bottom === undefined ? undefined : `${at.bottom}px`,
+              left: `${at.left}px`,
+              width: at.width ? `${at.width}px` : undefined,
+              '--menu-room': at.maxHeight === undefined ? undefined : `${at.maxHeight}px`,
+            }
+          : undefined
       "
     >
       <!-- 进资料库是往里走一层：这一层往左让开，下一层从右边进来；退回来反过来。 -->
@@ -93,6 +102,7 @@ defineExpose({ scrollActiveIntoView })
               :class="{ 'is-active': i === activeIndex }"
               @click="emit('pick', mm)"
               @mouseenter="emit('hover', i)"
+              @focus="emit('hover', i)"
             >
               <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
@@ -115,6 +125,9 @@ defineExpose({ scrollActiveIntoView })
               </span>
               <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
                 <v-icon size="13">mdi-file-outline</v-icon>
+              </span>
+              <span v-else-if="mm.kind === 'document'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-file-document-outline</v-icon>
               </span>
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
@@ -161,12 +174,11 @@ defineExpose({ scrollActiveIntoView })
      侧算成 `auto`，所以这两条不冲突。 */
   overflow-x: hidden;
   overflow-y: auto;
-  /* 菜单最多 7 项（`mentionMatches` 里 slice(0, 7)），每项 min-height 36px，展开
-     就是 254px；而 `.composer` 是 `.chat`（flex column）里不肯收缩的那一项。面板
-     一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、被外壳裁
-     掉，还没有滚动条。给个上限让它自己滚，量的是看得见的那一截：手机上键盘弹起来
-     时 40vh 还是按整屏算，菜单会伸到顶栏底下（--app-height / --keyboard-inset 见
-     lib/keyboardInset.ts）。 */
+  /* 候选不截断：项目里几十号人，一屏放不下就往下翻。而 `.composer` 是
+     `.chat`（flex column）里不肯收缩的那一项。面板一矮（尤其手机上），不设上限
+     菜单就会连同输入框一起从 `.chat` 底部溢出、被外壳裁掉（这一条自己有上限，
+     滚得动）。量的是看得见的那一截：手机上键盘弹起来时 40vh 还是按整屏算，菜单
+     会伸到顶栏底下（--app-height / --keyboard-inset 见 lib/keyboardInset.ts）。 */
   max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.4);
   background: var(--surface);
   box-shadow: var(--shadow-2);
@@ -176,7 +188,7 @@ defineExpose({ scrollActiveIntoView })
   bottom: auto;
   width: 280px;
   margin-bottom: 0;
-  max-height: 264px;
+  max-height: min(264px, var(--menu-room, 264px));
 }
 .mention-menu-item {
   display: flex;
@@ -289,10 +301,19 @@ defineExpose({ scrollActiveIntoView })
 .mention-menu-head:hover {
   background: var(--fill);
 }
+/* 分组标题：一级里是「不在频道」，二级里是「文件 / 图片」。它同时是一条分割线，
+   把这一组和上面的人分开。紧跟在二级菜单头下面的那一条不画线，否则会和头那条
+   下边线叠在一起。 */
 .mention-menu-group {
+  margin-top: 2px;
   padding: 6px 12px 2px;
+  border-top: 1px solid var(--line-2);
   font-size: 12px;
   color: var(--faint);
+}
+.mention-menu-head + .mention-menu-group {
+  margin-top: 0;
+  border-top: 0;
 }
 /* 一条候选都没有。它顶替的是一整列候选行，所以内边距和字号跟着候选行走（13px、
    上下 10px），而不是跟着组标题走——不然空态看起来像一个没写完的小标题。 */

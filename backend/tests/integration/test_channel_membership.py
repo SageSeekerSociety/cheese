@@ -331,17 +331,18 @@ def test_a_plain_member_does_not_manage_a_channel(client):
     assert (row["title"], row["description"], row["status"]) == ("前端", None, "active")
 
 
-def test_anyone_in_a_channel_renames_it(client):
-    """Which channel is called what is the room's own business, so renaming
-    takes no more than being in it — a plain member renames it without being
-    its creator or a project manager. The rest of the channel's settings stay
-    management's (the test above)."""
+def test_renaming_a_channel_is_its_admins_not_everyone_in_it(client):
+    """Renaming a channel is managing it: its admin (the creator) or someone the
+    project lets manage every channel may, a plain member sitting in it may
+    not."""
     p = _project(client)
     tid = _channel(client, p["id"], by="alice")
     assert _join(client, tid, "bob").status_code == 200
     assert _row(client, p["id"], tid, "bob")["can_manage"] is False
 
-    assert _rename(client, tid, "bob", "改个名").status_code == 200
+    assert _rename(client, tid, "bob", "改个名").status_code == 403
+    assert _row(client, p["id"], tid, "alice")["title"] == "前端"
+    assert _rename(client, tid, "alice", "改个名").status_code == 200
     assert _row(client, p["id"], tid, "alice")["title"] == "改个名"
 
 

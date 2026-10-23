@@ -2,8 +2,10 @@
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
 find, browser automation, and the runtime the connector itself needs where
 the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere), and on Linux the bwrap a room's sandbox is made with, which it
-places whatever the system has.
+elsewhere, and on Linux a recent enough tmux and git), and on Linux what a
+room's sandbox is made with, which it places whatever the system has: bwrap,
+and the host tools a platform host gives its sandboxes a network and a disk
+limit with.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -43,6 +45,9 @@ FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
 RIPGREP_VERSION = "15.2.0"
 AGENT_BROWSER_VERSION = "0.38.1"
+#: The Node a project's local MCP servers run on (`npx`), for machines without
+#: one of their own: the 24 LTS line.
+NODE_VERSION = "24.21.0"
 #: The runtime a Windows machine's connector provisions for itself, so that the
 #: `python3` and `sh` the platform runs everywhere exist there too.
 PYTHON_VERSION = "3.13.13"
@@ -55,7 +60,12 @@ PBS_RELEASE = "20261003"
 PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
 #: system has (`cli/internal/devenv`): built by `scripts/build-bubblewrap.sh`.
-BUBBLEWRAP_REVISION = "0.13.0-cheese.1"
+BUBBLEWRAP_REVISION = "0.13.0-cheese.2"
+#: What else a Linux connector places (`cli/internal/devenv`), built by
+#: `scripts/build-host-tools.sh`: the host tools (ip, iptables, mkfs.xfs,
+#: xfs_quota) whatever the system has, and tmux and git where the system's are
+#: missing or too old.
+HOST_TOOLS_REVISION = "2"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -70,6 +80,7 @@ _RG_BASE = (
     f"{RIPGREP_VERSION}/ripgrep-{RIPGREP_VERSION}"
 )
 _AB_BASE = f"https://github.com/vercel-labs/agent-browser/releases/download/v{AGENT_BROWSER_VERSION}"
+_NODE_BASE = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}"
 _PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
 _GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
 _PBS_BASE = (
@@ -83,6 +94,10 @@ _FJ_BASE = (
 _BWRAP_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"bubblewrap-v{BUBBLEWRAP_REVISION}/bubblewrap-{BUBBLEWRAP_REVISION}"
+)
+_HOST_TOOLS_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"host-tools-v{HOST_TOOLS_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -110,14 +125,52 @@ class Artifact:
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
     ("bubblewrap", "linux-x64"): Artifact(
         f"{_BWRAP_BASE}-linux-x64.tar.gz",
-        "3cea2c7dee3c4a24aa3d46cd3691b4f1cc45f397c958c807d56c004acb18d816",
-        85451,
+        "df8769e412c53e1065bc9e94383599992c78bbf8265d66067422b098680683c1",
+        94034,
         ".tar.gz",
     ),
     ("bubblewrap", "linux-arm64"): Artifact(
         f"{_BWRAP_BASE}-linux-arm64.tar.gz",
-        "ef555f752c2a17c1fd74f989aae0933599bbec1e1f900c3d7a96ab748d64e056",
-        96939,
+        "7ece0e2e82695237cc404212dc630ce229525d178a1188cd8b30cb49fa387ecf",
+        104979,
+        ".tar.gz",
+    ),
+    # scripts/build-host-tools.sh; digests and sizes of release host-tools-v2,
+    # checked against the downloaded files on 2026-10-21.
+    ("host-tools", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "e1e8446d4de0ac8a887898bccb03e13d543e51d1bcb5d68bb6b55083e843b921",
+        1273070,
+        ".tar.gz",
+    ),
+    ("host-tools", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/host-tools-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "682920e22c043c94e2a6f21d3ebf079fc4c98c096ee3cd74d784c1de8d05209a",
+        1300404,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "431fa99829de7257094a6cc33412a1b4fe5f8634dda5fec1d0e8abf3ebf57e6f",
+        624840,
+        ".tar.gz",
+    ),
+    ("tmux", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/tmux-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "a2222ef87684bc647aa6978e4e46a34f4ad5776d7a04534ef8914516fced1f5b",
+        620292,
+        ".tar.gz",
+    ),
+    ("git", "linux-x64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-x64.tar.gz",
+        "940886203cb09a19af987521d07d721322a6dba4e3330eb313432f4b13b4b3da",
+        7716487,
+        ".tar.gz",
+    ),
+    ("git", "linux-arm64"): Artifact(
+        f"{_HOST_TOOLS_BASE}/git-{HOST_TOOLS_REVISION}-linux-arm64.tar.gz",
+        "20986e04ae4d578eb3221423c4cab68426bade6625001316d7c4d380e2979d89",
+        7971160,
         ".tar.gz",
     ),
     # scripts/build-forge-cli.sh applies the merged-status localization fix.
@@ -335,6 +388,38 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         17868288,
         ".exe",
     ),
+    # Digests and sizes checked against nodejs.org's SHASUMS256.txt for the
+    # release on 2026-10-17.
+    ("node", "linux-x64"): Artifact(
+        f"{_NODE_BASE}-linux-x64.tar.xz",
+        "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+        31890184,
+        ".tar.xz",
+    ),
+    ("node", "linux-arm64"): Artifact(
+        f"{_NODE_BASE}-linux-arm64.tar.xz",
+        "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2",
+        30843004,
+        ".tar.xz",
+    ),
+    ("node", "darwin-x64"): Artifact(
+        f"{_NODE_BASE}-darwin-x64.tar.gz",
+        "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097",
+        54203979,
+        ".tar.gz",
+    ),
+    ("node", "darwin-arm64"): Artifact(
+        f"{_NODE_BASE}-darwin-arm64.tar.gz",
+        "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+        52909993,
+        ".tar.gz",
+    ),
+    ("node", "windows-x64"): Artifact(
+        f"{_NODE_BASE}-win-x64.zip",
+        "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+        37618919,
+        ".zip",
+    ),
     # The connector's own runtime on Windows (see PYTHON_VERSION). The embeddable
     # distribution is the interpreter and its standard library, nothing else.
     ("python", "windows-x64"): Artifact(
@@ -407,13 +492,18 @@ def fonts_pin() -> str:
 
 #: What the launcher places on a machine: (tool, version, kind, filename).
 #: `kind` is what the machine does with the artifact — unpack and find an
-#: executable of that name, or drop the file into the font directory. The
+#: executable of that name, keep the whole unpacked directory (`tree`: node's
+#: npm and npx find their modules by a path relative to themselves, so they
+#: cannot be lifted out), or drop the file into the font directory. The
 #: version is the directory name on the machine, which is what makes a bump land
 #: beside the old copy rather than over it.
 PLACEMENTS: tuple[tuple[str, str, str, str], ...] = (
     ("typst", TYPST_VERSION, "bin", "typst"),
     ("pandoc", PANDOC_VERSION, "bin", "pandoc"),
     ("uv", UV_VERSION, "bin", "uv"),
+    # The same archive's other binary: `uvx` is how a Python MCP server is run.
+    ("uv", UV_VERSION, "bin", "uvx"),
+    ("node", NODE_VERSION, "tree", "node"),
     ("ripgrep", RIPGREP_VERSION, "bin", "rg"),
     # Browser automation for rooms that operate websites; useless without the
     # Chrome `agent-browser install` fetches on first use, which stays on demand.
@@ -434,3 +524,10 @@ def resolve(tool: str, platform: str) -> tuple[str, Artifact] | None:
     key = _ANY if tool in PLATFORM_FREE else platform
     artifact = ARTIFACTS.get((tool, key))
     return (key, artifact) if artifact else None
+
+
+def node_path() -> str:
+    """Where the placed Node's programs are, as the launcher's PATH writes it:
+    `bin/` on Linux and macOS, the directory itself in the Windows zip."""
+    tree = f"$CHEESE_TOOLCHAIN/node/{NODE_VERSION}"
+    return f"{tree}/bin:{tree}"

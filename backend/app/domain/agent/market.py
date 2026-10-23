@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.environment import DEVICES_OF, STANDARD, VM
+from app.domain.agent.environment import STANDARD, TEAM_DEVICES, VM
 from app.domain.agent.profiles import ProfileRegistry
 
 # --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------
@@ -56,20 +56,13 @@ _AI_COPY: dict[str, tuple[str, str]] = {
         "包含（平台补贴）",
         "平台托管的通用大模型，开箱即用，适合绝大多数项目。",
     ),
-    "claude-opus": (
-        "仅团队内测",
-        "原生 Claude Opus，仅团队 dogfooding 使用，不对外开放。",
-    ),
 }
-_TIER_PRICE = {"byo": "自带凭证", "testing": "仅团队内测"}
+_TIER_PRICE = {"byo": "自带 API 密钥"}
 
 
-def ai_listings(
-    registry: ProfileRegistry, owner_handle: str | None = None
-) -> list[PoolListing]:
-    """Every AI pool in the catalog. `available` reflects credentials + whether
-    this owner may select it (a testing-tier profile is unavailable off-dogfood)."""
-    selectable = {v.name for v in registry.selectable(owner_handle)}
+def ai_listings(registry: ProfileRegistry) -> list[PoolListing]:
+    """Every AI pool in the catalog. `available` reflects credentials."""
+    selectable = {v.name for v in registry.selectable()}
     out: list[PoolListing] = []
     for name, p in registry.all():
         price, desc = _AI_COPY.get(name, (_TIER_PRICE.get(p.tier, "—"), f"{p.label}。"))
@@ -112,9 +105,8 @@ def compute_listings(
     device_online: bool | None = None,
 ) -> list[PoolListing]:
     """The sandbox specs on offer on this deployment: the platform's machines,
-    a whole VM of the platform's, and people's own computers — each person's
-    are a spec of their own in a project (``environment.devices_of``), listed
-    here once. ``device_online`` scopes the last to a project's machines; left
+    a whole VM of the platform's, and the team's enrolled computers.
+    ``device_online`` scopes the last to a project's team; left
     as None (the global 市场) it asks whether any machine is connected."""
     if device_online is None:
         # deferred-import: tests replace this name on app.domain.agent.device_hub
@@ -144,11 +136,11 @@ def compute_listings(
         ),
         PoolListing(
             kind="compute",
-            id=DEVICES_OF.rstrip(":"),
-            label="自己的设备",
+            id=TEAM_DEVICES,
+            label="团队设备",
             tier="byo",
             price="不收费",
-            description="沙箱放在项目成员自己接入的电脑上；先到『我的设备』连接一台。",
+            description="环境放在团队接入的设备上；由团队管理员在『设备』页接入。",
             available=device_online,
         ),
     ]
@@ -211,8 +203,8 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         "fable",
         "Claude Fable 5",
         "前沿：新一代最强模型。注意：安全分类器命中（网络安全/生物类话题）或"
-        "配额受限时会被自动降级到 Opus 4.8，且降级可能持续到会话结束"
-        "（重开会话恢复）。",
+        "配额受限时会被自动降级到 Opus 4.8；降级后，AI 队友在同一个频道、支线或任务里"
+        "可能一直用 Opus 4.8（新开的支线或任务会恢复）。",
         "claude-fable-5",
         False,
         TIER_FRONTIER,
@@ -243,10 +235,6 @@ def subscription_model_listings() -> list[PoolListing]:
         )
         for (mid, label, desc, _alias, default, tier) in _SUB_MODELS
     ]
-
-
-def subscription_model_default() -> str:
-    return next(mid for (mid, _l, _d, _a, dflt, _t) in _SUB_MODELS if dflt)
 
 
 def subscription_model_alias(mid: str | None) -> str:

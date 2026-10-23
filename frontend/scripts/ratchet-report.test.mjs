@@ -1,4 +1,4 @@
-// Tests for the --json contract the three frontend ratchets share. Run by
+// Tests for the --json contract the frontend checks share. Run by
 // `pnpm run test:ratchet` (node --test scripts/*.test.mjs), locally and in
 // frontend.yml.
 //
@@ -19,7 +19,7 @@
 // returned.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -59,9 +59,7 @@ describe('verdict', () => {
     })
   })
 
-  // The counters are numbers, not objects: the snapshot's shape is fixed in
-  // docs/topics/棘轮页方案 (3.1), and a page that has to guess which of two
-  // shapes it is reading is how "0" and "missing" start to look alike.
+  // Counters are numbers, not objects, so "0" and "missing" stay distinct.
   it('judges a tree with no regression as pass', () => {
     const record = verdict({ id: 'x', result: { ...COMPARED, ok: true } })
     assert.equal(record.status, 'pass')
@@ -152,11 +150,11 @@ function agreedRecord(script, id, ...args) {
 }
 
 describe('--json on the real checkers', () => {
-  // The plant, judged by the real ratchet against a scratch baseline: both modes
-  // must reach the same verdict on a component that imports the API layer.
+  // The plant, judged by the real check: both modes must reach the same verdict
+  // on a component that imports the API layer.
   it('agrees with the default mode on a planted boundary violation', () => {
     const probe = resolve(ROOT, 'src/components/__ratchetReportProbe.vue')
-    const args = ['--files', 'src/components/__ratchetReportProbe.vue', '--baseline', join(sandbox, 'planted.json')]
+    const args = ['--files', 'src/components/__ratchetReportProbe.vue']
     try {
       writeFileSync(
         probe,
@@ -169,30 +167,25 @@ describe('--json on the real checkers', () => {
       assert.equal(plain.status, 1, `${plain.stdout}${plain.stderr}`)
       assert.equal(json.status, plain.status, `${json.stdout}${json.stderr}`)
       assert.equal(JSON.parse(json.stdout).status, 'fail')
-      // --json is what ci:fast calls: stdout stays the one record line, and the
+      // --json is what the collector calls: stdout stays the one record line, and the
       // human report with the line and the fix rides on stderr instead.
       assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
-      assert.match(json.stderr, /__ratchetReportProbe\.vue: 0 -> 1/)
+      assert.match(json.stderr, /__ratchetReportProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router/)
       assert.match(json.stderr, /architecture\.md/)
     } finally {
       rmSync(probe, { force: true })
     }
   })
 
-  // A baseline with nothing frozen in it, so any finding in a fixture is new.
-  const emptyBaseline = join(sandbox, 'empty-baseline.json')
-  writeFileSync(emptyBaseline, '{"files":{}}\n')
-
   it('fe-storage: the record is the run, passing and failing', () => {
     const probe = resolve(ROOT, 'src/__ratchetReportStorageProbe.ts')
-    const args = ['--files', 'src/__ratchetReportStorageProbe.ts', '--baseline', emptyBaseline]
+    const args = ['--files', 'src/__ratchetReportStorageProbe.ts']
     try {
       // A file that reaches storage through a parameter, not the global: clean.
       writeFileSync(probe, 'export const read = (s: Storage): string | null => s.getItem("k")\n')
       assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'pass')
 
-      // The same file touching the global directly is a new reference against an
-      // empty baseline.
+      // The same file touching the global directly fails.
       writeFileSync(probe, 'export const read = (): string | null => localStorage.getItem("k")\n')
       assert.equal(agreedRecord('browser-storage-ratchet.mjs', 'fe-storage', ...args).status, 'fail')
 
@@ -200,7 +193,7 @@ describe('--json on the real checkers', () => {
       // record line; the human report with the line and the fix rides on stderr.
       const json = runChecker('browser-storage-ratchet.mjs', '--json', ...args)
       assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
-      assert.match(json.stderr, /__ratchetReportStorageProbe\.ts: 0 -> 1/)
+      assert.match(json.stderr, /__ratchetReportStorageProbe\.ts:\d+:\d+ {2}storage\/no-direct-browser-storage/)
       assert.match(json.stderr, /@\/lib\/browserStorage/)
     } finally {
       rmSync(probe, { force: true })
@@ -212,10 +205,34 @@ describe('--json on the real checkers', () => {
     const planted = join(sandbox, 'planted.css')
     writeFileSync(clean, 'a { margin: 0; }\n')
     writeFileSync(planted, 'a { color: #123456; }\n')
-    const args = (file) => ['--files', file, '--baseline', emptyBaseline]
+    const args = (file) => ['--files', file]
 
     assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(clean)).status, 'pass')
     assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(planted)).status, 'fail')
+  })
+
+  it('stylelint-tokens: an update cannot accept a colour violation', () => {
+    const planted = join(sandbox, 'update.css')
+    const baseline = join(sandbox, 'stylelint-baseline.json')
+    writeFileSync(planted, 'a { color: #123456; }\n')
+    const run = runChecker('stylelint-ratchet.mjs', '--json', '--files', planted, '--baseline', baseline, '--update')
+    assert.notEqual(run.status, 0, 'an update must not accept hardcoded colours')
+    assert.equal(existsSync(baseline), false, 'the check must never write an allowance')
+  })
+
+  it('stylelint-tokens: each colour rule blocks a violation, while tokens and pure style pass', () => {
+    const file = join(sandbox, 'colours.css')
+    for (const value of ['#123456', 'white', 'rgb(1 2 3)', 'hsl(20 30% 40%)']) {
+      writeFileSync(file, `a { color: ${value}; }\n`)
+      const record = agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', '--files', file)
+      assert.equal(record.status, 'fail', value)
+      assert.equal(record.actual, 1, value)
+      assert.equal(record.frozen, 0, value)
+    }
+    writeFileSync(file, '.Bad_Name{color:var(--text);background:rgba(var(--v-theme-primary),0.12)}\n')
+    const record = agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', '--files', file)
+    assert.equal(record.status, 'pass')
+    assert.equal(record.actual, 0)
   })
 
   it('vue-tsc: the record is the run, on a planted type error', () => {
@@ -226,7 +243,7 @@ describe('--json on the real checkers', () => {
       '{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"types":[]},"files":["planted.ts"]}\n'
     )
     writeFileSync(join(project, 'planted.ts'), "export const n: number = 'not a number'\n")
-    const args = ['--project', join(project, 'tsconfig.json'), '--baseline', emptyBaseline]
+    const args = ['--project', join(project, 'tsconfig.json')]
 
     assert.equal(agreedRecord('tsc-ratchet.mjs', 'vue-tsc', ...args).status, 'fail')
 
@@ -238,7 +255,7 @@ describe('--json on the real checkers', () => {
     assert.match(plain.stdout, /planted\.ts\(1,\d+\): error TS2322:/)
     assert.match(plain.stdout, /docs\/manual\/dev\/frontend\.md/)
 
-    // Under --json (what ci:fast calls) stdout stays the one record line; the
+    // Under --json (what the collector calls) stdout stays the one record line; the
     // same raw diagnostic and the fix ride on stderr.
     const json = runChecker('tsc-ratchet.mjs', '--json', ...args)
     assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)

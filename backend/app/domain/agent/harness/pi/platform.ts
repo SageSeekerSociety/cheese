@@ -39,6 +39,12 @@ type ToolSpec = {
   inputSchema: Record<string, unknown>;
 };
 
+type McpServer = {
+  url: string;
+  headers: Record<string, string>;
+  timeout: number;
+};
+
 type Manifest = {
   socket: string;
   state: string;
@@ -48,13 +54,21 @@ type Manifest = {
   // A session without hands that reads the room's machine (a document's 芝士):
   // pi's read, ls, find and grep on the room's checkout, and nothing else of it.
   reading?: boolean;
+  // A session without hands that works on a sandbox of its own (a person's
+  // 芝士): pi's own tools there, commands included.
+  works?: boolean;
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
   unavailable: string;
-  mcp: ToolSpec[];
+  // The project's MCP servers, each an `mcpServers` entry at the session's
+  // gateway, for pi's own MCP client.
+  mcp: Record<string, McpServer>;
   notice: string;
   subagents: boolean;
+  // `Monitor`, defined by the runner (`driven/monitor.py`); null for a session
+  // whose monitors nobody would be told about.
+  monitor?: ToolSpec | null;
 };
 
 const HOME = process.env.CHEESE_PI_EXTENSION ?? "";
@@ -67,7 +81,7 @@ function manifest(): Manifest {
     jobs: "",
     tools: [],
     unavailable: "the runner wrote no manifest",
-    mcp: [],
+    mcp: {},
     notice: "",
     subagents: false,
   };
@@ -112,10 +126,10 @@ function text(body: string) {
 
 // --- the platform's own tools ------------------------------------------------
 //
-// pi has no MCP client, so these arrive as extension tools. The catalog is
-// the runner's, read from the platform's own file: the platform's tool table
-// (the same one the other harnesses serve) plus the CLI commands that run on
-// the room's machine as a process.
+// These arrive as extension tools. The catalog is the runner's, read from the
+// platform's own file: the platform's tool table (the same one the other
+// harnesses serve) plus the CLI commands that run on the room's machine as a
+// process.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {
@@ -151,37 +165,17 @@ function registerPlatformTools(pi: any, spec: Manifest) {
 
 // --- the project's MCP servers ----------------------------------------------
 //
-// The runner is pi's MCP client (mcp.py): it listed every server's tools —
-// the machine's stdio servers and the platform's remote ones — under the name
-// the other harnesses give them, `mcp__<server>__<tool>`. A call goes back to
-// the runner, which sends it to the server that owns the tool, with the
-// project's PreToolUse and PostToolUse hooks run around it on the machine.
-//
-// A failed call is thrown, not returned: pi marks a tool result as an error
-// only when `execute` throws, whatever the returned object says.
+// pi's own MCP client (`builtin:mcp`, which the launch loads) reaches each of
+// the project's servers — the machine's commands, the type's and the remote
+// ones — at the session's gateway (mcp_gateway.py), which sends each call
+// where the server is served. Registered here rather than written to an
+// `mcp.json`: pi reads that file from places the session host shares with
+// every other room. The secret in the headers is the variable pi expands from
+// its own environment.
 
-function registerMcpTools(pi: any, spec: Manifest) {
-  for (const tool of spec.mcp ?? []) {
-    pi.registerTool({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema,
-      async execute(id: string, params: any) {
-        const result = await ask(spec.socket, "mcp", {
-          id,
-          tool: tool.name,
-          arguments: params ?? {},
-        });
-        if (result.isError) {
-          const said = result.content
-            .map((item: any) => (item.type === "text" ? item.text : `[${item.type}]`))
-            .join("\n")
-            .trim();
-          throw new Error(said || `${tool.name} failed`);
-        }
-        return { content: result.content };
-      },
-    });
+function registerMcpServers(pi: any, spec: Manifest) {
+  for (const [name, server] of Object.entries(spec.mcp ?? {})) {
+    pi.registerMcpServer(name, server);
   }
 }
 
@@ -194,9 +188,10 @@ function registerMcpTools(pi: any, spec: Manifest) {
 // the room's machine runs the hooks under the name each one is written for
 // (hooks.py).
 //
-// Two kinds of call are not asked about here. An MCP tool's hooks run around
-// the call itself (mcp.py). A platform tool runs none, as on the executor,
-// which runs no project hook around the platform's own tools.
+// An MCP tool's call is asked about like any other, and the gateway is told
+// its hooks have run. A platform tool runs none, as on the executor, which
+// runs no project hook around the platform's own tools. A codemode script is a
+// call of its own, and each tool it calls is asked about in turn.
 //
 // A PreToolUse block stops the call and pi hands the model its reason as the
 // tool's error; an `updatedInput` is written into the call's input, which pi
@@ -206,7 +201,7 @@ function registerMcpTools(pi: any, spec: Manifest) {
 // added to the result, since the call has already happened.
 
 function applyProjectHooks(pi: any, spec: Manifest) {
-  const skipped = new Set([...spec.tools, ...(spec.mcp ?? [])].map((tool) => tool.name));
+  const skipped = new Set(spec.tools.map((tool) => tool.name));
 
   pi.on("tool_call", async (event: any) => {
     if (skipped.has(event.toolName)) return;
@@ -1124,7 +1119,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
       }
       if (signal?.aborted) {
         await ask(spec.socket, "subagent_stop", { agent_id: id }).catch(() => {});
-        throw new Error(`${id} 随这一轮一起停了`);
+        throw new Error(`${id} 已随你一起停下`);
       }
       await ask(spec.socket, "subagent_background", { agent_id: id });
       return {
@@ -1158,7 +1153,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
 
   pi.registerTool({
     name: "TaskStop",
-    description: "Stop one subagent. Any others keep running.",
+    description: "Stop one subagent, or a monitor, by its id. Any others keep running.",
     parameters: {
       type: "object",
       properties: {
@@ -1167,8 +1162,58 @@ function registerSubagentTools(pi: any, spec: Manifest) {
       required: ["task_id"],
     },
     async execute(_id: string, params: any) {
+      if (isMonitor(params.task_id)) return stopMonitor(spec, params.task_id);
       const answer = await ask(spec.socket, "subagent_stop", { agent_id: params.task_id });
       return text(answer.stopped ? `${params.task_id} 已停下` : `${params.task_id} 已经结束了`);
+    },
+  });
+}
+
+// --- monitors ----------------------------------------------------------------
+//
+// Claude Code's `Monitor`: a command on the room's machine whose every stdout
+// line the session is told as it is printed. The runner follows the command and
+// says each line into the session (`driven/monitor.py`, which also defines the
+// tool), so all this does is hand the call over. `TaskStop` stops one by the id
+// it was started under, as Claude Code's does; where the session has subagents
+// that tool is theirs and passes a monitor's id on.
+
+const MONITOR_PREFIX = "monitor-";
+
+function isMonitor(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith(MONITOR_PREFIX);
+}
+
+async function stopMonitor(spec: Manifest, id: string) {
+  const answer = await ask(spec.socket, "monitor_stop", { task_id: id });
+  return text(answer.text);
+}
+
+function registerMonitorTools(pi: any, spec: Manifest, tool: ToolSpec) {
+  pi.registerTool({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema,
+    async execute(id: string, params: any) {
+      // A refusal is thrown, as `ask` rejects with it: pi marks a result as an
+      // error only when `execute` throws.
+      const answer = await ask(spec.socket, "monitor_start", { arguments: params ?? {}, id });
+      return text(answer.text);
+    },
+  });
+  if (spec.subagents) return;
+  pi.registerTool({
+    name: "TaskStop",
+    description: "Stop a monitor by the task id Monitor returned.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The monitor's task id, as Monitor returned it" },
+      },
+      required: ["task_id"],
+    },
+    async execute(_id: string, params: any) {
+      return stopMonitor(spec, params.task_id);
     },
   });
 }
@@ -1182,6 +1227,61 @@ function registerSubagentTools(pi: any, spec: Manifest) {
 // pi still names the directory it runs in, which on the session host is nothing
 // of the person's; that section goes.
 
+// --- a question that goes round in circles -----------------------------------
+//
+// A session without hands answers on whatever model the person's gateway
+// serves, and the weaker ones go round: the same call again and again, or call
+// after call without an end. Neither is caught by the model itself, so the
+// session catches them, per question (an agent run): the same tool with the
+// same input a third time is not run, and past ROUND_CALLS calls no tool is.
+// Either way the model is told why, so it can change course or stop and say
+// where it got to; the person says 继续 to go on.
+
+const SAME_CALL_RUNS = 2;
+const ROUND_CALLS = 200;
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function guardTheRound(pi: any) {
+  let calls = 0;
+  let seen = new Map<string, number>();
+  pi.on("before_agent_start", async () => {
+    calls = 0;
+    seen = new Map();
+  });
+  pi.on("tool_call", async (event: any) => {
+    calls += 1;
+    if (calls > ROUND_CALLS) {
+      return {
+        block: true,
+        reason:
+          `这次回答已经调用了 ${ROUND_CALLS} 次工具，不再调用。` +
+          "把做到哪里、还剩什么告诉用户，请用户说「继续」再接着做。",
+      };
+    }
+    const key = `${event.toolName} ${stable(event.input ?? {})}`;
+    const runs = (seen.get(key) ?? 0) + 1;
+    seen.set(key, runs);
+    if (runs > SAME_CALL_RUNS) {
+      return {
+        block: true,
+        reason:
+          `没有执行：这次回答里已经用同样的参数调用过 ${event.toolName} ${SAME_CALL_RUNS} 次，` +
+          "结果不会变。换个做法，或者把现在的情况告诉用户。",
+      };
+    }
+  });
+}
+
 function withoutHands(pi: any, spec: Manifest) {
   pi.on("before_agent_start", async (event: any) => {
     const options = promptOptions(event);
@@ -1190,10 +1290,15 @@ function withoutHands(pi: any, spec: Manifest) {
     // (`buildSystemPromptSections` writes `cwd` for every session), and what
     // this session has to say about its directory is that it has none.
     // One that reads the room's machine is in the room's checkout.
-    options.cwd = spec.reading ? spec.workspace : "";
+    // One that works on a machine of its own is in its directory there.
+    options.cwd = spec.reading || spec.works ? spec.workspace : "";
   });
+  guardTheRound(pi);
   registerPlatformTools(pi, spec);
   if (spec.reading) registerReadingTools(pi, spec);
+  // pi's own tools, on the session's own sandbox: a person's 芝士 has no
+  // project, so nothing of one's hooks or background jobs comes with them.
+  if (spec.works) registerMachineTools(pi, spec);
 }
 
 // The tools of pi's that only read, on the room's machine, with the project's
@@ -1260,18 +1365,19 @@ export default function (pi: any) {
     // never given any, and the agent will conclude it must shell out.
     process.stderr.write(`[cheese] no platform tools: ${spec.unavailable}\n`);
   }
-  registerMcpTools(pi, spec);
+  registerMcpServers(pi, spec);
   // Always, runner or no runner: pi's own tools left in place would work on the
   // session host, which holds nothing of the project and everything of every
   // other room's. Without a runner to reach they fail, which is the truth.
   registerMachineTools(pi, spec);
   if (spec.socket) applyProjectHooks(pi, spec);
   if (spec.socket && spec.subagents) registerSubagentTools(pi, spec);
+  if (spec.socket && spec.monitor) registerMonitorTools(pi, spec, spec.monitor);
   if (spec.jobs) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);
   }
   // No reminder to publish lives here. A room that has heard nothing for a while
-  // is reminded by the platform (ChatService.remind_silent_turns), which steers
+  // is reminded by the platform (QuietSessionReminders.silence), which steers
   // the same notice into a running turn on every harness.
 }

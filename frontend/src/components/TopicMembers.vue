@@ -6,14 +6,13 @@
 // 每个 AI 队友的会话有自己的执行环境（#2320），写在它那一行下面，各改各的；名册
 // 底下一行是新会话默认用的环境，改它不搬已经开工的会话。
 import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
-import type { Environment, SessionEnvironment, TopicEnvironment } from '../types/compute'
+import type { SessionEnvironment } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addTopicMember, removeTopicMember, setEnvironmentDefault, setSessionEnvironment } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
+import { useTopicRoster } from '../composables/useTopicRoster'
 import { t } from '../i18n'
 import { memberName, shownHandle } from '../lib/agentNames'
 import { environmentName } from '../lib/environment'
@@ -30,9 +29,6 @@ import EnvironmentMenu from './EnvironmentMenu.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import { queryClient } from '@/query/client'
-import { keys } from '@/query/keys'
-import { environmentQuery, roomMembersQuery } from '@/query/room'
 
 const props = defineProps<{
   topicId: string
@@ -41,8 +37,10 @@ const props = defineProps<{
   me: string
   /** 我管不管这个频道（创建者或项目管理员）。 */
   canManage: boolean
-  /** 不管频道也能加人：频道里的人都能加人，移出仍只归管理者。 */
+  /** 不管频道也能加人：频道里角色允许的人都能加人，移出仍只归管理者。 */
   canInvite?: boolean
+  /** 我在这个频道里：加不了人时，说的是角色不允许，而不是人不在频道里。 */
+  joined?: boolean
   /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
   general?: boolean
 }>()
@@ -51,26 +49,30 @@ const emit = defineEmits<{
   (e: 'manager', name: string | null): void
 }>()
 
-// 切回来过的房间先画上次那份名册，背后再重取（`query/room`）。骨架只在手上什么
-// 都没有时出：有上次那份就照着它画，回来了原地换。
-const roster = useQuery(
-  computed(() => roomMembersQuery(props.topicId)),
-  queryClient
-)
-const members = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
-const loading = computed(() => roster.isPending.value && !roster.isError.value)
-const busy = ref(false)
-const error = ref('')
+// 名册本身、加人移人两条动作、以及每位队友的执行环境，都在这一层
+// （`.claude/rules/architecture.md`：`src/components/**` 不碰 API 层）。
+const {
+  members,
+  loading,
+  loadError,
+  busy,
+  actionError,
+  addMember,
+  removeMember,
+  machines,
+  machinesError,
+  loadMachines,
+  saveSession,
+  saveDefault,
+} = useTopicRoster(() => props.topicId)
+
 // 名单开着没有，父组件可以管：频道详情的「设置」里也有一个入口，点它开的是这一份
 // （清单第 5 条），而不是在别处再造一份一样的名单。
 const open = defineModel<boolean>('open', { default: false })
 const addHandle = ref<string | null>(null)
 
-const loadError = computed(() =>
-  roster.error.value ? roster.error.value.message || t('work.room.roster.loadFailed') : ''
-)
 // 改名册那一下没成，压过「名册没读到」：那是此刻手上这一下的结果。
-const shownError = computed(() => error.value || loadError.value)
+const shownError = computed(() => actionError.value || loadError.value)
 
 watch(
   members,
@@ -81,44 +83,63 @@ watch(
   { immediate: true }
 )
 
-// 执行环境：一次读回新会话默认用哪个、每条会话各在哪个环境里（和任务页那一格同一份）。
-// 它只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。名册一展开就
-// 读，所以进房间这一下没必要挤在首屏前 —— 推到浏览器空下来再问，标记晚一点补上。
-const machinesWanted = ref(false)
-const machinesRead = useQuery(
-  computed(() => ({ ...environmentQuery(props.topicId), enabled: machinesWanted.value && !!props.topicId })),
-  queryClient
-)
-const machines = computed<TopicEnvironment | null>(() => machinesRead.data.value ?? null)
-const machinesError = computed(() =>
-  machinesRead.error.value ? machinesRead.error.value.message || t('compute.env.loadFailed') : ''
-)
-function loadMachines() {
-  if (!machinesWanted.value) machinesWanted.value = true
-  else void queryClient.invalidateQueries({ queryKey: keys.roomEnvironment(props.topicId) })
+// 名册一打开就把整份名单一次建出来：几十行，每行一个头像组件，平板上一等就是几秒，
+// 这中间屏幕上一个像素都不动，看着像没点到。列表本身只有 320px 高、一次看五六行，
+// 所以先挂看得见的那几行，其余趁浏览器空下来一批一批补——第一帧立刻有内容。
+const FIRST_ROWS = 8
+const ROWS_PER_BATCH = 24
+const shownRows = ref(FIRST_ROWS)
+const shownMembers = computed(() => members.value.slice(0, shownRows.value))
+let fillRows: (() => void) | null = null
+let readEnv: (() => void) | null = null
+
+function stopFilling(): void {
+  fillRows?.()
+  fillRows = null
 }
-let cancelIdleLoad: (() => void) | null = null
-onMounted(() => {
-  cancelIdleLoad = whenIdle(() => (machinesWanted.value = true))
-  window.addEventListener('project-compute-updated', loadMachines)
-})
+
+function fillRest(): void {
+  fillRows = null
+  shownRows.value = Math.min(members.value.length, shownRows.value + ROWS_PER_BATCH)
+  if (shownRows.value < members.value.length) fillRows = whenIdle(fillRest)
+}
+
+// 加人、移人之后名单长度会变：面板开着、又还有没挂上的行时，补行接着走，
+// 别让新加的人一直不出现。
+watch(
+  () => members.value.length,
+  () => {
+    if (!open.value || fillRows !== null) return
+    if (shownRows.value < members.value.length) fillRows = whenIdle(fillRest)
+  }
+)
+
+// `immediate`：频道详情的「设置」里那一份一挂上就是开着的，那一次没有「变成开」的
+// 变化可等。没这一项，从那里进来的名单会永远只挂着前几行。
+watch(
+  open,
+  (value) => {
+    stopFilling()
+    readEnv?.()
+    readEnv = null
+    if (!value) return
+    shownRows.value = FIRST_ROWS
+    if (members.value.length > FIRST_ROWS) fillRows = whenIdle(fillRest)
+    // 每位队友跑在哪个环境，是面板开着之后才要看的：排在建行后面，别和第一帧抢。
+    readEnv = whenIdle(loadMachines)
+  },
+  { immediate: true }
+)
+
 onBeforeUnmount(() => {
-  cancelIdleLoad?.()
-  window.removeEventListener('project-compute-updated', loadMachines)
-})
-watch(open, (value) => {
-  if (value) loadMachines()
+  stopFilling()
+  readEnv?.()
+  readEnv = null
 })
 // 一位 AI 队友在这里的会话：按它坐的那个名册位认（成员自己的 Claude Code 坐在主人
 // 名下的位上，会话的 agent_handle 和名册上的 handle 不一定相同）。
 function sessionsOf(handle: string): SessionEnvironment[] {
   return machines.value?.sessions.filter((s) => s.seat_handle === handle) ?? []
-}
-function saveSession(session: SessionEnvironment) {
-  return (env: Environment) => setSessionEnvironment(props.topicId, session.session_id, env)
-}
-function saveDefault(env: Environment) {
-  return setEnvironmentDefault(props.topicId, env)
 }
 
 // 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
@@ -127,8 +148,8 @@ function saveDefault(env: Environment) {
 // 「位」而不是「人」：同一句话要数得下一个 AI 队友。
 const countLabel = computed(() => t('work.room.roster.count', { count: members.value.length }))
 
-// Compact indicator: the first few human faces as a stack, capped so the
-// stack never grows unbounded — extra people fold into a "+N" tile.
+// Compact indicator: the first few faces as a stack, capped so the stack never
+// grows unbounded; the rest fold into "+N".
 const MAX_FACES = 3
 const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
 const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
@@ -181,29 +202,15 @@ const addable = computed(() => {
   )
 })
 
-async function guard<T>(fn: () => Promise<T>): Promise<void> {
-  busy.value = true
-  error.value = ''
-  try {
-    await fn()
-    // 写名册的那一下已经把名册标过期了（api/topicMembers），这里等新的一份回来再收起。
-    await roster.refetch()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
-  } finally {
-    busy.value = false
-  }
-}
-
 async function onAdd() {
   const handle = addHandle.value
   if (!handle) return
-  await guard(() => addTopicMember(props.topicId, handle))
+  await addMember(handle)
   addHandle.value = null
 }
 
 async function onRemove(handle: string) {
-  await guard(() => removeTopicMember(props.topicId, handle))
+  await removeMember(handle)
 }
 </script>
 
@@ -260,8 +267,9 @@ async function onRemove(handle: string) {
         :title="t('work.room.roster.empty')"
       />
       <ul v-else class="roster__list">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- right-click opens a menu whose one action is the row's × button -->
         <li
-          v-for="m in members"
+          v-for="m in shownMembers"
           :key="m.member_handle"
           class="roster__item"
           @contextmenu="removable(m) && rowMenu.open(m.member_handle, $event)"
@@ -403,7 +411,9 @@ async function onRemove(handle: string) {
           {{ t('work.room.roster.add') }}
         </BaseButton>
       </div>
-      <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
+      <div v-else class="roster__hint">
+        {{ joined ? t('work.room.roster.readOnlyRole') : t('work.room.roster.readOnly') }}
+      </div>
     </div>
   </v-menu>
 </template>
@@ -432,6 +442,11 @@ async function onRemove(handle: string) {
   background: var(--fill);
   border-color: var(--line-2);
 }
+/* 按下那一刻就变色：触屏上没有悬停，面板又要等一下才出来，不变一下就像没点到。 */
+.members-mini:active {
+  background: var(--fill);
+  border-color: var(--line-2);
+}
 .members-mini__stack {
   display: inline-flex;
   align-items: center;
@@ -446,10 +461,10 @@ async function onRemove(handle: string) {
   margin-left: -7px;
   font-size: 0.66rem;
   font-weight: 700;
-  /* 这圈 #fff 是故意写死的：底色由 UserAvatar 按 seed（member_handle）用
-     avatarColor() 算出来，两套主题下是同一个值，压在上面的字也得是同一个值。
+  /* 用 --avatar-ink 而不是 var(--ink)：底色由 UserAvatar 按 seed（member_handle）
+     用 avatarColor() 算出来，两套主题下是同一个值，压在上面的字也得是同一个值。
      底色逐人不同 —— 一排脸共用一个颜色就等于没有脸，而这一排存在的意义正是彼此不同。 */
-  color: #fff;
+  color: var(--avatar-ink);
   border: 1.5px solid var(--surface);
   box-sizing: border-box;
   overflow: hidden;
@@ -582,7 +597,7 @@ async function onRemove(handle: string) {
   border-radius: var(--radius-pill);
   font-size: 0.72rem;
   font-weight: 700;
-  color: #fff; /* theme-invariant ground, see .members-mini__face */
+  color: var(--avatar-ink); /* theme-invariant ground, see .members-mini__face */
   flex: none;
   overflow: hidden;
 }

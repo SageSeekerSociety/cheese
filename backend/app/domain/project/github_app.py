@@ -23,6 +23,7 @@ has its own installation_id, looked up from ``project_git_installations``.
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -36,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import forge_quota
 from app.core.config import settings
 from app.core.forge_http import forge_client
+from app.core.github_headers import github_headers
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
@@ -144,20 +146,24 @@ class GitHubAppTokens:
 
     async def read_token(self) -> tuple[str, str]:
         """An installation token that reads what the installation may read and
-        writes nothing: what ``/sandbox/forge-token`` hands a session whose
-        work is not kept (a 支线, a task not yet started). GitHub enforces it,
-        so a push or a new pull request from such a session is refused there."""
+        writes to nothing in the repository: what ``/sandbox/forge-token`` hands
+        a session whose work is not kept (a 支线, a routine's run there). GitHub
+        enforces it, so a push or a new pull request from such a session is
+        refused there. It may rerun or cancel CI (`read_permissions`)."""
         return await self._mint("read", self.read_permissions)
 
     async def read_permissions(self) -> dict[str, str]:
-        """Every grant of the installation at its read level. A grant GitHub
-        has no read level for (`workflows`) is left out: asking for it would
-        fail the whole mint."""
-        return {
-            key: "read"
-            for key in await self.granted_permissions()
-            if key not in _WRITE_ONLY_PERMISSIONS
-        }
+        """Every grant of the installation at its read level, except `actions`,
+        kept at `write` where the installation holds it: rerunning or
+        cancelling a workflow run changes nothing in the repository, and a
+        routine watching a deployment otherwise hands every flaky job to a
+        person. A grant GitHub has no read level for (`workflows`) is left out:
+        asking for it would fail the whole mint."""
+        grants = await self.granted_permissions()
+        levels = {key: "read" for key in grants if key not in _WRITE_ONLY_PERMISSIONS}
+        if grants.get("actions") == "write":
+            levels["actions"] = "write"
+        return levels
 
     async def write_token(self) -> tuple[str, str]:
         """The named write set, used by PR-based accept.
@@ -215,10 +221,7 @@ class GitHubAppTokens:
         async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 f"{self._api_base}/app/installations/{self._installation_id}",
-                headers={
-                    "Authorization": f"Bearer {self._app_jwt()}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(self._app_jwt()),
             )
         if resp.status_code != 200:
             raise GitHubAppError(
@@ -237,10 +240,7 @@ class GitHubAppTokens:
         async with forge_client(transport=self._transport, timeout=10.0) as client:
             resp = await client.get(
                 f"{self._api_base}/rate_limit",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(token),
             )
         if resp.status_code != 200:
             if _unreadable_quota.get(self._installation_id) != resp.status_code:
@@ -283,10 +283,7 @@ class GitHubAppTokens:
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
                     json={"permissions": permissions} | self._scope(),
-                    headers={
-                        "Authorization": f"Bearer {self._app_jwt()}",
-                        "Accept": "application/vnd.github+json",
-                    },
+                    headers=github_headers(self._app_jwt()),
                 )
             if resp.status_code != 201:
                 raise GitHubAppError(
@@ -372,6 +369,23 @@ async def github_app_tokens_for_project(
     )
 
 
+# Upstream URL shapes eligible for PR-based accept. SSH remotes are excluded on
+# purpose: an installation token only authenticates over https.
+_GITHUB_HTTPS_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$"
+)
+
+
+def parse_github_repo(url: str | None) -> tuple[str, str] | None:
+    """(owner, repo) when the upstream is an https GitHub remote, else None."""
+    if not url:
+        return None
+    match = _GITHUB_HTTPS_RE.match(url.strip())
+    if match is None:
+        return None
+    return match.group("owner"), match.group("repo")
+
+
 async def locate_repo(
     installation: ProjectGitInstallation,
 ) -> tuple[int, str] | None:
@@ -418,10 +432,7 @@ async def _describe(
     ) as client:
         resp = await client.get(
             f"{minter.api_base}{path}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
+            headers=github_headers(token),
         )
     if resp.status_code == 404:
         return None
@@ -462,10 +473,7 @@ async def _user_installation_items(token: str, path: str, key: str) -> list[dict
             response = await client.get(
                 f"https://api.github.com{path}",
                 params={"per_page": 100, "page": page},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                headers=github_headers(token),
             )
             if response.status_code != 200:
                 raise GitHubAppError(

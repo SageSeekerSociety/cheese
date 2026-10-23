@@ -38,8 +38,9 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.team.services import team_service
 from app.domain.team.summary import team_summary
-from app.domain.topic.models import Topic, TopicStatus, room_ref
-from app.domain.topic.repositories import TopicRepository, seen_by
+from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat, room_ref
+from app.domain.topic.repositories import TopicRepository, readable_by, seen_by
+from app.domain.user.services import remark_for_handle
 
 if TYPE_CHECKING:
     from app.domain.project.models import Project
@@ -56,7 +57,7 @@ def _listed_topic(viewer: str) -> ColumnElement[bool]:
     """A topic a personal page may name to ``viewer``: not a private 1:1 chat,
     which is not part of any topic listing — on the person's own page either —
     and not a private channel ``viewer`` is not in."""
-    return and_(Topic.is_private.is_(False), seen_by(viewer))
+    return and_(not_a_private_chat(), seen_by(viewer))
 
 
 def _outside(unseen: list[uuid.UUID]) -> ColumnElement[bool]:
@@ -75,17 +76,17 @@ class DashboardService:
     async def _unseen(
         self, project_ids: list[uuid.UUID], viewer: str | None
     ) -> list[uuid.UUID]:
-        """The private channels in these projects ``viewer`` is not in: what is
-        written there is not counted for them, so no number on a board says
-        more than the lists it summarises. ``None`` is the trusted development
-        credential, which names nobody and sees every channel
-        (``app.api.place.rooms_seen``)."""
+        """The private channels and private chats in these projects ``viewer``
+        is not in: what is written there is not counted for them, so no number
+        on a board says more than the lists it summarises. ``None`` is the
+        trusted development credential, which names nobody and sees every
+        channel (``app.api.place.rooms_seen``)."""
         if viewer is None or not project_ids:
             return []
         return list(
             await self._s.scalars(
                 select(Topic.id).where(
-                    Topic.project_id.in_(project_ids), not_(seen_by(viewer))
+                    Topic.project_id.in_(project_ids), not_(readable_by(viewer))
                 )
             )
         )
@@ -429,6 +430,7 @@ class DashboardService:
             # Merged schema: display name is UserProfile.nickname, bio is
             # UserProfile.intro.
             "name": profile.nickname if profile else handle,
+            "remark": await remark_for_handle(self._s, viewer, handle),
             "bio": profile.intro if profile else "",
             "avatar_id": chosen_avatar_id,
             "joined_at": user.created_at.isoformat() if user else None,

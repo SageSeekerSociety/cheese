@@ -9,26 +9,31 @@
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, TodoItem, Topic } from '../../cx_types'
+import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { GroupAnswer } from '../../lib/askGroups'
 import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { RefNames } from '../../lib/refChip'
+import type { ChapterRow } from '../../types/chapters'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
+import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
-import { editableText } from '../../lib/renderMessage'
+import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
@@ -37,6 +42,8 @@ import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
+
+import ChapterMark from './ChapterMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import RoutineRunLine from '@/components/routine/RoutineRunLine.vue'
@@ -63,6 +70,11 @@ const props = defineProps<{
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
+  /** 组头块的 id → 这一组的每道题（`lib/askGroups`）；组里其余几行不单独画。 */
+  askGroups?: Map<string, Block[]>
+  /** 整组提交在路上 / 失败时那一句：由面板拿着（`useAskGroupAnswer`）。 */
+  askGroupBusy?: boolean
+  askGroupFailure?: string | null
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
   dayLabels: Map<string, string>
@@ -94,7 +106,7 @@ const props = defineProps<{
   showStarters: boolean
   starterPrompts: { label: string; hint: string; text: string }[]
   agentName: string
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   outbox: Outgoing[]
   /** 队友正在写、还没发出的那几条（useTypingPreview），接在发件箱后面。 */
   typing: { block: Block; edge: RunEdge }[]
@@ -118,9 +130,10 @@ const props = defineProps<{
       彩色首字母。原名叫 `avatarSrc`，改成 `avatarOf`：和这批修复里其它地方（ThreadLine、
       文档链）已经统一的名字一致，一个概念只有一个叫法。 */
   avatarOf: (handle: string) => string | null
-  displayName: (m: Block) => string
+  displayName: (m: Block | ReplyPreview) => string
+  authorTitle?: (m: Block) => string | null
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
-  parentOf: (m: Block) => Block | undefined
+  parentOf: (m: Block) => Block | ReplyPreview | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
   pendingBlock: (item: Outgoing) => Block
@@ -134,6 +147,12 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）。 */
   pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉章节（频道主线、任务）：消息的 ⋯ 里多一项「钉成章节」。 */
+  chapterable?: boolean
+  /** 已经钉成章节的那几条（block id）。 */
+  chapterIds?: ReadonlySet<string>
+  /** 这段对话的章节，按对话里的顺序；每条起头消息前画一道章节刻度。 */
+  chapters?: ChapterRow[]
   /** 频道里一件任务的那张卡；不认得就是 null。 */
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
@@ -155,6 +174,7 @@ const emit = defineEmits<{
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
+  (e: 'ask-group-submit', questionId: string, answers: Record<string, GroupAnswer>): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -163,6 +183,8 @@ const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'pin', block: Block): void
   (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
   (e: 'keep', block: Block): void
   (e: 'retry-send', clientId: string): void
   (e: 'starter', text: string): void
@@ -170,6 +192,16 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
+// 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
+// 不是要画的东西，所以不放进响应式状态。
+let keyedBefore: ReadonlyMap<string, string> = new Map()
+const rowKeyList = computed(() => {
+  const { keys, byBlock } = rowKeys(props.rows, keyedBefore)
+  keyedBefore = byBlock
+  return keys
+})
 
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
 // 「正在做」，也是上一轮没走完的，不该跟着转。
@@ -221,6 +253,15 @@ function ownerName(task: TaskLine): string | null {
 }
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? []
+}
+/** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
+function became(m: Block): TaskLine | undefined {
+  return m.thread ? under(m.id).find((task) => task.id === m.thread?.id) : undefined
+}
+/** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
+function madeFrom(m: Block): TaskLine[] {
+  const own = props.threadable ? became(m) : undefined
+  return under(m.id).filter((task) => task !== own)
 }
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
@@ -355,6 +396,22 @@ function rowLabel(name: string | null, iso: string, text: string): string {
   const time = props.fmtTime(iso)
   return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
+// 章节刻度：每条被钉成章节的消息是第几章、叫什么。优先用书签自己的名字（人改的或模型起的），
+// 没有时退回那条消息的第一行；不在当前窗口里的章节也照样占一个号，翻动历史时刻度上的号不会跳。
+const chapterMarks = computed(() => {
+  const marks = new Map<string, { no: number; title: string }>()
+  inReadingOrder(props.chapters ?? []).forEach((chapter, i) => {
+    marks.set(chapter.block.id, {
+      no: i + 1,
+      title: chapter.title || replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
+    })
+  })
+  return marks
+})
+function chapterMarkOf(blockId: string) {
+  return chapterMarks.value.get(blockId) ?? null
+}
+
 const rowLabels = computed(() =>
   props.rows.map(({ block, notice }, i) => {
     const task = createdTasks.value[i]
@@ -401,6 +458,8 @@ const rowLabels = computed(() =>
         :processable="processable"
         :pinnable="pinnable"
         :pinned-ids="pinnedIds"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
@@ -410,6 +469,8 @@ const rowLabels = computed(() =>
         @edit="emit('edit', $event)"
         @pin="emit('pin', $event)"
         @unpin="emit('unpin', $event)"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
       <Transition name="tl-skel">
@@ -456,7 +517,7 @@ const rowLabels = computed(() =>
         :aria-label="t('work.room.chat.timelineLabel')"
         :aria-busy="loadingHistory || loadingOlder"
       >
-        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="rowKeyList[i]">
           <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
           <template v-if="i >= (hiddenRows ?? 0)">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
@@ -468,6 +529,10 @@ const rowLabels = computed(() =>
               <v-icon size="12">mdi-arrow-down</v-icon>
               {{ t('work.room.chat.newMessagesBelow') }}
             </TimelineMark>
+            <!-- 章节刻度：这一节从这条消息开始。 -->
+            <template v-if="!notice && chapterMarkOf(m.id)">
+              <ChapterMark :no="chapterMarkOf(m.id)!.no" :title="chapterMarkOf(m.id)!.title" />
+            </template>
             <TaskCreatedPost
               v-if="createdTasks[i]"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
@@ -514,6 +579,28 @@ const rowLabels = computed(() =>
               @retry="emit('retry')"
               @jump="emit('jump', $event)"
             />
+            <!-- 一次问的几道题：收成一张卡画（`lib/askGroups` 把同组的行并到组头）。 -->
+            <section
+              v-else-if="!notice && askGroups?.get(m.id)"
+              class="tl-ask-group"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <AskGroupCard
+                :blocks="askGroups!.get(m.id)!"
+                :asker="displayName(m)"
+                :names="refs.mentionNames"
+                :viewer="viewer"
+                :closed="askClosed"
+                :busy="askGroupBusy"
+                :failure="askGroupFailure"
+                @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+              />
+            </section>
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
@@ -531,11 +618,13 @@ const rowLabels = computed(() =>
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :author-title="authorTitle?.(m) ?? null"
               :external="isExternal(m.author)"
               :avatar="avatarOf(m.author)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refs"
+              :name-of-handle="nameOf"
               :viewer="viewer"
               :ask-closed="askClosed"
               :active="bar.shown && bar.id === m.id"
@@ -544,7 +633,6 @@ const rowLabels = computed(() =>
               :face-label="faceLabel(faceRows.get(m.id))"
               :face-status="faceStatus(faceRows.get(m.id))"
               :editing="editingId === m.id"
-              :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
               :saving="editSaving"
               :mention-pool="mentionPool"
               :topic-list="topicList"
@@ -581,37 +669,49 @@ const rowLabels = computed(() =>
             />
             <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->
-            <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
+            <!-- 这条消息下面合成一块：上面是它的支线（转成了任务就多一行任务名），下面一件
+                 一行是从这里拆出去的任务。支线里的回复下面，是从那句话拆出去的任务。 -->
             <div
-              v-if="!notice && threadable && (m.thread || under(m.id).length)"
+              v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
-              :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
             >
-              <ThreadLine
-                v-if="m.thread"
-                v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
-                :summary="m.thread ?? null"
-                :replying="replyingFor?.(m) ?? null"
-                :replying-seats="replyingSeatsFor?.(m) ?? []"
-                :status="threadStatusFor?.(m) ?? null"
-                :refs="refs"
-                :name-of="nameOf ?? String"
-                :avatar-of="avatarOf"
-                :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
-                @open="emit('open-thread', m)"
-              />
-              <div v-if="under(m.id).length" class="msg-work__tasks">
+              <div v-if="threadable && m.thread" class="msg-work__talk">
                 <TaskCard
-                  v-for="task in under(m.id)"
-                  :key="task.id"
+                  v-if="became(m)"
                   v-guide-anchor="'task-card'"
-                  :task="task"
-                  :owner-name="ownerName(task)"
-                  :in-list="!!m.thread"
+                  :task="became(m)!"
+                  :owner-name="ownerName(became(m)!)"
+                  head
                   @open="emit('open-card', $event)"
                 />
+                <ThreadLine
+                  v-guide-anchor="
+                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
+                  "
+                  :summary="m.thread ?? null"
+                  :replying="replyingFor?.(m) ?? null"
+                  :replying-seats="replyingSeatsFor?.(m) ?? []"
+                  :status="threadStatusFor?.(m) ?? null"
+                  :refs="refs"
+                  :name-of="nameOf ?? String"
+                  :avatar-of="avatarOf"
+                  :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+                  @open="emit('open-thread', m)"
+                />
               </div>
+              <TaskCard
+                v-for="task in madeFrom(m)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task="task"
+                :owner-name="ownerName(task)"
+                :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
+                in-list
+                :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
             </div>
           </template>
         </template>
@@ -661,6 +761,7 @@ const rowLabels = computed(() =>
           :mine="false"
           :topic-id="topic?.id ?? null"
           :author-name="displayName(m)"
+          :author-title="authorTitle?.(m) ?? null"
           :external="isExternal(m.author)"
           :avatar="avatarOf(m.author)"
           :is-agent="isAgentBlock(m)"
@@ -730,41 +831,41 @@ const rowLabels = computed(() =>
   margin-left: 54px;
   width: calc(100% - 70px);
 }
-/* 消息下面那一块：只有任务时，一件一张卡；支线和任务都有时，支线那一行在上，任务列在
-   下面一块白底里，合成一块。 */
+/* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
+   一行任务名；拆出去的任务一件一行，排在下面。 */
 .msg-work {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 6px;
-}
-.msg-work :deep(.thread-line) {
-  margin-top: 0;
-}
-.msg-work__tasks {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.msg-work--joined {
   max-width: 620px;
-  gap: 0;
+  margin-top: 6px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--fill);
   overflow: hidden;
 }
-.msg-work--joined :deep(.thread-line) {
+.msg-work--mine {
+  border-color: var(--warn);
+}
+.msg-work > * + * {
+  border-top: 1px solid var(--line);
+}
+/* 任务名那一行和下面的回复是同一段对话：一起变色，点哪儿都打开它。 */
+.msg-work__talk {
+  display: flex;
+  flex-direction: column;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.msg-work__talk:hover {
+  background: var(--line-2);
+}
+.msg-work__talk > :deep(.task-card--head + .thread-line) {
+  padding-top: 2px;
+}
+.msg-work :deep(.thread-line),
+.msg-work :deep(.thread-line:hover) {
   max-width: none;
   margin-top: 0;
   background: transparent;
-}
-.msg-work--joined .msg-work__tasks {
-  gap: 0;
-  margin: 0 6px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
 }
 .tl-content {
   position: relative;

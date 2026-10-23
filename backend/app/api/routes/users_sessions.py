@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
@@ -80,8 +81,7 @@ async def list_sessions(
 
 
 @router.delete(
-    "/me/sessions/{sessionId}",
-    summary="Revoke a session",
+    "/me/sessions/{sessionId}", summary="Revoke a session", dependencies=[ROUTE_DECIDES]
 )
 async def revoke_session(
     session_id: Annotated[uuid.UUID, Path(alias="sessionId")],
@@ -100,8 +100,7 @@ async def revoke_session(
 
 
 @router.delete(
-    "/me/sessions",
-    summary="Revoke all other sessions",
+    "/me/sessions", summary="Revoke all other sessions", dependencies=[ROUTE_DECIDES]
 )
 async def revoke_all_sessions(
     auth_user: AuthUserInfo = Depends(require_auth_user),

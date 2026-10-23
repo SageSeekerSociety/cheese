@@ -4,22 +4,23 @@ A task may deliver several times. The card says whether this delivery is the
 last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
-task up, and the task closes when that turn ends (`room_task.closing`). Either
-way the discussion the task came from hears what landed, and a merged PR is
-watched on the default branch for a while (`landing_watch`).
+task up and close it (`room_task.closing`). Either
+way the discussion the task came from hears what landed. Nothing is watched
+after the merge: the repository's CI and deploy on its default branch are
+its own.
 
-A last step lands as a step after all when the task's own AI teammate is
-working in it on something begun after the delivery was handed over, or a
-message to it there is waiting for its turn — someone asked for more after
-the card went up, and accepted it anyway. What it is doing is not in the
+A last step lands as a step after all when the task's own AI teammate's
+session is at work on a message it read that was sent after the delivery was
+handed over, or a message to it there is still waiting to be read — someone
+asked for more after the card went up, and accepted it anyway. What it is doing is not in the
 delivery, and closing the task would stop it half done and leave it with
 nowhere to be delivered. So the task stays open on the next step's branch,
 and the AI teammate delivers that work as the next step. The same holds for a
 task already being written up when such work starts in it
 (`go_on_while_working`). Only the task's own teammate's work counts, and only
-what a person or the teammate itself began: a turn the platform started —
-another seat woken in the task, a conflict or CI fix — is not more work asked
-of it (`room_task.closing.unfinished`).
+what a person or the teammate itself asked for: an instruction the platform
+gave — another seat woken in the task, a conflict or CI fix — is not more work
+asked of it (`room_task.closing.unfinished`).
 
 Every path that sees a delivery merge comes through here — an accept click,
 the merge queue, the poller, a PR merged by hand — so none of them can keep
@@ -29,20 +30,20 @@ a task twice.
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
-from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
@@ -52,11 +53,6 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
-
-#: How long a merge is watched on the default branch: its checks there, and a
-#: deployment that includes it. A repository's CI on main and a deploy after it
-#: take well under this; what has not happened by then is not reported.
-WATCH_FOR = timedelta(hours=2)
 
 
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
@@ -89,15 +85,13 @@ async def delivery_landed(
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
-    if await _already_landed(session, task, pr_number):
+    if _already_landed(task, head):
         return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
-    if pr_number is not None:
-        await _watch(session, task, pr_number, now)
     still_working = (
         completes
         and task.status == TaskStatus.open
@@ -123,7 +117,7 @@ async def delivery_landed(
         await tell_agent(
             session,
             task,
-            task_summary_prompt(title=task.title),
+            task_summary_prompt(title=task.title, pr_number=pr_number),
             record_instruction=record_instruction,
             closes=True,
         )
@@ -175,7 +169,7 @@ async def go_on_while_working(
                 task_teammate=task_teammate,
             ):
                 gone_on.append(task_id)
-        except Exception:  # noqa: BLE001 — one task must not stop the rest
+        except Exception:  # one task must not stop the rest
             logger.warning("could not take task %s on", task_id, exc_info=True)
     return gone_on
 
@@ -234,8 +228,14 @@ async def _asked_for_more(
     if teammate is None:
         # 项目和房间都不在了：这个任务无处落脚，也就没有队友的活要认。
         return []
-    _instance_id, handle = teammate
-    return await unfinished(session, task.id, since=since, by=handle)
+    instance_id, handle = teammate
+    return await unfinished(
+        session,
+        task.id,
+        since=since,
+        by=handle,
+        seat=agent_instance_handle(instance_id),
+    )
 
 
 async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
@@ -260,8 +260,8 @@ async def _go_on(
     base_branch: str | None = None,
 ) -> None:
     """``task``'s last step landed while its AI teammate was at work on more:
-    it goes on to the next step, and its AI teammate hears so once that work's
-    turn ends. The write-up instruction, if one was given, is not sent
+    it goes on to the next step, and its AI teammate hears so. The write-up
+    instruction, if one was given, is not sent
     (`delivery.agent.dispatch_pending`)."""
     await TaskService(session).next_step(task, base_branch=base_branch)
     await tell_agent(
@@ -272,50 +272,22 @@ async def _go_on(
     )
 
 
-async def _already_landed(
-    session: AsyncSession, task: Task, pr_number: int | None
-) -> bool:
-    """Whether this merge has already landed on ``task``: a row in
-    `task_landings`, written by every landing that has a PR.
+def _already_landed(task: Task, head: str | None) -> bool:
+    """Whether this merge has already landed on ``task``: the commit it put on
+    the branch is the one the task's latest delivery delivered.
 
-    A merge nobody has landed leaves no row, and lands as it always did. A
-    merge that did leaves one — and landing it a second time would drag a
-    task that has since gone on from the next step, or been reopened, back
-    into a write-up window it has already been through.
+    Landing a merge a second time would drag a task that has since gone on
+    from the next step, or been reopened, back into a write-up window it has
+    already been through. The task keeps `delivered_head` across both of those
+    (`room_task.services.TaskService.next_step` and `reopen`), so the commit is
+    what tells a second look at the same merge apart from the next delivery.
 
-    Deliveries with no PR of their own (an artifact, a URL out of the task's
-    folder) leave no row and are not held back."""
-    if pr_number is None:
+    A delivery is told the head it landed by every path that sees a merge; one
+    that is not (a discussion with no change, an artifact, a URL) has no commit
+    to compare and is not held back."""
+    if head is None:
         return False
-    return await _landing_exists(session, task.id, pr_number)
-
-
-async def _landing_exists(
-    session: AsyncSession, task_id: uuid.UUID, pr_number: int
-) -> bool:
-    return (
-        await session.scalar(
-            select(TaskLanding.id).where(
-                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
-            )
-        )
-    ) is not None
-
-
-async def _watch(
-    session: AsyncSession, task: Task, pr_number: int, now: datetime
-) -> None:
-    """Start watching the merge of ``pr_number`` on the default branch, once."""
-    if await _landing_exists(session, task.id, pr_number):
-        return
-    session.add(
-        TaskLanding(
-            task_id=task.id,
-            pr_number=pr_number,
-            landed_at=now,
-            watch_until=now + WATCH_FOR,
-        )
-    )
+    return task.delivered_head is not None and task.delivered_head == head[:64]
 
 
 async def tell_origin(
@@ -329,14 +301,15 @@ async def tell_origin(
     opening it if nobody has replied there yet. It is said by the task's AI
     teammate, as a reply: whoever took part in the discussion hears it, and the
     line under the message shows it. A task made on its own, or from something
-    that is not a message in a live channel, has nowhere to say it.
+    that is not a message in a live channel, has nowhere to say it; nor does a
+    task that is that 支线, turned into the task in place.
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
             await _tell_origin(session, task, content, task_teammate=task_teammate)
-    except Exception:  # noqa: BLE001 — a courtesy line never undoes a landing
+    except Exception:  # a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 
@@ -371,6 +344,10 @@ async def _tell_origin(
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
+    if thread.id == task.id:
+        # The 支线 became this task: the discussion is the task's own
+        # conversation, which the landing already speaks in.
+        return
     said = Block(
         id=uuid.uuid4(),
         project_id=task.project_id,
@@ -402,8 +379,8 @@ async def tell_agent(
     record_instruction: RecordInstruction | None,
     closes: bool = False,
 ) -> None:
-    """The task's AI teammate hears ``content`` on its next turn. ``closes``:
-    the task closes when that turn ends.
+    """The task's AI teammate hears ``content``. ``closes``: it is the
+    instruction to write the finished task up and close it.
 
     ``record_instruction`` 是第 5 层那个 `delivery.agent.record_task_instruction`，
     由调用链上的门递下来（`app.domain.review.ports.RecordInstruction`）：这句话
@@ -466,12 +443,34 @@ def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
     )
 
 
-def task_summary_prompt(*, title: str) -> str:
-    """What a task's agent is told when its last delivery lands: one turn to
-    write the task up, after which the task closes."""
+def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
+    """What a task's agent is told when its last delivery lands: write the task
+    up, post the record of it on its own, then close it.
+
+    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去**这个项目实际用的托管平台**
+    读标题、合并时间和正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；
+    没有 PR 的交付（文件或网址）换成交付物名字和交付说明原文。
+
+    两个命令名都给出来，是因为这一段话写不出项目用的是哪一种：仓库默认
+    `forge_kind=forgejo`，而 `forge_cli` 会**拒掉**在 Forgejo 项目上跑 `gh`
+    （「This project's repository uses fj; run fj instead」），所以只写 `gh`
+    的话，默认那一档上一次都读不到。"""
+    if pr_number is not None:
+        record = (
+            f"先读这次交付的 PR #{pr_number}，用这个项目实际用的那把 CLI："
+            f"GitHub 项目用 `gh pr view {pr_number} --json number,title,mergedAt,url,body`；"
+            "Forgejo 项目用 `fj`（命令和参数看 `fj --help`，别照抄 `gh` 那一串）。"
+            "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
+            "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
+            "读不到的那一项照实写没读到，不要编。"
+        )
+    else:
+        record = (
+            "这次交付没有 PR：顺序写任务名、交付物名字、交付说明原文，原样贴，不概括。"
+        )
     return (
-        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
-        "这一轮只做两件事：\n"
+        f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
+        "只做四件事：\n"
         "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
@@ -479,5 +478,9 @@ def task_summary_prompt(*, title: str) -> str:
         "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
         "写明是什么、没有交付。"
         "没什么可补的，只写一句结果。\n"
-        "不要改动文件，不要提交审阅，不要关闭任务。"
+        "3. 用 chat_send 再单独发一条【留痕记录】，和上一条总结分开、第一行就是"
+        "「【留痕记录】」。" + record + "负责人要把这一条整段抄进另一份表，"
+        "所以它要能直接圈选复制，不要并进总结、也不要分几条发。\n"
+        "4. 用 cheese_close_task 关闭任务，结论写一句结果。\n"
+        "不要改动文件，不要提交审阅。"
     )

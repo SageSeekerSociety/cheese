@@ -149,6 +149,7 @@ async def send_prepared(
     roster = prepared.roster
     topic_refs = prepared.topic_refs
     consumed_ids = prepared.consumed_ids
+    read_through = prepared.read_through
     replay_notice = prepared.replay_notice
     resume_session_id = prepared.resume_session_id
     needs_place = prepared.needs_place
@@ -213,6 +214,7 @@ async def send_prepared(
                 topic_id=topic_id,
                 work_id=marked_work_id,
                 pending_ids=set(consumed_ids),
+                read_through=read_through,
                 reply_to=user_block_id,
                 roster=roster,
                 topic_refs=topic_refs,
@@ -228,6 +230,10 @@ async def send_prepared(
             )
             return
         state.pending_ids.update(consumed_ids)
+        if read_through is not None and (
+            state.read_through is None or read_through > state.read_through
+        ):
+            state.read_through = read_through
         if state.reply_to is None:
             state.reply_to = user_block_id
         if prompt_text not in state.user_text:
@@ -253,6 +259,13 @@ async def send_prepared(
         nonce=nonce,
         at=datetime.now(UTC),
     )
+    # `open_interval` waited on its OWN commit, so the row is durable here and
+    # this process may name the turn running: the mark is placed with that
+    # commit, not with the session's first Working event, which a session may
+    # send before the row exists (and which the lifecycle must not let decide
+    # the mark). The confirm a write-through mark runs reads a row the step
+    # just awaited, so it sees it open.
+    await live.mark_turn_active(topic_id, turn_id)
     # From the interval opening (``started_at``) to the input stamped
     # delivered: where the platform's own time goes on every turn.
     delivery_ms: dict[str, float] = {}
@@ -341,7 +354,7 @@ async def send_prepared(
         checking, checking_meta = delivery_checking_notice()
         await effects.post_system_event(topic_id, checking, turn_id, meta=checking_meta)
         return
-    except Exception as exc:  # noqa: BLE001 — a failed write must be SAID
+    except Exception as exc:  # a failed write must be SAID
         # Nothing else will close this turn. `session_lifecycle` above told
         # the runner that the session owns the ending, and the session this
         # was going to be never started — so without this the room shows
@@ -359,7 +372,7 @@ async def send_prepared(
             topic_id,
             turn_id,
             AgentResult(
-                text=exception_text(exc) or "本轮没能把消息送进机器上的会话",
+                text=exception_text(exc) or "这次没能把消息送到 AI 队友那里",
                 session_id=resume_session_id,
                 is_error=True,
                 failure_code=failure_code,

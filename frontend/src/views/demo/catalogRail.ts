@@ -22,6 +22,7 @@ import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
 import TopicRailTaskFold from '@/components/topic-sidebar/TopicRailTaskFold.vue'
+import TopicRailTaskRow from '@/components/topic-sidebar/TopicRailTaskRow.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
@@ -84,40 +85,40 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     id: 'topic-rail-light',
     title: 'TopicRailLight',
     about:
-      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条归我」，由父级按归谁盖上（`useTopicRail.taskLight`），垫在那四盏下面。这一件只管画。',
+      '行尾那盏灯：一个 8px 的点。红黄绿三种说这一行自己的状态，判据在 `lib/roomLight.ts`；蓝的说的是「这条归我」，由父级按归谁盖上（`useTopicRail.taskLight`），垫在那三种下面。这一件只管画。',
     file: 'src/components/topic-sidebar/TopicRailLight.vue',
     component: TopicRailLight,
     // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
     needs: ['i18n'],
     states: [
       {
-        name: '红：显示在跑，但没动静了',
-        note: '五分钟没有输出。跑着的轮次真卡住了，和那个进程已经没了，长的是同一盏。',
-        props: { light: { kind: 'red', breathe: false } },
+        name: '红：停下来报错，没人接手',
+        note: '一轮停在报错上，五分钟没人接手。房间在等一位队友等太久了、交付被退回没人改，也是这一盏，悬停说的是哪一件。',
+        props: { light: { kind: 'red', why: 'unfinished' } },
         expectSelector: '.row-light--red',
       },
       {
         name: '黄：有事等你',
         note: '有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。',
-        props: { light: { kind: 'yellow', breathe: false } },
+        props: { light: { kind: 'yellow' } },
         expectSelector: '.row-light--yellow',
       },
       {
+        name: '长绿：做完了，你还没看过',
+        note: '点开看过就灭。',
+        props: { light: { kind: 'green', breathe: false } },
+        expectSelector: '.row-light--green',
+      },
+      {
         name: '呼吸绿：有活在往前走',
-        note: '它在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。系统设了「减少动态」时它停住，那圈常驻的光晕还在，和长绿仍然分得开。',
+        note: '有一轮在跑，或者活在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。这个动是信息本身：系统开了「减少动态」时它停下来，但留一圈光晕，和长绿仍然分得开。',
         props: { light: { kind: 'green', breathe: true } },
         expectSelector: '.row-light--breathe',
       },
       {
-        name: '长绿：做完了，你还没看过',
-        note: '不闪。点开看过就灭，之后再有新活它回到呼吸绿。',
-        props: { light: { kind: 'green', breathe: false } },
-        expectSelector: '.row-light--green:not(.row-light--breathe)',
-      },
-      {
         name: '蓝：这条归我',
-        note: '我负责的（以及没主的）任务行，在上面那四盏都没话说时才用它——红黄绿说的是这条活现在怎么了，蓝说的是这条归谁，谁轻谁重一眼看得出。别人的活不画蓝灯。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
-        props: { light: { kind: 'blue', breathe: false } },
+        note: '我负责的（以及没主的）任务行，在上面那几盏都没话说时才用它——红黄绿说的是这条活现在怎么了，蓝说的是这条归谁，谁轻谁重一眼看得出。别人的活不画蓝灯。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道自身没有蓝灯；收起自己的任务时，频道行可汇总其蓝灯。',
+        props: { light: { kind: 'blue' } },
         expectSelector: '.row-light--blue',
       },
     ],
@@ -125,8 +126,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
-    about:
-      '话题列表里的一行：左边一个 16px 槽，行尾是这一行自己的灯、未读角标、这个频道挂着任务时的折叠加手，以及 hover 才浮现的 ⋯。',
+    about: '频道行：名称前是任务和子话题的折叠箭头，行尾最多一盏状态灯，⋯ 独立占位；不显示头像和数字。',
     file: 'src/components/topic-sidebar/TopicRailRow.vue',
     component: TopicRailRow,
     // 一行不认识路由、也不取数：状态、折叠、未读全在 props 里（`row` 是
@@ -135,74 +135,115 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '有队友在干活',
-        note: '右边是那位队友的小头像，带一颗绿点。房间自己没有「在跑」这种状态，在干活的是成员。',
-        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working }),
+        note: '频道名保留完整可用空间；成员头像不在侧栏重复显示。',
+        props: rowProps({ row: RAIL_ROWS.working }),
         expect: '写第 4 章的教案',
       },
       {
         name: '有事等你（黄灯）',
-        note: '行尾一盏黄灯：有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。未读的 @ 不点这盏灯（芝士汇报、递卡都 @人），未读有右边的数字。',
-        props: rowProps({ row: RAIL_ROWS.awaits, light: { kind: 'yellow', breathe: false } }),
+        note: '行尾一盏黄灯：有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。未读的 @ 不点这盏灯；未读通过名称加粗提示，不显示数字。',
+        props: rowProps({ row: RAIL_ROWS.awaits, light: { kind: 'yellow' } }),
         expect: '决定这学期用哪本教材',
       },
       {
-        name: '有活在往前走（呼吸绿）',
-        note: '行尾那盏绿在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。',
-        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: true } }),
-        expectSelector: '.row-light--breathe',
-      },
-      {
-        name: '做完了、你还没看过（长绿）',
-        note: '同样一盏绿，不闪：这里的活都交付完了，你还没点开看过。点开就灭。',
+        name: '做完了、你还没看过（绿灯）',
+        note: '这里的活都交付完了，你还没点开看过。点开就灭。',
         props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: false } }),
-        expectSelector: '.row-light--green:not(.row-light--breathe)',
+        expectSelector: '.row-light--green',
       },
       {
-        name: '显示在跑、但没动静了（红灯）',
-        note: '五分钟没有输出。这一盏压过黄和绿——同时成立时只画它。',
-        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', breathe: false } }),
+        name: '停下来报错、没人接手（红灯）',
+        note: '一轮停在报错上，五分钟没人接手。这一盏压过黄和绿——同时成立时只画它。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', why: 'unfinished' } }),
         expectSelector: '.row-light--red',
       },
       {
         name: '一位成员卡住了',
-        note: '房间在等的那位成员，小头像带红点和一圈淡红晕。判据（报错 / 等太久）是父级带钟算的，hover 说出是谁、为什么。',
-        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true, marks: RAIL_MARKS.stalled }),
+        note: '原来成员头像上的卡住提示并入行尾唯一的灯，现有卡住判据不变。',
+        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true, marks: RAIL_MARKS.working }),
         expect: '把成绩单导出成 CSV',
       },
       {
         name: '收起来的父话题',
-        note: '折叠开关自己带一层聚合色，说的是收起来的那几行里有什么（黄 = 里面有事等你）；右边是聚上来的未读，说的是「这里还有内容」。开关只管收起来的东西，这一行自己的灯在行尾。',
+        note: '折叠开关保持中性，收起来的后代状态与频道自身状态在行尾合为一盏灯；隐藏未读仍让名称加粗。',
         props: rowProps({ row: RAIL_ROWS.collapsed, toggleTitle: '展开：里面有待处理的事项' }),
         expect: '期末复习',
       },
       {
         name: '子话题',
-        note: '缩进一级，左边一条竖向引导线；未读角标说的是这一行自己有几条。',
+        note: '缩进一级，左边保留竖向引导线；未读通过名称加粗提示。',
         props: rowProps({ row: RAIL_ROWS.sub }),
         expect: '第 3 题：为什么天空是蓝的',
       },
       {
         name: '整页形态（手机）',
-        note: '行更高（44px），没有那颗 hover 才出现的 ⋯ —— 那里长按一行打开同一组操作（见 TopicSidebar.longPress）。',
-        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, page: true, selected: true }),
+        note: '任务箭头和 ⋯ 使用独立触控区域，⋯ 常驻；长按仍可打开同一组操作。',
+        props: rowProps({
+          row: RAIL_ROWS.working,
+          page: true,
+          selected: true,
+          taskCount: 5,
+          tasksCollapsed: true,
+          taskLight: { kind: 'yellow' },
+        }),
         expect: '写第 4 章的教案',
       },
       {
-        name: '挂着任务：行尾多一个折叠加手',
-        note: '这个频道下面挂着一块任务，行尾就多一个把手，把那一块收起来。⋯ 给它让开一个身位，不压住它——这里把 ⋯ 一直亮着（`menuOpen`），看得清两个控件的位置。',
-        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, menuOpen: true, taskCount: 5 }),
+        name: '挂着任务：名称前的折叠箭头',
+        note: '任务箭头在名称前；⋯ 在行尾独立占位，出现时不移动名称或遮挡状态灯。',
+        props: rowProps({ row: RAIL_ROWS.working, menuOpen: true, taskCount: 5 }),
         expect: '写第 4 章的教案',
       },
       {
-        name: '任务块收起来了：条数和灯挪上来',
-        note: '那一块收起来时，行上留一个数（这个频道里进行中的有几条）和一盏最亮的灯——收起来不能把「有活在走」和「有事等你」一起收掉。',
+        name: '任务块收起：状态合成一盏灯',
+        note: '不显示任务数量，收起来的任务状态与频道状态合成一盏灯，红黄绿优先于蓝。',
         props: rowProps({
           row: RAIL_ROWS.awaits,
           taskCount: 5,
           tasksCollapsed: true,
-          taskLight: { kind: 'yellow', breathe: false },
+          taskLight: { kind: 'yellow' },
         }),
-        expect: '5',
+        expectSelector: '.row-light--yellow',
+      },
+      {
+        name: '同层：子频道和任务都能折叠',
+        note: '两个独立箭头共用固定宽度的前置区域，名称与同层其他频道对齐。',
+        props: rowProps({ row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false }, taskCount: 5 }),
+        expectSelector: '.subtree-toggle',
+      },
+      {
+        name: '同层：只有子频道',
+        note: '没有任务箭头时，前置区域宽度仍保持不变。',
+        props: rowProps({ row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false } }),
+        expectSelector: '.subtree-toggle',
+      },
+      {
+        name: '同层：只有任务',
+        note: '任务箭头在名称前，与只有子频道或没有子项的频道对齐。',
+        props: rowProps({ row: RAIL_ROWS.working, taskCount: 5 }),
+        expectSelector: '.task-fold__btn',
+      },
+      {
+        name: '私密频道有任务',
+        note: '任务箭头不替代锁；私密频道的标记与提示仍然可见。',
+        props: rowProps({
+          row: { ...RAIL_ROWS.working, topic: { ...RAIL_ROWS.working.topic, members_only: true } },
+          taskCount: 1,
+        }),
+        expectSelector: '.mdi-lock-outline',
+      },
+      {
+        name: '手机：两个独立折叠入口',
+        note: '子频道和任务各有独立的触屏落点，按钮之间不互相覆盖。',
+        props: rowProps({
+          row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false },
+          page: true,
+          selected: true,
+          taskCount: 5,
+          tasksCollapsed: true,
+          taskLight: { kind: 'yellow' },
+        }),
+        expectSelector: '.subtree-toggle',
       },
     ],
   },
@@ -259,7 +300,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '站在综合里',
-        note: '选中态和未读角标都和频道行同一套。',
+        note: '选中态和未读名称加粗与普通频道行一致，不显示未读数字。',
         props: {
           rootTopic: RAIL_ROOT_TOPIC,
           selectedTopicId: 't-root',
@@ -269,16 +310,31 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expect: '综合',
       },
       {
-        name: '有活在往前走',
+        name: '做完了、你还没看过',
         note: '行尾那盏灯和频道行、任务行是同一件（`TopicRailLight`），算它的判据也同一份。',
         props: {
           rootTopic: RAIL_ROOT_TOPIC,
           selectedTopicId: null,
           page: false,
           unreadOf: () => 0,
-          lightOf: () => ({ kind: 'green', breathe: true }),
+          lightOf: () => ({ kind: 'green', breathe: false }),
         },
-        expectSelector: '.row-light--breathe',
+        expectSelector: '.row-light--green',
+      },
+      {
+        name: '综合只汇总收起的任务',
+        note: '频道自身没有状态时，收起的任务仍通过唯一状态灯提示。',
+        props: {
+          rootTopic: RAIL_ROOT_TOPIC,
+          selectedTopicId: null,
+          page: false,
+          unreadOf: () => 0,
+          lightOf: () => null,
+          taskCount: 1,
+          tasksCollapsed: true,
+          taskLight: { kind: 'blue' },
+        },
+        expectSelector: '.row-light--blue',
       },
     ],
   },
@@ -382,6 +438,32 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'topic-rail-task-row',
+    title: 'TopicRailTaskRow',
+    about: '频道下面的任务行，与展开其余任务的文字左缘和竖向引导线对齐。',
+    file: 'src/components/topic-sidebar/TopicRailTaskRow.vue',
+    component: TopicRailTaskRow,
+    needs: UI,
+    args: {
+      task: { id: 'rail-task-demo', room_id: 'room-1', title: '频道行任务', title_source: 'human', status: 'open' },
+      selected: false,
+    },
+    states: [
+      {
+        name: '频道下面的任务',
+        note: '与同频道展开入口保持相同的文字缩进。',
+        props: { depth: 0 },
+        expect: '频道行任务',
+      },
+      {
+        name: '子频道下面的任务',
+        note: '跟随子频道层级缩进，文字与展开入口对齐。',
+        props: { depth: 1 },
+        expect: '频道行任务',
+      },
+    ],
+  },
+  {
     id: 'topic-rail-more-tasks-row',
     title: 'TopicRailMoreTasksRow',
     about:
@@ -415,30 +497,29 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-task-fold',
     title: 'TopicRailTaskFold',
-    about:
-      '频道行右边那个折叠加手：把挂在它下面的一整块任务收起来。收起来时它自己顶上那一块的条数和灯——不然收起来就成了一条没有信息量的空白。',
+    about: '频道名前的任务折叠箭头。只切换任务块展开状态，收起后的信号由频道行统一合并为一盏灯，不再显示数量。',
     file: 'src/components/topic-sidebar/TopicRailTaskFold.vue',
     component: TopicRailTaskFold,
-    // 那个箭头是 v-icon，所以要 Vuetify；两句 title 和计数那颗的说明要读词表。
+    // 箭头来自 Vuetify，展开和收起提示读取词表。
     needs: ['vuetify', 'i18n'],
     states: [
       {
         name: '开着：任务就挂在下面',
-        note: '只有一个朝下的箭头，安静地说「这一块能收」。它左边的宽度是留给下面的条数的，所以两颗箭头不会因为收没收起来而左右跳。',
-        props: { collapsed: false, count: 4 },
+        note: '只有一个朝下的箭头；开关独立于频道名称，操作不会切换频道。',
+        props: { collapsed: false },
         expectSelector: '.task-fold__btn',
       },
       {
-        name: '收起来了：留着条数和灯',
-        note: '箭头转成朝右，前面接上这个频道里进行中的任务数和那一块最亮的一盏灯。收起不能把信号一起收掉。',
-        props: { collapsed: true, count: 4, light: { kind: 'yellow', breathe: false } },
-        expect: '4',
+        name: '收起来了',
+        note: '箭头朝右，保留再次展开的入口；状态灯放在频道行尾。',
+        props: { collapsed: true },
+        expectSelector: '.task-fold__btn',
       },
       {
-        name: '收起来了，里面很静',
-        note: '没有在走的活、也没有等你的东西，就不点灯——不亮不是「亮着但说不清」。条数照旧。',
-        props: { collapsed: true, count: 2, light: null },
-        expect: '2',
+        name: '触屏',
+        note: '触屏入口使用独立的 44px 命中区域，不覆盖名称。',
+        props: { collapsed: true, page: true },
+        expectSelector: '.task-fold__btn',
       },
     ],
   },

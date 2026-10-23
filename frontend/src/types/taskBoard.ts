@@ -3,6 +3,7 @@
 import type {
   SpaceTeaching,
   Task,
+  TaskRubricLine,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -55,6 +56,8 @@ export type PostTaskRequestData = {
   /** 这道题指定的默认队友（#944）：平台预设的名字（如 `academic-research`）。
    *  省略 = 不用说（沿用项目集 / 空间）；空串 = 明确这道题不要默认队友。 */
   defaultRole?: string
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
 }
 
 export type { TaskAttachmentData, TaskAttachmentListResponseData } from '@/types/taskAttachments'
@@ -62,82 +65,6 @@ import type { TaskAttachmentData } from '@/types/taskAttachments'
 
 export type UploadTaskAttachmentResponseData = {
   attachment: TaskAttachmentData
-}
-
-/**
- * PDF 转赛题请求数据
- * @property spaceId - 目标空间 ID
- * @property file - 要上传的 PDF 文件
- * @property categoryId - 可选的分类 ID
- * @property templateIndex - 模板索引，-1 表示使用空白模板
- * @property submitterType - 提交者类型（USER / TEAM）
- * @property maxTasks - 最大解析赛题数量
- */
-export type CreateTaskFromPdfRequestData = {
-  spaceId: number
-  file: File
-  categoryId?: number
-  templateIndex?: number
-  submitterType?: TaskSubmitterType
-  maxTasks?: number
-}
-
-/**
- * 预览时已经**落成文件行**、可以勾来当附件的东西。
- *
- * **没有 url**：与题目附件那一份同一个理由 —— 存储给的是直链，发出来就等于绕开下载
- * 那道门。要文件走 `GET /tasks/{id}/attachments/{id}/download`。
- */
-export interface PdfPublishAttachmentData {
-  id: number
-  name: string
-  size: number
-  contentType: string
-}
-
-export type PdfPublishAttachmentsData = {
-  /** 上传的那份 PDF 本身。没有就是没有，不画一颗点了没用的勾。 */
-  pdf: PdfPublishAttachmentData | null
-  /** 从 PDF 里抽出来、并且真的进了某条草稿正文的那些插图。 */
-  images: PdfPublishAttachmentData[]
-}
-
-/**
- * PDF 解析预览的响应数据
- * @property drafts - 解析出的赛题草稿列表
- * @property templateUsed - 实际使用的模板信息
- * @property tokenUsed - 本次解析消耗的 token 数量
- * @property attachments - 服务端已经替调用者落好的、可以勾来当附件的文件
- */
-export type PreviewTaskFromPdfResponseData = {
-  drafts: PdfTaskDraftData[]
-  templateUsed: Record<string, any>
-  tokenUsed: number
-  attachments: PdfPublishAttachmentsData
-}
-
-/** 确认发布 PDF 解析草稿的请求数据 */
-export type ConfirmTaskFromPdfRequestData = {
-  drafts: PdfTaskDraftData[]
-  taskOptions: PostTaskRequestData
-}
-
-export type PdfTaskDraftData = {
-  name: string
-  intro: string
-  description: string
-  space: number
-  categoryId?: number
-}
-
-/**
- * 确认发布 PDF 解析草稿的响应数据
- * @property tasks - 已创建的赛题列表
- * @property count - 成功创建的赛题数量
- */
-export type ConfirmTaskFromPdfResponseData = {
-  tasks: Task[]
-  count: number
 }
 
 export type PatchTaskRequestData = {
@@ -159,12 +86,17 @@ export type PatchTaskRequestData = {
   teaching?: SpaceTeaching
   /** 这道题指定的默认队友（#944）。省掉 = 不动；空串 = 清掉这道题的覆盖。 */
   defaultRole?: string
+  /** 评分要点：整份替换；省掉它 = 不动。 */
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
   endedAt?: number | null
   hasEndedAt?: boolean
 }
 
 export type AddTaskParticipantRequestData = {
   deadline: number | null
+  /** 领取的人同意这道题的导师加入项目（#3830）；题目有导师时必须带上。 */
+  agreeMentors?: boolean
   email?: string
   phone?: string
   applyReason?: string
@@ -197,11 +129,12 @@ export type PostTaskSubmissionReviewRequestData = {
 export type PatchTaskSubmissionReviewRequestData = Partial<PostTaskSubmissionReviewRequestData>
 
 /**
- * Which level the composed guidance came from — `null` when no level said
- * anything. Shown so a student reads 「来自项目集」 rather than a bare result;
+ * Where the composed guidance came from — the space, the task, both, or the
+ * project; `null` when nobody said anything. Shown so a student reads where
+ * it came from rather than a bare result;
  * carried by the same resolution loop that picks the value (server side).
  */
-export type TaskInheritanceSource = 'space' | 'category' | 'task' | 'project'
+export type TaskInheritanceSource = 'space' | 'task' | 'both' | 'project'
 
 /** A board's 资料 row as the inheritance list reports it — never a `url`. */
 export interface TaskInheritanceMaterial {
@@ -218,6 +151,8 @@ export interface TaskInheritanceMaterial {
 
 /** The composed 给 AI 队友的指导, plus the level it came from. */
 export interface TaskInheritanceTeaching extends SpaceTeaching {
+  /** 空间和题目都写了补充要求时，空间的那一份（`systemPrompt` 是题目的）。 */
+  spacePrompt?: string | null
   source: TaskInheritanceSource | null
 }
 

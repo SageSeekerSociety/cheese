@@ -552,3 +552,40 @@ def test_counts_leave_out_what_is_written_in_it_for_those_outside(client):
     assert weekly("bob") == 0
     assert profile("alice") == (2, 2)
     assert profile("bob") == (0, 0)
+
+
+def test_counts_leave_out_other_peoples_private_chats(client):
+    """What two people say to each other is theirs: a third person's numbers
+    on the project count none of it."""
+    p = post_project(client, json={"name": "队伍"}, owner="dave").json()["data"]
+    for handle in ("alice", "bob", "carol"):
+        join_project_team(client, p["id"], handle)
+    chat = client.get(
+        f"/projects/{p['id']}/private-chat",
+        params={"user_handle": "alice", "peer_handle": "carol"},
+        headers=session_auth_headers("alice"),
+    )
+    assert chat.status_code == 200, chat.text
+    dm = chat.json()["data"]["id"]
+    post_message(client, dm, "alice", {"content": "私下说一句"})
+    post_message(client, dm, "alice", {"content": "再说一句"})
+
+    def written(who):
+        r = client.get(
+            f"/projects/{p['id']}/contributions", headers=session_auth_headers(who)
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["by_author"].get("alice")
+
+    def weekly(who):
+        r = client.get(
+            f"/projects/{p['id']}/members/alice/summary",
+            headers=session_auth_headers(who),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["weekly_contributions"]
+
+    assert written("alice") == 2
+    assert written("bob") is None
+    assert weekly("alice") == 2
+    assert weekly("bob") == 0

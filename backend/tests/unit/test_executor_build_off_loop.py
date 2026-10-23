@@ -65,7 +65,7 @@ async def _start(hub, lease):
         hub,
         lease,
         device_id="machine",
-        project_id=uuid.uuid4(),
+        namespace=uuid.uuid4(),
         work_resource=str(uuid.uuid4()),
         setup={},
         sandbox=False,
@@ -99,7 +99,9 @@ async def test_preparing_a_running_executor_leaves_the_loop_free(monkeypatch):
     monkeypatch.setattr(execution, "call", call)
     hub = SimpleNamespace(exec=AsyncMock())
 
-    started, worst = await _worst_stall_during(_start(hub, {"state": "/executor"}))
+    started, worst = await _worst_stall_during(
+        _start(hub, {"device_id": "machine", "state": "/executor"})
+    )
 
     assert started == INFO
     assert sent == {"prepare": {"prepared": True}}

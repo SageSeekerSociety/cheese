@@ -52,3 +52,14 @@ class TypeOfSeat(Protocol):
         seat's type cannot be resolved — the shared ``cheese`` seat included,
         when the project's default instance carries no type."""
         ...
+
+
+class DeviceOwners(Protocol):
+    """Whose computers these are: devices sit above this package too."""
+
+    async def __call__(
+        self, db: AsyncSession, device_ids: Sequence[str]
+    ) -> dict[str, str]:
+        """Each device id to its owner's handle; a device that is gone is left
+        out."""
+        ...

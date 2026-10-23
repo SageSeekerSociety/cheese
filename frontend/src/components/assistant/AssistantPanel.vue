@@ -1,42 +1,37 @@
 <template>
-  <section class="ap" :aria-label="t('tasks.assistant.label')">
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drop target for files dragged in; the attach button is the keyboard's way -->
+  <section
+    class="ap"
+    :aria-label="t('tasks.assistant.label')"
+    @dragenter.prevent="onDragOver"
+    @dragover.prevent="onDragOver"
+    @dragleave="onDragLeave"
+    @drop.prevent="onDrop"
+  >
     <header class="ap__head">
-      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" /></span>
-      <v-menu location="bottom start" :disabled="busy">
-        <template #activator="{ props: menu }">
-          <button v-bind="menu" type="button" class="ap__title" :disabled="busy">
-            <span class="ap__title-text">{{ title || t('tasks.assistant.newConversation') }}</span>
-            <v-icon size="16" class="ap__title-caret">mdi-chevron-down</v-icon>
-          </button>
-        </template>
-        <v-list density="compact" class="ap__list" :aria-label="t('tasks.assistant.conversations')">
-          <v-list-subheader>{{ t('tasks.assistant.conversations') }}</v-list-subheader>
-          <v-list-item
-            v-if="currentId === null"
-            :active="true"
-            :title="t('tasks.assistant.newConversation')"
-            :subtitle="t('tasks.assistant.noQuestions')"
-          />
-          <v-list-item
-            v-for="c in conversations"
-            :key="c.id"
-            :active="c.id === currentId"
-            :title="c.title || t('tasks.assistant.newConversation')"
-            :subtitle="listSubtitle(c)"
-            @click="!busy && emit('select', c.id)"
-          />
-        </v-list>
-      </v-menu>
+      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
+      <span class="ap__who">
+        <span class="ap__name">{{ t('work.agentAvatar.defaultName') }}</span>
+      </span>
       <span class="ap__grow" />
       <BaseButton
         icon="mdi-pencil-outline"
         size="sm"
-        :disabled="busy"
-        :title="t('tasks.assistant.newConversation')"
-        :aria-label="t('tasks.assistant.newConversation')"
+        :disabled="busy || (messages.length === 0 && streaming === null)"
+        :title="t('tasks.assistant.newTopic')"
+        :aria-label="t('tasks.assistant.newTopic')"
         @click="!busy && emit('new')"
       />
       <BaseButton
+        v-if="dockable"
+        :icon="docked ? 'mdi-dock-window' : 'mdi-dock-right'"
+        size="sm"
+        :title="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
+        :aria-label="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
+        @click="emit('dock', !docked)"
+      />
+      <BaseButton
+        v-if="closable"
         icon="mdi-close"
         size="sm"
         :title="t('tasks.assistant.close')"
@@ -46,14 +41,45 @@
     </header>
 
     <div ref="scroller" class="ap__chat">
+      <button v-if="hasOlder" type="button" class="ap__older" @click="emit('older')">
+        {{ t('tasks.assistant.olderTopics') }}
+      </button>
+      <section v-for="topic in earlier" :key="topic.id" class="ap__topic" :aria-label="topic.title">
+        <template v-for="(m, i) in topic.messages" :key="i">
+          <div v-if="m.role === 'user'" class="ap__q">
+            <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
+            <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
+              <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
+            </p>
+          </div>
+          <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
+          <div v-else class="ap__a">
+            <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
+            <AssistantTurn
+              class="ap__text"
+              :steps="m.steps ?? []"
+              :changes="m.changes ?? []"
+              :results="m.results ?? []"
+              :proposals="m.proposals ?? []"
+            >
+              <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+              <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
+              <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
+            </AssistantTurn>
+          </div>
+        </template>
+        <p class="ap__divider">
+          <span>{{ t('tasks.assistant.newTopic') }}</span>
+        </p>
+      </section>
       <template v-if="messages.length === 0 && streaming === null">
-        <p class="ap__ctx">{{ t('tasks.assistant.reads') }}</p>
+        <p v-if="context !== ''" class="ap__ctx">{{ context ?? t('tasks.assistant.reads') }}</p>
         <div class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
-          <p class="ap__text">{{ t('tasks.assistant.greeting') }}</p>
+          <p class="ap__text">{{ greeting ?? t('tasks.assistant.greeting') }}</p>
         </div>
         <div class="ap__starters">
-          <button v-for="s in starters" :key="s" type="button" class="ap__starter" @click="emit('send', s)">
+          <button v-for="s in starterList" :key="s" type="button" class="ap__starter" @click="emit('send', s)">
             {{ s }}
           </button>
         </div>
@@ -61,14 +87,35 @@
 
       <template v-for="(m, i) in messages" :key="i">
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
-        <p v-if="m.role === 'user'" class="ap__q">{{ m.text }}</p>
+        <div v-if="m.role === 'user'" class="ap__q">
+          <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
+          <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
+            <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
+          </p>
+        </div>
+        <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
         <div v-else class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
-          <div class="ap__text">
+          <AssistantTurn
+            class="ap__text"
+            :steps="m.steps ?? []"
+            :changes="m.changes ?? []"
+            :results="m.results ?? []"
+            :proposals="m.proposals ?? []"
+            :sending="sendingProposal"
+            @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
+            @dismiss-proposal="(id) => emit('dismissProposal', id)"
+            @open-place="(task) => emit('openPlace', task)"
+            @undo="(id, key) => emit('undo', id, key)"
+            @undo-all="(rows) => emit('undoAll', rows)"
+            @jump="(key) => emit('jump', key)"
+            @open-draft="(id) => emit('openDraft', id)"
+            @open-task="(id) => emit('openTask', id)"
+          >
             <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
             <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
             <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
-          </div>
+          </AssistantTurn>
         </div>
       </template>
 
@@ -76,134 +123,265 @@
         <span class="ap__avatar" aria-hidden="true"
           ><CheeseAvatar :size="26" :state="streaming ? null : 'think'"
         /></span>
-        <div class="ap__text">
-          <p v-if="!streaming" class="ap__looking">{{ queued ? t('tasks.assistant.queued') : toolLabel }}</p>
+        <AssistantTurn
+          class="ap__text"
+          live
+          :steps="steps"
+          :changes="changes"
+          :results="results"
+          :proposals="proposals"
+          :sending="sendingProposal"
+          @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
+          @dismiss-proposal="(id) => emit('dismissProposal', id)"
+          @open-place="(task) => emit('openPlace', task)"
+          @undo="(id, key) => emit('undo', id, key)"
+          @undo-all="(rows) => emit('undoAll', rows)"
+          @jump="(key) => emit('jump', key)"
+          @open-draft="(id) => emit('openDraft', id)"
+          @open-task="(id) => emit('openTask', id)"
+        >
+          <p v-if="!streaming && queued" class="ap__looking">{{ t('tasks.assistant.queued') }}</p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-          <div v-else class="ap__md" v-html="render(streaming)" />
-        </div>
+          <div v-else-if="streaming" class="ap__md" v-html="render(streaming)" />
+        </AssistantTurn>
       </div>
 
       <p v-if="notice" class="ap__notice" role="status">
         {{ notice }}
-        <NavLink v-if="creditRefused" :to="{ name: 'UserSettingsUsage' }" class="ap__usage">{{
-          t('usage.viewUsage')
-        }}</NavLink>
+        <NavLink
+          v-if="creditRefused"
+          :to="{ name: 'TeamsDetailCredits', params: { handle: personalTeamHandle } }"
+          class="ap__usage"
+          >{{ t('usage.viewUsage') }}</NavLink
+        >
       </p>
     </div>
 
-    <footer class="ap__foot">
-      <div class="ap__box" :class="{ 'ap__box--ready': ready }">
-        <textarea
-          ref="input"
+    <footer class="ap__foot" :class="{ 'ap__foot--drop': dragOver }">
+      <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
+      <div class="ap__box">
+        <ComposerChipRow
+          v-if="chips.length"
+          :atts="chips"
+          :topic-id="null"
+          @remove-att="(i: number) => emit('removeFile', i)"
+        />
+        <ComposerEditor
           v-model="draft"
           class="ap__input"
-          rows="2"
-          autocomplete="off"
-          :placeholder="t('tasks.assistant.placeholder')"
-          :aria-label="t('tasks.assistant.placeholder')"
+          :names="NO_NAMES"
+          :placeholder="placeholder ?? t('tasks.assistant.placeholder')"
+          :label="placeholder ?? t('tasks.assistant.placeholder')"
           @keydown="onKeydown"
-          @input="grow"
+          @compositionstart="composing = true"
+          @compositionend="composing = false"
         />
-        <div class="ap__acts">
-          <BaseButton
-            v-if="busy"
-            class="ap__send"
-            icon="mdi-stop"
-            size="sm"
-            :title="t('tasks.assistant.stop')"
-            :aria-label="t('tasks.assistant.stop')"
-            @click="emit('stop')"
-          />
-          <BaseButton
-            v-else
-            class="ap__send"
-            icon="mdi-send"
-            size="sm"
-            :kind="ready ? 'primary' : 'ghost'"
-            :disabled="!ready"
-            :title="t('tasks.assistant.send')"
-            :aria-label="t('tasks.assistant.send')"
-            @click="submit"
-          />
-        </div>
+        <ComposerActions
+          :uploading="files.some((f) => f.uploading)"
+          :can-send="ready"
+          :show-image-picker="canAttach && !mdAndUp"
+          :enter-sends="true"
+          :no-files="!canAttach || busy"
+          :files-label="t('tasks.assistant.files.add')"
+          :busy="busy"
+          @files="emit('attach', $event)"
+          @send="submit"
+          @stop="emit('stop')"
+        />
       </div>
-      <p class="ap__hint">{{ t('tasks.assistant.hint') }}</p>
+      <p class="ap__hint">{{ hint ?? t('tasks.assistant.hint') }}</p>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-// 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。
-// 只拿 props、只发事件：说话、换对话、开新对话都由外面那一层去做。
+// 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
+// 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
+// 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
+import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { PendingAttachment } from '@/lib/attachments'
+import type { RefNames } from '@/lib/refChip'
+
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
+
+import AssistantTurn from './AssistantTurn.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import ComposerActions from '@/components/room/ComposerActions.vue'
+import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
 
-export interface PanelConversation {
+/** 之前的一个话题：读回来只给看。 */
+export interface PanelTopic {
   id: string
   title: string
-  lastActiveAt: string
-  questions?: number
+  at: string
+  messages: PanelMessage[]
 }
 
 export interface PanelMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'platform'
   text: string
+  /** 平台开始一次运行的那一句：哪条例行事务。 */
+  shown?: { routine?: string }
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
+  /** 随问题交给芝士的文件名。 */
+  files?: string[]
+  steps?: PanelStep[]
+  changes?: PanelChange[]
+  results?: PanelResult[]
+  proposals?: PanelProposal[]
 }
 
-const props = defineProps<{
-  conversations: PanelConversation[]
-  currentId: string | null
-  title: string
-  messages: PanelMessage[]
-  /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
-  streaming: string | null
-  /** 芝士此刻在用的工具。 */
-  tool: string | null
-  /** 在等会话机空出来，还没开始答。 */
-  queued?: boolean
-  notice: string | null
-  /** 被拒是因为额度不够：提示旁给「查看用量」。 */
-  creditRefused?: boolean
-  busy: boolean
-}>()
+/** 要随下一个问题交给芝士的文件。 */
+export interface PanelFile {
+  name: string
+  mime?: string
+  uploading?: boolean
+}
+
+const props = withDefaults(
+  defineProps<{
+    messages: PanelMessage[]
+    /** 当前话题上面摆着的之前几个话题，从早到晚；只给看。 */
+    earlier?: PanelTopic[]
+    /** 还有更早的话题没摆出来。 */
+    hasOlder?: boolean
+    /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
+    streaming: string | null
+    /** 芝士此刻在用的工具。 */
+    tool: string | null
+    /** 在等会话机空出来，还没开始答。 */
+    queued?: boolean
+    notice: string | null
+    /** 被拒是因为额度不够：提示旁给「查看用量」。 */
+    creditRefused?: boolean
+    personalTeamHandle?: string
+    busy: boolean
+    /** 这一轮正在做的几步、写的草稿、发布的结果。 */
+    steps?: PanelStep[]
+    changes?: PanelChange[]
+    results?: PanelResult[]
+    /** 这一轮替人起草、等人确认的消息和任务。 */
+    proposals?: PanelProposal[]
+    /** 正在发出的那一件。 */
+    sendingProposal?: number | null
+    /** 空对话上面那一行（芝士读了什么）；空串就不显示。 */
+    context?: string
+    greeting?: string
+    starters?: string[]
+    placeholder?: string
+    hint?: string
+    /** 能把文件交给芝士。 */
+    canAttach?: boolean
+    files?: PanelFile[]
+    closable?: boolean
+    /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
+    dockable?: boolean
+    docked?: boolean
+  }>(),
+  {
+    earlier: () => [],
+    hasOlder: false,
+    dockable: false,
+    docked: false,
+    queued: false,
+    creditRefused: false,
+    personalTeamHandle: undefined,
+    steps: () => [],
+    changes: () => [],
+    results: () => [],
+    proposals: () => [],
+    sendingProposal: null,
+    context: undefined,
+    greeting: undefined,
+    starters: undefined,
+    placeholder: undefined,
+    hint: undefined,
+    canAttach: false,
+    files: () => [],
+    closable: true,
+  }
+)
 
 const emit = defineEmits<{
   send: [text: string]
   new: []
-  select: [id: string]
+  older: []
+  dock: [docked: boolean]
   stop: []
   close: []
+  undo: [changeId: number, key: string]
+  sendProposal: [id: number, edited: { title?: string; text: string }]
+  dismissProposal: [id: number]
+  openPlace: [task: string]
+  undoAll: [rows: { change: number; key: string }[]]
+  jump: [key: string]
+  openDraft: [draftId: number]
+  openTask: [taskId: number]
+  attach: [files: File[]]
+  removeFile: [index: number]
 }>()
 
 const { t } = useI18n()
+
+/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
+function runLine(shown?: { routine?: string }): string {
+  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
+}
 const markdown = new MarkdownRenderer()
 const draft = ref('')
-const input = ref<HTMLTextAreaElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
+const composing = ref(false)
+const { mdAndUp } = useDisplay()
 
-const starters = computed(() => (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)))
-const ready = computed(() => draft.value.trim().length > 0 && !props.busy)
+/** 正文里没有 @ 和话题标签可画：编辑器要一份空的名册。 */
+const NO_NAMES: RefNames = { mentionNames: {}, topicTitles: {} }
 
-const toolLabel = computed(() => {
-  switch (props.tool) {
-    case 'cheese_docs_search':
-    case 'cheese_docs_read':
-      return t('tasks.assistant.readingDocs')
-    case 'cheese_my_tasks':
-      return t('tasks.assistant.readingTasks')
-    default:
-      return t('tasks.assistant.thinking')
-  }
-})
+/** 待交给芝士的文件，画成和工作台一样的一排。 */
+const chips = computed<PendingAttachment[]>(() =>
+  props.files.map((f, i) => ({
+    path: `pending-${i}`,
+    mime: f.mime || 'application/octet-stream',
+    name: f.name,
+    uploading: f.uploading,
+  }))
+)
+
+// 拖文件进面板：整块面板都是落区，亮的是输入框那一圈（和工作台一样）。只认真拖着文件的；
+// 拖一段文字经过不亮。
+const dragOver = ref(false)
+function onDragOver(e: DragEvent) {
+  if (!props.canAttach || props.busy || !e.dataTransfer?.types.includes('Files')) return
+  dragOver.value = true
+}
+function onDragLeave(e: DragEvent) {
+  const entering = e.relatedTarget
+  if (entering instanceof Node && (e.currentTarget as HTMLElement).contains(entering)) return
+  dragOver.value = false
+}
+function onDrop(e: DragEvent) {
+  const was = dragOver.value
+  dragOver.value = false
+  const dropped = Array.from(e.dataTransfer?.files ?? [])
+  if (was && dropped.length) emit('attach', dropped)
+}
+
+const starterList = computed(
+  () => props.starters ?? (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`))
+)
+const ready = computed(
+  () =>
+    (draft.value.trim().length > 0 || props.files.length > 0) && !props.busy && !props.files.some((f) => f.uploading)
+)
 
 function render(text: string): string {
   return markdown.render(text)
@@ -220,33 +398,22 @@ function dayOf(i: number): string {
   return i === 0 || day(props.messages[i - 1].at) !== here ? here : ''
 }
 
-function listSubtitle(c: PanelConversation): string {
-  return t('tasks.assistant.listed', { day: day(c.lastActiveAt), n: c.questions ?? 0 })
-}
-
-function grow() {
-  const el = input.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-}
-
 function submit() {
   if (!ready.value) return
+  // 只附文件不打字也发：文件在这一页是什么意思，页面会告诉芝士。
   emit('send', draft.value.trim())
   draft.value = ''
-  nextTick(grow)
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing.value) {
     e.preventDefault()
     submit()
   }
 }
 
 watch(
-  () => [props.messages.length, props.streaming, props.notice],
+  () => [props.messages.length, props.streaming, props.notice, props.steps.length, props.changes.length],
   () => nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
   { immediate: true }
 )
@@ -276,31 +443,55 @@ watch(
   flex-shrink: 0;
 }
 
-.ap__title {
+.ap__who {
   display: inline-flex;
-  gap: 2px;
-  align-items: center;
+  gap: 6px;
+  align-items: baseline;
   min-width: 0;
-  max-width: 240px;
-  padding: 4px 8px;
+  padding: 0 6px;
+}
+
+.ap__name {
   font-size: 14px;
   font-weight: 600;
+  line-height: var(--lh-14);
   color: var(--ink);
-  border-radius: var(--radius-md);
-}
-
-.ap__title:hover:not(:disabled) {
-  background: var(--fill);
-}
-
-.ap__title-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ap__title-caret {
-  color: var(--faint);
+.ap__older {
+  align-self: center;
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  border-radius: var(--radius-pill);
+}
+
+.ap__older:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.ap__topic {
+  display: contents;
+}
+
+.ap__divider {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.ap__divider::before,
+.ap__divider::after {
+  flex: 1;
+  border-top: 1px solid var(--line-2);
+  content: '';
 }
 
 .ap__grow {
@@ -334,6 +525,19 @@ watch(
   color: var(--faint);
 }
 
+/* What started a run on its own: not the person's words, so not a bubble on their side. */
+.ap__run {
+  align-self: stretch;
+  padding: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  text-align: center;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+}
+
 .ap__q {
   align-self: flex-end;
   max-width: 85%;
@@ -343,6 +547,20 @@ watch(
   white-space: pre-wrap;
   background: var(--fill-2);
   border-radius: var(--radius-lg);
+}
+
+.ap__q-t {
+  margin: 0;
+}
+
+.ap__q-file {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 
 .ap__a {
@@ -430,41 +648,24 @@ watch(
 }
 
 .ap__box {
-  display: flex;
-  flex-direction: column;
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
+  transition:
+    border-color var(--dur-quick) var(--ease-standard),
+    box-shadow var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
 }
 
-.ap__box:focus-within,
-.ap__box--ready {
+.ap__box:focus-within {
   border-color: var(--faint);
 }
 
-.ap__input {
-  min-height: 40px;
-  padding: 6px 0 2px;
-  font: inherit;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  resize: none;
-  outline: none;
-  background: transparent;
-  border: 0;
-}
-
-.ap__acts {
-  display: flex;
-  justify-content: flex-end;
-  min-height: 28px;
-  margin-top: 2px;
-}
-
-.ap__send {
-  width: 28px;
-  height: 28px;
+/* 拖着文件进来：和工作台的输入框一样，那一圈加深、垫一层底色。 */
+.ap__foot--drop .ap__box {
+  border-color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--muted);
+  background: var(--fill);
 }
 
 .ap__hint {

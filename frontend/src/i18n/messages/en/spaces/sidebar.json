@@ -1,0 +1,11 @@
+{
+  "analytics": "Analytics",
+  "announcements": "Announcements",
+  "audit": "Awaiting review",
+  "back": "Back to home",
+  "manage": "Manage",
+  "members": "Members",
+  "settings": "Settings",
+  "tasks": "Tasks",
+  "newTasks": "{n} new since you last looked"
+}

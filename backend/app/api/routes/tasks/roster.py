@@ -19,6 +19,7 @@ from app.api.task_serialization import (
     _membership_to_api_model,
     _task_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_teach_task
@@ -46,8 +47,7 @@ router = APIRouter(prefix="/tasks")
 
 
 @router.post(
-    "/{taskId}/resubmit",
-    summary="Resubmit Task",
+    "/{taskId}/resubmit", summary="Resubmit Task", dependencies=[ROUTE_DECIDES]
 )
 async def resubmit_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

@@ -1,5 +1,5 @@
 import secrets
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -31,7 +31,6 @@ from app.domain.tag.models import Tag
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.domain.knowledge.services import KnowledgeService
     from app.domain.materials.services import MaterialService
     from app.domain.task.repositories import TaskRepository
 
@@ -77,17 +76,22 @@ def _error_data_id(exc: NotFoundError) -> object | None:
     return data.get("id") if isinstance(data, dict) else None
 
 
+#: Refuses the team documents a 指导 names unless each exists and the writer may
+#: read it (`api.doc_access.ensure_team_documents`): `(document_ids, user_id)`.
+DocumentCheck = Callable[[list[str], int], Awaitable[None]]
+
+
 async def ensure_teaching_references(
     *,
-    knowledge_service: "KnowledgeService | None",
+    document_check: "DocumentCheck | None",
     material_service: "MaterialService | None",
     session: "AsyncSession | None",
     teaching: dict,
     actor_user_id: int | None,
 ) -> None:
-    """Every id a 给 AI 队友的指导 names must exist — and, for 知识, be readable.
+    """Every id a 给 AI 队友的指导 names must exist — and, for a document, be readable.
 
-    The read side (`Teaching.from_json`, `KnowledgeService.get_many`) drops what
+    The read side (`Teaching.from_json`, `teaching.for_project`) drops what
     it cannot resolve, because a typo there would take down every 赛题 under the
     board. Here a person is looking at the form and can be told which field is
     wrong, so a bad reference is refused with the field's name instead of being
@@ -100,9 +104,9 @@ async def ensure_teaching_references(
     domain) rather than through one domain importing the other, so this stays
     the one implementation without adding a domain edge.
 
-    `KnowledgeService.ensure_readable` is the very criterion
-    `GET /knowledge/{id}` uses — a teacher may point at 知识 they could already
-    open, nobody else's. A 课件 has no owning team to check, but it does have a
+    A document must be a team's own that the teacher could already open — a
+    member of its team (#3774); a course's agents read it, nobody else's. A
+    课件 has no owning team to check, but it does have a
     visibility tier: a plain `Material` is open to any signed-in reader, while
     one placed in a board's「仅管理员」tier is not
     (`SpaceMaterialService.may_read_outside_space`). So a `material_ids` entry
@@ -110,18 +114,16 @@ async def ensure_teaching_references(
     admins-only 课件 is refused by the field's name, rather than accepted here
     and silently dropped by `for_project` later.
     """
-    knowledge_ids = teaching.get("knowledge_ids") or []
-    if knowledge_ids and knowledge_service is not None:
+    document_ids = [str(i) for i in teaching.get("document_ids") or []]
+    if document_ids and document_check is not None:
         if actor_user_id is None:
             raise ForbiddenError("Authentication required")
         try:
-            await knowledge_service.ensure_readable(
-                knowledge_ids=knowledge_ids, user_id=actor_user_id
-            )
+            await document_check(document_ids, actor_user_id)
         except NotFoundError as exc:
             raise BadRequestError(
-                "teaching.knowledgeIds names a knowledge that does not exist",
-                data={"field": "knowledgeIds", "id": _error_data_id(exc)},
+                "teaching.documentIds names a document that does not exist",
+                data={"field": "documentIds", "id": _error_data_id(exc)},
             ) from exc
 
     material_ids = teaching.get("material_ids") or []
@@ -195,7 +197,7 @@ class SpaceService:
         domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
         member_repo: SpaceMemberRepository | None = None,
         invite_code_repo: SpaceInviteCodeRepository | None = None,
-        knowledge_service: "KnowledgeService | None" = None,
+        document_check: "DocumentCheck | None" = None,
         material_service: "MaterialService | None" = None,
         session: "AsyncSession | None" = None,
     ) -> None:
@@ -209,7 +211,7 @@ class SpaceService:
         self._domain_group_domain_repo = domain_group_domain_repo
         self._member_repo = member_repo
         self._invite_code_repo = invite_code_repo
-        self._knowledge_service = knowledge_service
+        self._document_check = document_check
         self._material_service = material_service
         self._session = session
 
@@ -219,7 +221,7 @@ class SpaceService:
         session: "AsyncSession",
         *,
         task_repo: "TaskRepository | None" = None,
-        knowledge_service: "KnowledgeService | None" = None,
+        document_check: "DocumentCheck | None" = None,
         material_service: "MaterialService | None" = None,
     ) -> "SpaceService":
         """The board service the space routes hand out — wired here rather than in
@@ -228,7 +230,7 @@ class SpaceService:
         Assembling it needs nine ``space.repositories``; a route that builds them
         itself reaches past this domain's service layer (architecture guard C2),
         so the wiring lives with the repositories it wires. ``task_repo`` /
-        ``knowledge_service`` / ``material_service`` are passed in by the caller
+        ``document_check`` / ``material_service`` are passed in by the caller
         because the write side of ``teaching``'s references reaches into those
         domains, and this module keeps those out of its runtime imports.
         """
@@ -243,7 +245,7 @@ class SpaceService:
             domain_group_domain_repo=SpaceDomainGroupDomainRepository(session),
             member_repo=SpaceMemberRepository(session),
             invite_code_repo=SpaceInviteCodeRepository(session),
-            knowledge_service=knowledge_service,
+            document_check=document_check,
             material_service=material_service,
             session=session,
         )
@@ -537,18 +539,10 @@ class SpaceService:
         description: str | None = None,
         display_order: int | None = None,
         archived: bool | None = None,
-        teaching: dict | None = None,
         default_role: str | None = None,
     ) -> SpaceCategory:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
-
-        if teaching is not None:
-            # Refused here, before a single field of the row is touched: a
-            # rejected PATCH must leave the stored 教学安排 exactly as it was.
-            await self._ensure_teaching_references(
-                teaching=teaching, actor_user_id=actor_user_id
-            )
 
         if name is not None:
             if not name.strip():
@@ -567,18 +561,11 @@ class SpaceService:
             category.display_order = display_order
         if archived is not None:
             category.archived_at = datetime.now(UTC) if archived else None
-        if teaching is not None:
-            # Whole-key replacement, same as the 赛题 override: what a teacher
-            # saved is what is in force. `None` means the caller did not touch
-            # it, so a rename does not silently wipe the 教学安排.
-            category.teaching = teaching
         if default_role is not None:
             # 项目集级默认队友 (#944) — declared once here, inherited by every
             # 题目 under it. Same whole-key rule: `None` = the caller did not
-            # touch it; a blank string is a WRITE that clears it (the column
-            # then says 「没说」, so the level above — today nothing — stands).
+            # touch it; a blank string is a WRITE that clears it.
             category.default_role = default_role.strip() or None
-
         category.updated_at = datetime.now(UTC)
         return await self._category_repo.save(category)
 
@@ -588,7 +575,7 @@ class SpaceService:
         """The service's wiring of `ensure_teaching_references` — see it for the
         rule; this only hands in the lookups and the session the route builds."""
         await ensure_teaching_references(
-            knowledge_service=self._knowledge_service,
+            document_check=self._document_check,
             material_service=self._material_service,
             session=self._session,
             teaching=teaching,
@@ -720,7 +707,7 @@ class SpaceService:
         else:
             if relation.role == SpaceAdminRole.OWNER.value:
                 raise BadRequestError(
-                    "Cannot demote owner directly. Transfer ownership to another admin first."  # noqa: E501
+                    "Cannot demote owner directly. Transfer ownership to another admin first."
                 )
             relation.role = new_role.value
             relation.updated_at = datetime.now(UTC)

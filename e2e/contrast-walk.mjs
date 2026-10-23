@@ -1,28 +1,16 @@
 // The browser half of `fe-contrast`: open one of the public pages in one
 // theme, walk what it painted, hand the runs back.
 //
-// Two callers share this file. `tests/contrast-ratchet.spec.ts` is the gate
-// that runs on a pull request; `contrast-ratchet.mjs` is the record the ratchet
-// snapshot collector reads after the merge, because the number the page freezes
-// and the verdict the gate gives have to come from the same walk. A second copy
-// of this code is how the two would drift apart.
+// `tests/contrast-ratchet.spec.ts` calls this from the pull-request gate.
 //
-// Plain JavaScript with no test-runner imports on purpose: the collector runs
-// the driver as a node script, outside Playwright's test runner, and a helper
-// that needed `expect` would only work for one of the two callers.
-
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+// Keep the browser walk separate from the test assertions.
 
 import { collectRuns, floorFor } from '../frontend/scripts/contrast-ratchet-core.mjs'
-
-/** The frozen debt, beside the rule it belongs to, in frontend/. */
-export const BASELINE = fileURLToPath(new URL('../frontend/contrast-baseline.json', import.meta.url))
 
 /**
  * A floor on how much each page has to produce, so that "the page rendered
  * nothing measurable" cannot pass as "nothing is wrong". Each is about half of
- * what the page actually produced when the baseline was frozen — `/solutions`
+ * what the page actually produced when the check was written — `/solutions`
  * is the longest and `/download` is a short page with a heading and a few
  * buttons — and between them they catch the failure modes that make a walk
  * return almost nothing: a page that did not load, a redirect to sign-in, a
@@ -43,38 +31,6 @@ export const MIN_RUNS = { '/': 50, '/solutions': 60, '/download': 8 }
  *  would fail the page at the earlier of two deadlines. Comfortably above what
  *  a served build needs; the collector's driver passes a much longer one. */
 export const MOUNT_TIMEOUT = 15_000
-
-/** The baseline’s `runs`, or an empty one where the file is not there yet. */
-export function readBaseline() {
-  try {
-    return JSON.parse(readFileSync(BASELINE, 'utf8')).runs ?? {}
-  } catch (error) {
-    if (error.code === 'ENOENT') return {}
-    throw error
-  }
-}
-
-/** The baseline file as it is written, matching the other ratchets' shape. */
-export function baselineFile(runs) {
-  return {
-    _comment:
-      'Frozen rendered-contrast debt on the public pages, one entry per text run that is below ' +
-      'its WCAG floor (4.5:1, or 3:1 for large text and icon glyphs) or that the walker cannot ' +
-      'measure, wholly or in part — a `ratio` of null with a reason means a background image or ' +
-      'gradient ' +
-      'sits between the run and its ground, and those are frozen too rather than skipped. One ' +
-      'entry covers a whole selector, and a selector is not always one element: `ratio` answers ' +
-      'for the instances of it the walker could read, and `unreadable` counts those it could ' +
-      'not, so text hidden behind a picture cannot drop out of the check by sitting beside a ' +
-      'readable sibling. `sample` is a piece of the text the ratio was measured on. The ratchet ' +
-      'blocks any new or worse run, and the count is ratcheted the same way; the baseline only ' +
-      'goes down. Regenerate with `CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test ' +
-      'contrast-ratchet`, which will not add a key the baseline has never seen unless ' +
-      'CONTRAST_FREEZE_NEW=1 is set as well. The rule and its messages live in ' +
-      'frontend/scripts/contrast-ratchet-core.mjs.',
-    runs,
-  }
-}
 
 /**
  * Open a page in one theme and leave it settled: loaded, mounted, and with its
@@ -100,8 +56,8 @@ export async function open(page, path, theme, { timeout = MOUNT_TIMEOUT } = {}) 
   // The app mounting does not mean its stylesheet arrived: index.html loads the
   // CSS as its own render-blocking <link>, and the module mounts either way. With
   // no stylesheet every run falls back to the browser's black on white — 21:1,
-  // which is greener than the styled page — and a walk over it would empty the
-  // baseline. One design token is enough to tell the two apart, so this is the
+  // which is greener than the styled page — and a walk over it would pass
+  // whatever the page really paints. One design token is enough to tell the two apart, so this is the
   // check that the count guard cannot be.
   const muted = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(),

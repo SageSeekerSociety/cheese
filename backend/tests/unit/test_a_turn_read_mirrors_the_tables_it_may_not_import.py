@@ -1,4 +1,4 @@
-"""`run_record.turns` reads two tables that its layer may not import.
+"""`run_record.turns` and `delivery.agent` read tables their layer may not import.
 
 `run_record` sits at the bottom of `app.domain`'s seven layers and `agent` and
 `block` sit above it: importing either is the upward dependency C5 refuses. So
@@ -16,6 +16,7 @@ from app.domain.block.models import (
     PROMPTED_TURN_META_KEY,
     Block,
 )
+from app.domain.delivery import agent as delivery_agent
 from app.domain.notice_meta import (
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_TURN_FAILED,
@@ -23,6 +24,7 @@ from app.domain.notice_meta import (
     SEVERITY_INFO,
 )
 from app.domain.run_record import turns
+from app.domain.session_record import history as session_history
 
 
 def test_the_terminal_codes_cover_every_code_their_homes_name():
@@ -48,8 +50,18 @@ def test_the_notice_severity_is_the_one_its_home_names():
 def test_the_columns_are_the_ones_the_models_declare():
     """Same names and types — reading fewer columns is the point, reading a
     column the table does not have is not."""
-    for literal, model in ((turns._turns, AgentTurn), (turns._blocks, Block)):
+    copies = (
+        ("run_record.turns._turns", turns._turns, AgentTurn),
+        ("run_record.turns._blocks", turns._blocks, Block),
+        # `delivery` is layer 3 and `agent` is layer 3 too, but that domain
+        # reads delivery's rows, so the two may not import each other: the
+        # turn-interval clause reads `agent_turns` bare for the same reason.
+        ("delivery.agent._TURNS", delivery_agent._TURNS, AgentTurn),
+        ("session_record.history._turns", session_history._turns, AgentTurn),
+    )
+    for where, literal, model in copies:
         real = model.__table__.c
-        assert set(literal.c.keys()) <= set(real.keys())
+        unknown = sorted(set(literal.c.keys()) - set(real.keys()))
+        assert not unknown, f"{where} 抄了真表上没有的列: {unknown}"
         for name in literal.c.keys():
-            assert type(literal.c[name].type) is type(real[name].type)
+            assert type(literal.c[name].type) is type(real[name].type), where

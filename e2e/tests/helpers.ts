@@ -104,7 +104,7 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
     },
     { accessToken: loginData.accessToken, user: loginData.user, language },
   );
-  await page.goto("/spaces");
+  await page.goto("/inbox");
   await page
     .locator(".app-rail-item:not(.app-rail-item--add)")
     .first()
@@ -156,7 +156,7 @@ export async function projectIdOf(page: Page): Promise<string> {
 export async function openFirstProject(page: Page) {
   // Project tiles carry `--tile` (they render an avatar image); the bare
   // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
-  // sits first in the rail — clicking it lands on /spaces, not a project.
+  // sits first in the rail — clicking it lands on the inbox, not a project.
   await page.locator(".app-rail-item--tile").first().click();
   const rows = page.locator(".topic-row");
   // Wait for the rows themselves: a caller that counts before the seeded ones
@@ -172,9 +172,10 @@ export async function openFirstProject(page: Page) {
 // 一登录就替项目磁贴取这几张图——**在任何一页上都会出现，包括完全不碰这一页的页**。
 // 种子里只给默认头像写了文件，所以任何新部署的项目磁贴都会缺图，这是一个真问题，
 // 记在话题文档的待办里。放行范围写死到这个形状，不写成「忽略所有 404」：页面自己
-// 发出的请求挂掉时仍然要红。
+// 发出的请求挂掉时仍然要红。`?v=` 是前端给头像地址加的缓存版本（见
+// `frontend/src/utils/materials.ts`），不改变这是哪一张图。
 const AVATAR_404 =
-  /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+$/;
+  /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+(\?[^\s]*)?$/;
 
 const RESOURCE_FAILED = /^\[console\] Failed to load resource: .*? @ (\S+)$/;
 

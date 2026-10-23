@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 import uuid
@@ -19,6 +20,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+# Assemble the app up front: this file drives the app stack, and conftest now does
+# that only for `client`/`python_client` (the layer ceiling counts wall clock).
+import app.main  # noqa: F401
 from app.core.config import settings
 from app.domain.agent import device_provider, machine_launcher, screen_identity
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
@@ -155,6 +159,22 @@ class FakeHub:
             if isinstance(self.ping, BaseException):
                 raise self.ping
             return dict(self.ping)
+        if method == "register":
+            # The runner takes the epoch it is registered under.
+            self.epoch = params["epoch"]
+            return {"worker_epoch": self.epoch}
+        if method == "read":
+            # A runner with nothing to report: it holds a read that asked to
+            # wait for a moment, and answers with how it stands.
+            if params.get("wait"):
+                await asyncio.sleep(0.05)
+            return {
+                "worker_epoch": getattr(self, "epoch", 0),
+                "events": [],
+                "records": [],
+                "state": {"worker_status": "idle", "tasks": {}},
+                "alive": True,
+            }
         if method == "command":
             return {"is_error": False}
         subtype = params["request"]["subtype"]
@@ -444,9 +464,9 @@ async def test_a_reused_screen_gets_its_token_rotated_and_its_harness_config_lef
     )
     screen = await room.ensure(token="first")
     home = Path(
-        device_home_dir(
-            room.arguments["project_id"], room.arguments["topic_id"]
-        ).replace("$HOME", str(tmp_path))
+        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
+        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
+        .replace("$HOME", str(tmp_path))
     )
     # The token lives in THIS seat's directory, the room's other teammates
     # having one of their own (`place.seat_dir`).
@@ -504,9 +524,9 @@ async def test_a_turn_rewrites_only_its_own_seat_s_execution_token(tmp_path):
 
     mine_screen = await room.ensure(agent_handle="cheese-a", token="a1")
     home = Path(
-        device_home_dir(
-            room.arguments["project_id"], room.arguments["topic_id"]
-        ).replace("$HOME", str(tmp_path))
+        device_home_dir(room.arguments["project_id"], room.arguments["topic_id"])
+        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
+        .replace("$HOME", str(tmp_path))
     )
     mine = Path(seat_dir(str(home), "cheese-a")) / "remote-session/execution.token"
     theirs = Path(seat_dir(str(home), "cheese-b")) / "remote-session/execution.token"
@@ -542,11 +562,19 @@ async def test_a_task_s_session_leaves_its_room_s_session_its_own_files(tmp_path
             "CHEESE_RESOURCE_ID": str(room_id),
         },
     )
-    home = Path(device_home_dir(project, room_id).replace("$HOME", str(tmp_path)))
+    home = Path(
+        device_home_dir(project, room_id)
+        .replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese")
+        .replace("$HOME", str(tmp_path))
+    )
 
     def launcher(screen: HubScreen) -> Path:
         written = re.search(r'exec bash "([^"]+)"', screen.command[-1]).group(1)
-        return Path(written.replace("$HOME", str(tmp_path)))
+        return Path(
+            written.replace("${CHEESE_PROFILE_ROOT:-.cheese}", ".cheese").replace(
+                "$HOME", str(tmp_path)
+            )
+        )
 
     room_screen = await room.ensure(topic_id=room_id, token="room")
     room_token = Path(seat_dir(str(home), "cheese")) / "remote-session/execution.token"
@@ -1063,10 +1091,10 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     await room.ensure()
 
     (argv, stdin) = next((a, s) for a, s in hub.execs if s and "x" * 1000 in s)
-    assert f"$HOME/.cheese/launch/{topic_id}" in argv[-1]
+    assert f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/{topic_id}" in argv[-1]
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
-    assert f"$HOME/.cheese/launch/{topic_id}" in command[-1]
+    assert f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/{topic_id}" in command[-1]
 
 
 async def test_launcher_transfer_rotates_forwarded_token_without_an_extra_exec(
@@ -1167,7 +1195,10 @@ def test_every_device_work_dir_is_a_topic_scratch_dir():
     pid = uuid.uuid4()
     tid = uuid.uuid4()
     prov = DeviceChannel(hub=FakeHub())
-    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/home/{pid}/{tid}/room"
+    assert (
+        prov._work_dir(pid, tid)
+        == f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/home/{pid}/{tid}/room"
+    )
 
 
 async def test_concurrent_topics_never_share_a_device_home():
@@ -1514,13 +1545,17 @@ def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
     """How long a turn may talk without working, how long an input may sit
     unread, and the ceiling over both are decided once for the deployment. A
     transport that drifted from another would end the same turn at a different
-    moment depending on where it ran."""
+    moment depending on where it ran. A harness whose runner keeps those
+    clocks itself is registered with the same two limits, and the room keeps
+    none for it: two clocks on one turn would end it twice."""
     from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import HARNESSES
 
     pool = build_compute_pool()
     for backend in pool._runtimes():
-        assert backend.no_progress_s == settings.agent_no_progress_s
-        assert backend.unread_grace_s == settings.agent_unread_grace_s
+        own = not HARNESSES[backend.harness].reports_lifecycle
+        assert backend.no_progress_s == (settings.agent_no_progress_s if own else 0)
+        assert backend.unread_grace_s == (settings.agent_unread_grace_s if own else 0)
         assert backend.hard_ceiling_s == settings.agent_turn_hard_ceiling_s
 
 
@@ -1983,7 +2018,7 @@ def _launched_file(command: list[str]) -> str:
 def _launcher_state(script: str) -> str:
     """Where the runner a launcher starts keeps its state."""
     found = re.search(r"^CLAUDE_STATE=(.*)$", script, re.MULTILINE)
-    return found.group(1).strip().strip("'") if found else ""
+    return shlex.split(found.group(1))[0] if found else ""
 
 
 def _seat_state(room, seat: str) -> str:

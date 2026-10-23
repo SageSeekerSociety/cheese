@@ -16,7 +16,8 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
-from app.domain.room_task.models import Task
+from app.domain.room_task import heard
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -97,7 +98,7 @@ async def _require_reviewer_in_room(
 
     不进这一域的理由：这道判据要问房间是不是私聊，而「谁在什么情况下问这个
     布尔」在一个仓库里只该有一份声明（`tests/unit/test_is_private_read_points.py`
-    是那道棘轮）。在这里照抄一遍读法，就是同一件事的第二份声明。
+    守着这一条）。在这里照抄一遍读法，就是同一件事的第二份声明。
 
     挂的是同一只开关（`authz_enforce_topic_access`）：开关关掉时采纳那道门本来
     就不问成员资格，此时按房间名册拦下递卡只会让一个配置里合法的人递不出去。
@@ -120,10 +121,12 @@ async def reassign(
     card_id: uuid.UUID,
     reviewer_handles: list[str] | None = None,
     admits_reviewer: ReviewerAdmission,
+    by: str,
 ) -> AcceptCard:
     """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
-    different reviewer — or a different set of them, or, naming nobody, back
-    to the project's default one, which is the same ladder 递卡 climbs."""
+    different reviewer — or, naming nobody, back to the project's default
+    one, which is the same ladder 递卡 climbs. ``by`` is who did; the task's
+    teammate hears it in its next input (`room_task.heard`)."""
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReassign"))
@@ -131,9 +134,18 @@ async def reassign(
     reviewers = await self._reviewers_or_project_default(
         await self._projects.get(topic.project_id), reviewer_handles
     )
+    previous = await self._repo.reviewer_handles(card.id)
     for reviewer in reviewers:
         await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
     await self._repo.set_reviewers(card.id, reviewers)
+    moved = set(previous) != set(reviewers)
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    if moved and task is not None and task.status == TaskStatus.open:
+        await heard.inform(
+            self._session,
+            task,
+            heard.reviewer_changed(by=by, reviewer="、".join(reviewers)),
+        )
     await self._session.flush()
     await self._session.refresh(card)
     return card

@@ -30,19 +30,28 @@ function readPayload(event) {
     // 是同一条规则）。
     const taskId = data.taskId
     const threadId = data.threadId
+    // 项目自己的一份文档（不在哪个频道里）：落到那份文档。
     return {
       title: data.title || fallback.title,
       body: data.body || '',
       // 点开就落到那件事本身，而不是首页 —— 推送的作用是把人带回现场。项目和频道
       // 这两个 id 缺一个就退回待办列表：那里一定列着这件事。
-      url:
-        projectId && topicId && taskId
-          ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
-          : projectId && topicId && threadId
-            ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
-            : projectId && topicId
-              ? `/projects/${projectId}/topics/${topicId}`
-              : '/inbox',
+      // 空间里的一道题目（后端 `task_notices`）：落到题目页。它的号叫 `spaceTaskId`，
+      // `taskId` 说的是项目里的任务。
+      // 个人芝士自己做的事（后端 `routine.personal`）：在待办页打开那段对话。
+      url: data.assistantConversation
+        ? `/inbox?assistant=${data.assistantConversation}`
+        : data.spaceId && data.spaceTaskId
+          ? `/spaces/${data.spaceId}/tasks/${data.spaceTaskId}`
+          : projectId && topicId && taskId
+            ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
+            : projectId && topicId && threadId
+              ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
+              : projectId && topicId
+                ? `/projects/${projectId}/topics/${topicId}`
+                : projectId && data.documentId
+                  ? `/projects/${projectId}/docs/${data.documentId}`
+                  : '/inbox',
     }
   } catch {
     return fallback

@@ -45,18 +45,6 @@ class StartAbandoned(SessionError):
     for it."""
 
 
-class InputProtocolUnavailable(SessionError):
-    """The session's runner predates the receipt protocol, so nothing can be
-    said to it whose reading would be known. Nothing was said; the session,
-    its conversation and its pending inputs stay as they are."""
-
-    def __init__(self):
-        super().__init__(
-            "The original runner needs a receipt protocol upgrade; its "
-            "conversation and pending inputs are retained"
-        )
-
-
 @dataclass(frozen=True)
 class SessionRef:
     """One session: its harness, and where it lives on the session host.
@@ -71,7 +59,13 @@ class SessionRef:
     @property
     def state(self) -> str:
         """Its state directory, as the connector expands it."""
-        return f"$HOME/.cheese/{self.home}"
+        return f"$HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/{self.home}"
+
+
+#: Carries a teammate's thinking effort through the launch environment to where
+#: its session is started, which hands it to the harness as
+#: ``ModelSettings.effort`` (``room.sessions.starting``).
+EFFORT_ENV = "CHEESE_THINKING_EFFORT"
 
 
 @dataclass(frozen=True)
@@ -80,6 +74,9 @@ class ModelSettings:
     provider's own."""
 
     thinking: bool = True
+    #: How hard the model thinks (``gateway.EFFORTS``), one the model honours;
+    #: None leaves it to the model. Each harness says it its own way.
+    effort: str | None = None
     #: The longest answer, in tokens.
     max_tokens: int | None = None
     #: The context the conversation may grow to.
@@ -120,6 +117,10 @@ class SessionSpec:
     #: The tool table's tools it has (`sandbox/cheese`), by name; None is all
     #: of them.
     tools: tuple[str, ...] | None = None
+    #: With ``tools`` and an execution target: whether the session works on
+    #: the target with its harness's own tools, commands included, rather
+    #: than only reading it. A person's 芝士 in its own sandbox.
+    works: bool = False
     #: None is the session host's own limits.
     footprint: Footprint | None = None
     #: How long it may sit idle before it exits; None is the runner's own.
@@ -213,6 +214,18 @@ class Prompt:
 
 
 @dataclass(frozen=True)
+class Ending:
+    """How one work of a runner ended, as its ping says."""
+
+    work: str
+    #: It ended in a failure (any typed failure: the model service's, the
+    #: runner's own clocks, an interrupt).
+    failed: bool
+    #: The platform's inputs it read, by input id.
+    inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SessionStatus:
     """A running session, as its runner says it is now."""
 
@@ -222,13 +235,24 @@ class SessionStatus:
     conversation: str = ""
     #: The work it is doing, while it works.
     work_id: str | None = None
-    #: Whether its runner can take an input whose receipt will be read.
-    takes_inputs: bool = True
     #: False when the runner answered that its harness process is gone.
     alive: bool = True
     #: The machine answered that this session's runner is not there at all
     #: (``host.attach``). Its process is gone with it.
     runner_gone: bool = False
+    #: The runner speaks another lifecycle protocol than this release reads:
+    #: one another release started (``host.attach``). It is not read and given
+    #: nothing; the room replaces it once it is idle (``room.sessions.lifecycle``),
+    #: resuming its conversation.
+    outdated: bool = False
+    #: The registration the runner holds (its ping's ``worker_epoch``): what a
+    #: call this process makes without registering it carries.
+    epoch: int = 0
+    #: Which start of the runner answered (its ping's ``launch``).
+    launch: str | None = None
+    #: How the runner's last few works ended (its ping's ``endings``): how a
+    #: runner this release does not read says what its work came to.
+    endings: tuple[Ending, ...] = ()
 
 
 class InputUnconfirmed(SessionError):

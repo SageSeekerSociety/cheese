@@ -5,7 +5,7 @@
 // 抽屉（`SecondaryNavigation`）和目录都得跟版式住在一起，所以两样都在这一份里。值从
 // props 进、动作原样报回去：这里不知道后端、不知道地址（A 档）。两边的名字和
 // `HomeNav.vue` 那一份一一对应，含义见它。
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import HomeNav from './HomeNav.vue'
 
@@ -16,7 +16,7 @@ defineProps<{
   /** 视口 ≥960：只有这一档才有常驻侧栏；手机上这一份整个不画。 */
   mdAndUp: boolean
   teams: Team[]
-  spaces: { id: number; name: string }[]
+  spaces: SpaceLink[]
   awaiting?: number
   currentHandle?: string | null
   editing: Team | null
@@ -34,6 +34,9 @@ defineProps<{
   joinOpen: boolean
   joinBusy?: boolean
   joinError?: string
+  createOpen: boolean
+  createBusy?: boolean
+  createError?: string
 }>()
 
 const emit = defineEmits<{
@@ -50,6 +53,8 @@ const emit = defineEmits<{
   leave: [team: Team]
   'update:joinOpen': [open: boolean]
   join: [code: string]
+  'update:createOpen': [open: boolean]
+  createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
 }>()
 </script>
 
@@ -80,6 +85,9 @@ const emit = defineEmits<{
       :join-open="joinOpen"
       :join-busy="joinBusy"
       :join-error="joinError"
+      :create-open="createOpen"
+      :create-busy="createBusy"
+      :create-error="createError"
       @edit="(team) => emit('edit', team)"
       @update:editing="(team) => emit('update:editing', team)"
       @save-profile="(payload) => emit('saveProfile', payload)"
@@ -93,6 +101,8 @@ const emit = defineEmits<{
       @leave="(team) => emit('leave', team)"
       @update:join-open="(open) => emit('update:joinOpen', open)"
       @join="(code) => emit('join', code)"
+      @update:create-open="(open) => emit('update:createOpen', open)"
+      @create-space="(payload) => emit('createSpace', payload)"
     />
   </SecondaryNavigation>
 </template>

@@ -30,18 +30,22 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.chapter_rows import chapter_rows
 from app.api.project_skill_rows import proposals_in_room
 from app.api.review_comment_rows import review_comment_rows
-from app.api.room_task_rows import room_task_items, task_page_row
+from app.api.room_task_rows import (
+    room_task_items,
+    task_page_row,
+    with_session_running,
+)
 from app.api.task_origin import related_of
 from app.api.topic_member_rows import roster_rows
 from app.api.topic_pin_rows import pin_rows
 from app.core.errors import NotFoundError
-from app.domain.agent.chat import ChatService
 from app.domain.feedback.proposals import ProposalService
 from app.domain.identity.actor import Actor
+from app.domain.room_task.place import place_or_404
 from app.domain.thread import reads as thread_reads
-from app.domain.topic.services import TopicService
 
 #: How many recently finished tasks a channel's overview shows beside the open
 #: ones (the client's `RECENT_DONE`).
@@ -51,30 +55,33 @@ THREADS = 100
 
 
 async def room_snapshot(
-    db: AsyncSession, chat: ChatService, actor: Actor, conversation_id: uuid.UUID
+    db: AsyncSession, actor: Actor, conversation_id: uuid.UUID
 ) -> dict | None:
     """The `room` of a `subscribed` frame for this conversation (a channel or a
     task), or None when it is neither — a thread's own line, say. The caller
     has authorised `actor` for the room."""
     try:
-        place = await TopicService(db).place_or_404(conversation_id)
+        place = await place_or_404(db, conversation_id)
     except NotFoundError:
         return None
     room = place.room
     viewer = actor.handle if actor.authenticated else None
     snapshot: dict = {
-        "members": await roster_rows(db, room),
+        "members": await roster_rows(db, room, viewer=viewer),
         "feedback_proposals": await ProposalService(db).live_cards(conversation_id),
         "skill_proposals": await proposals_in_room(db, place.project_id, place.room_id),
     }
     task = place.task
     if task is None:
         snapshot["tasks"] = {
-            "open": await room_task_items(
-                db, chat, actor, room, limit=0, status="open"
+            "open": await with_session_running(
+                db, await room_task_items(db, actor, room, limit=0, status="open")
             ),
-            "recent": await room_task_items(
-                db, chat, actor, room, limit=0, status="closed", latest=RECENT_DONE
+            "recent": await with_session_running(
+                db,
+                await room_task_items(
+                    db, actor, room, limit=0, status="closed", latest=RECENT_DONE
+                ),
             ),
         }
         snapshot["pins"] = await pin_rows(db, place.room_id)
@@ -82,9 +89,12 @@ async def room_snapshot(
             db, place.room_id, viewer=viewer, limit=THREADS
         )
     else:
-        snapshot["task"] = await task_page_row(db, chat, place, task)
+        snapshot["task"] = await task_page_row(db, place, task, me=viewer or "")
         snapshot["related"] = await related_of(db, task)
         snapshot["review_comments"] = await review_comment_rows(
             db, task, actor.handle or ""
         )
+    # Chapters belong to the conversation being read — the room's own line or
+    # the task's — so both branches carry them.
+    snapshot["chapters"] = await chapter_rows(db, place.conversation_id)
     return snapshot

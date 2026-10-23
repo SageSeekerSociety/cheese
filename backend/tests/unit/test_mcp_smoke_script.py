@@ -41,10 +41,10 @@ class _Server(ThreadingHTTPServer):
 
 def _handler(cls):
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):  # noqa: ANN002 - 测试里静音
+        def log_message(self, *args):
             pass
 
-        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler 的约定
+        def do_POST(self):
             length = int(self.headers.get("Content-Length") or 0)
             message = json.loads(self.rfile.read(length) or b"{}")
             cls.seen_sessions.append(self.headers.get("Mcp-Session-Id"))

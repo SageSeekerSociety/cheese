@@ -13,19 +13,26 @@ import uuid
 
 import pytest
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
+from tests.conftest import seed_user
 from tests.delivery import delivery_artifact, delivery_headers, delivery_task
 from tests.integration.conftest import (
     join_project_team,
+    mail,
     post_project,
     session_auth_headers,
 )
-from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
+from tests.integration.test_accept_pr import (
+    _give_card_a_pr,
+    _rendered_head,
+    _rendered_revision,
+)
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
 
@@ -126,7 +133,11 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
 def _accept(client, card_id: str):
     r = client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
+        json={
+            "decided_by": "alice",
+            "head_sha": _rendered_head(client, card_id),
+            "deliverable_revision": _rendered_revision(client, card_id),
+        },
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -437,7 +448,7 @@ def test_the_card_says_what_this_delivery_hands_over(client):
 
     cards = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
     card = next(c for c in cards if c["id"] == card_id)
-    assert card["deliverable"] == {
+    assert {k: card["deliverable"][k] for k in ("kind", "filename", "url")} == {
         "kind": "file",
         "filename": "报告.pdf",
         "url": None,
@@ -578,7 +589,7 @@ def test_the_reviewer_can_take_the_file_before_accepting(client):
     assert card["status"] == "pending"
     # 卡面要说得出这两样：这次动的是哪一项产物、交出去的是什么。
     assert card["artifact"]["name"] == "报告"
-    assert card["deliverable"] == {
+    assert {k: card["deliverable"][k] for k in ("kind", "filename", "url")} == {
         "kind": "file",
         "filename": "结题报告.docx",
         "url": None,
@@ -678,3 +689,399 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
 
     asyncio.run(make_private())
     assert as_bob()["room"] is None, "a private room's name reached a non-member"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param(
+            {
+                "files": {"out/报告.pdf": "无分支提交的独立文件\n"},
+                "deliver": "out/报告.pdf",
+            },
+            id="file",
+        ),
+        pytest.param(
+            {"deliver_url": "https://example.com/standalone"},
+            id="link",
+        ),
+    ],
+)
+def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_pr(
+    client, declared
+):
+    """独立文件与链接交付不要求任务分支有 Git 提交，也不必开或合 PR。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = delivery_task(client, room_id, commit=False)
+    _place(client, task)
+    files = declared.get("files") or {}
+    for name, content in files.items():
+        path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    payload = {k: v for k, v in declared.items() if k != "files"}
+    response = client.post(
+        f"/topics/{task.id}/accept-card",
+        headers=delivery_headers(client, room_id),
+        json={
+            "change_subject": "docs(report): deliver without repository commits",
+            "reviewer_handle": "alice",
+            "new_artifact": "独立产物",
+            "about": "不进代码仓库的独立交付物",
+            **payload,
+        },
+    )
+    assert response.status_code == 200, response.text
+    card = response.json()["data"]
+    assert card["pr_number"] is None
+    assert card["merge_state"]["state"] == "clean"
+    assert card["merge_state"]["who"] == "human"
+    assert card["merge_state"]["head_sha"] is None
+
+    accepted = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={
+            "decided_by": "alice",
+            "head_sha": None,
+            "deliverable_revision": card["deliverable"]["revision"],
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["data"]["status"] == "accepted"
+
+
+def _put(client, task, name: str, content: str) -> None:
+    path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _redeliver(client, task, headers, **body):
+    return client.post(
+        f"/topics/{task.id}/accept-card/redeliver", headers=headers, json=body
+    )
+
+
+def test_a_task_replaces_what_its_waiting_card_hands_over(client):
+    """FB-104：卡还在等审阅，交付的人改了文件，要换的是卡上那一份 —— 不是再递一张，
+    也不是去够那条只有房间里的人才能走的改验收人。
+
+    换过之后验收人拿到的是新的那一份，旧的不再挂在这张卡上；审过旧那一份的批准
+    不算数，验收人被叫回来再看一眼。"""
+    reviewer = seed_user(client, "alice")
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/channel-row.html": "<p>第一稿</p>"},
+        deliver="out/channel-row.html",
+    )
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    approved = client.post(
+        f"/accept-cards/{card['id']}/approve",
+        json={"approver_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["approvals"] == ["alice"]
+    heard_before = len(mail(client, reviewer, "ROOM_NOTICE"))
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/channel-row-prototype.html", "<p>第二稿</p>")
+    r = _redeliver(
+        client,
+        task,
+        delivery_headers(client, room_id),
+        deliver="out/channel-row-prototype.html",
+    )
+
+    assert r.status_code == 200, r.text
+    now = r.json()["data"]
+    assert now["id"] == card["id"]
+    assert now["status"] == "pending"
+    assert now["deliverable"]["filename"] == "channel-row-prototype.html"
+    assert now["approvals"] == []
+    got = client.get(f"/accept-cards/{card['id']}/deliverable")
+    assert got.status_code == 200, got.text
+    assert got.content == "<p>第二稿</p>".encode()
+    assert len(mail(client, reviewer, "ROOM_NOTICE")) == heard_before + 1
+
+
+def test_a_decided_card_is_not_redelivered(client):
+    """采纳了的那一版已经是清单上的一版：换它的字节就是改写历史。要交新的一版，
+    递一张新卡。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "采纳的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/报告2.pdf", "想偷换的一份\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf"
+    )
+
+    assert r.status_code == 409, r.text
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "采纳的那一份\n".encode()
+
+
+def test_a_card_that_hands_over_the_merge_has_nothing_to_redeliver(client):
+    """交合并的卡交的是分支：换它走 push-fix，挂一个文件上去只会让卡说两件事。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(client, room_id)
+    assert filed.status_code == 200, filed.text
+
+    task = delivery_task(client, room_id)
+    r = _redeliver(
+        client,
+        task,
+        delivery_headers(client, room_id),
+        deliver_url="https://site.example/r",
+    )
+
+    assert r.status_code == 409, r.text
+    card = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"][0]
+    assert card["deliverable"]["kind"] == "merge"
+
+
+def test_another_tasks_session_cannot_redeliver_this_tasks_card(client):
+    """同一个房间里另一条任务的会话，碰不到这条任务的卡。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "这条任务交的\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    mine = delivery_task(client, room_id)
+    other = delivery_task(client, room_id, new=True)
+    _put(client, mine, "out/别人的.pdf", "另一条任务塞进来的\n")
+    other_session = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=str(other.project_id), topic_id=str(other.id)
+        )
+    }
+
+    r = _redeliver(client, mine, other_session, deliver="out/别人的.pdf")
+
+    assert r.status_code == 403, r.text
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "这条任务交的\n".encode()
+
+
+def test_accepting_after_a_redeliver_takes_a_fresh_look(client):
+    """采纳的是人看过的那一份。他看着第一稿，交付的人换成了第二稿（连文件名都
+    没变）：照着屏幕上那一版点采纳要被拒，卡还在等；重新看过再点才采纳。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/report.pdf": "第一稿\n"},
+        deliver="out/report.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    seen = _rendered_revision(client, card_id)
+    head = _rendered_head(client, card_id)
+
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/report.pdf", "第二稿\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/report.pdf"
+    )
+    assert r.status_code == 200, r.text
+
+    stale = client.post(
+        f"/accept-cards/{card_id}/accept",
+        json={"decided_by": "alice", "head_sha": head, "deliverable_revision": seen},
+        headers=session_auth_headers("alice"),
+    )
+    assert stale.status_code == 422, stale.text
+    (card,) = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
+    assert card["status"] == "pending"
+
+    _accept(client, card_id)
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "第二稿\n".encode()
+
+
+def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
+    client, monkeypatch
+):
+    """读机器上那一份要几秒，人正好在这几秒里采纳了：采纳的那一版不能被换掉，
+    它的字节也不能被删。换的那一方拿到 409。"""
+    from app.api.routes.accept import _accept_service
+    from app.domain.review.services import cards as cards_mod
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "采纳的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    head = _rendered_head(client, card_id)
+    seen = _rendered_revision(client, card_id)
+    read = cards_mod._read_deliverable
+
+    async def read_while_someone_accepts(*args, **kwargs):
+        data = await read(*args, **kwargs)
+        async with client.test_factory() as session:
+            await _accept_service(session).accept(
+                card_id=uuid.UUID(card_id),
+                decided_by="alice",
+                head_sha=head,
+                deliverable_revision=seen,
+            )
+            await session.commit()
+        return data
+
+    monkeypatch.setattr(cards_mod, "_read_deliverable", read_while_someone_accepts)
+    task = delivery_task(client, room_id)
+    _put(client, task, "out/报告2.pdf", "想偷换的一份\n")
+    r = _redeliver(
+        client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf"
+    )
+
+    assert r.status_code == 409, r.text
+    (card,) = client.get(f"/topics/{room_id}/accept-card").json()["data"]["data"]
+    assert card["status"] == "accepted"
+    assert card["deliverable"]["filename"] == "报告.pdf"
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert got.content == "采纳的那一份\n".encode()
+
+
+def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
+    client, monkeypatch
+):
+    """反过来的那个顺序：换交付物的请求已经锁住卡、正要写新的一份，人带着屏幕上
+    那一版点了采纳。采纳要么等它写完、看出版本变了而拒绝，要么先落定、让它拿到
+    409 —— 不能是「卡采纳了，挂着的却是没人看过的那一份」。"""
+    import time
+
+    from app.api.routes.accept import _accept_service
+    from app.domain.library import service as library_service
+    from app.domain.review.services import cards as cards_mod
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "看过的那一份\n"},
+        deliver="out/报告.pdf",
+    )
+    assert filed.status_code == 200, filed.text
+    card_id = filed.json()["data"]["id"]
+    task = delivery_task(client, room_id)
+    head = _rendered_head(client, card_id)
+    seen = _rendered_revision(client, card_id)
+    read = cards_mod._read_deliverable
+    write = library_service.write_artifact_snapshot
+    loop = {}
+    outcome = {}
+
+    async def remember_the_loop(*args, **kwargs):
+        loop["it"] = asyncio.get_running_loop()
+        return await read(*args, **kwargs)
+
+    async def accept_from_the_old_screen():
+        async with client.test_factory() as session:
+            try:
+                card = await _accept_service(session).accept(
+                    card_id=uuid.UUID(card_id),
+                    decided_by="alice",
+                    head_sha=head,
+                    deliverable_revision=seen,
+                )
+                await session.commit()
+                outcome["status"] = card.status.value
+            except Exception as exc:  # the refusal is one of the two answers
+                outcome["refused"] = repr(exc)
+
+    def write_once_an_accept_is_under_way(*args, **kwargs):
+        pending = asyncio.run_coroutine_threadsafe(
+            accept_from_the_old_screen(), loop["it"]
+        )
+        try:
+            pending.result(timeout=2)
+        except Exception:  # it waits on the row this request holds
+            pass
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(cards_mod, "_read_deliverable", remember_the_loop)
+    monkeypatch.setattr(
+        library_service, "write_artifact_snapshot", write_once_an_accept_is_under_way
+    )
+    _put(client, task, "out/报告2.pdf", "没看过的那一份\n")
+    _redeliver(client, task, delivery_headers(client, room_id), deliver="out/报告2.pdf")
+    for _ in range(100):
+        if outcome:
+            break
+        time.sleep(0.05)
+
+    got = client.get(f"/accept-cards/{card_id}/deliverable")
+    assert outcome, "the accept never finished"
+    assert not (
+        outcome.get("status") == "accepted"
+        and got.content == "没看过的那一份\n".encode()
+    ), outcome
+
+
+@pytest.mark.timeout(60)
+def test_accepting_a_file_card_whose_pr_is_not_open_yet_answers(client):
+    """交文件、分支上也有改动、PR 还没开的卡：采纳先替它开 PR。这一步用另一条连接
+    把 PR 号写回卡上，所以采纳和换交付物之间的排队不能是这一行的锁 —— 否则那条
+    连接等这次请求提交，这次请求等它写完，请求永远不返回。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = delivery_task(client, room_id)
+    _place(client, task)
+    _put(client, task, "out/报告.pdf", "正文\n")
+    filed = client.post(
+        f"/topics/{task.id}/accept-card",
+        headers=delivery_headers(client, room_id),
+        json={
+            "change_subject": "docs(report): finalise the report",
+            "reviewer_handle": "alice",
+            "deliver": "out/报告.pdf",
+            **delivery_artifact(client, room_id, hands_over=True),
+        },
+    )
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    assert card["pr_number"] is None
+
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={
+            "decided_by": "alice",
+            "head_sha": card["merge_state"]["head_sha"],
+            "deliverable_revision": _rendered_revision(client, card["id"]),
+        },
+        headers=session_auth_headers("alice"),
+    )
+
+    # 开出来的 PR 还没有任何人看过它的 head，所以这一次不合、让人重新看：要紧
+    # 的是请求答了，而不是答了什么。
+    assert r.status_code in (200, 422), r.text

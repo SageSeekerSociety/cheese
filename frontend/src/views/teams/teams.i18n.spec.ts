@@ -1,5 +1,4 @@
 import type { Component } from 'vue'
-import type { Knowledge } from '@/types'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -19,15 +18,14 @@ vi.mock('@/api', () => ({
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listProjects: vi.fn(async () => ({ data: [{ id: 'p1', name: 'Alpha' }] })),
   listTeamDevices: vi.fn(async () => ({
+    can_manage: false,
     devices: [
       {
         device_id: 'laptop',
         name: 'laptop',
         online: true,
-        project_ids: [],
-        team_ids: [1],
+        team_id: 1,
         screens: [{ sid: 's1', agent_handle: 'helper' }],
-        in_use: [],
       },
     ],
   })),
@@ -54,6 +52,11 @@ vi.mock('@/api/teams', () => ({
     listMyInvitations: vi.fn(async () => ({
       invitations: [{ id: 2, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
     })),
+    // 成员页上那张「团队地址与加入」卡：数据在页面里取，这一页也把它画出来。
+    getJoinLink: vi.fn(async () => ({ token: 'first', approval: true })),
+    resetJoinLink: vi.fn(async () => ({ token: 'second', approval: true })),
+    updateJoinLink: vi.fn(async () => ({ token: 'first', approval: false })),
+    update: vi.fn(),
   },
 }))
 
@@ -61,9 +64,6 @@ import Compute from './detail/Compute.vue'
 import Members from './detail/Members.vue'
 import Pending from './Pending.vue'
 
-import KnowledgeEmpty from '@/components/teams/knowledge/KnowledgeEmpty.vue'
-import KnowledgeTable from '@/components/teams/knowledge/KnowledgeTable.vue'
-import KnowledgeToolbar from '@/components/teams/knowledge/KnowledgeToolbar.vue'
 import i18n, { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -127,8 +127,7 @@ function expectNoChinese() {
 
 it('renders the team compute page in English', async () => {
   mount(Compute)
-  await screen.findByText('Running · @helper')
-  expect(screen.getByText('Self-hosted devices')).toBeTruthy()
+  await screen.findByText('Online')
   expectNoChinese()
 })
 
@@ -145,29 +144,5 @@ it('renders the pending requests and invitations page in English', async () => {
   await screen.findByText('A project')
   expect(screen.getByText('My requests')).toBeTruthy()
   expect(screen.getAllByText('Pending').length).toBe(2)
-  expectNoChinese()
-})
-
-it('renders the knowledge toolbar, table and empty state in English', async () => {
-  const resource = {
-    id: 1,
-    name: 'Notes',
-    type: 'CODE',
-    labels: ['guide'],
-    creator: { id: 1, nickname: 'Alice', avatarId: 1 },
-    createdAt: 0,
-  } as unknown as Knowledge
-  mount(KnowledgeToolbar, {
-    searchQuery: null,
-    typeFilter: null,
-    tagFilter: null,
-    viewMode: 'grid',
-    resourceTypes: ['TEXT', 'MATERIAL', 'LINK', 'CODE'],
-    availableTags: [],
-  })
-  mount(KnowledgeTable, { items: [resource], ownerId: 1 })
-  mount(KnowledgeEmpty, { hasFilters: true })
-  expect(await screen.findByText('Code snippet')).toBeTruthy()
-  expect(screen.getByText('Upload resource')).toBeTruthy()
   expectNoChinese()
 })

@@ -58,6 +58,16 @@ describe('signing in to the desktop app', () => {
     expect(url.href).not.toContain(kept!.verifier)
   })
 
+  it("opens the browser with the friend's invite code the sign-up link came with", async () => {
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null)
+    const view = await open('entry=signup&invite=K7Q2M9')
+
+    await fireEvent.click(view.getByRole('button', { name: /Sign up with your browser/ }))
+
+    await waitFor(() => expect(opened).toHaveBeenCalledTimes(1))
+    expect(new URL(String(opened.mock.calls[0][0])).searchParams.get('invite')).toBe('K7Q2M9')
+  })
+
   it('opens the same address again, so the browser tab already open still works', async () => {
     const opened = vi.spyOn(window, 'open').mockReturnValue(null)
     const view = await open('entry=signin')

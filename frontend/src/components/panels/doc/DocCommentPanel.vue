@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 评论栏这一列：够宽时贴在正文右边，窄时盖在正文上面；宽度能拖。里面是 DocComments。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../../composables/useMentionOutside'
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -26,6 +28,8 @@ const props = defineProps<{
   placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
+  mentionPeople?: MentionPoolEntry[]
+  outside?: ReturnType<typeof useMentionOutside>
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
   avatarOf?: (handle: string) => string
@@ -246,6 +250,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
   <div ref="root" class="doc-pane" :class="{ 'is-resizing': resizing }">
     <slot />
     <Transition name="doc-comment-panel">
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- Escape bubbles here from whatever inside the panel has focus and closes it -->
       <aside
         v-show="opened"
         ref="aside"
@@ -259,6 +264,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
         :style="{ width: `${width}px` }"
         @keydown="onEscape"
       >
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a focusable separator is a widget (ARIA 1.2); the rule does not count it as one. Arrow keys resize, see resizeKey -->
         <div
           v-if="docked"
           class="doc-comment-panel__resize"
@@ -346,6 +352,8 @@ defineExpose({ open, locate, toggle, close, opened, busy })
             :place-of="placeOf"
             :agent-name="agentName"
             :mention-names="mentionNames"
+            :mention-people="mentionPeople"
+            :outside="outside"
             :name-of="nameOf"
             :avatar-of="avatarOf"
             :writable="writable"

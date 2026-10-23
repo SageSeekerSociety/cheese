@@ -10,8 +10,8 @@ covers:
   - frontend/src/components/panels/doc/DocAgentBox.vue
   - backend/app/domain/agent/session_host/
   - backend/app/core/sandbox_auth.py
-  - backend/app/api/auth.py
-  - backend/app/domain/living_doc/work_edits.py
+  - backend/app/api/auth/
+  - backend/app/domain/assistant/changes.py
 ---
 
 # 文档里的芝士 {#doc-agent}
@@ -73,14 +73,14 @@ covers:
 - 这个评论串到目前为止的每一条；
 - 评论指着的文字，和它所在的那一节（从上面最近的标题到下一个同级或更高级的标题）；
 - 文档全文；
-- 话题里最近 20 条消息；
+- 频道里最近 20 条消息；
 - 最后说明要回答谁的哪一条。
 
 ## 工具与凭据 {#tools}
 
 会话有两张凭据。启动时拿的是文档所属任务的凭据（不属于任务的文档是项目的凭据）：写着项目、任务、这个队友，外加这个评论串（`mint_scoped_token` 的 `resource_id`），只用来经 `/llm/v1/*` 调模型，花费记在项目上。每次提问另签一张代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`），随问题交给会话，工具都用它。代行凭据写着提问人、这个队友、项目和任务、这次回答的编号，以及这一问能不能改文档；有效期是回答上限再加一分钟。
 
-工具是平台工具表里的几项（`sandbox/cheese`），调的就是界面用的那些接口。代行凭据只在 `api/auth.py` 的 `DELEGATED_ROUTES` 列出的接口上有效，按提问人的权限判断，只在签它的那个任务里有效（项目文档的代行凭据在那个项目里有效）。
+工具是平台工具表里的几项（`sandbox/cheese`），调的就是界面用的那些接口。代行凭据只在 `api/auth/` 的 `DELEGATED_ROUTES` 列出的接口上有效，按提问人的权限判断，只在签它的那个任务里有效（项目文档的代行凭据在那个项目里有效）。
 
 | 工具 | 做什么 |
 |---|---|
@@ -92,7 +92,7 @@ covers:
 | `read`、`ls`、`find`、`grep` | pi 自己的读文件工具，读任务工作电脑上的代码；只有任务的电脑开着时才有，见[任务的工作电脑](#machine) |
 | `git` | 看任务工作目录的 git：状态、提交记录、和某个分支比的改动（可以从分出来的地方算起，即「这个分支相对主干改了什么」，含没提交的）、某次提交、每行是谁改的；同样只有任务的电脑开着时才有 |
 
-改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；改了哪几处记在这次回答的编号下（`living_doc/work_edits.py`），输入框拿它显示改动和撤销。这一问不许改时，改文档被拒；回答结束、凭据过期后，工具一律被拒。
+改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；改了哪几处记在这次回答的编号下（`assistant/changes.py`，见[改动与撤销](/dev/assistant#changes)），输入框拿它显示改动；撤销、恢复走 `/assistant/changes/{id}/undo`、`/redo`，以问的人的名义把那几段换回去。这一问不许改时，改文档被拒；回答结束、凭据过期后，工具一律被拒。
 
 ## 回答 {#answer}
 

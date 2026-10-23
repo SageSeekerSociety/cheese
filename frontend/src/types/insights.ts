@@ -21,33 +21,9 @@ export type InsightMedia = {
   meta: ImageMeta | VideoMeta
 }
 
-export type InsightMediaImage = {
-  material_id: number
-  created_at: number
-  type: 'image'
-  url: string
-  meta: ImageMeta
-}
-
-export type InsightMediaVideo = {
-  material_id: number
-  created_at: number
-  type: 'video'
-  url: string
-  meta: VideoMeta
-}
-
 export type InsightAttachment = {
   type: 'file' | 'link'
   url: string
   title: string
   description: string
-}
-
-export function isInsightMediaImage(media: InsightMedia): media is InsightMediaImage {
-  return media.type === 'image'
-}
-
-export function isInsightMediaVideo(media: InsightMedia): media is InsightMediaVideo {
-  return media.type === 'video'
 }

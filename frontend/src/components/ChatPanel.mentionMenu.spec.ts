@@ -2,10 +2,10 @@
 /// <reference types="node" />
 /** `@` 候选菜单没有高度上限那条。
  *
- * 它最多 7 项（`mentionMatches` 里 `slice(0, 7)`），每项 `min-height: 36px`，展开
- * 就是 254px；而 `.composer` 是 `.chat`（flex column、`height: 100%`）里不肯收缩的
- * 那一项。面板一矮（尤其手机上），多出来的部分连同输入框一起从 `.chat` 底部溢出、
- * 被外壳裁掉，且没有任何滚动条——输入框也跟着看不见。
+ * 候选不截断（项目里几十号人，一屏放不下就往下翻），每项 `min-height: 36px`；而
+ * `.composer` 是 `.chat`（flex column、`height: 100%`）里不肯收缩的那一项。面板
+ * 一矮（尤其手机上），不设上限菜单就会连同输入框一起从 `.chat` 底部溢出、被外壳
+ * 裁掉，且没有任何滚动条——输入框也跟着看不见。
  *
  * 这是 CSS，jsdom 量不到布局，照仓库的老办法用源码断言钉住（见
  * `panels/PanelCard.spec.ts` 末尾那两节）。菜单现在自己是一件（#2143 把
@@ -16,9 +16,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 // These assertions read the Chinese copy.
 beforeEach(() => {
@@ -34,6 +35,8 @@ function rule(selector: string): string {
   // 注释里也会出现 `overflow-y: auto` 这种词，先摘掉再断言，免得注释把测试骗绿。
   return body.replace(/\/\*[\s\S]*?\*\//g, '')
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('@ 候选菜单压扁时滚得动', () => {
   it('有一个高度上限，并且自己滚', () => {

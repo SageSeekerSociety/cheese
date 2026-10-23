@@ -36,6 +36,8 @@ MOCK_MATRIX: dict[PreferenceCategory, tuple[bool, bool, bool]] = {
     PreferenceCategory.INVITATION: (True, True, True),
     PreferenceCategory.ANNOUNCEMENT: (True, False, True),
     PreferenceCategory.BILLING: (True, False, True),
+    # 芝士的提醒是用户自己要的：三个渠道全开。
+    PreferenceCategory.ASSISTANT: (True, True, True),
 }
 
 #: 有今天的生产者的那几行；`额度与计费` 还没有码落到它上面，`resolve` 试不到它。
@@ -46,7 +48,7 @@ NIGHT = datetime(2025, 6, 1, 23, 0, tzinfo=UTC)  # 落在默认安静时段里
 
 
 class TestMockDefaults:
-    def test_the_eight_rows_match_the_mock(self):
+    def test_every_row_matches_the_mock(self):
         events = to_dict(default_preferences())["events"]
         assert set(events) == {category.value for category in CATEGORY_ORDER}
         for category, (in_app, push, email) in MOCK_MATRIX.items():
@@ -196,7 +198,7 @@ class TestTypesOutsideTheMatrix:
 
     def test_a_non_pushable_legacy_type_does_not_push(self):
         intent = resolve(
-            default_preferences(), NotificationType.DEADLINE_REMIND, now=NOON
+            default_preferences(), NotificationType.TEAM_REQUEST_APPROVED, now=NOON
         )
         assert intent.push is False
 

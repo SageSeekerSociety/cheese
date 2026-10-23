@@ -9,20 +9,26 @@
 // those pieces: header, timeline, new-message pill, error toast.
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
+import type { ChapterRow } from '../types/chapters'
 
 import { computed, ref, watch } from 'vue'
 
+import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { useKeepAudience } from '../composables/useKeepAudience'
 import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { memberName } from '../lib/agentNames'
+import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
+import BookmarkRail from './chat/BookmarkRail.vue'
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
@@ -30,8 +36,8 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
-import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
@@ -42,6 +48,8 @@ const props = withDefaults(
     topic: Topic | null
     /** 私聊里的消息不能转为任务：不给「转为任务」。 */
     noUpgrade?: boolean
+    /** 这是一段私聊：只有里面的人看得到，保存到资料库前要先确认。 */
+    privateChat?: boolean
     // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
     // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
     alwaysSummon?: boolean
@@ -81,15 +89,22 @@ const props = withDefaults(
     // 信息卡那行「AI 队友」挑的），或支线正在和它说话的那位队友。发送框那个 @ 写它。
     // 空＝跟着房间。
     agentHandle?: string | null
-    // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
-    // 位置换成这一句，`composer-closed` 插槽接在它后面。
+    // 这里此刻不能说话，以及为什么（任务已关闭、频道已归档）。输入框的位置换成这一句，
+    // `composer-closed` 插槽接在它后面。
     composerClosed?: string | null
-    // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。和
-    // `composerClosed` 分开，因为「我不能说话」（任务只有负责人能说）不等于「题结束了」。
+    // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。
     askClosed?: boolean
     // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
     // 先带上「@芝士 」。
     inThread?: boolean
+    // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
+    hint?: string | null
+    /** 这段对话的章节，按对话里的顺序（频道页、任务页给；支线、私聊不给）。 */
+    chapters?: ChapterRow[]
+    /** 现在能不能改章节：说得上话、没归档。 */
+    chapterable?: boolean
+    /** 已经钉成章节的那几条（block id）。 */
+    chapterIds?: ReadonlySet<string>
   }>(),
   {
     alwaysSummon: false,
@@ -103,10 +118,14 @@ const props = withDefaults(
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
+    chapters: () => [],
+    chapterable: false,
+    chapterIds: () => new Set<string>(),
     agentHandle: null,
     composerClosed: null,
     askClosed: false,
     inThread: false,
+    hint: null,
   }
 )
 
@@ -146,13 +165,18 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 // 我 @ 了不在这个频道里的人：问要不要加进来（Slack 那样），见 useMentionOutside。
 const mentionOutside = useMentionOutside({
   place: () => props.conversationId ?? props.topic?.id ?? null,
-  nameOf: (handle) => props.members.find((m) => m.user_handle === handle)?.name || handle,
+  nameOf: (handle) => memberName(props.members.find((m) => m.user_handle === handle)) || handle,
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
+
+// 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
+// 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
+const chatRoot = ref<HTMLElement | null>(null)
 
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
@@ -165,11 +189,14 @@ const panel = useChatPanel({
   emit: panelEmit,
 })
 
+// 一件任务交给的那位 AI 队友叫什么；没单独指定的，是这间房的那位。
+const taskAgentName = (handle: string | null | undefined) =>
+  (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value
 const threadLines = useThreadLines({
   mainLine: () => mainLine.value,
   roomId: () => props.topic?.id ?? null,
   timeline: panel.timeline,
-  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+  agentNameOf: taskAgentName,
 })
 // 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
 const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
@@ -178,19 +205,40 @@ const pins = useChannelPins({
   report: (message) => (panel.errorMsg.value = message),
   seen: () => panel.timeline.messages.value.some((m) => typeof m.meta?.pinned_block_id === 'string'),
 })
+// 章节：这段对话的目录由拿着这一段地址的页面取（频道页、任务页），这里只画。支线和
+// 私聊不传，就没有章节刻度，也没有 ⋯ 里那一项。
+// 私密频道和私聊里的东西只有这里的人看得到：保存到资料库之前先说清保存后谁会看到。
+const keeping = ref<Block | null>(null)
+const keepAudience = useKeepAudience(
+  () => props.topic?.id ?? null,
+  () => keeping.value !== null
+)
 function keepFile(block: Block) {
-  if (props.topic) pins.keep(props.topic.id, block)
+  if (!props.topic) return
+  if (props.privateChat || props.topic.members_only) keeping.value = block
+  else pins.keep(props.topic.id, block)
+}
+function confirmKeep() {
+  const block = keeping.value
+  keeping.value = null
+  if (block && props.topic) pins.keep(props.topic.id, block)
 }
 function nameOf(handle: string): string {
-  return panel.refMaps.mentionNames[handle] || handle
+  return panel.nameOfHandle(handle)
 }
-// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条。认得
-// 的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
+// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条；支线里
+// 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () =>
+    new Map(
+      knownTasks.value.map((task) => [
+        task.id,
+        taskLine(task, panel.viewer.value, nameOf, taskAgentName(task.agent_handle)),
+      ])
+    )
 )
-const taskOrigins = computed(() => tasksByOrigin(knownTasks.value))
+const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
@@ -211,6 +259,7 @@ const {
   prState,
   composerHint,
   rows,
+  askGroups,
   hiddenRows,
   refMaps,
   hasMore,
@@ -238,6 +287,7 @@ const {
   fmtTime,
   isMine,
   displayName,
+  authorTitle,
   isExternal,
   avatarSrc,
   myName,
@@ -287,6 +337,7 @@ const {
   retryBusy,
   retryNow,
   onComposerSend,
+  hearVoice,
   errorMsg,
   linkDown,
   send,
@@ -304,12 +355,32 @@ const {
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
+// 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
+const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
-// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
-// 的那一刻做一次，删掉了不会再长回来。
+// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
+// 打开的那一刻做一次，删掉了不会再长回来。
 watch(loadingHistory, (loading, was) => {
-  if (!props.inThread || loading || !was || draft.value) return
-  draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
+  if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
+  const seat = agentSeat.value
+  draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
+})
+
+// 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
+// （平时画它，点一下就交给它）。后者从我自己发过的话里找：最近一条 @ 了队友的那条。
+const busyAgents = computed(() =>
+  Object.entries(agentFaces.value)
+    .filter(([, face]) => face.status !== null)
+    .map(([handle]) => handle)
+)
+const lastMate = computed(() => {
+  const messages = panel.timeline.messages.value
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.kind !== 'message' || !isMine(m)) continue
+    for (const [, handle] of (m.content ?? '').matchAll(/<@([\w-]+)>/g)) if (isAgentHandle(handle)) return handle
+  }
+  return null
 })
 
 // The timeline binds these two with `:ref`, so it has to receive the Refs
@@ -342,7 +413,6 @@ const submitQuestion = createQuestionSubmit({
 defineExpose({ send, linkDown, submitQuestion })
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
-const chatRoot = ref<HTMLElement | null>(null)
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
@@ -374,114 +444,139 @@ useComposerShortcut({
         :title-override="titleOverride"
         :back-label="backLabel"
         @back="emit('back')"
-      />
+      >
+        <template v-if="$slots['header-actions']" #actions><slot name="header-actions" /></template>
+      </ChatPanelHeader>
 
       <!-- The timeline gets its own boundary: one bad row must not take the
            composer, the new-message pill or the error toast down with it.
            resetKey = topic id, so switching topics recovers on its own. -->
-      <ErrorBoundary :reset-key="topic.id">
-        <ChatTimeline
-          v-guide-anchor="onProjectLine ? 'timeline' : ''"
-          :topic="topic"
-          :ask-closed="askClosed"
-          :no-upgrade="noUpgrade"
-          :threadable="threadable"
-          :processable="inThread"
-          :fold-plain="!!conversationId"
-          :replying-for="threadLines.replyingFor"
-          :replying-seats-for="threadLines.replyingSeats"
-          :thread-status-for="threadLines.statusFor"
-          :pinnable="pinnable"
-          :pinned-ids="pins.pinnedIds.value"
-          :task-of="taskOf"
-          :tasks-under="tasksUnder"
-          :name-of="nameOf"
-          :rows="rows"
-          :hidden-rows="hiddenRows"
-          :day-labels="dayLabels"
-          :unread-anchor-id="unreadAnchorId"
-          :run-edges="runEdges"
-          :arrived="arrived"
-          :delivered="delivered"
-          :sent-now="sentNow"
-          :flash-id="flashId"
-          :time-shown-id="timeShownId"
-          :bar="bar"
-          :bar-block="barBlock"
-          :bar-editable="barEditable"
-          :reaction-picker-for="reactionPickerFor"
-          :loading-history="loadingHistory"
-          :has-more="hasMore"
-          :loading-older="loadingOlder"
-          :retry-index="retryIndex"
-          :retry-busy="retryBusy"
-          :working="awaitingReply"
-          :show-starters="showStarters"
-          :starter-prompts="starterPrompts"
-          :agent-name="agentName"
+      <div class="timeline-zone">
+        <ErrorBoundary :reset-key="topic.id">
+          <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- the keyboard twins are the focusin/focusout listeners useChatRowActions puts on the same scroller -->
+          <ChatTimeline
+            v-guide-anchor="onProjectLine ? 'timeline' : ''"
+            :topic="topic"
+            :ask-closed="askClosed"
+            :no-upgrade="noUpgrade"
+            :threadable="threadable"
+            :processable="inThread"
+            :fold-plain="!!conversationId"
+            :replying-for="threadLines.replyingFor"
+            :replying-seats-for="threadLines.replyingSeats"
+            :thread-status-for="threadLines.statusFor"
+            :pinnable="pinnable"
+            :pinned-ids="pins.pinnedIds.value"
+            :chapterable="chapterable"
+            :chapter-ids="chapterIds"
+            :chapters="chapters"
+            :task-of="taskOf"
+            :tasks-under="tasksUnder"
+            :name-of="nameOf"
+            :rows="rows"
+            :ask-groups="askGroups"
+            :ask-group-busy="askGroupBusy"
+            :ask-group-failure="errorMsg"
+            :hidden-rows="hiddenRows"
+            :day-labels="dayLabels"
+            :unread-anchor-id="unreadAnchorId"
+            :run-edges="runEdges"
+            :arrived="arrived"
+            :delivered="delivered"
+            :sent-now="sentNow"
+            :flash-id="flashId"
+            :time-shown-id="timeShownId"
+            :bar="bar"
+            :bar-block="barBlock"
+            :bar-editable="barEditable"
+            :reaction-picker-for="reactionPickerFor"
+            :loading-history="loadingHistory"
+            :has-more="hasMore"
+            :loading-older="loadingOlder"
+            :retry-index="retryIndex"
+            :retry-busy="retryBusy"
+            :working="awaitingReply"
+            :show-starters="showStarters"
+            :starter-prompts="starterPrompts"
+            :agent-name="agentName"
+            :refs="refMaps"
+            :outbox="outbox"
+            :typing="typingRows"
+            :editing-id="editingId"
+            :edit-saving="editSaving"
+            :mention-pool="mentionPool"
+            :topic-list="topicList"
+            :scroll-ref="timelineRefs.scrollRef"
+            :content-ref="timelineRefs.contentRef"
+            :is-agent-block="isAgentBlock"
+            :is-mine="isMine"
+            :is-external="isExternal"
+            :avatar-of="avatarSrc"
+            :display-name="displayName"
+            :author-title="authorTitle"
+            :notice-agent="noticeAgent"
+            :agent-faces="agentFaces"
+            :parent-of="parentOf"
+            :show-reply-cue="showReplyCue"
+            :fmt-time="fmtTime"
+            :pending-block="pendingBlock"
+            :outgoing-state="outgoingState"
+            :outbox-edge="outboxEdge"
+            :my-name="myName"
+            :viewer="viewer"
+            @scroll="onTimelineScroll"
+            @click="onMessagesClick"
+            @mouseover="onTimelinePointer"
+            @mouseleave="hideBar"
+            @react="onReact"
+            @reply="setReply"
+            @open-thread="emit('open-thread', $event)"
+            @open-process="emit('open-process', $event)"
+            @upgrade-message="emit('upgrade-message', $event)"
+            @edit="startEdit"
+            @edit-send="editSend"
+            @toggle-picker="togglePicker"
+            @open-file="(path) => emit('open-file', path)"
+            @open-card="emit('open-card', $event)"
+            @open-resource="
+              (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
+            "
+            @ask-reply="replyToQuestion"
+            @ask-withdraw="withdrawQuestionAnswer"
+            @ask-skip="skipQuestion"
+            @ask-group-submit="submitAskGroup"
+            @checklist="changeChecklist"
+            @download="downloadAttachment"
+            @jump="openAt"
+            @save-edit="saveEdit"
+            @cancel-edit="editingId = null"
+            @retry="retryNow"
+            @retry-send="retrySend"
+            @starter="startDraft"
+            @settle-arrival="settleArrival"
+            @settle-sent="settleSent"
+            @outbox-leave="outboxLeave"
+            @pin="pins.pin"
+            @unpin="pins.unpin"
+            @chapter="emit('chapter', $event)"
+            @unchapter="emit('unchapter', $event)"
+            @keep="keepFile"
+          >
+            <template #timeline-start><slot name="timeline-start" /></template>
+            <template #timeline-end><slot name="timeline-end" /></template>
+          </ChatTimeline>
+        </ErrorBoundary>
+        <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
+        <BookmarkRail
+          :chapters="chapters"
+          :can-chapter="chapterable"
           :refs="refMaps"
-          :outbox="outbox"
-          :typing="typingRows"
-          :editing-id="editingId"
-          :edit-saving="editSaving"
-          :mention-pool="mentionPool"
-          :topic-list="topicList"
-          :scroll-ref="timelineRefs.scrollRef"
-          :content-ref="timelineRefs.contentRef"
-          :is-agent-block="isAgentBlock"
-          :is-mine="isMine"
-          :is-external="isExternal"
-          :avatar-of="avatarSrc"
-          :display-name="displayName"
-          :notice-agent="noticeAgent"
-          :agent-faces="agentFaces"
-          :parent-of="parentOf"
-          :show-reply-cue="showReplyCue"
-          :fmt-time="fmtTime"
-          :pending-block="pendingBlock"
-          :outgoing-state="outgoingState"
-          :outbox-edge="outboxEdge"
-          :my-name="myName"
-          :viewer="viewer"
-          @scroll="onTimelineScroll"
-          @click="onMessagesClick"
-          @mouseover="onTimelinePointer"
-          @mouseleave="hideBar"
-          @react="onReact"
-          @reply="setReply"
-          @open-thread="emit('open-thread', $event)"
-          @open-process="emit('open-process', $event)"
-          @upgrade-message="emit('upgrade-message', $event)"
-          @edit="startEdit"
-          @edit-send="editSend"
-          @toggle-picker="togglePicker"
-          @open-file="(path) => emit('open-file', path)"
-          @open-card="emit('open-card', $event)"
-          @open-resource="
-            (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
-          "
-          @ask-reply="replyToQuestion"
-          @ask-withdraw="withdrawQuestionAnswer"
-          @ask-skip="skipQuestion"
-          @checklist="changeChecklist"
-          @download="downloadAttachment"
+          :active-id="flashId"
           @jump="openAt"
-          @save-edit="saveEdit"
-          @cancel-edit="editingId = null"
-          @retry="retryNow"
-          @retry-send="retrySend"
-          @starter="startDraft"
-          @settle-arrival="settleArrival"
-          @settle-sent="settleSent"
-          @outbox-leave="outboxLeave"
-          @pin="pins.pin"
-          @unpin="pins.unpin"
-          @keep="keepFile"
-        >
-          <template #timeline-start><slot name="timeline-start" /></template>
-          <template #timeline-end><slot name="timeline-end" /></template>
-        </ChatTimeline>
-      </ErrorBoundary>
+          @unpin="emit('unchapter', $event)"
+          @rename="(id: string, title: string) => emit('rename', id, title)"
+        />
+      </div>
 
       <RoomMessageSheet
         v-model="sheet.open"
@@ -491,12 +586,20 @@ useComposerShortcut({
         :no-upgrade="noUpgrade"
         :threadable="threadable"
         :processable="inThread"
+        :pinnable="pinnable"
+        :pinned-ids="pins.pinnedIds.value"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"
         @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
+        @pin="pins.pin"
+        @unpin="pins.unpin"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 
@@ -510,21 +613,6 @@ useComposerShortcut({
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
         <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
-        <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
-          <MessageQuote :quote="draftQuote" />
-          <button type="button" class="composer-quote__remove" @click="clearDraftQuote">
-            {{ t('slides.removeQuote') }}
-          </button>
-        </div>
-        <MentionOutsidePrompt
-          v-if="showComposer && outsidePrompt"
-          :names="mentionOutside.names(outsidePrompt.handles)"
-          :members-only="outsidePrompt.members_only"
-          :may-add="outsidePrompt.may_add"
-          :adding="outsideAdding"
-          @add="mentionOutside.add"
-          @dismiss="mentionOutside.dismiss"
-        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>
@@ -542,17 +630,23 @@ useComposerShortcut({
           :topic="topic"
           :mention-pool="mentionPool"
           :topic-list="topicList"
+          :refs="refMaps"
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"
           :hand-off="handOff"
-          :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
+          :hint="hint ?? (inThread ? t('work.room.thread.placeholder') : composerHint)"
           :atts="pendingAtts"
           :atts-uploading="attsUploading"
           :reply-label="replyLabel"
+          :quote="draftQuote"
           :post-checklist="postChecklist"
+          :hear-voice="hearVoice"
+          :busy-agents="busyAgents"
+          :last-mate="lastMate"
           @send="onComposerSend"
           @clear-reply="clearReply"
+          @clear-quote="clearDraftQuote"
           @files="(files) => void addFiles(files)"
           @drop-files="onComposerDrop"
           @paste="onComposerPaste"
@@ -561,9 +655,27 @@ useComposerShortcut({
           @add-library-file="(path) => void addLibraryFile(path)"
         >
           <template #composer-chips><slot name="composer-chips" /></template>
+          <template v-if="outsidePrompt" #strip>
+            <MentionOutsidePrompt
+              docked
+              :names="mentionOutside.names(outsidePrompt.handles)"
+              :members-only="outsidePrompt.members_only"
+              :may-add="outsidePrompt.may_add"
+              :adding="outsideAdding"
+              @add="mentionOutside.add"
+              @dismiss="mentionOutside.dismiss"
+            />
+          </template>
         </RoomComposer>
       </div>
     </template>
+    <KeepToLibraryConfirm
+      :name="keeping ? keeping.content.split('/').pop() ?? keeping.content : null"
+      :people="keepAudience.people.value"
+      :project-people="keepAudience.projectPeople.value"
+      @confirm="confirmKeep"
+      @cancel="keeping = null"
+    />
   </div>
 </template>
 
@@ -597,15 +709,6 @@ useComposerShortcut({
 .composer-closed__text {
   min-width: 0;
 }
-.composer-quote {
-  margin: 0 16px 8px;
-}
-.composer-quote__remove {
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  padding: 4px 0;
-}
 .chat {
   /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so
      the declarations carry normal specificity: v-show's inline `display: none`
@@ -614,6 +717,14 @@ useComposerShortcut({
   flex-direction: column;
   height: 100%;
   background: var(--surface);
+}
+/* 时间线的那一块：书签条要浮在它上面，而不是跟着消息滚走。 */
+.timeline-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* 手机底部的安全区（Home 横杠 / 圆角）由输入框这一块的最后一样东西出：输入区，
    或者说明为什么不能说话的那一格。 */

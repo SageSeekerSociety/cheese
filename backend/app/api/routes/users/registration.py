@@ -1,7 +1,5 @@
 """注册与注册邮箱验证码。"""
 
-import re
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -27,8 +25,10 @@ from app.api.routes.users._common import (
 from app.api.users_deps import (
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -39,6 +39,7 @@ from app.db.session import get_db
 from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.services import ConsentService
+from app.domain.usage import referrals
 from app.domain.user.login_security import ClientFailureBudget
 from app.domain.user.passwords import require_new_password
 from app.domain.user.repositories import (
@@ -57,6 +58,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 @router.post(
     "/verify/email",
     summary="Send registration email verification code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def send_register_email_code(
     payload: SendEmailCodeRequest,
@@ -75,14 +77,14 @@ async def send_register_email_code(
         payload.invite_code, required=settings.require_invite_code
     )
 
-    if invite_code:
+    # Open registration lets a stale code through: it is only an invitation.
+    if invite_code and settings.require_invite_code:
         try:
             await InviteCodeService(db).validate_code(invite_code)
         except ValueError as exc:
             raise _invite_code_error(exc) from exc
 
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not re.match(email_regex, email):
+    if not EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
 
     client = resolved_client_address(request)
@@ -129,10 +131,7 @@ async def get_registration_config() -> dict:
     )
 
 
-@router.post(
-    "",
-    summary="Register User",
-)
+@router.post("", summary="Register User", dependencies=[ROUTE_DECIDES])
 async def register_user(
     payload: RegisterUserRequest,
     request: Request,
@@ -157,7 +156,7 @@ async def register_user(
         raise UnprocessableEntityError(consent_problem)
     assert payload.consent is not None
 
-    if invite_code:
+    if invite_code and settings.require_invite_code:
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
@@ -236,9 +235,13 @@ async def register_user(
     if invite_code:
         invite_service = InviteCodeService(session)
         try:
-            await invite_service.consume_code(invite_code)
+            consumed = await invite_service.consume_code(invite_code)
         except ValueError as exc:
-            raise _invite_code_error(exc) from exc
+            if settings.require_invite_code:
+                raise _invite_code_error(exc) from exc
+            consumed = None
+        if consumed is not None:
+            await referrals.record_referral(session, consumed, user.id)
 
     access_token = await issue_session(
         response,

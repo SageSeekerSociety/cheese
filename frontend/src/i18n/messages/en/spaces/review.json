@@ -1,0 +1,19 @@
+{
+  "APPROVED": "Approved",
+  "PENDING": "Pending",
+  "REJECTED": "Rejected",
+  "actionFailed": "Review did not finish. Refresh the page to confirm the application status.",
+  "adminHelp": "Approval makes the space public and lets its owner publish challenges. Include a reason when rejecting an application.",
+  "applicant": "Applicant",
+  "approve": "Approve",
+  "dismiss": "Dismiss this notice",
+  "empty": "No applications.",
+  "loadFailed": "Space applications failed to load",
+  "next": "Next",
+  "previous": "Previous",
+  "reason": "Rejection reason",
+  "refresh": "Refresh",
+  "reject": "Reject",
+  "retry": "Retry",
+  "status": "Review status"
+}

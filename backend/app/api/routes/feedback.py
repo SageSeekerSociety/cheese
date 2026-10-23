@@ -26,13 +26,16 @@ put the old count back on screen.
 import uuid
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.inert_headers import INERT_HEADERS
 from app.api.request_deps import DbSession
 from app.api.response import Deleted, Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.core.sentences import say
 from app.domain.admin.services import AdminService
@@ -47,9 +50,11 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.paging import THREAD_PAGE
 from app.domain.feedback.schemas import (
+    MAX_ATTACHMENTS,
     CommentCreate,
     CommentLikeOut,
     CommentOut,
+    FeedbackAttachmentOut,
     FeedbackCard,
     FeedbackCounts,
     FeedbackCreate,
@@ -59,9 +64,10 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.topic.services import TopicService
+from app.domain.library import service as library
+from app.domain.room_task.place import place_or_404
 
-router = APIRouter(prefix="/feedback", tags=["feedback"])
+router = APIRouter(prefix="/feedback", tags=["feedback"], dependencies=[ROUTE_DECIDES])
 
 
 # Response shapes these routes build by hand (``{**page(...), "counts": ...}``),
@@ -156,7 +162,7 @@ async def _in_room(
     """
     if topic is None:
         return await resolver.resolve(), None
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -257,6 +263,8 @@ async def get_feedback_meta(
         hot_score=feedback_services.repo.HOT_SCORE,
         hot_half_life_days=feedback_services.repo.HOT_HALF_LIFE_DAYS,
         hot_min_items=feedback_services.repo.HOT_MIN_ITEMS,
+        max_attachments=MAX_ATTACHMENTS,
+        max_attachment_bytes=library.MAX_FILE_BYTES,
         is_admin=await _is_admin(db, service, who),
         is_platform_admin=await _is_platform_admin(db, who),
     )
@@ -734,9 +742,107 @@ async def release_feedback(
     resolver: ActorResolverDep,
     topic: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
-    """放弃领取：持有人自己或反馈管理员。没人领着时是空操作；状态不退回。"""
+    """放弃领取：持有人自己或反馈管理员。没人领着时是空操作；状态不退回。
+
+    已经办完的（已修复 / 已上线 / 不修复）回 409，持有人保持原样：领取和放弃
+    是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人走管理端的改派。
+    """
     who, _ = await _claimer(db, resolver, topic)
     is_admin = await _is_admin(db, service, who)
     row = await service.release(feedback_ref, handle=who.handle, is_admin=is_admin)
     await db.commit()
     return ok(await _detail(service, row, handle=who.handle, is_admin=is_admin))
+
+
+# --- 附件 ---------------------------------------------------------------------
+#
+# 两条路，一条上传、一条读，`POST /feedback` 用 id 把它们挂上去。为什么不是附件
+# 跟着报告那条请求一起传（multipart）：表单在选文件那一刻就上传，用户在屏幕上先
+# 看见它失败，而不是写完几百字按提交才发现；发题目那条路也是这么做的
+# （`TaskAttachmentService.attach_uploaded` 的说明）。代价是中途放弃会留下一个没人
+# 引用的对象，同一个代价。
+
+
+@router.post(
+    "/attachments",
+    summary="Upload Feedback Attachment",
+    status_code=201,
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(FeedbackAttachmentOut),
+)
+async def upload_feedback_attachment(
+    db: DbSession,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+    file: Annotated[UploadFile, File()],
+) -> dict:
+    """把一份文件放到服务端，拿回它的 id；``POST /feedback`` 的 ``attachment_ids``
+    带上它。
+
+    大小和类型在这里就判，不等提交：一份 30MB 的录屏在选中那一刻就该被拒，而不是让人
+    写完正文再被退回。字节落在 `blob_store` 里（见
+    `domain/feedback/services/attachments.py` 开头），所以这份文件**没有公开地址** ——
+    读它只能走下面的 `GET /feedback/attachments/{id}`。
+    """
+    who = await resolver.resolve()
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError(say("signInRequired"))
+    row = await service.store_attachment(
+        file=file.file,
+        filename=file.filename,
+        content_type=file.content_type,
+        uploader_handle=who.handle,
+    )
+    # Commit before answering: the id handed back is referenced by the report's
+    # create request, which must find the row. `get_db` commits after the
+    # response has gone out, which is too late for that (`routes/attachments.py`
+    # has the same note).
+    await db.commit()
+    return ok(FeedbackAttachmentOut.from_row(row).model_dump(mode="json"))
+
+
+@router.get("/attachments/{attachment_id}", include_in_schema=False)
+async def read_feedback_attachment(
+    attachment_id: uuid.UUID,
+    db: DbSession,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+    topic: Annotated[uuid.UUID | None, Query()] = None,
+    download: bool = False,
+) -> Response:
+    """附件的字节 —— 反馈中心里唯一一条把文件读出去的路。
+
+    判据在 `service.attachment_for_read`，照抄它所属的那条反馈：看得见反馈就看得见
+    附件；还没挂到任何反馈上的（表单刚传完、还没提交）只有上传者本人。看不见是 404，
+    和详情同一个理由 —— 403 确认了它存在。
+
+    ``download=true`` 时浏览器存成文件，不带时图片就地显示。两种都带 ``nosniff`` 和
+    那条 CSP：这些字节是人上传的，而页面和它同源、token 在 localStorage 里，一个
+    HTML 当文档跑起来就是拿着读者的会话跑（`app/api/inert_headers.py`）。
+
+    ``include_in_schema=False``：这条路由只给浏览器读字节用，客户端的类型从
+    `FeedbackDetail.attachments` 来，不需要它自己的一份。
+    """
+    who, _ = await _reader(db, service, resolver, topic)
+    row = await service.attachment_for_read(
+        attachment_id,
+        handle=who.handle if who.authenticated else None,
+        is_admin=await _is_admin(db, service, who),
+    )
+    body = await service.attachment_bytes(row)
+    return Response(
+        content=body,
+        media_type=("application/octet-stream" if download else row.content_type),
+        headers={
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(row.name, safe="")
+                if download
+                else "inline"
+            ),
+            # no-store, not private max-age: a background cache serving the bytes
+            # after the reader signed out is the one lifetime this response must
+            # not have.
+            "Cache-Control": "private, no-store",
+            **INERT_HEADERS,
+        },
+    )

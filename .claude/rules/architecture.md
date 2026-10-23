@@ -13,11 +13,10 @@ it enforces and how to fix a failure, so this file keeps only (a) the
 conventions no machine holds and (b) the landing points other files point at.
 
 A check cannot say whether the tree is getting *better*: a ratchet against a
-frozen baseline holds still and reports success forever. That half is the board,
-`arch-metrics.py`, and the per-commit ratchet snapshot beside it; the board
-reports and never fails. Counts, history and per-contract reasoning:
-`docs/manual/dev/architecture.md`, `docs/manual/dev/arch-metrics.md`,
-`docs/topics/棘轮页方案`, `backend/.importlinter`.
+frozen baseline holds still and reports success forever. `arch-metrics.py`
+reports the measurements and never gates a change. Counts, history and
+per-contract reasoning: `docs/manual/dev/architecture.md`,
+`docs/manual/dev/arch-metrics.md`, `backend/.importlinter`.
 
 ## Backend: the import graph is checked, not assumed
 
@@ -48,7 +47,23 @@ Conventions no contract sees:
 - **A deferred import's reason names the cycle** it breaks (or an optional
   dependency, a start-up cost, a test double). "Avoid circular import" with no
   cycle named is not a reason — check whether the cycle still exists first.
-  `check_deferred_imports.py` asks for a reason; only a reader can judge it.
+  No check asks for the reason; a reader does.
+
+## Backend: what the platform pays for is metered, never called straight
+
+A model call or a web search the platform pays for goes out on the payer's key
+through the platform's metering. From backend code that is the gateway
+(LiteLLM) on the payer's virtual key — the project's, the task's, a person's
+own — which admits it against that key's budget, prices it, and leaves its
+spend to be drained into credits (`docs/manual/dev/gateway.md`); from an
+agent's session it is the metering proxy, which alone holds the platform's
+Claude subscription credential (`docs/manual/dev/metering-proxy.md`). Backend
+code never calls a model or search provider directly, and never hands a
+session a provider credential the platform pays for: such a call is priced by
+nobody, charged to nobody and outside every budget. The only direct calls are
+on someone's own account — a member's or team's own API key or model service
+(`backend/app/domain/agent_instance/account_connections.py`) — which they pay
+for.
 
 ## Frontend: a component does not fetch
 
@@ -77,13 +92,6 @@ come back. The four principles, in the order they matter:
 Going through the facade puts the call inside whatever a test mocked `@/api`
 with. Some older modules still do, and changing one changes what its tests
 intercept, so it is its own change.
-
-## Files have a size cap
-
-Judged against the merge base. Split the file: `check-file-sizes.py`'s failure
-names the cap and its reason, and `EXEMPT` is the one considered exception. A
-file over its cap is a prompt to split, not a defect; raising the cap helps
-nothing.
 
 Scenes and the catalog live in `frontend/AGENTS.md` and
 `docs/manual/dev/scenes.md`.

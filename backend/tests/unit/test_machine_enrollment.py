@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,6 +22,9 @@ from app.domain.machine import enrollment
 from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
 
 pytestmark = pytest.mark.anyio
+
+#: What a pool host's bootstrap says of the 64 GB data disk it set up.
+DATA_DISK_SAID = "CHEESE_SANDBOX_DISK_BYTES=68719476736"
 
 
 class FakeDevices:
@@ -35,7 +39,7 @@ class FakeDevices:
         self.started.append(name)
         return "code-1"
 
-    async def approve(self, code, *, owner_user_id, supply, name=None):
+    async def approve(self, code, *, owner_user_id, team_id, supply, name=None):
         # `supply` is required on the real service (#282 决定 2 /
         # #358) — mirrored here so this double cannot go on accepting a call the
         # production one rejects.
@@ -50,12 +54,6 @@ class FakeDevices:
 
     async def delete_platform_provisioned(self, device_id, *, actor_user_id):
         pass
-
-    async def assign_to_project(self, device_id, project_id, *, actor_user_id):
-        self.assigned.append((device_id, project_id))
-
-    async def assign_to_team(self, device_id, team_id, *, actor_user_id):
-        self.team_assigned.append((device_id, team_id))
 
 
 class FakeSession:
@@ -87,9 +85,10 @@ class FakeMachineRepo:
         self.enrolled: list[str] = []
         self.failures: list[str] = []
 
-    async def mark_enrolled(self, machine, *, device_id, when):
+    async def mark_enrolled(self, machine, *, device_id, when, sandbox_disk_gb):
         machine.device_id = device_id
         machine.enrolled_at = when
+        machine.sandbox_disk_gb = sandbox_disk_gb
         machine.enroll_error = None
         machine.bootstrap_key = None
         self.enrolled.append(device_id)
@@ -116,6 +115,8 @@ def make_machine(**overrides):
         enroll_attempts=0,
         bootstrap_key="PRIVATE-KEY",
         machine_id=7,
+        whole_machine=False,
+        sandbox_disk_gb=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -136,19 +137,27 @@ def build_service(
     service._devices = FakeDevices()
     service._client = SimpleNamespace(configured=True)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", FakeIdentity)
+    monkeypatch.setattr(
+        "app.domain.machine.services.team_service",
+        lambda _: SimpleNamespace(
+            ensure_personal_team=AsyncMock(return_value=SimpleNamespace(id=7))
+        ),
+    )
 
     monkeypatch.setattr(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
 
-    async def _run_bootstrap(*, ip, login_user, private_key, script, progress=None):
+    async def _run_bootstrap(
+        *, ip, login_user, private_key, script, sandboxes, progress=None
+    ):
         service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}
         )
         if bootstrap is not None:
             return bootstrap()
-        return "Connected."
+        return f"{DATA_DISK_SAID}\nConnected."
 
     monkeypatch.setattr(enrollment, "run_bootstrap", _run_bootstrap)
     return service, calls
@@ -264,7 +273,7 @@ async def test_a_retried_host_is_one_machine_not_one_per_attempt(monkeypatch):
         failure = next(outcomes)
         if failure is not None:
             raise failure
-        return "Connected."
+        return f"{DATA_DISK_SAID}\nConnected."
 
     service, calls = build_service(monkeypatch, bootstrap=_bootstrap)
     devices = DeviceService(InMemoryDeviceRepository())
@@ -324,19 +333,20 @@ async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
     assert result == {"enrolled": 1, "failed": 1}
 
 
-def test_the_script_resolves_the_download_target_on_the_machine():
+@pytest.mark.parametrize("sandbox_disk", [False, True])
+def test_the_script_downloads_no_connector(sandbox_disk):
+    """The connector reaches a cloud machine over the enrollment connection
+    (`run_bootstrap`); the public origin is a slow way round from inside the
+    cloud's network."""
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=sandbox_disk, origin="https://x.test", token="T", device_id="D"
     )
-    # Guessing the architecture from here would break the moment a VM offering
-    # lands on arm — the machine is the only thing that knows.
-    assert "uname -m" in script
-    assert "linux-amd64" in script and "linux-arm64" in script
+    assert "/connector/latest/" not in script
 
 
 def test_the_script_never_puts_the_token_on_a_command_line():
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="TOK", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="TOK", device_id="D"
     )
     # It lands in the config via a heredoc; an argument would be visible in the
     # machine's own process list.
@@ -391,23 +401,32 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
     assert await runner.sweep() == {"enrolled": 0, "failed": 0}
 
 
-def test_the_script_provides_tmux_the_connector_needs():
-    """The connector hosts sessions in tmux and exits without one.
-
-    MicroCloud's Debian template ships no tmux, so a machine enrolled without
-    this got a service that died on startup — while enrollment recorded success.
-    """
+@pytest.mark.parametrize("sandbox_disk", [False, True])
+def test_enrollment_installs_no_system_package(sandbox_disk):
+    """Everything a host needs ships with the platform and is placed by
+    cheesehost; a machine's own package manager is never asked, whatever
+    image the machine came from."""
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=sandbox_disk, origin="https://x.test", token="T", device_id="D"
     )
-    assert "tmux" in script.split("for tool in")[1].split(";")[0]
-    # ...and before the connector is started, or the check buys nothing.
-    # Compare executable lines only: prose mentioning `link connect` would
-    # otherwise decide the order.
+    code = "\n".join(
+        line for line in script.splitlines() if not line.lstrip().startswith("#")
+    )
+    for manager in ("apt-get", "apt ", "dpkg", "dnf", "yum", "apk add", "zypper"):
+        assert manager not in code, manager
+
+
+def test_the_tools_are_checked_after_cheesehost_placed_them():
+    """`link connect` places tmux, git and python3 where the system lacks
+    them; a check before it would refuse a machine it was about to fix."""
+    script = enrollment.bootstrap_script(
+        sandbox_disk=True, origin="https://x.test", token="T", device_id="D"
+    )
     code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
-    ensures = next(i for i, ln in enumerate(code) if "for tool in" in ln)
     connects = next(i for i, ln in enumerate(code) if "link connect" in ln)
-    assert ensures < connects
+    checks = next(i for i, ln in enumerate(code) if "for tool in" in ln)
+    formats = next(i for i, ln in enumerate(code) if "mkfs.xfs" in ln)
+    assert connects < checks and connects < formats
 
 
 def test_the_script_confirms_the_service_actually_stayed_up():
@@ -419,7 +438,7 @@ def test_the_script_confirms_the_service_actually_stayed_up():
     the unit and would answer "inactive" for a connector that is running fine.
     """
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     assert "systemctl --user is-active --quiet cheese" in script
     connect = next(
@@ -442,7 +461,7 @@ def test_the_script_refuses_a_machine_that_will_drop_off_when_ssh_closes():
     fail while somebody is still looking at the output.
     """
     script = enrollment.bootstrap_script(
-        origin="https://x.test", token="T", device_id="D"
+        sandbox_disk=False, origin="https://x.test", token="T", device_id="D"
     )
     code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
     checks = [i for i, line in enumerate(code) if "Linger" in line]
@@ -470,16 +489,35 @@ async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
 
 
 def _tool_check_block() -> str:
-    """The generated script's tool loop, ready to run on its own."""
+    """The generated script's tool check, ready to run on its own."""
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=False, origin="http://cheese.test", token="tok", device_id="dev"
     )
-    start = script.index("for tool in")
+    start = script.index('runtime="$HOME/.cheese/runtime"')
     return script[start : script.index("\ndone", start) + len("\ndone")]
 
 
-@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "ip"])
-def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
+def _run_tool_check(home, system):
+    """The check on a machine whose system has `system` on PATH."""
+    import subprocess
+
+    path = home / "system-bin"
+    path.mkdir()
+    for name in system:
+        (path / name).write_text("#!/bin/sh\n")
+        (path / name).chmod(0o755)
+    harness = f"""set -eu
+HOME={home}
+PATH={path}
+{_tool_check_block()}
+"""
+    return subprocess.run(
+        ["/bin/bash", "-c", harness], capture_output=True, text=True, timeout=10
+    )
+
+
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3"])
+def test_a_machine_missing_one_of_these_refuses_to_enrol(tmp_path, missing):
     """Each of these fails SILENTLY when discovered later, which is the whole
     reason the check is here rather than in whatever breaks first.
 
@@ -487,98 +525,192 @@ def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     the agent's turn runs in an empty dir and its work is never seen. Without
     python3 the connector (Go) comes up fine and every room on the machine dies
     at environment preparation instead, because the platform's own programs on a
-    machine — `cheese` and the environment helper — are python3. Without
-    ip no session on the machine can have the network its sandbox runs with.
-
-    None is guaranteed by the image: MicroCloud's LXC template lists git but not
-    tmux, and the VM template installs neither.
+    machine — `cheese` and the environment helper — are python3.
     """
-    import subprocess
-
-    harness = f"""
-command() {{ [ "$2" = "{missing}" ] && return 1; return 0; }}
-sudo() {{ return 1; }}
-{_tool_check_block()}
-"""
-    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+    done = _run_tool_check(tmp_path, {"tmux", "git", "python3"} - {missing})
 
     assert done.returncode == 1, "a machine without it must not become a host"
     assert missing in done.stderr, "the operator has to be told which tool"
 
 
-def test_the_check_installs_nothing_on_a_machine_that_already_has_them(tmp_path):
-    """An image that carries all of them must not pay for an apt transaction — and
-    must not need passwordless sudo at all to enrol."""
-    import subprocess
+def test_a_tool_cheesehost_placed_is_as_good_as_the_systems(tmp_path):
+    """An image with no tmux, git or python3 of its own enrols on the ones
+    cheesehost placed under its runtime directory."""
+    for tool, directory in (("tmux", "tmux"), ("git", "git"), ("python3", "python")):
+        placed = tmp_path / ".cheese/runtime" / directory / "bin" / tool
+        placed.parent.mkdir(parents=True)
+        placed.write_text("#!/bin/sh\n")
+        placed.chmod(0o755)
 
-    calls = tmp_path / "sudo-calls"
-    harness = f"""
-command() {{ return 0; }}
-sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
-{_tool_check_block()}
-"""
-    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+    done = _run_tool_check(tmp_path, set())
 
     assert done.returncode == 0, done.stderr
-    assert not calls.exists(), "nothing should have been installed"
 
 
-def test_a_machine_without_ip_is_given_the_package_that_has_it(tmp_path):
-    """Every session on a Cloud machine has a network of its own, and the
-    command is not the package's name."""
-    import subprocess
-
-    calls = tmp_path / "sudo-calls"
-    harness = f"""
-command() {{ [ "$2" = ip ] && return 1; return 0; }}
-sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
-{_tool_check_block()}
-"""
-    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
-
-    assert done.returncode == 0, done.stderr
-    assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q iproute2"
-
-
-def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
-    """A machine is reported running while cloud-init still upgrades its
-    packages and holds the dpkg lock; an install then fails, and the machine
-    is given up for a provider failure it is not."""
-    import subprocess
-
+def _format_block() -> str:
+    """The data disk step from finding the disk through formatting it."""
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=True, origin="http://cheese.test", token="tok", device_id="dev"
     )
-    start = script.index("if command -v cloud-init")
-    block = script[start : script.index("\ndone", start) + len("\ndone")]
-    calls = tmp_path / "calls"
-    harness = f"""
-command() {{ [ "$2" = ip ] && return 1; return 0; }}
-cloud-init() {{ printf 'cloud-init %s\\n' "$*" >> {calls}; }}
-sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
-{block}
+    start = script.index('tools="$HOME/.cheese/runtime/host-tools"')
+    return script[start : script.index("uuid=", start)]
+
+
+def _run_format(home, kernel, confs):
+    import subprocess
+
+    tools = home / ".cheese/runtime/host-tools"
+    (tools / "bin").mkdir(parents=True)
+    (tools / "mkfs").mkdir()
+    (tools / "bin/mkfs.xfs").write_text("#!/bin/sh\n")
+    (tools / "bin/mkfs.xfs").chmod(0o755)
+    for conf in confs:
+        (tools / "mkfs" / conf).write_text("")
+    calls = home / "calls"
+    harness = f"""set -eu
+HOME={home}
+disk=/dev/sdb
+uname() {{ echo {kernel}; }}
+sudo() {{ [ "$2" = blkid ] || printf '%s\\n' "$*" >> {calls}; }}
+{_format_block()}
 """
-    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+    done = subprocess.run(
+        ["/bin/bash", "-c", harness], capture_output=True, text=True, timeout=10
+    )
+    return done, (calls.read_text() if calls.exists() else "")
+
+
+LTS = [
+    "lts_5.4.conf",
+    "lts_5.10.conf",
+    "lts_5.15.conf",
+    "lts_6.1.conf",
+    "lts_6.12.conf",
+]
+
+
+@pytest.mark.parametrize(
+    ("kernel", "chosen"),
+    [
+        ("6.8.0-45-generic", "lts_6.1.conf"),
+        ("5.15.0-118-generic", "lts_5.15.conf"),
+        ("6.12.113+deb13-cloud-amd64", "lts_6.12.conf"),
+        ("7.0.1", "lts_6.12.conf"),
+    ],
+)
+def test_the_data_disk_is_formatted_for_the_machines_kernel(tmp_path, kernel, chosen):
+    """A newer mkfs.xfs's defaults can make a filesystem an older kernel cannot
+    mount: the disk gets the features of the newest long-term kernel that is
+    not newer than the machine's own."""
+    done, calls = _run_format(tmp_path, kernel, LTS)
 
     assert done.returncode == 0, done.stderr
-    assert calls.read_text().splitlines()[:2] == [
-        "cloud-init status --wait",
-        "sudo -n apt-get install -y -q iproute2",
-    ]
+    assert "-c options=" in calls, calls
+    assert calls.split("options=")[1].split()[0].endswith(f"/mkfs/{chosen}"), calls
 
 
-def test_bootstrap_is_valid_shell():
+def test_a_host_without_the_platforms_mkfs_formats_nothing(tmp_path):
+    """The machine's own mkfs.xfs, if it has one, is not a substitute: the
+    disk is formatted with the build the platform pinned or not at all."""
+    import subprocess
+
+    calls = tmp_path / "calls"
+    harness = f"""set -eu
+HOME={tmp_path}
+disk=/dev/sdb
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+{_format_block()}
+"""
+    done = subprocess.run(
+        ["/bin/bash", "-c", harness], capture_output=True, text=True, timeout=10
+    )
+
+    assert done.returncode == 1
+    assert "mkfs.xfs" in done.stderr
+    assert not calls.exists(), "nothing may be formatted"
+
+
+def test_a_kernel_older_than_every_feature_set_formats_nothing(tmp_path):
+    done, calls = _run_format(tmp_path, "4.9.0", ["lts_5.4.conf", "lts_6.1.conf"])
+
+    assert done.returncode == 1
+    assert "kernel 4.9" in done.stderr
+    assert calls == "", "nothing may be formatted"
+
+
+@pytest.mark.parametrize("sandbox_disk", [False, True])
+def test_bootstrap_is_valid_shell(sandbox_disk):
     """The script is built from an f-string, so a mis-escaped brace turns into a
     syntax error that would only surface on a real machine."""
     import subprocess
 
     script = enrollment.bootstrap_script(
-        origin="http://cheese.test", token="tok", device_id="dev"
+        sandbox_disk=sandbox_disk,
+        origin="http://cheese.test",
+        token="tok",
+        device_id="dev",
     )
     checked = subprocess.run(
         ["bash", "-n"], input=script, text=True, capture_output=True, timeout=30
     )
     assert checked.returncode == 0, checked.stderr
+
+
+async def test_a_pool_host_is_enrolled_with_the_data_disk_it_set_up(monkeypatch):
+    service, calls = build_service(monkeypatch)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert "drive-scsi1" in calls[0]["script"]
+    assert machine.device_id == "dev123"
+    assert machine.sandbox_disk_gb == 68
+
+
+async def test_a_pool_host_with_no_data_disk_is_not_enrolled(monkeypatch):
+    """No sandbox runs without a disk limit, and the limit needs the disk:
+    a host without one could take no sandbox, so it never joins the pool."""
+    service, _ = build_service(monkeypatch, bootstrap=lambda: "Connected.")
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert machine.device_id is None
+    assert machine.enroll_attempts == 1
+    assert "no data disk" in machine.enroll_error
+
+
+async def test_a_whole_vm_is_enrolled_without_a_data_disk(monkeypatch):
+    service, calls = build_service(monkeypatch, bootstrap=lambda: "Connected.")
+    machine = make_machine(whole_machine=True)
+
+    await service.enroll(machine)
+
+    assert "drive-scsi1" not in calls[0]["script"]
+    assert machine.device_id == "dev123" and machine.sandbox_disk_gb is None
+
+
+def test_a_machine_whose_data_disk_is_missing_refuses_to_enrol(tmp_path):
+    """The data disk step on a machine with no scsi1 disk: it stops the
+    enrollment and says why, before anything is formatted or mounted."""
+    import subprocess
+
+    calls = tmp_path / "sudo-calls"
+    script = enrollment.bootstrap_script(
+        sandbox_disk=True, origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    start = script.index('disk=""')
+    block = script[start : script.index("CHEESE_SANDBOX_DISK_BYTES", start)]
+    harness = f"""set -eu
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+shopt -s nullglob
+{block}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 1
+    assert "no data disk" in done.stderr
+    assert not calls.exists(), "nothing may be formatted or mounted"
 
 
 @pytest.mark.parametrize("already_running", [False, True])
@@ -602,7 +734,10 @@ def test_enrollment_runs_with_the_identity_it_just_wrote(tmp_path, already_runni
     )
     connector.chmod(0o755)
     script = enrollment.bootstrap_script(
-        origin="https://cheese.test", token="new-token", device_id="new-device"
+        sandbox_disk=False,
+        origin="https://cheese.test",
+        token="new-token",
+        device_id="new-device",
     )
     start = script.index('cat > "$HOME/.config/cheese/config.json"')
     end = script.index('echo "cheese.service active"')
@@ -635,7 +770,10 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
 
     monkeypatch.setattr(enrollment.settings, "microcloud_direct_control", direct)
     script = enrollment.bootstrap_script(
-        origin="https://cheese.test/api", token="test-token", device_id="test-device"
+        sandbox_disk=False,
+        origin="https://cheese.test/api",
+        token="test-token",
+        device_id="test-device",
     )
     config = json.loads(script.split("<<'CHEESE_CONFIG_EOF'\n", 1)[1].split("\n", 1)[0])
     assert config["base"] == "https://cheese.test/api/connector"

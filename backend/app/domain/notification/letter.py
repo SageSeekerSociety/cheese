@@ -5,7 +5,7 @@
 收件人是在自己的邮箱里读到它的，那里没有平台的任何上下文。所以这封信要单独站得
 住：发生了什么（标题）、原话是什么（引文）、在哪儿（项目、房间、设备）、点哪里回去
 处理（按钮直达那个房间）。措辞跟站内通知同一套 ——
-`frontend/src/i18n/messages/zh-CN/notifications.json` 和各个 `Render*Notification`
+`frontend/src/i18n/messages/zh-CN/notifications/` 和各个 `Render*Notification`
 组件说的那句话，人在邮件里读到的、在收件箱里读到的是同一句。
 
 `payload` 的形状按类型各不相同，下面按类型取字；认不出来的类型退回到一句类型的人
@@ -69,7 +69,7 @@ _HEADLINES: Final[dict[str, str]] = {
     "THREAD_REPLY": "你参与的支线有新回复",
     "REACTION": "有人对你的内容做出了反应",
     "PROJECT_INVITE": "你收到了项目邀请",
-    "DEADLINE_REMIND": "有一个截止时间快到了",
+    "PROJECT_TRANSFER": "你收到了项目转让",
     "DEVICE_IN_USE": "有 AI 队友开始在你的设备上工作",
 }
 
@@ -102,7 +102,7 @@ class Letter:
     headline: str
     #: 别人的原话（芝士的问题另有标题位，不重复放这里）。
     quote: str = ""
-    #: (标签, 值)，比如 ("房间", "登录页改版")。
+    #: (标签, 值)，比如 ("频道", "登录页改版")。
     details: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     action: str = "到芝士里查看"
     link: str = ""
@@ -153,13 +153,29 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             subject=f"{agent} 问你：{_clip(question, _SUBJECT_LIMIT)}"
             if question
             else f"{agent} 有一个问题待你回答",
-            eyebrow=f"{agent} 在等你回答，这一轮已暂停",
+            eyebrow=f"{agent} 在等你回答，你回答后它接着做",
             headline=question or "有一个问题待你回答",
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="去回答",
             link=link,
         )
 
+    if type_ == "MENTION" and _text(payload, "documentId"):
+        # 文档正文里的一个 @（`api.doc_mentions`）：在哪份文档，比在哪个频道要紧。
+        who = _text(payload, "authorName") or _text(payload, "author") or "有人"
+        title = _text(payload, "documentTitle")
+        headline = (
+            f"{who} 在文档「{title}」提到了你" if title else f"{who} 在文档里提到了你"
+        )
+        return Letter(
+            subject=headline,
+            eyebrow="有人提到了你",
+            headline=headline,
+            quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
+            details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
+            action="查看文档",
+            link=link,
+        )
     if type_ in ("MENTION", "THREAD_REPLY") and room:
         # 频道里的一条消息（`agent.mentions`）：讨论区的 @ 没有 `topicTitle`，走下面
         # 那一句通用的。
@@ -179,13 +195,45 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ in ("TASK_NOTICE", "TASK_DUE_SOON"):
+        # 空间里一道题目上的事（`task_notices`）：那句话就是标题，按钮去题目页。
+        content = _text(payload, "content") or "题目有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow=_text(payload, "spaceName") or "题目",
+            headline=content,
+            details=tuple(
+                (k, v)
+                for k, v in (
+                    ("空间", _text(payload, "spaceName")),
+                    ("题目", _text(payload, "taskName")),
+                )
+                if v
+            ),
+            action="查看题目",
+            link=link,
+        )
+
+    if type_ == "ASSISTANT_NOTICE":
+        # 个人芝士自己做的事（`routine.personal`）：那句话就是标题，芝士说的放引文，
+        # 按钮打开那段对话。
+        content = _text(payload, "content") or "芝士有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow="你的芝士",
+            headline=content,
+            quote=_clip(_text(payload, "quote"), _QUOTE_LIMIT),
+            action="查看对话" if _text(payload, "assistantConversation") else "查看",
+            link=link,
+        )
+
     if type_ == "ROOM_NOTICE":
         content = _text(payload, "content") or "平台有一条提示"
         return Letter(
             subject=_clip(content, _SUBJECT_LIMIT),
             eyebrow=f"「{room}」需要你处理" if room else "需要你处理",
             headline=content,
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="打开房间",
             link=link,
         )
@@ -250,8 +298,11 @@ def _dark_css() -> str:
     return f"@media (prefers-color-scheme:dark){{{body}}}"
 
 
-def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
-    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。"""
+def _page(
+    *, title: str, preview: str, card: list[str], why: str, inbox: bool = True
+) -> str:
+    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。
+    ``inbox`` 时来由后面接一个「查看全部通知」：一封不是从通知来的信不接。"""
     c = _LIGHT
     e = html.escape
     base = settings.frontend_url.rstrip("/")
@@ -283,8 +334,13 @@ def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
             "</td></tr>",
             f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
             f'font-size:12px;line-height:20px;color:{c["faint"]};">{e(why)}'
-            f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
-            f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
+            + (
+                f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
+                f'style="color:{c["faint"]};">查看全部通知</a>'
+                if inbox
+                else ""
+            )
+            + "</td></tr>",
             "</table></td></tr></table></body></html>",
         ]
     )

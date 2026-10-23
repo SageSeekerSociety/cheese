@@ -1,10 +1,421 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
+import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: no test depends on another, and one CI worker still runs them one
 // at a time.
 test.describe.configure({ mode: 'parallel' });
+
+// These are real catalog fixtures, not whatever tasks the shared demo user has.
+// The frame indices are the registered collapsed-task row and page-form row in
+// frontend/src/views/demo/catalogRail.ts. No source-module imports are needed.
+test.describe('sidebar channel row geometry', () => {
+  type Box = { x: number; y: number; width: number; height: number };
+
+  async function boxOf(target: Locator): Promise<Box> {
+    const box = await target.boundingBox();
+    expect(box, 'the measured control must have a rendered box').not.toBeNull();
+    return box!;
+  }
+
+  function expectSeparate(a: Box, b: Box) {
+    const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+    const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+    expect(overlapX <= 0.5 || overlapY <= 0.5, 'independent row contents must not overlap').toBe(true);
+  }
+
+  function expectStationary(before: Box, after: Box) {
+    for (const edge of ['x', 'y', 'width', 'height'] as const) {
+      expect(Math.abs(after[edge] - before[edge]), `revealing more must not change ${edge}`).toBeLessThanOrEqual(0.5);
+    }
+  }
+
+  // PinnedRows/RootRow render their own v-list (which carries the nav's horizontal
+  // padding); TopicRailRow is mounted as a bare v-list-item. Comparing absolute title
+  // x across frames would then charge that host padding to the row. Measure the title
+  // relative to the row it belongs to instead — no guessed pixel compensation.
+  async function titleOffsetInRow(title: Locator): Promise<number> {
+    return title.evaluate(el => {
+      const row = el.closest('.v-list-item');
+      if (!row) throw new Error('title is not inside a v-list-item');
+      return el.getBoundingClientRect().x - row.getBoundingClientRect().x;
+    });
+  }
+
+  async function expectHitSurface(target: Locator) {
+    // Check inside the whole button, not only its tiny icon at the centre.
+    // A visually exposed but covered button is not a usable touch target.
+    const hits = await target.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return [0.25, 0.5, 0.75].flatMap(x => [0.25, 0.5, 0.75].map(y => {
+        const hit = document.elementFromPoint(r.left + r.width * x, r.top + r.height * y);
+        return hit !== null && el.contains(hit);
+      }));
+    });
+    expect(hits).toEqual(Array(9).fill(true));
+  }
+
+  // Dev/nginx rewrite /demo/* to demo.html; Vite preview has no such
+  // middleware. Serve that same built document at the catalog's addresses in both
+  // environments, preserving the pathname/query consumed by demo-main.ts.
+  async function serveDemo(page: Page, entry: string) {
+    await page.route(new RegExp(`/demo/catalog/${entry}(/frame/\\d+)?(\\?|$)`), async route => {
+      if (route.request().resourceType() !== 'document') return route.continue();
+      const url = new URL(route.request().url());
+      url.pathname = '/demo.html';
+      const response = await route.fetch({ url: url.href });
+      await route.fulfill({ response });
+    });
+  }
+
+  // A frame is addressed by its position in the entry's list of states, and entries
+  // gain and lose states as the component changes: a number written here then
+  // measures some other state. So a state is named, and its position read off the
+  // entry's own page, where each case shows its name and its #position.
+  const positions = new Map<string, Map<string, number>>();
+  async function stateIndex(page: Page, entry: string, state: string): Promise<number> {
+    if (!positions.has(entry)) {
+      await serveDemo(page, entry);
+      await page.goto(`/demo/catalog/${entry}`);
+      const heads = page.locator('.catalog-case-head');
+      await expect(heads.first()).toBeVisible({ timeout: 30_000 });
+      const byName = new Map<string, number>();
+      for (const head of await heads.all()) {
+        const name = (await head.locator('.catalog-case-name').innerText()).trim();
+        const index = Number((await head.locator('.catalog-case-index').innerText()).trim().slice(1)) - 1;
+        byName.set(name, index);
+      }
+      positions.set(entry, byName);
+    }
+    const index = positions.get(entry)!.get(state);
+    expect(index, `catalog ${entry} has no state named 「${state}」`).not.toBeUndefined();
+    return index!;
+  }
+
+  // Any catalog entry, not only the channel row: the alignment contracts below compare
+  // independently rendered components, and each has its own frame id.
+  async function catalogFrame(page: Page, entry: string, state: string, theme = 'light') {
+    const index = await stateIndex(page, entry, state);
+    await serveDemo(page, entry);
+    await page.goto(`/demo/catalog/${entry}/frame/${index}?theme=${theme}&motion=off&bg=canvas`);
+    await expect(page.locator('.frame-page')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  }
+
+  // Give the standalone frame the same constrained width as a sidebar rather than a
+  // whole desktop viewport.
+  async function narrowFrame(page: Page) {
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+  }
+
+  async function catalogRow(page: Page, state: string, theme = 'light') {
+    await catalogFrame(page, 'topic-rail-row', state, theme);
+    const row = page.locator('.frame-page .topic-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toBeVisible();
+    return row;
+  }
+
+  test('task arrow precedes the name and revealing more neither shifts nor covers the name or light', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const theme of ['light', 'dark']) {
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯', theme);
+      // The standalone frame supplies real component markup; give it the same
+      // constrained width as a sidebar rather than a whole desktop viewport.
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await page.mouse.move(1000, 700);
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const actions = row.locator('.row-actions');
+      const more = row.locator('.row-actions__btn');
+      await expect(light).toHaveCount(1);
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(actions).toHaveCSS('opacity', '0');
+      const before = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(before[0].x + before[0].width).toBeLessThanOrEqual(before[1].x + 0.5);
+
+      await row.hover();
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      const shown = await Promise.all([arrow, title, light, more].map(boxOf));
+      expectStationary(before[1], shown[1]);
+      expectStationary(before[2], shown[2]);
+      expectSeparate(shown[0], shown[1]);
+      expectSeparate(shown[0], shown[3]);
+      await expectHitSurface(arrow);
+      await expectHitSurface(more);
+
+      await page.mouse.move(1000, 700);
+      await expect(actions).toHaveCSS('opacity', '0');
+      expectStationary(before[1], await boxOf(title));
+      expectStationary(before[2], await boxOf(light));
+    }
+  });
+
+  test.describe('400px touch page', () => {
+    test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
+
+    // Page form with a real subtree and a collapsed yellow task block.
+    test('subtree and task controls each have separate hittable 44px targets', async ({ page }) => {
+      const row = await catalogRow(page, '手机：两个独立折叠入口');
+      const subtree = row.locator('.subtree-toggle');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
+      await expect(subtree).toHaveCount(1);
+      // The subtree is expanded here; only the task block is collapsed.
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const rowBox = await boxOf(row);
+      expect(rowBox.height).toBeGreaterThanOrEqual(44);
+      const boxes = await Promise.all([subtree, arrow, title, light, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (const target of [boxes[0], boxes[1], boxes[4]]) {
+        expect(target.x).toBeGreaterThanOrEqual(0);
+        expect(target.x + target.width).toBeLessThanOrEqual(400);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [subtree, arrow, more]) {
+        await expectHitSurface(target);
+        // Catalog props are controlled: observe the actual browser-delivered
+        // click rather than expecting an unhandled emit to update the fixture.
+        await target.evaluate(el => el.addEventListener('click', () => {
+          el.setAttribute('data-layout-clicked', 'true');
+        }, { once: true }));
+        await target.tap();
+        await expect(target).toHaveAttribute('data-layout-clicked', 'true');
+      }
+      expectStationary(boxes[2], await boxOf(title));
+      expectStationary(boxes[3], await boxOf(light));
+    });
+  });
+
+  // 触屏不等于「整页形态」。桌面宽度、但输入是手指的机器（触屏笔记本）上，⋯ 也必须
+  // 常驻、行高至少 44px，同时保持紧凑的 16px 前置图标槽位而不把文字挤偏。
+  test.describe('desktop-width touch', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('hover:none at desktop width keeps ⋯ resident and controls separate', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      // The collapsed row with a yellow task light and menuOpen=false; the
+      // task-only state stays untouched because it is the alignment control.
+      const row = await catalogRow(page, '任务块收起：状态合成一盏灯');
+      await narrowFrame(page);
+
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'this contract is about touch input, not page form'
+      ).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      // The row is NOT the page form: page remains false at desktop width.
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const actions = row.locator('.row-actions');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
+      const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [arrow, more]) await expectHitSurface(target);
+      // A public channel with tasks gets no redundant #; the task arrow is the only mark.
+      await expect(row.locator('.row-glyph')).toHaveCount(0);
+    });
+
+    // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
+    // controls, not a light, and do not assume the task arrow is collapsed.
+    test('both fold controls keep separate targets when the row is expanded', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      const row = await catalogRow(page, '同层：子频道和任务都能折叠');
+      await narrowFrame(page);
+      expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const subtree = row.locator('.subtree-toggle');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(subtree).toHaveCount(1);
+      await expect(arrow).toHaveCount(1);
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
+
+      const boxes = await Promise.all([subtree, arrow, title, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [subtree, arrow, more]) await expectHitSurface(target);
+    });
+  });
+
+  // 单图标行（只有 #、只有子话题折叠、或只有任务折叠）不留多余的双图标空槽，
+  // 同层标题从同一条紧凑左缘开始；同时有子话题和任务两个折叠按钮的行，两个按钮与标题互不重叠。
+  test('same-level single-control rows share one tight left edge without empty dual-slot gap', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const cases = [
+      { state: '有队友在干活', children: false, tasks: false },
+      { state: '同层：只有子频道', children: true, tasks: false },
+      { state: '同层：只有任务', children: false, tasks: true },
+    ];
+    const lefts: number[] = [];
+    for (const item of cases) {
+      const row = await catalogRow(page, item.state);
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await expect(row.locator('.subtree-toggle')).toHaveCount(item.children ? 1 : 0);
+      await expect(row.locator('.task-fold__btn')).toHaveCount(item.tasks ? 1 : 0);
+      lefts.push((await boxOf(row.locator('.topic-title'))).x);
+    }
+    expect(Math.max(...lefts) - Math.min(...lefts), `title left edges: ${lefts.join(', ')}`).toBeLessThanOrEqual(0.5);
+
+    const dual = await catalogRow(page, '同层：子频道和任务都能折叠');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+    const [subBox, taskBox, titleBox] = await Promise.all([
+      boxOf(dual.locator('.subtree-toggle')),
+      boxOf(dual.locator('.task-fold__btn')),
+      boxOf(dual.locator('.topic-title')),
+    ]);
+    expectSeparate(subBox, taskBox);
+    expectSeparate(taskBox, titleBox);
+  });
+
+  // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。
+  test('private channel keeps its lock and its private hint while tasks are collapsible', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const row = await catalogRow(page, '私密频道有任务');
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+
+    const glyph = row.locator('.row-glyph');
+    await expect(glyph).toHaveCount(1);
+    await expect(glyph).toHaveClass(/mdi-lock-outline/);
+    await expect(glyph).toHaveAttribute('title', '私密频道');
+    const arrow = row.locator('.task-fold__btn');
+    await expect(arrow).toHaveCount(1);
+    const [glyphBox, arrowBox] = await Promise.all([boxOf(glyph), boxOf(arrow)]);
+    expectSeparate(glyphBox, arrowBox);
+  });
+
+  // 置顶层和频道层用的不是同一个组件，但「左边一列、文字一列」是同一条视觉契约：
+  // 总览、资料库、综合和普通频道的标题必须从同一条竖线开始。
+  test('pinned pages, 综合 and a normal channel share one title left edge', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const offsets: number[] = [];
+    const collect = async (titles: Locator[]) => {
+      for (const title of titles) offsets.push(await titleOffsetInRow(title));
+    };
+
+    await catalogFrame(page, 'topic-rail-pinned', '站在总览上');
+    await narrowFrame(page);
+    const pinned = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(pinned).toHaveCount(2); // 总览、资料库
+    await collect(await pinned.all());
+
+    await catalogFrame(page, 'topic-rail-root', '站在综合里');
+    await narrowFrame(page);
+    const root = page.locator('.frame-page .pinned-row .v-list-item-title');
+    await expect(root).toHaveCount(1);
+    await collect([root]);
+
+    const row = await catalogRow(page, '有队友在干活');
+    await narrowFrame(page);
+    await collect([row.locator('.v-list-item-title')]);
+
+    expect(offsets).toHaveLength(4);
+    expect(
+      Math.max(...offsets) - Math.min(...offsets),
+      `title offsets inside their rows: ${offsets.join(', ')}`
+    ).toBeLessThanOrEqual(0.5);
+  });
+
+  // 任务行和「展开其余」那一行是同一块里的两种行：同一个深度上，字必须从同一个 x
+  // 开始。桌面走普通 context；触屏走真实 hasTouch 上下文，并显式确认两条媒体查询
+  // 都成立，而不是只发一次 CDP 就假定它生效。
+  async function expectTaskMoreAligned(page: Page, mode: string) {
+    for (const depth of [0, 1]) {
+      await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? '收着' : '挂在子频道下面');
+      await narrowFrame(page);
+      const more = page.locator('.frame-page .rail-more__label');
+      await expect(more).toHaveCount(1);
+      const moreX = (await boxOf(more)).x;
+
+      await catalogFrame(page, 'topic-rail-task-row', depth === 0 ? '频道下面的任务' : '子频道下面的任务');
+      await narrowFrame(page);
+      const task = page.locator('.frame-page .rail-task__title');
+      await expect(task).toHaveCount(1);
+      const taskX = (await boxOf(task)).x;
+
+      expect(Math.abs(moreX - taskX), `depth ${depth} (${mode}): more=${moreX}, task=${taskX}`).toBeLessThanOrEqual(
+        0.5
+      );
+    }
+  }
+
+  test('task and "more" rows share one left edge at each depth (desktop)', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expectTaskMoreAligned(page, 'desktop');
+  });
+
+  test.describe('task/more left edge (touch context)', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('task and "more" rows share one left edge at each depth (touch)', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'touch context must really expose hover:none'
+      ).toBe(true);
+      expect(
+        await page.evaluate(() => matchMedia('(pointer: coarse)').matches),
+        'touch context must really expose pointer:coarse'
+      ).toBe(true);
+      await expectTaskMoreAligned(page, 'touch');
+    });
+  });
+});
 
 // 表单字段的几何不变量。
 //
@@ -104,88 +515,6 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
     }
   });
 }
-
-type Defect = { kind: string; what: string };
-
-/** 一页表单把字段画成了哪一套 —— 量的人得先知道，因为「字段」和「标签」的盒子在两套
- *  里不是同一个选择器，而**判据**是同一个。
- *
- *  平台上只有两套：
- *
- *    * `VUETIFY_FIELDS` —— Vuetify 的 outlined 控件。真正画出来的 label 住在描边的
- *      缺口里（`.v-field__outline .v-field-label`），而字段是 `.v-field` 那个盒子。
- *    * `TOKEN_FIELDS` —— 平台自己用令牌画的表单（反馈提交页，见
- *      `components/feedback/SubmitFeedbackForm.vue` 的文件头：它**故意**不用 Vuetify
- *      的输入框）。那里一对「标签 + 控件」是 `.sb-field`，标签在控件上方一行，是普通
- *      的 `.sb-label`，没有骑在边框上的那一半。
- *
- *  两套要守的是同一件事：**标签不压到别的字段上、也不被滚动容器裁掉**。2026-09 换成
- *  令牌之后这条用例红过一次，红在「`.sb-form` 里一个 `.v-field` 都没有」——量不到字段
- *  时这个函数会当场炸（空范围永远返回「没有缺陷」），而那不是缺陷、是**画法变了**。
- *  把画法变成参数，判据一个字不用改。 */
-type FieldDrawing = { field: string; label: string };
-const VUETIFY_FIELDS: FieldDrawing = { field: '.v-field', label: '.v-field__outline .v-field-label' };
-const TOKEN_FIELDS: FieldDrawing = { field: '.sb-field', label: '.sb-label' };
-
-async function fieldDefects(scope: Locator, drawing: FieldDrawing = VUETIFY_FIELDS): Promise<Defect[]> {
-  return scope.evaluate((root: Element, { field, label: labelSelector }: FieldDrawing) => {
-    const out: { kind: string; what: string }[] = [];
-    const drawn = (el: Element) => {
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    };
-
-    const boxes = [...root.querySelectorAll(field)].filter(drawn);
-    // 量不到字段就是范围选错了。空范围永远返回「没有缺陷」，是一条只会绿的断言，
-    // 所以这里炸掉而不是放过：`.v-overlay__content` 的第一个是 tooltip 的浮层而
-    // 不是对话框，这一条就是这么发现的。
-    if (!boxes.length) throw new Error('这个范围里一个字段都没有，这条断言等于没做');
-
-    const nameOf = (el: Element) =>
-      (el.querySelector('.v-field-label, .sb-label')?.textContent || '').trim() || '(无标签字段)';
-    const scrollerOf = (el: Element) => {
-      for (let p = el.parentElement; p; p = p.parentElement) {
-        const overflow = getComputedStyle(p).overflowY;
-        if (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') return p;
-      }
-      return null;
-    };
-
-    // outlined 变体真正画出来的那个 label 住在描边的缺口里；字段内部还有一个同名
-    // 副本，是 visibility:hidden 的占位，量它只会得到错的坐标。（令牌画的那一套里
-    // 标签本来就是元素的文字，没有这种副本，这个过滤对它无害。）
-    const labels = [...root.querySelectorAll(labelSelector)].filter(
-      (el) => getComputedStyle(el).visibility !== 'hidden' && drawn(el)
-    );
-
-    for (const label of labels) {
-      const own = label.closest(field);
-      const text = (label.textContent || '').trim();
-      const lr = label.getBoundingClientRect();
-
-      for (const box of boxes) {
-        if (box === own) continue;
-        const br = box.getBoundingClientRect();
-        // 1px 容差：边框相接不算压上，真叠进去才算。
-        const hit = lr.left < br.right && lr.right > br.left && lr.top < br.bottom - 1 && lr.bottom > br.top + 1;
-        if (hit) out.push({ kind: 'overlap', what: `「${text}」压在「${nameOf(box)}」上` });
-      }
-
-      const scroller = scrollerOf(label);
-      const fr = own?.getBoundingClientRect();
-      if (scroller && fr) {
-        const sr = scroller.getBoundingClientRect();
-        // 只看「字段本身完整露着、label 却被切掉」。字段滚到视野外是正常的滚动，
-        // 不是缺陷。
-        const fieldFullyInView = fr.top >= sr.top - 0.5 && fr.bottom <= sr.bottom + 0.5;
-        if (fieldFullyInView && (lr.top < sr.top - 0.5 || lr.bottom > sr.bottom + 0.5))
-          out.push({ kind: 'clipped', what: `「${text}」被它所在的滚动容器裁掉` });
-      }
-    }
-    return out;
-  }, drawing);
-}
-
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
     await apiLogin(page);
@@ -668,7 +997,7 @@ const WARM_STEP_MS = 10_000;
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
-const TAB_PATHS = ['', 'members', 'knowledge', 'compute'];
+const TAB_PATHS = ['', 'members', 'docs', 'compute'];
 const VIEWPORT_SIZES = [
   // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到溢出
   // 不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度保持在
@@ -792,8 +1121,8 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   }
 });
 
-// 房间的输入框：输入框下面那一行按钮只会越加越多（附件、照片、清单、提问、提醒、
-// 交给芝士、发送）。触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
+// 房间的输入框：输入框下面那一行（「+」、麦克风、交给谁那颗队友头像、发送）。
+// 触屏上按钮之间要拉开、能点的范围要撑到 44×44，同样几颗在桌面
 // 上放得下，到手机上就会顶出输入框的边、或者互相盖住。所以这里在真触屏（pointer:
 // coarse）的手机宽度和桌面宽度各量一次：没有一颗伸出输入框，每一颗手指都点得中。
 test.describe('房间输入框：下面那一行放得下，手指点得中', () => {
@@ -818,7 +1147,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
         const r = el.getBoundingClientRect();
         const name = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').trim().slice(0, 16);
         if (r.left < edge.left - 0.5 || r.right > edge.right + 0.5) outside.push(`「${name}」${Math.round(r.left)}–${Math.round(r.right)}`);
-        // 挤不下时按钮先被压窄，字折成两行（「交给」竖着排），还没伸出去就已经坏了。
+        // 挤不下时按钮先被压窄，字折成两行（比如「还原原话」竖着排），还没伸出去就已经坏了。
         // 只量字（文字节点），图标和 Vuetify 的叠层不算行。
         const lines = new Set<number>();
         const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -871,11 +1200,11 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
       if (size.width < 960) await chatTab.click();
       await expect(page.locator('.composer-actions')).toBeVisible();
       // 有字时发送键才可点（禁用的按钮不接点击，量不出来）。只填不发。
-      await page.locator('.composer-input textarea:not([aria-hidden])').fill('量一下');
+      await page.locator('.composer-input .ProseMirror').fill('量一下');
       const got = await measureComposer(page);
       expect(got, `${size.width}：没找到输入框`).not.toBeNull();
       if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);
-      // 附件 + 交给芝士 + 发送，至少这三颗；一颗都没量到就是范围选错了。
+      // 「+」、队友头像、发送，至少这三颗；一颗都没量到就是范围选错了。
       expect(got!.count, `${size.width}`).toBeGreaterThanOrEqual(3);
       expect(got!.outside, `${size.width}：伸出输入框的按钮`).toEqual([]);
       expect(got!.wrapped, `${size.width}：被压窄、字折了行的按钮`).toEqual([]);
@@ -958,7 +1287,6 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     const paths = [
       '/users/settings/security',
       '/users/settings/profile',
-      '/users/settings/devices',
       `${projectPath}/settings/agents`,
     ];
     const seen: { path: string; left: number; width: number }[] = [];
@@ -1025,7 +1353,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
 // 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
 // 看这个，只有屏幕上量得出来。
-test('房间面板的「定时与触发」那一格铺满整条面板', async ({ page }) => {
+test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   const rows = await openFirstProject(page);

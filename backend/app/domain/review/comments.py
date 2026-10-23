@@ -133,7 +133,7 @@ class ReviewCommentService:
                 try:
                     read = await files.text(comment.path, "committed")
                     contents[comment.path] = read.get("content")
-                except Exception:  # noqa: BLE001 — a file gone from the version
+                except Exception:  # a file gone from the version
                     contents[comment.path] = None
             content = contents[comment.path]
             found[comment.id] = (
@@ -158,7 +158,7 @@ class ReviewCommentService:
             if comment.path not in raws:
                 try:
                     raws[comment.path] = (await files.raw(comment.path, "committed"))[0]
-                except Exception:  # noqa: BLE001 — a file gone from the version
+                except Exception:  # a file gone from the version
                     raws[comment.path] = None
             raw = raws[comment.path]
             there = raw is not None and await asyncio.to_thread(
@@ -222,7 +222,7 @@ class ReviewCommentService:
                 commit_sha = await ProjectFiles(
                     self._session, task.project_id, task.id
                 ).revision()
-            except Exception:  # noqa: BLE001 — a comment does not wait on the forge
+            except Exception:  # a comment does not wait on the forge
                 commit_sha = None
         comment = ReviewComment(
             task_id=task.id,
@@ -406,7 +406,7 @@ async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
         head = f"- [{row.id}] {_where(row)}"
         if parent is not None:
             said = f"，你上次说：{parent.outcome_note}" if parent.outcome_note else ""
-            head += f"（回复上一轮的批注「{parent.body}」{said}）"
+            head += f"（回复上次审阅时的批注「{parent.body}」{said}）"
         if comment_place.kind_of(row.path) != "line" and row.line_text:
             quote = (
                 row.line_text

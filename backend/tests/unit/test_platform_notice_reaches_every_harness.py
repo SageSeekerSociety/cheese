@@ -1,12 +1,13 @@
-"""A platform notice reaches the running turn on every harness, and only it.
+"""A platform notice reaches the session that is working, on every harness.
 
 The silence reminder, a doc edit, a note from another thread: each goes out as
-``ChatService.notify_running_turn`` → ``compute.steer(topic, text,
-expected_work_id=…)``, and the session core turns that into each harness's own
-mid-turn verb — Claude Code's ``steer`` written at the next tool boundary,
-Codex's ``send`` that its runner turns into ``turn/steer``, pi's ``steer``.
-The work id is the guard: a notice meant for a turn that has since been
-replaced must not land in the next one.
+``ChatService.notify_running_session`` → ``compute.steer(topic, text, …)``, and
+the session core turns that into each harness's own mid-work verb — Claude
+Code's ``steer`` written at the next tool boundary, Codex's ``send`` that its
+runner turns into ``turn/steer``, pi's ``steer``.
+
+What decides is the session: the seat this process holds whose runner says it
+is working. A seat whose session is idle hears nothing.
 
 Claude Code runs its real runner behind ``StubChannel``; Codex and pi run
 the real room sessions and session core against a runner that answers the
@@ -136,7 +137,7 @@ async def _working(runtime, session) -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("wire", [_claude_code, _codex, _pi], ids=lambda w: w.__name__)
-async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
+async def test_a_notice_reaches_the_working_session(tmp_path, wire):
     session, runtime, heard, _ = await wire(tmp_path)
     runtime.report_to(
         room_reader(events=AsyncMock(), activity=AsyncMock(), receipts=AsyncMock()),
@@ -144,35 +145,29 @@ async def test_a_notice_reaches_the_turn_it_was_meant_for(tmp_path, wire):
         memory=AsyncMock(),
     )
     register_input = AsyncMock()
-    work = uuid.uuid4()
     try:
+        # A seat whose session is not working hears nothing.
+        assert not await runtime.steer(
+            session.topic_id, "early", register_input=register_input
+        )
+
         await runtime.send(
             session,
             "检查一下",
             system_prompt="system",
-            work_id=work,
+            work_id=uuid.uuid4(),
             on_mark=lambda _: None,
             register_input=register_input,
         )
         await _working(runtime, session)
 
-        stale = await runtime.steer(
-            session.topic_id,
-            "stale",
-            expected_work_id=uuid.uuid4(),
-            register_input=register_input,
-        )
-        assert stale is False, "a notice for another turn must not land in this one"
         assert await runtime.steer(
-            session.topic_id,
-            NOTICE,
-            expected_work_id=work,
-            register_input=register_input,
+            session.topic_id, NOTICE, register_input=register_input
         )
         deadline = time.monotonic() + 8
         while not any(NOTICE in said for said in heard()):
             assert time.monotonic() < deadline, f"the session heard {heard()}"
             await asyncio.sleep(0.01)
-        assert not any("stale" in said for said in heard())
+        assert not any("early" in said for said in heard())
     finally:
         await runtime._detach(runtime._seat_of(session))

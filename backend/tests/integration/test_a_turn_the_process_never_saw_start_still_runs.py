@@ -135,7 +135,7 @@ class _Frames:
         while True:
             try:
                 self._queue.put(ws.receive_json())
-            except Exception:  # noqa: BLE001 — the socket is gone; so is its feed
+            except Exception:  # the socket is gone; so is its feed
                 return
 
     def next(self, within_s: float = 10.0) -> dict:

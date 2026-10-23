@@ -16,6 +16,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.integration.test_project_roles import _invite
 
 OWNER = "user-1"
 PERSON = session_auth_headers(OWNER)
@@ -192,6 +193,22 @@ def _proposal(name: str = "weekly-report", **extra) -> dict:
         "accepted": "用户说就这样",
         **extra,
     }
+
+
+def test_a_teammate_refused_a_decline_hears_whose_proposal_it_was(client):
+    """Declining is a person's call. The teammate that tries is told so in words
+    that name the teammate who proposed it — by its seat, which reads as the
+    name the project gave it — never a hard-coded 芝士."""
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+
+    refused = client.post(f"/skills/{skill['id']}/decline")
+
+    assert refused.status_code == 403, refused.text
+    error = refused.json()["error"]
+    assert f"<@{room_agent_seat(client, room)}>" in error["message"]
+    assert "芝士" not in error["message"]
 
 
 def test_a_declined_proposal_is_not_proposed_again_but_a_person_may_write_it(client):
@@ -538,3 +555,33 @@ def test_only_a_manager_rewrites_or_deletes_another_members_method(client):
     assert "skills/weekly-report/SKILL.md" in _shipped(project)
 
     assert client.delete(f"/skills/{skill['id']}", headers=PERSON).status_code == 200
+
+
+def test_naming_a_room_gives_a_person_no_skill_their_role_does_not(client):
+    """Writing the project's skills is ``configure_agents`` whichever door the
+    request comes in by: a person naming the room they speak from is still a
+    person, and a mentor's role does not hold it."""
+    project = _project(client)
+    room = _room(client, project)
+    _invite(client, project, "teacher", role="mentor", by=OWNER)
+    mentor = session_auth_headers("teacher")
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+
+    made = client.post(
+        f"/topics/{room}/skills",
+        json={**METHOD, "name": "mentor-made"},
+        headers=mentor,
+    )
+    changed = client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "导师改的"},
+        headers=mentor,
+    )
+
+    assert made.status_code == 403, made.text
+    assert changed.status_code == 403, changed.text
+    shipped = _shipped(project)
+    assert "skills/mentor-made/SKILL.md" not in shipped
+    assert "导师改的" not in shipped["skills/weekly-report/SKILL.md"]

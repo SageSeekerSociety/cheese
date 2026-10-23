@@ -18,7 +18,9 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtures'
 import { DOC_PANEL_ENTRIES } from './catalogPanelsDoc'
 import {
-  BUILD_LOG_BYTES,
+  CHANGES_ALL_PROPS,
+  CHANGES_BAR_PROPS,
+  CHANGES_CONTENT_PROPS,
   CHANGES_TASK,
   changesBundle,
   checklistAt,
@@ -28,18 +30,19 @@ import {
   docThreadsBundle,
   FILE_DIFFS,
   fileTreeRows,
-  loadBuildTail,
-  loadLsOutput,
   LONG_DIFF_LINES,
-  LS_OUTPUT_BYTES,
   PANEL_NAMES,
   previewBundle,
   projectFileProps,
-  ROUTINE_DRAFT,
+  ROUTINE_ACCEPTED,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
-  SITE_DONE,
-  SITE_WORKING,
+  SITE_AGENT_LABELS,
+  SITE_AGENTS,
+  SITE_EDIT_RECORD,
+  SITE_ONE_TURN,
+  SITE_RAW_RECORDS,
+  SITE_TURN_START,
   siteBundle,
   THREAD_ROWS,
   threadTime,
@@ -48,8 +51,11 @@ import {
 import { PREVIEW_PANEL_ENTRIES } from './catalogPanelsPreview'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
+import ChangesAllView from '@/components/panels/ChangesAllView.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
+import ChangesFileBar from '@/components/panels/ChangesFileBar.vue'
+import ChangesFileContent from '@/components/panels/ChangesFileContent.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
 import ChangesMoreMenu from '@/components/panels/ChangesMoreMenu.vue'
 import ChangesOpenFile from '@/components/panels/ChangesOpenFile.vue'
@@ -60,7 +66,10 @@ import PanelRoutines from '@/components/panels/PanelRoutines.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import ProjectFileView from '@/components/panels/ProjectFileView.vue'
-import SiteStepOutput from '@/components/panels/SiteStepOutput.vue'
+import SiteAgentTabs from '@/components/panels/SiteAgentTabs.vue'
+import SiteRecordRow from '@/components/panels/SiteRecordRow.vue'
+import SiteRecordTree from '@/components/panels/SiteRecordTree.vue'
+import SiteTurnHead from '@/components/panels/SiteTurnHead.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -69,15 +78,21 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'changes-diff-list',
     title: 'ChangesDiffList',
-    about: '「改动」默认那一面：这次改到的每个文件一段，差异连着往下排，段头写路径和增删，可以单独收起或打开。',
+    about: '「改动」默认那一面：这次改到的每个文件一段，段头写路径和增删，差异默认收着，点段头铺开。',
     file: 'src/components/panels/ChangesDiffList.vue',
     component: ChangesDiffList,
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '三个文件',
-        note: '新增、改过、删掉的各一份；git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        name: '三个文件，都收着',
+        note: '新增、改过、删掉的各一份，每一段只留段头：一件活改几十个文件是常态，先给「改了哪些东西」这一眼清单。',
         props: { diffs: FILE_DIFFS },
+        expect: 'docs/old-plan.md',
+      },
+      {
+        name: '铺开其中一段',
+        note: '铺开的那一段里是它的差异：git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        props: { diffs: FILE_DIFFS, expanded: new Set(['README.md']) },
         expect: '这个项目放本课程的课件和作业。',
       },
       {
@@ -191,6 +206,105 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'changes-file-bar',
+    title: 'ChangesFileBar',
+    about: '改动那一格打开一份文件时顶上那条横条：返回、这份文件、它的两面（差异 / 全文），以及能对它做的事。',
+    file: 'src/components/panels/ChangesFileBar.vue',
+    component: ChangesFileBar,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '打开着改过的一份',
+        note: '一头写着这件任务的状态，中间是路径和两面对切的开关，另一头是下载和版本菜单；没打开文件时整条不画。',
+        props: CHANGES_BAR_PROPS,
+        expect: '差异',
+      },
+      {
+        name: '改到一半',
+        note: '有没保存的改动时路径后面点一颗点，切到全文面就摆出保存；没改动之前那颗按钮是灰的。',
+        props: { ...CHANGES_BAR_PROPS, effectiveView: 'edit' as const, fileDirty: true },
+        expect: '保存',
+      },
+      {
+        name: '打不开的一份',
+        note: '二进制、图片、过大的文件没有编辑面，也就没有保存：这里摆一句「只读」，省得人以为是自己没权限。',
+        props: { ...CHANGES_BAR_PROPS, fileReadOnly: true },
+        expectSelector: '.changes-bar__ro',
+      },
+    ],
+  },
+  {
+    id: 'changes-file-content',
+    title: 'ChangesFileContent',
+    about: '改动那一格里打开着的那一份的正文：文档画成一页，文本按差异或全文出，图片、二进制、过大的各给一个说法。',
+    file: 'src/components/panels/ChangesFileContent.vue',
+    component: ChangesFileContent,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '改过的那一份',
+        note: '默认看差异：新增的行是新建的 README，一整个文件都算增。',
+        props: CHANGES_CONTENT_PROPS,
+        expect: '这个项目放本课程的课件和作业',
+      },
+      {
+        name: '一张图',
+        note: '图片没有文本差异可看，也不该拿去按文本编辑：直接把原图摆出来。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, openIsImage: true },
+        expectSelector: '.file-image-view img',
+      },
+      {
+        name: '二进制文件',
+        note: '解不出文本的文件说清是二进制，只给下载原文件这一条路。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileBinary: true, fileBytes: 40960 },
+        expect: '非文本文件，无法编辑',
+      },
+      {
+        name: '文件太大',
+        note: '超过上限的一份不往浏览器里搬，报一下有多大、让人下载下去看。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileTooLarge: true, fileBytes: 9437184 },
+        expect: '文件过大，无法在浏览器中打开',
+      },
+      {
+        name: '文档预览没开',
+        note: '这台机器没装文档渲染器时，不摆一页空白：说明这里看不了，下载原文件看。',
+        props: { ...CHANGES_CONTENT_PROPS, openIsDocument: true, docRendererMissing: true },
+        expect: '文档预览未启用',
+      },
+    ],
+  },
+  {
+    id: 'changes-all-view',
+    title: 'ChangesAllView',
+    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，每一段的差异默认收着，点段头铺开。',
+    file: 'src/components/panels/ChangesAllView.vue',
+    component: ChangesAllView,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '整支活改到的文件',
+        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列、每段只留段头；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
+        props: CHANGES_ALL_PROPS,
+        expect: '个文件 · +',
+      },
+      {
+        name: '铺开其中一段',
+        note: '要看哪一份就点哪一段的段头：那一段铺开，其余照旧收着。',
+        props: { ...CHANGES_ALL_PROPS, expanded: new Set(['docs/week-1.md']) },
+        expect: '习题答案：第 3、5、7、9 题',
+      },
+      {
+        name: '这一轮什么都没改',
+        note: '没有改动时收起来的不只是清单：一行总数和文件那几颗也一起收，只留一句「暂无改动」。',
+        props: { ...CHANGES_ALL_PROPS, treeFiles: [], diffByPath: new Map(), fileDiffs: [] },
+        expect: '暂无改动',
+      },
+    ],
+  },
+  {
     id: 'panel-changes-shell',
     title: 'PanelChanges',
     about: '任务页右侧「改动」那一格的薄壳：收 usePanelChanges 的整包，摊开递给 PanelChangesView。',
@@ -216,6 +330,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '取数那一层说这个项目没有代码仓库：一句话说清，不画一棵空树；树和打开的文件都是空的，横条上文件那半也不摆。',
         props: { changes: changesBundle(NO_REPO) },
         expect: '暂无代码仓库',
+      },
+      {
+        name: '现场工作区没及时响应',
+        note: '取数那一层退到了已提交版本：顶上一条中性说明和「重试现场」，差异照旧能看，不是红条。',
+        props: { changes: changesBundle({ liveFallback: 'committed' }) },
+        expect: '现场工作区没有及时响应，已切到已提交版本',
       },
     ],
   },
@@ -301,35 +421,35 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-routines',
     title: 'PanelRoutines',
-    about: '话题页右侧「定时与触发」那一格：这个房间的规则，新建、确认、暂停、看执行记录都从这里抛出去。',
+    about: '话题页右侧「例行事务」那一格：这个频道的规则，新建、暂停、看执行记录都从这里抛出去。',
     file: 'src/components/panels/PanelRoutines.vue',
     component: PanelRoutines,
     needs: ['vuetify', 'i18n'],
-    args: { defaultRoom: DEMO_TOPIC, userNames: PANEL_NAMES },
+    args: { defaultRoom: DEMO_TOPIC },
     states: [
       {
-        name: '一条在跑、一条等确认',
-        note: '芝士起草的那条排在最上面「等你确认」；在跑的那条写着下一次什么时候。',
-        props: { routines: [ROUTINE_DRAFT, ROUTINE_WEEKLY] },
-        expect: '等你确认',
+        name: '两条在跑',
+        note: '一条按时间跑（写着下一次什么时候），一条等频道里发生某件事。',
+        props: { routines: [ROUTINE_ACCEPTED, ROUTINE_WEEKLY] },
+        expect: '成果被采纳时',
       },
       {
         name: '展开了执行记录',
-        note: '最近两次：一次成了（写着做了什么），一次没成（写着为什么）。',
+        note: '最近三次：成了的那次写着交回的文件名，没能执行的那次把原因收在「原因 ▸」后面。',
         props: { routines: [ROUTINE_WEEKLY], runs: ROUTINE_RUNS, openId: ROUTINE_WEEKLY.id },
-        expect: '工作电脑没有连上',
+        expect: '原因',
       },
       {
-        name: '别人管的规则',
-        note: '这一条不归你管：行里不画按钮，只说清归谁管 —— 只读是说出来，不是偷偷禁用。',
-        props: { routines: [{ ...ROUTINE_WEEKLY, can_manage: false }] },
-        expect: '只有他和项目管理员能改',
+        name: '删不掉的那一条',
+        note: '这一条不归你管：别的动作都在行尾的 ⋯ 里，就是不画「删除」。',
+        props: { routines: [{ ...ROUTINE_WEEKLY, can_delete: false }] },
+        expectSelector: 'button[aria-label="更多操作"]',
       },
       {
         name: '还没有规则',
         note: '空的时候告诉人两条路：点「新建」，或者在频道里让芝士起草。',
         props: { routines: [] },
-        expect: '还没有定时或触发规则',
+        expect: '还没有例行事务',
       },
     ],
   },
@@ -343,20 +463,18 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     args: { topicId: DEMO_TOPIC, projectId: DEMO_PROJECT, memberNames: PANEL_NAMES, agentName: PANEL_NAMES.cheese },
     states: [
       {
-        name: '一轮正在跑',
-        note: '剧本第三步：开工作区、看一眼、写 README、提交推送；这一轮还在跑，组头上亮着「进行中」。',
+        name: '概览',
+        note: '示例数据：工具参数和输出可展开查看全文，思考只在原始记录中显示。',
         props: {
           site: siteBundle({ connected: true }),
-          working: true,
-          runningTurns: SITE_WORKING.running,
         },
-        expect: '进行中',
+        expect: '运行登录校验测试',
       },
       {
-        name: '一轮做完了',
-        note: '递了验收卡，这一轮收尾：组头写几步、用了多久，平台动作的圆点是实心的。',
-        props: { site: siteBundle({ transcript: SITE_DONE.site }) },
-        expect: 'docs: add a welcome note',
+        name: '原始记录',
+        note: '示例数据：每条原始记录保留身份和时刻，思考默认折叠，每条都能查看 JSON。',
+        props: { site: siteBundle({ viewMode: 'raw', connected: true }) },
+        expect: '思考',
       },
       {
         name: '读记录的时候',
@@ -370,6 +488,95 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这个房间还没人干过活：会话栏照常在顶上，底下一句话。',
         props: { site: siteBundle({ transcript: [] }) },
         expect: '暂无现场记录',
+      },
+    ],
+  },
+  {
+    id: 'site-record-row',
+    title: 'SiteRecordRow',
+    about: '同一条原始记录的可读展示和 JSON。',
+    file: 'src/components/panels/SiteRecordRow.vue',
+    component: SiteRecordRow,
+    needs: ['i18n'],
+    args: { block: SITE_RAW_RECORDS[1], loadImage: async () => '' },
+    states: [
+      { name: '概览', props: { raw: false }, note: '示例数据', expect: '运行登录校验测试' },
+      { name: '原始记录', props: { raw: true }, note: '示例数据', expect: '查看 JSON 原文' },
+      {
+        name: '平台记的一句点到成员',
+        props: { block: SITE_EDIT_RECORD, raw: false, memberNames: { 'demo-alice': 'Alice' } },
+        note: '示例数据：有人改了房间里 AI 队友读过的消息，句子里的成员按名册显示名字。',
+        expect: 'Alice 改了一条之前的消息',
+      },
+    ],
+  },
+  {
+    id: 'site-record-tree',
+    title: 'SiteRecordTree',
+    about: '工具调用下的相关记录，按原始父调用身份连接。',
+    file: 'src/components/panels/SiteRecordTree.vue',
+    component: SiteRecordTree,
+    needs: ['i18n'],
+    args: {
+      nodes: [{ block: SITE_RAW_RECORDS[1], children: [{ block: SITE_RAW_RECORDS[2], children: [] }] }],
+      loadImage: async () => '',
+    },
+    states: [
+      { name: '概览', props: { raw: false }, note: '示例数据', expect: '查看完整输出' },
+      { name: '原始记录', props: { raw: true }, note: '示例数据', expect: '查看 JSON 原文' },
+    ],
+  },
+  {
+    id: 'site-agent-tabs',
+    title: 'SiteAgentTabs',
+    about: '现场顶上按队友筛的那一排：一个房间里几个队友并行时，切一个看他做过什么；只有一个队友时整排不画。',
+    file: 'src/components/panels/SiteAgentTabs.vue',
+    component: SiteAgentTabs,
+    needs: ['i18n'],
+    args: { agents: SITE_AGENTS, labels: SITE_AGENT_LABELS, controls: 'demo-site-log' },
+    states: [
+      {
+        name: '两个队友',
+        note: '默认停在「全部」：几段轮次交错着排，哪一段是谁做的由每组的组头署。',
+        props: { viewing: null },
+        expect: '芝士K',
+        expectSelector: '.site-agents__tab--on',
+      },
+      {
+        name: '只看一个队友',
+        note: '选中的那一格填成实心、字提亮；底下那条记录就只剩他这一段。',
+        props: { viewing: 'cheese-k' },
+        expect: '全部',
+      },
+    ],
+  },
+  {
+    id: 'site-turn-head',
+    title: 'SiteTurnHead',
+    about: '现场一轮开头的那一行：谁、什么时候、几步、用了多久，底下那根细条说这一轮的时间花在哪几段。',
+    file: 'src/components/panels/SiteTurnHead.vue',
+    component: SiteTurnHead,
+    needs: ['i18n'],
+    args: { turn: SITE_ONE_TURN, startsAtMs: SITE_TURN_START },
+    states: [
+      {
+        name: '一轮做完了',
+        note: '几步、用了多久写在这里（用时从这一轮开始那一刻算，不是从头一步，不然「思考中」等掉的那十几秒就不见了）。',
+        props: { who: '芝士', live: false },
+        expect: '5 步',
+        expectSelector: '.turn__phases',
+      },
+      {
+        name: '一轮还在跑',
+        note: '右头亮一个「进行中」，那个点是呼吸的（浏览器里看得出来）。',
+        props: { who: '芝士', live: true },
+        expect: '进行中',
+      },
+      {
+        name: '只有一个队友的房间',
+        note: '`who` 由父组件算：只看一个队友、或者房间里只有一个时不给名字，组头上就不写。',
+        props: { who: null, live: false },
+        expect: '5 步',
       },
     ],
   },
@@ -462,28 +669,6 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '取文件失败：错误原话摆在这一格里。',
         props: projectFileProps({ error: '读取文件失败：请求超时' }),
         expect: '读取文件失败：请求超时',
-      },
-    ],
-  },
-  {
-    id: 'site-step-output',
-    title: 'SiteStepOutput',
-    about: '现场里摊开一步之后那一行「输出」：默认收着、写着有多大，第一次点开才去取。',
-    file: 'src/components/panels/SiteStepOutput.vue',
-    component: SiteStepOutput,
-    needs: [],
-    states: [
-      {
-        name: '一小段输出',
-        note: '收着时只说有多长：参数是这一行的主体，输出是想追问的人才看的。点开是 ls 打印的那两行。',
-        props: { blockId: 'demo-ls', bytes: LS_OUTPUT_BYTES, load: loadLsOutput },
-        expect: `输出（${LS_OUTPUT_BYTES} B）`,
-      },
-      {
-        name: '一大段输出',
-        note: '几十 KB 的构建日志也只占一行；点开时后端只留了末尾 8 KB，会再说一句只看到了末尾。',
-        props: { blockId: 'demo-build', bytes: BUILD_LOG_BYTES, load: loadBuildTail },
-        expect: '输出（48 KB）',
       },
     ],
   },

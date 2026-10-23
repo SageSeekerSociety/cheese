@@ -1,6 +1,6 @@
 /**
  * `panels/doc/` 这一册的后一半：AI 队友那几张卡、建议条与建议卡、评审条与评审卡、讨论卡、
- * 评论、评论面板、正文面，一格一格摆出来。
+ * 评论、评论面板、正文面和它里面的正文列，一格一格摆出来。
  *
  * 和 `catalogPanelsDocPartA.ts` 一起构成这一册；两份都由 `catalogPanelsDoc.ts` 合并成
  * `DOC_PANEL_ENTRIES`。样例数据在 `catalogPanelsDocFixtures.ts`。
@@ -8,8 +8,10 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  demoProseEditor,
   DOC_AGENT,
   DOC_AGENT_HANDLE,
+  DOC_MARKDOWN,
   DOC_MENTION_NAMES,
   DOC_PERSON,
   DOC_PERSON_HANDLE,
@@ -23,10 +25,13 @@ import {
   docThreadStateEmpty,
 } from './catalogPanelsDocFixtures'
 
+import DocMoveDialog from '@/components/library/DocMoveDialog.vue'
 import DocAgentBox from '@/components/panels/doc/DocAgentBox.vue'
 import DocAgentResult from '@/components/panels/doc/DocAgentResult.vue'
+import DocBacklinks from '@/components/panels/doc/DocBacklinks.vue'
 import DocCommentPanel from '@/components/panels/doc/DocCommentPanel.vue'
 import DocComments from '@/components/panels/doc/DocComments.vue'
+import DocProse from '@/components/panels/doc/DocProse.vue'
 import DocReviewCard from '@/components/panels/doc/DocReviewCard.vue'
 import DocReviewStrip from '@/components/panels/doc/DocReviewStrip.vue'
 import DocSuggestionCard from '@/components/panels/doc/DocSuggestionCard.vue'
@@ -224,7 +229,13 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocSuggestionStrip.s1.note')
         },
-        props: { agentName: DOC_AGENT, count: 3, decided: { accepted: 0, rejected: 0 }, editable: true },
+        props: {
+          author: DOC_AGENT,
+          decidedAuthor: DOC_AGENT,
+          count: 3,
+          decided: { accepted: 0, rejected: 0 },
+          editable: true,
+        },
         expect: '还有 3 处待处理',
       },
       {
@@ -234,7 +245,13 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocSuggestionStrip.s2.note')
         },
-        props: { agentName: DOC_AGENT, count: 0, decided: { accepted: 2, rejected: 1 }, editable: true },
+        props: {
+          author: null,
+          decidedAuthor: DOC_AGENT,
+          count: 0,
+          decided: { accepted: 2, rejected: 1 },
+          editable: true,
+        },
         expect: '接受 2 处，拒绝 1 处',
       },
     ],
@@ -257,8 +274,10 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.panelDocSuggestionCard.s1.note')
         },
         props: {
-          agentName: DOC_AGENT,
-          agentHandle: DOC_AGENT_HANDLE,
+          authorName: DOC_AGENT,
+          authorHandle: DOC_AGENT_HANDLE,
+          authorAgent: true,
+          authorAvatar: '',
           index: 0,
           total: 2,
           reason: '把「翻倍」改成「翻了三倍」更准。',
@@ -274,8 +293,10 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.panelDocSuggestionCard.s2.note')
         },
         props: {
-          agentName: DOC_AGENT,
-          agentHandle: DOC_AGENT_HANDLE,
+          authorName: DOC_AGENT,
+          authorHandle: DOC_AGENT_HANDLE,
+          authorAgent: true,
+          authorAvatar: '',
           index: 1,
           total: 2,
           reason: null,
@@ -302,8 +323,8 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s1.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 3 },
-        expect: '王长鑫让芝士改的 3 处',
+        props: { agentName: DOC_AGENT, count: 3 },
+        expect: '芝士改的 3 处',
       },
       {
         get name() {
@@ -312,7 +333,7 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s2.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 0 },
+        props: { agentName: DOC_AGENT, count: 0 },
         expect: '都已还原',
       },
     ],
@@ -598,6 +619,124 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           pulse: () => {},
         },
         expectSelector: '.doc-skel',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc-prose',
+    title: 'DocProse · 正文列',
+    get about() {
+      return t('catalog.panelDocProse.about')
+    },
+    file: 'src/components/panels/doc/DocProse.vue',
+    component: DocProse,
+    needs: T,
+    states: [
+      {
+        get name() {
+          return t('catalog.panelDocProse.s1.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s1.note')
+        },
+        props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: false, placeholder: '' },
+        expect: '上线过程',
+      },
+      {
+        get name() {
+          return t('catalog.panelDocProse.s2.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s2.note')
+        },
+        props: { editor: demoProseEditor(), loading: false, keyFocus: false, placeholder: '' },
+        expectSelector: 'br.ProseMirror-trailingBreak',
+      },
+      {
+        get name() {
+          return t('catalog.panelDocProse.s3.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s3.note')
+        },
+        props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: true, placeholder: '' },
+        expectSelector: '.doc-editor--keyfocus',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc-backlinks',
+    title: 'DocBacklinks · 被引用',
+    about:
+      '文档末尾的「被引用」（#3827）：引用了这份文档的文档在前，对话每个一行，写最近一条引用它的消息和条数。没有被引用时整段不画，所以这里只有一格。',
+    file: 'src/components/panels/doc/DocBacklinks.vue',
+    component: DocBacklinks,
+    needs: UI,
+    args: { names: { alice: '张华', liming: '李明', wangyue: '王悦' } },
+    states: [
+      {
+        name: '文档和对话',
+        note: '点一行打开那份文档，或那个对话里的那条消息。',
+        props: {
+          items: [
+            {
+              kind: 'conversation',
+              conversation: { kind: 'room', id: 'c1', title: '课题组周会', room_id: 'c1', project_id: 'p1' },
+              message_id: 'b1',
+              excerpt: '第二批 400 段清洗完了，字段和说明里写的一致',
+              author: 'wangyue',
+              at: '2026-10-17T08:00:00.000Z',
+              count: 3,
+            },
+            {
+              kind: 'document',
+              id: 'd1',
+              project_id: 'p1',
+              title: '标注规范 v2',
+              updated_by: 'alice',
+              updated_at: '2026-10-17T07:00:00.000Z',
+            },
+          ],
+        },
+        expect: '被引用',
+      },
+    ],
+  },
+  {
+    id: 'library-doc-move-dialog',
+    title: 'DocMoveDialog · 移动到…',
+    about:
+      '文档「⋯」里的「移动到…」（#3774）：能去的地方摆成一列，自己名下、每个团队和它的项目；点一行选中，底下一句说明挪过去以后谁能读。',
+    file: 'src/components/library/DocMoveDialog.vue',
+    component: DocMoveDialog,
+    needs: UI,
+    teleport: true,
+    args: {
+      modelValue: true,
+      title: '标注规范 v2',
+      places: [
+        { teamId: 1, name: '张华', personal: true, projects: [] },
+        {
+          teamId: 2,
+          name: '视觉课题组',
+          personal: false,
+          projects: [
+            { id: 'p1', name: '标注工具选型' },
+            { id: 'p2', name: '课堂提问分析' },
+          ],
+        },
+        { teamId: 3, name: '深度学习研究组', personal: false, projects: [{ id: 'p3', name: '论文复现' }] },
+      ],
+      current: { teamId: 2, projectId: 'p1' },
+      saving: false,
+      error: '',
+    },
+    states: [
+      {
+        name: '刚打开',
+        note: '现在所在的项目写着「当前位置」，还没选时「移动」是灰的。',
+        props: {},
+        expect: '当前位置',
       },
     ],
   },

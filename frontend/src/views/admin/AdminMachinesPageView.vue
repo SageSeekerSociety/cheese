@@ -3,19 +3,33 @@
  * 后台「机器」这一屏的画面：只收结果，不取数。路由页 `AdminMachinesPage.vue` 取数。
  *
  * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句）；
- * 每台宿主机走到哪一步、上面有谁（一台一行，点开列出它的沙箱）；过去一天沙箱起得
- * 多快、有多少没起来、拒了多少会话、丢了几台宿主机；温机池里有什么。
+ * 每台宿主机走到哪一步、上面有谁、磁盘内存 CPU 用了多少（一台一行，下面一条用量，
+ * 点开列出它的沙箱和每个沙箱离上限多远；还没被领走的温机也各占一行，在跑就在花钱，
+ * 不能看不见）；过去一天沙箱起得多快、有多少没起来、拒了多少会话、丢了几台宿主机。
+ *
+ * 用量是磁盘巡检上次读到的，不是这一刻：读数多旧写在旁边，超过三次巡检没读到就标黄。
  */
-import type { HostPhase, MachineHost, MachineSandbox, MachinesOverview, SandboxState } from '@/views/admin/machinesApi'
+import type {
+  HostPhase,
+  HostUsage,
+  MachineHost,
+  MachineSandbox,
+  MachinesOverview,
+  SandboxState,
+  WarmMachineRow,
+} from '@/views/admin/machinesApi'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
+import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
+import AdminSparkline from '@/components/admin/AdminSparkline.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { dayStamp } from '@/lib/dateText'
+import { fmtCompact, fmtPercent } from '@/lib/usageFormat'
 
 defineOptions({ name: 'AdminMachinesPageView' })
 
@@ -85,7 +99,8 @@ function stamp(iso: string | null): string {
   return iso ? dayStamp(new Date(iso).getTime(), nowMs.value) : ''
 }
 
-function spec(h: MachineHost): string {
+function spec(h: MachineHost | WarmMachineRow): string {
+  if (h.cores === null || h.memory_mb === null || h.disk_gb === null) return ''
   return t('admin.machines.spec', { cores: h.cores, memory: Math.round(h.memory_mb / 1024), disk: h.disk_gb })
 }
 
@@ -115,6 +130,123 @@ function sandboxWhen(s: MachineSandbox): string {
   return active
 }
 
+// 磁盘按十进制 GB（和 12 GB 的沙箱上限同一把尺子），内存按 GiB（和 3 GiB 的上限同一把）。
+function gb(bytes: number): string {
+  return (bytes / 1e9).toFixed(1)
+}
+function gib(bytes: number): string {
+  return (bytes / 2 ** 30).toFixed(1)
+}
+function ratio(used: number | null, total: number | null): number | null {
+  return used === null || !total ? null : used / total
+}
+
+/** 读数旧过三次巡检：宿主机多半没在被读，画面上的数不能当此刻看。 */
+function stale(at: string | null): boolean {
+  if (!at || !props.overview) return false
+  return (nowMs.value - new Date(at).getTime()) / 1000 > 3 * props.overview.config.check_s
+}
+
+type MeterKey = 'disk' | 'inodes' | 'memory' | 'cpu'
+type Meter = { key: MeterKey; label: string; value: string; ratio: number; hint: string; tone: 'ink' | 'warn' }
+const METER_LABEL: Record<MeterKey, string> = {
+  disk: 'admin.machines.usage.disk',
+  inodes: 'admin.machines.usage.inodes',
+  memory: 'admin.machines.usage.memory',
+  cpu: 'admin.machines.usage.cpu',
+}
+
+/** 一台宿主机的四根条：过了告警线（`alert_used`，和告警同一条线）的那根标黄。 */
+function meters(u: HostUsage): Meter[] {
+  const line = props.overview?.config.alert_used
+  const out: Meter[] = []
+  const add = (key: MeterKey, share: number | null, value: string, hint?: string, alertAt?: number) => {
+    out.push({
+      key,
+      label: t(METER_LABEL[key]),
+      value: share === null ? '—' : value,
+      ratio: share ?? 0,
+      hint: hint ?? fmtPercent(share, 0),
+      tone: share !== null && alertAt !== undefined && share > alertAt ? 'warn' : 'ink',
+    })
+  }
+  add(
+    'disk',
+    ratio(u.disk_used_bytes, u.disk_bytes),
+    t('admin.machines.usage.gb', { used: gb(u.disk_used_bytes), total: gb(u.disk_bytes) }),
+    undefined,
+    line?.disk
+  )
+  add(
+    'inodes',
+    ratio(u.inodes_used, u.inodes),
+    `${fmtCompact(u.inodes_used)} / ${fmtCompact(u.inodes)}`,
+    undefined,
+    line?.inodes
+  )
+  add(
+    'memory',
+    ratio(u.memory_used_bytes, u.memory_bytes),
+    t('admin.machines.usage.gib', { used: gib(u.memory_used_bytes ?? 0), total: gib(u.memory_bytes ?? 0) }),
+    undefined,
+    line?.memory
+  )
+  add(
+    'cpu',
+    u.cpu_busy,
+    fmtPercent(u.cpu_busy, 0),
+    u.load1 === null ? '' : t('admin.machines.usage.load', { n: u.load1 })
+  )
+  return out
+}
+
+/** 一个沙箱离它的上限多远：内存对 `sandbox_memory_mb`，磁盘对 `sandbox_disk_budget_gb`
+ * 和文件数上限；到 `near_cap` 这一份就标出来。 */
+function sandboxUse(s: MachineSandbox): { text: string; near: boolean }[] {
+  const u = s.usage
+  const c = props.overview?.config
+  if (!u || !c) return [{ text: t('admin.machines.usage.none'), near: false }]
+  const parts: { text: string; near: boolean }[] = []
+  if (u.memory_bytes !== null) {
+    const cap = c.sandbox_memory_mb * 2 ** 20
+    const peak = u.memory_peak_bytes
+    parts.push({
+      text:
+        peak === null
+          ? t('admin.machines.usage.sandboxMemory', { used: gib(u.memory_bytes), cap: gib(cap) })
+          : t('admin.machines.usage.sandboxMemoryPeak', { used: gib(u.memory_bytes), cap: gib(cap), peak: gib(peak) }),
+      near: Math.max(u.memory_bytes, peak ?? 0) >= c.near_cap * cap,
+    })
+  }
+  if (u.disk_bytes !== null) {
+    parts.push({
+      text: t('admin.machines.usage.sandboxDisk', { used: gb(u.disk_bytes), cap: c.sandbox_disk_budget_gb }),
+      near: u.disk_bytes >= c.near_cap * c.sandbox_disk_budget_gb * 1e9,
+    })
+  }
+  if (u.disk_inodes !== null) {
+    parts.push({
+      text: t('admin.machines.usage.sandboxFiles', {
+        used: fmtCompact(u.disk_inodes),
+        cap: fmtCompact(c.sandbox_inode_budget),
+      }),
+      near: u.disk_inodes >= c.near_cap * c.sandbox_inode_budget,
+    })
+  }
+  return parts.length ? parts : [{ text: t('admin.machines.usage.none'), near: false }]
+}
+function sandboxUseTitle(s: MachineSandbox): string {
+  if (!s.usage) return ''
+  return t('admin.machines.usage.sandboxRead', {
+    memory: s.usage.memory_read_at ? t('admin.machines.usage.ago', { ago: since(s.usage.memory_read_at) }) : '—',
+    disk: s.usage.disk_read_at ? t('admin.machines.usage.ago', { ago: since(s.usage.disk_read_at) }) : '—',
+  })
+}
+
+function showsUsage(h: MachineHost): boolean {
+  return h.usage !== null && h.phase !== 'failed' && h.phase !== 'releasing'
+}
+
 // 温机的状态是后端的代号；认不出的照原样画，不替它编一个词。
 const WARM_LABEL: Record<string, string> = {
   preparing: 'admin.machines.warmState.preparing',
@@ -139,12 +271,22 @@ function toggle(id: string) {
 
 const pool = computed(() => props.overview?.pool ?? null)
 const hosts = computed(() => props.overview?.hosts ?? [])
+const warm = computed(() => props.overview?.warm ?? [])
 const history = computed(() => props.overview?.history ?? null)
 const first = computed(() => props.loading && !props.overview)
+/** 小折线画的是多长一段：步长乘点数，后端说了算。 */
+const historySpan = computed(() => {
+  const read = hosts.value.find((h) => h.usage)?.usage
+  return read && props.overview ? duration(props.overview.config.history_step_s * read.memory_history.length) : ''
+})
 
 const hostsNote = computed(() =>
   pool.value
-    ? [t('admin.machines.kpi.hostsNote'), pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '']
+    ? [
+        t('admin.machines.kpi.hostsNote'),
+        pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '',
+        t('admin.machines.kpi.warm', { n: warm.value.length, target: pool.value.warm_target }),
+      ]
         .filter(Boolean)
         .join(' ')
     : ''
@@ -219,7 +361,7 @@ const failureNote = computed(() =>
     <div v-else-if="overview" class="admin-page__body">
       <section class="mc-section">
         <h2 class="t-title">{{ t('admin.machines.hosts') }}</h2>
-        <BaseEmptyState v-if="!hosts.length" :title="t('admin.machines.noHosts')" />
+        <BaseEmptyState v-if="!hosts.length && !warm.length" :title="t('admin.machines.noHosts')" />
         <div v-else class="mc-table" role="table" :aria-label="t('admin.machines.hosts')">
           <div class="mc-row mc-row--head" role="row">
             <span role="columnheader" />
@@ -265,22 +407,85 @@ const failureNote = computed(() =>
               <span class="mc-dim mc-num mc-age" :title="stamp(h.created_at)">{{ since(h.created_at) }}</span>
               <span class="mc-note" :title="hostNote(h)">{{ hostNote(h) }}</span>
             </button>
+            <div
+              v-if="h.usage && showsUsage(h)"
+              class="mc-usage"
+              role="group"
+              :aria-label="t('admin.machines.usage.label', { host: h.hostname })"
+            >
+              <div v-for="m in meters(h.usage)" :key="m.key" class="mc-usage__meter">
+                <AdminMeterBar
+                  :label="m.label"
+                  :value-text="m.value"
+                  :limit="1"
+                  :ratio="m.ratio"
+                  :tone="m.tone"
+                  :hint="m.hint"
+                />
+                <AdminSparkline v-if="m.key === 'memory'" :values="h.usage.memory_history" :height="16" />
+                <AdminSparkline v-else-if="m.key === 'cpu'" :values="h.usage.cpu_history" :height="16" />
+              </div>
+              <p class="mc-usage__read" :class="{ 'mc-usage__read--stale': stale(h.usage.read_at) }">
+                <span v-if="stale(h.usage.read_at)" class="status-dot status-dot--warn" />
+                {{
+                  stale(h.usage.read_at)
+                    ? t('admin.machines.usage.readStale', { ago: since(h.usage.read_at) })
+                    : t('admin.machines.usage.read', { ago: since(h.usage.read_at) })
+                }}
+                <template v-if="historySpan">
+                  · {{ t('admin.machines.usage.history', { span: historySpan }) }}</template
+                >
+              </p>
+            </div>
             <div v-if="open.has(h.id)" class="mc-sandboxes" role="rowgroup">
               <!-- 和宿主机那一行同一套列：房间落在「宿主机」列下，状态落在「阶段」列下。 -->
               <div v-for="s in h.sandboxes" :key="s.id" class="mc-row mc-row--sandbox" role="row">
                 <span class="mc-caret" />
-                <a class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
+                <a v-if="s.project_id" class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
                   {{ s.project ?? '—' }} / {{ s.room ?? t('admin.machines.taskRoom') }}
                 </a>
+                <!-- A person's own conversation is theirs alone: named, not linked. -->
+                <span v-else class="mc-place">{{ t('admin.machines.personal') }}</span>
                 <span class="mc-phase">
                   <span class="status-dot" :class="stateDot(s.state)" />
                   {{ t(STATE_LABEL[s.state]) }}
                 </span>
                 <span class="mc-dim mc-when">{{ sandboxWhen(s) }}</span>
                 <span class="mc-dim mc-placed">{{ t('admin.machines.placed', { at: stamp(s.placed_at) }) }}</span>
+                <span class="mc-use" :title="sandboxUseTitle(s)">
+                  <span
+                    v-for="(part, i) in sandboxUse(s)"
+                    :key="i"
+                    class="mc-use__part"
+                    :class="{ 'mc-use__part--near': part.near }"
+                    >{{ part.text }}</span
+                  >
+                </span>
               </div>
             </div>
           </template>
+          <!-- 温机还不是宿主机，但已经在跑、在花钱：同一套列，阶段落在「阶段」列下。 -->
+          <div v-for="w in warm" :key="w.id" class="mc-row mc-row--warm" role="row">
+            <span class="mc-caret" />
+            <span class="mc-host">
+              <span class="mc-mono c-ink">{{ w.hostname ?? '—' }}</span>
+              <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
+              <span class="chip-neutral">{{ t('admin.machines.warmChip') }}</span>
+            </span>
+            <span class="mc-phase">
+              <span
+                class="status-dot"
+                :class="w.error ? 'status-dot--danger' : w.state === 'ready' ? 'status-dot--ok' : 'status-dot--muted'"
+              />
+              {{ warmState(w.state) }}
+            </span>
+            <span class="mc-dim mc-spec">{{ spec(w) }}</span>
+            <span class="mc-slots" />
+            <span class="mc-dim mc-num mc-age" :title="stamp(w.created_at)">{{ since(w.created_at) }}</span>
+            <span class="mc-note" :title="w.error ?? ''">{{
+              w.error ?? (w.attempts ? t('admin.machines.attempts', { n: w.attempts }, w.attempts) : '')
+            }}</span>
+          </div>
         </div>
       </section>
 
@@ -357,28 +562,6 @@ const failureNote = computed(() =>
         </dl>
       </section>
 
-      <section class="mc-section">
-        <h2 class="t-title">{{ t('admin.machines.warm', { target: pool?.warm_target ?? 0 }) }}</h2>
-        <p v-if="!overview.warm.length" class="mc-dim">{{ t('admin.machines.noWarm') }}</p>
-        <ul v-else class="mc-warm">
-          <li v-for="w in overview.warm" :key="w.id" class="mc-warm__row">
-            <span class="mc-phase">
-              <span
-                class="status-dot"
-                :class="w.error ? 'status-dot--danger' : w.state === 'ready' ? 'status-dot--ok' : 'status-dot--muted'"
-              />
-              <span>{{ warmState(w.state) }}</span>
-            </span>
-            <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
-            <span class="mc-dim"
-              >{{ t('admin.machines.warmAge', { for: since(w.created_at) }) }} ·
-              {{ t('admin.machines.attempts', { n: w.attempts }, w.attempts) }}</span
-            >
-            <span v-if="w.error" class="mc-note" :title="w.error">{{ w.error }}</span>
-          </li>
-        </ul>
-      </section>
-
       <p class="mc-foot">
         {{
           t('admin.machines.config', {
@@ -387,6 +570,17 @@ const failureNote = computed(() =>
             sandboxIdle: duration(overview.config.sandbox_idle_s),
             hostIdle: duration(overview.config.host_idle_hold_s),
             vmIdle: duration(overview.config.vm_idle_s),
+          })
+        }}
+      </p>
+      <p class="mc-foot">
+        {{
+          t('admin.machines.usage.foot', {
+            check: duration(overview.config.check_s),
+            disk: fmtPercent(overview.config.alert_used.disk, 0),
+            inodes: fmtPercent(overview.config.alert_used.inodes, 0),
+            memory: fmtPercent(overview.config.alert_used.memory, 0),
+            near: fmtPercent(overview.config.near_cap, 0),
           })
         }}
       </p>
@@ -458,6 +652,9 @@ const failureNote = computed(() =>
 .mc-row--gone {
   color: var(--muted);
 }
+.mc-row--warm {
+  cursor: default;
+}
 .mc-row--sandbox {
   padding-top: 6px;
   padding-bottom: 6px;
@@ -523,6 +720,44 @@ const failureNote = computed(() =>
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* 宿主机那一行下面的用量：四根条排一行，窄屏一根一行。 */
+.mc-usage {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 24px;
+  min-width: 840px;
+  padding: 2px 12px 10px 40px;
+  border-bottom: 1px solid var(--line);
+}
+.mc-usage__meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.mc-usage__read {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.mc-usage__read--stale {
+  color: var(--warn-ink);
+}
+.mc-use {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2 / -1;
+  gap: 2px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.mc-use__part--near {
+  color: var(--warn-ink);
+}
 .mc-sandboxes {
   padding: 2px 0 6px;
   border-bottom: 1px solid var(--line);
@@ -559,20 +794,6 @@ const failureNote = computed(() =>
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--faint);
-}
-.mc-warm {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.mc-warm__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
 }
 /* 窄屏放不下七列：一行折成三行（名字和阶段 / 规格和沙箱 / 说明），表头不画，不靠
    横向滚动把一半的列藏到屏幕外。沙箱行同理：房间和状态 / 什么时候 / 放上来的时刻。 */
@@ -615,7 +836,16 @@ const failureNote = computed(() =>
     grid-template-areas:
       'caret host phase'
       '. spec spec'
-      '. note note';
+      '. note note'
+      '. use use';
+  }
+  .mc-use {
+    grid-area: use;
+  }
+  .mc-usage {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    padding-left: 40px;
   }
 }
 </style>

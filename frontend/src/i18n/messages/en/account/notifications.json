@@ -1,0 +1,49 @@
+{
+  "channels": {
+    "email": "Email",
+    "emailDigest": "Digest",
+    "emailHint": "Sent to your account email",
+    "emailInstant": "Instantly",
+    "emailOff": "Off",
+    "inApp": "In-app",
+    "inAppHint": "Inbox and the sidebar badge",
+    "push": "Browser push",
+    "pushHint": "Off means no system notifications",
+    "title": "Channels"
+  },
+  "lede": "Which kinds of events reach you on which channel, when to stay quiet, how often to get a summary. Each change saves on its own.",
+  "loadFailed": "Couldn't load your notification settings",
+  "loading": "Loading your notification settings",
+  "matrix": {
+    "assistant": "Notices from Cheese",
+    "announcement": "Space announcement",
+    "billing": "Credit and billing reminders",
+    "desc": "Each kind picks its own channels",
+    "deviceInUse": "Someone is using my device",
+    "email": "Email",
+    "event": "Event",
+    "inApp": "In-app",
+    "invitation": "Team / project invitation",
+    "mention": "Someone {'@'}-mentions me",
+    "push": "Push",
+    "reaction": "Someone reacts to my message",
+    "reply": "My message gets a reply",
+    "title": "By type",
+    "waitsOnMe": "A change or decision request waits on my review"
+  },
+  "quiet": {
+    "daily": "Daily",
+    "digest": "Digest frequency",
+    "digestHint": "One email summarising what happened while you were away",
+    "off": "Off",
+    "title": "Quiet hours",
+    "weekly": "Weekly",
+    "window": "Quiet hours",
+    "windowHint": "In your time zone ({zone}): no push or instant email in this window; the digest still comes",
+    "windowOff": "None",
+    "windowOn": "{start} – {end}"
+  },
+  "saveFailed": "Couldn't save",
+  "title": "Notifications",
+  "toggleEvent": "Toggle {channel} for “{event}”"
+}

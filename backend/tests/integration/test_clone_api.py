@@ -60,20 +60,22 @@ def test_clone_source_without_session_is_422(client):
     _, src, dst = _project_and_topics(client)
     r = client.post(f"/topics/{dst}/clone-from", json={"source_topic_id": src})
     assert r.status_code == 422
-    assert "还没跑过" in r.json()["message"]
+    assert "还没工作过" in r.json()["message"]
 
 
 def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
     """Happy path: the source transcript is copied + session-id-forked under the
     target's session mount, and the target is pointed at the new id."""
 
-    # Fake ws.session_dir → a per-topic tmp dir (the host mount stand-in).
+    # Fake ws.session_dir → a per-topic tmp dir (the host mount stand-in). Patch
+    # the module itself: the clone route hands that very object in as `paths`,
+    # so the fake is what `clone_from` resolves at call time.
     def fake_session_dir(project_id, topic_id):
         d = tmp_path / topic_id.hex[:8]
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    monkeypatch.setattr("app.domain.topic.services.ws.session_dir", fake_session_dir)
+    monkeypatch.setattr(ws, "session_dir", fake_session_dir)
 
     _, src, dst = _project_and_topics(client)
     old_sid = "source-session-uuid"

@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// 分支保护 (#718) 设置区的结构断言。和 githubSettingsSections.spec.ts 一个路子：
+// 分支保护 (#718) 设置区的结构断言：
 // 断言的对象是「哪个规则在哪个位置、跟着哪个状态灰掉」——这是模板里的事实，
 // 源码扫描直接读它；mount 这个视图要拖上 Vuetify 和十几个 API 调用，反而绕远。
 import { readFileSync } from 'node:fs'
@@ -73,7 +73,7 @@ describe('the 分支保护 section', () => {
     expect(s).not.toMatch(/merge_method\s*:/)
   })
 
-  it('平台独有的三项（自动合并、默认审阅、调度座位）不随 GitHub 灰掉', () => {
+  it('平台独有的两项（自动合并、默认审阅）不随 GitHub 灰掉', () => {
     const s = section('title')
     const row = (key: string) => {
       const at = s.indexOf(`'${label(key)}'`)
@@ -82,6 +82,5 @@ describe('the 分支保护 section', () => {
     }
     expect(row('autoMerge')).not.toContain('ghEnforced')
     expect(row('defaultReviewer')).not.toContain('ghEnforced')
-    expect(row('dispatchSeat')).not.toContain('ghEnforced')
   })
 })

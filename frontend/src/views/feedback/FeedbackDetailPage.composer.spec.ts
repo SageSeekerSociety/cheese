@@ -46,6 +46,7 @@ const DETAIL = {
   comments: 0,
   thread: [],
   thread_next_cursor: null,
+  attachments: [],
   timeline: [],
   author_handle: 'alice',
 } as unknown as FeedbackDetail

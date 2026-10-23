@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import httpx
 import pytest
@@ -106,6 +106,25 @@ def _connect(client, pid, name="tracker", handle="alice") -> httpx.Response:
     return client.get("/mcp/oauth/callback?" + back.query, follow_redirects=False)
 
 
+def test_a_callback_that_does_not_name_its_issuer_is_refused(client, upstream):
+    """The authorization server says it names itself in every response (RFC
+    9207), so a callback without `iss` is not one of its own: nothing is
+    connected on it."""
+    pid = _project(client, upstream)
+    started = client.post(
+        f"/projects/{pid}/mcp/servers/tracker/connect",
+        headers=session_auth_headers("alice"),
+    )
+    consent = httpx.get(started.json()["data"]["authorization_url"])
+    query = dict(parse_qsl(urlsplit(consent.headers["location"]).query))
+    query.pop("iss")
+
+    client.get("/mcp/oauth/callback?" + urlencode(query), follow_redirects=False)
+
+    assert _servers(client, pid)["tracker"]["status"] == "disconnected"
+    assert _rows(client, ProjectMcpConnection) == []
+
+
 def _call(client, tid, pid, name, method, params=None) -> dict:
     response = client.post(
         f"/topics/{tid}/mcp/{name}",
@@ -129,7 +148,8 @@ def _rows(client, model):
 def test_a_member_connects_a_server_once_for_the_whole_project(client, upstream):
     pid = _project(client, upstream)
     before = _servers(client, pid)
-    assert set(before) == {"tracker", "search"}, "stdio servers are the machine's"
+    assert set(before) == {"tracker", "search", "local"}
+    assert before["local"]["transport"] == "stdio", "a command is listed as one"
     assert before["tracker"]["status"] == "disconnected"
     assert before["search"]["status"] == "missing_values"
 
@@ -361,6 +381,43 @@ def test_only_members_manage_the_projects_servers(client, upstream):
     )
 
 
+def test_an_agent_reads_the_servers_but_does_not_manage_them(client, upstream):
+    """Which servers the project reaches is the people's call: an agent acting on
+    whatever it last read does not connect, drop or re-key them."""
+    pid = _project(client, upstream)
+    tid = _topic(client, pid)
+    rows = client.get(
+        f"/topics/{tid}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    seat = next(row["member_handle"] for row in rows if row["agent"])
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=str(pid),
+            topic_id=tid,
+            access_scope="project",
+            agent_handle=seat,
+        )
+    }
+
+    listed = client.get(f"/projects/{pid}/mcp/servers", headers=agent)
+    connected = client.post(
+        f"/projects/{pid}/mcp/servers/tracker/connect", headers=agent
+    )
+    keyed = client.put(
+        f"/projects/{pid}/mcp/secrets/SEARCH_KEY", json={"value": "x"}, headers=agent
+    )
+    dropped = client.delete(
+        f"/projects/{pid}/mcp/servers/tracker/connection", headers=agent
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert (connected.status_code, keyed.status_code, dropped.status_code) == (
+        403,
+        403,
+        403,
+    )
+
+
 def test_a_state_is_spent_once(client, upstream):
     pid = _project(client, upstream)
     started = client.post(
@@ -498,7 +555,7 @@ def test_a_session_keeps_its_servers_while_the_forge_is_down(
 
 def test_the_settings_page_shows_a_committed_change_at_once(client, upstream):
     pid = _project(client, upstream)
-    assert set(_servers(client, pid)) == {"tracker", "search"}
+    assert set(_servers(client, pid)) == {"tracker", "search", "local"}
     _commit_servers(pid, {"wiki": {"type": "http", "url": f"{upstream.base}/mcp"}})
 
     assert set(_servers(client, pid)) == {"wiki"}

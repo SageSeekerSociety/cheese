@@ -19,18 +19,18 @@ from pathlib import Path
 import pytest
 
 from app.core.config import Settings
-from app.domain.agent.capability import (
-    BuiltIn,
-    Declaration,
-    Difference,
-    Missing,
-)
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import (
     MatrixIncomplete,
     declarations,
     matrix,
     written,
+)
+from app.domain.agent.declaration import (
+    BuiltIn,
+    Declaration,
+    Difference,
+    Missing,
 )
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, Harness
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, private

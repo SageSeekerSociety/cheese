@@ -47,9 +47,6 @@ class CodexDriver:
     def conversation(self, status: dict) -> str:
         return str(status.get("thread_id") or "")
 
-    def takes_inputs(self, status: dict) -> bool:
-        return True
-
     async def launch(
         self,
         wire: Wire,
@@ -124,7 +121,13 @@ class CodexDriver:
         readers: Readers,
     ) -> Subscription:
         return Subscription(
-            seat, mirror, call, readers.consume, readers.activity, moved=readers.moved
+            seat,
+            mirror,
+            call,
+            readers.consume,
+            readers.activity,
+            moved=readers.moved,
+            records=readers.records,
         )
 
     def images(self, images: tuple[Image, ...]) -> list:

@@ -36,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.domain.agent import turn_inputs
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from tests.support.work_chat import WorkChat
@@ -57,12 +58,16 @@ class _Chat(WorkChat):
         # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
         self.notices: list[tuple[uuid.UUID, str]] = []
         self.retryable: list[bool] = []
+        # The turn each event is about, in step with `events`: the run-record
+        # page can only attribute a failure to a turn when this is set.
+        self.turn_ids: list[uuid.UUID | None] = []
         self.converse_calls: list[dict] = []
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         self.events.append((topic_id, text))
         self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
         self.retryable.append(bool((meta or {}).get("retryable")))
+        self.turn_ids.append(turn_id)
         return {"id": "b1", "content": text}
 
     def has_live_screen(self, topic_id, agent_handle=None):
@@ -82,6 +87,57 @@ class _Chat(WorkChat):
     async def converse(self, **kw):
         self.converse_calls.append(kw)
         yield {"type": "done"}
+
+
+@pytest.mark.anyio
+async def test_replay_protects_only_its_own_conversation_from_the_orphan_sweep(
+    db_factory,
+):
+    pending_room = await a_topic(db_factory)
+    ready_room = await a_topic(db_factory)
+    pending_turn = await open_turn(db_factory, pending_room)
+    ready_turn = await open_turn(db_factory, ready_room)
+    chat = _Chat(db_factory, delivered=[pending_turn, ready_turn])
+    replay = asyncio.create_task(asyncio.Event().wait())
+    chat.replaying = lambda room: replay if room == pending_room else None
+    runner = AgentWorkRunner(InProcessBroker())
+    try:
+        await runner.resume_orphans(chat)
+        assert await open_turn_ids(db_factory) == {pending_turn}
+    finally:
+        replay.cancel()
+        await asyncio.gather(replay, return_exceptions=True)
+
+
+@pytest.mark.anyio
+async def test_overlapping_sweeps_resend_an_unheard_prompt_only_once(
+    db_factory, monkeypatch
+):
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="Fix the login page", age_s=90)
+    chat = _Chat(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+    both_read = asyncio.Event()
+    reads = 0
+    original = turn_inputs.open_turns
+
+    async def read_together(factory):
+        nonlocal reads
+        turns = await original(factory)
+        reads += 1
+        if reads == 2:
+            both_read.set()
+        await both_read.wait()
+        return turns
+
+    monkeypatch.setattr(turn_inputs, "open_turns", read_together)
+    results = await asyncio.wait_for(
+        asyncio.gather(runner.resume_orphans(chat), runner.sweep_orphans(chat)), 5
+    )
+    assert sum(results) == 1
+    await _drain(chat)
+    assert [call["content"] for call in chat.converse_calls] == ["Fix the login page"]
 
 
 # Captured before any test patches `asyncio.sleep` away. `_drain` has to wait on
@@ -322,6 +378,45 @@ async def test_a_wedged_turn_is_cancelled_and_never_re_run(db_factory, monkeypat
     # promising the platform will pick it back up.
     assert len(chat.events) == 1
     assert chat.retryable == [True]
+    # The notice names the turn it is about. Without the id the run-record page
+    # reads a turn that timed out as one that never failed (`run_record/turns.py`).
+    assert chat.turn_ids == [turn]
+
+
+@pytest.mark.anyio
+async def test_a_stranded_turn_is_announced_with_its_turn_id(db_factory, monkeypatch):
+    """The deploy-interrupted notice is about one turn — the newest stranded
+    one — and carries its id for the same reason as the wedged notice: a turn
+    whose only failure event has no `turn_id` looks like it never failed."""
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    # Two re-sends the deploy interrupted: nothing will re-send either again, so
+    # the room is handed the decision instead of a silent retry. The notice is
+    # about the NEWEST of them, which is the one the verdict was read from.
+    await open_turn(
+        db_factory,
+        topic,
+        content="更早的一轮",
+        age_s=600,
+        is_resume=True,
+        resendable=False,
+    )
+    newest = await open_turn(
+        db_factory,
+        topic,
+        content="重发的一轮",
+        age_s=90,
+        is_resume=True,
+        resendable=False,
+    )
+    chat = _Chat(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 0
+    await _drain(chat, rounds=50)
+    assert chat.converse_calls == []  # no automatic re-run
+    assert len(chat.events) == 1
+    assert chat.turn_ids == [newest]
 
 
 @pytest.mark.parametrize(

@@ -120,7 +120,7 @@ class NativeTurns:
                     agent_handle=agent.handle,
                     session_id=session_id,
                 )
-        except Exception:  # noqa: BLE001 — the event matters more than the row
+        except Exception:  # the event matters more than the row
             logger.exception(
                 "could not open the turn a session started for itself "
                 "(topic=%s, work=%s)",
@@ -133,6 +133,10 @@ class NativeTurns:
             topic_id=topic_id,
             work_id=turn_id,
             pending_ids=set(),
+            # This process assembled no prompt: the window this session was
+            # handed belongs to the process that sent it, and only that one can
+            # say how far it reached.
+            read_through=None,
             reply_to=row.reply_to if row is not None else None,
             roster=None,
             topic_refs=[],
@@ -169,4 +173,11 @@ class NativeTurns:
                 for work_id in self.live.active_turn_ids.get(topic_id, ())
                 if (topic_id, work_id) in self.live.hook_work
             } | {turn_id}
+        else:
+            # `open_turn` above awaited its own commit, so the row is durable
+            # here and this process may name the turn running. Not left to the
+            # session's Working event: a session that opens its own turn (an
+            # unsolicited one) may never send one this process hears, and then
+            # no cache entry would ever appear for a turn that is on.
+            self.live.activate_cached(topic_id, turn_id)
         return state

@@ -1,14 +1,15 @@
-"""Where a new task's first instruction is: drafting its document from where
-the task came from.
+"""Where a new task's first instruction is: the work that sets out from where
+the task came from, writing the task's document as it goes.
 
 Nothing new is stored for it. The instruction is a delivery like any other,
-marked with what it is for (``purpose``), and the turn it started is an agent
-turn like any other; this reads the two and says what someone opening the task
-should be told while its document is still empty.
+marked with what it is for (``purpose``); the task has started once a session
+read it. This reads the instruction, what became of the input that carried it,
+and what the session that read it declares, and says what someone opening the
+task should be told while its document is still empty.
 
 Pages showing the task hear when the instruction moves on its ledger — waits to
 try again, gives up — through the task's own live path (`room_task.live`), so
-an open overview does not keep saying 正在整理 after it failed.
+an open overview does not keep saying 正在做 after it failed.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.domain.agent.models import AgentTurn
+from app.domain.agent.harness.driven.lifecycle import IDLE
+from app.domain.agent.models import SessionState
 from app.domain.block.models import Block, BlockKind
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.identity.handles import agent_handle_column
 from app.domain.room_task.live import moved_in_flush
 
@@ -65,12 +67,19 @@ def _note_openings(session: Session, _context) -> None:
 async def opening_state(
     session: AsyncSession, task_id: uuid.UUID
 ) -> OpeningState | None:
-    """``drafting`` while the first turn is about to start or running,
-    ``waiting`` when it could not start yet and will try again, ``failed`` when
-    it gave up or ended having said and written nothing. None when there was no
-    such instruction, or it ended and the teammate said something: then the
-    conversation says what happened. The caller asks only while the task's
-    document is empty."""
+    """``drafting`` while the instruction is about to be read or its session is
+    at work on it, ``waiting`` when it could not be handed over yet and will be
+    tried again, ``failed`` when it was given up on, or read and then not
+    acted on: the work it was read into failed, or its session stopped with
+    nothing said since. None when there was no such instruction, or its session
+    stopped having said something: then the conversation says what happened.
+    The caller asks only while the task's document is empty.
+
+    Every answer rests on a fact the platform can check: the instruction's
+    ledger row, the session's echo of it (`NativeInput.echoed_at`, which settles
+    the row as ``received``), the failure the runner reported on what that work
+    read (`NativeInput.failed_at`), and the session's declared state
+    (`SessionState`)."""
     row = await session.scalar(
         select(Delivery)
         .where(
@@ -84,15 +93,39 @@ async def opening_state(
         return None
     if row.state == "failed":
         return "failed"
-    # ``uncertain`` alone is not a failure: the send returns before the session's
-    # receipt is recorded, so for the first seconds of a normal turn the row
-    # reads ``uncertain``. The turn it started says whether it is still going.
-    if row.state not in ("received", "uncertain"):
+    # ``uncertain``: written to the session, not read yet — what is about to
+    # happen to it is the session's next read, or its runner dropping it, which
+    # puts the row back to be tried again.
+    if row.state != "received":
+        if row.state == "uncertain":
+            return "drafting"
         return "waiting" if row.attempts > 0 and row.retry_at else "drafting"
-    turn = await session.get(AgentTurn, row.attempt_id) if row.attempt_id else None
-    if turn is None:
-        return "failed" if row.state == "uncertain" else "drafting"
-    if turn.stopped_at is None:
+    read = await session.scalar(
+        select(NativeInput)
+        .where(
+            NativeInput.delivery_id == row.id,
+            NativeInput.attempt_id == row.attempt_id,
+            NativeInput.echoed_at.is_not(None),
+        )
+        .limit(1)
+    )
+    if read is None:
+        return "drafting"
+    if read.failed_at is not None:
+        return "failed"
+    # The task's sessions, as their runners declare them: one still at work
+    # is working on it; one that stopped after the read has done what it was
+    # going to do with it.
+    states = (
+        await session.execute(
+            select(SessionState.worker_status, SessionState.changed_at).where(
+                SessionState.conversation_id == task_id
+            )
+        )
+    ).all()
+    if any(status != IDLE for status, _ in states):
+        return "drafting"
+    if not any(changed_at > read.echoed_at for _, changed_at in states):
         return "drafting"
     spoke = await session.scalar(
         select(Block.id)
@@ -100,7 +133,7 @@ async def opening_state(
             Block.conversation_id == task_id,
             Block.kind == BlockKind.message,
             agent_handle_column(Block.author),
-            Block.created_at >= turn.started_at,
+            Block.created_at >= read.echoed_at,
         )
         .limit(1)
     )

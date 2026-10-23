@@ -41,19 +41,20 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_user_realname_service
 from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
     get_space_analytics_view_service,
-    get_space_user_realname_service,
     require_reviewed_space,
 )
 from app.api.task_deps import get_task_submission_service
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
@@ -226,7 +227,7 @@ async def export_space_analytics_participants(
     realName: str = Query(default="all"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
-    realname_service: UserRealNameService = Depends(get_space_user_realname_service),
+    realname_service: UserRealNameService = Depends(get_user_realname_service),
     db=Depends(get_db),
 ) -> Response:
     """Export participant analytics as CSV (22 columns, NT-aligned).
@@ -260,35 +261,27 @@ async def export_space_analytics_participants(
         f"completionStatus={completionStatus}, realName={realName}"
     )
     ip_address = resolved_client_address(request) or ""
-    seen_target_ids: set[int] = set()
-    for m in memberships:
-        if m.is_team:
-            continue
-        if m.member_id in seen_target_ids:
-            continue
-        seen_target_ids.add(m.member_id)
-        try:
-            await realname_service.log_access(
-                accessor_id=auth_user.user_id,
-                target_id=m.member_id,
-                access_reason=access_reason,
-                access_type="EXPORT",
-                ip_address=ip_address,
-                module_type="SPACE",
-                module_entity_id=space_id,
-            )
-        except NotFoundError:
-            # Target user may have been soft-deleted; skip audit but continue export.
-            _logger.warning(
-                "Skip participant export audit: user not found",
-                extra={"space_id": space_id, "target_id": m.member_id},
-            )
+    target_ids = list(dict.fromkeys(m.member_id for m in memberships if not m.is_team))
+    # Targets may have been soft-deleted; skip their audit but continue export.
+    for missing_id in await realname_service.log_accesses(
+        accessor_id=auth_user.user_id,
+        target_ids=target_ids,
+        access_reason=access_reason,
+        access_type="EXPORT",
+        ip_address=ip_address,
+        module_type="SPACE",
+        module_entity_id=space_id,
+    ):
+        _logger.warning(
+            "Skip participant export audit: user not found",
+            extra={"space_id": space_id, "target_id": missing_id},
+        )
 
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
         },
     )
 
@@ -482,6 +475,7 @@ async def get_space_learning_queues(
 @router.post(
     "/{spaceId}/analytics/learning/outline",
     summary="Build Space Learning Outline",
+    dependencies=[ROUTE_DECIDES],
 )
 async def build_space_learning_outline(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -572,6 +566,6 @@ async def export_space_analytics_publishers(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'  # noqa: E501
+            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'
         },
     )

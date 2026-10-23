@@ -8,23 +8,28 @@ service listens on loopback TCP and the permission is a token instead: it is
 written beside the port in ``executor.endpoint``, a file only the owner can
 read, and a connection that does not open with it is closed. After that line
 the protocol is the same one. What else differs on Windows is in portable.py.
+
+The bodies of everything below moved out of this file on 2026-10-16, into the
+four modules beside it that it imports: `runtime_core` (the platform
+primitives, the constants, where a state's service is reached and the one call
+that reaches it), `runtime_commands` (the command registry), `runtime_context`
+(the project's context and the task filesystem) and `runtime_calls` (the tool
+calls). What stays here is the class, with one-line forwarders to those bodies
+— the names a test patches on this module (`time`, `COMMAND_ABANDONED_S`,
+`request`, `fcntl`) are read from here, where they are — and the three entry
+points: `serve`, `bridge` and `main`. Every name this file used to hold is
+re-exported, so nothing that reaches it by this path changed.
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import contextlib
-import functools
 import hashlib
 import hmac
 import json
 import os
-import re
-import runpy
 import secrets
-import select
-import shlex
 import shutil
 import signal
 import socket
@@ -34,313 +39,76 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
-from datetime import datetime, timezone
-from functools import partial
 from pathlib import Path
 
 if sys.platform != "win32":
-    import fcntl
+    # Re-exported from `runtime_core`, where the lock that takes it lives: this
+    # is the name the stop test's observer patches (`runtime.fcntl.flock`), and
+    # it is the module itself, so the patch reaches the caller either way.
+    import fcntl  # noqa: F401
 
-    NOFOLLOW = os.O_NOFOLLOW
-    BINARY = 0
-    pwrite = os.pwrite
+# The pieces shipped beside this file (`RELEASE_FILES`): the primitives and
+# helpers all of them read, the command registry, the project's context and
+# the tool calls themselves.
+if __package__:
+    from . import runtime_calls as calls
+    from . import runtime_commands as commands
+    from . import runtime_context as context
+    from . import runtime_core as core
 else:
-    # No symlink flag to open with: `workflow_path` has already refused a path
-    # with a link anywhere in it. BINARY because a descriptor Windows opens in
-    # text mode writes every \n as \r\n.
-    NOFOLLOW = 0
-    BINARY = os.O_BINARY
+    # Its siblings sit beside it, which a script run has first on `sys.path`
+    # and a file loaded by path — `bootstrap` installs one and `predecessor`
+    # loads the release's — has not.
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import runtime_calls as calls
+    import runtime_commands as commands
+    import runtime_context as context
+    import runtime_core as core
 
-    def pwrite(fd, data, offset):
-        os.lseek(fd, offset, os.SEEK_SET)
-        return os.write(fd, data)
-
-
+# This file's own bytes, and the protocol it answers with: the two names that
+# are about the release rather than about how it is used.
 SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 PROTOCOL_VERSION = 1
 
-# What this runtime reads from its own release, by its path there, with the
-# file it is built from in a checkout (under `backend/`). The launch ships these
-# (`launch.file_sources`) and every copy of this runtime installs them the same
-# way (`tests/support/executor_release.py`): machine and fixture get the same.
-_OWN = (
-    "runtime",
-    "portable",
-    "darwin",
-    "mcp_process",
-    "machine_files",
-    "machine_git",
-    "repo_search",
-)
-RELEASE_FILES = {
-    **{
-        f"remote-execution/{name}.py": (
-            f"app/domain/agent/harness/claude_code/remote_execution/{name}.py"
-        )
-        for name in (*_OWN, "predecessor")
-    },
-    "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
-    "remote-execution/raster_images.py": "app/core/raster_images.py",
-    "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
-    "cheese": "sandbox/cheese",
-}
-
-NATIVE_TOOLS = {
-    "Read",
-    "Edit",
-    "Write",
-    "Bash",
-    "NotebookEdit",
-    "TaskStop",
-}
-
-# A command the central session's shell prefix started (`shell`) is read by
-# that prefix until it ends. One nobody has read for this long lost its reader
-# for good — the session ended while the link to this machine was down — so it
-# is stopped; a finished one nobody collected is forgotten. Longer than any
-# link drop a deploy of the device connection causes, which the prefix waits
-# out and then reattaches.
-COMMAND_ABANDONED_S = 600.0
-# The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
-# SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
-# SIGKILL, so there every stop failed on the name before `signal_command`,
-# which stops the whole tree on Windows whatever the number.
-STOP_SIGNALS = frozenset({1, 2, 9, 15})
-# The longest one `shell` read waits for output before answering with none.
-COMMAND_READ_WAIT_S = 25.0
-# The most one `shell` read answers with per stream, before base64.
-COMMAND_READ_BYTES = 1024 * 1024
-# What the executor's own Bash (Codex, platform commands) hands back inline,
-# as the build's own Bash tool does; the rest stays in the task's output file.
-BASH_INLINE_CHARS = 30_000
-COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
-
-
-def stamp():
-    # This shipped script also runs on hosts with Python 3.9.
-    return datetime.now(timezone.utc).isoformat()  # noqa: UP017
-
-
-def write_json(path, value):
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex)
-    temporary.write_text(json.dumps(value))
-    temporary.replace(path)
-
-
-@functools.cache
-def beside(name):
-    """A module shipped beside this file (`RELEASE_FILES`): Windows and macOS
-    primitives (`portable`, `darwin`), the stdio MCP client, the files and git
-    pi's tools take."""
-    return runpy.run_path(str(Path(__file__).with_name(name + ".py")))
-
-
-@functools.cache
-def project_hooks():
-    """The project's tool hooks, by the rules pi's runner follows too
-    (`app/domain/agent/project_hooks.py`). Shipped beside this file; read from
-    the source tree when this runs from a checkout."""
-    beside = Path(__file__).with_name("project_hooks.py")
-    if not beside.exists():
-        source = RELEASE_FILES["remote-execution/project_hooks.py"]
-        beside = Path(__file__).resolve().parents[6] / source
-    return runpy.run_path(str(beside))
-
-
-def lock(file, blocking=True):
-    if sys.platform == "win32":
-        beside("portable")["lock"](file, blocking)
-    else:
-        fcntl.flock(file, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def resolve_program(argv):
-    return beside("portable")["which"](argv) if sys.platform == "win32" else argv
-
-
-def socket_path(state):
-    """Where a client finds this state's service: the address it dials, or on
-    Windows the file naming its port and token. It exists only while the
-    service may.
-
-    On POSIX the address is a link to the socket in `socket_directory`. The
-    connector derives this same name (`cli/internal/host/executor_unix.go`)."""
-    if sys.platform == "win32":
-        return str(Path(state) / "executor.endpoint")
-    return socket_directory(state) + ".sock"
-
-
-def socket_directory(state):
-    """The directory this state's service binds its sockets in. A sandboxed
-    executor (`bootstrap.sandbox_argv`) is shown this one directory of the
-    machine's /tmp and nothing else there, so its sockets cannot sit beside
-    every other room's."""
-    digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-execution-{os.getuid()}-{digest}"
-
-
-def connect(state):
-    if sys.platform == "win32":
-        # A missing file is FileNotFoundError and a port nobody listens on is
-        # ConnectionRefusedError: the two a Unix socket gives for the same cases.
-        endpoint = json.loads(Path(socket_path(state)).read_text())
-        connection = socket.create_connection(("127.0.0.1", endpoint["port"]))
-        connection.sendall(endpoint["token"].encode() + b"\n")
-        return connection
-    connection = socket.socket(socket.AF_UNIX)
-    connection.connect(socket_path(state))
-    return connection
-
-
-def claude_shell(env):
-    """The shell Claude Code runs its commands in on a machine with this
-    environment, chosen as the pinned build chooses it (held to it by
-    `scripts/remote_execution/mcp_contract.py`). On Windows, the Git Bash it is
-    pointed at; elsewhere `CLAUDE_CODE_SHELL` when it names an executable bash
-    or zsh, then `$SHELL` when it does, then zsh before bash (bash before zsh
-    when `$SHELL` names bash), each found on PATH first and then in the usual
-    directories."""
-    if sys.platform == "win32" and env.get("CLAUDE_CODE_GIT_BASH_PATH"):
-        return env["CLAUDE_CODE_GIT_BASH_PATH"]
-
-    def usable(path):
-        return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
-
-    def posix(path):
-        return "bash" in path or "zsh" in path
-
-    override = env.get("CLAUDE_CODE_SHELL", "")
-    if posix(override) and usable(override):
-        return override
-    own = env.get("SHELL", "")
-    order = ("bash", "zsh") if "bash" in own else ("zsh", "bash")
-    found = [shutil.which(name, path=env.get("PATH")) for name in order]
-    candidates = [
-        found[0],
-        *(
-            f"{directory}/{name}"
-            for name in order
-            for directory in ("/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")
-        ),
-        found[1],
-    ]
-    if posix(own):
-        candidates.insert(0, own)
-    for candidate in candidates:
-        if usable(candidate):
-            return candidate
-    raise RuntimeError("No bash or zsh on this machine for Claude Code to run")
-
-
-def native_path(path):
-    """This machine's own spelling of a path the session names.
-
-    The session sees a Windows executor's paths the way Git Bash spells them
-    (`/c/Users/x` for `C:\\Users\\x`, `executor_transport.session_path`),
-    which Git Bash opens and nothing else here does. Elsewhere the spellings
-    are the same.
-    """
-    if sys.platform != "win32":
-        return path
-    return re.sub(r"^/([A-Za-z])(?:/|$)", lambda m: m.group(1).upper() + ":/", path)
-
-
-def gitignored(root, directories):
-    """Those of `directories`, all under `root`, that git ignores. None when
-    `root` is not a work tree or git cannot be run: nothing is ignored then."""
-    if not directories:
-        return set()
-    names = [directory.relative_to(root).as_posix() + "/" for directory in directories]
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "--stdin"],
-            input="\n".join(names) + "\n",
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    if result.returncode not in (0, 1):
-        return set()
-    found = set(result.stdout.splitlines())
-    return {
-        directory
-        for directory, name in zip(directories, names, strict=True)
-        if name in found
-    }
-
-
-def _unquote(value):
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
-
-
-def skill_paths(path):
-    """What a SKILL.md's frontmatter `paths` scopes it to, as written: each
-    string it lists (a flow sequence as its inner text), for the session to
-    split and expand as Claude Code does (`release.path_patterns`). None when
-    the frontmatter has no `paths`."""
-    try:
-        with open(path, encoding="utf-8") as stream:
-            if stream.readline().strip() != "---":
-                return None
-            lines = []
-            for line in stream:
-                line = line.rstrip("\r\n")
-                if line.strip() == "---":
-                    break
-                lines.append(line)
-            else:
-                return None
-    except (OSError, UnicodeError):
-        return None
-    for index, line in enumerate(lines):
-        match = re.match(r"paths\s*:(.*)$", line)
-        if not match:
-            continue
-        value = match.group(1).strip()
-        if value.startswith("[") and value.endswith("]"):
-            return [value[1:-1]]
-        if value:
-            return [_unquote(value)]
-        items = []
-        for following in lines[index + 1 :]:
-            item = re.match(r"\s*-\s*(.*)$", following)
-            if item:
-                items.append(_unquote(item.group(1).strip()))
-            elif following.strip() and not following[:1].isspace():
-                break
-        return items
-    return None
-
-
-def request(state, method, params=None):
-    with connect(state) as connection:
-        with connection.makefile("rwb") as stream:
-            stream.write(
-                json.dumps({"method": method, "params": params or {}}).encode() + b"\n"
-            )
-            stream.flush()
-            line = stream.readline()
-    if not line:
-        raise RuntimeError(
-            "Executor disconnected; request outcome must be queried by its original ID"
-        )
-    try:
-        response = json.loads(line)
-    except ValueError:
-        if sys.platform != "win32":
-            raise
-        # An endpoint left behind by a service that died with the machine can
-        # name a port something else has taken since; what answers there is
-        # not an executor.
-        raise ConnectionRefusedError("No executor answers at this endpoint") from None
-    if "error" in response:
-        raise RuntimeError(response["error"])
-    return response["result"]
+# Everything this file held before its bodies moved out, taken from the module
+# that holds it now and bound here as this module's own global: a caller or a
+# test that reaches `runtime.NAME` still resolves, and the code above reads it
+# here — which is how `_reap` is still the one patched name's reader.
+_OWN = core._OWN
+RELEASE_FILES = core.RELEASE_FILES
+# The `control` operations that reach a command rather than make one: the one
+# thing the facade reads of `runtime_commands` at call time, so an executor
+# that is draining still answers them.
+CONTROL_INSPECT = commands.SHELL_INSPECT
+NATIVE_TOOLS = core.NATIVE_TOOLS
+COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
+EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
+EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
+STOP_SIGNALS = core.STOP_SIGNALS
+COMMAND_READ_WAIT_S = core.COMMAND_READ_WAIT_S
+COMMAND_READ_BYTES = core.COMMAND_READ_BYTES
+BASH_INLINE_CHARS = core.BASH_INLINE_CHARS
+COMMAND_ID = core.COMMAND_ID
+NOFOLLOW = core.NOFOLLOW
+BINARY = core.BINARY
+pwrite = core.pwrite
+stamp = core.stamp
+write_json = core.write_json
+beside = core.beside
+project_hooks = core.project_hooks
+lock = core.lock
+resolve_program = core.resolve_program
+socket_path = core.socket_path
+socket_directory = core.socket_directory
+connect = core.connect
+claude_shell = core.claude_shell
+native_path = core.native_path
+gitignored = core.gitignored
+_unquote = core._unquote
+skill_paths = core.skill_paths
+request = core.request
 
 
 class Executor:
@@ -349,8 +117,7 @@ class Executor:
         self.config = json.loads((self.state / "config.json").read_text())
         self.programs = Path(self.config.get("release", self.state.parent))
         self.admission_lock = threading.Lock()
-        self.active_calls = 0
-        self.upgrading = False
+        self.active_calls, self.upgrading = 0, False
         upgrade = self.state / "upgrade.json"
         if upgrade.exists():
             pending = json.loads(upgrade.read_text())
@@ -372,6 +139,12 @@ class Executor:
         self.commands_dir.mkdir(exist_ok=True)
         self.running = {}
         self.command_lock = threading.RLock()
+        # The process groups its commands started and that still have a
+        # process in them, and when it last had a request or a command end:
+        # what it ends, and when, once it has sat idle (`idle_stop`).
+        self.groups = set()
+        self.active_at = time.monotonic()
+        self.stopping = False
         # Foreground Bash calls still waiting on their command (call → command),
         # and the ones told to stop waiting (`control` "background").
         self.foreground = {}
@@ -380,17 +153,20 @@ class Executor:
         # a `cd` changes for the next call, as the build's own Bash tool does.
         self.bash_cwd = self.root
         # When a watched command's record was last read, by command id.
-        self.collected = {}
-        self.snapshot = None
-        self.snapshot_lock = threading.Lock()
-        self.cli_lock = threading.Lock()
+        self.collected, self.snapshot = {}, None
+        self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
-        # Agent types' servers, by name: their definitions come with the calls.
-        self.agent_specs = {}
-        self.client_lock = threading.Lock()
-        self.log_lock = threading.Lock()
-        self.db_lock = threading.Lock()
-        self.context_fs_entries = {}
+        # Commands added in project settings and agent types' own, by name:
+        # their definitions come with the calls.
+        self.handed_specs = {}
+        # What the session's gateway hands with a local server's calls
+        # (`RemoteClient._local_start`): the values of the project secrets its
+        # definition names, and — on a member's computer — the fingerprints of
+        # the commands its owner lets run here. Read when the server starts.
+        self.server_values = {}
+        self.server_allowed = {}
+        self.client_lock, self.log_lock = threading.Lock(), threading.Lock()
+        self.db_lock, self.context_fs_entries = threading.Lock(), {}
         # Socket clients load this module without opening the service database.
         import sqlite3  # deferred-import: socket clients load this without a DB
 
@@ -403,8 +179,7 @@ class Executor:
             "(id TEXT PRIMARY KEY, input TEXT, result TEXT)"
         )
         self.db.commit()
-        self.cli_worker = None
-        self.cli_worker_ready = False
+        self.cli_worker, self.cli_worker_ready = None, False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
         # The worker forks and passes descriptors; Windows has neither, and
@@ -431,591 +206,87 @@ class Executor:
             )
             output.flush()
 
+    # --- the calls -----------------------------------------------------------
+
     def client(self, server):
-        with self.client_lock:
-            if server not in self.clients:
-                if server == "native":
-                    config_dir = self.state / "native-config"
-                    config_dir.mkdir(exist_ok=True)
-                    command = [
-                        self.config["claude"],
-                        "--setting-sources",
-                        "",
-                        "mcp",
-                        "serve",
-                    ]
-                    # This process runs the room's file operations, and it is
-                    # the build that writes the shell snapshot every command
-                    # here starts from (`shell_snapshot`). So it carries the
-                    # environment a command gets — the room's own, credentials
-                    # included, with the platform CLI on PATH — and is held to
-                    # the shell commands here run in, which is the one it would
-                    # choose itself.
-                    env = dict(
-                        self.command_env(),
-                        CLAUDE_CONFIG_DIR=str(config_dir),
-                        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
-                        CLAUDE_CODE_TMPDIR=str(self.state / "serve-temp"),
-                        CLAUDE_CODE_SHELL=claude_shell(self.env),
-                    )
-                    for key in (
-                        "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS",
-                        "CLAUDE_CODE_SHELL_PREFIX",
-                    ):
-                        env.pop(key, None)
-                    cwd = self.root
-                else:
-                    spec = {**self.agent_specs, **self.config["mcp_servers"]}[server]
-                    if spec.get("type", "stdio") != "stdio":
-                        raise ValueError(
-                            "Remote process servers require stdio transport"
-                        )
-                    command = [spec["command"], *spec.get("args", [])]
-                    env = dict(self.env, **spec.get("env", {}))
-                    cwd = spec.get("cwd", str(self.root))
-                log = (
-                    self.state
-                    / (
-                        "mcp-"
-                        + hashlib.sha256(server.encode()).hexdigest()[:12]
-                        + ".log"
-                    )
-                ).open("a")
-                try:
-                    process = beside("mcp_process")["MCPProcess"]
-                    self.clients[server] = process(command, cwd, env, log)
-                finally:
-                    log.close()
-            return self.clients[server]
+        return calls.client(self, server)
 
     def _ready_cli_worker(self):
-        if self.cli_worker is None:
-            raise RuntimeError("Cheese CLI worker is unavailable")
-        # A lock of its own, held only for the handshake: readiness is one line
-        # read off the worker's stdout, so two threads arriving together would
-        # each get half an answer.
-        with self.cli_lock:
-            if self.cli_worker_ready:
-                return
-            assert self.cli_worker.stdout is not None
-            if (
-                not select.select([self.cli_worker.stdout], [], [], 15)[0]
-                or self.cli_worker.stdout.readline().strip() != "ready"
-            ):
-                self.cli_worker.kill()
-                self.cli_worker.wait()
-                raise RuntimeError("CLI worker startup failed; inspect cli-worker.log")
-            self.env["CHEESE_CLI_SOCKET"] = str(
-                Path(socket_directory(self.state)) / "cli.sock"
-            )
-            self.cli_worker_ready = True
+        return calls._ready_cli_worker(self)
 
     def invoke(self, params):
-        key = params["id"]
-        serialized = json.dumps(params, sort_keys=True)
-        with self.db_lock:
-            existing = self.db.execute(
-                "SELECT input,result FROM requests WHERE id=?", (key,)
-            ).fetchone()
-            if existing:
-                if existing[0] != serialized:
-                    raise ValueError("Request ID already belongs to different input")
-                if existing[1] is None:
-                    raise RuntimeError(
-                        "Request accepted; outcome is pending or unknown. "
-                        "Do not replay with a new ID"
-                    )
-                return json.loads(existing[1])
-            self.db.execute("INSERT INTO requests VALUES (?,?,NULL)", (key, serialized))
-            self.db.commit()
-        self.log(key, "started", input=params)
-        try:
-            result = {
-                "value": self.execute(
-                    params["tool"],
-                    params.get("args", {}),
-                    key,
-                    params.get("server", "native"),
-                    params.get("cwd"),
-                    tool_hooks=not params.get("platform"),
-                )
-            }
-        except Exception as exc:
-            result = {"error": str(exc)}
-        with self.db_lock:
-            self.db.execute(
-                "UPDATE requests SET result=? WHERE id=?", (json.dumps(result), key)
-            )
-            self.db.commit()
-        self.log(key, "failed" if "error" in result else "completed", result=result)
-        return result
+        return calls.invoke(self, params)
 
     def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
-        name = tool if server == "native" else f"mcp__{server}__{tool}"
-        if tool_hooks:
-            args = self.hooks("PreToolUse", name, args, key, cwd=cwd)
-        result = self.execute_core(tool, args, key, server)
-        if tool_hooks:
-            self.hooks("PostToolUse", name, args, key, result, cwd=cwd)
-        return result
+        return calls.execute(self, tool, args, key, server, cwd, tool_hooks)
 
     def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
-        if self.config.get("private"):
-            return args
-        return project_hooks()["run"](
-            event,
-            tool,
-            args,
-            call_id=key,
-            root=self.root,
-            cwd=Path(cwd) if cwd and Path(cwd).is_dir() else self.bash_cwd,
-            env=self.env,
-            session_id=self.state.name,
-            result=result,
-            extra=[self.config.get("settings", {})],
-            program=resolve_program,
-            fire=fire,
-        )
+        return calls.hooks(self, event, tool, args, key, result, cwd, fire)
 
     def tool_hooks(self, params):
-        """The project's hooks for one event of a call this executor does not
-        run, asked before and after it by a harness that fires none itself; or,
-        with `fire` false, only its `permissions.deny`, for one whose hooks the
-        build fires. A deny is an answer: the caller must be able to say why."""
-        try:
-            args = self.hooks(
-                params["event"],
-                params["tool"],
-                params.get("args", {}),
-                params["request_id"],
-                params.get("result"),
-                cwd=params.get("cwd"),
-                fire=params.get("fire", True),
-            )
-        except PermissionError as denied:
-            return {"denied": str(denied)}
-        return {"args": args}
+        return calls.tool_hooks(self, params)
 
     def execute_core(self, tool, args, key, server="native"):
-        if tool in self.config.get("deny_tools", []):
-            raise PermissionError(f"Remote execution policy denies {tool}")
-        if server != "native":
-            return self.client(server).call(
-                "tools/call", {"name": tool, "arguments": args}
-            )
-        if tool not in NATIVE_TOOLS:
-            raise ValueError(f"Unsupported remote tool: {tool}")
-        if tool == "Bash":
-            return self.bash(args, key)
-        if tool == "TaskStop":
-            record = self.stop_command(args["task_id"])
-            return {
-                "message": "Remote process group stopped",
-                "task_id": args["task_id"],
-                "task_type": "local_bash",
-                "command": record["command"],
-            }
-        args = {
-            key: native_path(value)
-            if key in ("file_path", "notebook_path", "path") and isinstance(value, str)
-            else value
-            for key, value in args.items()
-        }
-        result = self.client("native").call(
-            "tools/call", {"name": tool, "arguments": args}
-        )
-        if result.get("isError"):
-            raise RuntimeError(result["content"][0]["text"])
-        return json.loads(result["content"][0]["text"])
+        return calls.execute_core(self, tool, args, key, server)
 
-    # --- commands ------------------------------------------------------------
+    # --- the commands --------------------------------------------------------
 
     def shell_argv(self, script):
-        """How the build starts its shell for one command: after its snapshot
-        when it has one, and as a login shell when it does not."""
-        snapshot = self.shell_snapshot()
-        return [
-            claude_shell(self.env),
-            "-c",
-            *([] if snapshot else ["-l"]),
-            (
-                f"source {shlex.quote(str(snapshot))} 2>/dev/null || true && "
-                if snapshot
-                else ""
-            )
-            + script,
-        ]
+        return commands.shell_argv(self, script)
 
     def command_env(self):
-        """The environment every command starts from: the room's, with the
-        platform CLI first on PATH, and the build that runs here named where a
-        native session names it for its commands (the snapshot's `rg` reads it)."""
-        if self.cli_worker is not None:
-            # Commands reach the CLI through it, so it has to be up first.
-            self._ready_cli_worker()
-        env = dict(
-            self.env,
-            PATH=str(self.programs / "remote-execution/bin")
-            + os.pathsep
-            + self.env.get("PATH", os.defpath),
-        )
-        if self.config.get("claude"):
-            env["CLAUDE_CODE_EXECPATH"] = str(self.config["claude"])
-        return env
+        return commands.command_env(self)
 
     def shell_snapshot(self):
-        """The snapshot of this machine's shell that the pinned build writes.
-
-        A native Claude Code session sources a snapshot of its own machine's
-        shell — functions, aliases, options, PATH — before every command. The
-        central session's snapshot is of the wrong machine, so every command
-        here sources this one instead: `claude mcp serve` writes it into its
-        config directory the first time its Bash tool runs, from the
-        environment a command here gets, so asking that tool for `true` once
-        is how this executor holds exactly the file a native session on this
-        machine would. None when the build could not write one; a command then
-        runs without, as a native one does.
-        """
-        with self.snapshot_lock:
-            if self.snapshot is not None and self.snapshot.exists():
-                return self.snapshot
-            try:
-                self.client("native").call(
-                    "tools/call", {"name": "Bash", "arguments": {"command": "true"}}
-                )
-            except Exception as exc:  # noqa: BLE001 — a command still runs
-                self.log("shell-snapshot", "failed", error=str(exc))
-                return None
-            shell = claude_shell(self.env)
-            kind = "zsh" if "zsh" in shell else "bash" if "bash" in shell else "sh"
-            found = sorted(
-                (self.state / "native-config/shell-snapshots").glob(
-                    f"snapshot-{kind}-*.sh"
-                ),
-                key=lambda path: path.stat().st_mtime,
-            )
-            self.snapshot = found[-1] if found else None
-            return self.snapshot
+        return commands.shell_snapshot(self)
 
     def _record(self, command_id):
-        if not isinstance(command_id, str) or not COMMAND_ID.fullmatch(command_id):
-            raise ValueError("Invalid command id")
-        return self.commands_dir / command_id
+        return commands._record(self, command_id)
 
     def start_command(
         self, command_id, argv, cwd, env, *, merge, stdin=None, watched, meta
     ):
-        """Run one command as a process group of its own, output to its record.
-
-        Its output goes to files and not through this process, so what it
-        prints does not depend on anyone reading it at the time: a reader that
-        loses its connection picks up at the byte it had reached.
-        """
-        record = self._record(command_id)
-        record.mkdir()
-        write_json(record / "command.json", {**meta, "watched": watched})
-        out = (record / "out").open("wb")
-        err = out if merge else (record / "err").open("wb")
-        source = subprocess.DEVNULL
-        if stdin is not None:
-            (record / "in").write_bytes(stdin)
-            source = (record / "in").open("rb")
-        try:
-            options = {
-                "cwd": str(cwd),
-                "env": env,
-                "stdin": source,
-                "stdout": out,
-                "stderr": err,
-            }
-            if sys.platform == "win32":
-                process = subprocess.Popen(
-                    resolve_program(argv),
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                    **options,
-                )
-            else:
-                process = subprocess.Popen(argv, start_new_session=True, **options)
-        finally:
-            for stream in {out, err, source} - {subprocess.DEVNULL}:
-                stream.close()
-        with self.command_lock:
-            self.running[command_id] = {
-                "process": process,
-                "read_at": time.monotonic(),
-                "watched": watched,
-            }
-        self.log(command_id, "started", pid=process.pid, command=meta.get("command"))
-        threading.Thread(
-            target=self._wait_command, args=(command_id, process), daemon=True
-        ).start()
+        return commands.start_command(
+            self,
+            command_id,
+            argv,
+            cwd,
+            env,
+            merge=merge,
+            stdin=stdin,
+            watched=watched,
+            meta=meta,
+        )
 
     def _wait_command(self, command_id, process):
-        code = process.wait()
-        # Publish only a complete code; ENOSPC can leave an empty or partial file.
-        temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
-        written = False
-        with contextlib.suppress(OSError):
-            written = temporary.write_text(str(code)) == len(str(code))
-        with self.command_lock:
-            with contextlib.suppress(OSError):
-                if written:
-                    temporary.replace(temporary.with_name("exit"))
-            self.running.pop(command_id, None)
-            self.collected[command_id] = time.time()
-        with contextlib.suppress(OSError):
-            self.log(command_id, "exited", exit_code=code)
+        return commands._wait_command(self, command_id, process)
 
     def _tree(self, pid):
-        """The process and its descendants, parents first. A descendant that
-        left the group (`setsid`) is still one: the build's own stop kills the
-        tree, not the group."""
-        rows = []
-        if Path("/proc").is_dir():
-            # /proc rather than `ps`: the private execution image has no `ps`.
-            for entry in Path("/proc").iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    stat = (entry / "stat").read_text()
-                except OSError:
-                    continue
-                # The command name sits in parentheses and may hold spaces;
-                # the parent pid is the second field after it.
-                rows.append(
-                    (int(entry.name), int(stat[stat.rindex(")") + 2 :].split()[1]))
-                )
-        else:
-            # macOS, where not even `ps` runs in a room's sandbox.
-            rows = beside("darwin")["processes"]()
-        children = {}
-        for child, parent in rows:
-            children.setdefault(parent, []).append(child)
-        found, pending = [], [pid]
-        while pending:
-            current = pending.pop(0)
-            if current not in found:
-                found.append(current)
-                pending.extend(children.get(current, []))
-        return found
+        return commands._tree(self, pid)
 
     def signal_command(self, command_id, number):
-        """Send a signal to a running command's group and every descendant.
-
-        A stop for a command not started yet is kept: the prefix's start and
-        its stop travel separately, and a stop that overtook its start must
-        still hold, so that start is refused (`shell`)."""
-        record = self._record(command_id)
-        with self.command_lock:
-            entry = self.running.get(command_id)
-            if entry is None and not record.exists():
-                record.mkdir()
-                write_json(
-                    record / "command.json",
-                    {"watched": True, "stopped_before_start": True, "command": ""},
-                )
-                (record / "exit").write_text(str(-number))
-                self.log(command_id, "stopped before start", signal=number)
-                return {"running": False}
-        if entry is None:
-            return {"running": False}
-        pid = entry["process"].pid
-        if sys.platform == "win32":
-            beside("portable")["terminate_tree"](pid)
-            return {"running": True}
-        pids = self._tree(pid)
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(pid, number)
-        for member in pids:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(member, number)
-        return {"running": True}
+        return commands.signal_command(self, command_id, number)
 
     def stop_command(self, command_id):
-        """Stop a command for good: TERM, then KILL for whatever ignored it."""
-        record = self._record(command_id)
-        if not (record / "command.json").exists():
-            raise ValueError("Unknown remote task")
-        meta = json.loads((record / "command.json").read_text())
-        with self.command_lock:
-            entry = self.running.get(command_id)
-        if entry is not None:
-            # Taken once, before TERM: a descendant that ignores TERM outlives
-            # the shell that parented it and is re-parented, so a second look
-            # would not find it.
-            pids = [] if sys.platform == "win32" else self._tree(entry["process"].pid)
-            self.signal_command(command_id, signal.SIGTERM)
-            time.sleep(0.3)
-            for pid in pids:
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.kill(pid, signal.SIGKILL)
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                if sys.platform != "win32":
-                    os.killpg(entry["process"].pid, signal.SIGKILL)
-            self.log(command_id, "stopped")
-        return meta
+        return commands.stop_command(self, command_id)
 
     def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
-        """What a command printed from the given offsets on, waiting briefly for
-        more; its exit status and final directory once everything is read.
-
-        Offsets are the reader's, so a reader that lost an answer asks again
-        from where it was and gets each byte exactly once.
-        """
-        record = self._record(command_id)
-        if not (record / "command.json").exists():
-            raise ValueError("Unknown command")
-        deadline = time.monotonic() + min(max(float(wait), 0.0), COMMAND_READ_WAIT_S)
-        out_path, err_path = record / "out", record / "err"
-        while True:
-            with self.command_lock:
-                entry = self.running.get(command_id)
-                if entry is not None:
-                    entry["read_at"] = time.monotonic()
-                self.collected[command_id] = time.time()
-            # The exit file first: once it exists, the process wrote all it
-            # will, so the sizes read after it cover everything it printed.
-            exited = (record / "exit").exists()
-            out_size = out_path.stat().st_size if out_path.exists() else 0
-            err_size = err_path.stat().st_size if err_path.exists() else 0
-            if entry is None and not exited:
-                # Not ours to wait for, and never finished: the service that
-                # started it is gone.
-                return {"out": "", "err": "", "lost": True}
-            if (
-                out_size > out_offset
-                or err_size > err_offset
-                or exited
-                or time.monotonic() >= deadline
-            ):
-                break
-            time.sleep(0.05)
-
-        def chunk(path, offset, size):
-            if size <= offset:
-                return b""
-            with path.open("rb") as stream:
-                stream.seek(offset)
-                return stream.read(min(size - offset, COMMAND_READ_BYTES))
-
-        out = chunk(out_path, out_offset, out_size)
-        err = chunk(err_path, err_offset, err_size)
-        answer: dict = {
-            "out": base64.b64encode(out).decode(),
-            "err": base64.b64encode(err).decode(),
-        }
-        if (
-            exited
-            and out_offset + len(out) >= out_size
-            and err_offset + len(err) >= err_size
-        ):
-            answer["exit"] = int((record / "exit").read_text())
-            # As the shell spelled it, which is the session's spelling too
-            # (`native_path`).
-            path = record / "cwd"
-            if path.exists():
-                text = path.read_text(errors="replace")[:4096].strip()
-                if text:
-                    answer["cwd"] = text
-        return answer
+        return commands.read_command(self, command_id, out_offset, err_offset, wait)
 
     def _final_directory(self, record):
-        """The directory a command's shell ended in, as its `pwd -P` wrote it."""
-        path = record / "cwd"
-        if not path.exists():
-            return None
-        text = path.read_text(errors="replace")[:4096].strip()
-        return Path(native_path(text)) if text else None
+        return commands._final_directory(self, record)
 
     def shell(self, params):
-        """The central session's shell prefix: one command, started, read and
-        signalled by the id its prefix chose. Starting it again with the same
-        input is answered as started, so a prefix whose answer was lost asks
-        again without running it twice.
+        return commands.shell(self, params)
 
-        A `control` rather than a method of its own: the route that carries
-        executor calls from a session is served by the device connection's
-        owner, which an app release leaves on its previous image, and that
-        route admits a fixed set of methods."""
-        operation = params.get("operation")
-        command_id = params.get("command_id")
-        record = self._record(command_id)
-        if operation == "start":
-            inputs = {
-                key: params.get(key)
-                for key in ("kind", "body", "cwd", "env", "merge", "stdin")
-            }
-            digest = hashlib.sha256(
-                json.dumps(inputs, sort_keys=True).encode()
-            ).hexdigest()
-            with self.command_lock:
-                if record.exists():
-                    meta = json.loads((record / "command.json").read_text())
-                    if meta.get("stopped_before_start"):
-                        # Its stop came first: it never runs, and reads as
-                        # ended by that signal.
-                        return {"started": False}
-                    if meta.get("digest") != digest:
-                        raise ValueError(
-                            "Command ID already belongs to different input"
-                        )
-                    return {"started": True}
-                cwd = Path(native_path(params.get("cwd") or str(self.root)))
-                # 看不见的 cwd 会抛 EPERM：Path.is_dir 吞不住，os.path.isdir 当它不在
-                if not os.path.isdir(cwd):
-                    cwd = self.root
-                env = self.command_env()
-                env.update(
-                    (name, str(value))
-                    for name, value in (params.get("env") or {}).items()
-                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
-                )
-                if params.get("kind") == "bash":
-                    argv = self.shell_argv(
-                        params["body"]
-                        + " && pwd -P >| "
-                        + shlex.quote(str(record / "cwd"))
-                    )
-                elif params.get("kind") == "sh":
-                    argv = (
-                        [claude_shell(self.env), "-c", params["body"]]
-                        if sys.platform == "win32"
-                        else ["/bin/sh", "-c", params["body"]]
-                    )
-                else:
-                    raise ValueError("Unknown command kind")
-                stdin = params.get("stdin")
-                self.start_command(
-                    command_id,
-                    argv,
-                    cwd,
-                    env,
-                    merge=bool(params.get("merge")),
-                    stdin=None if stdin is None else base64.b64decode(stdin),
-                    watched=True,
-                    meta={"digest": digest, "command": params["body"][-2000:]},
-                )
-            return {"started": True}
-        if operation == "read":
-            return self.read_command(
-                command_id,
-                int(params.get("out", 0)),
-                int(params.get("err", 0)),
-                params.get("wait", 0),
-            )
-        if operation == "signal":
-            number = int(params["signal"])
-            if number not in STOP_SIGNALS:
-                raise ValueError("Unsupported signal")
-            return self.signal_command(command_id, number)
-        if operation == "forget":
-            with self.command_lock:
-                if command_id in self.running:
-                    raise ValueError("Command is still running")
-                shutil.rmtree(record, ignore_errors=True)
-                self.collected.pop(command_id, None)
-            return {}
-        raise ValueError("Unknown shell operation")
+    def prune_groups(self):
+        return commands.prune_groups(self)
+
+    def end_left_behind(self):
+        return commands.end_left_behind(self)
+
+    def idle_stop(self, idle_s):
+        return commands.idle_stop(self, idle_s)
 
     def _reap(self):
         """Stop a watched command whose reader is gone for good, and forget a
@@ -1033,6 +304,7 @@ class Executor:
                 self.log(command_id, "abandoned")
                 with contextlib.suppress(Exception):
                     self.stop_command(command_id)
+            self.prune_groups()
             for record in list(self.commands_dir.iterdir()):
                 try:
                     meta = json.loads((record / "command.json").read_text())
@@ -1040,749 +312,45 @@ class Executor:
                 except (OSError, ValueError):
                     continue
                 last = max(finished, self.collected.get(record.name, 0))
-                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                kept = OUTPUT_KEPT_S if meta.get("kept") else COMMAND_ABANDONED_S
+                if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
     def bash(self, args, key=None):
-        """This executor's own Bash tool, for the callers that have no shell of
-        their own here: the Codex harness and the platform's own commands.
-
-        It keeps the build's Bash contract those callers were written against:
-        a `cd` holds for the next call and leaving the workspace returns to its
-        root, a failure comes back as `Exit code N` followed by the output, a
-        foreground command still running at its timeout goes on as a background
-        task, and `TaskStop` stops one. So does one the caller moves to the
-        background while it runs (`background`), as Ctrl+B does to the build's.
-        """
-        command_id = "task-" + uuid.uuid4().hex[:16]
-        record = self._record(command_id)
-        cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
-        self.start_command(
-            command_id,
-            self.shell_argv(
-                f"eval {shlex.quote(args['command'])} < /dev/null && pwd -P >| "
-                + shlex.quote(str(record / "cwd"))
-            ),
-            cwd,
-            self.command_env(),
-            merge=True,
-            watched=False,
-            meta={"command": args["command"]},
-        )
-        running = {
-            "stdout": "",
-            "stderr": "",
-            "interrupted": False,
-            "noOutputExpected": False,
-            "backgroundTaskId": command_id,
-            # Where it goes on printing: a file on this machine, so the caller
-            # can read it with the same tools it reads the project with.
-            "outputFile": str(record / "out"),
-        }
-        if args.get("run_in_background"):
-            return running
-        deadline = (
-            time.monotonic() + min(max(args.get("timeout", 120000), 1), 600000) / 1000
-        )
-        with self.command_lock:
-            self.foreground[key] = command_id
-        try:
-            while not (record / "exit").exists():
-                with self.command_lock:
-                    yielded = key in self.backgrounded
-                    self.backgrounded.discard(key)
-                if yielded or time.monotonic() >= deadline:
-                    return running
-                time.sleep(0.05)
-        finally:
-            with self.command_lock:
-                self.foreground.pop(key, None)
-                self.backgrounded.discard(key)
-        code = int((record / "exit").read_text())
-        if code < 0:
-            # Killed by signal n: the number a shell reports.
-            code = 128 - code
-        final = self._final_directory(record)
-        self.bash_cwd = (
-            final
-            if final is not None and (final == self.root or self.root in final.parents)
-            else self.root
-        )
-        with (record / "out").open("rb") as stream:
-            text = stream.read(BASH_INLINE_CHARS * 4).decode("utf-8", "replace")
-        text = text[:BASH_INLINE_CHARS].rstrip("\n")
-        return {
-            "stdout": text if code == 0 else f"Exit code {code}\n{text}",
-            "stderr": "",
-            "interrupted": False,
-            "noOutputExpected": False,
-        }
+        return commands.bash(self, args, key)
 
     def control(self, params):
-        kind = params["subtype"]
-        if kind == "checkpoint":
-            self.hooks("Stop", "", {}, params["request_id"])
-            # The platform's own command, not a call of the agent's: the
-            # project's tool hooks never see it, as they never would natively.
-            return self.invoke(
-                {
-                    "id": params["request_id"],
-                    "tool": "Bash",
-                    "args": {"command": "cheese-sync"},
-                    "platform": True,
-                }
-            )
-        if kind == "shell":
-            return self.shell(params)
-        if kind in ("files", "git"):
-            return beside(f"machine_{kind}")["answer"](params, str(self.root))
-        if kind == "background":
-            # The named Bash call returns now, its command running on. Named by
-            # the call rather than by what is waiting: a call that is only
-            # starting has not registered yet, and must find the request when
-            # it does. Another session's calls on this machine are not touched.
-            with self.command_lock:
-                self.backgrounded.add(params["id"])
-                return {"background": self.foreground.get(params["id"])}
-        if kind == "tool_hooks":
-            return self.tool_hooks(params)
-        if kind == "read_file":
-            path = Path(native_path(params["path"]))
-            if not path.is_absolute():
-                path = self.root / path
-            return {"contents": path.read_text(), "absPath": str(path)}
-        if kind == "file_suggestions":
-            query = params.get("query", "").casefold()
-            if self.config.get("private"):
-                files = [
-                    p.relative_to(self.root).as_posix()
-                    for p in self.root.rglob("*")
-                    if p.is_file()
-                    and not any(
-                        part.startswith(".") for part in p.relative_to(self.root).parts
-                    )
-                ]
-                return {"files": [p for p in files if query in p.casefold()][:100]}
-            files = subprocess.check_output(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-                cwd=self.root,
-                text=True,
-            ).splitlines()
-            return {"files": [p for p in files if query in p.casefold()][:100]}
-        if kind == "get_workspace_diff":
-            if self.config.get("private"):
-                return {"diff": ""}
-            diff = subprocess.check_output(
-                ["git", "diff", "HEAD", "--"], cwd=self.root, text=True
-            )
-            return {"diff": diff}
-        raise ValueError(f"Unsupported executor control: {kind}")
+        return calls.control(self, params)
+
+    # --- the project's context and its files ---------------------------------
 
     def context(self, known_files=None):
-        if self.config.get("private"):
-            # Never import executable configuration written by a scratch command
-            # into the central Claude Code process.
-            return {
-                "workspace": str(self.root),
-                "files": {},
-                "instructions": "This chat has temporary scratch space at /work. "
-                "Use shell and file tools for drafts and small processing tasks. "
-                "Save finished documents through cheese_doc_set and publish artifacts "
-                "through cheese show. Scratch files can disappear when execution "
-                "is released; they are not permanent storage. "
-                "No project checkout is available.",
-            }
-        files = {}
-        instructions = []
-        seen = set()
-
-        def include(path):
-            path = path.resolve()
-            if path in seen or not path.is_file():
-                return
-            seen.add(path)
-            text = path.read_text()
-            imported = []
-
-            def reference(match):
-                candidate = Path(match.group(1)).expanduser()
-                if not candidate.is_absolute():
-                    candidate = path.parent / candidate
-                if candidate.is_file():
-                    imported.append(candidate)
-                    return (
-                        "[included instruction file: " + str(candidate.resolve()) + "]"
-                    )
-                return match.group()
-
-            text = re.sub(r"(?<![\w`])@([^\s`]+)", reference, text)
-            instructions.append("# " + str(path) + "\n\n" + text)
-            for candidate in imported:
-                include(candidate)
-
-        paths = [self.root / "CLAUDE.md", self.root / "CLAUDE.local.md"]
-        for path in paths:
-            include(path)
-        for directory in (self.root / ".claude",):
-            if directory.exists():
-                paths.extend(p for p in directory.rglob("*") if p.is_file())
-        file_names = []
-        for path in paths:
-            if path.is_file():
-                name = path.relative_to(self.root).as_posix()
-                file_names.append(name)
-                content = path.read_bytes()
-                if (known_files or {}).get(name) != hashlib.sha256(content).hexdigest():
-                    files[name] = base64.b64encode(content).decode()
-        return {
-            "workspace": str(self.root),
-            "files": files,
-            "file_names": file_names,
-            "instructions": "\n\n".join(instructions),
-        }
+        return context.context(self, known_files)
 
     def task_fs(self, params):
-        """Read or edit one task's live worktree, never the room's host filesystem."""
-        task_id = str(uuid.UUID(params["task_id"]))
-        home = Path(self.env["HOME"]).resolve()
-        root = (home / ".cheese" / "tasks" / task_id).resolve()
-        root.relative_to(home)
-        if not root.is_dir():
-            return {"error": "not_found", "missing": "worktree"}
-        operation = params["operation"]
-        if operation == "diff":
-
-            def git(*args, expected=(0,)):
-                result = subprocess.run(
-                    ["git", "-C", str(root), *args], capture_output=True, timeout=30
-                )
-                if result.returncode not in expected:
-                    raise ValueError("Cannot read the task's Git comparison")
-                return result.stdout
-
-            base = "refs/remotes/origin/" + params["base_branch"]
-            ancestor = git("merge-base", "HEAD", base).decode().strip()
-            diff = git("diff", "--no-ext-diff", "--no-textconv", ancestor, "--")
-            untracked = git("ls-files", "--others", "--exclude-standard", "-z")
-            for name in untracked.decode().split("\0"):
-                if not name:
-                    continue
-                path = (root / name).resolve()
-                try:
-                    path.relative_to(root)
-                except ValueError:
-                    continue
-                if path.is_file():
-                    diff += git(
-                        "diff",
-                        "--no-index",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "--",
-                        "/dev/null",
-                        name,
-                        expected=(0, 1),
-                    )
-            return {"diff": diff.decode("utf-8", errors="replace")}
-        if operation == "tree":
-            listed = (
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        str(root),
-                        "ls-files",
-                        "-c",
-                        "-o",
-                        "--exclude-standard",
-                        "-z",
-                    ],
-                    capture_output=True,
-                    check=True,
-                )
-                .stdout.decode()
-                .split("\0")
-            )
-            files = []
-            for name in sorted(set(listed) - {""}):
-                path = root / name
-                try:
-                    path.resolve().relative_to(root)
-                    if path.is_file():
-                        files.append({"path": name, "bytes": path.stat().st_size})
-                except (ValueError, OSError):
-                    continue
-            return {"files": files}
-        name = params.get("path", "")
-        relative = Path(name)
-        if (
-            not name
-            or relative.is_absolute()
-            or any(p in ("..", ".git") for p in relative.parts)
-        ):
-            raise ValueError("Invalid task file path")
-        path = (root / relative).resolve()
-        path.relative_to(root)
-        if not path.is_file():
-            return {"error": "not_found", "missing": "file"}
-        if operation == "read":
-            offset = params.get("offset", 0)
-            count = params.get("size", 1024 * 1024)
-            if (
-                not isinstance(offset, int)
-                or not isinstance(count, int)
-                or offset < 0
-                or not 0 <= count <= 2 * 1024 * 1024
-            ):
-                raise ValueError("Invalid task file byte range")
-            with path.open("rb") as file:
-                before = os.fstat(file.fileno())
-                version = hashlib.file_digest(file, "sha256").hexdigest()[:16]
-                if params.get("version") and params["version"] != version:
-                    return {"error": "conflict"}
-                file.seek(offset)
-                data = file.read(count)
-                after = os.fstat(file.fileno())
-                if (before.st_size, before.st_mtime_ns) != (
-                    after.st_size,
-                    after.st_mtime_ns,
-                ):
-                    return {"error": "conflict"}
-            return {
-                "data": base64.b64encode(data).decode(),
-                "bytes": before.st_size,
-                "version": version,
-            }
-        if operation in ("write", "write_bytes"):
-            limit = (1 if operation == "write" else 10) * 1024 * 1024
-            if path.stat().st_size > limit:
-                raise ValueError("Text file is too large")
-            old = path.read_bytes()
-            version = hashlib.sha256(old).hexdigest()[:16]
-            if params.get("version") != version:
-                return {"error": "conflict"}
-            if operation == "write" and b"\0" in old[:8192]:
-                raise ValueError("Binary task files cannot be edited as text")
-            if operation == "write":
-                old.decode("utf-8")
-                data = params["content"].encode("utf-8")
-            else:
-                data = base64.b64decode(params["data"], validate=True)
-            if len(data) > limit:
-                raise ValueError("Text file is too large")
-            temporary = path.with_name(path.name + ".cheese-save-" + uuid.uuid4().hex)
-            try:
-                temporary.write_bytes(data)
-                temporary.chmod(path.stat().st_mode & 0o777)
-                if path.read_bytes() != old:
-                    return {"error": "conflict"}
-                os.replace(temporary, path)
-            finally:
-                temporary.unlink(missing_ok=True)
-            return {"version": hashlib.sha256(data).hexdigest()[:16]}
-        raise ValueError("Unknown task filesystem operation")
+        return context.task_fs(self, params)
 
     def repo_search(self, params):
-        # A private chat rents no place and has no checkout (结论 19), and its
-        # image carries no `repo_search.py`: it says so rather than searching
-        # whatever the process happens to be standing in.
-        if self.config.get("private"):
-            return {"searched": False, "reason": "no-checkout", "hits": []}
-        return beside("repo_search")["search"](params, self.root)
+        return context.repo_search(self, params)
 
     def context_fs(self, params):
-        """Expose project context, with writes limited to project workflows."""
-        if self.config.get("private"):
-            if params.get("operation", "tree") != "tree":
-                raise ValueError("Private project context is not writable")
-            return {"generation": hashlib.sha256(b"private").hexdigest(), "entries": {}}
-
-        root = self.root.resolve()
-        operation = params.get("operation", "tree")
-        if operation == "statfs" and sys.platform == "win32":
-            usage = shutil.disk_usage(root)
-            return {
-                "f_bsize": 1,
-                "f_blocks": usage.total,
-                "f_bfree": usage.free,
-                "f_bavail": usage.free,
-            }
-        if operation == "statfs":
-            fs = os.statvfs(root)
-            return {
-                "f_bsize": fs.f_bsize,
-                "f_blocks": fs.f_blocks,
-                "f_bfree": fs.f_bfree,
-                "f_bavail": fs.f_bavail,
-            }
-        if operation in ("directory", "list"):
-            # Project directories are looked up one at a time.
-            relative = Path(params.get("path", ""))
-            if relative.is_absolute() or ".." in relative.parts:
-                return {"missing": True}
-            try:
-                path = (root / relative).resolve(strict=True)
-                path.relative_to(root)
-            except (OSError, ValueError):
-                return {"missing": True}
-            if not path.is_dir():
-                return {"missing": True}
-            if operation == "list":
-                names = []
-                for child in path.iterdir():
-                    with contextlib.suppress(OSError, ValueError):
-                        child.resolve(strict=True).relative_to(root)
-                        if child.is_dir():
-                            names.append(child.name)
-                return {"directories": sorted(names)}
-            stat = path.stat()
-            return {
-                "mode": stat.st_mode & 0o777,
-                "mtime_ns": stat.st_mtime_ns,
-                "nlink": stat.st_nlink,
-            }
-        if operation in {
-            "mkdir",
-            "create",
-            "write",
-            "truncate",
-            "rename",
-            "unlink",
-            "rmdir",
-        }:
-
-            def workflow_path(name):
-                relative = Path(name)
-                parts = relative.parts
-                claude_directory = operation == "mkdir" and parts == (".claude",)
-                if (
-                    relative.is_absolute()
-                    or not (
-                        claude_directory
-                        or len(parts) >= 2
-                        and parts[:2] == (".claude", "workflows")
-                    )
-                    or (len(parts) == 2 and operation not in {"mkdir", "rmdir"})
-                    or ".." in parts
-                    or any(
-                        (root.joinpath(*parts[:index])).is_symlink()
-                        for index in range(1, len(parts) + 1)
-                    )
-                ):
-                    raise ValueError("Only project workflows may be changed")
-                path = root / relative
-                path.resolve().relative_to(root)
-                return path
-
-            path = workflow_path(params.get("path", ""))
-            if operation == "mkdir":
-                path.mkdir(mode=0o700)
-            elif operation == "create":
-                fd = os.open(
-                    path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600
-                )
-                os.close(fd)
-            elif operation in {"write", "truncate"}:
-                fd = os.open(path, os.O_WRONLY | NOFOLLOW | BINARY)
-                try:
-                    if operation == "write":
-                        data = base64.b64decode(params["data"], validate=True)
-                        offset = params["offset"]
-                        if (
-                            not isinstance(offset, int)
-                            or offset < 0
-                            or offset + len(data) > 10 * 1024 * 1024
-                        ):
-                            raise ValueError("Invalid workflow write range")
-                        written = 0
-                        while written < len(data):
-                            written += pwrite(fd, data[written:], offset + written)
-                    else:
-                        size = params["size"]
-                        if (
-                            not isinstance(size, int)
-                            or not 0 <= size <= 10 * 1024 * 1024
-                        ):
-                            raise ValueError("Invalid workflow size")
-                        os.ftruncate(fd, size)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-                if operation == "write":
-                    return {"written": written}
-            elif operation == "rename":
-                destination = workflow_path(params["destination"])
-                os.replace(path, destination)
-            elif operation == "unlink":
-                path.unlink()
-            else:
-                path.rmdir()
-            return {"ok": True}
-        if params.get("operation") == "read":
-            name = params.get("path", "")
-            entry = self.context_fs_entries.get(name)
-            if not entry or entry["kind"] != "file":
-                raise FileNotFoundError(name)
-            offset = params.get("offset", 0)
-            size = params.get("size", 0)
-            if (
-                not isinstance(offset, int)
-                or not isinstance(size, int)
-                or offset < 0
-                or size < 0
-            ):
-                raise ValueError("Invalid context filesystem byte range")
-            path = root / name
-            try:
-                path.resolve().relative_to(root)
-            except (OSError, ValueError) as exc:
-                raise FileNotFoundError(name) from exc
-            with path.open("rb") as stream:
-                stream.seek(offset)
-                content = stream.read(size)
-            return {"data": base64.b64encode(content).decode()}
-
-        selected = set()
-        unsupported_imports = set()
-        unsupported_paths = set()
-
-        def project_path(path):
-            try:
-                path.resolve().relative_to(root)
-            except (OSError, ValueError):
-                return None
-            return path
-
-        def include(path, *, imports=False, depth=0):
-            candidate = project_path(path)
-            if candidate is None:
-                if path.is_symlink():
-                    try:
-                        unsupported_paths.add(path.relative_to(root).as_posix())
-                    except ValueError:
-                        pass
-                return
-            path = candidate
-            relative = path.relative_to(root)
-            if relative in (
-                Path(".claude/settings.json"),
-                Path(".claude/settings.local.json"),
-            ):
-                return
-            if path in selected or not path.exists():
-                return
-            selected.add(path)
-            if path.is_symlink():
-                target = project_path(path.resolve())
-                if target is None:
-                    unsupported_paths.add(path.relative_to(root).as_posix())
-                elif target != path:
-                    include(target, imports=imports, depth=depth)
-                return
-            if path.is_dir():
-                for child in path.iterdir():
-                    include(child, imports=imports, depth=depth)
-                return
-            if not imports or path.suffix != ".md" or depth >= 5:
-                return
-            try:
-                text = path.read_text()
-            except (OSError, UnicodeError):
-                return
-            for match in re.finditer(r"(?<![\w`])@([^\s`]+)", text):
-                reference = Path(match.group(1)).expanduser()
-                if reference.is_absolute():
-                    unsupported_imports.add(str(reference))
-                    continue
-                candidate = project_path(path.parent / reference)
-                if candidate is None:
-                    unsupported_imports.add(match.group(1))
-                elif candidate.exists():
-                    include(candidate, imports=True, depth=depth + 1)
-
-        for path in (
-            root / "AGENTS.override.md",
-            root / "AGENTS.md",
-            root / "CLAUDE.md",
-            root / "CLAUDE.local.md",
-            root / ".claude/rules",
-            root / ".claude/commands",
-            root / ".claude/agents",
-        ):
-            include(path, imports=True)
-        nested_skills = []
-        for directory, directories, files in os.walk(root):
-            here = Path(directory)
-            directories[:] = [
-                n for n in directories if n not in (".git", "node_modules")
-            ]
-            for name in directories:
-                path = here / name
-                if path.is_symlink() and project_path(path) is not None:
-                    selected.add(path)
-            for name in (
-                "AGENTS.override.md",
-                "AGENTS.md",
-                "CLAUDE.md",
-                "CLAUDE.local.md",
-            ):
-                if name in files:
-                    include(here / name, imports=True)
-            if here != root and (here / ".claude/skills").is_dir():
-                nested_skills.append(here)
-        ignored = gitignored(root, nested_skills)
-        for here in nested_skills:
-            if here not in ignored:
-                include(here / ".claude/skills")
-        if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
-            selected.add(root / ".claude")
-        include(root / ".claude/skills")
-        include(root / ".claude/workflows")
-        include(root / ".agents/skills")
-        include(root / ".codex/skills")
-
-        entries = {}
-        for path in selected:
-            relative = path.relative_to(root).as_posix()
-            stat = path.lstat()
-            if path.is_symlink():
-                kind = "symlink"
-            elif path.is_dir():
-                kind = "directory"
-            elif path.is_file():
-                kind = "file"
-            else:
-                continue
-            entries[relative] = {
-                "kind": kind,
-                "mode": stat.st_mode & 0o777,
-                "mtime_ns": stat.st_mtime_ns,
-                "size": stat.st_size,
-                "nlink": stat.st_nlink,
-            }
-            if kind == "symlink":
-                entries[relative]["target"] = os.readlink(path)
-            elif kind == "file" and path.name == "SKILL.md":
-                scoped = skill_paths(path)
-                if scoped is not None:
-                    # The files it applies to: the session holds it back
-                    # until a file tool reaches one (`release.lazy_skills`).
-                    entries[relative]["paths"] = scoped
-            parent = path.parent
-            while parent != root:
-                name = parent.relative_to(root).as_posix()
-                if name not in entries:
-                    parent_stat = parent.lstat()
-                    entries[name] = {
-                        "kind": "directory",
-                        "mode": parent_stat.st_mode & 0o777,
-                        "mtime_ns": parent_stat.st_mtime_ns,
-                        "size": parent_stat.st_size,
-                        "nlink": parent_stat.st_nlink,
-                    }
-                parent = parent.parent
-
-        generation = hashlib.sha256(
-            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if params.get("operation", "tree") == "tree":
-            self.context_fs_entries = entries
-            return {
-                "generation": generation,
-                "entries": entries,
-                "unsupported_imports": sorted(unsupported_imports),
-                "unsupported_paths": sorted(unsupported_paths),
-                "hooks": self.project_tool_hooks(),
-            }
-        raise ValueError("Unsupported context filesystem operation")
+        return context.context_fs(self, params)
 
     def project_tool_hooks(self):
-        """The project's own PreToolUse and PostToolUse command hooks.
-
-        The central session registers them, so the build fires them for the
-        calls it runs itself — Bash above all — with its own input, and their
-        commands run here through its shell prefix. The file tools the plugin
-        runs here keep their hooks in `hooks`. A hook that is not a shell
-        command string is left out: nothing of the project runs on the
-        session host.
-        """
-        hooks = {}
-        for name in ("settings.json", "settings.local.json"):
-            path = self.root / ".claude" / name
-            try:
-                path.resolve(strict=True).relative_to(self.root)
-                settings = json.loads(path.read_text())
-            except (OSError, ValueError):
-                continue
-            for event in ("PreToolUse", "PostToolUse"):
-                for group in (settings.get("hooks") or {}).get(event) or []:
-                    commands = [
-                        {
-                            key: hook[key]
-                            for key in ("type", "command", "timeout")
-                            if key in hook
-                        }
-                        for hook in group.get("hooks") or []
-                        if hook.get("type") == "command"
-                        and isinstance(hook.get("command"), str)
-                        and "args" not in hook
-                    ]
-                    if commands:
-                        hooks.setdefault(event, []).append(
-                            {
-                                **(
-                                    {"matcher": group["matcher"]}
-                                    if isinstance(group.get("matcher"), str)
-                                    else {}
-                                ),
-                                "hooks": commands,
-                            }
-                        )
-        return hooks
+        return context.project_tool_hooks(self)
 
     def prepare(self, payload):
-        owner = self.state.parents[5]
-        home = (
-            owner
-            / ".cheese/home"
-            / str(uuid.UUID(payload["project"]))
-            / str(uuid.UUID(payload["resource"]))
-        )
-        if home / ".cheese/executor" != self.state:
-            raise ValueError("Executor preparation belongs to another room")
-        bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
-        with bootstrap["prepared"](
-            payload,
-            owner,
-            # Read-only in a sandbox: only the install, outside it, fetches it.
-            fetch_toolchain=not self.config.get("sandbox"),
-        ) as (
-            _,
-            config,
-            _,
-            _,
-        ):
-            if {k: v for k, v in self.config.items() if k != "env"} != {
-                k: v for k, v in config.items() if k != "env"
-            }:
-                raise RuntimeError(
-                    "Executor configuration changed; restart the room environment"
-                )
-            info = {
-                **self.dispatch("configure", {"env": config["env"]}),
-                "mcp_servers": bootstrap["process_servers"](config),
-                "context_tree": self.context_fs({"operation": "tree"}),
-            }
-            if payload.get("environment"):
-                runner = runpy.run_path(str(self.programs / "cheese-environment.py"))
-                info["environment_status"] = runner["read_status"](
-                    home / ".cheese-environment"
-                )["state"]
-            return info
+        return calls.prepare(self, payload)
+
+    # --- the service ---------------------------------------------------------
 
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
-            self.agent_specs[params["server"]] = params["spec"]
+            self.handed_specs[params["server"]] = params["spec"]
+        if isinstance(params, dict) and isinstance(params.get("values"), dict):
+            self.server_values[params["server"]] = params["values"]
+        if isinstance(params, dict) and "allowed" in params:
+            self.server_allowed[params["server"]] = params["allowed"]
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
@@ -1804,17 +372,24 @@ class Executor:
         inspect_task = (
             method == "control"
             and params.get("subtype") == "shell"
-            and params.get("operation") in {"read", "signal", "forget"}
+            and params.get("operation") in CONTROL_INSPECT
         ) or (method == "invoke" and params.get("tool") == "TaskStop")
         with self.admission_lock:
+            if self.stopping:
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+                raise RuntimeError(
+                    "Executor is stopping after sitting idle; request was not accepted"
+                )
             if self.upgrading and not inspect_task:
                 raise RuntimeError("Executor is upgrading; request was not accepted")
             self.active_calls += 1
+            self.active_at = time.monotonic()
         try:
             return self._dispatch(method, params)
         finally:
             with self.admission_lock:
                 self.active_calls -= 1
+                self.active_at = time.monotonic()
 
     def _dispatch(self, method, params):
         if method == "prepare":
@@ -1822,6 +397,11 @@ class Executor:
         if method == "configure" or (
             method == "configure_private" and self.config.get("private")
         ):
+            # A governed name the prepare does not state, and the room holds the
+            # value of, is one to stop using: this only adds, so it would stay.
+            for name, value in params.get("env_reset", {}).items():
+                if name not in params["env"] and self.env.get(name) == value:
+                    self.env.pop(name, None)
             self.env.update(params["env"])
             self.config["env"] = params["env"]
             write_json(self.state / "config.json", self.config)
@@ -1849,6 +429,10 @@ class Executor:
                 "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
                 "running_commands": len(self.running),
+                # Which ones: the sweep stops a command that outlasts its
+                # background cap instead of destroying the sandbox around it
+                # (`machine.lifecycle`).
+                "running_command_ids": list(self.running),
                 "capabilities": [
                     "prepare",
                     "idle_upgrade",
@@ -1880,14 +464,7 @@ class Executor:
         raise ValueError("Unknown executor method")
 
     def close(self):
-        for command_id in list(self.running):
-            self.stop_command(command_id)
-        for client in self.clients.values():
-            client.close()
-        if self.cli_worker is not None:
-            assert self.cli_worker.stdin is not None
-            self.cli_worker.stdin.close()
-            self.cli_worker.wait(timeout=10)
+        return calls.close(self)
 
 
 def serve(state):
@@ -1920,8 +497,7 @@ def serve(state):
                 self.wfile.write(json.dumps(response).encode() + b"\n")
 
     if sys.platform == "win32":
-        base = socketserver.ThreadingTCPServer
-        address = ("127.0.0.1", 0)
+        base, address = socketserver.ThreadingTCPServer, ("127.0.0.1", 0)
     else:
         base = socketserver.ThreadingUnixStreamServer
         directory = Path(socket_directory(state))
@@ -1957,89 +533,52 @@ def serve(state):
 
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
+        # A private chat's executor is not stopped for sitting idle: its
+        # container is reused across turns and `private.ensure` reaches a
+        # running container's executor with `request`, never `start`, so one
+        # that stopped itself would leave the chat without one until the
+        # container is released, which is what bounds it (`private.release`).
+        idle_s = float(
+            os.environ.get("CHEESE_EXECUTOR_IDLE_EXIT_S", EXECUTOR_IDLE_EXIT_S)
+        )
+        if not executor.config.get("private"):
+
+            def leave_when_idle():
+                while not executor.idle_stop(idle_s):
+                    time.sleep(min(EXECUTOR_IDLE_CHECK_S, idle_s / 4))
+                    # Every look, so a group that emptied is forgotten before
+                    # its number can be handed to a process of somebody else's.
+                    executor.prune_groups()
+                stop(None, None)
+
+            threading.Thread(target=leave_when_idle, daemon=True).start()
         try:
             server.serve_forever(poll_interval=0.1)
         finally:
-            executor.close()
+            # The socket goes first: from here a caller finds no executor, which
+            # it knows how to answer (an install starts one), rather than one
+            # that answers and refuses while what follows takes its time.
             path.unlink(missing_ok=True)
             if sys.platform != "win32":
                 Path(address).unlink(missing_ok=True)
+            if executor.stopping:
+                ended = executor.end_left_behind()
+                with contextlib.suppress(OSError):
+                    executor.log("service", "idle", idle_s=idle_s, ended_groups=ended)
+            executor.close()
     # server_close joins request handlers before their receipt database closes.
     executor.db.close()
-
-
-def bridge(state, server, *, call=None):
-    if call is None:
-        call = partial(request, state)
-
-    output_lock = threading.Lock()
-    bridge_id = uuid.uuid4().hex
-
-    def handle(data):
-        if "id" not in data:
-            return
-        try:
-            method = data["method"]
-            params = data.get("params", {})
-            if method == "initialize":
-                result = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "cheese-execution", "version": "0.1.0"},
-                }
-            elif method == "ping":
-                result = {}
-            elif method == "tools/call":
-                value = call(
-                    "invoke",
-                    {
-                        "id": f"mcp-{bridge_id}-{data['id']}",
-                        "server": server,
-                        "tool": params["name"],
-                        "args": params.get("arguments", {}),
-                        # Claude Code, the only bridge user, fires the hooks.
-                        "platform": True,
-                    },
-                )
-                result = value.get("value") or {
-                    "content": [{"type": "text", "text": value["error"]}],
-                    "isError": True,
-                }
-            else:
-                result = call(
-                    "mcp", {"server": server, "method": method, "params": params}
-                )
-            response = {"jsonrpc": "2.0", "id": data["id"], "result": result}
-        except Exception as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": data["id"],
-                "error": {"code": -32000, "message": str(exc)},
-            }
-        with output_lock:
-            print(json.dumps(response), flush=True)
-
-    threads = []
-    for line in sys.stdin:
-        thread = threading.Thread(target=handle, args=(json.loads(line),))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
 
 
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
+    parser.add_argument("mode", choices=["start", "serve", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)
-    parser.add_argument("--server", default="native")
     args = parser.parse_args()
     state = args.state if args.state.match("/proc/self/fd/*") else args.state.resolve()
     if args.mode == "serve":
         serve(state)
-    elif args.mode == "bridge":
-        bridge(state, args.server)
     elif args.mode == "request":
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))

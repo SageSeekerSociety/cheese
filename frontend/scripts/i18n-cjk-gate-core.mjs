@@ -18,6 +18,9 @@
 // The exception lives on the line it excuses, so it is read in the diff that
 // adds it and deleted with the line. A list kept in another file would outlive
 // the lines it names and let a new string slip in under an old entry.
+//
+// Chinese inside an HTML comment, a `//` or a `/* */` is prose, not copy, and
+// is not counted.
 
 /**
  * The same character class `catalog.spec.ts` uses for "this English value still
@@ -377,10 +380,64 @@ function chineseLines(relPath, text) {
   return found
 }
 
-/** An exempting comment: the marker right after the comment opener, then the reason. */
-const ANNOTATIONS = {
-  code: [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/],
-  markup: [/<!--\s*i18n-data:(.*?)(?:-->|$)/],
+/**
+ * An annotation is the marker right after a comment opener: `<!-- i18n-data: …`
+ * in a template, `//`/`/* i18n-data: …` in code. The marker may not sit on a
+ * later line than the opener; a reason that continues on the next line counts,
+ * one that only begins there does not.
+ */
+const MARKUP_ANNOTATION = /^<!--[ \t]*i18n-data:(.*?)(?:-->|$)/
+/** The marker after a `//` or `/*` opener on a code line, then the reason. */
+const CODE_ANNOTATIONS = [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/]
+
+/**
+ * The lines of a `.vue` file that sit inside a `<template>` block, where the
+ * only comment syntax is `<!-- -->`.
+ *
+ * `chineseLines` says the same thing for lines carrying Chinese outside a
+ * comment, but a line whose Han all sits inside one has no `kind` — and those
+ * are the lines where the wrong syntax would be read: `//` is text in a
+ * template, so a Chinese comment that mentions `// i18n-data:` in its prose
+ * would be taken for an annotation on that line.
+ * @param {string} relPath
+ * @param {string} text
+ * @returns {Set<number>} 1-based line numbers
+ */
+function markupLines(relPath, text) {
+  /** @type {Set<number>} */
+  const lines = new Set()
+  const src = String(text)
+  if (!String(relPath).replaceAll('\\', '/').endsWith('.vue')) return lines
+  const lineOf = lineIndexer(src)
+  for (const template of topLevelBlocks(src, 'template')) {
+    const first = lineOf(template.start)
+    template.body.split('\n').forEach((_, index) => lines.add(first + index))
+  }
+  return lines
+}
+
+/**
+ * The reason a template line's annotation gives, or `null`.
+ *
+ * `<!--` inside an HTML comment is text, not another comment, so the line is
+ * walked from one comment's end to the next instead of searched for the marker:
+ * a Chinese comment that merely quotes `<!-- i18n-data:` in its prose is prose,
+ * and exempts nothing. The comment may close on a later line and its reason may
+ * continue there; only the opener and the marker share a line.
+ * @param {string} line
+ * @returns {string | null}
+ */
+function markupAnnotationOn(line) {
+  for (let at = line.indexOf('<!--'); at !== -1; ) {
+    const m = MARKUP_ANNOTATION.exec(line.slice(at))
+    if (m) return m[1].trim()
+    const close = line.indexOf('-->', at)
+    // No close left on this line: the rest of it sits inside this comment, so
+    // there is no second opener to ask.
+    if (close === -1) return null
+    at = line.indexOf('<!--', close + 3)
+  }
+  return null
 }
 
 /**
@@ -393,7 +450,12 @@ const ANNOTATIONS = {
  */
 export function annotationOn(line, kinds) {
   for (const kind of kinds) {
-    for (const pattern of ANNOTATIONS[kind]) {
+    if (kind === 'markup') {
+      const reason = markupAnnotationOn(line)
+      if (reason !== null) return { reason }
+      continue
+    }
+    for (const pattern of CODE_ANNOTATIONS) {
       const m = pattern.exec(line)
       if (m) return { reason: m[1].trim() }
     }
@@ -412,23 +474,34 @@ const hasReason = (reason) => /[\p{L}\p{N}]/u.test(reason)
  *                  it covered moved or was translated); left in place it would
  *                  read as an exemption for whatever lands on that line next
  * plus the lines that are correctly annotated, so the run can say how many.
+ *
+ * One line gets one finding, in this order: an annotation with no reason wins,
+ * then unannotated copy, then a stale annotation.
  * @param {string} relPath
  * @param {string} text
  * @returns {{ problems: Array<{line: number, problem: 'copy' | 'no-reason' | 'stale', text: string}>, annotated: number[] }}
  */
 export function checkSource(relPath, text) {
-  const found = chineseLines(relPath, text)
+  const copy = chineseLines(relPath, text)
+  const markup = markupLines(relPath, text)
   const lines = String(text).split('\n')
   const problems = []
   const annotated = []
   lines.forEach((raw, index) => {
     const line = index + 1
-    const kind = found.get(line)
-    const note = annotationOn(raw, kind ? [kind] : ['code', 'markup'])
+    const kind = copy.get(line)
+    // The block decides the syntax, never the copy: a line whose Chinese all
+    // sits inside a comment carries no `kind`, and it is exactly there that
+    // reading a template line as code would take a `// i18n-data:` quoted in
+    // the comment for an annotation.
+    const note = annotationOn(raw, [markup.has(line) ? 'markup' : 'code'])
     const shown = raw.trim().slice(0, 110)
     if (note && !hasReason(note.reason)) problems.push({ line, problem: 'no-reason', text: shown })
+    else if (!note && kind) problems.push({ line, problem: 'copy', text: shown })
+    // A comment is prose and never the Chinese an annotation covers, so an
+    // annotation beside only a comment is stale: left standing it would exempt
+    // whatever copy lands on that line next.
     else if (note && !kind) problems.push({ line, problem: 'stale', text: shown })
-    else if (kind && !note) problems.push({ line, problem: 'copy', text: shown })
     else if (note) annotated.push(line)
   })
   return { problems, annotated }
@@ -506,7 +579,7 @@ function topLevelBlocks(src, tag) {
 
 /**
  * The whole tree's result: problems per file (files with none are left out) and
- * how many lines carry a valid annotation.
+ * how many lines carry a valid annotation. `ok` means nothing was found.
  * @param {Array<{path: string, text: string}>} files
  */
 export function scanTree(files) {
@@ -531,14 +604,14 @@ const LABELS = {
 }
 
 /**
- * What the gate prints. A failure lists every offending line and, for each kind
- * of problem present, exactly what to do about it.
+ * What the gate prints: each finding, plus, for each kind of problem present,
+ * exactly what to do about it.
  * @param {ReturnType<typeof scanTree>} result
  */
 export function formatReport(result) {
   const lines = []
   if (result.ok) {
-    lines.push(`No hardcoded Chinese in src/. ${result.annotated} line(s) carry an i18n-data annotation.`)
+    lines.push(`No Chinese copy in src/. ${result.annotated} line(s) carry an i18n-data annotation.`)
     return lines.join('\n')
   }
   const kinds = new Set()
@@ -575,7 +648,8 @@ export function formatReport(result) {
   if (kinds.has('stale')) {
     lines.push('An i18n-data annotation on a line with no counted Chinese excuses nothing: delete it.')
   }
-  lines.push('Comments, console/logger arguments and *.spec.ts / __tests__ files are not scanned (docs/i18n.md §5).')
+  lines.push('Chinese in comments (`//`, `/* */`, `<!-- -->`), console/logger arguments and')
+  lines.push('*.spec.ts / __tests__ files is not scanned.')
   lines.push(`${total} problem(s).`)
   return lines.join('\n')
 }

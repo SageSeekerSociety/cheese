@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from fastapi import Depends
 from redis.asyncio import Redis
@@ -18,23 +18,37 @@ from app.domain.agent import live_notices as live_notices
 
 # Registers the listeners that tell a project's pages what changed in it.
 from app.domain.agent import project_feed as project_feed
+from app.domain.agent.admission import HostMemory
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_provider import topic_credential_expiry
+from app.domain.agent.document import box, thread
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.pending_messages import bind_runner
+from app.domain.agent.personal import service as personal
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.dashboard.user_statistics import UserStatisticsRepository
+from app.domain.delivery.ledger import deliver
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.discussion.reaction_services import DiscussionReactionService
+from app.domain.discussion.repositories import (
+    DiscussionReactionRepository,
+    DiscussionRepository,
+    ReactionTypeRepository,
+)
+from app.domain.discussion.services import DiscussionService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
+from app.domain.routine import personal as routine_personal
+from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -54,6 +68,8 @@ __all__ = [
     "get_work_runner",
     "get_passkey_service",
     "get_user_realname_service",
+    "get_user_auth_service",
+    "get_discussion_service",
     "project_device_online",
     "team_device_online",
 ]
@@ -93,12 +109,28 @@ def get_llm_gateway() -> LlmGateway | None:
     return None
 
 
+def _note_alive(conversation: uuid.UUID) -> None:
+    """A runner answered a read for ``conversation``: stamp the channel its
+    turn publishes to (`realtime.broker.note_alive`).
+
+    Not a frame — it may come from a turn that has written nothing for half an
+    hour — and that is the point: it is the one sign of life a quiet turn
+    leaves, and the stall verdict (`TopicService.stall_signal`, read by
+    `cheese status`) reads it to tell quiet from stopped.
+    """
+    get_broker().note_alive(str(conversation))
+
+
 @lru_cache
 def get_session_host() -> SessionHost:
     """The sessions on the session host this process talks to — a room's, a
     person's 芝士, a document thread's. One per process, like the chat
     service: it remembers which sessions are running and where each is read."""
-    return SessionHost(device_hub)
+    return SessionHost(
+        device_hub,
+        on_alive=_note_alive,
+        records=partial(session_records.append, async_session_factory),
+    )
 
 
 @lru_cache
@@ -117,11 +149,16 @@ def consumptions_for(
     sessions: async_sessionmaker[AsyncSession] = async_session_factory,
 ) -> Consumptions:
     """The questions read on ``host``, each kind served by its consumer."""
-    from app.domain.agent.document import box, thread
-    from app.domain.agent.personal import service as personal
-
     consumptions = Consumptions(host, redis)
-    consumptions.serve(personal.KIND, personal.Answers(sessions, consumptions, redis))
+    consumptions.serve(
+        personal.KIND,
+        personal.Answers(
+            sessions,
+            consumptions,
+            redis,
+            run_ended=partial(routine_personal.ended, sessions),
+        ),
+    )
     consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))
     consumptions.serve(box.KIND, box.Answers(chat, consumptions))
     return consumptions
@@ -166,9 +203,6 @@ def get_work_runner() -> AgentWorkRunner:
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
     # the device hub's live screen state (in-memory, cheap); a topic on the local
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
-    from app.domain.agent.admission import HostMemory
-    from app.domain.agent.device_provider import topic_credential_expiry
-
     runner = AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
@@ -190,6 +224,19 @@ async def get_user_auth_service(
         user_repo=user_repo,
         profile_repo=profile_repo,
         stats_repo=stats_repo,
+    )
+
+
+async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
+    reaction_service = DiscussionReactionService(
+        reaction_repo=DiscussionReactionRepository(session=db),
+        reaction_type_repo=ReactionTypeRepository(session=db),
+    )
+    return DiscussionService(
+        repo=DiscussionRepository(session=db),
+        reaction_service=reaction_service,
+        session=db,
+        deliver=deliver,
     )
 
 

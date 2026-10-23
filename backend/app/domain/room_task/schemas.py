@@ -5,21 +5,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.room_task.models import TaskStatus
+from app.domain.presentation_meta import PresentationOut
+from app.domain.room_task.models import TaskProgress, TaskStatus
+from app.domain.room_task.progress import NOTE_MAX_CHARS
 
-
-class PresentationOut(BaseModel):
-    """看板上这一格：哪一列，卡面写什么。
-
-    两个字段一起出，因为它们是一个答案的两半 —— 列说「该谁动」，短语说「在等什
-    么」，而每一列只能说属于自己的话（`room_task/presentation.py`）。客户端拿到
-    的是结论，不是原料：状态从来不存库，是读的时候从事实算出来的，算的地方只有
-    后端这一处，所以网页、CLI 和以后任何一个客户端不可能给出不同答案。
-    """
-
-    column: str
-    #: 短语的码（`presentation.Phrase`），字由读者的屏幕按语言画。
-    phrase: str
+#: `PresentationOut` 住在本层（`app.domain.presentation_meta`），因为
+#: `topic.schemas.TopicOut` 也要交同一个形状；在这里留一个名字，是从前读
+#: `room_task.schemas.PresentationOut` 的地方不用改。
+__all__ = ["PresentationOut", "ProgressIn", "TaskOut"]
 
 
 class TaskOut(BaseModel):
@@ -38,7 +31,7 @@ class TaskOut(BaseModel):
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
-    # 开始时确定验收人；还没开始的任务和历史记录可能为空。
+    # 建任务时确定验收人；没有人能审阅时和历史记录可能为空。
     reviewer_handle: str | None = None
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
@@ -54,21 +47,38 @@ class TaskOut(BaseModel):
     agent_handle: str | None = None
     # 这件事的实况文档。
     document_id: uuid.UUID | None = None
-    # 负责人点「开始」的那一刻、点的人、实况文档当时的版本。
-    started_at: datetime | None = None
-    started_by: str | None = None
-    started_doc_version: int | None = None
     # The latest accepted delivery. Accepting the last step closes the task;
     # closing a task alone does not imply delivery.
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 它出自的那句话：主线消息本身，或支线里的一条回复。
+    source_block_id: uuid.UUID | None = None
     # 关闭时留下的一句话。
     conclusion: str | None = None
+    # 做它的 AI 队友最后一次报的状态、那一句话、什么时候谁报的
+    # （`room_task/progress.py`）；还没报过时全是 None。
+    progress_state: TaskProgress | None = None
+    progress_note: str | None = None
+    progress_set_at: datetime | None = None
+    progress_set_by: str | None = None
+    # 它报完之后会话结束了：看板在它报的那一句旁边写「已离开」。
+    agent_left_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     # 看板上这一格。派生的，所以和 TopicOut 的 `running` 一样：只有明确去算它的
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
+    # Attention includes people following the outcome, such as the reporter.
+    awaits_me: bool = False
+    # Whether the displayed next action is assigned to the caller.
+    needs_my_action: bool = False
+
+
+class ProgressIn(BaseModel):
+    """What the task's AI teammate reports (`cheese_task_state`)."""
+
+    state: TaskProgress
+    note: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)

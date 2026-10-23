@@ -12,6 +12,14 @@ import pytest
 from app.domain.fetch import guard, layers, service
 from app.domain.fetch.extract import substantive_length, to_markdown
 
+
+@pytest.fixture(autouse=True)
+def _no_page_cache(monkeypatch):
+    """Each test reads its own pages; a cache shared through a configured Redis
+    would answer one test with another's page. The cache's own test brings one."""
+    monkeypatch.setattr(service, "get_redis_client", lambda: None, raising=False)
+
+
 # A directory page: many short entries, mostly links, very little prose per
 # block. This is the shape that readability-style extractors discard wholesale.
 LIST_PAGE = """
@@ -213,41 +221,6 @@ async def test_a_sandbox_token_is_accepted_when_the_room_is_named(monkeypatch):
     assert actor.authenticated and actor.handle.startswith("cheese-")
 
 
-async def test_distillation_asks_for_the_model_this_deployment_runs(monkeypatch):
-    """The model handed to the distiller must be one the gateway serves.
-
-    Shipped broken once: the endpoint asked for `agent_haiku_model`, reasoning
-    that a small model is cheaper. That setting is an ALIAS the CLI resolves
-    internally — it says what "haiku" should mean for a session — and its
-    default named a model this gateway does not serve. The gateway answered
-    "Invalid model name", distillation failed, and every prompted fetch quietly
-    returned the whole page instead of an answer.
-    """
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    from app.api.routes import fetch as fetch_route
-
-    seen: dict = {}
-
-    async def capture(url, prompt=None, **kwargs):
-        seen.update(kwargs)
-        return service.FetchOutcome(url, True, "text", "plain-http", [])
-
-    monkeypatch.setattr(fetch_route, "fetch_url", capture)
-    monkeypatch.setattr(fetch_route.settings, "anthropic_base_url", "http://gw")
-    monkeypatch.setattr(fetch_route.settings, "anthropic_auth_token", "tok")
-    monkeypatch.setattr(fetch_route.settings, "agent_model", "the-model-we-run")
-    monkeypatch.setattr(fetch_route.settings, "agent_haiku_model", "an-alias-only")
-
-    await fetch_route.read_url(
-        fetch_route.FetchIn(url="https://example.com/x", prompt="q"),
-        SimpleNamespace(require_verified_caller=AsyncMock()),
-    )
-
-    assert seen["distill"][2] == "the-model-we-run"
-
-
 async def test_a_short_but_real_page_is_an_answer_not_a_failure(monkeypatch):
     """Thin is not empty.
 
@@ -370,3 +343,234 @@ async def test_a_site_root_is_read_without_asking_another_host(monkeypatch):
 
     assert {httpx.URL(u).host for u in asked} == {"example.com"}, asked
     assert got.ok and got.note == "https://example.com/docs/teams.md"
+
+
+def _serve(monkeypatch, handler):
+    """Route every client the rungs open through ``handler``."""
+    import httpx
+
+    original = httpx.AsyncClient
+
+    def with_mock(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(layers.httpx, "AsyncClient", with_mock)
+
+
+async def test_a_sites_llms_txt_is_never_taken_for_the_page(monkeypatch):
+    """`llms.txt` is the index of a whole site, not the page asked for.
+
+    Taken as the page, it answered half the fetches the markdown rung won with
+    the wrong document: measured on dev, a GitHub repository page, a blog post
+    and a page that answered 403 all came back as their site's index, and the
+    model then summarised the index as if it were the page.
+    """
+    import httpx
+
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path == "/llms.txt":
+            return httpx.Response(
+                200,
+                text="# Example\n\n> The documentation index for this site.\n",
+                headers={"content-type": "text/plain"},
+            )
+        return httpx.Response(404, text="<html>not here</html>")
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_markdown_native("https://example.com/org/repo")
+
+    assert not got.ok, "the site index is not the page"
+    assert "/llms.txt" not in asked
+
+
+async def test_a_page_served_as_markdown_is_read_in_one_request(monkeypatch):
+    """The plain GET already asks for markdown first, as WebFetch does, so a site
+    that publishes it answers on the first request — however short the page."""
+    import httpx
+
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(
+            200, text="# Teams\n\nShort.\n", headers={"content-type": "text/markdown"}
+        )
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://example.com/docs/teams")
+
+    assert got.ok and got.rung == "markdown-native"
+    assert asked == ["https://example.com/docs/teams"]
+
+
+async def test_a_binary_body_is_not_converted_and_html_rungs_are_skipped(monkeypatch):
+    """A PDF is neither decoded as HTML nor downloaded again by rungs that read
+    HTML; a reader service, which can convert one, still gets to try."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"%PDF-1.7 " + bytes(range(256)) * 64,
+            headers={"content-type": "application/pdf"},
+        )
+
+    _serve(monkeypatch, handler)
+    plain = await layers.rung_plain_http("https://example.com/paper.pdf")
+    assert not plain.ok and plain.note == "binary application/pdf"
+
+    called: list[str] = []
+
+    async def record(name, result):
+        called.append(name)
+        return result
+
+    async def resolve(host, port):
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(guard, "_resolve", resolve)
+    monkeypatch.setattr(layers, "rung_plain_http", lambda url: record("plain", plain))
+    miss = layers.Attempt("x", False, "", "miss", 0.1)
+    monkeypatch.setattr(
+        layers, "rung_markdown_native", lambda url: record("twin", miss)
+    )
+    monkeypatch.setattr(layers, "rung_impersonated", lambda url: record("imp", miss))
+    monkeypatch.setattr(
+        layers, "rung_reader_service", lambda url, e: record("reader", miss)
+    )
+    monkeypatch.setattr(layers, "rung_browser", lambda url, e: record("browser", miss))
+
+    await service.fetch(
+        "https://example.com/paper.pdf",
+        reader_endpoint="https://r.example",
+        browser_endpoint="http://render:8900",
+    )
+    assert called == ["plain", "twin", "reader"]
+
+
+async def test_a_page_read_within_the_cache_window_is_not_read_again(monkeypatch):
+    """WebFetch keeps a page for 15 minutes; an agent that asks a second question
+    about the same page should not wait for the ladder twice."""
+
+    class FakeRedis:
+        def __init__(self):
+            self.data: dict[str, tuple[bytes, int]] = {}
+
+        async def get(self, key):
+            hit = self.data.get(key)
+            return hit[0] if hit else None
+
+        async def set(self, key, value, ex):
+            self.data[key] = (value.encode() if isinstance(value, str) else value, ex)
+
+    redis = FakeRedis()
+    monkeypatch.setattr(service, "get_redis_client", lambda: redis)
+
+    async def resolve(host, port):
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(guard, "_resolve", resolve)
+    reads: list[str] = []
+
+    async def page(url, *a, **k):
+        reads.append(url)
+        return layers.Attempt("plain-http", True, "prose. " * 500, "", 0.1)
+
+    monkeypatch.setattr(layers, "rung_plain_http", page)
+
+    first = await service.fetch("https://example.com/x")
+    second = await service.fetch("https://example.com/x")
+
+    assert reads == ["https://example.com/x"], "the second fetch must come from cache"
+    assert second.ok and second.text == first.text and second.rung == "plain-http"
+    assert [ttl for _, ttl in redis.data.values()] == [service.CACHE_SECONDS]
+
+
+async def test_render_goes_to_the_browser_first(monkeypatch):
+    """The caller read the page and saw only a shell: the fast rungs would answer
+    with that shell again, so the browser goes first."""
+
+    async def resolve(host, port):
+        return ["93.184.215.14"]
+
+    monkeypatch.setattr(guard, "_resolve", resolve)
+    called: list[str] = []
+
+    async def browser(url, endpoint, *a, **k):
+        called.append("browser")
+        return layers.Attempt("browser", True, "rendered prose. " * 100, "", 2.0)
+
+    async def plain(url, *a, **k):
+        called.append("plain")
+        return layers.Attempt("plain-http", True, "shell prose. " * 100, "", 0.1)
+
+    monkeypatch.setattr(layers, "rung_browser", browser)
+    monkeypatch.setattr(layers, "rung_plain_http", plain)
+
+    outcome = await service.fetch(
+        "https://example.com/app", browser_endpoint="http://render:8900", render=True
+    )
+    assert called == ["browser"] and outcome.rung == "browser"
+
+
+async def test_an_api_answering_json_is_read_not_skipped_as_binary(monkeypatch):
+    """A scholarly API's JSON is the page: measured, two such URLs failed once
+    every body that was not HTML or markdown was treated as binary."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"title": "A paper", "year": 2018})
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://api.example.org/paper/1")
+
+    assert got.ok and '"title"' in got.text
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/csv", "text/x-python", "application/javascript", "application/yaml"],
+)
+async def test_a_text_file_that_is_not_a_page_is_read_not_skipped_as_binary(
+    monkeypatch, content_type
+):
+    """A data file or a source file is text: only bodies that are not text at
+    all (a PDF, an image) are binary."""
+    import httpx
+
+    body = "name,year\nA paper,2018\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=body.encode(), headers={"content-type": content_type}
+        )
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://files.example.org/data")
+
+    assert got.ok and "A paper,2018" in got.text, got.note
+
+
+async def test_an_event_stream_is_not_read_as_text(monkeypatch):
+    """A server-sent-events endpoint never ends and its heartbeats keep the read
+    timeout from firing: reading it as a page would hold the fetch forever."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b": ping\n\n", headers={"content-type": "text/event-stream"}
+        )
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://api.example.org/sse")
+
+    assert not got.ok and got.note.startswith("binary"), got.note

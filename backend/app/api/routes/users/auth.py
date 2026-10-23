@@ -29,7 +29,7 @@ from app.api.routes.users._common import (
     _email_code_unavailable,
     _issue_2fa_pending_token,
     _too_many_from_client,
-    _trusted_device,
+    _trusted_device_id,
     logger,
 )
 from app.api.users_deps import (
@@ -41,6 +41,7 @@ from app.api.users_deps import (
     challenge_from_credential,
     issue_session,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -322,10 +323,7 @@ def _wrong_password(wait_seconds: int) -> AuthenticationRequiredError:
     )
 
 
-@router.post(
-    "/auth/login",
-    summary="User Login",
-)
+@router.post("/auth/login", summary="User Login", dependencies=[ROUTE_DECIDES])
 async def user_login(
     payload: LoginRequest,
     request: Request,
@@ -369,11 +367,13 @@ async def user_login(
 
         totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
-        trust = (
-            await _trusted_device(request, session, user.id) if requires_2fa else None
+        trust_id = (
+            await _trusted_device_id(request, session, user.id)
+            if requires_2fa
+            else None
         )
 
-        if requires_2fa and trust is None:
+        if requires_2fa and trust_id is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
                 return ok(
@@ -400,8 +400,8 @@ async def user_login(
             session,
             user_id=user.id,
             handle=user.username,
-            login_method="totp" if requires_2fa and trust is None else "password",
-            trust_device_id=trust.id if trust else None,
+            login_method="totp" if requires_2fa and trust_id is None else "password",
+            trust_device_id=trust_id,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -425,6 +425,7 @@ async def user_login(
 @router.post(
     "/auth/verify-2fa",
     summary="Complete a 2FA-gated login",
+    dependencies=[ROUTE_DECIDES],
 )
 async def verify_2fa_login(
     payload: dict,
@@ -565,8 +566,7 @@ async def _mail_sign_in_code(email: str) -> None:
 
 
 @router.post(
-    "/auth/email-code",
-    summary="Mail a sign-in code",
+    "/auth/email-code", summary="Mail a sign-in code", dependencies=[ROUTE_DECIDES]
 )
 async def request_sign_in_code(
     payload: EmailCodeSignInRequest,
@@ -600,6 +600,7 @@ async def request_sign_in_code(
 @router.post(
     "/auth/email-code/verify",
     summary="Sign in with a mailed code",
+    dependencies=[ROUTE_DECIDES],
 )
 async def verify_sign_in_code(
     payload: EmailCodeSignInVerifyRequest,
@@ -637,10 +638,10 @@ async def verify_sign_in_code(
     if user is None or is_placeholder_email(user.email):
         raise _invalid_email_code()
 
-    trust = None
+    trust_id = None
     if await TOTPService(session).is_2fa_enabled(user.id):
-        trust = await _trusted_device(request, session, user.id)
-        if trust is None:
+        trust_id = await _trusted_device_id(request, session, user.id)
+        if trust_id is None:
             return ok(
                 {
                     "requires2FA": True,
@@ -662,7 +663,7 @@ async def verify_sign_in_code(
         user_id=user.id,
         handle=user.username,
         login_method="email_code",
-        trust_device_id=trust.id if trust else None,
+        trust_device_id=trust_id,
     )
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -681,8 +682,7 @@ async def verify_sign_in_code(
 
 
 @router.post(
-    "/auth/refresh-token",
-    summary="Refresh Access Token",
+    "/auth/refresh-token", summary="Refresh Access Token", dependencies=[ROUTE_DECIDES]
 )
 async def refresh_access_token(
     request: Request,
@@ -730,10 +730,7 @@ async def refresh_access_token(
     )
 
 
-@router.post(
-    "/auth/logout",
-    summary="Logout",
-)
+@router.post("/auth/logout", summary="Logout", dependencies=[ROUTE_DECIDES])
 async def user_logout(
     request: Request,
     response: Response,
@@ -755,6 +752,7 @@ async def user_logout(
 @router.post(
     "/auth/sudo",
     summary="Verify credentials for privileged operations",
+    dependencies=[ROUTE_DECIDES],
 )
 async def sudo_auth(
     payload: SudoAuthRequest,

@@ -43,6 +43,8 @@ vi.mock('../../api', async () => {
 
 import ChatPanel from '../ChatPanel.vue'
 
+import { loadMarkdownReader } from '@/test/markdownReader'
+
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
 function freshRoom(): string {
@@ -179,6 +181,8 @@ beforeEach(() => {
   listTopicMembers.mockResolvedValue({ data: [] })
 })
 
+beforeAll(loadMarkdownReader)
+
 describe('agent status messages', () => {
   it.each([
     'turn_failed',
@@ -240,12 +244,7 @@ describe('agent status messages', () => {
     expect(emitted()['open-resource']).toEqual([
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
-      [
-        'doc',
-        undefined,
-        { requester: '', edits: [{ old: '年付', new: '年付折扣' }] },
-        { id: 'lib-doc', title: '竞品定价对比' },
-      ],
+      ['doc', undefined, { edits: [{ old: '年付', new: '年付折扣' }] }, { id: 'lib-doc', title: '竞品定价对比' }],
     ])
   })
 
@@ -347,10 +346,12 @@ describe('agent status messages', () => {
     expect(inTurn.textContent).toContain('频道体验改进')
     expect(inTurn.textContent).not.toContain('芝士S')
 
-    // 不在哪一轮里的：两个名字都写出来，写成普通的字。
+    // 不在哪一轮里的：写出改的人。早先存下的那一行还记着「谁让改的」，也不再说它：
+    // 队友改文档和人一样是它自己的事。
     const alone = container.querySelector('[data-row-id="edit-alone"]')!
     const aloneText = alone.querySelector('[data-testid="doc-edit-line"]')!.textContent ?? ''
-    expect(aloneText).toMatch(/李老师.*芝士S/)
+    expect(aloneText).toContain('芝士S 改了文档')
+    expect(aloneText).not.toContain('李老师')
     expect(alone.querySelector('[role="img"]')).toBeNull()
 
     for (const id of ['edit-in-turn', 'edit-alone']) {
@@ -743,5 +744,96 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
 
     expect(container.querySelector('.im-event')!.textContent).toContain('机器「dev-box」连续失败，已暂停派活')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
+  })
+})
+
+// 一条可展开的提示（提议技能、起草例行、人工放行合并……）这一行里提到的人，读的人看到的是名字，
+// 不是存储用的 `<@handle>` 原文。
+describe('a foldable notice that names someone', () => {
+  it('reads the name, never the raw token', async () => {
+    listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'cheese-s', name: '芝士S', agent: true }] })
+    const { container } = mountRoom([
+      event('', '<@cheese-s> 提议新增技能「周报格式」', {
+        event_type: 'skill_proposed',
+        detail: '每周五汇总本周合并的改动',
+      }),
+    ])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('芝士S 提议新增技能「周报格式」')
+    expect(text).not.toContain('<@cheese-s>')
+  })
+})
+
+// 「@」的样子只说一件事：这一处通知到了那个人。消息里的点名通知了，画 @chip；平台的一行
+// 提示只是提到谁做了什么，没有通知谁，画成他的名字。
+describe('a person named in the room', () => {
+  it('is the @chip where a message told them, and only their name where a notice mentions them', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    const said: Block = {
+      ...event('', '<@bob> 帮忙看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    const { container } = mountRoom([event('', '<@alice> 置顶了一条消息', { event_type: 'pin' }), said])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('爱丽丝')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('is the @chip in a notice only for the AI teammate that same event woke', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'cheese-s', name: '芝士S', agent: true },
+      ],
+    })
+    const handed = event('', '<@alice> 把之前的消息交给了 <@cheese-s>', {
+      i18n: { content: { key: 'pendingHandedTo', params: { actor: '<@alice>', seat: '<@cheese-s>' } } },
+    })
+    const { container } = mountRoom([handed])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('爱丽丝 把之前的消息交给了 @芝士S')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('in a members-only channel, is the @chip only for the members its message could notify', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    listBlocks.mockImplementation(async () => ({ data: [], has_more: false }))
+    const id = freshRoom()
+    const said: Block = {
+      ...event(id, '<@bob> <@carol> 一起看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    listBlocks.mockResolvedValue({ data: [said], has_more: false })
+    const { container } = render(ChatPanel, {
+      props: { topic: { ...room(id), members_only: true }, topicList: [room(id)] },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('carol')
+    expect(text).not.toContain('@carol')
   })
 })

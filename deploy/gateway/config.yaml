@@ -1,373 +1,27 @@
-# What the gateway will route, and how it accounts for it.
+# How the gateway runs: credentials, the database, the router and the hooks.
 #
-# This is also the ONE place a model becomes available to people. Cheese keeps
-# no list of its own — it reads this one back through /model/info (see
-# backend/app/domain/agent/gateway_catalog.py), because a model needs a route
-# and a price here before it can be served at all, and a second list over there
-# could only ever drift out of step with this one.
-#
-# Three keys under `model_info` are cheese's, all optional passthrough metadata:
-#
-#   cheese_selectable: true    offer it in agent settings. OPT-IN, because the
-#                              gateway also routes models that are not menu
-#                              items: glm-4.5 is where the subagent alias
-#                              points, and nobody should be handed a model we
-#                              route to on their behalf as though they chose it.
-#   cheese_label: "GLM-5.2"    what to call it; the model_name when absent.
-#   cheese_tier: premium       which plans may use it (included / premium /
-#                              frontier); included when absent.
-#   cheese_efforts: [low, high]  the thinking efforts it honours (low / medium
-#                              / high / max), offered on a teammate's settings
-#                              and passed by Claude Code as output_config.effort.
-#                              None when absent: the model's own default.
-#   cheese_free: true          its upstream charges nothing, and both token
-#                              prices are written as 0 on purpose. The one way
-#                              a selectable model may be priced at zero; a
-#                              zero without it is a missing price.
-#
-# Two keys are per deployment, not per model group, for an upstream that wants
-# headers of its own (upstream_headers.py). Other rows of the same group, such
-# as the pay-per-use API behind a subscription, are sent neither:
-#
-#   cheese_upstream_headers: {user-agent: cheese-gateway/1.0}
-#                              sent as written.
-#   cheese_session_header: x-opencode-session
-#                              carries the caller's Claude Code session.
-#
-# A selectable model with no price is not offered — see the pricing note below
-# for why a missing price is worse than a missing model.
-#
-# Provider credentials stay in the gateway; callers use project-scoped keys so
-# every configured upstream is metered against the same project budget.
-model_list:
-  - model_name: mimo-v2.6-pro
-    litellm_params:
-      model: anthropic/mimo-v2.6-pro
-      api_base: https://token-plan-cn.xiaomimimo.com/anthropic
-      api_key: os.environ/MIMO_TOKEN_PLAN_API_KEY
-      # Internal budget estimates use CN API rates (RMB 3 input, 6 output,
-      # 0.025 cache read per million), divided by the existing RMB 7.1/USD.
-      # This endpoint consumes subscription Credits, not pay-as-you-go balance.
-      # https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go
-      input_cost_per_token: 0.000000422535
-      output_cost_per_token: 0.000000845070
-      cache_read_input_token_cost: 0.000000003521
-      cache_creation_input_token_cost: 0
-    model_info:
-      cheese_selectable: true
-      cheese_label: MiMo V2.6 Pro
-      supports_reasoning: true
-      supports_vision: true
-      # Measured 2026-10-04: a system-role message in the middle of the
-      # conversation is forwarded untouched and the upstream drops it, so
-      # Claude Code is launched to put that content in the first user message.
-      supports_mid_conversation_system: false
+# It declares no models. Every model the gateway routes, priced or price-only,
+# is a row in the gateway database, added and edited on the admin models page
+# (STORE_MODEL_IN_DB is on), so changing a model or its price needs no release.
+# A row names its credential as `os.environ/<VAR>`, which LiteLLM resolves from
+# the gateway's environment for database rows as it did for this file; the
+# variables stay in the gateway's .env. The cheese keys a row carries under
+# `model_info` are described in docs/manual/dev/gateway.md.
+model_list: []
 
-  - model_name: kimi-k3
+# The platform's own web search (backend `/web-search`, the agents'
+# `cheese_web_search`), asked on the caller's virtual key at
+# /v1/search/deepseek-search, so it is admitted, logged and drained like that
+# key's model calls. DeepSeek's search API as a provider: deepseek_search.py.
+search_tools:
+  - search_tool_name: deepseek-search
     litellm_params:
-      model: anthropic/kimi-k3
-      api_base: https://api.moonshot.cn/anthropic
-      api_key: os.environ/MOONSHOT_API_KEY
-      # CN rates per million tokens: RMB 20 input, 100 output, 2 cache read,
-      # 20 cache write (5m), 40 cache write (1h).
-      # https://platform.kimi.com/docs/pricing/chat
-      # Budget estimates in USD use the existing RMB 7.1/USD convention.
-      input_cost_per_token: 0.000002816902
-      output_cost_per_token: 0.000014084508
-      cache_read_input_token_cost: 0.000000281691
-      cache_creation_input_token_cost: 0.000002816902
-      cache_creation_input_token_cost_above_1hr: 0.000005633803
-    model_info:
-      cheese_selectable: true
-      cheese_label: Kimi K3
-      cheese_efforts: [low, high, max]
-      # K3 always reasons: keep native effort, but omit adaptive thinking.
-      supports_output_config: true
-      supports_max_reasoning_effort: true
-      # Measured 2026-10-14 with gateway_conformance.py on the OpenCode Go row
-      # (anthropic/, order 1, added from the admin side): a mid-conversation
-      # system message is dropped there. The flag tells Claude Code to fold it
-      # into the first user message, which every upstream of the group receives.
-      supports_mid_conversation_system: false
-  # 芝士's own turns and the agents' Claude Code both speak the Anthropic
-  # protocol, so both arrive on /v1/messages and are metered by the same rows.
-  - model_name: glm-4.6
-    litellm_params:
-      # anthropic/, not openai/: the callers speak the Anthropic protocol, and
-      # routing that through an openai-prefixed model made LiteLLM translate it
-      # into the OpenAI *Responses* API — a path Zhipu does not serve (404 on
-      # /v4/responses). Zhipu publishes a native Anthropic endpoint; use it and
-      # nothing has to be translated at all.
-      model: anthropic/glm-4.6
-      api_base: https://open.bigmodel.cn/api/anthropic
-      api_key: os.environ/ZHIPU_API_KEY
-      # Without a price LiteLLM records tokens at spend=0, and max_budget — the
-      # whole brake — never trips. Better an approximate number than none.
-      #
-      # PROVENANCE: 4.6 has no官方 figure we could read (the pricing page is
-      # client-rendered); third-party sources say ~¥5/M tokens. Applied to BOTH
-      # directions, which over-states input — deliberately, since for a brake
-      # the safe error is to stop early. Confirm against the real invoice in the
-      # Zhipu console and correct this; it is an estimate, not a fact.
-      # ¥5/M ÷ 7.1 ¥/$ = $0.704/M = 7.04e-7 per token.
-      input_cost_per_token: 0.000000704
-      output_cost_per_token: 0.000000704
-
-  - model_name: glm-4.5
-    litellm_params:
-      model: anthropic/glm-4.5
-      api_base: https://open.bigmodel.cn/api/anthropic
-      api_key: os.environ/ZHIPU_API_KEY
-      # 4.5 is the one with a published官方 figure: ¥0.8/M in, ¥2/M out.
-      # ÷ 7.1 ¥/$ → $0.1127/M and $0.2817/M.
-      input_cost_per_token: 0.0000001127
-      output_cost_per_token: 0.0000002817
-
-  - model_name: glm-5.2
-    litellm_params:
-      model: anthropic/glm-5.2
-      api_base: https://open.bigmodel.cn/api/anthropic
-      api_key: os.environ/ZHIPU_API_KEY
-      # Preserve the deployed budget estimate; Coding Plan quota is separate.
-      input_cost_per_token: 0.000003944
-      output_cost_per_token: 0.000003944
-      cache_read_input_token_cost: 0.0000002817
-    model_info:
-      cheese_selectable: true
-      cheese_label: GLM-5.2
-      # Measured 2026-10-14 on the OpenCode Go chat route this group is getting
-      # (hosted_vllm/, added from the admin page): a mid-conversation system
-      # message is dropped there. The flag tells Claude Code to fold it into the
-      # first user message, which every upstream of the group then receives.
-      supports_mid_conversation_system: false
-
-  # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
-  # when every RUC key fails or is cooling down. RUC admits 3 parallel
-  # requests per key and the limits are independent, so each of its keys is a
-  # deployment of its own; a 429 on one is retried on another before the
-  # request leaves RUC. RUC sends each key to one of its vLLM nodes, and each
-  # node has a prompt cache of its own, so a conversation keeps its key
-  # (router_settings below) and misses only when it moves: to another key while
-  # its own is busy, or to DeepSeek's API. Every
-  # row carries the same cheese keys because the catalogue reads whichever
-  # row /model/info lists first.
-  - model_name: deepseek-flash
-    litellm_params: &ruc_deepseek_flash_params
-      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
-      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
-      # upstream serves Messages at /v1/messages and answers that path with a
-      # 500 after about 130 s. Plain http because that is all it serves.
-      model: anthropic/deepseek-flash
-      # The endpoint admits campus addresses only; the dev box reaches it
-      # through 119pve (docs/infrastructure.md, "Campus model API"). Its
-      # address and key are box settings: it is a service of another team,
-      # not ours to publish.
-      api_base: os.environ/RUC_DEEPSEEK_API_BASE
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
-      order: 1
-      # Used internally without a price of its own. The official rates are the
-      # estimate, so the budget brake behaves the same on either backend; that
-      # holds only while RUC's cache hits as DeepSeek's does, which needs
-      # Claude Code's billing line kept out of the prompt
-      # (system_billing_line.py).
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
-    # Each row merges its own copy: LiteLLM writes the deployment id into
-    # model_info, and one mapping shared by alias gives every key the same id,
-    # so a 429 on one key cools them all down.
-    model_info: &ruc_deepseek_flash_info
-      cheese_selectable: true
-      cheese_label: DeepSeek V4.1 Flash
-      # Accepted here without error; low and high gave the same reasoning
-      # length when measured on 2026-10-08, so on this backend they are moot.
-      cheese_efforts: [low, high]
-      supports_reasoning: true
-      supports_vision: true
-      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
-      # official route, for the same reason.
-      max_input_tokens: 920000
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_2
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_3
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_4
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_5
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_6
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_7
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_8
-    model_info:
-      <<: *ruc_deepseek_flash_info
-  - model_name: deepseek-flash
-    litellm_params:
-      <<: *ruc_deepseek_flash_params
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY_9
-    model_info:
-      <<: *ruc_deepseek_flash_info
-
-  - model_name: deepseek-flash
-    litellm_params:
-      model: deepseek/deepseek-flash
+      search_provider: deepseek
       api_key: os.environ/DEEPSEEK_API_KEY
-      order: 2
-    model_info:
-      cheese_selectable: true
-      cheese_label: DeepSeek V4.1 Flash
-      cheese_efforts: [low, high]
-      # Official peak rates bound the budget estimate; off-peak billing is half.
-      # https://api-docs.deepseek.com/quick_start/pricing/
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
-      # This deployment's alias supports native thinking/effort. Without these
-      # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
-      supports_reasoning: true
-      supports_vision: true
-      supports_adaptive_thinking: true
-      supports_output_config: true
-      # Claude Code compacts by the max_input_tokens that /v1/models reports,
-      # and LiteLLM's own figure for this model is 1,000,000. DeepSeek counts
-      # the request's max_tokens against its 1,048,576 window, and Claude Code
-      # asks for 128,000 on every request, so a conversation past ~920k tokens
-      # was refused before Claude Code thought it was time to compact.
-      # 1,048,576 - 128,000, rounded down.
-      max_input_tokens: 920000
-
-  # Price-only entries: the Claude models served through the platform's
-  # subscription (the metering proxy), never through this gateway. Their tokens
-  # are billed at these rates when the backend ingests the proxy's usage log,
-  # so subscription and gateway traffic are charged by one price table.
-  # `blocked: true` makes the router refuse them; no credential is configured.
-  # Anthropic's public API prices per million tokens (input, output, cache
-  # read, 5-minute cache write, 1-hour cache write),
-  # https://platform.claude.com/docs/en/about-claude/pricing read 2026-10-02.
-  - model_name: claude-sonnet-5
-    litellm_params:
-      model: anthropic/claude-sonnet-5
-      # $2 / $10 / $0.20 / $2.50 / $4
-      input_cost_per_token: 0.000002
-      output_cost_per_token: 0.00001
-      cache_read_input_token_cost: 0.0000002
-      cache_creation_input_token_cost: 0.0000025
-      cache_creation_input_token_cost_above_1hr: 0.000004
-    model_info:
-      blocked: true
-
-  - model_name: claude-sonnet-5-5
-    litellm_params:
-      model: anthropic/claude-sonnet-5-5
-      # $2 / $10 / $0.20 / $2.50 / $4
-      input_cost_per_token: 0.000002
-      output_cost_per_token: 0.00001
-      cache_read_input_token_cost: 0.0000002
-      cache_creation_input_token_cost: 0.0000025
-      cache_creation_input_token_cost_above_1hr: 0.000004
-    model_info:
-      blocked: true
-
-  - model_name: claude-opus-5
-    litellm_params:
-      model: anthropic/claude-opus-5
-      # $5 / $25 / $0.50 / $6.25 / $10
-      input_cost_per_token: 0.000005
-      output_cost_per_token: 0.000025
-      cache_read_input_token_cost: 0.0000005
-      cache_creation_input_token_cost: 0.00000625
-      cache_creation_input_token_cost_above_1hr: 0.00001
-    model_info:
-      blocked: true
-
-  - model_name: claude-opus-5-5
-    litellm_params:
-      model: anthropic/claude-opus-5-5
-      # $4 / $20 / $0.20 / $5 / $8
-      input_cost_per_token: 0.000004
-      output_cost_per_token: 0.00002
-      cache_read_input_token_cost: 0.0000002
-      cache_creation_input_token_cost: 0.000005
-      cache_creation_input_token_cost_above_1hr: 0.000008
-    model_info:
-      blocked: true
-
-  - model_name: claude-opus-4-8
-    litellm_params:
-      model: anthropic/claude-opus-4-8
-      # $5 / $25 / $0.50 / $6.25 / $10
-      input_cost_per_token: 0.000005
-      output_cost_per_token: 0.000025
-      cache_read_input_token_cost: 0.0000005
-      cache_creation_input_token_cost: 0.00000625
-      cache_creation_input_token_cost_above_1hr: 0.00001
-    model_info:
-      blocked: true
-
-  - model_name: claude-fable-5
-    litellm_params:
-      model: anthropic/claude-fable-5
-      # $10 / $50 / $1 / $12.50 / $20
-      input_cost_per_token: 0.00001
-      output_cost_per_token: 0.00005
-      cache_read_input_token_cost: 0.000001
-      cache_creation_input_token_cost: 0.0000125
-      cache_creation_input_token_cost_above_1hr: 0.00002
-    model_info:
-      blocked: true
-
-  - model_name: claude-fable-5-1
-    litellm_params:
-      model: anthropic/claude-fable-5-1
-      # $10 / $50 / $0.25 / $12.50 / $20
-      input_cost_per_token: 0.00001
-      output_cost_per_token: 0.00005
-      cache_read_input_token_cost: 0.00000025
-      cache_creation_input_token_cost: 0.0000125
-      cache_creation_input_token_cost_above_1hr: 0.00002
-    model_info:
-      blocked: true
-
-  # Claude Code's own small requests on the subscription stay on Haiku.
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      # $1 / $5 / $0.10 / $1.25 / $2
-      input_cost_per_token: 0.000001
-      output_cost_per_token: 0.000005
-      cache_read_input_token_cost: 0.0000001
-      cache_creation_input_token_cost: 0.00000125
-      cache_creation_input_token_cost_above_1hr: 0.000002
-    model_info:
-      blocked: true
+      # LiteLLM's default is 6000 s, so a stalled DeepSeek connection would hold
+      # the request until the ingress cut it at 30 min. DeepSeek answers in a
+      # second or two; the backend gives up after 15 s anyway.
+      timeout: 15
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -405,11 +59,29 @@ litellm_settings:
   # An image no model can decode is replaced by a line saying so, since one
   # such image fails every later request of its conversation (`image_guard.py`).
   # A deployment that declares cheese_upstream_headers or cheese_session_header
-  # is sent them (`upstream_headers.py`).
+  # is sent them (`upstream_headers.py`), and one that declares
+  # cheese_no_explicit_cache loses its cache_control marks
+  # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
+  # refused past that total (`spend_cap.py`).
+  # A row whose provider account is out of credit is taken out of rotation
+  # for minutes and named for the administrators (`provider_credit.py`, which
+  # also wraps the router at worker start-up).
+  # A request carrying web search goes to a deployment that runs it, and an
+  # answer that did not search reaches the client as an error, not as a
+  # search that found nothing (`web_search.py`).
   callbacks:
     - cheese_chatgpt_session.handler
     - cheese_billing_line.handler
     - cheese_image_guard.handler
     - cheese_upstream_headers.handler
+    - cheese_no_explicit_cache.handler
+    - cheese_spend_cap.handler
+    - cheese_provider_credit.handler
+    - cheese_web_search.handler
+  # Providers LiteLLM has no route for, served by a handler of ours behind the
+  # chat API (`qwen_asr.py`).
+  custom_provider_map:
+    - provider: qwen-asr
+      custom_handler: cheese_qwen_asr.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

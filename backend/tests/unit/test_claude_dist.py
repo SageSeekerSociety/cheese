@@ -168,3 +168,44 @@ async def test_a_windows_build_is_the_vendors_claude_exe(tmp_path, upstream):
     assert path.name == "claude.exe"
     assert path.read_bytes() == BINARY
     assert any(call.endswith(f"/{VERSION}/win32-x64/claude.exe") for call in t.calls)
+
+
+def test_a_machine_gets_the_packed_build_in_pieces_and_the_digest_of_what_it_runs(
+    tmp_path, monkeypatch
+):
+    """A machine on a slow link asks for the packed copy and, after a cut, for
+    the rest of it; the digest names the binary it ends up running."""
+    import gzip
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import installer
+
+    cached = tmp_path / "claude"
+    cached.write_bytes(BINARY)
+
+    async def ensure_cached(root, version, platform):
+        return cached
+
+    monkeypatch.setattr(claude_dist, "ensure_cached", ensure_cached)
+    app = FastAPI()
+    app.include_router(installer.router)
+    client = TestClient(app)
+    url = f"/connector/claude/{VERSION}/{PLATFORM}/claude"
+    packed = {"Accept-Encoding": "gzip"}
+
+    with client.stream("GET", url, headers=packed) as first:
+        whole = b"".join(first.iter_raw())
+    cut = len(whole) // 2
+    with client.stream(
+        "GET", url, headers={**packed, "Range": f"bytes={cut}-"}
+    ) as rest:
+        tail = b"".join(rest.iter_raw())
+
+    assert rest.status_code == 206
+    assert gzip.decompress(whole[:cut] + tail) == BINARY
+    assert rest.headers["X-Checksum-SHA256"] == DIGEST
+    plain = client.get(url)
+    assert plain.content == BINARY
+    assert plain.headers["X-Checksum-SHA256"] == DIGEST

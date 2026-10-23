@@ -31,6 +31,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.run_records import records_of
+from tests.support.session_records import wait_for_record
 
 
 def _room(client) -> tuple[str, StubChannel, ChatService]:
@@ -42,7 +43,7 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
-        compute=stub_compute(channel),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     # 芝士 answers in a 支线: that is where these messages are said.
@@ -98,10 +99,14 @@ def _handed_over(client, service: ChatService) -> int:
 
 
 def _until_answered(client, service, channel: StubChannel, room: str) -> None:
-    deadline = time.monotonic() + 10
-    while channel.reply not in [block.content for block in _blocks(client, room)]:
-        assert time.monotonic() < deadline, "the message was never answered"
-        time.sleep(0.05)
+    wait_for_record(
+        client,
+        room,
+        lambda record: (
+            record.get("type") == "result" and record.get("result") == channel.reply
+        ),
+        timeout=10,
+    )
     client.portal.call(settle_turn, service, uuid.UUID(room))
 
 
@@ -216,7 +221,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
-        compute=stub_compute(channel),
+        compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     # 芝士 answers in a 支线 of each channel; the machine is the channel's.
@@ -330,3 +335,56 @@ def test_a_message_held_by_an_open_turn_starts_when_its_stop_closes_it(client):
     client.portal.call(stop)
 
     _until_answered(client, service, channel, room)
+
+
+def test_a_waiting_message_starts_one_turn_though_two_scans_look_together(
+    client, monkeypatch
+):
+    """Overlapping scans reserve the same waiting message only once."""
+    room, channel, service = _room(client)
+    runner = get_work_runner()
+    runner.hold_turns()
+    _say(client, room, "@芝士 修一下登录页")
+
+    # Pair the scans at each database check, including the final busy check.
+    real = ChatService.has_running_turn
+    seen = 0
+    gate: asyncio.Event | None = None
+
+    async def together(self, topic_id, agent_handle=None):
+        nonlocal seen, gate
+        seen += 1
+        if seen % 2 == 1:
+            gate = asyncio.Event()
+            await gate.wait()
+        else:
+            assert gate is not None
+            gate.set()
+        return await real(self, topic_id, agent_handle)
+
+    monkeypatch.setattr(ChatService, "has_running_turn", together)
+
+    started: list[uuid.UUID] = []
+    real_receive = runner._receive_message
+
+    def recording(chat, topic, turn, **message):
+        started.append(turn)
+        return real_receive(chat, topic, turn, **message)
+
+    monkeypatch.setattr(runner, "_receive_message", recording)
+
+    client.portal.call(runner.let_go)
+    runner.start_turns()
+
+    async def both() -> list[int]:
+        return await asyncio.wait_for(
+            asyncio.gather(
+                runner.resume_lost_messages(service),
+                runner.resume_lost_messages(service),
+            ),
+            timeout=10,
+        )
+
+    client.portal.call(both)
+
+    assert len(started) == 1

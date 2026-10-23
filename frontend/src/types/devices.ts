@@ -1,10 +1,41 @@
+// ---- self-hosted 设备连接器 (P3 Phase B) ----
+
+// 这一节的类型原来长在 `@/cx_types` 里，现在跟本模块已有的那两个设备函数合住；
+// `@/cx_types` 把它们原样转出去，所以对外一个名字都没变。只认 props、不连网络层
+// 的那半张设备画面照旧从 `MyDevice` 取类型 —— 这台设备的样子本来就写在手写的接口
+// 契约里，搬过来之后 `@/types/devices` 和 `@/cx_types` 上的名字还是同一份。
+import type { DeviceScreen } from './deviceSessions'
+
+// A compute machine (算力节点) the signed-in human enrolled. A device is pure compute
+// — it has NO agent identity; the agents running on it are `screens` (each carries its
+// own agent). See execution-architecture v3 / fusion-design §5.
+export interface MyDevice {
+  device_id: string
+  name: string
+  online: boolean
+  team_id: number
+  screens: DeviceScreen[]
+}
+
+// A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
+// the device pages need. Includes the auto-provisioned personal team (个人 =
+// 单人真团队), which the backend sorts first and flags `personal`.
+export interface MyTeam {
+  id: number
+  handle: string
+  name: string
+  personal?: boolean
+  role?: string
+}
+
+// The result of approving a pending device flow (binds the machine to its owner).
+export interface DeviceApproval {
+  device_id: string
+  device_name: string
+  team_id: number
+}
+
 // 设备列表里一台设备上次在线的时间：链路断开时记下的最后一次收到消息的时刻，还没断开过时为 null。
-import type { MyDevice } from '@/cx_types'
-
-// 只认 props、不连网络层的那半张设备画面要从这儿取类型：这台设备的样子本来就写在
-// 手写的接口契约 `@/cx_types` 里，这里原样转出去，对外的 import 路径不变。
-export type { MyDevice } from '@/cx_types'
-
 export function lastSeenOf(device: MyDevice): string | null {
   return (device as MyDevice & { last_seen_at?: string | null }).last_seen_at ?? null
 }

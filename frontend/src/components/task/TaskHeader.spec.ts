@@ -1,4 +1,4 @@
-/** 任务页头：只有负责人能开始、能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
+/** 任务页头：只有负责人能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicEnvironment } from '@/types/compute'
@@ -33,10 +33,9 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'needs_you', phrase: 'awaiting_review' },
     ...over,
   } as RoomTask
 }
@@ -75,8 +74,7 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
-  const start = vi.fn(async () => {})
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
@@ -92,10 +90,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       agents,
       machine: MACHINE,
       machineError: false,
-      starting: false,
-      startError,
       actionError: null,
-      start,
       close: async () => true,
       reopen,
       handOver: async () => true,
@@ -108,7 +103,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
+  return { ...view, loadMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -153,43 +148,100 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
-  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你开始」。
-  it('等的是看的人：写「待你开始」，等的是别人：写「讨论中」', () => {
+  // 「未连接」只在真的断了的时候说：页面没告诉页头连没连上，就当连着。
+  it('没说断了就不写「未连接」', () => {
+    const view = mount()
+    expect(view.queryByText('未连接')).toBeNull()
+  })
+
+  // 页头那一格和频道里的卡、全部任务、总览说同一件事：标签只说「待审阅」，后面那一行
+  // 说在等谁——是看的人就说「等你」。
+  it('标签只说待审阅；等的是看的人，后面那一行说等你，等的是别人就写出是谁', () => {
     me = 'alice'
-    const mine = mount({ waiting_on: 'alice' })
-    expect(mine.getByTestId('task-phrase').textContent).toBe('待你开始')
+    const mine = mount({ waiting_on: 'alice', needs_my_action: true })
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(mine.getByTestId('task-progress-note').textContent).toContain('等你')
     mine.unmount()
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
-    expect(theirs.getByTestId('task-phrase').textContent).toBe('讨论中')
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等 ')
+    expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
   })
 
-  it('负责人点「开始」就开始', async () => {
-    const { container, start } = mount()
-    const button = container.querySelector('[data-testid="task-start"]')
-    expect(button).not.toBeNull()
-    await fireEvent.click(button!)
-    expect(start).toHaveBeenCalled()
+  it('关注人不被页头写成实际答题人', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: 'bob',
+      awaits_me: true,
+      needs_my_action: false,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).not.toContain('等你')
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等 ')
   })
 
-  it('开始之后不再有「开始」', () => {
-    const { container } = mount({ started_at: '2026-10-05T01:00:00Z', started_by: 'alice' })
-    expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
+  it('多人问题的实际被问者在页头看到等你', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: null,
+      awaits_me: true,
+      needs_my_action: true,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等你')
   })
 
-  it('不做这件事的人：不能开始，也没有更多操作', () => {
+  // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
+  it('队友说在等：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
+    const said = {
+      presentation: { column: 'building', phrase: 'waiting' },
+      progress_state: 'waiting',
+      progress_note: '等 CI 跑完',
+      progress_set_by: 'cheese-01',
+      progress_set_at: '2026-10-05T00:00:00Z',
+    } as Partial<RoomTask>
+    const here = mount(said)
+    expect(here.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(here.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
+    expect(here.queryByTestId('task-agent-left')).toBeNull()
+    here.unmount()
+
+    const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
+    expect(gone.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(gone.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
+    expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
+  })
+
+  // 名字跟的是报那句话的队友：任务中途换过人时，两处不是同一个，照任务当前的队友
+  // 写就把别人的「离开」栽到了还在干活的那位头上。
+  it('已离开说的是报那一句的队友，不是任务现在的队友', () => {
+    const swapped = mount({
+      agent_handle: 'cheese-02',
+      presentation: { column: 'building', phrase: 'running' },
+      progress_state: 'working',
+      progress_note: '在改页头',
+      progress_set_by: 'cheese-01',
+      progress_set_at: '2026-10-05T00:00:00Z',
+      agent_left_at: '2026-10-05T01:00:00Z',
+    })
+    expect(swapped.getByTestId('task-agent-left').textContent).toBe('小苔已离开')
+  })
+
+  it('任务关了，就不再摆它报过的状态', () => {
+    const { queryByTestId } = mount({
+      status: 'closed',
+      presentation: { column: 'done', phrase: 'closed' },
+      progress_state: 'waiting',
+      progress_note: '等 CI 跑完',
+      agent_left_at: '2026-10-05T01:00:00Z',
+    })
+    expect(queryByTestId('task-progress-note')).toBeNull()
+    expect(queryByTestId('task-agent-left')).toBeNull()
+  })
+
+  it('不做这件事的人：没有更多操作', () => {
     me = 'bob'
     const { container } = mount()
-    expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
-  })
-
-  it('开始被拒：只把原因说出来，不再让人在提示里挑审阅人', () => {
-    const { container, start } = mount({}, PEOPLE, AGENTS, '需要指定由谁审阅，或在项目设置中设置默认审阅的人')
-    const notice = container.querySelector('[role="alert"]')!
-    expect(notice.textContent).toContain('需要指定由谁审阅')
-    expect(notice.querySelector('select')).toBeNull()
-    expect(start).not.toHaveBeenCalled()
   })
 
   it('负责人在任务信息里看得到每条会话的环境，也能更换', async () => {

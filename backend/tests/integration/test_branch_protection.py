@@ -4,8 +4,9 @@
 endpoint contract: defaults straight off GitHub's page (everything off, except
 `dismiss_stale` — the pusher here is 芝士 with App write credentials, so a new
 commit voids accepts unless opted out), partial-update semantics, write-side
-validation, the steward-only guard (404 conceals the project, like every other
-steward surface), and the read-only GitHub annotations degrading instead of
+validation, the settings guard (the owner and admins; a member is refused, an
+outsider gets 404 that conceals the project, an AI teammate never), and the
+read-only GitHub annotations degrading instead of
 500ing.
 
 `approvals_required` predates the block and stays at
@@ -33,7 +34,6 @@ _DEFAULTS = {
     "override_handles": None,
     "approvals_required": 1,
     "default_reviewer": "",
-    "dispatch_seat": "",
 }
 
 
@@ -122,41 +122,6 @@ def test_override_handles_and_default_reviewer_roundtrip_and_clear(client):
     assert data["default_reviewer"] == ""
 
 
-def test_dispatch_seat_roundtrips_and_clears(client):
-    """调度座位：项目设置里的一项，默认空（= 和以前一样，只叫当事的那条线）。"""
-    pid = _make_project(client)
-    assert _get(client, pid)["dispatch_seat"] == ""
-
-    r = _put(client, pid, {"dispatch_seat": "  cheese-ab12cd34ef56  "})
-    assert r.status_code == 200
-    assert _get(client, pid)["dispatch_seat"] == "cheese-ab12cd34ef56"
-
-    # 别的键照旧，动这一项不碰它们。
-    assert _put(client, pid, {"strict": True}).status_code == 200
-    assert _get(client, pid)["dispatch_seat"] == "cheese-ab12cd34ef56"
-
-    # 清空 = 回到「没设」；库里不留一个空串。
-    assert _put(client, pid, {"dispatch_seat": ""}).status_code == 200
-    assert _get(client, pid)["dispatch_seat"] == ""
-
-    from app.domain.project.models import Project
-
-    async def _settings() -> dict:
-        async with client.test_factory() as s:
-            project = await s.get(Project, uuid.UUID(pid))
-            assert project is not None
-            return dict((project.settings or {}).get("branch_protection") or {})
-
-    assert "dispatch_seat" not in asyncio.run(_settings())
-
-
-def test_rejects_a_bad_dispatch_seat(client):
-    pid = _make_project(client)
-    assert _put(client, pid, {"dispatch_seat": "x" * 100}).status_code == 422
-    assert _put(client, pid, {"dispatch_seat": "cheese\x00ab12"}).status_code == 422
-    assert _get(client, pid)["dispatch_seat"] == ""
-
-
 def test_dismiss_stale_can_be_opted_out_and_back(client):
     pid = _make_project(client)
     r = _put(client, pid, {"dismiss_stale": False, "auto_merge_allowed": True})
@@ -239,38 +204,27 @@ def test_update_allows_a_team_admin_not_an_ordinary_member(client):
     client.headers.update(session_auth_headers("lead-user"))
     assert _put(client, pid, {"strict": True}).status_code == 200
 
+    # A member sees the project, so is refused rather than concealed from.
     client.headers.update(session_auth_headers("member-user"))
-    assert _put(client, pid, {"strict": False}).status_code == 404
+    assert _put(client, pid, {"strict": False}).status_code == 403
 
 
-@pytest.mark.parametrize("role", ["team-admin", "owner"])
-def test_an_agent_steward_changes_merge_policy_like_any_other_steward(client, role):
-    """Standing answers this, not whether the steward is a person.
-
-    Nothing about relaxing a check is safer in a human's hands: whoever owns the
-    project or administers its team was given that authority deliberately, and a
-    project that does not want an agent changing its checks does not give one it.
-    """
+@pytest.mark.parametrize("admin", [True, False], ids=["team-admin", "team-member"])
+def test_an_agent_never_changes_merge_policy(client, admin):
+    """An AI teammate does no management, wherever it sits: relaxing a check is
+    changing the project's settings, which is a person's to do (#3830)."""
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
     handle = room_agent_seat(client, project["root_topic_id"])
-    join_project_team(client, pid, handle, admin=True)
-    if role == "owner":
-        response = client.put(f"/projects/{pid}/owner", json={"owner_handle": handle})
-        assert response.status_code == 200, response.text
-    client.headers.update(session_auth_headers(handle))
-    response = _put(client, pid, {"auto_merge_allowed": True})
-    assert response.status_code == 200, response.text
-    assert _get(client, pid)["auto_merge_allowed"] is True
-
-
-def test_an_agent_who_is_not_a_steward_still_cannot(client):
-    """Standing is the whole of it: an ordinary member of the team, refused."""
-    pid = _make_project(client)
-    project = client.get(f"/projects/{pid}").json()["data"]
-    handle = room_agent_seat(client, project["root_topic_id"])
-    join_project_team(client, pid, handle)
+    join_project_team(client, pid, handle, admin=admin)
     before = _get(client, pid)
-    client.headers.update(session_auth_headers(handle))
-    assert _put(client, pid, {"auto_merge_allowed": True}).status_code == 404
+
+    agent = session_auth_headers(handle)
+    refused = client.put(
+        f"/projects/{pid}/branch-protection",
+        json={"auto_merge_allowed": True},
+        headers=agent,
+    )
+
+    assert refused.status_code in (403, 404), refused.text
     assert _get(client, pid) == before

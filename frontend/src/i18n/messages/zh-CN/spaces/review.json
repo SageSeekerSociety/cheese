@@ -1,0 +1,19 @@
+{
+  "APPROVED": "已通过",
+  "PENDING": "待审核",
+  "REJECTED": "已驳回",
+  "actionFailed": "审核未完成，刷新页面确认申请状态。",
+  "adminHelp": "通过后，空间将公开显示，创建者可以开始发布题目。驳回时请说明原因。",
+  "applicant": "申请人",
+  "approve": "通过",
+  "dismiss": "关闭这条提示",
+  "empty": "暂无申请。",
+  "loadFailed": "空间申请加载失败",
+  "next": "下一页",
+  "previous": "上一页",
+  "reason": "驳回原因",
+  "refresh": "刷新",
+  "reject": "驳回",
+  "retry": "重试",
+  "status": "审核状态"
+}

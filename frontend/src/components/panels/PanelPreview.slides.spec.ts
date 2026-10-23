@@ -14,6 +14,7 @@ import TopicChatColumn from '../../views/workspace/TopicChatColumn.vue'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 import { previewBundles } from '@/test/panelBundles'
 
 const text = 'Whole page original PDF text '.repeat(30)
@@ -315,7 +316,7 @@ async function pageQuestion(ui: ReturnType<typeof chatPreview>, note = 'explain 
 }
 it('whole-page ask posts the current canonical AI mention through the normal message outbox', async () => {
   const ui = chatPreview('room-post')
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await pageQuestion(ui)
   await waitFor(() => expect(ui.posted).toHaveLength(1))
   expect(ui.posted[0].url).toContain('/topics/room-post/messages')
@@ -346,7 +347,7 @@ it.each(['  @评审\n', '<@cheese-other>', '@评审 <@cheese-current> <@cheese-o
     pdfText.text = quote
     const roomId = `room-quote-${quote.length}`
     const ui = chatPreview(roomId)
-    await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+    await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
     await pageQuestion(ui)
     await waitFor(() => expect(ui.posted).toHaveLength(1))
     expect(ui.posted[0].body.content).toBe('<@cheese-current> explain this page')
@@ -377,30 +378,44 @@ it('keeps the whole-page question until this room roster arrives, then submits i
   } finally {
     release()
   }
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await fireEvent.click(ui.getByPlaceholderText('说明要改什么').closest('.locator')!.querySelector('button')!)
   await waitFor(() => expect(ui.posted).toHaveLength(1))
   expect(ui.posted[0].body.content).toMatch(/^<@cheese-current> /)
 })
+/** 输入框上那枚引用标签引的原文：点开它，读浮层里那一段。 */
+async function composerQuoteText(ui: { container: Element }): Promise<string | null | undefined> {
+  // 浮层是 VOverlay：happy-dom 没有 visualViewport、devicePixelRatio，不补上挂不起来。
+  vi.stubGlobal('visualViewport', {
+    width: 1280,
+    height: 800,
+    offsetLeft: 0,
+    offsetTop: 0,
+    addEventListener() {},
+    removeEventListener() {},
+  })
+  vi.stubGlobal('devicePixelRatio', 1)
+  await fireEvent.click(ui.container.querySelector('.quote-chip .chip__label')!)
+  await waitFor(() => expect(document.querySelector('.chip__detail .message-quote__text')).toBeTruthy())
+  return document.querySelector('.chip__detail .message-quote__text')?.textContent
+}
 it('editing a refused question keeps its frozen quote outside the composer text and resend body', async () => {
   pdfText.text = '  @评审 <@cheese-other> 原页\n'
   const ui = chatPreview('room-edit-quote', Promise.resolve(), true)
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await pageQuestion(ui)
   await waitFor(() => expect(ui.container.querySelector('.outbox-fail')).toBeTruthy())
   const first = ui.posted[0].body
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail button')[1])
-  const draft = ui.container.querySelector('textarea')!
-  expect(draft.value).toBe('<@cheese-current> explain this page')
-  expect(ui.container.querySelector('.composer-quote .message-quote__text')?.textContent).toBe(
-    '  @评审 <@cheese-other> 原页\n'
-  )
+  const draft = ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!
+  expect(composerText(draft)).toBe('<@cheese-current> explain this page')
+  expect(await composerQuoteText(ui)).toBe('  @评审 <@cheese-other> 原页\n')
   ui.chatTopic.value = room('room-edit-away')
-  await waitFor(() => expect(ui.container.querySelector('.composer-quote')).toBeNull())
+  await waitFor(() => expect(ui.container.querySelector('.quote-chip')).toBeNull())
   ui.chatTopic.value = room('room-edit-quote')
-  await waitFor(() => expect(ui.container.querySelector('.composer-quote')).toBeTruthy())
-  const restored = ui.container.querySelector('textarea')!
-  await fireEvent.update(restored, '<@cheese-current> explain again')
+  await waitFor(() => expect(ui.container.querySelector('.quote-chip')).toBeTruthy())
+  const restored = ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!
+  await fillComposer(restored, '<@cheese-current> explain again')
   await fireEvent.keyDown(restored, { key: 'Enter' })
   await waitFor(() => expect(ui.posted).toHaveLength(2))
   expect(ui.posted[1].body.content).toBe('<@cheese-current> explain again')
@@ -409,9 +424,9 @@ it('editing a refused question keeps its frozen quote outside the composer text 
 })
 it('does not send a page question into a different topic even when its AI roster is ready', async () => {
   const ui = chatPreview('room-mismatch')
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   ui.chatTopic.value = room('other-room')
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await pageQuestion(ui)
   expect(ui.posted).toHaveLength(0)
   expect((ui.getByPlaceholderText('说明要改什么') as HTMLInputElement).value).toBe('explain this page')
@@ -420,13 +435,13 @@ it('does not send a page question into a different topic even when its AI roster
 it('removing a refused-question reference sends only the edited authored message', async () => {
   pdfText.text = '原页 @评审'
   const ui = chatPreview('room-remove-quote', Promise.resolve(), true)
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await pageQuestion(ui)
   await waitFor(() => expect(ui.container.querySelector('.outbox-fail')).toBeTruthy())
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail button')[1])
-  await fireEvent.click(ui.getByText('移除引用'))
-  expect(ui.container.querySelector('.composer-quote')).toBeNull()
-  await fireEvent.keyDown(ui.container.querySelector('textarea')!, { key: 'Enter' })
+  await fireEvent.click(ui.getByRole('button', { name: '移除引用' }))
+  expect(ui.container.querySelector('.quote-chip')).toBeNull()
+  await fireEvent.keyDown(ui.container.querySelector('.composer .ProseMirror')!, { key: 'Enter' })
   await waitFor(() => expect(ui.posted).toHaveLength(2))
   expect(ui.posted[1].body.content).toBe('<@cheese-current> explain this page')
   expect(ui.posted[1].body.quoted_context).toBeUndefined()
@@ -434,7 +449,7 @@ it('removing a refused-question reference sends only the edited authored message
 it('editing a different refused quote leaves the existing quote and failed message available', async () => {
   pdfText.text = '原页 A'
   const ui = chatPreview('room-conflicting-quotes', Promise.resolve(), true)
-  await waitFor(() => expect(ui.container.querySelector('.summon-btn')?.hasAttribute('disabled')).toBe(false))
+  await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
   await pageQuestion(ui, 'question A')
   await waitFor(() => expect(ui.container.querySelectorAll('.outbox-fail')).toHaveLength(1))
   pdfText.text = '原页 B'
@@ -442,8 +457,10 @@ it('editing a different refused quote leaves the existing quote and failed messa
   await waitFor(() => expect(ui.container.querySelectorAll('.outbox-fail')).toHaveLength(2))
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail')[0].querySelectorAll('button')[1])
   await fireEvent.click(ui.container.querySelector('.outbox-fail')!.querySelectorAll('button')[1])
-  expect(ui.container.querySelector('.composer-quote .message-quote__text')?.textContent).toBe('原页 A')
-  expect(ui.container.querySelector('textarea')?.value).toBe('<@cheese-current> question A')
+  expect(await composerQuoteText(ui)).toBe('原页 A')
+  expect(composerText(ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!)).toBe(
+    '<@cheese-current> question A'
+  )
   expect(ui.container.querySelector('.outbox-fail')).toBeTruthy()
   expect(ui.container.textContent).toContain('输入框中已有另一份引用，请先发送或移除它。')
 })

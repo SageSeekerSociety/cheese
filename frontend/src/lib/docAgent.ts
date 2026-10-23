@@ -22,6 +22,8 @@ export type AgentPresetId =
   | 'summarize'
   | 'check_all'
   | 'structure'
+  // 只给还空着的项目总览：总览页上的「让 AI 队友起草」，不在框里的常用说法里。
+  | 'draft'
 
 export interface AgentPreset {
   id: AgentPresetId
@@ -133,8 +135,19 @@ export interface DocAgentListener {
   working: () => void
   /** More of the answer: `text` from its `at`-th character on. */
   delta: (text: string, at?: number) => void
-  done: (result: { answer: string; edits: DocEdit[]; stopped: boolean }) => void
+  /** `edits`: the passages it changed, in order; `changes`: what the server kept of them, to
+   *  undo and redo them by (`/assistant/changes`). */
+  done: (result: { answer: string; edits: DocEdit[]; changes: number[]; stopped: boolean }) => void
   error: (message: string) => void
+}
+
+/** The document writes an answer made (`assistant_changes` rows): their passages, and their ids. */
+function changesOf(given: unknown): { edits: DocEdit[]; changes: number[] } {
+  const rows = Array.isArray(given) ? (given as { id?: unknown; edits?: unknown }[]) : []
+  return {
+    edits: rows.flatMap((row) => (Array.isArray(row.edits) ? (row.edits as DocEdit[]) : [])),
+    changes: rows.flatMap((row) => (typeof row.id === 'number' ? [row.id] : [])),
+  }
 }
 
 /** Hand one server-sent event of an answer to `listener`. */
@@ -147,7 +160,7 @@ export function dispatch(listener: DocAgentListener, event: string, data: Record
   else if (event === 'done')
     listener.done({
       answer: text('answer'),
-      edits: Array.isArray(data.edits) ? (data.edits as DocEdit[]) : [],
+      ...changesOf(data.changes),
       stopped: data.stopped === true,
     })
   else if (event === 'error') listener.error(renderNoticeMessage(data.i18n, text('message')))

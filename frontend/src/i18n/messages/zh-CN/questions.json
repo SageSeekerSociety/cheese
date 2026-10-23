@@ -1,7 +1,7 @@
 {
   "ask": {
     "buttons": {
-      "createTopic": "创建 {name} 话题"
+      "createTopic": "创建 {name} 标签"
     },
     "titleLabel": "问题标题",
     "addBounty": "添加悬赏",
@@ -18,7 +18,7 @@
     "errors": {
       "titleRequired": "填写问题标题",
       "titleQuestionMark": "问题标题必须以问号结尾",
-      "topicRequired": "至少选择一个话题"
+      "topicRequired": "至少选择一个标签"
     },
     "success": "提问成功"
   },
@@ -63,7 +63,7 @@
     },
     "errors": {
       "inviteFailed": "邀请失败：{reason}",
-      "loadFailed": "读不到可以邀请的人。"
+      "loadFailed": "无法读取可邀请的人"
     }
   },
   "answer": {

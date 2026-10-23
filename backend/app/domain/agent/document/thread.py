@@ -42,7 +42,15 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question
 from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.document.session import ref, session_for
-from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Thinking,
+    Tool,
+    ToolArgs,
+    ToolFailed,
+    Waiting,
+    Words,
+)
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
     HostFull,
@@ -53,7 +61,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc import collab
 from app.domain.living_doc.comments import CommentThreads
 from app.domain.living_doc.services import Documents
 
@@ -181,7 +189,9 @@ async def answer(
     try:
         async with factory() as db:
             await question.admit(db, asked.project_id, bound)
-            around = await question.surroundings(db, asked, seat=bound.agent_handle)
+            around = await question.surroundings(
+                db, asked, seat=bound.agent_handle, asker=None
+            )
             prompt = await thread_question(
                 db, around, document_id=asked.document_id, thread_id=thread_id
             )
@@ -205,6 +215,8 @@ async def answer(
                 asker=asker,
                 work=work,
                 may_edit=True,
+                # A thread is read by everyone who reads the document.
+                shown_to_readers=True,
             )
         return Prompt(work, prompt, acting=acting)
 
@@ -240,15 +252,12 @@ class Replies:
         self._chat = chat
         self._factory = factory
 
-    async def stopped(self, consumption: Consumption) -> bool:
-        redis = get_redis_client()
-        return (
-            redis is not None
-            and await question.stopped(redis, uuid.UUID(consumption.key))()
-        )
+    stopped = staticmethod(question.is_stopped)
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
     ) -> None:
         document_id = Asked.of(consumption.data).document_id
         thread_id = uuid.UUID(consumption.key)
@@ -284,8 +293,6 @@ class Replies:
         else:
             said = text
         redis = get_redis_client()
-        if redis is not None:
-            await work_edits.take(redis, consumption.work_id)
         if stopped:
             # What it had written when it was stopped stays, marked as stopped.
             said = "\n\n".join(part for part in (written.strip(), STOPPED) if part)

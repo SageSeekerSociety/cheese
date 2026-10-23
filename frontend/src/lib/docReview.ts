@@ -13,8 +13,6 @@ import { flatText, occurrences, plainOf, rangeOf } from './docEdits'
 
 /** 「查看改动」opens the document with these. */
 export interface DocReviewRequest {
-  /** Who asked for the changes, as people call them. */
-  requester: string
   edits: DocEdit[]
 }
 

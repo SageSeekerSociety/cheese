@@ -75,6 +75,13 @@ class User(Base):
     work_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Their school or employer, as they wrote it; read with `work_role`.
     organization: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # When they asked that their content not be used to train models or be given,
+    # anonymised, to partners (privacy policy 1.2); NULL means they have not. No
+    # such export exists yet: whatever first exports user content for training or
+    # for partners must leave out everyone with this set.
+    training_opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -116,7 +123,7 @@ class UserProfile(Base):
 
 
 class UserRealNameIdentity(Base):
-    """Minimal mapping for user_real_name_identities to support Task.requireRealName checks."""  # noqa: E501
+    """Minimal mapping for user_real_name_identities to support Task.requireRealName checks."""
 
     __tablename__ = "user_real_name_identities"
 
@@ -306,4 +313,25 @@ class UserTrustedDevice(Base):
     user_agent: Mapped[str] = mapped_column(String(1024), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class UserTeammateRemark(Base):
+    """A personal remark (alias) ``viewer_handle`` set for ``target_handle``.
+
+    Keyed by handle so it applies uniformly across projects to both human
+    teammates and AI teammates (``cheese-<hex>``), and is visible only to
+    ``viewer_handle``. Clearing a remark deletes its row.
+    """
+
+    __tablename__ = "user_teammate_remarks"
+
+    viewer_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    remark: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

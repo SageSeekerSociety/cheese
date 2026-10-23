@@ -13,7 +13,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task

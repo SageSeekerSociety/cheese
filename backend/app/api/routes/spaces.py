@@ -26,6 +26,7 @@ from app.api.space_payloads import (
     _invite_codes_to_api_models,
     _space_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -253,7 +254,7 @@ async def get_space(
     space_data = await _build_full_space_payload(
         space, service=service, db=db, include_private=may_manage
     )
-    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
         "space": space_data,
@@ -299,30 +300,15 @@ async def get_spaces(
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
 
         admin_relations = await service.list_admins(s.id)
-        # 和 _hydrate_people 同一判据：管理员列表也不能回档案上的原始 avatar_id，得问
-        # 「这个人自己挑过没有」，没挑过就给 None 让前端画彩色首字母。
-        admin_faces = await profile_repo.chosen_avatar_ids(
-            [rel.user_id for rel in admin_relations]
+        # 一次取齐所有管理员的人；头像判据（挑过没有）也在 _hydrate_people 里。
+        people = await _hydrate_people(
+            [rel.user_id for rel in admin_relations],
+            user_repo=user_repo,
+            profile_repo=profile_repo,
         )
-        admins_list = []
-        for rel in admin_relations:
-            user = await user_repo.get_by_id(rel.user_id)
-            profile = (
-                await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-            )
-            user_info = (
-                {
-                    "id": user.id,
-                    "username": user.username,
-                    "nickname": profile.nickname if profile else user.username,
-                    "avatarId": admin_faces.get(rel.user_id),
-                    "intro": profile.intro if profile else "",
-                }
-                if user
-                else {"id": rel.user_id, "username": "unknown"}
-            )
-            admins_list.append(_admin_to_api_model(rel, user_info))
-        dto["admins"] = admins_list
+        dto["admins"] = [
+            _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
+        ]
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
@@ -347,6 +333,7 @@ async def get_spaces(
     "",
     summary="Create Space",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_space(
     payload: CreateSpaceRequest,
@@ -407,10 +394,7 @@ async def create_space(
     )
 
 
-@router.patch(
-    "/{spaceId}",
-    summary="Update Space",
-)
+@router.patch("/{spaceId}", summary="Update Space", dependencies=[ROUTE_DECIDES])
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: PatchSpaceRequest,
@@ -460,6 +444,7 @@ async def patch_space(
     "/{spaceId}",
     summary="Delete Space",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -471,8 +456,7 @@ async def delete_space(
 
 
 @router.post(
-    "/join",
-    summary="Join a Space with an invite code",
+    "/join", summary="Join a Space with an invite code", dependencies=[ROUTE_DECIDES]
 )
 async def join_space(
     payload: JoinSpaceRequest,
@@ -518,6 +502,7 @@ async def list_space_members(
     "/{spaceId}/members",
     summary="Add Space Member",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -552,6 +537,7 @@ async def add_space_member(
     "/{spaceId}/members/{userId}",
     summary="Remove Space Member",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -573,6 +559,7 @@ async def delete_space_member(
     "/{spaceId}/leave",
     summary="Leave a Space",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def leave_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -647,7 +634,7 @@ async def get_publishers_participation(
     "/{spaceId}/participants/export",
     summary="Export Space Participants",
     deprecated=True,
-    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",  # noqa: E501
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -665,6 +652,6 @@ async def export_space_participants(
         content=csv_payload,
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
         },
     )

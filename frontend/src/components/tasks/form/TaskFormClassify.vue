@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「分类与话题」那一节：一道题在侧栏哪个分类下（必选一个），带哪些话题（可多选）。
+// 「分类与标签」那一节：一道题在侧栏哪个分类下（必选一个），带哪些标签（可多选）。
 //
 // 它只画：选项是外面映射好传进来的，值改一次往上报一次。
 import { useI18n } from 'vue-i18n'
@@ -26,7 +26,12 @@ const { t } = useI18n()
 <template>
   <TaskFormSection :title="t('tasks.form.classify')">
     <div class="tf-grid">
-      <BaseField :label="t('tasks.form.category')" required :error="categoryIdControl['error-messages']?.[0]">
+      <BaseField
+        data-agent-field="category"
+        :label="t('tasks.form.category')"
+        required
+        :error="categoryIdControl['error-messages']?.[0]"
+      >
         <template #default="{ id, describedby, invalid, required }">
           <v-select
             :id="id"
@@ -47,7 +52,7 @@ const { t } = useI18n()
         </template>
       </BaseField>
 
-      <BaseField :label="t('tasks.form.topics')">
+      <BaseField data-agent-field="tags" :label="t('tasks.form.topics')">
         <template #default="{ id }">
           <v-autocomplete
             :id="id"

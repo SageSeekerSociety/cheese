@@ -21,7 +21,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent.gateway import GatewayModel, LlmGateway
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,8 @@ _state = _State()
 def _floor() -> list[GatewayModel]:
     """What to offer when the gateway has never answered.
 
-    ``settings.agent_model`` is the model this deployment is configured to run,
+    The ``agent_model`` platform role (``app.core.model_roles``) is the model
+    this deployment is configured to run,
     so it is the one thing we can name without asking anyone. A deployment that
     never configured the admin API (``llm_gateway_admin_base`` is optional) lives
     here permanently and keeps working — on exactly the model it was set up for,
@@ -59,8 +60,8 @@ def _floor() -> list[GatewayModel]:
     """
     return [
         GatewayModel(
-            id=settings.agent_model,
-            label=settings.agent_model,
+            id=model_roles.model("agent_model"),
+            label=model_roles.model("agent_model"),
             selectable=True,
             priced=True,
         )
@@ -91,6 +92,14 @@ def offerable() -> list[GatewayModel]:
     """
     picked = [m for m in snapshot() if m.selectable and m.priced]
     return picked or _floor()
+
+
+def sees_pictures(model: str) -> bool:
+    """Whether ``model`` reads pictures, as the gateway last said. A model it
+    has not described, or before it has answered at all, is shown text only:
+    a picture sent to a model that cannot read one is a refused request, or a
+    billed one for nothing."""
+    return any(m.id == model and m.vision for m in snapshot())
 
 
 async def refresh(gateway: LlmGateway | None) -> bool:
@@ -126,7 +135,7 @@ async def keep_fresh(gateway: LlmGateway | None) -> None:
     while True:
         try:
             await refresh(gateway)
-        except Exception:  # noqa: BLE001 — a refresh must never kill its own loop
+        except Exception:  # a refresh must never kill its own loop
             logger.warning("gateway catalogue refresh failed", exc_info=True)
         answered = _state.models is not None
         await asyncio.sleep(

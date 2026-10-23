@@ -9,7 +9,7 @@
 # file states the whole shape once, in the tool that reads the import graph.
 #
 # RUN IT
-#     cd backend && uv run lint-imports          the nine contracts on their own,
+#     cd backend && uv run lint-imports          the ten contracts on their own,
 #                                                exit 0/1. This file writes no
 #                                                exemptions, so this is the raw
 #                                                graph, not the verdict — every
@@ -215,6 +215,14 @@ ancestors =
     app.domain
 unmatched_ignore_imports_alerting = warn
 
+# **2026-10-15 拆包**：`app/domain/topic/repositories.py` 变成一个包（照 #3856 对
+# `app.domain.feedback.services` 的做法）。读 project 的地址 / 环境 / 模型本来就写在
+# 这一个文件里，合并进仓库的树记的是 `app.domain.topic.repositories`，而那个模块路径
+# 现在归包的 `__init__`，它自己不读这些，所以旧的三条配对再也不会匹配；一个文件分成
+# 几个，配对从三条变成四条。**2026-10-16**：这里曾为此手写四条豁免，现在
+# `check_boundaries.py` 自己认得这种改名——某个模块在基线树里是一个文件、在本树里是
+# 个包时，落在该包子模块上的配对按 `M -> Y` 认成 `M.<submod> -> Y`——四条一起删掉。
+
 # `app.domain.membership.services -> app.domain.delivery.*`: a project invitation
 # is told to the invitee through the delivery ledger, the one way a notification
 # leaves (I11) — the same two edges `team.membership_services` already has for
@@ -245,6 +253,16 @@ unmatched_ignore_imports_alerting = warn
 # 23 条（C2 另多 2 条，是 answers、questions 两个路由读 discussion.models）。这些都
 # 是早已存在的依赖，只是现在才看得见；冻结的是契约在补入口文件后重新提名的切口，
 # 其中十来条落在老包之间，因为新的环要从环上任意一处切开。
+#
+# 2026-10-18 拆 `agent_instance -> agent`：这两包互相读，`agent_instance.configuration`
+# 读 `agent` 的网关报价、订阅名单、供给策略和骨架，`agent.queries` / `gateway_usage` /
+# `document.question` 又反过来读它；C3 提名的 27 条里，这四条是最便宜的一刀。
+# 模型目录（「这个项目能用哪些模型」）整块搬进 `agent.model_catalog`——它答的是部署和
+# 项目的事实，不是某个队友存下来的配置——`agent_instance` 只留 `AgentConfiguration`
+# 这个形状，唯一要用目录的地方（建/改队友时校验模型）由调用方把 `model_choices` 递
+# 进来。拆完 `--measure` 从 27 条降到 14 条。注意：基线是从 merge base 量的，主干树
+# 里这四条边还在，把它们加回来检查不会红，所以由
+# `tests/unit/test_agent_instance_does_not_read_the_agent_package.py` 钉住。
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
@@ -402,6 +420,31 @@ unmatched_ignore_imports_alerting = warn
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
 #
+# `reads` joined at layer 1 (2026-10-18): the shared batch-read primitive
+# `get_by_ids` imports only SQLAlchemy and the standard library, and is called
+# by repositories from layer 1 (`tag`, `avatars`) upward (`comments`, `groups`).
+#
+# `repositories` joined beside it (2026-10-18): the `Repository` base gives those
+# same repositories `get_by_id` / `get_by_ids` on top of `reads`, and imports
+# nothing else from the domain.
+#
+# `project_material_rows` joined at layer 1 (2026-10-17), by the same move one step
+# further: `project_material` (layer 4) reads tasks and accept cards, and both
+# `room_task` and `review` read back into this side, so importing their models
+# from there is a C3 cycle. The columns it reads come down; the readers stay.
+#
+# `review_note_codes` joined at layer 1 (2026-10-17): the note code and the level it
+# renders as are read by `room_task.presentation` (layer 4) to place a card on the
+# board, and `review` reads `room_task` the other way — each importing the other is
+# the C3 cycle this move removes. The vocabulary came down; the writers
+# (`record` / `annotate` / `clear`) stayed in `review/notes.py`, which needs the
+# card's two columns.
+#
+# `project_permissions` joined at layer 1 (2026-10-16): the roles of a project
+# and what each may do (#3830) are asked by `topic`, `topic_membership`,
+# `review` and `membership` alike, and `project` sits beside the first two, so
+# the names live below all of them. The module imports nothing.
+#
 # `delivery_events` joined at layer 1 (2026-10-14), the same move once more:
 # the notification codes (`NotificationType`) and the shape of one event
 # (`DeliveryEvent`, `event_id_for`, `dedup_key`) are what every layer needs to
@@ -415,19 +458,191 @@ unmatched_ignore_imports_alerting = warn
 # it reads is `common`, `conversation` (both layer 1) and `topic.models`, whose
 # row is 2. Layer 3 is the lowest row that keeps that one import legal, and it
 # is where four of the five upward edges into it stop being upward. The fifth,
-# `topic -> agent_session`, stays: the session row cannot name its project's id
-# without the join, and layer 2 is below layer 3.
+# `topic -> agent_session`, has since been handed in as a value at construction
+# instead: layer 2 sits below layer 3, so `topic` cannot reach the session row —
+# it takes the store. (The join is what binds the row to layer 3 either way:
+# `agent_session` still reads `topic.models` at layer 2.)
+#
+# `shell_catalog` joined at layer 1 (2026-10-14), the same move as `notice_meta`
+# and `delivery_events`: what a 壳 DECLARES (`Nav`, `Shell`, `CATALOG`, `lookup`)
+# and the shape it resolves to (`ShellOut`) is vocabulary, and `ShellOut` is a
+# field of `ProjectOut` — so `project.schemas` at layer 2 read it at layer 2's
+# neighbour `shell`, upward. The declarations and the wire shape moved down;
+# resolving a project's 壳 stays in `app.domain.shell.service`, which reads
+# `space.models`, `task.models` and `task.protocol` and so cannot follow. That
+# split is what takes `project -> shell` off the graph, which is the one edge
+# under `project` that was holding `shell` inside the largest cycle.
+#
+# `presentation_meta` joined at layer 1 (2026-10-16), the same move a fourth
+# time: `PresentationOut` — the two codes of one 看板 cell — was a field of two
+# response shapes at once, `room_task.schemas.TaskOut` (layer 4) and
+# `topic.schemas.TopicOut` (layer 2), so `topic.schemas` climbed to layer 4 for
+# a two-field wire shape. The shape moved down; computing it stays in
+# `room_task/presentation.py`, which reads room and task rows.
+#
+# `event_about` joined at layer 1 (2026-10-16), the same move as `notice_meta`
+# and `presentation_meta`: `EventAbout` — the four things one event can be about
+# — and the `landing()` that turns one of them into where it lands (`Landing`:
+# the project and the conversation) lived in `block/about.py` at layer 4, and
+# they are pure vocabulary — the module imports `enum`, `uuid` and `dataclasses`
+# and nothing else. Six packages read them — `topic` at layer 2, `review`,
+# `room_task`, `pin` and `block` itself at layer 4, `agent` at layer 5 — and the
+# table lived in `block` at layer 4, so the layer-2 reader climbed two layers
+# for a closed four-row table. The table
+# and `landing()` moved down. Writing the event row stays in `block`:
+# whoever says something into a room now hands the call in (the `PlatformLine` port
+# in `topic/ports.py`), and stepping through `landing()` is what that
+# implementation does before it appends — the landing guard asks for exactly
+# that, so the table keeps deciding where a line goes.
+#
+# `event_author` joined at layer 1 (2026-10-16), the next step of the same
+# commit that took `topic -> block` to zero. `AuthorType` — participant or
+# platform — lived in `block/models.py` at layer 4, and `topic` at layer 2 reads
+# that column twice: the unread badge and 「回复了我」 both filter on it, through
+# the bare `blocks` table that package declares itself. The vocabulary moved
+# down; `block/models.py` imports it back for the mapped column, and the column's
+# one judged landing place stays `app.domain.block.authorship`, which keeps the
+# pair of twins (`is_participant` for a row, `participant_blocks` for a `WHERE`).
+# Why the move was forced rather than merely tidy: the column may only be read as
+# an enum member (`tests/unit/test_author_type_two_values.py`), and a package
+# that cannot name the enum can only spell the member as a string literal — the
+# exact thing that guard exists to catch. Importers were followed one by one and
+# now take it from `app.domain.event_author`; `block/models.py` still imports it
+# for its own mapped column, so the name is reachable as an attribute of that
+# module — nobody imports it from there. `block.schemas` re-exports it on purpose
+# for routes, and takes it from layer 1 the way every other importer does.
+#
+# `environment_diagnosis` joined at layer 3 (2026-10-14), out of the `project`
+# package it was written in. It takes no project row — the route hands it two
+# ids, the settings and the failure — and what it reads is `gateway_chat` and
+# `usage.ledger`, both of this row. Living in `project` made `project ->
+# gateway_chat` an upward edge for a module that never needed the layer.
+#
+# `project -> usage` came off the graph (2026-10-14) the way `project -> shell`
+# did: what `project` wanted was two questions (has this 赛题 earmarked credits
+# for this project yet? issue them), not the `Ledger` class, so
+# `app.domain.project.ports.ComputeCredits` declares them and
+# `app.domain.usage.adapters.ComputeCredits` answers them — the composition root
+# hands one in at `ProjectService`'s four construction sites. `Ledger.earmarks`
+# returns `ComputeGrant` rows, which is why the port folds them into a bool: a
+# layer-2 package does not name a caller's class.
+#
+# `project -> preview` came off in the same breath, and here the port needed no
+# implementation written at all: saving a room file warms the Office → PDF
+# preview cache, which is `preview.office.prewarm` at layer 5, and its shape
+# (`data, path`, returns at once, does nothing when no render service is
+# configured) is already exactly what `project.ports.WarmPreview` asks for. The
+# eight route call sites hand the function itself in, next to the bytes they are
+# saving — 谁调用谁给, the `webhook/ports.py` `Poster` shape.
+#
+# `project -> library` came off the same way one step later (2026-10-15), and it
+# needed two ports because `project` asks the layer-4 `library` two unrelated
+# things. Saving, reading back, versioning and snapshotting a room file's bytes
+# are address lookups on disk: `project.ports.FileStore` declares them and
+# `app/domain/library/service.py` already answers every one, so the routes hand
+# the module itself in — `integration.ports.RoomFiles` again, right down to the
+# constant (`MAX_FILE_BYTES`, half of the pair the routes read as
+# `MAX_ARTIFACT_BYTES`; that name now lives in `library.service` beside the
+# number it is, instead of in `project.room_files` pointing at it).
+# `project.ports.LibraryFiles` is the other half — keeping a file in the
+# project's 资料库 (`records.add`) and listing its blobs for the export archive
+# (`records.stored`, plus a one-line `records.read_blob` so a caller does not
+# have to know that bytes are addressed by `(location, key)`). `records.add`'s
+# `data` is narrowed from `service.Content` to `bytes` in the port: it does not
+# change a call, and it keeps `BinaryIO` from leaking into a layer-2 signature.
+#
+# Only the six *imports* left; the two packages keep their rows. `library` could
+# not sink — `records._follow_references` (it rewrites `<&library/…>` chips and
+# attachment block contents when a file is renamed) and `listing` both read
+# `block.models` — and the artifact *rules* stayed in `project.room_files`
+# because they are pure functions over a path, not over bytes:
+# `ARTIFACT_MIME`, `artifact_kind_for`, `clean_artifact_path`. That ceiling
+# alone moved, because a ceiling is the number the landing layer writes down.
+#
+# `project_material` joined at layer 4 and `project_situation` at layer 1
+# (2026-10-16). The material — a project's goal, recent and open tasks, and what
+# people said in its public channels — reads `room_task`, `review`, `block` and
+# `library` and is read by two callers at different heights: the overview's
+# 「现状」 (`project_situation`, which also needs `agent.harness.prompt.WRITING`
+# and so sits above `agent`) and the document agent drafting the overview
+# (`agent`, layer 3). It sits below both so that neither reaches up.
+# `repository` lost its last three upward edges (2026-10-17). They were one
+# mistake in two shapes. Three of them read a task's row — is it still open,
+# which branch and last landed head, what did the card's declared work turn out
+# to be — through `room_task.models.Task` and `room_task.services.TaskService`,
+# because `repository` is layer 3 and `room_task` is layer 4 and nobody had
+# written down what it actually needed: columns. So `repository/task_rows.py`
+# declares those columns as a bare `table(...)`, the way
+# `topic/repositories/statements.py` declares `tasks`, `threads` and `blocks`,
+# and the three readers take it from there. Only reads go through the copy; a
+# write or a decision still comes from `room_task.services`, which owns the
+# table. `tests/unit/test_repository_task_rows_match_their_rows.py` pins the
+# copy to the real table, and its opposite number in `topic` does the same
+# there — both compare which table a statement's columns belong to, because
+# `find_tables` hands back an annotated copy of an ORM table that `is` never
+# matches, which is also why the `topic` guard's "borrowed a model table"
+# assertion had never been able to go red until now.
+#
+# The fourth was a path, not a row: `repository.service.session_dir` copies a
+# project's confirmed skills out of `project_skill`'s mirror directory and
+# therefore imported `project_skill.service.mirror_root` to learn where that
+# directory is. Where a path is is a convention, not a query, and it now sits
+# at layer 1 in `skill_library.project_skills_root` — the same move as
+# `event_author` and `event_about`, for the same reason: one writer and one
+# other reader, three layers apart, needing one string. `mirror_root` stays in
+# `project_skill.service` as a one-line wrapper; it is the name its own callers
+# and the tests that patch it use.
+#
+# `chapter` joined at layer 4 beside `pin` (2026-10-21): it reads a block by id
+# and the conversation's place, and is read by the room snapshot and the routes
+# only — nothing below reads it back.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
-    platform_stats : feature_stats : dashboard : project_progress : onboarding
-    routine : task_quiet : admin : room_cleanup : wake_watch
+    platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding : account
+    routine : task_quiet : task_notices : admin : room_cleanup
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet : machine_skill : skill_market
-    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session
-    identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
+    block : thread : pin : chapter : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice : machine_skill : skill_market
+    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
+    identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
 containers =
     app.domain
 exhaustive = true
 unmatched_ignore_imports_alerting = warn
+
+# **2026-10-15 拆包**，和 C3 那边同一件事：`app/domain/topic/repositories.py` 变成
+# 一个包，读 `app.domain.block.models` 的 (Block / BlockKind) 原本是这一个文件顶上的
+# 一条导入，包内三个子模块各自要用，于是多出两个导入方、配对从一条变三条。债是同一
+# 笔（`topic -> block`），只是合并进仓库的树里记的模块路径不再是导入方了。
+# **2026-10-16**：为此手写的三条豁免已删——`check_boundaries.py` 现在自己认得这种
+# 改名（见 C3 那段），不必在声明里再写一遍。
+
+[importlinter:contract:platform-not-claude-code]
+# H1 — the platform side of the harness seam holds no Claude Code knowledge: it
+# gets finished `AgentEvent`s from the room's session path, and stores and
+# sends them; translating is the adapter's job (`docs/fusion-design.md`). Only
+# the session-core drivers and the adapter's outer edges import its door.
+# Direct imports only: reaching it through a driver is the seam working.
+name = H1 the platform side does not import the Claude Code adapter
+type = forbidden
+source_modules =
+    app.domain.agent.chat
+    app.domain.agent.chat_admission
+    app.domain.agent.chat_lifecycle
+    app.domain.agent.chat_live_input
+    app.domain.agent.chat_places
+    app.domain.agent.room
+    app.domain.agent.room_events
+    app.domain.agent.runtime
+    app.domain.agent.runtime_orphans
+    app.domain.agent.turn
+    app.domain.agent.turn_adoption
+    app.domain.agent.turn_counts
+    app.domain.agent.turn_inputs
+    app.domain.agent.turn_ledger
+    app.domain.agent.turn_speakers
+    app.domain.agent.turn_times
+    app.domain.agent.turn_usage
+forbidden_modules = app.domain.agent.harness.claude_code
+allow_indirect_imports = true

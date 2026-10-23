@@ -79,6 +79,7 @@ def device(tmp_path, monkeypatch):
                             {
                                 "path": self.path,
                                 "token": self.headers["X-Cheese-Token"],
+                                "turn": self.headers.get("X-Cheese-Turn"),
                                 "body": json.loads(payload),
                             }
                         )
@@ -169,6 +170,7 @@ def device(tmp_path, monkeypatch):
         "CHEESE_PROJECT": project,
         "CHEESE_TOPIC": room,
         "CHEESE_TOKEN": "test-secret",
+        "CHEESE_TURN": str(uuid.uuid4()),
         "PATH": str(CLI.parent) + os.pathsep + os.environ["PATH"],
     }.items():
         monkeypatch.setenv(key, value)
@@ -313,6 +315,102 @@ def test_sync_all_touches_only_the_tasks_with_something_to_sync(device):
     assert not [task for task in finished if task in seen]
 
 
+def _sync_by_hand(work, *args):
+    return subprocess.run(
+        [sys.executable, str(CLI), "sync", *args],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(device):
+    """Agents often run `cheese sync` right after `git commit`, whose hook has
+    just delivered the commit. With nothing new it is done once the platform
+    says the task is still on that branch: no backup asked after, and nothing
+    to say."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "a.txt").write_text("done\n")
+    git(work, "add", "a.txt")
+    git(work, "commit", "-m", "work")
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == git(
+        work, "rev-parse", "HEAD"
+    )
+    (home / "requests.log").unlink()
+
+    done = _sync_by_hand(work)
+
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+    assert (home / "requests.log").read_text().splitlines() == [
+        f"GET /projects/{os.environ['CHEESE_PROJECT']}/git/tasks/{task}"
+    ]
+
+
+def test_a_sync_by_hand_still_restores_a_snapshot_waiting_for_its_checkout(device):
+    """A replaced sandbox's checkout, clean and at its branch's tip, may still
+    be owed the work the platform's snapshot holds: a sync asks for it."""
+    cli, tasks, _, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).write_text("")
+    (home / "requests.log").unlink(missing_ok=True)
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
+
+
+def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
+    device, tmp_path
+):
+    """The hand-off (`cheese_accept_request`) syncs the task this way. A
+    checkout whose every commit is on the branch of a step that has since
+    landed still has work for the next one: the sync carries it over and
+    delivers it there."""
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    earlier = info["branch"]
+    _land(remote, tmp_path, info, 1)
+    _commit(work, "later.txt", "step two\n")
+    git(work, "push", "-q", "origin", f"HEAD:refs/heads/{earlier}")
+    git(work, "fetch", "-q", "origin", f"{earlier}:refs/remotes/origin/{earlier}")
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    assert git(work, "symbolic-ref", "--short", "HEAD") == info["branch"]
+    assert git(remote, "log", "-1", "--format=%s", info["branch"]) == "edit later.txt"
+
+
+@pytest.mark.parametrize("left", ["a commit not pushed", "a file not committed"])
+def test_a_sync_by_hand_with_something_new_still_delivers_and_backs_it_up(device, left):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    if left == "a commit not pushed":
+        _commit(work, "a.txt", "not pushed\n")
+    else:
+        (work / "draft.txt").write_text("not committed\n")
+
+    done = _sync_by_hand(work, "--task", task)
+
+    assert done.returncode == 0, done.stderr
+    head = git(work, "rev-parse", "HEAD")
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    if left == "a file not committed":
+        assert (home / "backups" / task / "latest.json").exists()
+
+
 def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
     cli, tasks, _, _ = device
     task = next(iter(tasks))
@@ -416,7 +514,13 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     assert (work / "draft.txt").read_text() == "keep me"
 
 
-def test_failed_push_is_told_to_the_room(device):
+def test_failed_push_is_shown_in_the_site(device):
+    """A failed push is a line in 现场, not a chat message.
+
+    Nobody in the room can retry the turn, and the message that said to read
+    like one for a person. It goes to this session's own conversation, naming
+    the branch and the turn the checkpoint ended — a sibling task's failure
+    cannot be written into that task's 现场 with this credential."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -431,10 +535,13 @@ def test_failed_push_is_told_to_the_room(device):
     (report,) = [
         json.loads(line) for line in (home / "posted.jsonl").read_text().splitlines()
     ]
-    assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/messages"
+    assert report["path"] == f"/topics/{os.environ['CHEESE_TOPIC']}/session-records"
     assert report["token"] == "test-secret"
-    assert tasks[task]["branch"] in report["body"]["content"]
-    assert report["body"]["request_id"]
+    # The turn the checkpoint ended travels with the sync, so the failure is
+    # filed under that turn's 过程 rather than guessed when it is written.
+    assert report["turn"] == os.environ["CHEESE_TURN"]
+    assert report["body"]["subtype"] == "sync_failed"
+    assert tasks[task]["branch"] in report["body"]["text"]
 
 
 def test_a_push_that_lands_tells_the_room_nothing(device):
@@ -449,12 +556,16 @@ def test_a_push_that_lands_tells_the_room_nothing(device):
 
 
 def _told_the_room(home):
+    """What was posted, whichever door it went through: a chat message carries
+    `content`, a 现场 record carries `text`."""
     posted = home / "posted.jsonl"
     if not posted.exists():
         return []
-    return [
-        json.loads(line)["body"]["content"] for line in posted.read_text().splitlines()
-    ]
+    told = []
+    for line in posted.read_text().splitlines():
+        body = json.loads(line)["body"]
+        told.append(body.get("content") or body.get("text"))
+    return told
 
 
 def test_the_pre_push_report_of_a_commit_reaches_the_room(device):
@@ -728,7 +839,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     seed = remote.parent / "seed"
     for directory in ("backend", "frontend"):
         (seed / directory).mkdir()
-        (seed / directory / "dependency-version").write_text("1")
+        (seed / directory / "uv.lock").write_text("1")
     git(seed, "add", ".")
     git(seed, "commit", "-m", "Add dependency fixtures")
     git(seed, "push", str(remote), "main")
@@ -743,7 +854,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
         setup_script=(
             'echo setup >> "$HOME/setup-count"\n'
             'mkdir -p "$HOME/.local/bin"\n'
-            "printf '#!/bin/sh\\ncat dependency-version\\n' "
+            "printf '#!/bin/sh\\ncat uv.lock\\n' "
             '> "$HOME/.local/bin/install-dependencies"\n'
             'chmod +x "$HOME/.local/bin/install-dependencies"\n'
             "export ONLY_SETUP=yes"
@@ -795,7 +906,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
             assert (work / directory / "installed-version").read_text() == "1"
         assert (work / "project-value").read_text() == config.variables["PROJECT_VALUE"]
         assert not (work / "injected").exists()
-    (first_work / "backend/dependency-version").write_text("2")
+    (first_work / "backend/uv.lock").write_text("2")
     (first_work / "draft.txt").write_text("unfinished work")
     assert open_task(first).returncode == 0
     assert (first_work / "backend/installed-version").read_text() == "2"
@@ -803,6 +914,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert (first_work / "startup-count").read_text() == "startup\nstartup\n"
 
     (first_work / "fail-install").touch()
+    (first_work / "backend/uv.lock").write_text("3")
     failed = open_task(first)
     assert failed.returncode == 23
     assert not failed.stdout.strip(), "A failed task must not be returned as ready"
@@ -818,8 +930,253 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert open_task(first).returncode == 0
     task_status = environment_runner.read_status(root / "tasks" / first)
     assert task_status["state"] == "complete"
+    assert (first_work / "backend/installed-version").read_text() == "3"
     assert (home / "setup-count").read_text() == "setup\n"
     assert (first_work / "draft.txt").read_text() == "unfinished work"
+
+
+def _prepared_room(home, startup_script):
+    """A room whose environment runner prepares each task checkout with
+    `startup_script`, as a machine the platform launched has it."""
+    room = home / "room"
+    room.mkdir()
+    helpers = home / ".cheese"
+    helpers.mkdir(exist_ok=True)
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    config = EnvironmentConfig(startup_script=startup_script)
+    started = subprocess.run(
+        [sys.executable, environment_runner.__file__, "true"],
+        env={
+            **os.environ,
+            "CHEESE_WORK": str(room),
+            "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+
+
+def test_reopening_a_task_left_as_it_was_needs_neither_the_forge_nor_an_install(
+    device,
+):
+    """An agent's shell starts each command in the room again, so it opens the
+    task again for nearly every command it runs there. A checkout already on the
+    task's branch, whose dependency files are the ones last installed from,
+    comes back as it is: with the forge out of reach, and without the startup
+    script running again."""
+    cli, tasks, remote, home = device
+    _prepared_room(home, "echo startup >> startup-count")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("unfinished\n")
+    _commit(work, "a.txt", "committed\n")
+    remote.rename(remote.with_name("unreachable.git"))
+
+    assert cli._task_worktree(task) == work
+    assert cli._task_worktree(task) == work
+
+    assert (work / "startup-count").read_text() == "startup\n"
+    assert (work / "draft.txt").read_text() == "unfinished\n"
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["a lock file edited", "a dependency file added", "a branch with other locks"],
+)
+def test_a_reopen_installs_again_once_the_dependency_files_change(device, change):
+    cli, tasks, _, home = device
+    _prepared_room(
+        home, "cat uv.lock >> installed 2>/dev/null || echo none >> installed"
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    if change == "a dependency file added":
+        (work / "uv.lock").write_text("added\n")
+        wanted = "none\nadded\n"
+    else:
+        (work / "uv.lock").write_text("first\n")
+        _commit(work, "uv.lock", "first\n")
+        assert cli._task_worktree(task) == work
+        if change == "a lock file edited":
+            (work / "uv.lock").write_text("second\n")
+            wanted = "none\nfirst\nsecond\n"
+        else:
+            git(work, "reset", "-q", "--hard", "HEAD~1")
+            wanted = "none\nfirst\nnone\n"
+
+    assert cli._task_worktree(task) == work
+
+    assert (work / "installed").read_text() == wanted
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    ["requirements/base.txt", "setup.cfg", "environment.yml", "go.mod", "Gemfile"],
+)
+def test_a_reopen_installs_again_once_a_manifest_changes(device, manifest):
+    """Projects name their dependencies in many places; a hosted repository
+    does not rename its files for the platform."""
+    cli, tasks, _, home = device
+    _prepared_room(home, f"cat {manifest} >> installed 2>/dev/null || true")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / manifest).parent.mkdir(parents=True, exist_ok=True)
+    _commit(work, manifest, "first\n")
+    # The first open had nothing to read yet; this one installs from it.
+    (work / "installed").unlink(missing_ok=True)
+    cli._task_worktree(task)
+    (work / manifest).write_text("second\n")
+
+    cli._task_worktree(task)
+
+    assert (work / "installed").read_text() == "first\nsecond\n"
+
+
+@pytest.mark.parametrize("how", ["removed by hand", "cleaned by git"])
+def test_a_reopen_installs_again_once_what_it_installed_is_gone(device, how):
+    cli, tasks, _, home = device
+    _prepared_room(home, "mkdir -p .venv && echo ran >> .venv/../installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / ".gitignore").write_text(".venv/\ninstalls\n")
+    _commit(work, ".gitignore", ".venv/\ninstalls\n")
+    assert cli._task_worktree(task) == work
+    runs = (work / "installs").read_text()
+    if how == "removed by hand":
+        shutil.rmtree(work / ".venv")
+    else:
+        git(work, "clean", "-q", "-x", "-d", "-f", "-e", "installs")
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == runs + "ran\n"
+    assert (work / ".venv").is_dir()
+
+
+def test_a_reopen_installs_again_once_the_room_has_a_new_environment(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    config = home / ".cheese-environment/config.json"
+    pinned = json.loads(config.read_text())
+    config.write_text(json.dumps({**pinned, "startup_script": "echo new >> installs"}))
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == "ran\nnew\n"
+
+
+def test_a_reopen_after_a_failed_install_installs_again(device):
+    """An install that failed partway leaves the checkout half prepared, even
+    once its dependency files are back as they were when it last succeeded."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\ntest ! -f fail-install",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("broken\n")
+    (work / "fail-install").touch()
+    with pytest.raises(SystemExit):
+        cli._task_worktree(task)
+    (work / "uv.lock").unlink()
+    (work / "fail-install").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
+def test_a_reopen_after_an_open_killed_mid_install_installs_again(device):
+    """An open killed while it installs (the machine reclaimed, a timeout)
+    never gets to say the install failed."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\n"
+        # The `cheese worktree` that started this install, killed outright.
+        'test ! -f kill-open || kill -9 "$(ps -o ppid= -p "$PPID")"\n'
+        "sleep 1",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("half installed\n")
+    (work / "kill-open").touch()
+    killed = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert killed.returncode == -9, killed.stderr
+    (work / "uv.lock").unlink()
+    (work / "kill-open").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
+def test_a_reopen_installs_again_when_asked_to(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+
+    opened = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task, "--prepare"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert opened.returncode == 0, opened.stderr
+    assert opened.stdout.strip() == str(work)
+    assert (work / "installs").read_text() == "ran\nran\n"
+
+
+def test_a_reopen_follows_the_task_to_its_new_forge(device, tmp_path):
+    """A project moved to another forge: the reopen reads the task's base
+    from there, not from what the old one last had."""
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    moved = tmp_path / "moved.git"
+    git(tmp_path, "clone", "-q", "--bare", str(remote), str(moved))
+    remote.rename(remote.with_name("retired.git"))
+    tasks[task]["remote"] = str(moved)
+    elsewhere = tmp_path / "elsewhere"
+    git(tmp_path, "clone", "-q", str(moved), str(elsewhere))
+    git(elsewhere, "config", "user.name", "someone")
+    git(elsewhere, "config", "user.email", "someone@example.com")
+    _commit(elsewhere, "new.txt", "landed on the new forge\n")
+    git(elsewhere, "push", "-q", "origin", "HEAD:main")
+
+    assert cli._task_worktree(task) == work
+
+    assert git(work, "rev-parse", "origin/main") == git(moved, "rev-parse", "main")
+
+
+def test_a_reopen_brings_back_a_snapshot_still_waiting_for_its_checkout(device):
+    cli, tasks, _, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).write_text("")
+    (home / "requests.log").unlink(missing_ok=True)
+
+    cli._task_worktree(task)
+
+    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
+    assert not (admin / cli._RESTORE_PENDING).exists()
 
 
 def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
@@ -1203,7 +1560,7 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
         cli._sync_all_tasks()
 
     told = [
-        json.loads(line)["body"]["content"]
+        json.loads(line)["body"]["text"]
         for line in (home / "posted.jsonl").read_text().splitlines()
     ]
     assert len(told) == 1

@@ -10,9 +10,8 @@
     "docs": "项目文档",
     "settings": "项目设置",
     "general": "综合",
-    "routines": "定时与触发",
+    "routines": "例行事务",
     "skills": "技能",
-    "channelFiles": "频道文件",
     "pages": "项目页面",
     "overview": "总览",
     "tasks": "全部任务"
@@ -41,7 +40,7 @@
     "members": "成员",
     "integrations": "飞书应用",
     "featureStats": "功能数据",
-    "ratchet": "棘轮",
+    "ciActivity": "CI 与合并队列",
     "credits": "方案与额度",
     "runRecords": "运行记录",
     "machines": "机器",
@@ -67,12 +66,13 @@
     "appearance": "外观",
     "language": "语言",
     "logout": "退出登录",
-    "noIntro": "暂无个人简介",
     "theme": {
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
     },
+    "invites": "邀请好友",
+    "seatsLeft": "剩 {n} 个",
     "archivedProjects": "已归档的项目",
     "download": "下载客户端",
     "usePhone": "在手机上使用"
@@ -133,7 +133,8 @@
     "searchIn": "项目内搜索",
     "leaveScope": "移除项目范围，跨项目搜索名称",
     "searchAll": "查看全部结果",
-    "weekly": "周报"
+    "weekly": "周报",
+    "spaceTasks": "题目"
   },
   "sidebar": {
     "resize": "拖动调整宽度",
@@ -153,7 +154,7 @@
     "checking": "正在检查更新…",
     "downloading": "正在下载新版本 {version}…",
     "latest": "已是最新版本",
-    "failed": "没能检查更新，稍后再试",
+    "failed": "检查更新失败，稍后重试",
     "ready": "新版本 {version} 已下载",
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",

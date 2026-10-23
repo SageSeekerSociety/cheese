@@ -33,10 +33,14 @@ const createAvatar = vi.fn()
 vi.mock('@/api/avatars', () => ({ createAvatar: (...args: unknown[]) => createAvatar(...args) }))
 const spaceList = vi.fn()
 const spaceJoin = vi.fn()
+const spaceApplications = vi.fn()
+const spaceCreate = vi.fn()
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     list: (...args: unknown[]) => spaceList(...args),
     join: (...args: unknown[]) => spaceJoin(...args),
+    applications: (...args: unknown[]) => spaceApplications(...args),
+    create: (...args: unknown[]) => spaceCreate(...args),
   },
 }))
 const confirm = vi.fn()
@@ -81,7 +85,7 @@ async function mount(path = '/inbox') {
       // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
       // 的行会当场抛，整个侧栏就渲染不出来。
       { path: '/market', name: 'market', component: blank },
-      { path: '/spaces', name: 'HomeSpaces', component: blank },
+      { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
       {
@@ -90,8 +94,9 @@ async function mount(path = '/inbox') {
         children: [
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
-          { path: 'knowledge', name: 'TeamsDetailKnowledge', component: blank },
+          { path: 'docs', name: 'TeamsDetailDocs', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
+          { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
         ],
       },
@@ -141,12 +146,15 @@ beforeEach(() => {
     createAvatar,
     spaceList,
     spaceJoin,
+    spaceApplications,
+    spaceCreate,
     confirm,
     refreshProjects,
   ])
     fn.mockReset()
   getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
   spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课' }] })
+  spaceApplications.mockResolvedValue({ items: [] })
 })
 afterEach(cleanup)
 
@@ -192,12 +200,16 @@ describe('目录的名单', () => {
 describe('退出团队', () => {
   it('确认了才退：这一行消失，项目清单跟着刷新', async () => {
     confirm.mockResolvedValue(true)
-    removeMember.mockResolvedValue({})
+    removeMember.mockImplementation(async () => {
+      getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组')] })
+      return {}
+    })
     await mount('/teams/lab')
     await fireEvent.contextMenu(await screen.findByLabelText('收起 数据课第三组'))
     await fireEvent.click(await screen.findByText('退出团队'))
 
     await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox'))
     await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
     expect(refreshProjects).toHaveBeenCalled()
   })
@@ -487,6 +499,64 @@ describe('用邀请码加入空间', () => {
     await fireEvent.click(screen.getByRole('button', { name: '加入' }))
 
     expect(await screen.findByText('邀请码无效、已过期或已达使用上限')).toBeTruthy()
+    expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
+  })
+})
+
+describe('我建的空间还没过审', () => {
+  const application = (id: number, name: string, reviewStatus: string) => ({ id, name, intro: '', reviewStatus })
+
+  it('待审核和被驳回的也在空间那一组里，标着是哪一种；过审的不重复', async () => {
+    spaceApplications.mockResolvedValue({
+      items: [
+        application(3, '数据分析课', 'APPROVED'),
+        application(8, '操作系统 2026 秋', 'PENDING'),
+        application(9, '量子计算导论', 'REJECTED'),
+      ],
+    })
+    await mount()
+    expect(await screen.findByText('操作系统 2026 秋')).toBeTruthy()
+    expect(screen.getByText('待审核')).toBeTruthy()
+    expect(screen.getByText('已驳回')).toBeTruthy()
+    expect(screen.getAllByText('数据分析课')).toHaveLength(1)
+  })
+
+  it('点还没过审的那一行，进的是这份申请', async () => {
+    spaceApplications.mockResolvedValue({ items: [application(9, '量子计算导论', 'REJECTED')] })
+    await mount()
+    await fireEvent.click(await screen.findByText('量子计算导论'))
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/space-applications/9'))
+  })
+
+  it('申请读不到时，加入的空间照样列出来', async () => {
+    spaceApplications.mockRejectedValue(new Error('offline'))
+    await mount()
+    expect(await screen.findByText('数据分析课')).toBeTruthy()
+  })
+})
+
+describe('新建空间', () => {
+  it('提交以后落到这份申请上', async () => {
+    spaceCreate.mockResolvedValue({ space: { id: 12 }, inviteCode: null })
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '  编译原理 2026 秋 ')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    await waitFor(() =>
+      expect(spaceCreate).toHaveBeenCalledWith({ name: '编译原理 2026 秋', intro: '', avatarId: undefined })
+    )
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/space-applications/12'))
+  })
+
+  it('没建成的那一句留在弹窗里，人还在原处', async () => {
+    spaceCreate.mockRejectedValue(new Error('offline'))
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    expect(await screen.findByText('创建失败，稍后重试')).toBeTruthy()
     expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
   })
 })

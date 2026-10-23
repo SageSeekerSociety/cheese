@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.domain.repository.identity import noreply_email
+
 
 @dataclass
 class PullRequestStatus:
@@ -69,6 +71,54 @@ class PullRequestStatus:
     #: payload; that reads as "cannot confirm" and stops the merge, which is
     #: the safe side of a title nobody can check.
     title: str = ""
+    #: The address of the human whose account opened the PR, None when a bot
+    #: (the App) did. GitHub makes the opener the author of the squash commit,
+    #: so this decides who the landed commit is credited to.
+    opened_by: str | None = None
+    #: Who GitHub says merged the PR: its numeric id and login. Gated on
+    #: `merged` like `merge_commit_sha` — the field names nobody on an open
+    #: PR. A card merged on GitHub without a platform accept click has no
+    #: `decided_by`; this is how the progress line still names the person
+    #: (`project_progress.feed`). None when the payload carries no merger, or
+    #: on an unmerged PR.
+    merged_by_github_id: str | None = None
+    merged_by_login: str | None = None
+
+
+def pr_opener(data: dict) -> str | None:
+    """The GitHub no-reply address of the person who opened the PR in `data`,
+    None when it was a bot or the payload does not say."""
+    user = data.get("user") or {}
+    if user.get("type") != "User" or not user.get("id") or not user.get("login"):
+        return None
+    return noreply_email(str(user["id"]), str(user["login"]))
+
+
+def pr_merger(data: dict) -> tuple[str | None, str | None]:
+    """GitHub's `merged_by` in ``data`` as ``(numeric id, login)``, or
+    ``(None, None)`` when the payload names nobody. Unlike `pr_opener` this
+    keeps bots: a merge queue or an app can be the account that pressed the
+    button, and its login is a truer answer than an empty cell."""
+    user = data.get("merged_by") or {}
+    if not user.get("id") or not user.get("login"):
+        return None, None
+    return str(user["id"]), str(user["login"])
+
+
+def merge_actor(status: PullRequestStatus) -> dict:
+    """The fact a card keeps about who merged it: GitHub's id and login, or
+    `{}` when GitHub named nobody.
+
+    `{}` is deliberately distinct from a NULL column (`AcceptCard.merged_by`
+    documents both): NULL means nobody has asked yet, and the backfill must
+    keep asking; `{}` means the question was answered and there is no person
+    to show — asking again would spend a GitHub read every tick forever."""
+    if status.merged_by_github_id and status.merged_by_login:
+        return {
+            "github_id": status.merged_by_github_id,
+            "login": status.merged_by_login,
+        }
+    return {}
 
 
 def _parse_github_time(raw: object) -> datetime | None:
@@ -95,6 +145,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
     mergeable = data.get("mergeable")
     mergeable_state = data.get("mergeable_state")
     review_comments = data.get("review_comments")
+    merged_by_github_id, merged_by_login = pr_merger(data) if merged else (None, None)
     return PullRequestStatus(
         head_sha=data["head"]["sha"],
         head_ref=str(data["head"].get("ref") or ""),
@@ -116,10 +167,13 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
         ),
         draft=bool(data.get("draft")),
         title=str(data.get("title") or ""),
+        opened_by=pr_opener(data),
         # Gated on `merged` on purpose — see PullRequestStatus's docstring
         # for what this field holds on an unmerged PR.
         merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
         merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+        merged_by_github_id=merged_by_github_id,
+        merged_by_login=merged_by_login,
     )
 
 

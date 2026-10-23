@@ -10,6 +10,7 @@ import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
 import { carryLoginRedirect } from './loginRedirect'
 import QuestionRoutes from './question'
+import SharedRoutes from './shared'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
@@ -45,11 +46,18 @@ const routes: RouteRecordRaw[] = [
   },
   AccountRoutes,
   ...LegalRoutes,
+  ...SharedRoutes,
   HomeRoutes,
   UserRoutes,
   QuestionRoutes,
   SpacesRoutes,
   TeamsRoutes,
+  {
+    name: 'CreditPlans',
+    path: '/plans',
+    component: () => import('@/views/CreditPlans.vue'),
+    meta: { titleKey: 'usage.plans.title', isFullPage: true, hideTabs: true, backTo: 'HomeHub' },
+  },
   // --- CheeseX (agent workspace) routes ---------------------------------
   // Our grafted views navigate internally by these route names; they must be
   // registered here (the merged app uses main's router).

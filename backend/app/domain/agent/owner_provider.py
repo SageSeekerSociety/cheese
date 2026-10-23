@@ -1,8 +1,8 @@
 """A member's own Claude Code, run on their own machine (#2991).
 
 Only the process that talks to the model runs there, with the login its owner
-gave the platform (`cheesehost claude login`): a subscription's login stays on
-the machine it was given on. Its tools go to its execution environment like
+gave the platform (`cheesehost claude login`) that the agent was added with: a
+subscription's login stays on the machine it was given on. Its tools go to its execution environment like
 any session's (#2320) — the remote-execution client, the executor in that
 environment, its sandbox, the work lease and the platform tools are a central
 session's. Nothing runs on the platform's session host and nothing goes
@@ -18,12 +18,12 @@ there (`client.prepare`).
 
 Which machine runs the session: the one holding the model connection the
 agent was added with, and no other — a subscription's login never leaves the
-machine it was given on. While that machine is away the session waits for it.
-When the connection is gone (its owner removed or logged it out), or its kind
-or its model service's host is one the project does not allow, the session
+machine it was given on. A machine may hold several logins; the session signs
+in with that one (`place.OWN_LOGIN_ID`). While that machine is away the session waits for it.
+When the connection is gone or no longer allows the selected model, the session
 does not start, and the room is told why (`own.unusable`).
 
-A connection its owner's account holds instead — an API key or a model
+A connection the team stores encrypted on the platform instead — an API key or a model
 service, kept sealed by the platform — is not tied to any machine, so its
 session runs on the deployment's session host like the project's own agents
 (`AccountChannel`), calling the model with that key.
@@ -42,6 +42,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.place import (
     OWN_KEY,
+    OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
     OWN_MODEL_BASE_URL,
@@ -63,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 #: What a compute choice and a session's placement name this channel by.
 OWNER_CHANNEL = "owner"
-#: And the channel of one on a connection its owner's account holds.
+#: And the channel of one on a connection the team stores encrypted on the platform.
 ACCOUNT_CHANNEL = "own_account"
 
 
@@ -83,6 +84,8 @@ class OwnerChannel(CentralChannel):
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
         project = await load_project(db, topic.project_id)
+        if project is None:
+            raise ScreenSetupError(say("screenAgentIdentityMissing"))
         reason = await unusable(
             db, owned, project.settings if project is not None else None
         )
@@ -110,28 +113,41 @@ class OwnerChannel(CentralChannel):
             # launch: this session signs in with its owner's login on the
             # machine, and none of the metering proxy's environment is set.
             prepared.env["CHEESE_OWN_LOGIN"] = "1"
-            # What the machine calls a model with is read once, as the session
-            # starts. Folded into what the session was started with, so the
-            # next turn after its owner switches account or model service
-            # starts a new session instead of keeping the old one.
-            calls = await self._model_access(kwargs["precheck"].machine)
-            prepared.env["CHEESE_AGENT_CONFIG"] = hashlib.sha256(
-                f"{prepared.env.get('CHEESE_AGENT_CONFIG', '')}:{calls}".encode()
-            ).hexdigest()
+            # The session uses its registered subscription directory and the
+            # model selected for the teammate, independently of its computer.
+            login = await self._login(kwargs["session"])
+            prepared.env[OWN_LOGIN_ID] = login.local_id
+            async with (self._session_factory or async_session_factory)() as db:
+                owned = await owned_by_session(
+                    db, kwargs["session"].project_id, kwargs["session"].agent_handle
+                )
+                instance = (
+                    await db.get(AgentInstance, owned.instance_id) if owned else None
+                )
+                if instance is None:
+                    raise ScreenSetupError(say("screenAgentIdentityMissing"))
+                prepared.env[OWN_MODEL] = (instance.configuration or {}).get(
+                    "model"
+                ) or "sonnet"
             yield prepared
 
-    async def _model_access(self, machine: str) -> str:
-        """How the owner's Claude Code on ``machine`` reaches a model, as it
-        last said: the kind of login, and a model service's model."""
+    async def _login(self, session: SessionRef) -> DeviceClaudeLoginRow:
+        """The login the agent was added with, as its machine last said; one
+        removed or logged out since the turn placed it starts nothing."""
         async with (self._session_factory or async_session_factory)() as db:
-            row = await db.get(DeviceClaudeLoginRow, machine)
-        if row is None:
-            return ""
-        return f"{row.auth_method or ''}:{row.model or ''}"
+            owned = await owned_by_session(db, session.project_id, session.agent_handle)
+            row = (
+                await db.get(DeviceClaudeLoginRow, owned.login_id)
+                if owned is not None and owned.login_id is not None
+                else None
+            )
+        if row is None or not row.logged_in or row.revoked_at is not None:
+            raise ScreenSetupError(say("ownAgentConnectionNotFound"))
+        return row
 
 
 class AccountChannel(CentralChannel):
-    """A member's own Claude Code on a connection its owner's account holds:
+    """A member's own Claude Code on a connection the team stores encrypted on the platform:
     an Anthropic API key or a model service (`AccountConnection`).
 
     It runs where the project's own agents run — the deployment's session host,
@@ -142,9 +158,8 @@ class AccountChannel(CentralChannel):
     The key is opened here, as the session starts, and handed to that one
     process's environment; the execution environment is never given it.
 
-    When the connection is gone, or of a kind or at a model-service host the
-    project does not allow, the session does not start and the room is told why
-    (`own.unusable`).
+    When the connection is gone or its team does not allow the selected model,
+    the session does not start and the room is told why (`own.unusable`).
     """
 
     def __init__(self, executor):
@@ -161,7 +176,9 @@ class AccountChannel(CentralChannel):
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
         project = await load_project(db, topic.project_id)
-        # Removed by its owner, its row names no connection any more.
+        if project is None:
+            raise ScreenSetupError(say("screenAgentIdentityMissing"))
+        # Removed by the team, its row names no connection any more.
         reason = await unusable(
             db, owned, project.settings if project is not None else None
         )
@@ -169,7 +186,7 @@ class AccountChannel(CentralChannel):
             raise ScreenSetupError(reason)
         row = (
             await account_connections.owned(
-                db, owned.owner_user_id, owned.account_connection_id
+                db, project.team_id, owned.account_connection_id
             )
             if owned.account_connection_id is not None
             else None
@@ -185,7 +202,13 @@ class AccountChannel(CentralChannel):
             base_url = account_connections.base_url_of(row)
             key = account_connections.key_of(row)
             kind = ConnectionKind(row.kind)
-            model = row.model
+            owned = await owned_by_session(
+                db, kwargs["session"].project_id, kwargs["session"].agent_handle
+            )
+            instance = await db.get(AgentInstance, owned.instance_id) if owned else None
+            if instance is None:
+                raise ScreenSetupError(say("screenAgentIdentityMissing"))
+            model = (instance.configuration or {}).get("model") or row.model or "sonnet"
             identity = f"{row.id}:{base_url}:{model or ''}"
         # Its address was checked as its owner saved it; a name can be
         # pointed elsewhere since, and this host calls it next.
@@ -215,11 +238,11 @@ class AccountChannel(CentralChannel):
 
 
 async def owner_is_away(db, instance_id, hub) -> bool:
-    """Whether ``instance_id`` is a member's own agent whose connection's
-    machine is not online: its turn has nowhere to run until it comes back.
-    Not when the connection is gone or one the project refuses: that turn
-    starts, to be refused with the reason. Never one on a connection its
-    owner's account holds, which runs on the session host."""
+    """Whether the connection's credential device is offline.
+
+    Missing connections and disallowed models proceed to report their refusal
+    reason. Platform-held connections do not wait for a credential device.
+    """
     owned = await owned_instance(db, instance_id)
     if owned is None or owned.on_account:
         return False

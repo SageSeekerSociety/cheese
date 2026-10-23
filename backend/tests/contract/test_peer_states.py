@@ -41,13 +41,14 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
 from app import device_connection_app
-from app.api.routes.connector import recover_business_state
+from app.api.routes.connector.devices import recover_business_state
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
@@ -62,6 +63,10 @@ from tests.support import wire
 OWNER_SECRET = "test-owner-secret"
 DEVICE = "machine-7"
 STATE = "/home/cheese/rooms/8b1f2a/.cheese/executor"
+
+#: `routes/connector.py` became a package; `recover_business_state` and the
+#: logger it writes through moved into `routes/connector/devices.py`.
+DEVICES_LOGGER = "app.api.routes.connector.devices"
 
 #: The connector's own words when the runner's socket is not there, taken from
 #: the committed wire fixture rather than retyped — a hand-typed copy drifts
@@ -223,7 +228,7 @@ async def _ask(state: PeerState) -> BaseException:
     )
     try:
         await _let_the_machine_answer(state, connector)
-        with pytest.raises(BaseException) as raised:  # noqa: PT011,B017 — the type IS the column
+        with pytest.raises(BaseException) as raised:  # the type IS the column
             await asyncio.wait_for(asked, 5)
     finally:
         await backend.close()
@@ -400,9 +405,9 @@ async def test_a_peer_state_on_reconnect_is_waited_out_not_alerted(
     one of these same states. Its next connection runs recovery again, which is
     what makes it a state to wait out rather than an alert."""
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: _Chat(failure))
-    with caplog.at_level(logging.WARNING, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.WARNING, logger=DEVICES_LOGGER):
         await recover_business_state(DEVICE)
-    records = [r for r in caplog.records if r.name == "app.api.routes.connector"]
+    records = [r for r in caplog.records if r.name == DEVICES_LOGGER]
     assert [r.levelname for r in records] == ["WARNING"]
     # The line has to name the machine this is about, or the words it said —
     # 「recovery failed」 with neither is what nobody could act on.
@@ -419,15 +424,14 @@ async def test_a_recovery_failure_that_is_not_a_peer_state_is_still_an_error(
     monkeypatch.setattr(
         "app.api.deps.get_chat_service", lambda: _Chat(ValueError("bad row"))
     )
-    with caplog.at_level(logging.WARNING, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.WARNING, logger=DEVICES_LOGGER):
         await recover_business_state(DEVICE)
-    records = [r for r in caplog.records if r.name == "app.api.routes.connector"]
+    records = [r for r in caplog.records if r.name == DEVICES_LOGGER]
     assert [r.levelname for r in records] == ["ERROR"]
 
 
 async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
-    """The same standing inside `recover_sessions`: the topic whose machine said
-    no is skipped, every other session is still recovered."""
+    """An unreadable session stays pending while another finishes recovery."""
     import uuid
 
     from app.domain.agent.chat import REPLAYS_AT_ONCE, ChatService
@@ -455,10 +459,18 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     chat._compute = Compute()
     chat.live = LiveWork()
     chat._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
+    chat.prewarm = SimpleNamespace(nudge=lambda session: None)
 
-    assert await chat.recover_sessions(DEVICE) == 2
-    await chat.replays_settled()
-    assert replayed == [sessions[1]]
+    try:
+        assert await chat.recover_sessions(DEVICE) == 2
+        await asyncio.wait_for(chat.live.replays[sessions[1].conversation_id], 1)
+        assert replayed == [sessions[1]]
+        assert chat.replaying(sessions[0].conversation_id) is not None
+    finally:
+        tasks = list(chat.live.replays.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def test_a_public_route_that_reaches_a_failing_machine_still_warns(

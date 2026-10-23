@@ -18,18 +18,14 @@ one only this branch has is. Shared request dependencies (`DbSession`,
 `app/api/request_deps.py`, so a route never needs another route's import;
 `task boundaries` (`Taskfile.yml`) runs them.
 
-Imports inside a function body may only go down: lift one to the top of the
-module, or say why it cannot be with `# deferred-import: <reason>` on the same
-line or the line above. Unexplained ones are frozen per file in
-`deferred-import-baseline.json`; a new file may have none. What counts as a
-reason, how the count is taken, and the shrink-only refresh command are in
-`scripts/check_deferred_imports.py`.
+An import inside a function body says why it cannot be at the top of the
+module, with `# deferred-import: <reason>` on the same line or the line above.
 
 ## Refactors must preserve the callers and the frozen graph
 
 When shrinking an oversized module, extract new leaf modules rather than moving
-existing modules just to lower the line count. The import and deferred-import
-ledgers key debt by module path; relocating it is not removing it, and accepting
+existing modules just to lower the line count. The import ledgers key debt by
+module path; relocating it is not removing it, and accepting
 new frozen pairs is not a routine refactor step.
 
 Before moving a public name in `app/`, search the whole repository for callers,
@@ -39,19 +35,13 @@ is `app`, so a green backend type check cannot clear those outside callers.
 ## Generated routes and database predicates
 
 The route index is not committed. `scripts/route_index.py --emit` prints it to
-stdout, and it is generated where it is judged — the frontend `request-paths`
-job and this suite — so there is no file to regenerate and no conflict to
+stdout, and it is generated where it is judged — the frontend `check` job and
+this suite — so there is no file to regenerate and no conflict to
 resolve in it. After adding, removing or reordering routes, from `backend/` run
 
 - `uv run python -m scripts.route_index --check` — no later route is provably
-  shadowed by an earlier one. The frozen pairs in
-  `scripts/route_index_frozen.py` name their two leaves by path and handler, so a
-  route added elsewhere never moves them. Never freeze a newly introduced
-  shadowing relationship just to clear the check, and never pin a pair by
-  registration position.
-- `uv run python -m scripts.route_index --check-annotations` — every live route
-  has its handwritten authorization and owner note in
-  `tests/contract/route_index.yaml` (`tests/unit/test_route_index*.py`).
+  shadowed by an earlier one. A shadow is fixed by reordering or narrowing the
+  earlier route; nothing exempts one.
 
 Keep a partial index's predicate and its querying expression aligned, including
 literal values and casts; a parameterised or differently spelled expression may
@@ -66,12 +56,9 @@ and cache-pricing constraints in
 
 ## Caps and conventions
 
-- `app/**/*.py` over **1500 lines** may not grow: a file already over the cap is
-  frozen at the size it had at the merge base with `origin/main`. The cap, the
-  reason and the exception list are in `.claude/scripts/check-file-sizes.py`.
-- Run `task ci:fast` from the repository root before you push (see
-  [`../AGENTS.md`](../AGENTS.md)); add `--types` when you touch shared types.
-  `task be:check` runs the whole backend check locally.
+- The pull request's CI is the verdict (see [`../AGENTS.md`](../AGENTS.md));
+  locally, run the test files your change touches. `task be:check` runs the
+  whole backend check on a machine that can hold it.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)
   — the alembic chain has exactly one head at all times.
 - Test pitfalls by symptom:

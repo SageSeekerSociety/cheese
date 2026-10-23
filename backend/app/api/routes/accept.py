@@ -11,9 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
@@ -24,9 +26,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
     dispatch_pending,
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
 from app.domain.identity.actor import Actor
@@ -37,16 +37,23 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.project.forge import proposal_client
+from app.domain.oauth.services import github_sign_in_state
+from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
+from app.domain.repository import identity
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService
 from app.domain.review.comments import instruction as comment_instruction
 from app.domain.review.comments import summary as comment_summary
+from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRError
 from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
+    AcceptCardOut,
+    AcceptCardReassign,
+    AcceptCardRedeliver,
     AcceptDecision,
     ApprovalCreate,
     AutoMergeDecision,
@@ -55,12 +62,11 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService, ReviewerAdmission
-from app.domain.room_task import naming
+from app.domain.room_task import heard, naming
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -80,8 +86,6 @@ def _accept_service(db: AsyncSession) -> AcceptService:
         announce=announce,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
-        seat_instance_id=seat_instance_id,
-        record_agent=record_agent,
         task_teammate=task_teammate,
         roster_team=project_team,
         executor=execution.call,
@@ -109,29 +113,40 @@ async def _card_actor(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic.id
     )
+    # Deciding a review is the task side of the project (#3830).
+    await require_role(db, actor, topic.project_id, Permission.tasks)
     return actor
 
 
 async def _task_actor(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    *,
+    writes: bool = False,
 ) -> tuple[Actor, uuid.UUID, uuid.UUID]:
-    """Who acts on the task ``topic_id`` names, its room and the task."""
+    """Who acts on the task ``topic_id`` names, its room and the task.
+    ``writes``: handing the task's work in, or changing the review it waits
+    on, is the task side of the project (#3830), as deciding a card is."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
     if not actor.authenticated:
         raise AuthenticationRequiredError()
+    if writes:
+        await require_role(db, actor, place.project_id, Permission.tasks)
     return actor, place.room_id, task.id
 
 
-async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> None:
+async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Actor:
     """Whoever may read this task, or this room's cards: the task's people, or
     whoever the room lets in."""
     if place.task is not None:
-        await _task_actor(place.conversation_id, db, resolver)
-        return
+        actor, _room, _task = await _task_actor(place.conversation_id, db, resolver)
+        return actor
     actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    return actor
 
 
 def _requested_reviewers(body: AcceptCardCreate) -> list[str] | None:
@@ -159,7 +174,7 @@ def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdm
     return admits
 
 
-@router.post("/topics/{topic_id}/accept-card")
+@router.post("/topics/{topic_id}/accept-card", dependencies=[ROUTE_DECIDES])
 async def create_accept_card(
     topic_id: uuid.UUID,
     resolver: ActorResolverDep,
@@ -168,7 +183,7 @@ async def create_accept_card(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """Hand a task's change in for review; ``topic_id`` is the task's."""
-    actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    actor, room_id, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     topic_id = room_id
     svc = _accept_service(db)
     card = await svc.create_card(
@@ -212,14 +227,14 @@ async def create_accept_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/topics/{topic_id}/push-fix")
+@router.post("/topics/{topic_id}/push-fix", dependencies=[ROUTE_DECIDES])
 async def push_fix(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     drop_dependency: bool = False,
 ) -> dict:
-    _actor, _room, task_id = await _task_actor(topic_id, db, resolver)
+    _actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     result = await _accept_service(db).push_fix(
         task_id, drop_dependency=drop_dependency
     )
@@ -227,17 +242,17 @@ async def push_fix(
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/ready")
+@router.post("/topics/{topic_id}/ready", dependencies=[ROUTE_DECIDES])
 async def mark_ready(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    _actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    _actor, room_id, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     result = await _accept_service(db).mark_ready(room_id, task_id)
     await db.commit()
     return ok(result)
 
 
-@router.post("/topics/{topic_id}/accept-card/describe")
+@router.post("/topics/{topic_id}/accept-card/describe", dependencies=[ROUTE_DECIDES])
 async def describe_card(
     topic_id: uuid.UUID,
     body: AcceptCardDescribe,
@@ -251,10 +266,10 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
-    署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
+    署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
-    actor, _room, task_id = await _task_actor(topic_id, db, resolver)
+    actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
     card = await _accept_service(db).redescribe(
         task_id,
         actor=actor.handle,
@@ -263,6 +278,31 @@ async def describe_card(
     )
     await db.commit()
     return ok(await _accept_service(db).describe(card))
+
+
+@router.post(
+    "/topics/{topic_id}/accept-card/redeliver",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(AcceptCardOut),
+)
+async def redeliver_card(
+    topic_id: uuid.UUID,
+    body: AcceptCardRedeliver,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """换掉这条任务待处理那张卡交出去的文件或地址；``topic_id`` 是任务的。
+
+    走任务这一侧，和递卡、改描述同一道门：卡挂在房间上，按卡 id 决定的那几条路
+    （`_card_actor`）问的是房间，任务自己的凭据进不去房间 —— 所以交付的人换自己
+    交出去的那一份，只能从这里进。"""
+    actor, _room, task_id = await _task_actor(topic_id, db, resolver, writes=True)
+    svc = _accept_service(db)
+    card = await svc.redeliver(
+        task_id, actor=actor.handle, deliver=body.deliver, deliver_url=body.deliver_url
+    )
+    await db.commit()
+    return ok(await svc.describe(card))
 
 
 @router.get("/accept-cards/{card_id}/deliverable")
@@ -309,7 +349,7 @@ async def list_accept_cards(
     resolver: ActorResolverDep,
 ) -> dict:
     """A task's review cards, or for a room every card of its tasks."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _reader(place, db, resolver)
     svc = _accept_service(db)
     cards, total = await svc.list_for_topic(place.room_id)
@@ -340,19 +380,27 @@ async def topic_pr_checks(
     posting a traceback into the room (`report_unhandled_to_room`). That is
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _reader(place, db, resolver)
+    place = await place_or_404(db, topic_id)
+    actor = await _reader(place, db, resolver)
     try:
-        return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))
+        return ok(
+            await _pr_checks_payload(
+                place.room_id, db, task_id=place.task_id, viewer=actor.handle
+            )
+        )
     except NotFoundError:
         raise  # 404 for a topic that does not exist stays a 404
-    except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
+    except Exception as exc:  # display-only endpoint, see above
         logger.exception("pr-checks read failed for topic %s", topic_id)
         return ok({"available": False, "reason": f"{type(exc).__name__}: {exc}"[:200]})
 
 
 async def _pr_checks_payload(
-    topic_id: uuid.UUID, db: AsyncSession, *, task_id: uuid.UUID | None = None
+    topic_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    task_id: uuid.UUID | None = None,
+    viewer: str | None = None,
 ) -> dict:
     svc = _accept_service(db)
     cards, _ = await svc.list_for_topic(topic_id)
@@ -370,6 +418,7 @@ async def _pr_checks_payload(
     client = await proposal_client(topic.project_id, db)
     if client is None:
         return {"available": False}
+    owner_link = await _owner_link_state(db, topic, card, viewer)
     # Every open card polls this, and the two forge calls below can take as
     # long as the forge's timeout. Holding the request's connection across them
     # pinned one pool slot per open card, so a slow forge alone could drain the
@@ -383,6 +432,7 @@ async def _pr_checks_payload(
         checks = await client.check_runs(head_sha)
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
+    opened_by_app = (view.get("user") or {}).get("type") == "Bot"
     return {
         "available": True,
         "pr_number": card.pr_number,
@@ -390,10 +440,27 @@ async def _pr_checks_payload(
         "state": "merged" if view.get("merged") else view.get("state"),
         "mergeable": view.get("mergeable"),
         "checks": checks,
+        # Set only for the task owner, and only when the PR they would have
+        # opened was opened by the App: why, as the owner's own account stands.
+        "owner_credit": owner_link if opened_by_app else None,
     }
 
 
-@router.post("/accept-cards/{card_id}/approve")
+async def _owner_link_state(db: AsyncSession, topic, card, viewer: str | None):
+    """`none`/`expired`/`ok` for the viewer's GitHub account, when the viewer
+    owns the card's task and the project credits task owners; else None."""
+    if not viewer or card.task_id is None:
+        return None
+    project = await ProjectService(db).get(topic.project_id)
+    settings_ = (project.settings or {}) if project else {}
+    if identity.credit_mode(settings_) != identity.CREDIT_OWNER:
+        return None
+    if await identity.owner_handle(db, card.task_id) != viewer:
+        return None
+    return await github_sign_in_state(db, viewer)
+
+
+@router.post("/accept-cards/{card_id}/approve", dependencies=[ROUTE_DECIDES])
 async def approve_card(
     card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -406,7 +473,7 @@ async def approve_card(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/accept")
+@router.post("/accept-cards/{card_id}/accept", dependencies=[ROUTE_DECIDES])
 async def accept_card(
     card_id: uuid.UUID,
     body: AcceptDecision,
@@ -418,15 +485,18 @@ async def accept_card(
         raise AuthenticationRequiredError(say("acceptSignIn"))
     svc = _accept_service(db)
     card = await svc.accept(
-        card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
+        card_id=card_id,
+        decided_by=actor.handle,
+        head_sha=body.head_sha,
+        deliverable_revision=body.deliverable_revision,
     )
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/reassign")
+@router.post("/accept-cards/{card_id}/reassign", dependencies=[ROUTE_DECIDES])
 async def reassign_card(
     card_id: uuid.UUID,
-    body: AcceptCardCreate,
+    body: AcceptCardReassign,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -439,11 +509,12 @@ async def reassign_card(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
         reviewer_handles=_requested_reviewers(body),
+        by=actor.handle,
     )
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/reject")
+@router.post("/accept-cards/{card_id}/reject", dependencies=[ROUTE_DECIDES])
 async def reject_card(
     card_id: uuid.UUID,
     body: RejectDecision,
@@ -470,11 +541,12 @@ async def reject_card(
     task = await TaskService(db).get(card.task_id) if card.task_id else None
     actionable = task is not None and task.status == TaskStatus.open
     action = (
+        f"{heard.BACK_TO_WORK}\n"
         f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
         "照着理由和批注改，改完重新递卡（驳回不阻塞重递）。"
         "理由看不懂或者你不同意，在对话里说清分歧，请人决定。"
         if actionable
-        else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+        else heard.TASK_CLOSED
     )
 
     topic = await svc._topic_or_404(topic_id)
@@ -485,9 +557,9 @@ async def reject_card(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=decided_by)
+            say("cardRejectedFixing", who=f"<@{decided_by}>")
             if actionable
-            else say("cardRejectedClosed", who=decided_by)
+            else say("cardRejectedClosed", who=f"<@{decided_by}>")
         ),
         meta=notice(
             EVENT_CARD_REJECTED,
@@ -504,9 +576,14 @@ async def reject_card(
     return ok(described)
 
 
-@router.post("/accept-cards/{card_id}/void")
+@router.post("/accept-cards/{card_id}/void", dependencies=[ROUTE_DECIDES])
 async def void_card(
-    card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: VoidDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
 
@@ -528,10 +605,15 @@ async def void_card(
         raise AuthenticationRequiredError(say("voidSignIn"))
     svc = _accept_service(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
-    return ok(await svc.describe(card))
+    described = await svc.describe(card)
+    # The task's teammate was told in the void's own transaction; it is woken
+    # once that has committed, as a return wakes it.
+    await db.commit()
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok(described)
 
 
-@router.post("/accept-cards/{card_id}/merge-anyway")
+@router.post("/accept-cards/{card_id}/merge-anyway", dependencies=[ROUTE_DECIDES])
 async def merge_card_anyway(
     card_id: uuid.UUID,
     body: ForceMergeDecision,
@@ -564,7 +646,7 @@ async def merge_card_anyway(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/auto-merge")
+@router.post("/accept-cards/{card_id}/auto-merge", dependencies=[ROUTE_DECIDES])
 async def set_auto_merge(
     card_id: uuid.UUID,
     body: AutoMergeDecision,
@@ -591,7 +673,7 @@ async def set_auto_merge(
     return ok(await svc.describe(card))
 
 
-@router.post("/accept-cards/{card_id}/revoke")
+@router.post("/accept-cards/{card_id}/revoke", dependencies=[ROUTE_DECIDES])
 async def revoke_card(
     card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

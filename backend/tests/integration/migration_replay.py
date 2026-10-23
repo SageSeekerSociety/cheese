@@ -83,7 +83,7 @@ def _fresh_at(name: str, revision: str) -> ReplayDatabase:
         try:
             asyncio.run(_clone_db(name, template))
             return db
-        except Exception:  # noqa: BLE001 — the walk below is still correct
+        except Exception:  # the walk below is still correct
             pass
     asyncio.run(_admin_recreate_db(name))
     db.upgrade(revision)

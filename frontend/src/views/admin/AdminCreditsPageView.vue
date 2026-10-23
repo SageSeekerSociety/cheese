@@ -10,14 +10,18 @@ import type {
   PlanInput,
   TeamKind,
 } from '@/lib/adminCredits'
+import type { CreditRequest } from '@/types/creditOffers'
+import type { AdminInviteCode } from '@/types/invites'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AdminPage from '@/components/admin/AdminPage.vue'
+import AdminCreditRequests from '@/components/admin/credits/AdminCreditRequests.vue'
 import AdminCreditTeamPanel from '@/components/admin/credits/AdminCreditTeamPanel.vue'
 import AdminCreditTeamsTable from '@/components/admin/credits/AdminCreditTeamsTable.vue'
 import AdminGrantDialog from '@/components/admin/credits/AdminGrantDialog.vue'
+import AdminInviteCodes from '@/components/admin/credits/AdminInviteCodes.vue'
 import AdminPlanDialog from '@/components/admin/credits/AdminPlanDialog.vue'
 import AdminPlansTable from '@/components/admin/credits/AdminPlansTable.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -28,6 +32,9 @@ import { teamTitle } from '@/lib/adminCredits'
 defineOptions({ name: 'AdminCreditsPageView' })
 
 const props = defineProps<{
+  requests?: CreditRequest[]
+  requestsBusy?: boolean
+  requestsError?: string | null
   plans: Plan[] | null
   plansLoading: boolean
   plansError: string | null
@@ -51,12 +58,20 @@ const props = defineProps<{
   historyError: string | null
   teamPlanSaving: boolean
   teamPlanError: string | null
+  overseasSaving: boolean
+  overseasError: string | null
   grantOpen: boolean
   grantSaving: boolean
   grantError: string | null
+  inviteCodes?: AdminInviteCode[] | null
+  inviteCodesError?: string | null
+  inviteCodesBusy?: boolean
+  inviteCodesActionError?: string | null
 }>()
 
 const emit = defineEmits<{
+  'handle-request': [id: string, approve: boolean, paymentConfirmed: boolean, planKey?: string]
+  'retry-requests': []
   'retry-plans': []
   'open-plan': [plan: Plan | null]
   'update:planDialogOpen': [open: boolean]
@@ -72,9 +87,15 @@ const emit = defineEmits<{
   'retry-team': []
   'change-plan': [planKey: string]
   'dismiss-plan-error': []
+  'set-overseas': [approved: boolean]
+  'dismiss-overseas-error': []
   'open-grant': []
   'update:grantOpen': [open: boolean]
   grant: [input: GrantInput]
+  'create-invite-code': [maxUses: number, note: string]
+  'deactivate-invite-code': [id: number]
+  'copy-invite-code': [code: string]
+  'retry-invite-codes': []
 }>()
 
 const { t } = useI18n()
@@ -94,6 +115,14 @@ const kindOptions = computed(() => [
 <template>
   <AdminPage :title="t('navigation.admin.credits')">
     <div class="acr__body admin-page__body">
+      <AdminCreditRequests
+        :requests="requests ?? []"
+        :plans="plans ?? []"
+        :busy="requestsBusy ?? false"
+        :error="requestsError ?? null"
+        @handle="(id, approve, confirmed, plan) => emit('handle-request', id, approve, confirmed, plan)"
+        @retry="emit('retry-requests')"
+      />
       <section class="acr__section">
         <div class="acr__sectionhead">
           <h2 class="acr__h t-title">{{ t('credits.plans.title') }}</h2>
@@ -166,6 +195,17 @@ const kindOptions = computed(() => [
           @retry="emit('retry-teams')"
         />
       </section>
+
+      <AdminInviteCodes
+        :codes="props.inviteCodes ?? null"
+        :error="props.inviteCodesError ?? null"
+        :busy="props.inviteCodesBusy ?? false"
+        :action-error="props.inviteCodesActionError ?? null"
+        @create="(maxUses, note) => emit('create-invite-code', maxUses, note)"
+        @deactivate="emit('deactivate-invite-code', $event)"
+        @copy="emit('copy-invite-code', $event)"
+        @retry="emit('retry-invite-codes')"
+      />
     </div>
 
     <AdminPlanDialog
@@ -187,11 +227,15 @@ const kindOptions = computed(() => [
       :plans="props.plans ?? []"
       :plan-saving="props.teamPlanSaving"
       :plan-error="props.teamPlanError"
+      :overseas-saving="props.overseasSaving"
+      :overseas-error="props.overseasError"
       :history="props.history"
       :history-error="props.historyError"
       @update:model-value="emit('update:panelOpen', $event)"
       @change-plan="emit('change-plan', $event)"
       @dismiss-plan-error="emit('dismiss-plan-error')"
+      @set-overseas="emit('set-overseas', $event)"
+      @dismiss-overseas-error="emit('dismiss-overseas-error')"
       @grant="emit('open-grant')"
       @retry="emit('retry-team')"
     />

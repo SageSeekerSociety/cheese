@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name("scene-debt-ratchet.py")
 spec = importlib.util.spec_from_file_location("debt", SCRIPT)
@@ -64,6 +65,30 @@ request()
         )
         self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
         return result
+
+    def test_the_ratchet_reads_each_source_once_per_run(self) -> None:
+        # The scan reads every production file to hand to the node scanner;
+        # judging the scenes must reuse those texts, not read the pages again.
+        # Only this script's own reads count: the scene grader reads files too,
+        # and that is the grader's I/O, not this ratchet's.
+        original = Path.read_text
+        script = SCRIPT.resolve()
+        reads: dict[Path, int] = {}
+
+        def counting_read_text(path: Path, *args: object, **kwargs: object) -> str:
+            caller = Path(sys._getframe(1).f_code.co_filename).resolve()
+            if caller == script:
+                reads[path] = reads.get(path, 0) + 1
+            return original(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        with mock.patch.object(Path, "read_text", counting_read_text):
+            debt.collect(self.root)
+
+        # collect() resolves its root, so the recorded keys are resolved paths.
+        self.assertIn(self.root.resolve() / "frontend/src/views/P.vue", reads)
+        self.assertEqual(
+            {path: count for path, count in reads.items() if count > 1}, {}
+        )
 
     def test_rendered_edges_not_unused_imports_comments_or_attribute_examples(
         self,
@@ -295,7 +320,7 @@ request()
         # The debt entry itself is the location, listed under the fix.
         self.assertIn("NEW: src/views/P.vue", routes.stdout)
 
-        # --json (what ci:fast calls) stays the one record line on stdout, with
+        # --json (what the snapshot collector calls) stays the one record line on stdout, with
         # the same failing verdict, and carries the same fix and entries on stderr.
         result = self.run_gate("--kind", "routes", "--json", rc=1)
         lines = result.stdout.strip().splitlines()

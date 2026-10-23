@@ -15,13 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.membership.ports import ProjectTeam
 from app.domain.pin.models import Pin
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicStatus, is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 #: What can be pinned: what someone said, and the files sent with it.
@@ -69,7 +69,7 @@ class Pins:
         )
 
     async def _may_pin(self, room: Topic, by: str) -> None:
-        if room.is_private:
+        if is_private_chat(room):
             raise ValidationError(say("pinChannelsOnly"))
         if room.status == TopicStatus.archived:
             raise ForbiddenError(say("roomArchivedUnarchiveFirst"))

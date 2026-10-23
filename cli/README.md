@@ -48,9 +48,11 @@ cheese link auto-connect         connect now and reconnect on every boot
 cheese link no-auto-connect      disconnect and stop reconnecting on boot
 
 cheese status                    login, connection and screen count at a glance
-cheese claude login              log in your own Claude Code for the platform
-cheese claude status             whether that login is good
-cheese claude logout             log it out (your own ~/.claude is untouched)
+cheese prevent-sleep [on|off]    show or change idle-sleep prevention during AI work
+cheese claude login              add a login of your own Claude Code for the platform
+                                 (--login <id> logs one of them in again)
+cheese claude status             each login, and whether it is good
+cheese claude logout [id]        log one out (your own ~/.claude is untouched)
 cheese api <operation> [args]    the server's full request/response API
 cheese update                    update the binary to the latest published build
 cheese uninstall                 remove the CLI entirely (service, config, binary)
@@ -61,6 +63,14 @@ the machine isn't logged in yet; `link disconnect` warns (and asks) when live
 screens would be killed; every success message says what to do next. The server
 URL is remembered after the first login — installers can pre-seed it, after
 which no command ever needs a URL.
+
+Sleep prevention defaults on and applies to all enrollment profiles on this
+computer. The connector reads `machine.json` beside the default config every
+five seconds and holds an idle-sleep assertion while the platform reports active
+AI turns here, as session host or execution host. It releases the assertion when
+the last turn ends or the setting is turned off. A failed platform read retains
+the last known activity until a successful read. Linux skips this where
+`systemd-inhibit` is unavailable. A Mac still sleeps with its lid closed on battery.
 
 **Login is a device flow.** `cheese auth login` registers the machine, prints a
 link, and blocks until a human opens it and approves. On approval the server

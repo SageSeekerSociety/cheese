@@ -1,22 +1,26 @@
 // The timeline hands what a person does on a row back to the panel, naming the
 // row it happened on.
 import type { Component } from 'vue'
-import type { Block } from '../../cx_types'
+import type { Block, ReplyPreview } from '../../cx_types'
 import type { TaskLine } from '../../lib/channelTasks'
+import type { ChapterRow } from '../../types/chapters'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { isAgentBlock } from '../../lib/authorship'
 import { collapseNotices } from '../../lib/platformNotice'
+import { taskState } from '../../lib/taskState'
 
 import ChatTimeline from './ChatTimeline.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 function said(id: string, content: string): Block {
   return {
@@ -31,6 +35,11 @@ function said(id: string, content: string): Block {
 }
 
 const BLOCKS = [said('a', 'first'), said('b', 'second'), said('c', 'third')]
+/** 一件等看的人审阅的任务，卡上那一格的状态。 */
+const REVIEW = taskState(
+  { id: 'task', presentation: { column: 'needs_you', phrase: 'awaiting_review' }, waiting_on: 'lin' },
+  { viewer: 'lin', agentName: '芝士' }
+)
 
 function mount(overrides: Record<string, unknown> = {}) {
   const rows = collapseNotices(BLOCKS)
@@ -72,7 +81,7 @@ function mount(overrides: Record<string, unknown> = {}) {
       isMine: () => true,
       isExternal: () => false,
       avatarOf: () => null,
-      displayName: (m: Block) => m.author,
+      displayName: (m: Block | ReplyPreview) => m.author,
       noticeAgent: () => null,
       parentOf: () => undefined,
       showReplyCue: () => false,
@@ -90,6 +99,8 @@ function mount(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => setLocale('zh-CN'))
 
+beforeAll(loadMarkdownReader)
+
 describe('a row tells the panel which row it is', () => {
   it('the fade-in that ended belongs to the row it played on', async () => {
     const { container, emitted } = mount({ arrived: new Set(['b']) })
@@ -102,7 +113,7 @@ describe('a row tells the panel which row it is', () => {
   it('saving an edit saves the message being edited', async () => {
     const { emitted } = mount({ editingId: 'b', barEditable: true })
     const box = screen.getByRole('textbox')
-    await fireEvent.update(box, 'second, reworded')
+    await fillComposer(box, 'second, reworded')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
     const saved = emitted('save-edit') as [Block, string][]
     expect(saved.map(([block, text]) => [block.id, text])).toEqual([['b', 'second, reworded']])
@@ -148,7 +159,7 @@ describe('each task made on its own in the channel keeps its own card', () => {
     } as Block
   }
   function card(id: string, title: string): TaskLine {
-    return { id, title, owner: 'lin', creator: 'lin', status: '待你审阅', tone: 'mine', accepted: null, at: '' }
+    return { id, title, owner: 'lin', creator: 'lin', state: REVIEW, mine: true, accepted: null, at: '' }
   }
 
   it('two tasks created one after the other by the same person show two cards', () => {
@@ -196,8 +207,8 @@ describe('every row in the timeline has a name, on screen or not', () => {
       title: 'Fix the login redirect',
       owner: 'lin',
       creator: 'lin',
-      status: '待你审阅',
-      tone: 'mine',
+      state: REVIEW,
+      mine: true,
       accepted: null,
       at: '',
     }
@@ -214,8 +225,89 @@ describe('every row in the timeline has a name, on screen or not', () => {
     for (const item of items) item.replaceChildren()
 
     expect(screen.getByRole('article', { name: '10:00：平台 PR #1459 已在 GitHub 上被人工合并' })).toBeTruthy()
-    expect(screen.getByRole('article', { name: '芝士，10:00：@林 更新了文档「周报」' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '芝士，10:00：林 更新了文档「周报」' })).toBeTruthy()
     expect(screen.getByRole('article', { name: '林，10:00：新建了任务 Fix the login redirect' })).toBeTruthy()
     expect(screen.getByRole('article', { name: 'me，10:00：second' })).toBeTruthy()
+  })
+})
+
+describe('a chapter starts where someone marked it', () => {
+  function chapter(block: Block): ChapterRow {
+    return { pinned_by: 'alice', pinned_at: '2026-10-21T00:00:00Z', title: null, block }
+  }
+
+  it('writes the chapter number and the message it starts, right above that message', () => {
+    const { container, getAllByRole } = mount({ chapters: [chapter(BLOCKS[1])] })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('second')
+    expect(container.querySelector('[data-mid="b"]')!.previousElementSibling).toBe(marks[0])
+  })
+
+  it('numbers chapters in reading order, not the order they were marked', () => {
+    const { getAllByRole } = mount({ chapters: [chapter(BLOCKS[2]), chapter(BLOCKS[0])] })
+    const texts = getAllByRole('heading', { level: 3 }).map((mark) => mark.textContent)
+    expect(texts[0]).toContain('书签 1')
+    expect(texts[0]).toContain('first')
+    expect(texts[1]).toContain('书签 2')
+    expect(texts[1]).toContain('third')
+  })
+
+  it('prefers the bookmark’s own title when one is set', () => {
+    const { getAllByRole } = mount({
+      chapters: [{ ...chapter(BLOCKS[1]), title: '空白会话问候' }],
+    })
+    const marks = getAllByRole('heading', { level: 3 })
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.textContent).toContain('书签 1')
+    expect(marks[0]!.textContent).toContain('空白会话问候')
+  })
+
+  it('says nothing above a message nobody marked', () => {
+    const { queryAllByRole } = mount({ chapters: [] })
+    expect(queryAllByRole('heading', { level: 3 })).toHaveLength(0)
+  })
+})
+
+describe('a merged line someone opened stays open', () => {
+  // The same person archives channels one after another: one merged line.
+  function archived(id: string, room: string, minute: number): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'wang',
+      content: `<@wang> archived 「${room}」`,
+      created_at: `2026-09-01T10:${String(minute).padStart(2, '0')}:00Z`,
+      meta: { platform: true, i18n: { content: { key: 'roomArchived', params: { actor: '<@wang>', room } } } },
+    } as unknown as Block
+  }
+
+  it('shows the one that just joined without folding back up', async () => {
+    const first = [archived('x1', 'weekly', 1), archived('x2', 'hiring', 2)]
+    const view = mount({ rows: collapseNotices(first), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+    expect(view.container.textContent).toContain('hiring')
+
+    const next = [...first, archived('x3', 'budget', 3)]
+    await view.rerender({ rows: collapseNotices(next), runEdges: ['start'], arrived: new Set(['x3']) })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
+    expect(view.container.textContent).toContain('budget')
+  })
+
+  it('stays open when an older page brings an earlier one into it', async () => {
+    const later = [archived('y2', 'hiring', 2), archived('y3', 'budget', 3)]
+    const view = mount({ rows: collapseNotices(later), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+
+    const all = [archived('y1', 'weekly', 1), ...later]
+    await view.rerender({ rows: collapseNotices(all), runEdges: ['start'] })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
   })
 })

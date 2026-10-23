@@ -45,6 +45,8 @@ export interface GatewayPrices {
   output?: number | null
   cache_read?: number | null
   cache_creation?: number | null
+  /** 一小时缓存写入（Anthropic 与五分钟那档分开定价；订阅计费读它）。 */
+  cache_creation_1h?: number | null
 }
 
 export type GatewayCapabilities = Partial<
@@ -79,6 +81,10 @@ export interface GatewaySource {
   priced: boolean
   header_names: string[]
   session_header: string | null
+  /** 上游模型的累计消费上限（美元），没有上限是 `null`。按上游计：同一上游的每条线路一样。 */
+  spend_cap_usd: number | null
+  /** 上游模型累计已花多少（美元），口径同网关拦截时：终身、按上游模型名。没有上限是 `null`。 */
+  spend_cap_used_usd?: number | null
 }
 
 /** 一条线路自己的字段：新建模型时的第一条、加线路、改线路三处共用。
@@ -98,6 +104,9 @@ export interface GatewaySourceFields {
   session_header?: string
   /** 只在加线路时：这个优先级会接走在用线路的流量，人已经明确同意。 */
   make_primary?: boolean
+  /** 只在改线路时：上游模型的累计消费上限（美元），`null` 清掉，不传不动。服务端把它
+   *  写到同一上游的每一条运行时线路上。 */
+  spend_cap_usd?: number | null
 }
 
 /** 清单里的一个模型（契约 §3.1）。
@@ -114,6 +123,8 @@ export interface GatewayModelInfo {
   selectable: boolean
   priced: boolean
   offered: boolean
+  /** 跑在它上面的平台模型角色；有角色时停用、删除都会被拒，先把角色指走。 */
+  roles?: string[]
   blocked_reasons: string[]
   unpriced_reason: string | null
   upstream: GatewayUpstream
@@ -126,6 +137,8 @@ export interface GatewayModelInfo {
   series?: number[]
   /** 全部线路，按网关试它们的先后排好；config 的也在，只是只读。 */
   sources?: GatewaySource[]
+  /** 需开通才能用：只有管理员开通了的团队能看到、能用它。 */
+  overseas: boolean
 }
 
 export interface GatewayModelsPayload {
@@ -156,6 +169,7 @@ export interface GatewayModelCreateInput extends GatewaySourceFields {
   label?: string
   selectable?: boolean
   capabilities?: GatewayCapabilities
+  overseas?: boolean
 }
 
 /** 改一个运行时模型（契约 §3.3）。PATCH 语义：只传要改的字段，缺的表示「别动它」。
@@ -172,6 +186,7 @@ export interface GatewayModelUpdateInput {
   selectable?: boolean
   prices?: GatewayPrices
   capabilities?: GatewayCapabilities
+  overseas?: boolean
 }
 
 export interface GatewayProjectCredits {
@@ -330,4 +345,27 @@ export function setGatewayProjectBudget(projectId: string, maxBudgetUsd: number 
 
 export function getGatewayAudit(limit: number): Promise<GatewayAuditPayload> {
   return request<GatewayAuditPayload>(`/admin/gateway/audit${gatewayQuery({ limit })}`)
+}
+
+/** 一个平台模型角色（默认模型、语音输入、话题命名……）现在跑在哪个网关模型上。
+ *  `chosen`：管理员在页面上指过；没指过时读部署的设置项（`fallback`）。
+ *  `offered_only`：只能指到上架的模型。 */
+export interface PlatformRole {
+  role: string
+  model: string | null
+  fallback: string | null
+  chosen: boolean
+  offered_only: boolean
+}
+
+export function getPlatformRoles(): Promise<{ roles: PlatformRole[] }> {
+  return request<{ roles: PlatformRole[] }>('/admin/gateway/roles')
+}
+
+/** 把一个角色指到 `model`；`null` 回到部署的设置项。立即生效，有审计。 */
+export function setPlatformRole(role: string, model: string | null): Promise<{ role: string; model: string | null }> {
+  return request<{ role: string; model: string | null }>(`/admin/gateway/roles/${encodeURIComponent(role)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }

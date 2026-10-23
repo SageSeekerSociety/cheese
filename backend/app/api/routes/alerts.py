@@ -24,20 +24,23 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
-from app.domain.notification.models import Notification, NotificationType
+from app.domain.block.adapters import DecisionLine
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
     NotificationCreate,
     NotificationOut,
+    NotificationRow,
+    NotificationType,
     ResolveIn,
 )
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["alerts"])
 
@@ -50,11 +53,13 @@ def _options(body: NotificationCreate) -> list[str]:
     return [o for o in listed if isinstance(o, str) and o.strip()]
 
 
-def _dump(row: Notification) -> dict:
+def _dump(row: NotificationRow) -> dict:
     return NotificationOut.from_row(row).model_dump(mode="json")
 
 
-async def _acting_recipient(resolver: ActorResolver, notification: Notification) -> str:
+async def _acting_recipient(
+    resolver: ActorResolver, notification: NotificationRow
+) -> str:
     """能对这一条动手的那个验证过的调用者：它的收件人。
 
     并表之前还有第二档 —— 一条广播（没有收件人）任何验证过的调用者都能动。广播
@@ -67,7 +72,7 @@ async def _acting_recipient(resolver: ActorResolver, notification: Notification)
     )
 
 
-@router.post("/projects/{project_id}/alerts")
+@router.post("/projects/{project_id}/alerts", dependencies=[ROUTE_DECIDES])
 async def create_notification(
     project_id: uuid.UUID,
     body: NotificationCreate,
@@ -104,9 +109,9 @@ async def create_notification(
     conversation_id = None
     room_id = None
     if body.topic_id is not None:
-        place = await TopicService(db).place_or_404(body.topic_id)
+        place = await place_or_404(db, body.topic_id)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         conversation_id = place.conversation_id
         room_id = place.room_id
     if actor.authenticated:
@@ -222,7 +227,7 @@ async def notifications_unread_count(
     return ok({"unread": count})
 
 
-@router.post("/projects/{project_id}/alerts/read-all")
+@router.post("/projects/{project_id}/alerts/read-all", dependencies=[ROUTE_DECIDES])
 async def mark_all_notifications_read(
     project_id: uuid.UUID,
     db: DbSession,
@@ -244,7 +249,7 @@ async def mark_all_notifications_read(
     return ok({"marked": marked})
 
 
-@router.post("/alerts/{notification_id}/read")
+@router.post("/alerts/{notification_id}/read", dependencies=[ROUTE_DECIDES])
 async def mark_notification_read(
     notification_id: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -256,7 +261,7 @@ async def mark_notification_read(
     return ok(_dump(read))
 
 
-@router.post("/alerts/{notification_id}/resolve")
+@router.post("/alerts/{notification_id}/resolve", dependencies=[ROUTE_DECIDES])
 async def resolve_notification(
     notification_id: int,
     body: ResolveIn,
@@ -273,6 +278,8 @@ async def resolve_notification(
         chosen=body.chosen,
         decided_by=handle,
         publish=get_broker().publish,
+        # 拍板那句话落在房间里，那一层 `notification` 够不着（`block/adapters.py`）。
+        decision_line=DecisionLine(db),
     )
     await db.commit()
     return ok(_dump(resolved))

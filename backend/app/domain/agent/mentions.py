@@ -25,15 +25,17 @@
 
 人类发送、assistant 发布和编辑的真实 intake 共享这些判据。
 `SentText` 与 `text_as_sent` 由 `turn/intake/rewrite.py` 持有，`block/editing.py`
-直接使用；它只问 `turn/intake/rooms.py` 的 `_is_dm`，仍然只有那里读一次房间的
-私聊布尔。`person_mentions` 接收该答案，不复制判据
+直接使用；它只问 `turn/intake/rooms.py` 的 `_is_dm`，仍然只有那里问一次房间
+是不是私聊。`person_mentions` 接收该答案，不复制判据
 （`test_is_private_read_points.py`）。
 """
 
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
@@ -41,20 +43,22 @@ from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.conversation.services import is_task, room_of
+from app.domain.block.models import Block
+from app.domain.conversation.services import is_task
 from app.domain.delivery.ledger import deliver
+from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
-from app.domain.membership.roster import roster_rows
+from app.domain.identity.services import IdentityService
+from app.domain.living_doc.models import Document, DocumentComment
+from app.domain.membership.roster import Member, roster_rows, rows_of
 from app.domain.mentions import (
     canonicalize_refs,
     dangling_refs,
     expand_mention_names,
 )
 from app.domain.notification.models import NotificationType
+from app.domain.run_record.service import record
 from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -134,6 +138,7 @@ async def person_mentions(
     agent,
     *,
     dm: bool,
+    members: Sequence[Member] | None = None,
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -142,12 +147,15 @@ async def person_mentions(
     project roster answers to.
 
     ``dm`` 是调用方对 ``topic`` 问过 `_is_dm` 之后递进来的答案。名字刻意不
-    叫 ``is_private``：那个布尔的读点按文件登记、是一道棘轮
+    叫 ``is_private``：那个布尔只在 `topic/models.py` 里读
     （`test_is_private_read_points.py`，连形参与关键字实参都数），这里既不该
     读它，也不该让它的名字在第二个模块里出现。
 
     Sending (`post_user_message`) and editing (`text_as_sent`) both read a
-    person's words through here, so an edit stores what sending stores."""
+    person's words through here, so an edit stores what sending stores.
+
+    ``members`` is the project's `roster` when the caller already read it
+    (sending hands over the request's read); without it the roster is read."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
@@ -179,6 +187,8 @@ async def person_mentions(
         roster = (
             []
             if "@" not in content or dm
+            else rows_of(members)
+            if members is not None
             else await roster_rows(session, topic.project_id, team=project_team)
         )
         # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
@@ -419,26 +429,20 @@ async def announce_mentions(
     ]
     if not lines:
         return
-    # Beside the message it is about, not in the room the message did not
-    # go to — same landing as the message.
-    room = await room_of(session, block.conversation_id)
-    in_task = room != block.conversation_id
-    landed = landing(
-        EventAbout.task if in_task else EventAbout.room,
-        project_id=block.project_id,
-        room_id=room,
-        task_id=block.conversation_id if in_task else None,
-    )
+    # The same conversation as the message. The site reads platform records;
+    # hidden event blocks are no longer one of its sources.
     for line in lines:
-        await BlockRepository(session).add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
-            author=author,
-            author_type=AuthorType.participant,
+        await record(
+            session,
+            conversation_id=block.conversation_id,
             content=line,
-            kind=BlockKind.event,
             turn_id=block.turn_id,
-            meta={"in_room": False},
+            seat=author,
+            meta={
+                "event_type": "unresolved_reference",
+                "severity": "warning",
+                "block_id": str(block.id),
+            },
         )
 
 
@@ -487,3 +491,124 @@ async def mentioned_outside(
         may_add=await members.may_bring_in(room, author),
         members_only=room.members_only,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CommentMentions:
+    """What a document comment's @s did: the people it told, and, for its
+    writer alone, the people it named who cannot open the document."""
+
+    notified: list[str]
+    outside: MentionedOutside | None
+
+
+async def announce_comment_mentions(
+    session: AsyncSession,
+    doc: Document,
+    room: Topic | None,
+    comment: DocumentComment,
+    *,
+    title: str,
+    task_id: uuid.UUID | None = None,
+) -> CommentMentions:
+    """Tell each person a document comment @s, once for that comment.
+
+    Only people of the project are told, never the writer, and never anyone who
+    cannot open the document: a task's document is read by whoever may enter
+    its channel, so in a private channel someone not seated in it is left out
+    and named back to the writer instead, as a message in that channel would
+    be (:func:`mentioned_outside`). An AI teammate is not told here: the
+    document's own agent is handed the thread by the comment route, and a
+    comment names no other. A comment an AI teammate wrote tells nobody.
+
+    The delivery is keyed by the comment, so delivering it again tells
+    nobody twice; :func:`comment_notified` reads the same key back."""
+    author = comment.author
+    # What an AI teammate writes into a comment refers to people; it calls
+    # nobody (its answer is read where it was asked).
+    if await IdentityService(session).is_agent(author):
+        return CommentMentions([], None)
+    if doc.project_id is None:
+        # A team's own document tells nobody yet (`api.doc_mentions`).
+        return CommentMentions([], None)
+    members = TopicMemberService(session)
+    people = set(await members.project_people(doc.project_id, team=project_team))
+    named = [
+        h
+        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
+        if h != author and h in people
+    ]
+    if not named:
+        return CommentMentions([], None)
+    outside = None
+    targets = named
+    if room is not None:
+        targets = await members.reached(room, named)
+        # Only whoever the comment could not tell: in a public channel someone
+        # not in it still opens the document and is told.
+        outsiders = await members.outside(room, named, team=project_team)
+        away = [h for h in outsiders if h not in targets]
+        if away:
+            outside = MentionedOutside(
+                room_id=room.id,
+                handles=away,
+                may_add=await members.may_bring_in(room, author),
+                members_only=room.members_only,
+            )
+    if targets:
+        roster = await roster_rows(session, doc.project_id, team=project_team)
+        who = next(
+            (r["name"] for r in roster if r.get("handle") == author and r.get("name")),
+            author,
+        )
+        where = (
+            {"topicId": str(room.id), "taskId": str(task_id)}
+            if room is not None and task_id is not None
+            else {"topicId": str(room.id)}
+            if room is not None
+            else {}
+        )
+        await deliver(
+            session,
+            DeliveryEvent(
+                id=event_id_for(NotificationType.MENTION, str(comment.id)),
+                type=NotificationType.MENTION,
+                payload={
+                    "projectId": str(doc.project_id),
+                    "documentId": str(doc.id),
+                    "commentId": str(comment.id),
+                    "documentTitle": title,
+                    # What the email's headline names (`letter_for`).
+                    "topicTitle": title,
+                    "author": author,
+                    "authorName": who,
+                    "content": markdown_preview(comment.content, 200),
+                    **where,
+                },
+                occurred_at=comment.created_at,
+            ),
+            address(Event(mentioned=tuple(targets)), Hand.participant),
+        )
+    return CommentMentions(targets, outside)
+
+
+async def comment_notified(
+    session: AsyncSession, comment_ids: list[uuid.UUID]
+) -> dict[str, list[str]]:
+    """Whom each of these comments told by its @s, from the delivery ledger:
+    a name in a comment is drawn as a mention only where it told someone."""
+    if not comment_ids:
+        return {}
+    by_event = {
+        event_id_for(NotificationType.MENTION, str(cid)): str(cid)
+        for cid in comment_ids
+    }
+    rows = await session.execute(
+        select(Delivery.event_id, Delivery.recipient_handle).where(
+            Delivery.event_id.in_(list(by_event))
+        )
+    )
+    told: dict[str, list[str]] = {}
+    for event_id, handle in rows:
+        told.setdefault(by_event[event_id], []).append(handle)
+    return told

@@ -6,7 +6,9 @@ covers:
   - .github/workflows/required-ci.yml
   - .github/scripts/required-ci.py
   - .github/scripts/required-ci-paths.json
-  - .github/workflows/ci-fast.yml
+  - .github/scripts/backend_imports.py
+  - .github/scripts/coverage_map.py
+  - .github/workflows/coverage-map.yml
   - .github/workflows/build.yml
   - .github/workflows/deploy-dev.yml
   - .github/workflows/deploy-prod.yml
@@ -26,19 +28,28 @@ covers:
 |---|---|---|
 | backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器 |
 | frontend | `frontend.yml` | 类型检查、eslint、vitest |
-| e2e | `e2e.yml` | Playwright 端到端测试 |
+| e2e | `e2e.yml` | Playwright 端到端测试（只在合并后跑） |
 | cli | `cli.yml` | Go 连接器的测试 |
 | guards | `repo-guards.yml` | 仓库规矩的机器检查和文档站构建（链接与锚点、每页的类型/摘要/涉及代码、参考页生成器），每次都跑 |
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
 | harness | `harness-contract.yml` | 骨架请求契约 |
-| mcp | `mcp-contract.yml` | Claude Code 构建契约 |
-| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式、每种 shell 各一个 job |
-| remote | `remote-execution.yml` | 远端执行验收 |
-| cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
+| mcp | `mcp-contract.yml` | Claude Code 构建契约（只在合并后跑） |
+| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式覆盖一次，每种 shell 两个 job（各跑一组运行方式）；只在合并后跑 |
+| remote | `remote-execution.yml` | 远端执行验收（只在合并后跑） |
 
-最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
+最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以一个套件早早红了，`CI required` 也要到最后才显示红。聚合 job 有两个：`required`（`name: CI required`）给正式 PR 和主干 push，`required-draft`（`name: CI required (draft quick)`）给草稿，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
 
-**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，那之前先 `gh api .../pulls/N` 把 PR 的 JSON 写成文件），所有套件跳过，由 `required-draft` 聚合，名字是 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿（完整档那个 job 在草稿上显示 skipped，GitHub 把 skipped 当已满足，但草稿合不了，平台自己也把 skipped 当没跑）。选中范围与本地 quick 档一致，边界按 runner 给（本地默认 180s / 3072 MiB 是开发机自己的限制，用它会让带前端改动的草稿全红；详见 `.github/scripts/ci-fast.md`）。这个档不判自己没有的东西：草稿的占位标题（`WIP: <任务标题>`）不查，需要固定版 Claude Code / Codex / pi 的测试记未执行，Redis 由这个 job 自带（和完整档同一个 valkey 镜像和端口）。所以让草稿变红的只有两种：`ci-fast.py` 的报告判出真的失败（退出码 1），和一次根本没留下报告就结束的退出；预算耗尽、读不出东西（2/3）只打警告并把逐条未判项写进步骤摘要（2/3 指 `ci-fast.py` 那份报告里的判定，不是 shell 拿到的数字：报告说 unknown/blocked 才走警告，没留下报告的退出码，比如 argparse 拒绝参数留下的 2，照旧判红）——绿不等于全判过了，摘要才是全部信息。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
+前端套件还有一个不看路径的入口：前端的类型是从后端的 OpenAPI 文档生成的，后端改动可能改了这份文档，而没有哪个文件能说明它变没变。所以路径选中了后端、没选中前端时，`api` job 在这次 diff 的基点和这次提交上各打印一次文档（`export_openapi --stdout`）逐字节比较，不同就跑前端套件。`required` 按它的回答要求前端套件成功或跳过；`api` 自己没给出回答（失败、取消、输出缺失）也判失败。这件事原来靠仓库里提交的一行文档摘要 `backend/openapi.sha256`：每个改 API 的 PR 都要改这一行，任意两个这样的 PR 都会在这一行上冲突。
+
+**主干是提交后门禁**：PR squash 进 main 之后，每次落码触发一次 `push` run，它判的是**一批**而不是这一条提交。`scope` 的基点不是 `github.event.before`（那只是上一个 tip，被顶掉的排队 run 里的提交会落在所有后续 diff 之外），而是 `refs/heads/main-green`：上一次这道理检查通过的提交。`mark-green` job 只在 main push 的 `required` 绿之后把锚点推到这个提交，红了不动，下一批自然把这段一起盖上。push 的并发组固定为 `required-ci-push-main`、`cancel-in-progress` 为 `false`：GitHub 同时只让一个 run 在跑、最多一个排队，新的排队顶掉旧的排队，所以攒批不丢提交。第一次落地时还没有 `main-green`，`scope` 把所有已跟踪路径都算作改动、选全部套件——宁宽不窄。部署门禁认 main 上这次 `push` run。
+
+**三档**（`required-ci.py` 的 `tier_for`）：
+
+- **草稿 PR 不跑套件**：只有 `scope` 和 `required-draft`，几秒钟结束。草稿是还没做完的东西，平台递卡时会把它转正式（`pr_publish.py` 调 `mark_ready_for_review`），`ready_for_review` 触发下一档。
+- **正式 PR**：路径选中的套件都跑，只有 e2e、remote、mcp、equivalence 留到合并后。这四个要专门的机器或耗时是其余套件的几倍，2026-10-18 到 10-20 里合进 main 之后把 main 弄红的次数也远少于其余套件。后端的 integration 层只跑执行过这次改动的测试文件。依据是覆盖率映射表：`coverage-map.yml` 每天两次在 `main-green` 上带覆盖率跑整层 integration，按测试记下每个函数被哪些测试文件执行过（`coverage_map.py`）。改了函数体，就跑执行过这个函数的测试文件；改了函数外面的代码（常量、类字段这类只在 import 时执行一次的），就找出读这些名字的函数，再跑这些函数的测试文件；函数外不绑定任何名字的语句（比如注册调用），跑 import 这个模块的所有模块的测试文件。PR 改到的测试文件一律跑，映射表里没有对应测试的测试文件每次都跑。迁移、`pyproject.toml`、`uv.lock`、`alembic.ini`、`backend/sandbox/`（镜像的 Dockerfile 除外）、任何 conftest，所有测试都靠它们，改到就整层跑；测试数据只跑读这个文件的模块能到达的测试，conftest 读的数据整层跑；改到选择规则自己、改到 gate、从 `backend/` 以外的路径选中了后端套件，或者读不到映射表，也整层跑。选中的文件按每片 144 个分片，最多 5 片；一个也没选中时 integration 不跑。漏选由合并后 main 上的整层跑兜底。
+- **主干 push**：选中的套件全跑、整层跑，这是部署认的结果。
+
+事件读不出时按主干那一档处理（fail closed）。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
@@ -46,7 +57,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence, cifast
+expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档
@@ -58,8 +69,6 @@ paths:
     label: 改部署脚本
   - path: cli/cheese
     label: 改 CLI 连接器
-  - path: .github/scripts/required-ci.py
-    label: 改这套检查本身
 scenarios:
   - key: docs
     label: 只改文档
@@ -76,29 +85,26 @@ scenarios:
   - key: cli
     label: 改 CLI 连接器
     paths: cli/cheese
-  - key: gate
-    label: 改这套检查本身
-    paths: .github/scripts/required-ci.py
 ```
 
 上面这张表里的套件名、pattern 和勾选结果都是构建时从 `.github/scripts/required-ci-paths.json` 读出来的，而且和真跑一遍 `required-ci.py` 的结果逐条对过：对不上，构建就失败。
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层和前端的 check、unit 两个 job 用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，这几个 job 在 arm64 上更快或者持平，耗时也更稳定。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
+`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上（只有 `scope`、`CI required`、`CI required (draft quick)` 和主干 push 的 `Mark main green` 这几个只跑几秒的串行 job：主干 push 和同仓 PR 用 `cheese-ci` 池，fork 来的 PR 仍用托管机），cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层和前端的 eslint、check、unit 三个 job 用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，这几个 job 在 arm64 上更快或者持平，耗时也更稳定。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个。
 
-自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
+自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上除了上面那几个汇总 job，只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 
 ## 合并之后 {#after-merge}
 
 1. `build.yml`：main 上的每个提交构建一整套镜像，以提交号为标签；没变的镜像直接给旧镜像加上新标签。这一步也把文档站构建进前端镜像。
-2. `deploy-dev.yml`：镜像构建结束时触发，确认这个提交的镜像构建成功、它在合并队列里跑的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。`Required CI` 不在 main 上重跑：队列把 PR squash 到测试过的基底上再快进 main，队列里测的就是落到 main 的那个提交。这个提交的镜像构建或 `Required CI` 没有成功的最新一次时，这次运行失败。GitHub 的运行列表有时比运行本身晚一分钟左右才显示构建已成功，所以判定失败之前会每 15 秒重读一次，最多读两分钟；测试环境已经在跑同一个或更新的版本时，跳过部署，运行成功。`desktop.yml` 发布桌面端安装包之后会重建一遍镜像，再手动触发这个工作流，点名它重建的那个提交（不是触发时 main 的最新提交）；这时测试环境在跑同一个提交也照样部署，因为这个提交的镜像已经换成了新的。部署组里同时只能有一个运行在等，后来的会取消先在等的那个；镜像构建又不按合并顺序结束，所以如果 main 上已经有一个更新的提交可以部署（镜像和 `Required CI` 都成功），这个提交的运行就不再去排队，摘要写明由哪个更新的提交连它一起部署。每次运行的摘要都写明测试环境实际在跑哪个提交。
+2. `deploy-dev.yml`：`Required CI` 结束时触发，确认这个提交的镜像构建成功、它的 `Required CI` 也成功，就自动部署到测试环境（也可以手动触发），见[部署拓扑](/dev/topology)。批次先结束、镜像还在构建时，会等构建跑完（最多 10 分钟）；等不到时这次运行失败，摘要说明构建仍在进行，构建完成后重跑这次运行或由下一次合入一并部署。`Required CI` 认的是 main 上 `push` 的那次；那次被后来的批次顶掉时，认覆盖了它的那个绿批次。这个提交的镜像构建或 `Required CI` 没有成功的最新一次时，这次运行失败。GitHub 的运行列表有时比运行本身晚一分钟左右才显示构建已成功，所以判定失败之前会每 15 秒重读一次，最多读两分钟；测试环境已经在跑同一个或更新的版本时，跳过部署，运行成功。`desktop.yml` 发布桌面端安装包之后会重建一遍镜像，再手动触发这个工作流，点名它重建的那个提交（不是触发时 main 的最新提交）；这时测试环境在跑同一个提交也照样部署，因为这个提交的镜像已经换成了新的。部署组里同时只能有一个运行在等，后来的会取消先在等的那个；镜像构建又不按合并顺序结束，所以如果 main 上已经有一个更新的提交可以部署（镜像和 `Required CI` 都成功），这个提交的运行就不再去排队，摘要写明由哪个更新的提交连它一起部署。每次运行的摘要都写明测试环境实际在跑哪个提交。
 3. `deploy-prod.yml`：只在发布 GitHub Release 或手动指定提交时触发，并且要有人批准才会执行。
-4. `warm-caches.yml`：依赖锁文件或版本 pin 变了的时候（另外每天一次），在 main 上照各套件的 key 装一遍依赖并存下缓存，不跑测试。PR 和合并队列里的套件只恢复、不保存：从这两类 ref 存的缓存，别的 ref 读不到。
+4. `warm-caches.yml`：依赖锁文件或版本 pin 变了的时候（另外每天一次），在 main 上照各套件的 key 装一遍依赖（包括测试分片用 apt 装的那几个工具的 .deb 包）并存下缓存，不跑测试。PR 上的套件只恢复、不保存：从 PR 的 ref 存的缓存，别的 ref 读不到。
+5. `coverage-map.yml`：每天两次，在 `main-green` 上带覆盖率跑整层 integration，发布正式 PR 精选 integration 用的映射表。带覆盖率比平时慢约 37%，所以不放在任何有人等结果的运行里；缺一片就不发布，PR 继续用上一份。
 
 ## PR 上的两个机器人 {#bots}
 
-- `claude-review.yml`：在 PR 里写 `@claude` 可以让它评审或回答问题。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
 - `claude-md-review.yml`：改了 `AGENTS.md` 的 PR 需要人批准。`AGENTS.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
 
 ## 定时巡检 {#scheduled}

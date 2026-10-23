@@ -18,6 +18,7 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.crypto import Purpose, keyed_digest, keyed_digests
 from app.core.errors import (
@@ -27,8 +28,9 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
-from app.domain.block.authorship import AuthorType
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.mail import IntegrationError
@@ -53,7 +55,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["integrations"])
@@ -67,7 +69,23 @@ def _service(db: AsyncSession) -> IntegrationService:
     assembles the route's dependencies hands it in — the shape
     `app.domain.user.ports` uses for the same reason.
     """
-    return IntegrationService(db, library)
+    return IntegrationService(db, library, _Teammates(db))
+
+
+class _Teammates:
+    """`integration.ports.TeammateNames`, answered by the project's roster of
+    teammates (`agent_instance`, a layer above `integration`)."""
+
+    def __init__(self, db: AsyncSession):
+        self._db = db
+
+    async def name_of(self, project_id: uuid.UUID, seat: str) -> str:
+        named = await AgentInstanceService(self._db).for_seat_handle_in(
+            project_id, seat
+        )
+        if named is not None and str(named.name_source) != "default":
+            return named.display_name
+        return say("teammateDefaultName")
 
 
 class MailIn(BaseModel):
@@ -136,7 +154,7 @@ async def _in_room(
     db: AsyncSession, resolver: ActorResolver, topic: uuid.UUID
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
     """(project, room, speaker) for a call made from a room."""
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     actor = await resolver.resolve(project_id=place.project_id, topic_id=topic)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic, enforce=True
@@ -172,7 +190,7 @@ async def my_integrations(db: DbSession, resolver: ActorResolverDep) -> dict:
     return ok(page(items, len(items)))
 
 
-@router.post("/me/integrations/mail")
+@router.post("/me/integrations/mail", dependencies=[ROUTE_DECIDES])
 async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
@@ -217,7 +235,7 @@ async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict
     )
 
 
-@router.post("/me/integrations/feishu")
+@router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])
 async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
     """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
 
@@ -234,7 +252,7 @@ async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
     return ok(public(row))
 
 
-@router.patch("/me/integrations/{integration_id}")
+@router.patch("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
 async def update_integration(
     integration_id: uuid.UUID,
     body: IntegrationPatch,
@@ -261,7 +279,7 @@ async def update_integration(
     return ok(public(row))
 
 
-@router.post("/me/integrations/{integration_id}/check")
+@router.post("/me/integrations/{integration_id}/check", dependencies=[ROUTE_DECIDES])
 async def check_integration(
     integration_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -273,7 +291,7 @@ async def check_integration(
     return ok(public(row))
 
 
-@router.delete("/me/integrations/{integration_id}")
+@router.delete("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
 async def delete_integration(
     integration_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -361,7 +379,7 @@ async def _finish_feishu(
     try:
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
-    except Exception as exc:  # noqa: BLE001 — the person reads why, on the page
+    except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page
         # words; an IntegrationError is that answer even when it is said with
         # a key. A refusal of ours goes by its sentence's key.
@@ -393,13 +411,13 @@ def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
     if draft.topic_id is None:
         return
     if draft.status == "sent":
-        line = say("mailSent", actor=by, subject=draft.subject)
+        line = say("mailSent", actor=f"<@{by}>", subject=draft.subject)
         severity = SEVERITY_INFO
     elif draft.status == "failed":
         line = say("mailFailed", subject=draft.subject)
         severity = SEVERITY_WARN
     elif draft.status == "discarded":
-        line = say("mailDiscarded", actor=by, subject=draft.subject)
+        line = say("mailDiscarded", actor=f"<@{by}>", subject=draft.subject)
         severity = SEVERITY_INFO
     else:
         return
@@ -430,7 +448,7 @@ def _mail_outcome(draft: MailDraft, by: str) -> Block | None:
     )
 
 
-@router.post("/me/mail-drafts/{draft_id}/send")
+@router.post("/me/mail-drafts/{draft_id}/send", dependencies=[ROUTE_DECIDES])
 async def send_draft(
     draft_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -449,7 +467,7 @@ async def send_draft(
     return ok(result)
 
 
-@router.post("/me/mail-drafts/{draft_id}/discard")
+@router.post("/me/mail-drafts/{draft_id}/discard", dependencies=[ROUTE_DECIDES])
 async def discard_draft(
     draft_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -491,7 +509,7 @@ async def project_integrations(
     return ok(page(items, len(items)))
 
 
-@router.post("/integrations/{integration_id}/mail/search")
+@router.post("/integrations/{integration_id}/mail/search", dependencies=[ROUTE_DECIDES])
 async def mail_search(
     integration_id: uuid.UUID,
     body: SearchIn,
@@ -549,7 +567,7 @@ async def mail_attachment(
     )
 
 
-@router.post("/integrations/{integration_id}/mail/drafts")
+@router.post("/integrations/{integration_id}/mail/drafts", dependencies=[ROUTE_DECIDES])
 async def mail_draft(
     integration_id: uuid.UUID,
     body: DraftIn,
@@ -581,7 +599,10 @@ async def mail_draft(
         else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)
     )
     line = say(
-        "mailDraftedBy", who=f"<@{speaker}>", account=row.label, owner=row.owner_handle
+        "mailDraftedBy",
+        who=f"<@{speaker}>",
+        account=row.label,
+        owner=f"<@{row.owner_handle}>",
     )
     block_id = uuid.uuid4()
     db.add(
@@ -608,6 +629,8 @@ async def mail_draft(
                     # checks is what the teammate wrote, in the room it was written.
                     "mail": {
                         "owner": row.owner_handle,
+                        # 写它的那位队友：卡上那句「由 X 起草」叫它的名字。
+                        "drafted_by": speaker,
                         "account": row.label,
                         "to": draft.to,
                         "cc": draft.cc,
@@ -646,7 +669,9 @@ async def mail_draft(
     )
 
 
-@router.post("/integrations/{integration_id}/feishu/search")
+@router.post(
+    "/integrations/{integration_id}/feishu/search", dependencies=[ROUTE_DECIDES]
+)
 async def feishu_search(
     integration_id: uuid.UUID,
     body: FeishuSearchIn,
@@ -674,7 +699,7 @@ async def feishu_read(
     return ok(doc)
 
 
-@router.post("/integrations/{integration_id}/feishu/docs")
+@router.post("/integrations/{integration_id}/feishu/docs", dependencies=[ROUTE_DECIDES])
 async def feishu_create(
     integration_id: uuid.UUID,
     body: FeishuDocIn,
@@ -690,7 +715,10 @@ async def feishu_create(
     return ok(created)
 
 
-@router.patch("/integrations/{integration_id}/feishu/docs/{document_id}")
+@router.patch(
+    "/integrations/{integration_id}/feishu/docs/{document_id}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def feishu_edit(
     integration_id: uuid.UUID,
     document_id: str,

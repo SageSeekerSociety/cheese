@@ -6,14 +6,15 @@
     "add": "新增模型",
     "days": "过去 {n} 天",
     "window": "时间窗口",
-    "loadFailed": "加载失败，请重试。",
-    "saveFailed": "没保存上，请重试。",
-    "deleteFailed": "没删掉，请重试。",
-    "blockFailed": "没改成功，请重试。",
-    "budgetFailed": "额度没设上，请重试。",
+    "loadFailed": "加载失败，稍后重试",
+    "saveFailed": "保存失败，稍后重试",
+    "deleteFailed": "删除失败，稍后重试",
+    "blockFailed": "修改失败，稍后重试",
+    "budgetFailed": "额度设置失败，稍后重试",
     "section": {
       "budgets": "额度",
-      "audit": "最近操作"
+      "audit": "最近操作",
+      "roles": "平台模型角色"
     },
     "gateway": {
       "unconfigured": "这个部署没有配网关管理密钥，模型与额度都读写不了。",
@@ -37,6 +38,8 @@
     "empty": "暂无模型",
     "calls": "次调用",
     "blocked": "已停用",
+    "capWarn": "上限已用 {pct}",
+    "capOver": "已达消费上限",
     "blockedReason": {
       "blocked": "已在网关停用，选择器不会提供它",
       "unlisted": "未上架（网关里没有标 cheese_selectable）",
@@ -56,7 +59,8 @@
       "offered": "上架",
       "status": "状态",
       "actions": "操作",
-      "tier": "档位"
+      "tier": "档位",
+      "overseas": "需开通"
     },
     "origin": {
       "config": "配置文件",
@@ -73,13 +77,16 @@
       "unblock": "启用"
     },
     "loadFailed": "模型加载失败",
-    "tierFailed": "更改档位失败"
+    "tierFailed": "更改档位失败",
+    "overseas": "需开通才能用",
+    "overseasFailed": "更改开通要求失败"
   },
   "price": {
     "input": "输入",
     "output": "输出",
     "cacheRead": "缓存读",
     "cacheCreation": "缓存写",
+    "cacheCreation1h": "缓存写（1 小时）",
     "unpriced": "未定价"
   },
   "usage": {
@@ -95,7 +102,7 @@
   "detail": {
     "title": "模型详情",
     "close": "关闭",
-    "loadFailed": "详情加载失败，请重试。",
+    "loadFailed": "详情加载失败，稍后重试",
     "empty": "暂无此模型",
     "upstreamHost": "上游地址",
     "trend": "每天用量",
@@ -151,6 +158,11 @@
     "unblocked": "已启用「{name}」",
     "budgetSet": "已更新「{name}」的额度",
     "dismiss": "关闭这条提示"
+  },
+  "caution": {
+    "title": "改动 {name} 之前",
+    "confirm": "继续",
+    "roles": "{name} 上跑着这些平台模型角色：{roles}。在它们被指到别的模型之前，停用、删除它都会被拒；在这里改它，这些角色也跟着变。"
   },
   "confirm": {
     "delete": {
@@ -211,7 +223,7 @@
       "subscriptionStart": "开始导入订阅",
       "subscriptionComplete": "完成导入订阅",
       "subscriptionCancel": "取消导入订阅",
-      "subscriptionRefresh": "刷新订阅凭据",
+      "subscriptionRefresh": "刷新订阅登录",
       "subscriptionRevoke": "移除订阅",
       "other": "其它操作",
       "subscriptionUpdateUpstream": "改订阅的上游模型",
@@ -254,7 +266,10 @@
     "orderNone": "无优先级（垫底）",
     "free": "免费",
     "headers": "请求头",
-    "session": "会话头",
+    "session": "对话标识头",
+    "cap": "消费上限",
+    "capUsed": "已用 {used} / 上限 {cap}（{pct}）",
+    "capOver": "已达上限，网关拒绝调用",
     "readonly": "配置文件声明，只读",
     "testSoon": "测试线路要等一致性测试套件上线",
     "failed": "线路操作失败",
@@ -285,7 +300,9 @@
       "apiBaseKeep": "留空则沿用已保存的上游地址。",
       "free": "免费线路",
       "freeHint": "上游不按 token 收费（免费模型、包月订阅）：输入与输出单价记为 0，不算没定价。",
-      "zeroNeedsFree": "输入或输出单价写成 0 只能用在免费线路上；免费线路的输入与输出单价只能是 0。",
+      "zeroNeedsFree": "输入、输出都写 0 就是免费线路，请打开「免费线路」；免费线路的输入与输出单价只能是 0。",
+      "spendCap": "消费上限（美元）",
+      "spendCapHint": "这个上游模型累计最多能花多少，按它所有线路合计：网关自己的账到了这个数就拒绝调用。在这里保存，会写到同一上游的每一条运行时线路上。留空则不设上限。",
       "headers": "静态请求头",
       "existingHeaders": "现有：{names}（值不回显；重新设置会整份替换）",
       "noHeaders": "没有请求头。",
@@ -295,13 +312,15 @@
       "addHeader": "添加请求头",
       "removeHeader": "移除这个请求头",
       "headerInvalid": "请求头名或值不合法：认证与传输相关的头不能按线路设置，值里不能有换行。",
-      "session": "会话头名",
-      "sessionHint": "上游按会话路由或缓存时填（如 x-opencode-session），网关把 Claude Code 的会话 id 放进这个头；留空不转。",
+      "session": "对话标识头名",
+      "sessionHint": "上游按对话路由或缓存时填（如 x-opencode-session），网关把 Claude Code 的对话标识放进这个头；留空不转。",
       "leadsWarning": "这个优先级会让新线路排到所有在用线路的前面，接走它们的流量（没写优先级的线路只在带优先级的都不可用时才轮到）。",
       "makePrimary": "让它成为首选",
       "fallback": "它排在现有线路之后，作兜底：前面的线路都不可用时才轮到它。",
       "mixedFree": "这个模型会同时有免费和付费线路：账按付费线路的价记，免费线路上的流量也一样。",
-      "headersPublic": "头的值不是秘密：除了名字里带 key、token、secret、auth、password、credential、cookie 的头，任何拿着项目密钥的调用方都能从网关读到。上游凭据请填在上游密钥里。"
+      "headersPublic": "头的值不是秘密：除了名字里带 key、token、secret、auth、password、credential、cookie 的头，任何拿着项目密钥的调用方都能从网关读到。上游的 API 密钥填在上游密钥里。",
+      "needsPrices": "输入与输出单价都要写（其中一向可以是 0，比如语音转写的输出）：平台按单价给这个模型的全部用量计费。上游不收费的，打开「免费线路」。",
+      "priceCleared": "这条线路已有的价可以改，不能清空。"
     },
     "confirm": {
       "delete": {
@@ -325,5 +344,36 @@
       "unblocked": "已启用 {name} 的一条线路",
       "reordered": "已调整 {name} 的线路优先级"
     }
+  },
+  "priceChange": {
+    "title": "修改 {name} 的单价",
+    "line": "{price}（每百万 token）：{before} → {after}。",
+    "effect": "确认后，{name} 此后的全部用量都按新价计费。",
+    "confirm": "改价"
+  },
+  "roles": {
+    "hint": "平台自己挑模型的那几件事各跑在哪个模型上。改了立即生效，不用重新部署；项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。",
+    "now": "现在：{model}",
+    "unset": "未设置：跟着项目的默认模型",
+    "fallback": "部署默认（{model}）",
+    "fallbackNone": "不设置（跟着项目的默认模型）",
+    "separator": "、",
+    "loadFailed": "读取平台模型角色失败",
+    "failed": "改角色失败",
+    "notice": {
+      "set": "{role} 已指到选中的模型"
+    },
+    "role": {
+      "agent_model": "默认模型",
+      "subagent_model": "分身默认",
+      "assistant_model": "个人芝士",
+      "docs_assistant_model": "问芝士（文档助手）",
+      "topic_naming_model": "话题命名",
+      "environment_diagnosis_model": "环境诊断（让芝士看看）",
+      "voice_asr_model": "语音输入：语音转文字",
+      "voice_polish_model": "语音输入：整理转写",
+      "memory_migration_model": "记忆迁移"
+    },
+    "retry": "重新读取角色"
   }
 }

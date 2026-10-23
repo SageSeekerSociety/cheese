@@ -109,6 +109,7 @@ def memory_changed_notice(
     diff: str,
     refused: dict[str, str],
     rejected: dict[str, str] | None = None,
+    unindexed: tuple[str, ...] = (),
 ) -> tuple[str, dict]:
     """记忆树的一次改动：一行说改了哪一棵、改了几条，diff 收进 `detail`。
 
@@ -149,24 +150,39 @@ def memory_changed_notice(
     if refused:
         for_agent.append(memory_conflict_notice(where=where, refused=refused))
     if rejected:
-        for_agent.append(memory_rejected_notice(where=where, reasons=rejected))
+        for_agent.append(
+            memory_rejected_notice(where=where, reasons=rejected, unindexed=unindexed)
+        )
     if for_agent:
         meta[AGENT_NOTICE_META_KEY] = "\n\n".join(for_agent)
     return line, meta
 
 
-def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
-    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。"""
+def memory_rejected_notice(
+    *, where: str, reasons: dict[str, str], unindexed: tuple[str, ...] = ()
+) -> str:
+    """说给 agent 的那句：哪几条因为太长没存下、为什么、它写的那一版在哪。
+
+    `unindexed` 是其中这一轮新加的索引行也被拿掉的那几条：只对它们说「把那一行
+    加回去」。别的被拒的文件索引没动过，叫它加回去只会多出一行重复的。
+    """
     lines = "\n".join(
         f"- `{prompt_path(path)}`（你写的那一版在 "
         f"`{prompt_path(rejected_path(path))}`）：{reason}"
         for path, reason in sorted(reasons.items())
     )
-    return (
+    text = (
         f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
         f"{lines}\n"
         "改短之后重新写入。"
     )
+    if unindexed:
+        names = "、".join(f"`{prompt_path(path)}`" for path in sorted(unindexed))
+        text += (
+            f"你这次在 `MEMORY.md` 里为 {names} 新加的那一行也没有留下，"
+            "重新写入之后再把它加回去。"
+        )
+    return text
 
 
 def memory_conflict_notice(*, where: str, refused: dict[str, str]) -> str:

@@ -2,56 +2,93 @@
 """The orchestrator's patrol sweep: list what needs a decision across a channel's task lines.
 
 It reads the platform and GitHub and writes nothing, except under --sync-doc, which
-appends the rendered board to one document and never restates anything above it.
+appends the board, --auto-accept, which accepts eligible cards, or
+--recover-environment, which sends bounded recovery wakes.
+The latter requires two distinct environmental turn failures since the last heartbeat,
+a stopped open task, and complete message history. It never changes environments or
+permissions: it wakes the current seat, at most twice per task with a 30-minute cooldown.
+The task's message history persists the budget; stable request IDs deduplicate retries.
+A generic provider 502 does not qualify without work-machine/environment context.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
+      [--silent-min 40] [--stopped-min 3] [--skip 1443,1405] [--json | --render | --sync-doc <document id> | --recover-environment] \
+      [--auto-accept-check | --auto-accept]
   python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
   可采纳未采纳  card pending, PR mergeable >= 5 min, not queued, not removed since
-  红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
+  待回答        the line is parked on a person and will not move on its own: a question
+                (`cheese_ask`) nobody has answered, or a filed card whose next step is
+                the reviewer's. It needs no quiet minutes — the question is itself the
+                line's newest heartbeat, so judging it by --silent-min hides every fresh
+                question for the whole 40. A line already carrying another class
+                (可采纳未采纳, 出队 — a card waiting on its reviewer is both) keeps that
+                one row instead, unless the parking is a real question (`awaiting_answer`):
+                no other class says "somebody was asked", so that one always gets its row.
+                A parked line is never also 长时间无动静. One fact, one line.
+  红了没人修    CI red / conflict >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
-                rounds). A heartbeat is the newest of the line's last message, the last
-                event block its seat wrote (a command it ran) and, when the platform gives
-                it, the running turn's last output (`last_output_at` on the task row). A
+                rounds), or for --stopped-min minutes (default 3) when the platform says
+                `started`, `bounced`, or `checks_failed`, unless the line is parked, accepted,
+                or classified as 连续失败、出队
+                or 可采纳未采纳. A heartbeat is the newer of the line's last message and the
+                last event block its seat wrote (a command it ran). A
                 command the seat started and that has not returned yet — its event block
                 carries no output yet, no failed turn came after it and the platform still
                 calls a turn running — is a heartbeat now: a seat inside a 45-minute test
                 run is working, not stalled. The row says when the last event and the last
                 message were and what the message said, so the patrol reads the line's own
-                last word before nudging it. The room's task rows carry no last_output_at
-                today, so that leg is there for a platform that sends it.
+                last word before nudging it.
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
   --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
                independent review covers (read from the card body), minutes waited, whom it waits on, the PR's two core
-               sections and its failed checks and cases — plus that UTC day's metrics.
-               Fixed shape, for tools.
+               sections and its failed checks, each as {name, url}, and cases — plus that UTC
+               day's metrics. Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read;
                under the table, one block per task with what its PR changed, how it was
-               verified, and (when it is red) which checks are red and which cases the
-               logs name. A section the description never wrote says so rather than
-               being filled in.
+               verified, and (when it is red) which checks are red, each naming its log's
+               page, and which cases the logs name. A section the description never wrote
+               says so rather than being filled in.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
                <!-- board:end -->; when the markers are not there yet, append a marked
                section by naming a trailing passage and putting the board after it, and
                refuse when no such passage can be named. One of these three, not two at
                once.
+
+A failed check is written as a Markdown link after its name, so a reader of either text
+form can open the log. Names and URLs land inside the text list's `[<class>] <name>｜<detail>`
+line and the auto-accept block's `…｜<code>: <detail>；…` lines; `｜` and `；` are the
+separators other code splits those lines on (orchestrator_autoaccept._flat strips them),
+so neither a check name nor a URL may carry either character.
+
+--auto-accept-check and --auto-accept add the dispatcher's own adopt decision to the run.
+Every 可采纳未采纳 card is handed to orchestrator_autoaccept.py, which reads the card, the
+PR and the checks and answers 会采 or 交总调度 with the codes it failed on; the answer
+prints under the rows and rides in --json's row as `auto_accept`. That script owns the five
+conditions — CI required green on the card's head, an independent review of that head with
+no blocker/major, the card's head equal to the PR's and MERGEABLE, no PROD_DEPLOY or
+HIGH_RISK path, and the acceptor being the dev account — so the sweep reports them rather
+than stating them again, and a card touching a high-risk path is 交总调度 there, not a
+second gate here. --auto-accept also approves and accepts each 会采 card; --auto-accept-check
+stops at the answer. Neither flag runs on an invocation that leaves both out, which keeps
+the calls a plain sweep makes unchanged.
 """
-import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
+import contextlib, io, json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
+
+from orchestrator_actions import environment_recovery, recovery_wake
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/")
 
 #: The classes a row carries, in the order the text list prints them. "GitHub 未查"
 #: is not a decision to make — it is the sweep saying it could not look.
-CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
+CLASSES = ["出队", "可采纳未采纳", "待回答", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 #: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
 #: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
@@ -66,17 +103,6 @@ CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑",
 #: backend's run_record.turns.TURN_FAILURE_EVENTS. A tool block left behind by any of
 #: them is not a command still running.
 TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error")
-#: The task row's presentation phrase while a turn is running (the backend's
-#: Building.running): the frontend's 还在动 rule is the same judgement, scoped to the
-#: running turn's blocks.
-RUNNING_PHRASE = "running"
-#: The phrases the board answers *instead of* `running` although a turn may still be
-#: running, so they answer nothing: task_presentation decides 结算中 (被采纳的那一条还要跑
-#: 一轮写总结), 待回答 (「进程可能还在，但它不会自己往下走了」) and 讨论中 (还没点开始，芝士
-#: 也可能已经在回话) before it ever looks at `running`. 第四轮审查 2026-10-14：把前两个读成
-#: 「没在跑」，正在写总结、或刚被回答打断的线会被报成停摆。sweep 读到这一行之前就跳过了没
-#: 开始的行，讨论中那一格只对别的调用方有意义。
-RUNNING_OVERRIDES = ("accepted", "awaiting_answer", "discussing")
 #: A tool call older than this is not taken for still running, whatever its block says:
 #: a turn can end in a way that posts no event at all (a seat replaced under it), and a
 #: line that then reads 命令在跑 forever is the one failure this class exists to catch.
@@ -84,8 +110,8 @@ IN_FLIGHT_MAX_MIN = 120
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "review_since", "review_verdict", "review_tier", "waited_min", "waiting_on",
               "stage", "detail", "changed", "verified", "checks", "cases",
-              "last_event_at", "last_message_at", "last_message", "last_output_at",
-              "running", "heartbeat_min")
+              "last_event_at", "last_message_at", "last_message",
+              "running", "heartbeat_min", "recovery", "auto_accept")
 #: How much of a line's last message the row carries: enough to tell "审查在跑" from
 #: "等总调度", not the whole message.
 _MESSAGE_BRIEF = 80
@@ -392,7 +418,7 @@ _BOLD_NAME = re.compile(r"(?:verif|valid|test|check)(?:s|es|ed|ing|ied|ication|a
                         r"|验证|怎么验|测试|自测", re.I)
 _COMMENT_OPEN, _COMMENT_CLOSE = "<!--", "-->"
 #: Everything from the first of these lines down is the platform's, not the author's.
-_TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
+_TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by|Link"
                            r"|Reviewed-by|Reported-by|Fixes-feedback):", re.M | re.I)
 _AGENT_MARK = re.compile(r"^[ \t]*AGENT:[ \t]*$", re.M)
 #: The lines a runner prints to name a case that failed — pytest's summary, the
@@ -793,6 +819,10 @@ def waiting_of(t, kind):
         return t["waiting_on"]
     if kind == "可采纳未采纳":
         return t.get("reviewer_handle") or t.get("owner_handle")
+    if kind == "待回答":
+        # 问了好几个人、或者问了所有人：平台上没有一个「某某」写得出来，就不写。
+        # 不拿这条线的座位顶 —— 它在等的是被问的人，不是它自己。
+        return None
     return t.get("agent_handle")
 
 
@@ -819,15 +849,23 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "detail": text,
         "changed": changed,
         "verified": verified,
-        "checks": [c["name"] for c in (pr.get("checks") or [])] if good else [],
+        # 名字和链接一起留在行里：看板要能点到失败日志，--json 的消费方要的是两者。
+        "checks": [{"name": c.get("name") or "?", "url": c.get("url") or ""}
+                   for c in (pr.get("checks") or [])] if good else [],
         "cases": (pr.get("cases") or []) if good else [],
         "last_event_at": pulse.get("last_event_at"),
         "last_message_at": pulse.get("last_message_at"),
         "last_message": pulse.get("last_message"),
-        "last_output_at": pulse.get("last_output_at"),
         "running": pulse.get("running"),
         "heartbeat_min": pulse.get("heartbeat_min"),
+        "recovery": None,
         "read": good,
+        # 采纳判据那一层填，没跑判据的就是 None。判据本身是 orchestrator_autoaccept 的，
+        # 行只把它带出去（text 的尾部一块、--json 的一项）。
+        "auto_accept": None,
+        # 平台那条任务对象，跟着行走：采纳那一步要把它原样交回 orchestrator_autoaccept，
+        # 不必为它再读一次平台。不在 ROW_FIELDS 里，--json 不会带出去。
+        "platform": t,
     }
 
 
@@ -840,45 +878,39 @@ def message_brief(m):
     return f"@{m.get('author') or '-'}「{body}」"
 
 
-def heartbeat_of(last_msg, last_event, last_output=None):
-    """The line's last sign of life: the newest of its last message, the last event
-    block its seat wrote, and the running turn's last output when the platform gives it.
-    A line that has no event blocks at all beats by its messages."""
-    return max((x for x in (last_msg, last_event, last_output) if x), key=ts)
+def heartbeat_of(last_msg, last_event):
+    """The line's last sign of life: the newer of its last message and the last event
+    block its seat wrote. A line that has no event blocks at all beats by its messages."""
+    return max((x for x in (last_msg, last_event) if x), key=ts)
 
 
-def turn_running(task):
-    """Whether the platform says a turn is running in this task right now: the row's
-    presentation phrase is `running` while one is, and False for a phrase that means no
-    turn is running (Building.started, the card's own states — `running` outranks all of
-    those). None when the row carries no phrase (an older platform), or when the phrase
-    is one the board decides *instead of* `running` though a turn may be running
-    (RUNNING_OVERRIDES): those leave the caller its own fallback."""
-    pres = task.get("presentation")
-    if isinstance(pres, dict) and isinstance(pres.get("phrase"), str):
-        if pres["phrase"] in RUNNING_OVERRIDES:
-            return None
-        return pres["phrase"] == RUNNING_PHRASE
-    return None
+def session_running(task):
+    """Whether the platform says a session of the task's AI teammate is running in it
+    right now: the row's `session_running`, which the session protocol declares
+    (`room_task_rows.with_session_running`). The board's phrase is not that: it says what
+    the teammate reported about its work. None when the row does not carry the field (a
+    platform deployed before it)."""
+    value = task.get("session_running")
+    return value if isinstance(value, bool) else None
 
 
-def in_flight(event, ended_after, now=None, turn=None):
+def in_flight(event, ended_after, now=None, session=None):
     """Whether the seat's latest event block is a tool call that has not returned: the
     platform writes the block when the call starts (that is its created_at) and adds
     `output_bytes` when it ends, so a tool block without one is a command still running
     — unless the turn ended after it (TURN_ENDED), which leaves the block unmarked
     forever, or the call is older than IN_FLIGHT_MAX_MIN.
 
-    `turn` is the platform's word on whether a turn is running (turn_running). A call that
-    returned with empty output leaves the block byte-identical to this one, so the block
-    alone cannot tell the two apart (第三轮审查 2026-10-14): when the platform says no turn
-    is running, the block has returned and is not in flight. When the platform does not say
-    (None — an older platform, or a phrase that overrides `running`, see RUNNING_OVERRIDES),
-    only the age limit above keeps 命令在跑 from lasting forever."""
+    `session` is the platform's word on whether the seat's session is running
+    (session_running). A call that returned with empty output leaves the block
+    byte-identical to this one, so the block alone cannot tell the two apart (第三轮审查
+    2026-10-14): when the platform says no session is running, the block has returned and
+    is not in flight. When the platform does not say (None — a platform deployed before the
+    field), only the age limit above keeps 命令在跑 from lasting forever."""
     m = meta(event)
     if not m.get("tool") or "output_bytes" in m or m.get("failed") or ended_after:
         return False
-    if turn is False:
+    if session is False:
         return False
     now = now or datetime.now(timezone.utc)
     return (now - ts(event["created_at"])).total_seconds() / 60 < IN_FLIGHT_MAX_MIN
@@ -893,37 +925,71 @@ def stalled_for(now, heartbeat, silent, running=False):
     return w if w >= silent else None
 
 
+def parked_on_a_person(t):
+    """Whether this line has stopped and is waiting for a person to move it: a question
+    the seat asked and ended its turn on (`cheese_ask`), or a filed card whose next step
+    is the reviewer's. The platform says so three ways and any one is enough — the row
+    names who it waits on (`waiting_on`), or says it waits on the reading seat
+    (`awaits_me`), or its presentation phrase is 待回答.
+
+    The phrase carries the case the other two cannot: a question put to several people,
+    or to everyone, names nobody (`room_task.presentation.waiting_on` returns None for
+    it), and the line is just as parked."""
+    phrase = (t.get("presentation") or {}).get("phrase")
+    return bool(t.get("waiting_on") or t.get("awaits_me") or phrase == "awaiting_answer")
+
+
+def awaiting_detail(waited, who, phrase, last_msg_at, last_msg_brief):
+    """The 待回答 line: how long the line has been parked, on whom, and its own last
+    word — the question or the delivery — so the patrol reads that before anyone asks
+    or nudges a second time. `who` is None when nobody in particular is named, and the
+    line says 有人 rather than leaving the field blank."""
+    what = {"awaiting_answer": "回答", "awaiting_review": "审阅"}.get(phrase, "回话")
+    return (f"待 {who or '有人'} {what}，{waited:.0f} 分钟："
+            f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
+
+
 def hhmm(iso):
     return f"{iso[11:16]} UTC" if iso else "没有"
 
 
-def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=None):
+def pulse_detail(waited, last_event, last_msg_at, last_msg_brief):
     """The 长时间无动静 line: how long without a heartbeat, then the facts the patrol
-    needs before it nudges — when the seat last ran something, when the turn last
-    produced output (only when the platform says), and the line's own last word."""
+    needs before it nudges — when the seat last ran something, and the line's own last
+    word."""
     return (f"{waited:.0f} 分钟无心跳：最后 event {hhmm(last_event)}，"
-            + (f"最后输出 {hhmm(last_output)}，" if last_output else "")
-            + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
+            f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
-def sweep(tok, room, silent, skip, want_facts):
+def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_min=3):
     """The rows the text list prints, each also carrying the board's fields. GitHub
     facts are read only for tasks that have a PR: for the pending ones always, and for
     the rest only when `want_facts`, which is set by the flags that show the board — so
-    an invocation with no flag makes exactly the calls it always made."""
+    an invocation with no flag makes exactly the calls it always made.
+
+    `adopt` is the handle a card would be accepted as. When it is set, every 可采纳未采纳
+    row also carries orchestrator_autoaccept's own verdict on that card in `auto_accept`
+    (会采, or 交总调度 with the codes and notes it failed on) — the five conditions live
+    there, so this reports the decision the dispatcher would act on rather than a second
+    opinion of its own. Still read-only: accepting is the caller's, and only under
+    --auto-accept."""
     now = datetime.now(timezone.utc)
     age = lambda s: (now - ts(s)).total_seconds() / 60
     d = get(tok, f"/topics/{room}/tasks?status=open&limit=200")
     tasks = d.get("data", d) if isinstance(d, dict) else d
     rows, facts, idmap = [], {}, {}
     for t in tasks:
-        if not t.get("started_at") or str(t["number"]) in skip:
+        # 行的开始时刻：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始，行上只有
+        # `created_at`）。只认 `started_at` 会把线上每一条在办任务整行跳过、一条信号都
+        # 报不出来。老行还带这个键时照旧认它——值为 None 仍是「还没点开始」，整行跳过。
+        started = t["started_at"] if "started_at" in t else t.get("created_at")
+        if not started or str(t["number"]) in skip or (only is not None and t["id"] not in only):
             continue
         tid = t["id"]
         idmap[tid] = t["number"]
         name = f"#{t['number']} {t['title'][:28]} @{t.get('agent_handle') or '-'}" + (f" 等:{t['waiting_on']}" if t.get("waiting_on") else "")
         msg = get(tok, f"/topics/{tid}/history?limit=1&kind=message")["data"]
-        last_msg = msg[-1]["created_at"] if msg else t["started_at"]
+        last_msg = msg[-1]["created_at"] if msg else started
         # 心跳：座位跑命令是 event 块，不是消息。只看消息会把一条正在跑长命令的线报成
         # 停摆（2026-10-13 #1468 跑了 70 分钟命令、被按「70 分钟没消息」催过）。event 只认
         # 座位自己写的：system 的 turn_failed 也是 event，但那不是它在动。
@@ -935,18 +1001,17 @@ def sweep(tok, room, silent, skip, want_facts):
         # 命令是「现在在跑」；单条 45 分钟的命令靠它才不会被报成停摆。event 只认座位自己
         # 写的，author 过滤不能省：不过滤的话别人的块（accept 的 pr_closed 每隔几天来一
         # 条，`review/room_notices.py` 的 announce(author="accept")）会被当成它的心跳；座位
-        # 不知道是谁时就一条都不读。行上的 last_output_at 是
-        # 平台的第三个说法，现在两端都不给值，给了就顺手采信。
+        # 不知道是谁时就一条都不读。
         seat = t.get("agent_handle")
         evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event&author={seat}")["data"] if seat else []
         last_event = evs[-1]["created_at"] if evs else None
         ended_after = any(meta(m).get("event_type") in TURN_ENDED and m["created_at"] > last_event
                           for m in sysev) if evs else False
-        running = bool(evs) and in_flight(evs[-1], ended_after, now, turn_running(t))
-        heartbeat = heartbeat_of(last_msg, last_event, t.get("last_output_at"))
+        running = bool(evs) and in_flight(evs[-1], ended_after, now, session_running(t))
+        heartbeat = heartbeat_of(last_msg, last_event)
         pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
                  "last_message": message_brief(msg[-1]) if msg else None,
-                 "last_output_at": t.get("last_output_at"), "running": running,
+                 "running": running,
                  "heartbeat_min": 0 if running else round(age(heartbeat))}
 
         card = t.get("card") or {}
@@ -969,7 +1034,7 @@ def sweep(tok, room, silent, skip, want_facts):
         # 卡还在「可以合并」上，得是最后一条 accept 事件就是 accept_ready。中间插进来
         # 的改审阅说明（card_redescribed）等于是把这份结论换掉了，不能再当可采纳。
         ready_at = accev[-1]["created_at"] if accev and meta(accev[-1]).get("event_type") == "accept_ready" else None
-        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict", "main_checks_failed")]
+        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict")]
         red_at = red[-1]["created_at"] if red else None
         tail = [m for m in sysev if meta(m).get("event_type")]
 
@@ -981,8 +1046,13 @@ def sweep(tok, room, silent, skip, want_facts):
         if red_recent and want_facts and pr is not None and "error" not in pr and pr.get("cases") is None:
             pr["cases"] = failing_cases(pr.get("checks") or [])
 
+        reported = set()
+
         def add(kind, text, waited=None, waiting=None):
-            rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse))
+            reported.add(kind)
+            r = row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse)
+            rows.append(r)
+            return r
 
         if card.get("status") == "pending" and n:
             if "error" in pr:
@@ -994,28 +1064,147 @@ def sweep(tok, room, silent, skip, want_facts):
                     add("出队", f"PR #{n} {tl[-1]['createdAt'][11:16]} UTC 出队（{tl[-1]['reason']}），{w:.0f} 分钟没回队列", w)
                 elif ready_at and age(ready_at) >= 5:
                     w = age(ready_at)
-                    add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
+                    r = add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
+                    if adopt:
+                        r["auto_accept"] = _autoaccept().decide(tok, t, adopt)
 
         if red_recent:
             w = age(red[-1]["created_at"])
             where = ""
             if want_facts and pr is not None and "error" not in pr:
-                names = [c["name"] for c in (pr.get("checks") or [])]
+                names = [check_link(c) for c in (pr.get("checks") or [])]
                 where = "，红的是 " + "、".join(names) if names else ""
             add("红了没人修", f"{red[-1]['content'][:50]}{where}，{w:.0f} 分钟线上没新消息", w)
 
         if len(tail) >= 2 and all(meta(m)["event_type"] == "turn_failed" for m in tail[-2:]) and tail[-1]["created_at"] > last_msg:
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
+            rows[-1]["recovery"] = environment_recovery(t, sysev, heartbeat, now)
+            if rows[-1]["recovery"]:
+                rows[-1]["detail"] += "；环境故障，可用 --recover-environment 限次重唤醒"
 
-        w = stalled_for(now, heartbeat, silent, running)
-        if w is not None:
-            add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
-                                        pulse["last_message"] or "（还没有消息）",
-                                        t.get("last_output_at")), w)
+        # 待回答：这条线停在别人身上，自己不会往下走 —— 刚问出的问题，或者递上去、
+        # 下一步在验收人手上的卡。它不看 --silent-min：提问本身就是这条线最新的心跳，
+        # 按阈值判的话刚问出的问题要整整 40 分钟才浮出来（2026-10-15 #1620 就是这么漏
+        # 掉的）。停在别人身上的线也不再补一行长时间无动静 —— 那不是停摆，球本来就在
+        # 别人手上。
+        #
+        # 等验收人那一类不重复出：这一轮已经为它报过别的类别，就不再报待回答 ——
+        # 可采纳未采纳 / 出队 那一行本来就把「在等谁」写在名字上（`waiting_of` 返回的
+        # 正是行的 `waiting_on`），而「可以合并、等着人点采纳」的卡按平台的说法就是
+        # awaiting_review —— 不挡的话每一张可采纳未采纳的卡都会跟着多出一行，同一件
+        # 事说两遍。
+        #
+        # 真问出去的问题不挡：别的类别说不出「有人被问了、还没答」，挡掉它就是把
+        # #1620 那类漏看原样搬回来。一张卡可以既能合并、又刚问了人一句 —— 那是两件
+        # 事，出两行。
+        phrase = (t.get("presentation") or {}).get("phrase")
+        if parked_on_a_person(t):
+            if phrase == "awaiting_answer" or not reported:
+                w = age(heartbeat)
+                add("待回答", awaiting_detail(w, t.get("waiting_on"), phrase,
+                                             pulse["last_message_at"],
+                                             pulse["last_message"] or "（还没有消息）"), w)
+        else:
+            short_stall = (session_running(t) is False
+                           and phrase in {"started", "bounced", "checks_failed"}
+                           and card.get("status") != "accepted"
+                           and not reported.intersection({"连续失败", "出队", "可采纳未采纳"}))
+            threshold = stopped_min if short_stall else silent
+            w = stalled_for(now, heartbeat, threshold, running)
+            if w is not None:
+                add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
+                                            pulse["last_message"] or "（还没有消息）"), w)
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
+
+
+def recovery_messages(tok, topic):
+    """Complete durable ledger or refusal; truncation must not reset the budget."""
+    messages, before, seen = [], None, set()
+    for _ in range(50):
+        page = get(tok, f"/topics/{topic}/history?limit=200&kind=message"
+                   + (f"&before={before}" if before else ""))
+        messages.extend(page["data"])
+        if page.get("has_more") is False:
+            return messages
+        before = page.get("oldest_id")
+        if not before or before in seen:
+            break
+        seen.add(before)
+    raise ValueError("未读全恢复记录，不执行自动恢复")
+
+
+def recover_environment(tok, room, rows):
+    """Opt-in wakes, with a fresh eligibility check after reading the ledger.
+
+    Only message POST is used: no seat switch, machine change, stop or permission
+    escalation. A refused or uncertain write stops this invocation; rerunning uses
+    the same task slot's request_id instead of creating an unbounded retry loop.
+    """
+    seen = set()
+    for r in rows:
+        if not r.get("recovery") or r["topic"] in seen:
+            continue
+        seen.add(r["topic"])
+        messages = recovery_messages(tok, r["topic"])
+        fresh, _ = sweep(tok, room, 40, set(), False, only={r["topic"]})
+        candidate = next((f for f in fresh if f.get("recovery")), None)
+        if not candidate:
+            print(f"#{r['task']}：状态已变化，不重唤醒")
+            continue
+        body, why = recovery_wake({"id": r["topic"], "agent_handle": candidate["seat"]},
+                                  messages, datetime.now(timezone.utc))
+        if body is None:
+            print(f"#{r['task']}：{why}")
+            continue
+        sent = send(tok, "POST", f"/topics/{r['topic']}/messages", body)
+        if not isinstance(sent, dict) or not sent.get("id"):
+            raise SystemExit(f"#{r['task']}：发送结果不确定，未确认重唤醒；"
+                             f"request_id {body['request_id']}")
+        print(f"#{r['task']}：恢复请求已发送 {sent['id']}，不代表环境已恢复")
+
+
+def _autoaccept():
+    """orchestrator_autoaccept, imported when a run actually judges a card.
+
+    Module scope would be circular: that script imports this one. And when this file is
+    run as `__main__`, the import machinery would otherwise execute a second copy of it
+    under its own name, so alias the instance we are already running as before importing —
+    both entry points then share one set of helpers."""
+    if __name__ == "__main__":
+        sys.modules.setdefault("orchestrator_sweep", sys.modules["__main__"])
+    import orchestrator_autoaccept
+    return orchestrator_autoaccept
+
+
+def apply_auto_accept(tok, rows, me):
+    """Approve and accept every 可采纳的卡 orchestrator_autoaccept judged 会采.
+
+    Nothing here re-checks the five conditions: 会采 comes back only with all of them
+    green, and a card touching PROD_DEPLOY or a HIGH_RISK path is 交总调度 by that same
+    judge. accept() reads the card again and judges it again, so a card that moved since
+    the sweep read it is not accepted on a verdict that no longer holds."""
+    aa = _autoaccept()
+    for r in rows:
+        v = r.get("auto_accept")
+        if v and v["verdict"] == "accept":
+            v["applied"] = aa.accept(tok, r["platform"], me)
+    return rows
+
+
+def auto_accept_text(rows):
+    """The 自动采纳 block the text list prints under its rows: one line per judged card,
+    in the shape orchestrator_autoaccept itself prints, so the answer reads the same
+    whichever entry point a patrol called."""
+    judged = [r for r in rows if r.get("auto_accept")]
+    if not judged:
+        return []
+    aa = _autoaccept()
+    return ["", f"自动采纳（{len(judged)} 张可采纳的卡，判据由 orchestrator_autoaccept 给定）："] \
+        + [aa.line(r["auto_accept"]) for r in judged]
+
 
 
 def text(rows):
@@ -1024,6 +1213,8 @@ def text(rows):
         return
     for r in rows:
         print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
+    for ln in auto_accept_text(rows):
+        print(ln)
 
 
 def review_cell(r):
@@ -1039,9 +1230,18 @@ def review_cell(r):
     return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
 
 
-def render(rows, metrics, silent, now, room):
+def check_link(c):
+    """A failed check as both text forms write it: its name, and after it the page its log
+    can be read from. GitHub sometimes gives no page for a check; the name then stands
+    alone rather than becoming a link to nowhere."""
+    name, url = c.get("name") or "?", c.get("url") or ""
+    return f"[{name}]({url})" if url else name
+
+
+def render(rows, metrics, silent, now, room, stopped_min=3):
     out = ["## 调度看板", "",
-           f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
+           f"UTC {now:%Y-%m-%d %H:%M}｜静默阈值 {silent} 分钟｜已停轮 {stopped_min} 分钟｜"
+           f"{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
@@ -1072,7 +1272,6 @@ def details(rows):
         if r.get("heartbeat_min") is not None:
             out += [f"心跳：{'命令在跑' if r.get('running') else str(r['heartbeat_min']) + ' 分钟前'}"
                     f"｜最后 event {hhmm(r['last_event_at'])}"
-                    + (f"｜最后输出 {hhmm(r['last_output_at'])}" if r.get("last_output_at") else "")
                     + f"｜最后消息 {hhmm(r['last_message_at'])} {r['last_message'] or '（还没有消息）'}", ""]
         if not r["read"]:
             # 「没写这一节」是替作者下判断；读不到正文时说读不到，两件事分开。
@@ -1085,10 +1284,19 @@ def details(rows):
                     out.append(f"{label}：PR 正文里没写这一节")
                 out.append("")
         if r["checks"]:
-            out.append("红的是：" + "、".join(r["checks"]))
+            out.append("红的是：" + "、".join(check_link(c) for c in r["checks"]))
         if r["cases"]:
             out += ["失败用例："] + ["> " + ln for ln in r["cases"]]
         if r["checks"] or r["cases"]:
+            out.append("")
+        if r.get("auto_accept"):
+            # 采纳判据只在 --auto-accept-check / --auto-accept 那一轮在；会采的说它会不会
+            # 被采纳，交总调度的说它卡在哪个 code 上。
+            v = r["auto_accept"]
+            if v["verdict"] == "accept":
+                out.append("自动采纳：会采" + (f"｜{v['applied']}" if "applied" in v else ""))
+            else:
+                out.append("自动采纳：交总调度（" + "、".join(v["codes"]) + "）")
             out.append("")
     return out
 
@@ -1159,10 +1367,11 @@ def day_metrics(tok, room, day, idmap):
     }
 
 
-def board_json(rows, metrics, room, silent, skip, now):
+def board_json(rows, metrics, room, silent, skip, now, stopped_min=3):
     classes = {k: [{f: r[f] for f in ROW_FIELDS} for r in rows if r["kind"] == k] for k in CLASSES}
     return {"generated_at": now.isoformat(), "room": room, "signal_min": silent,
-            "skipped": sorted(skip), "classes": classes, "metrics": metrics}
+            "stopped_min": stopped_min, "skipped": sorted(skip),
+            "classes": classes, "metrics": metrics}
 
 
 def occurrences(hay, needle):
@@ -1607,13 +1816,27 @@ def _self_test_board():
         ("每个待判 PR：GitHub 上查不到的那条说「GitHub 上看不到」",
          detail([_self_row(pr={"error": "boom"})]),
          "**#1 甲**｜可采纳未采纳｜GitHub 查不到\n\nPR 正文：GitHub 上看不到"),
-        ("每个待判 PR：红在哪个检查、哪些用例都摆出来",
+        ("每个待判 PR：红在哪个检查、它的日志在哪、哪些用例都摆出来",
          detail([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
-                                       checks=[{"name": "guards / guards", "url": "u"},
-                                               {"name": "unit", "url": "u"}],
+                                       checks=[{"name": "guards / guards", "url": "https://gh/run/1"},
+                                               {"name": "unit", "url": "https://gh/run/2"}],
                                        cases=["tests/a.py::b", "tests/c.py::d"]))]),
          one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：\n> 全过。\n"
-         "\n红的是：guards / guards、unit\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
+         "\n红的是：[guards / guards](https://gh/run/1)、[unit](https://gh/run/2)"
+         "\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
+        # 名字后面跟的就是那个能点开的页面：只留名字时这条红，`--json` 也就没有 url。
+        ("每个待判 PR：没有页面的检查只写名字，不留空链接",
+         detail([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
+                                       checks=[{"name": "unit", "url": ""}]))]),
+         one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：\n> 全过。\n\n红的是：unit"),
+        ("JSON 看板：失败检查带名字和 url",
+         board_json([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
+                                          checks=[{"name": "unit",
+                                                   "url": "https://gh/run/2"}],
+                                          cases=[]))],
+                    _SELF_TEST_METRICS, "room", 60, set(),
+                    datetime(2026, 10, 13, 5, 0))["classes"]["可采纳未采纳"][0]["checks"],
+         [{"name": "unit", "url": "https://gh/run/2"}]),
         ("每个待判 PR：同一个任务在两类里只说一次",
          detail([_self_row(), _self_row(kind="长时间无动静")]).count("**#1 甲**"), 1),
         ("表格：CI 用字、审查对的不是现在的 head 标「（旧）」、增量标出来、没在等的写「—」",
@@ -1628,13 +1851,19 @@ def _self_test_board():
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
           if ln.startswith(("UTC ", "| 类别", "### "))],
-         ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
+         ["UTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜1 条｜频道 12345678",
           "| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
           "### 每个待判 PR"]),
         ("一条信号都没有时：不摆表格，只说一句",
          board([]),
-         "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
+         "## 调度看板\n\nUTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜0 条｜频道 12345678\n"
          "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
+        ("JSON 看板：同时带静默与停轮阈值",
+         (board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["signal_min"],
+          board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["stopped_min"]),
+         (60, 3)),
     ]
 
 
@@ -1651,9 +1880,6 @@ def _self_test_pulse():
          heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), "2026-10-13T01:40:00Z"),
         ("没有 event 块的线按消息算心跳",
          heartbeat_of("2026-10-13T01:00:00Z", None), "2026-10-13T01:00:00Z"),
-        ("平台给了 last_output_at（+00:00 写法）且更新，心跳取它",
-         heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z", "2026-10-13T01:55:00+00:00"),
-         "2026-10-13T01:55:00+00:00"),
         ("停摆判定：心跳 60 分钟前、阈值 40，报 60",
          stalled_for(now, "2026-10-13T01:00:00Z", 40), 60.0),
         ("停摆判定：消息 60 分钟前但 event 20 分钟前，不报（回退成只看消息这里就红）",
@@ -1666,20 +1892,18 @@ def _self_test_pulse():
         ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False, now), False),
         ("在跑：没返回的 tool 块超过 IN_FLIGHT_MAX_MIN 也不算在跑",
          in_flight(dict(call, created_at="2026-10-12T23:00:00Z"), False, now), False),
-        ("在跑：块没返回但平台说这一轮没在跑（返回了、输出是空的块就长这样），不算在跑",
-         in_flight(call, False, now, turn=False), False),
-        ("在跑：平台说 running，同样没返回的块照旧算在跑",
-         in_flight(call, False, now, turn=True), True),
-        ("在跑：平台给不出判断（行上没有这个字段）时退回按块的年龄算",
-         in_flight(call, False, now, turn=None), True),
-        ("平台说在不在跑：running 是、started 不是、压过 running 的三个短语和空字段都不回答",
-         [turn_running(t) for t in ({"presentation": {"phrase": "running"}},
-                                    {"presentation": {"phrase": "started"}},
-                                    {"presentation": {"phrase": "awaiting_answer"}},
-                                    {"presentation": {"phrase": "accepted"}},
-                                    {"presentation": {"phrase": "discussing"}},
-                                    {}, {"presentation": None})],
-         [True, False, None, None, None, None, None]),
+        ("在跑：块没返回但平台说会话没在跑（返回了、输出是空的块就长这样），不算在跑",
+         in_flight(call, False, now, session=False), False),
+        ("在跑：平台说会话在跑，同样没返回的块照旧算在跑",
+         in_flight(call, False, now, session=True), True),
+        ("在跑：平台给不出判断（行上没有这个字段）时按块的年龄算",
+         in_flight(call, False, now, session=None), True),
+        ("平台说会话在不在跑：读行上的 session_running，看板短语不算数",
+         [session_running(t) for t in ({"session_running": True},
+                                       {"session_running": False},
+                                       {"session_running": False, "presentation": {"phrase": "running"}},
+                                       {}, {"session_running": None})],
+         [True, False, False, None, None]),
         ("结束一轮的事件：四种都算，memory_changed 不算",
          [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
          [True, True, True, True, False]),
@@ -1693,9 +1917,6 @@ def _self_test_pulse():
         ("停摆那一行：没有 event 的线说「没有」",
          pulse_detail(45, None, "2026-10-13T01:00:00Z", "@a「等」"),
          "45 分钟无心跳：最后 event 没有，最后消息 01:00 UTC @a「等」"),
-        ("停摆那一行：平台给了最后输出就一并写",
-         pulse_detail(45, "2026-10-13T01:00:00Z", "2026-10-13T01:00:00Z", "@a「等」", "2026-10-13T01:10:00+00:00"),
-         "45 分钟无心跳：最后 event 01:00 UTC，最后输出 01:10 UTC，最后消息 01:00 UTC @a「等」"),
         ("看板：带心跳的行在标题下多一行心跳",
          [ln for ln in details([row("长时间无动静", "#1 甲 @cheese", "细节",
                                     {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese"},
@@ -1719,31 +1940,65 @@ def _self_test_pulse():
 
 
 def _self_test_sweep():
-    """(name, got, want) for `sweep` 本身那一条线：平台读数换成现成的答案，看 长时间无动静
-    这一类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按最后一条
-    消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前。"""
+    """(name, got, want) for `sweep` 本身那两条线：平台读数换成现成的答案，看 长时间无动静
+    和 待回答 这两类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按
+    最后一条消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前；要更近的
+    消息就自己给 msg_min。"""
     now = datetime.now(timezone.utc)
     at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
+    # 线上现在的行：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始），开始时刻
+    # 只剩 `created_at`。老用例的 `task` 带这个键，是为了钉住「值为 None 就整行跳过」。
+    task_now = {k: v for k, v in task.items() if k != "started_at"} | {"created_at": at(300)}
     call = {"tool": "Bash", "arg": "跑测试"}
     done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
     sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
 
-    def kinds(ev_min=None, ev_meta=None, system=(), row=None):
+    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60, accept=(), pr=None,
+                base=None):
         answers = {
-            "/tasks?": [dict(task, **(row or {}))],
-            "kind=message": {"data": [{"created_at": at(60), "author": "a", "content": "等"}]},
+            "/tasks?": [dict(base if base is not None else task, **(row or {}))],
+            "kind=message": {"data": [{"created_at": at(msg_min), "author": "a", "content": "等"}]},
             "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
             "author=system": {"data": list(system)},
-            "author=accept": {"data": []},
+            "author=accept": {"data": list(accept)},
         }
-        real = globals()["get"]
+        real, real_pr = globals()["get"], globals()["gh_pr"]
         globals()["get"] = lambda tok, path: next(v for k, v in answers.items() if k in path)
+        globals()["gh_pr"] = lambda n, board=False: pr
         try:
             rows, _ = sweep("tok", "room", 40, set(), False)
         finally:
-            globals()["get"] = real
-        return [r["kind"] for r in rows]
+            globals()["get"], globals()["gh_pr"] = real, real_pr
+        return rows
+
+    def kinds(*a, **kw):
+        return [r["kind"] for r in rows_of(*a, **kw)]
+
+    waiting_on_a_review = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                  "presentation": {"phrase": "awaiting_review"}})
+    waiting_on_an_answer = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                   "presentation": {"phrase": "awaiting_answer"}})
+    # 一张可以合并、等人点采纳的卡：平台说它就是 awaiting_review、等的是验收人，所以
+    # 「停在人身上」和「可采纳未采纳」两条判据同时成立 —— 每一张可采纳未采纳都是这个
+    # 形状，不只是造得出来。
+    adoptable = {
+        "waiting_on": "wangchangxin",
+        "presentation": {"phrase": "awaiting_review"},
+        "card": {"status": "pending", "pr_number": 42},
+    }
+    # 没进过合并队列的 PR：`gh_pr` 的时间线只要 ADDED_TO_MERGE_QUEUE_EVENT 和
+    # REMOVED_FROM_MERGE_QUEUE_EVENT 两种事件，所以「一个队列事件都没有」的真实形状
+    # 是空 nodes —— 可采纳那一支走的就是它。
+    adoptable_pr = {"merged": False, "mergeQueueEntry": None,
+                    "timelineItems": {"nodes": []}}
+    adoptable_accept = [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
+                         "content": "可以合并"}]
+    # 同一张卡上还能同时挂着一句刚问出去的话：短语被待回答压过（`awaiting_answer`
+    # 在平台上先于卡判定），等的是被问的那个人，而「可以合并」由 PR 的合并态单独
+    # 成立。两件事，出两行。
+    adoptable_asking = dict(adoptable, waiting_on="bob",
+                            presentation={"phrase": "awaiting_answer"})
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1755,18 +2010,189 @@ def _self_test_sweep():
          kinds(60, call, sysev("turn_timeout", 50)), ["长时间无动静"]),
         ("sweep：命令没返回但之后 platform_error 结束了一轮，报停摆",
          kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
-        ("sweep：命令没返回、任务行说这一轮没在跑，块已经返回了，报停摆",
-         kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
-        ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
-         kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
-        ("sweep：任务行说待回答（这一轮可能还在跑），同样没返回的块不报",
-         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
+        ("sweep：命令没返回、任务行说会话没在跑，块已经返回了，报停摆",
+         kinds(60, call, row={"session_running": False}), ["长时间无动静"]),
+        ("sweep：started 停下 5 分钟、会话没在跑，超过默认 stopped-min 3，立即报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "started"}, "session_running": False}),
+         ["长时间无动静"]),
+        ("sweep：started 5 分钟、会话还在跑（队友没报状态，正在跑一条长命令），不触发 stopped-min",
+         kinds(5, call, row={"presentation": {"phrase": "started"}, "session_running": True}), []),
+        ("sweep：平台等检查的交付态 5 分钟没新消息，不触发 stopped-min",
+         kinds(5, done, row={"presentation": {"phrase": "awaiting_checks"}}), []),
+        ("sweep：被退回、需要座位处理时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "bounced"}, "session_running": False}),
+         ["长时间无动静"]),
+        ("sweep：检查红需要座位修复时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "checks_failed"}, "session_running": False}),
+         ["长时间无动静"]),
+        ("sweep：会话在跑的任务 5 分钟没消息，不受 stopped-min 影响",
+         kinds(5, call, row={"session_running": True}), []),
+        ("sweep：本轮已归入连续失败时不触发 3 分钟停摆",
+         kinds(5, done, system=sysev("turn_failed", 4) + sysev("turn_failed", 3),
+               row={"presentation": {"phrase": "started"}, "session_running": False}), ["连续失败"]),
+        ("sweep：结算中（被采纳的那一条还在写总结），会话在跑，同样没返回的块算在跑，不报",
+         kinds(60, call, row={"presentation": {"phrase": "accepted"}, "session_running": True}), []),
+        ("sweep：任务行说待回答、会话还在跑，报待回答，块没返回就不再报停摆",
+         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}, "session_running": True}),
+         ["待回答"]),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
          kinds(60, done, row={"started_at": None}), []),
-        ("sweep：平台给的 last_output_at 10 分钟前，不报",
-         kinds(60, done, row={"last_output_at": at(10)}), []),
+        # 与上一条成对：老行带着 `started_at`、值为 None 才跳过；线上现在的行根本没有
+        # 这个键，不能跟着一起跳过，否则每一条在办任务都被咽掉、一条信号都报不出来。
+        ("sweep：行上没有 started_at 这个键、只剩 created_at（后端已下线该字段），照常扫出停摆",
+         kinds(60, done, base=task_now), ["长时间无动静"]),
+        # 待回答这一条线：不等阈值。提问本身就是最新的心跳，2 分钟前问的、阈值 40，
+        # 按 长时间无动静 判是 None —— 少了 sweep 里那段，这几条读成 []。
+        ("sweep：2 分钟前刚问出一句、行上写着在等谁，立刻报待回答（阈值 40 也报）",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin"}), ["待回答"]),
+        ("sweep：待回答的行报出等谁、等了多久、最后一条提问是哪个时刻哪句话",
+         # 判的是这几样说出来没有，不是那句话怎么措辞：`awaiting_detail` 的用词、
+         # 摘要拿什么符号括起来，改了都不该红 —— 摘要的格式由「消息摘要」那两条盯着。
+         [(r["waited_min"], "wangchangxin" in r["detail"], at(2)[11:16] in r["detail"],
+           "等" in r["detail"])
+          for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
+         [(2, True, True, True)]),
+        ("sweep：行上写着在等谁、短语是待审阅（递上去等验收的那一类）同样立刻报待回答，"
+         "不看阈值",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin",
+                               "presentation": {"phrase": "awaiting_review"}}), ["待回答"]),
+        ("sweep：等审阅和等人回话这两条线，看板上写出来不是同一句话",
+         # 判据是两条读起来分得清，不是哪一个词 —— 换成「审核」「答复」照样算数。
+         [[r["detail"] for r in waiting_on_a_review] != [r["detail"] for r in waiting_on_an_answer]],
+         [True]),
+        # 这一条问不出具体是谁：写出来的那句得是句人话 —— 不拿这条线的座位顶（它在等
+        # 的是被问的人），也不能把「没有名字」漏成 None。具体用哪个词是文案，换词不该红。
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，写成人话、不拿这条线的座位顶",
+         [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"],
+           "None" in r["detail"])
+          for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
+                                           "waiting_on": None})],
+         [(None, False, True, False)]),
+        ("sweep：行上说在等看的这个人（awaits_me）照样算待回答（这条端点上它蕴含 waiting_on，"
+         "钉的是规范里那一条判据）",
+         kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
+        ("sweep：待回答的线不再补一行长时间无动静（消息 60 分钟前也一样）",
+         kinds(row={"waiting_on": "bob"}), ["待回答"]),
+        # 可以合并的卡同时也是「停在验收人身上」：两行会把同一件事说两遍，只留可采纳
+        # 未采纳那一行（它本来就把在等谁写在名字上）。
+        ("sweep：可以合并、等人点采纳的卡只出一行（可采纳未采纳），不再跟着一行待回答",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "wangchangxin")]),
+        # 但真问出去的一句不挡：能合并和「有人被问了、还没答」是两件事，两行都要。
+        ("sweep：可以合并的卡又刚问了人一句，两行都在（可采纳未采纳 + 待回答）",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable_asking, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "bob"), ("待回答", "bob")]),
+    ]
+
+
+def _self_test_adopt():
+    """(name, got, want) for 自动采纳那一步：可采纳的卡交回 orchestrator_autoaccept 自己判
+    ——判据只有那一份，这里不另判一次；--auto-accept 对会采的卡 approve 再 accept，对碰了
+    高风险路径的卡一个写都不发；--auto-accept-check 判完就停；不给开关时行上根本没有判据。
+    平台读数、GitHub 读数、判据的输入和平台的写全在这一段里换掉，仍然离线。"""
+    H = "a" * 40
+    now = datetime.now(timezone.utc)
+    at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    task = {"number": 42, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300),
+            "card": {"id": "c1", "status": "pending", "pr_number": 7}}
+    # 没进过合并队列的 PR（时间线里一个队列事件都没有），卡上写着「可以合并」10 分钟 ——
+    # 这就是每一张可采纳未采纳的卡的样子。
+    pr = {"merged": False, "mergeQueueEntry": None, "timelineItems": {"nodes": []}}
+    answers = {"kind=message": [{"created_at": at(10), "author": "a", "content": "等"}],
+               "author=accept": [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
+                                  "content": "可以合并"}]}
+
+    def facts(files):
+        """判据要的那些事实，摆成 gather() 会摆的样子：审查结论在卡正文里，行上写着谁验收。"""
+        body = f"改了什么：A。\n\n独立 review：head {H[:8]} 结论 无 blocker/major\n"
+        f = {"task": 42, "card": {"id": "c1", "pr_number": 7, "pr_head_sha": H,
+                                  "reviewer_handle": "me", "change_body": body},
+             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False},
+             "ci": "success", "files": list(files)}
+        f["review"] = _autoaccept().latest_review(body)
+        return f
+
+    def run(argv, files=("backend/app/x.py",)):
+        """跑一次 main()，返回（它印出来的、它写出去的）。平台和 GitHub 的读、判据自己的
+        读、平台的写都换掉了，所以四次调用一次网都不连。"""
+        aa = _autoaccept()
+        kept = {n: globals()[n] for n in ("get", "gh_pr", "login")}
+        kept_gather, kept_post, kept_env = aa.gather, aa.post, os.environ.get("OKCHEESE_USER")
+        kept_argv, writes = sys.argv, []
+
+        def fake_get(tok, path):
+            for key, value in answers.items():
+                if key in path:
+                    return {"data": list(value)}
+            return {"data": [task]} if "tasks?" in path else {"data": []}
+
+        def fake_post(tok, path, body):
+            writes.append((path, body))
+            return True, ""
+
+        globals().update(get=fake_get, gh_pr=lambda n, board=False: pr, login=lambda: "tok")
+        os.environ["OKCHEESE_USER"] = "me"
+        aa.gather, aa.post = lambda tok, t, me: facts(files), fake_post
+        sys.argv, buf = argv, io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                main()
+        finally:
+            sys.argv = kept_argv
+            globals().update(kept)
+            aa.gather, aa.post = kept_gather, kept_post
+            if kept_env is None:
+                os.environ.pop("OKCHEESE_USER", None)
+            else:
+                os.environ["OKCHEESE_USER"] = kept_env
+        return buf.getvalue(), writes
+
+    accepted, accepted_writes = run(["sweep", "room", "--auto-accept"])
+    risky, risky_writes = run(["sweep", "room", "--auto-accept"], files=("backend/alembic/7_x.py",))
+    checked, checked_writes = run(["sweep", "room", "--auto-accept-check"])
+    plain, plain_writes = run(["sweep", "room"])
+    verdict = f"[会采] #42 PR #7 head {H[:8]}"
+    judged = {"task": 42, "pr": 7, "head": H, "verdict": "accept", "codes": [],
+              "reasons": [], "notes": ["审查来自卡"]}
+    as_json = lambda r: board_json([r], _SELF_TEST_METRICS, "room", 60, set(),
+                                   datetime(2026, 10, 13, 5, 0))["classes"]["可采纳未采纳"][0]
+    return [
+        # 写只落在判据说会采的那张卡上，而且 approve 在前、accept 在后 —— 反过来平台会拒。
+        ("自动采纳：会采的卡 approve 再 accept",
+         [p for p, _ in accepted_writes], ["/accept-cards/c1/approve", "/accept-cards/c1/accept"]),
+        ("自动采纳：accept 带上验收人和判据判的那个 head",
+         [b for _, b in accepted_writes],
+         [{"approver_handle": "me"},
+          {"decided_by": "me", "head_sha": H, "deliverable_revision": None}]),
+        ("自动采纳：采纳了就说采纳，清单里带着 orchestrator_autoaccept 那一行结论",
+         ("已采纳 head " + H[:8]) in accepted and verdict in accepted, True),
+        # 高风险路径是判据自己在判的（deploy_reasons → high_risk），不是这里另加的一道闸：
+        # 撞上它的卡在判据那一步就交总调度了，所以这一轮一个写都不发。
+        ("自动采纳：碰了高风险路径的卡一个写都不发", risky_writes, []),
+        ("自动采纳：碰了高风险路径的卡判成交总调度，并说出是哪个 code",
+         ("交总调度" in risky, "high_risk" in risky), (True, True)),
+        ("自动采纳：--auto-accept-check 判完就停，一个写都不发",
+         (checked_writes, verdict in checked), ([], True)),
+        ("自动采纳：不给开关时判据根本不跑，清单上没有这一块",
+         (plain_writes, "自动采纳" in plain), ([], False)),
+        # 结论还得进另外两种输出：--json 每一行带 auto_accept（没判过是 null），
+        # 看板每个待判 PR 那一段也写一句。
+        # 判的是 --json 交出去的那一行（ROW_FIELDS 挑出来的），不是 rows 里的行 ——
+        # 行上一直带着这一项，看起来怎么都对，漏掉的正是「它没被带出去」。
+        ("自动采纳：--json 的每一行都带 auto_accept，没判过是 null",
+         [("auto_accept" in b, b.get("auto_accept")) for b in [as_json(_self_row())]], [(True, None)]),
+        ("自动采纳：判过的行 --json 里带得出去",
+         as_json({**_self_row(), "auto_accept": judged}).get("auto_accept"), judged),
+        ("自动采纳：看板每个待判 PR 那一段也写一句",
+         "自动采纳：会采" in "\n".join(details([{**_self_row(), "auto_accept": judged}])), True),
+        ("自动采纳：交总调度的卡在看板上写出它卡在哪个 code",
+         "自动采纳：交总调度（high_risk）" in "\n".join(
+             details([{**_self_row(), "auto_accept": {**judged, "verdict": "handoff",
+                                                      "codes": ["high_risk"]}}])), True),
     ]
 
 
@@ -1780,17 +2206,20 @@ def _self_test_review():
     renderer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(renderer)
     head, old = "a" * 40, "b" * 40
-    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1, "kind": "runtime",
-                           "rung": 4, "failure": "x", "evidence": "y", "confirm_with": ""}
+    # Every finding the schema accepts is a blocker or a major; a minor is refused before
+    # anything is rendered. A fixture carrying one would be a result this method can no
+    # longer produce, and the line that came out of it would not be a line any review has.
+    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1,
+                           "kind": "runtime", "rung": 4, "failure": "x", "evidence": "y"}
     result = lambda *sevs: {"reviewed_sha": head, "summary": "s", "candidates_found": 3,
                             "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
                             "not_covered": []}
     out = []
     for name, res, since, tier, want in (
-        ("整轮、无严重问题", result("minor"), "", "", ("a" * 8, "", "无 blocker/major", "")),
-        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, "",
+        ("整轮、无严重问题", result(), "", "", ("a" * 8, "", "无 blocker/major", "")),
+        ("增量、有 blocker 和 major", result("blocker", "major"), old, "",
          ("a" * 8, "b" * 8, "有 2 条", "")),
-        ("带档位", result("minor"), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
+        ("带档位", result(), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
     ):
         body = renderer.render(res, head, "m" * 40, since, tier)
         out.append((f"审查行：{name}，卡片正文里读得回", review_of("## 摘要\n\n" + body), want))
@@ -1915,6 +2344,92 @@ def _self_test_jobs():
     ]
 
 
+def _self_test_recovery():
+    """Exercise the real CLI -> sweep -> history -> POST path, entirely offline."""
+    import contextlib, io
+    from unittest.mock import patch
+
+    now = datetime.now(timezone.utc)
+    at = lambda minutes: (now - timedelta(minutes=minutes)).isoformat()
+    task = {"id": "t1", "number": 1685, "title": "环境恢复", "status": "open",
+            "created_at": at(120), "agent_handle": "cheese-a",
+            "presentation": {"phrase": "started"}, "session_running": False}
+    failures = [{"id": f"failure-{i}", "turn_id": f"turn-{i}", "created_at": at(mins),
+                 "meta": {"event_type": "turn_failed", "i18n": {"detail": {
+                     "params": {"said": "Failed to prepare work machine: 502 Bad Gateway"}}}}}
+                for i, mins in enumerate((5, 2))]
+    messages, posts, reads = [], [], []
+    state = {"task": task, "complete": True, "stale": False}
+
+    def fake_get(tok, path):
+        reads.append(path)
+        if "/tasks?" in path:
+            t = state["task"]
+            if state["stale"] and any("limit=200&kind=message" in p for p in reads):
+                t = dict(t, session_running=True)
+            return {"data": [t]}
+        if "kind=message" in path:
+            return {"data": list(messages), "has_more": not state["complete"],
+                    "oldest_id": "same-cursor"}
+        if "author=system" in path:
+            return {"data": failures}
+        return {"data": []}
+
+    def fake_send(tok, method, path, body):
+        posts.append((method, path, body))
+        messages.append({**body, "id": "wake-" + str(len(posts)), "created_at": at(0)})
+        return messages[-1]
+
+    def run(*flags):
+        reads.clear()
+        with patch.object(sys, "argv", ["sweep", "room", *flags]), contextlib.redirect_stdout(io.StringIO()):
+            main()
+
+    out = []
+    with patch.dict(globals(), get=fake_get, send=fake_send, login=lambda: "offline"):
+        rows, _ = sweep("offline", "room", 40, set(), False)
+        recovery = next(r for r in rows if r["kind"] == "连续失败")["recovery"]
+        out.append(("环境候选进入巡检行", recovery is not None, True))
+        out.append(("跳过的任务不进入恢复候选", sweep("offline", "room", 40, {"1685"}, False)[0], []))
+        run()
+        out.append(("默认巡检零写入", len(posts), 0))
+        state["stale"] = True
+        run("--recover-environment")
+        out.append(("发之前任务恢复运行，不打扰", len(posts), 0))
+        state["stale"], state["complete"] = False, False
+        try:
+            run("--recover-environment")
+            refused = False
+        except ValueError:
+            refused = True
+        out.append(("历史不完整拒绝执行", (refused, len(posts)), (True, 0)))
+        state["complete"] = True
+        run("--recover-environment")
+        out.append(("显式恢复只发任务消息", [(m, p) for m, p, _ in posts],
+                    [("POST", "/topics/t1/messages")]))
+        out.append(("恢复消息点名当前座位并带幂等键",
+                    bool(posts and "<@cheese-a>" in posts[0][2]["content"]
+                         and posts[0][2].get("request_id")), True))
+        run("--recover-environment")
+        out.append(("同一失败再次巡检不重复唤醒", len(posts), 1))
+        # New failures after the first wake still obey the durable cooldown.
+        messages[0]["created_at"] = at(10)
+        run("--recover-environment")
+        out.append(("新进程读取历史仍受冷却保护", len(posts), 1))
+        messages[0]["created_at"] = at(31)
+        run("--recover-environment")
+        out.append(("冷却后第二次恢复", len(posts), 2))
+        messages[-1]["created_at"] = at(30)
+        run("--recover-environment")
+        out.append(("新失败也不能突破两次上限", len(posts), 2))
+        # Pagination must include an old wake, not just the latest page.
+        with patch.dict(globals(), get=lambda tok, path: (
+                {"data": [messages[0]], "has_more": False} if "&before=" in path else
+                {"data": [messages[1]], "has_more": True, "oldest_id": "page-1"})):
+            out.append(("恢复账本翻页读全", len(recovery_messages("tok", "t1")), 2))
+    return out
+
+
 def self_test():
     """离线自测：不开网络、不取 token、不调 gh，覆盖读段和读红两条新路径。"""
     bad, total = [], 0
@@ -1934,7 +2449,8 @@ def self_test():
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
     for name, got, want in (_self_test_board() + _self_test_review() + _self_test_patterns()
-                            + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()):
+                            + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()
+                            + _self_test_recovery() + _self_test_adopt()):
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
@@ -1950,33 +2466,46 @@ def main():
         return self_test()
     room = argv[1]
     silent = int(value_of(argv, "--silent-min") or 40)
+    stopped_min = int(value_of(argv, "--stopped-min") or 3)
     skip = set((value_of(argv, "--skip") or "").split(",")) - {""}
     as_json = "--json" in argv
     as_render = "--render" in argv
     document = value_of(argv, "--sync-doc")
+    recover = "--recover-environment" in argv
     given = [name for name, on in (("--json", as_json), ("--render", as_render),
-                                   ("--sync-doc", document is not None)) if on]
+                                   ("--sync-doc", document is not None),
+                                   ("--recover-environment", recover)) if on]
     if len(given) > 1:
         raise SystemExit("、".join(given) + " 只能给一个")
     # `--sync-doc "$VAR"` with an empty VAR arrives as an id of "": counting it as the flag
     # itself (not as absent) is what makes it say so, instead of quietly never syncing.
     if document is not None and not document.strip():
         raise SystemExit("--sync-doc 后面要给一个文档号")
+    # 判据只在要它的那一轮跑：不给这两个开关的调用，做的还是它一直做的那几次调用。
+    auto_accept = "--auto-accept" in argv
+    judge = auto_accept or "--auto-accept-check" in argv
     tok = login()
+    me = os.environ["OKCHEESE_USER"] if judge else None
     now = datetime.now(timezone.utc)
-    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document))
+    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document),
+                        adopt=me, stopped_min=stopped_min)
+    if auto_accept:
+        apply_auto_accept(tok, rows, me)
     if as_json:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(json.dumps(board_json(rows, metrics, room, silent, skip, now), ensure_ascii=False, indent=2))
+        print(json.dumps(board_json(rows, metrics, room, silent, skip, now, stopped_min),
+                         ensure_ascii=False, indent=2))
         return
     if as_render:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(render(rows, metrics, silent, now, room))
+        print(render(rows, metrics, silent, now, room, stopped_min))
         return
     text(rows)
+    if recover:
+        recover_environment(tok, room, rows)
     if document:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(sync_doc(tok, document, render(rows, metrics, silent, now, room)))
+        print(sync_doc(tok, document, render(rows, metrics, silent, now, room, stopped_min)))
 
 
 if __name__ == "__main__":

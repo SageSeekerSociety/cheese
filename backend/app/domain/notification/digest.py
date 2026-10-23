@@ -48,8 +48,9 @@ from app.domain.notification.letter import (
 )
 from app.domain.notification.maintenance import display_names
 from app.domain.notification.models import ChannelDelivery
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.outbox import LEASE_SECONDS
-from app.domain.notification.preferences import DigestCadence, EmailMode
+from app.domain.notification.preferences import DigestCadence, EmailMode, Preferences
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.user.models import User
 
@@ -85,6 +86,11 @@ async def send_digest_email(
     async with sessions() as session:
         email = await session.scalar(select(User.email).where(User.id == receiver_id))
         names = [await display_names(session, item.get("payload")) for item in items]
+        # An email names people by name, not by the room's <@handle> token.
+        people = await names_for(session, *(item.get("payload") for item in items))
+    items = [
+        {**item, "payload": with_names(item.get("payload"), people)} for item in items
+    ]
     if not email or is_placeholder_email(email):
         logger.warning("摘要收件人 %s 没有可用邮箱", receiver_id)
         return False
@@ -101,12 +107,15 @@ async def send_digest_email(
 
 
 async def _claim_due_digest(
-    sessions: SessionFactory, receiver_id: int, *, now: datetime
+    sessions: SessionFactory,
+    receiver_id: int,
+    pref: Preferences,
+    *,
+    now: datetime,
 ) -> tuple[uuid.UUID, list[dict[str, Any]]] | None:
     """这个人的摘要攒够他的周期了吗？够了就认领，返回 (令牌, 内容)；没够返回 None。"""
     stamp = datetime.now(UTC)
     async with sessions() as session:
-        pref = await PreferencesRepository(session).for_user(receiver_id)
         period = _PERIOD.get(pref.digest_cadence)
         # 关掉了摘要、或把邮件整个关掉了：这一轮不带他的。
         if period is None or pref.email_mode is EmailMode.off:
@@ -182,8 +191,13 @@ async def run_notification_digests(
                 .distinct()
             )
         )
+        preferences = await PreferencesRepository(session).for_users(receivers)
     for receiver_id in receivers:
-        claimed = await _claim_due_digest(sessions, receiver_id, now=now)
+        pref = preferences[receiver_id]
+        period = _PERIOD.get(pref.digest_cadence)
+        if period is None or pref.email_mode is EmailMode.off:
+            continue
+        claimed = await _claim_due_digest(sessions, receiver_id, pref, now=now)
         if claimed is None:
             continue
         token, items = claimed

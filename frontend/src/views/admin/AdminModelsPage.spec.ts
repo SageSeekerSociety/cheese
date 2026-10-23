@@ -41,6 +41,8 @@ const updateGatewaySource = vi.fn()
 const deleteGatewaySource = vi.fn()
 const setGatewaySourceBlocked = vi.fn()
 const reorderGatewaySources = vi.fn()
+const getPlatformRoles = vi.fn()
+const setPlatformRole = vi.fn()
 
 // 整块换掉 `@/api`，**不走 `importActual`**：真模块会一路 import 到 i18n 的 barrel，
 // 而那一层要 `createI18n`，与本文件对 vue-i18n 的透传 mock 直接冲突（收集阶段就崩）。
@@ -61,6 +63,8 @@ vi.mock('@/api', () => ({
   deleteGatewaySource: (...a: unknown[]) => deleteGatewaySource(...a),
   setGatewaySourceBlocked: (...a: unknown[]) => setGatewaySourceBlocked(...a),
   reorderGatewaySources: (...a: unknown[]) => reorderGatewaySources(...a),
+  getPlatformRoles: (...a: unknown[]) => getPlatformRoles(...a),
+  setPlatformRole: (...a: unknown[]) => setPlatformRole(...a),
 }))
 const setGatewayModelTier = vi.fn()
 vi.mock('@/api/adminCredits', () => ({ setGatewayModelTier: (...a: unknown[]) => setGatewayModelTier(...a) }))
@@ -200,6 +204,8 @@ beforeEach(() => {
   deleteGatewaySource.mockReset().mockResolvedValue({ deleted: true })
   setGatewaySourceBlocked.mockReset().mockResolvedValue({ blocked: true })
   reorderGatewaySources.mockReset().mockResolvedValue({})
+  getPlatformRoles.mockReset().mockResolvedValue({ roles: [] })
+  setPlatformRole.mockReset().mockResolvedValue({})
 })
 afterEach(cleanup)
 
@@ -354,6 +360,16 @@ describe('模型管理 · 危险动作', () => {
     await waitFor(() => expect(deleteGatewayModel).toHaveBeenCalledWith('glm-4.7-runtime'))
   })
 
+  it('平台模型角色跑在上面的模型：删除前先列出那些角色', async () => {
+    getGatewayModels.mockResolvedValue(modelsPayload([runtimeModel({ roles: ['voice_asr_model'] })]))
+    const page = mountPage()
+    await page.findByText('GLM 4.7')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.table.action.delete' }))
+    expect(await page.findByText('models.caution.roles')).toBeTruthy()
+    expect(deleteGatewayModel).not.toHaveBeenCalled()
+  })
+
   it('config 来源的模型那一行只读：不给编辑/删除/停用按钮，给「查看改法」入口', async () => {
     getGatewayModels.mockResolvedValue(modelsPayload([configModel()]))
     const page = mountPage()
@@ -390,6 +406,8 @@ describe('模型管理 · 写失败', () => {
     await page.findByText('models.dialog.add.title')
     await fireEvent.update(page.getByLabelText('models.dialog.field.name'), 'glm-4.7-x')
     await fireEvent.update(page.getByLabelText('models.dialog.field.upstreamModel'), 'anthropic/glm-4.7')
+    await fireEvent.update(page.getByLabelText('models.price.input'), '1')
+    await fireEvent.update(page.getByLabelText('models.price.output'), '2')
     await fireEvent.click(page.getByRole('button', { name: 'models.dialog.create' }))
 
     expect(await page.findByText(/缺输出单价/)).toBeTruthy()
@@ -550,6 +568,24 @@ describe('模型管理 · 线路', () => {
     return page
   }
 
+  it('改一条线路的价：先列出改前改后，取消什么都不发，确认才写', async () => {
+    const page_ = await openDrawer()
+    await fireEvent.click(await page_.findByRole('button', { name: 'models.source.action.edit' }))
+    await page_.findByText('models.source.dialog.editTitle')
+    await fireEvent.update(page_.getByLabelText('models.price.input'), '3')
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.save' }))
+
+    expect(await page_.findByText(/models\.priceChange\.line/)).toBeTruthy()
+    expect(updateGatewaySource).not.toHaveBeenCalled()
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.cancel' }))
+    expect(updateGatewaySource).not.toHaveBeenCalled()
+
+    await fireEvent.click(page_.getByRole('button', { name: 'models.dialog.save' }))
+    await fireEvent.click(await page_.findByRole('button', { name: 'models.priceChange.confirm' }))
+    await waitFor(() => expect(updateGatewaySource).toHaveBeenCalledTimes(1))
+    expect(updateGatewaySource.mock.calls[0][2].prices.input).toBeCloseTo(3e-6)
+  })
+
   it('删除线路先确认，确认之后才删那一条', async () => {
     const page = await openDrawer()
 
@@ -638,5 +674,31 @@ describe('模型管理 · 新建模型发出去的请求体', () => {
       free: false,
       prices: { input: 1e-6, output: 2e-6, cache_read: null, cache_creation: null },
     })
+  })
+})
+
+describe('模型管理 · 平台模型角色', () => {
+  const voice = {
+    role: 'voice_asr_model',
+    model: 'qwen-audio-asr',
+    fallback: 'qwen-audio-asr',
+    chosen: false,
+    offered_only: false,
+  }
+
+  it('把一个角色指到另一个模型：发出去的是那个角色和那个模型，然后角色与模型表都重拉', async () => {
+    getPlatformRoles.mockResolvedValue({ roles: [voice] })
+    const page = mountPage()
+    const select = await page.findByRole('combobox', { name: 'models.roles.role.voice_asr_model' })
+    await page.findByText('GLM 4.7')
+    const before = getGatewayModels.mock.calls.length
+
+    await fireEvent.mouseDown(select)
+    const menu = await within(document.body).findByRole('listbox')
+    await fireEvent.click(within(menu).getByText('GLM 4.7 (glm-4.7-runtime)'))
+
+    await waitFor(() => expect(setPlatformRole).toHaveBeenCalledWith('voice_asr_model', 'glm-4.7-runtime'))
+    await waitFor(() => expect(getGatewayModels.mock.calls.length).toBeGreaterThan(before))
+    expect(getPlatformRoles.mock.calls.length).toBeGreaterThan(1)
   })
 })

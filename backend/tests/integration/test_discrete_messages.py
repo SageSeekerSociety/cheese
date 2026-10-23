@@ -11,6 +11,7 @@ from tests.integration.conftest import (
     post_project,
     room_socket,
 )
+from tests.support.session_records import assistant_texts, records
 
 
 class MultiMessageScreen(StubChannel):
@@ -59,7 +60,7 @@ def _run_turn(client) -> tuple[str, list[dict]]:
     return t["id"], frames
 
 
-def test_each_message_boundary_lands_as_own_block(client):
+def test_each_message_boundary_is_retained_in_the_session_record(client):
     topic_id, frames = _run_turn(client)
 
     # No delta frames ever reach the chat; messages arrive as they complete,
@@ -73,25 +74,21 @@ def test_each_message_boundary_lands_as_own_block(client):
     assert types == [
         "user_block",
         "turn_started",  # explicit lifecycle for every open client
-        "event_block",  # execution note
-        "event_block",  # the tool call, as the 现场 record of it
-        "event_block",  # complete final text retained in activity
         "done",
     ]
 
-    user_block = next(f for f in frames if f["type"] == "user_block")["block"]
-    first, second = [
-        f["block"]
-        for f in frames
-        if f["type"] == "event_block" and f["block"]["meta"].get("progress")
-    ]
-    assert first["content"] == "我先查一下代码，稍等"
-    assert second["content"] == "查完了：一共 3 处 TODO"
-    assert first["id"] != second["id"]
-    assert first["meta"]["in_room"] is False
-    assert second["meta"]["in_room"] is False
+    kept = records(client, topic_id)
+    assert assistant_texts(kept) == ["我先查一下代码，稍等", "查完了：一共 3 处 TODO"]
+    messages = [item for item in kept if item["record"].get("type") == "assistant"]
+    assert len({item["sequence"] for item in messages}) == 3
+    assert messages[1]["record"]["message"]["content"][0]["name"] == "Grep"
     assert not any(f["type"] == "assistant_block" for f in frames)
-    assert first["reply_to"] == user_block["id"]
+    asked = next(f for f in frames if f["type"] == "user_block")["block"]
+    turn = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"][0]["meta"][
+        "consumed_turn"
+    ]
+    assert {item["turn_id"] for item in messages} == {turn}
+    assert asked["author"] == "alice"
 
 
 def test_result_text_is_not_duplicated_as_extra_block(client):
@@ -115,7 +112,11 @@ def test_stop_only_text_stays_in_activity(client, stub_hooks):
     stub_hooks.emit_turn = _plain  # type: ignore[method-assign]
     topic_id, frames = _run_turn(client)
     assert not any(f["type"] == "assistant_block" for f in frames)
-    assistant = [f["block"] for f in frames if f["type"] == "event_block"]
-    assert len(assistant) == 1
-    assert assistant[0]["content"] == "Hello world"
-    assert assistant[0]["meta"]["in_room"] is False
+    assert not [f for f in frames if f["type"] == "event_block"]
+    stopped = [
+        item
+        for item in records(client, topic_id)
+        if item["record"].get("type") == "result"
+    ]
+    assert len(stopped) == 1
+    assert stopped[0]["record"]["result"] == "Hello world"

@@ -1,6 +1,6 @@
-// 文档里的 @ 和 #：打 @ 挑一个人，打 # 挑一个话题。写进正文的是引用本身
+// 文档里的 @ 和 #：打 @ 挑一个人，打 # 挑一个频道或一份文档。写进正文的是引用本身
 // （`<@账号>`、`<#话题编号>`，lib/refChip.ts），画出来是带名字的标签
-// （lib/docDecorations.ts 的 createTokenChips）。
+// （lib/tokenChips.ts 的 createTokenChips）。
 //
 // 对话输入框写进去的是「@名字」，发送时才换成引用；文档没有发送这一步，正文直接
 // 协同同步出去，所以挑中的那一刻就写引用。写成名字的话，它永远只是一串字。
@@ -27,11 +27,14 @@ export interface RefItem extends MentionItem {
 const LIMIT = 7
 
 /** 打 @ 时的候选，按名字或账号搜。人在前、AI 队友在后：对话里 @ 芝士是叫它干活，
- *  所以它排第一；文档里的 @ 只是写下这是谁（负责人、找谁确认），写的多半是人。 */
+ *  所以它排第一；文档里的 @ 只是写下这是谁（负责人、找谁确认），写的多半是人。
+ *
+ *  人**不截断**：菜单自己有高度上限、自己滚，截在这一层等于名单第 8 个人以后永远
+ *  选不到。话题和文档还是各取几条——它们和人是两类东西，搜索时挤在一起更难看。 */
 export function peopleItems(pool: MentionPoolEntry[], query: string): RefItem[] {
   const q = query.toLowerCase()
   const found = pool.filter((p) => p.label.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q))
-  return [...found.filter((p) => !p.agent), ...found.filter((p) => p.agent)].slice(0, LIMIT).map((p) => ({
+  return [...found.filter((p) => !p.agent), ...found.filter((p) => p.agent)].map((p) => ({
     label: p.label,
     kind: 'member',
     insert: p.handle,
@@ -59,6 +62,40 @@ export function topicItems(topics: Topic[], query: string): RefItem[] {
       agent: false,
       token: `<#${tp.id}>`,
     }))
+}
+
+/** 一份能被引用的文档：编号、标题和最近改动的时间（文档本身的 id 写进引用）。 */
+export interface LinkableDocument {
+  id: string
+  title: string | null
+  updated_at?: string | null
+}
+
+/** 打 # 时的文档候选，按标题搜。只列读的人能读的（宿主给进来的就是）。 */
+export function documentItems(docs: LinkableDocument[], query: string, exclude?: string | null): RefItem[] {
+  const q = query.toLowerCase()
+  return docs
+    .filter((d) => d.id !== exclude && (d.title || t('work.room.doc.untitled')).toLowerCase().includes(q))
+    .slice(0, LIMIT)
+    .map((d) => ({
+      label: d.title || t('work.room.doc.untitled'),
+      kind: 'document',
+      insert: d.id,
+      sub: '',
+      agent: false,
+      token: `<#${d.id}>`,
+    }))
+}
+
+/** 打 # 时的全部候选：频道一组、文档一组。两组都有时才写组名。 */
+export function hashItems<T extends MentionItem>(topics: T[], docs: T[]): T[] {
+  if (!topics.length || !docs.length) return [...topics, ...docs]
+  const channel = t('work.room.mention.channelGroup')
+  const doc = t('work.room.mention.docGroup')
+  return [
+    ...topics.slice(0, 4).map((i) => ({ ...i, group: channel })),
+    ...docs.slice(0, 5).map((i) => ({ ...i, group: doc })),
+  ]
 }
 
 export interface RefMenuHandlers {

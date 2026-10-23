@@ -49,7 +49,7 @@ ${moved ? `<script>(function(m){function go(){var to=m[decodeURIComponent(locati
     <button class="search-btn" data-open-search>${ic('search')}<span>搜索</span><kbd>⌘K</kbd></button>
     <button class="ghost-btn" data-open-ask>${ic('chat')}<span>问芝士</span></button>
     <button class="icon-btn" id="themeBtn" aria-label="切换深浅色"><span class="theme-ico">${ic('sun').replace('class="ico"', 'class="ico sun"')}${ic('moon').replace('class="ico"', 'class="ico moon"')}</span></button>
-    <a class="btn btn-primary hide-sm" href="${PLATFORM}/">进入知是</a>
+    <a class="btn btn-primary hdr-enter" href="${PLATFORM}/">进入知是</a>
   </div>
 </header>
 <div id="main">${main}</div>
@@ -187,13 +187,13 @@ export function downloadPage(ctx, desktop) {
      ${card('macOS', 'Intel 芯片', [['下载 .dmg', 'Cheese-x64.dmg']], '打开 .dmg，把 Cheese 拖进「应用程序」。')}
      ${card('Windows', 'x64', [['下载安装程序', 'Cheese-Setup-x64.exe']], '运行安装程序，按提示完成。')}
     </div>
-    <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后在「我的设备 → 添加设备」点「接入这台电脑」，芝士就能在这台电脑上干活。</p>
+    <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后进入你管理的团队，在「设备」页点「接入设备」，再点「接入这台电脑」。</p>
     <p>桌面端每次启动都会检查新版本，下载完成后自动安装并重启。当前版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
     <h2 id="connector">连接器<a class="anchor" href="#connector">#</a></h2>
     <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#add-device">接入服务器或其他机器</a>。</p>
     <div class="code"><div class="code-bar"><span class="code-lang">Mac / Linux</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="c"># 安装连接器 cheesehost</span>
 curl -fsSL https://okcheese.com/connector/install.sh | sh
-<span class="c"># 登录并保持连接：打开它给出的链接，点「批准并绑定到我」</span>
+<span class="c"># 登录并保持连接：打开给出的链接，选择团队，点「批准接入」</span>
 <span class="k">cheesehost</span> link connect https://okcheese.com/connector
 <span class="c"># 查看登录与连接状态</span>
 <span class="k">cheesehost</span> status</pre></div>

@@ -8,8 +8,6 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
-# 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
     apply_task_default_role,
@@ -30,18 +28,16 @@ from app.domain.space.repositories import (
 from app.domain.task.inputs import (
     map_submitter_type,
 )
+from app.domain.task.mentors import require_consent, set_mentors
+from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
 
-
-class ConfirmTaskPublishFromPdfRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    drafts: list[dict]
-    task_options: dict = Field(alias="taskOptions")
+# 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
+# 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 
 
 class CreateTaskRequest(BaseModel):
@@ -68,6 +64,9 @@ class CreateTaskRequest(BaseModel):
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
     )
+    # 评分要点：每行 ``{item, points, criteria}``，见 app.domain.task.rubric。
+    rubric: list[dict] = Field(default_factory=list)
+    rubric_public: bool = Field(default=True, alias="rubricPublic")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -81,6 +80,9 @@ class CreateTaskRequest(BaseModel):
     # 这道题自己的默认队友类型名 (#944)，盖过 项目集 那份。省略 = 不设（沿用上层）；
     # 给了（含空串 = 明说「不要」）就整份替换掉这一格。
     default_role: str | None = Field(default=None, alias="defaultRole")
+    # Who joins every claimer's project as a mentor (#3830): the publisher or
+    # an admin of the space. Empty = nobody.
+    mentors: list[str] = Field(default_factory=list)
 
 
 class TaskParticipantRequest(BaseModel):
@@ -94,6 +96,8 @@ class TaskParticipantRequest(BaseModel):
     apply_reason: str | None = Field(default=None, alias="applyReason")
     personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
     remark: str | None = None
+    # The claimer agrees to the task's mentors joining their project (#3830).
+    agree_mentors: bool = Field(default=False, alias="agreeMentors")
 
 
 class JoinTaskAsTeamRequest(BaseModel):
@@ -106,6 +110,7 @@ class JoinTaskAsTeamRequest(BaseModel):
     apply_reason: str | None = Field(default=None, alias="applyReason")
     personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
     remark: str | None = None
+    agree_mentors: bool = Field(default=False, alias="agreeMentors")
 
 
 class PatchTaskParticipantRequest(BaseModel):
@@ -149,6 +154,9 @@ class PatchTaskRequest(BaseModel):
     team_locking_policy: str | None = Field(default=None, alias="teamLockingPolicy")
     category_id: int | None = Field(default=None, alias="categoryId")
     submission_schema: list[dict] | None = Field(default=None, alias="submissionSchema")
+    # 评分要点：给了就整份替换，省略不动。
+    rubric: list[dict] | None = None
+    rubric_public: bool | None = Field(default=None, alias="rubricPublic")
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
@@ -165,6 +173,8 @@ class PatchTaskRequest(BaseModel):
     # 这道题自己的默认队友类型名 (#944)。省掉 = 不动；给了（含空串）就替换这一格，
     # 与 `teaching` 同一条整键语义。
     default_role: str | None = Field(default=None, alias="defaultRole")
+    # The whole list of mentors; omitted leaves it as it is.
+    mentors: list[str] | None = None
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -212,6 +222,8 @@ async def _create_task_entity(
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
+        rubric_raw = payload.rubric
+        rubric_public = payload.rubric_public
         teaching = coerce_teaching(payload.teaching)
         default_role = payload.default_role
     else:
@@ -308,6 +320,15 @@ async def _create_task_entity(
         default_role_raw = payload.get("defaultRole")
         default_role = default_role_raw if isinstance(default_role_raw, str) else None
 
+        rubric_raw = payload.get("rubric") or []
+        rubric_public = bool(payload.get("rubricPublic", True))
+
+    rubric = rubric_lines(
+        [e for e in rubric_raw if isinstance(e, dict)]
+        if isinstance(rubric_raw, list)
+        else []
+    )
+
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
@@ -343,9 +364,8 @@ async def _create_task_entity(
     # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
-    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里而不是两个
-    # 路由各写一遍，是因为 ``POST /tasks`` 与 PDF 批量发布
-    # （``publish/from-pdf/confirm``）都从这里走，漏掉任一条就等于少了半道门。
+    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
+    # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):
@@ -390,6 +410,7 @@ async def _create_task_entity(
     apply_task_teaching(task, teaching)
     # 题目级默认队友 (#944)：同一份覆盖里的另一格，语义同上；省掉 = 不写。
     apply_task_default_role(task, default_role)
+    task.rubric_public = rubric_public
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
@@ -417,5 +438,18 @@ async def _create_task_entity(
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
+    if rubric:
+        await task_service.replace_rubric(task.id, rubric)
 
     return task
+
+
+async def set_task_mentors(
+    db, *, task, handles: list[str], creator_user_id: int | None
+) -> None:
+    """Record the task's mentors (`app.domain.task.mentors`)."""
+    await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
+
+
+async def require_mentor_consent(db, *, task, agreed: bool) -> None:
+    await require_consent(db, task=task, agreed=agreed)

@@ -15,6 +15,9 @@ def build() -> bytes:
         "app.domain.agent.harness.codex.entry",
         (
             "domain/agent/executor_transport.py",
+            # What the transport reads from beside itself for a task's checkout.
+            "domain/agent/task_checkout.py",
+            "domain/agent/pr_creation.py",
             "domain/agent/harness/codex/app_server.py",
             "domain/agent/harness/codex/session.py",
             "domain/agent/harness/codex/journal.py",

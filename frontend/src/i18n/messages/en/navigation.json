@@ -12,7 +12,6 @@
     "general": "General",
     "routines": "Routines",
     "skills": "Skills",
-    "channelFiles": "Channel files",
     "pages": "Project pages",
     "overview": "Overview",
     "tasks": "All tasks"
@@ -41,7 +40,7 @@
     "members": "Members",
     "integrations": "Feishu app",
     "featureStats": "Feature data",
-    "ratchet": "Ratchet",
+    "ciActivity": "CI and merge queue",
     "credits": "Plans & credits",
     "runRecords": "Run records",
     "machines": "Machines",
@@ -67,12 +66,13 @@
     "appearance": "Appearance",
     "language": "Language",
     "logout": "Log out",
-    "noIntro": "No bio yet",
     "theme": {
       "system": "System",
       "light": "Light",
       "dark": "Dark"
     },
+    "invites": "Invite friends",
+    "seatsLeft": "{n} left",
     "archivedProjects": "Archived projects",
     "download": "Download apps",
     "usePhone": "Use on your phone"
@@ -133,7 +133,8 @@
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",
     "searchAll": "View all results",
-    "weekly": "Weekly report"
+    "weekly": "Weekly report",
+    "spaceTasks": "Tasks in spaces"
   },
   "sidebar": {
     "resize": "Drag to resize",

@@ -62,7 +62,12 @@ async def say_in(
 async def _line(
     session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
-    """Say it in the conversation: a person has something to do."""
+    """Say it in the conversation: a person has something to do. A person's
+    own 芝士 conversation has no lines of the platform's in it; its 芝士 hears
+    on its next tool call that the sandbox is a new one (``LOST_KEY``) and
+    tells its person, and the line is kept as a record."""
+    if home.project_id is None:
+        return await _record(session, home, content, meta)
     return await say_in(
         session,
         await _conversation(session, home),
@@ -155,47 +160,6 @@ async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
         session,
         home,
         say("sandboxReleasedNoCredits"),
-        {"event_type": "sandbox_asleep", "severity": "warn"},
-    )
-
-
-async def tell_disk_full(
-    session: AsyncSession, home: SandboxHome, *, gb: str, files: str, where: str
-) -> dict | None:
-    """The machine's disk was nearly full and this sandbox held the most of it
-    (``disk_guard``): what it held, and where, so its agent can tell what to
-    stop leaving behind."""
-    return await _line(
-        session,
-        home,
-        say("sandboxReleasedDiskFull", gb=gb, files=files, where=where),
-        {"event_type": "sandbox_asleep", "severity": "warn"},
-    )
-
-
-async def tell_over_budget(
-    session: AsyncSession,
-    home: SandboxHome,
-    *,
-    gb: str,
-    files: str,
-    where: str,
-    limit_gb: str,
-    limit_files: str,
-) -> dict | None:
-    """This sandbox held more of its host's disk than one sandbox may
-    (``disk_guard``): what it held, where, and the limit."""
-    return await _line(
-        session,
-        home,
-        say(
-            "sandboxReleasedOverBudget",
-            gb=gb,
-            files=files,
-            where=where,
-            limit_gb=limit_gb,
-            limit_files=limit_files,
-        ),
         {"event_type": "sandbox_asleep", "severity": "warn"},
     )
 

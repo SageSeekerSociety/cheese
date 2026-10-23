@@ -6,6 +6,10 @@
 是池子巡检（``HostPool.maintain`` / ``refresh_due``）上次从 MicroCloud 读到的，不是
 这一刻去问的；连接器在不在线读的是本进程的 device hub。
 
+宿主机和沙箱此刻用了多少读磁盘巡检留下的读数（``readings.py``）：每台宿主机最近一次
+读数和之前几个小时的形状，每个沙箱最近一次的内存和磁盘。读数有多旧也给出来，过期的
+读数一眼看得出。
+
 过去一天的部分读运行记录：一个沙箱开始准备时记一条 ``cloud_startup``，就绪时记一条
 ``cloud_provisioning``（``progress.py``），两条都带 ``home``。按 ``home`` 配对，就
 是一个会话等沙箱等了多久。会话被拒（``cloud_refused``）和宿主机被放弃
@@ -25,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.agent.environment import spec_of
-from app.domain.machine import infra_records
+from app.domain.machine import infra_records, readings
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
@@ -44,6 +48,9 @@ HISTORY = timedelta(hours=24)
 #: 最近一次工具调用在这之内，沙箱算「工作中」；``active_at`` 最多一分钟挪一次
 #: （``services.ACTIVE_STEP``），所以至少两分钟。
 WORKING_WITHIN = timedelta(minutes=2)
+
+#: 沙箱用到上限的这一份，页面上标出来。
+NEAR_CAP = 0.8
 
 #: 项目叫什么、房间叫什么：只读这两列，不为它把项目、话题领域拉进来。
 _projects = table("projects", column("id", Uuid), column("name", String))
@@ -109,7 +116,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 async def _names(
     session: AsyncSession, homes: list[SandboxHome], hosts: list[CloudHost]
 ) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
-    project_ids = {h.project_id for h in homes} | {
+    project_ids = {h.project_id for h in homes if h.project_id is not None} | {
         h.project_id for h in hosts if h.project_id is not None
     }
     room_ids = {h.topic_id for h in homes}
@@ -239,6 +246,11 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         assert home.host_id is not None
         by_host[home.host_id].append(home)
 
+    usage = await readings.hosts_now(
+        session, [h for h in hosts if h.released_at is None], now
+    )
+    sandbox_usage = await readings.sandboxes_now(session, [h.id for h in homes])
+
     def online(device_id: str | None) -> bool:
         return device_id is not None and hub.is_online(device_id)
 
@@ -270,13 +282,19 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "released_at": _iso(host.released_at),
                 "enroll_attempts": host.enroll_attempts,
                 "enroll_error": host.enroll_error or None,
+                "usage": usage.get(host.id),
                 "sandboxes": [
                     {
                         "id": str(home.id),
                         "spec": home.spec,
                         "state": sandbox_state(home, now),
-                        "project_id": str(home.project_id),
-                        "project": projects.get(home.project_id),
+                        # None for a sandbox of a person's own conversation.
+                        "project_id": (
+                            str(home.project_id) if home.project_id else None
+                        ),
+                        "project": (
+                            projects.get(home.project_id) if home.project_id else None
+                        ),
                         "room_id": str(home.topic_id),
                         "room": rooms.get(home.topic_id),
                         "placed_at": _iso(home.created_at),
@@ -284,6 +302,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                         "active_at": _iso(home.active_at),
                         "stopped_at": _iso(home.stopped_at),
                         "idle_deadline": _iso(_idle_deadline(home)),
+                        "usage": sandbox_usage.get(home.id),
                     }
                     for home in on
                 ],
@@ -339,6 +358,12 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "sandbox_idle_s": settings.cloud_sandbox_idle_stop_s,
             "host_idle_hold_s": settings.cloud_host_idle_hold_s,
             "vm_idle_s": settings.cloud_vm_idle_release_s,
+            "sandbox_disk_budget_gb": settings.cloud_sandbox_disk_budget_gb,
+            "sandbox_inode_budget": settings.cloud_sandbox_inode_budget,
+            "near_cap": NEAR_CAP,
+            "check_s": settings.sandbox_disk_check_s,
+            "alert_used": dict(readings.LINES),
+            "history_step_s": int(readings.STEP.total_seconds()),
         },
         "hosts": host_rows,
         "warm": [
@@ -346,6 +371,10 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "id": str(w.id),
                 "state": w.state,
                 "machine_id": w.machine_id,
+                "hostname": w.create_request.get("hostname"),
+                "cores": w.create_request.get("cores"),
+                "memory_mb": w.create_request.get("memoryMb"),
+                "disk_gb": w.create_request.get("diskGb"),
                 "ip": w.ip,
                 "online": online(w.device_id),
                 "created_at": _iso(w.created_at),

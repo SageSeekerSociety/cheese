@@ -602,6 +602,22 @@ class TestWhoseMove:
         assert v.state == "unstable"
         assert whose_move(v) == "agent"
 
+    def test_a_running_check_outside_the_required_list_leaves_it_to_the_human(self):
+        """unstable 是「可以采纳」：必跑那条已经绿了，还在跑的是非必跑检查。
+
+        它不挡合并，采纳按钮是亮的 —— 下一步在验收人手上，不是「等 CI」。真实
+        现场（2026-10-21，#4562）：两个 job 的每一步都绿了、run 也结束了，GitHub
+        却一直把它们报成 in_progress；写成 ci 会让那张卡永远显示「等检查」。
+        """
+        v = self._verdict(
+            github_mergeable_state="unstable",
+            github_mergeable=True,
+            check_runs=[_green("test"), _running("scope")],
+            required_checks=[RequiredCheck(name="test")],
+        )
+        assert v.state == "unstable"
+        assert whose_move(v) == "human"
+
     def test_required_check_missing_waits_on_ci(self):
         v = self._verdict(
             github_mergeable_state="unstable",
@@ -651,8 +667,12 @@ class TestWhoseMove:
 # ---- 读镜像：还在等 CI 吗（`checks_running`，环境释放判据读它）----------------
 
 _LOOKED = datetime(2026, 10, 12, 0, 0, tzinfo=UTC)
-#: 三个轮询间隔（`queries.CHECK_WATCH_TICKS` 乘 `accept_pr_poll_interval_s`）。
-_FRESH = timedelta(minutes=15)
+#: 生产那个窗口：`queries.CHECK_WATCH_TICKS` 个轮询间隔（3 ×
+#: `accept_pr_poll_interval_s`，默认共 180s）。`checks_running` 把窗口当参数
+#: 收，这几条用例量的是它的边界，所以窗口取默认那一个就够，不跟着设置走；
+#: 边界本身按 `_FRESH` 算（见 `test_the_window_is_measured_from_…`），
+#: 不另抄一份「3 分钟」。
+_FRESH = timedelta(minutes=3)
 
 
 def _mirror(**over: object) -> dict:
@@ -676,13 +696,14 @@ def _at(minutes: float) -> datetime:
 
 
 def test_a_fresh_mirror_saying_ci_runs_is_waiting_on_ci():
-    assert checks_running(_mirror(), now=_at(4), fresh_for=_FRESH)
+    assert checks_running(_mirror(), now=_at(1), fresh_for=_FRESH)
 
 
 def test_the_window_is_measured_from_when_the_poller_last_looked():
     """边界上是还在新鲜期内（`>` 不是 `>=`）：那正是轮询该写下一次的间隔。"""
-    assert checks_running(_mirror(), now=_at(15), fresh_for=_FRESH)
-    assert not checks_running(_mirror(), now=_at(15.1), fresh_for=_FRESH)
+    window = _FRESH.total_seconds() / 60
+    assert checks_running(_mirror(), now=_at(window), fresh_for=_FRESH)
+    assert not checks_running(_mirror(), now=_at(window + 0.1), fresh_for=_FRESH)
 
 
 @pytest.mark.parametrize(
@@ -714,7 +735,7 @@ def test_the_window_is_measured_from_when_the_poller_last_looked():
     ],
 )
 def test_a_mirror_that_does_not_say_a_fresh_ci_is_running_is_not_waited_on(mirror):
-    assert not checks_running(mirror, now=_at(4), fresh_for=_FRESH)
+    assert not checks_running(mirror, now=_at(1), fresh_for=_FRESH)
 
 
 def test_a_naive_look_stamp_reads_as_utc():
@@ -722,7 +743,7 @@ def test_a_naive_look_stamp_reads_as_utc():
     时区的旧值时当作 UTC，不是当作读不懂 —— 读不懂就成了「没在等」。"""
     assert checks_running(
         _mirror(checked_at=_LOOKED.replace(tzinfo=None).isoformat()),
-        now=_at(4),
+        now=_at(1),
         fresh_for=_FRESH,
     )
 
@@ -737,6 +758,6 @@ def test_a_mirror_saying_both_ci_runs_and_a_check_is_red_is_still_waiting_on_ci(
                 {"kind": "ci_running", "checks": ["test"], "detail": ""},
             ]
         ),
-        now=_at(4),
+        now=_at(1),
         fresh_for=_FRESH,
     )

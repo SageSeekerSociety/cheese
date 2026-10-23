@@ -15,11 +15,23 @@ broker and not in the database.
 """
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import String, Uuid, any_, bindparam, or_, select, true
+from sqlalchemy import (
+    DateTime,
+    String,
+    Uuid,
+    any_,
+    bindparam,
+    column,
+    func,
+    or_,
+    select,
+    table,
+    true,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +68,15 @@ FAILED = "failed"
 
 #: Run records on the machine side: a turn waiting for the machine it runs on.
 MACHINE_RECORDS = ("device_waiting",)
+
+# 「这个对话里的会话后来又读进了什么」：取 conversation_id 和 echoed_at 两列，一张
+# 裸表。整张 `NativeInput` 属于 delivery 域，这里要的只是它被读到的那个瞬间 —— 用
+# 裸表是为了不去 import 那个模型，block 域不必因此多一条跨域依赖。
+_INPUTS = table(
+    "native_inputs",
+    column("conversation_id", Uuid),
+    column("echoed_at", DateTime(timezone=True)),
+)
 
 
 def _among(column, values, item_type):
@@ -107,6 +128,7 @@ class MemberWaits:
         *,
         now: datetime,
         stuck_rooms: Mapping[uuid.UUID, StuckCard] | None = None,
+        threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
     ) -> dict[uuid.UUID, list[MemberWait]]:
         """{room: the members it is waiting on} — every room in one go.
 
@@ -114,11 +136,14 @@ class MemberWaits:
         already known to be broken; the others are only taking long); among the
         rest the earliest wait decides, because whoever has waited longest
         decides when the mark comes on.
+
+        ``threads``: 这些房间的支线，调用方已经问过的那一份（见
+        `topics_signals.at_work`）。没给就自己问。
         """
         if not topic_ids:
             return {}
         since = now - REPLY_LOOKBACK
-        spoke = await self._last_said(topic_ids, since)
+        spoke = await self._last_said(topic_ids, since, threads)
         waits: dict[tuple[uuid.UUID, str | None], MemberWait] = {}
 
         def keep(room: uuid.UUID, wait: MemberWait) -> None:
@@ -149,8 +174,115 @@ class MemberWaits:
             out.setdefault(room, []).append(wait)
         return out
 
+    async def unresolved_failures(
+        self, units: Mapping[uuid.UUID, Sequence[uuid.UUID]]
+    ) -> dict[uuid.UUID, datetime]:
+        """{row: when the earliest failure still unresolved in it began}.
+
+        一行 = 频道自己那条线，或一件活。`units` 把每一行映射到它由哪几段对话组成：
+        频道是它自己那条线加上它的支线（调用方已经按「还在当支线用」筛过——原地转
+        成任务的支线算另一件活，不折回频道），一件活就是它自己那条线。谁在哪段对话
+        里开口，就只算那一行的恢复：按 `units` 折，不再自己查支线表。
+
+        A failure is a platform event saying a turn ended in an error
+        (`indexed_rows.FAILED_TURN_ROWS`, the same predicate the room-waits scan
+        uses). It is unresolved until, after it, one of two things happens in the
+        row:
+
+        - the member whose turn it was speaks there again — a retry that worked,
+          or the next answer coming normally; or
+        - a session there reads an input (`native_inputs.echoed_at`): a message,
+          an instruction, or the platform's own resume of the failed work. The
+          row is being worked on again, and that is behind the failure whether
+          or not the work it was read into succeeds (work that goes quiet, or
+          fails in turn, is a *new* failure with its own clock, not the old one
+          still counting).
+
+        An input that was written to a session and never read clears nothing:
+        nothing has heard it, so nothing is working on the row. Nor does a turn
+        interval opening — the platform opening one says only that it meant to
+        start work, not that any session took it up.
+
+        Taking the earliest unresolved failure is what lets the sidebar count
+        from the moment the row broke and stay red across a retry that failed
+        again — while a recovery, silent or not, clears it. There is deliberately
+        no time window here: recovery, not elapsed time, is what ends it, so a
+        row that nobody has picked up stays red however long ago it broke.
+
+        Row-level, not conversation-level: a channel is one row even though its
+        line and its 支线 are separate conversations, so both are queried and
+        the answer folded under the row id the caller named. The caller decides
+        which rows to ask for — a channel that wants its tasks' failures too
+        passes each task as its own row and takes the earliest.
+        """
+        conversations = [c for ids in units.values() for c in ids]
+        if not conversations:
+            return {}
+        unit_of = {c: unit for unit, ids in units.items() for c in ids}
+        failures = (
+            await self._session.execute(
+                select(Block.conversation_id, Block.turn_id, Block.created_at)
+                .where(
+                    _among(Block.conversation_id, conversations, Uuid),
+                    ~participant_blocks(),
+                    FAILED_TURN_ROWS,
+                )
+                .order_by(Block.created_at)
+            )
+        ).all()
+        if not failures:
+            return {}
+        since = failures[0][2]
+        owners = await self._turn_owners(
+            conversations, since, {turn for _, turn, _ in failures if turn}
+        )
+        spoke = await self._last_said(conversations, since, unit_of)
+        read = await self._inputs_read(conversations, unit_of, since)
+        # 按 created_at 排好，所以每一行遇到的第一条失败就是它最早的那条；那一条没
+        # 恢复就是答案，恢复了就继续往后看（它之后的下一条才是现在的这一条）。
+        found: dict[uuid.UUID, datetime] = {}
+        for conversation, turn, at in failures:
+            unit = unit_of[conversation]
+            if unit in found:
+                continue
+            member = owners.get(turn) if turn else None
+            if self._answered(spoke, unit, member, at):
+                continue
+            newest_read = read.get(unit)
+            if newest_read is not None and newest_read > at:
+                continue
+            found[unit] = at
+        return found
+
+    async def _inputs_read(
+        self,
+        conversation_ids: list[uuid.UUID],
+        unit_of: Mapping[uuid.UUID, uuid.UUID],
+        since: datetime,
+    ) -> dict[uuid.UUID, datetime]:
+        """{row: when a session there last read an input} since the earliest
+        failure. Only the read counts (`echoed_at`): an input written and never
+        read was heard by nobody."""
+        stmt = (
+            select(_INPUTS.c.conversation_id, func.max(_INPUTS.c.echoed_at))
+            .where(
+                _among(_INPUTS.c.conversation_id, conversation_ids, Uuid),
+                _INPUTS.c.echoed_at >= since,
+            )
+            .group_by(_INPUTS.c.conversation_id)
+        )
+        newest: dict[uuid.UUID, datetime] = {}
+        for conversation, at in (await self._session.execute(stmt)).all():
+            unit = unit_of[conversation]
+            if unit not in newest or at > newest[unit]:
+                newest[unit] = at
+        return newest
+
     async def _last_said(
-        self, topic_ids: list[uuid.UUID], since: datetime
+        self,
+        topic_ids: list[uuid.UUID],
+        since: datetime,
+        threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
     ) -> dict[tuple[uuid.UUID, str], datetime]:
         """{(room, agent): when it last said something of the room's own} — the
         room's main line and its 支线.
@@ -161,7 +293,8 @@ class MemberWaits:
         board of its own with a card of its own, and what is said on one is not
         the room's own doings.
         """
-        threads = await threads_of_rooms(self._session, topic_ids)
+        if threads is None:
+            threads = await threads_of_rooms(self._session, topic_ids)
         # 筛选条件用字面量（`indexed_rows.LAST_SAID_ROWS`），和部分索引的谓词逐字
         # 相同 —— ORM 那版把 `kind`、`author_type`、署名前缀都绑成参数，缓存下来的
         # 通用计划看不见它们，就证不出这条查询蕴含索引的 WHERE，索引被绕过（实测）。

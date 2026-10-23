@@ -1,0 +1,9 @@
+{
+  "offline": "离线",
+  "online": "在线",
+  "os": {
+    "unix": "Mac / Linux",
+    "windows": "Windows（PowerShell）"
+  },
+  "renameFailed": "重命名失败"
+}

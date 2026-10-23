@@ -41,9 +41,9 @@ from tests.integration.conftest import registered
 from tests.integration.test_switch_pushes_first import (
     _environment,
     _machines,
-    _owner_id,
     _room,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -215,7 +215,7 @@ async def test_an_agent_changes_only_its_own_environment_and_only_to_a_sandbox(
     room = await _room(client)
     other = await _second_agent(client, room)
     _machines(monkeypatch)
-    mine = {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"}
+    mine = {"kind": "sandbox", "spec": "team_devices"}
 
     on_another = client.put(other.path, headers=room.agent, json={"environment": mine})
     unisolated = client.put(
@@ -252,27 +252,26 @@ async def test_only_a_computers_owner_runs_an_agent_on_it_unisolated(
     assert by_owner.status_code == 200, by_owner.text
 
 
-async def test_a_persons_computers_are_offered_while_one_can_make_a_sandbox(client):
+async def test_team_computers_are_offered_while_one_can_make_a_sandbox(client):
     room = await _room(client)
-    owner = await _owner_id(client)
     path = f"/topics/{room.topic_id}/environment"
 
     def offered():
         data = client.get(path, headers=room.person).json()["data"]
         return {spec["spec"]: spec["label"] for spec in data["specs"]}
 
-    assert offered()[f"devices_of:{owner}"] == "alice的设备"
+    assert offered()["team_devices"] == "团队设备"
     async with client.test_factory() as db:
         devices = sql_device_service(db)
         for device in (room.old_device, room.new_device):
             await devices.record_sandbox_check(device, isolates=False, reason=None)
         await db.commit()
 
-    assert f"devices_of:{owner}" not in offered()
+    assert "team_devices" not in offered()
     refused = client.put(
         f"/topics/{room.topic_id}/environment-default",
         headers=room.person,
-        json={"environment": {"kind": "sandbox", "spec": f"devices_of:{owner}"}},
+        json={"environment": {"kind": "sandbox", "spec": "team_devices"}},
     )
     assert refused.status_code in (400, 422), refused.text
 
@@ -318,18 +317,18 @@ async def _none():
     return None
 
 
-async def test_one_persons_sandbox_never_lands_on_anothers_computer(
+async def test_a_team_sandbox_never_lands_on_another_teams_computer(
     client, monkeypatch
 ):
     room = await _room(client)
     async with client.test_factory() as db:
         bob = await registered(db, "bob")
         devices = sql_device_service(db)
-        bobs = await devices.approve(
-            await devices.start("bob's"), owner_user_id=bob, supply=Supply.self_hosted
-        )
-        await devices.assign_to_project(
-            bobs.device_id, room.project_id, actor_user_id=bob
+        await devices.approve(
+            await devices.start("bob's"),
+            owner_user_id=bob,
+            supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, bob),
         )
         # Alice's machines both said they cannot make a sandbox.
         for device in (room.old_device, room.new_device):
@@ -337,7 +336,7 @@ async def test_one_persons_sandbox_never_lands_on_anothers_computer(
         await AgentSessionService(db).set_environment(
             room.conversation_id,
             room.agent_handle,
-            {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"},
+            {"kind": "sandbox", "spec": "team_devices"},
             chosen_by=None,
         )
         session = await AgentSessionService(db).by_id(room.session_id)
@@ -384,9 +383,10 @@ async def test_nobody_is_shown_the_platforms_machines(client):
             await devices.start("pool host"),
             owner_user_id=owner.id,
             supply=Supply.cloud,
+            team_id=await enrollment_team(devices, owner.id),
         )
-        await devices.assign_to_project(
-            host.device_id, room.project_id, actor_user_id=owner.id
+        await place_in_project_team(
+            devices, host.device_id, room.project_id, actor_user_id=owner.id
         )
         await db.commit()
 
@@ -396,3 +396,61 @@ async def test_nobody_is_shown_the_platforms_machines(client):
     listed = {device["device_id"] for device in shown.json()["data"]["devices"]}
     assert listed == {room.old_device, room.new_device}
     assert host.device_id not in shown.text
+
+
+async def test_device_sessions_select_count_does_not_scale_with_sessions(client):
+    room = await _room(client)
+    from sqlalchemy import event
+
+    from app.domain.machine.session_reports import device_sessions
+    from app.domain.room_task.models import Task
+
+    async def add_task_sessions(titles: list[str]) -> None:
+        async with client.test_factory() as db:
+            sessions = AgentSessionService(db)
+            for title in titles:
+                task = Task(
+                    project_id=room.project_id,
+                    room_id=room.topic_id,
+                    title=title,
+                )
+                db.add(task)
+                await db.flush()
+                await sessions.ensure(task.id, room.agent_handle, harness="claude-code")
+                await sessions.set_environment(
+                    task.id,
+                    room.agent_handle,
+                    _self_hosted(room.old_device),
+                    chosen_by=None,
+                )
+            await db.commit()
+
+    async def count_selects() -> tuple[int, list[dict]]:
+        selects = 0
+
+        def record(_conn, _cursor, statement: str, *_rest) -> None:
+            nonlocal selects
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects += 1
+
+        async with client.test_factory() as db:
+            target = db.sync_session.bind
+            event.listen(target, "before_cursor_execute", record)
+            try:
+                rows = await device_sessions(db, room.project_id, room.old_device)
+            finally:
+                event.remove(target, "before_cursor_execute", record)
+        return selects, [session for _topic, session in rows]
+
+    await add_task_sessions([f"Task {i}" for i in range(2)])
+    selects_3, sessions_3 = await count_selects()
+
+    await add_task_sessions([f"Task {i}" for i in range(2, 11)])
+    selects_12, sessions_12 = await count_selects()
+
+    assert len(sessions_3) == 3
+    assert len(sessions_12) == 12
+    assert {s["task_title"] for s in sessions_3} == {None, "Task 0", "Task 1"}
+    assert all(s["agent_name"] for s in sessions_12)
+    assert selects_3 > 0
+    assert selects_3 == selects_12

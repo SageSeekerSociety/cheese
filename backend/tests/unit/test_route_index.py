@@ -1,9 +1,8 @@
 """The route-index collector and first-match guard (v6 reading-boundary
 pilot): the counter-example set — real shadows are provable, parameterized
-later routes are witnesses, frozen pairs cite exact registrations, and
-protocols never cross. Real-app inventory assertions run under the fixed
-profile in the existing API-addressing contract suite. The index is never
-committed, so nothing here reads or writes one.
+later routes are witnesses, and protocols never cross. Real-app inventory
+assertions run under the fixed profile in the existing API-addressing contract
+suite. The index is never committed, so nothing here reads or writes one.
 """
 
 from fastapi import APIRouter, FastAPI
@@ -13,6 +12,7 @@ from scripts.route_index import (
     _full,
     collect,
     first_match_findings,
+    print_sections,
 )
 
 
@@ -80,29 +80,6 @@ def test_different_methods_and_protocols_never_shadow():
     assert first_match_findings(collect(app)) == []
 
 
-def test_a_frozen_tuple_suppresses_exactly_itself():
-    from scripts.route_index_frozen import FROZEN
-
-    (pair,) = FROZEN
-    key = (
-        pair.earlier_path,
-        pair.earlier_endpoint,
-        pair.later_path,
-        pair.later_endpoint,
-    )
-    assert key == (
-        "/users/{userId}",
-        "app.api.routes.users.account.get_user",
-        "/users/invite-codes",
-        "app.api.routes.users.invite_codes.list_invite_codes",
-    ), "the frozen tuple cites the concrete registration records"
-    wrong = (pair.earlier_path, pair.earlier_endpoint, pair.later_path, "other")
-    assert wrong not in {
-        (f.earlier_path, f.earlier_endpoint, f.later_path, f.later_endpoint)
-        for f in FROZEN
-    }, "a near-miss is not exempt"
-
-
 def test_records_keep_their_methods_for_the_http_intersection():
     record = RouteRecord(
         index=0,
@@ -114,3 +91,33 @@ def test_records_keep_their_methods_for_the_http_intersection():
     )
     assert not record.all_literal
     assert record.segments == ("users", "{userId}")
+
+
+def test_each_section_of_a_merged_run_carries_its_own_status(capsys):
+    """The marker is the contract: the caller reads a section's status off it.
+
+    One child answers all three questions, so a caller that wants one of them
+    must be able to see that answer go red without the other two turning red
+    with it. Written out literally — the separator is what the addressing
+    contract suite parses, so a change to it belongs in this test.
+    """
+    code = print_sections(
+        [
+            ("emit", 0, '{"settings_profile": {"name": "p"}}'),
+            ("check", 1, "first-match guard: 2 provable shadow(s)"),
+        ]
+    )
+
+    assert code == 1, "a provable shadow still has to leave the run non-zero"
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n"
+        '{"settings_profile": {"name": "p"}}\n'
+        "## route-index section check status 1\n"
+        "first-match guard: 2 provable shadow(s)\n"
+    )
+
+    assert print_sections([("emit", 0, "{}"), ("check", 0, "")]) == 0
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n{}\n"
+        "## route-index section check status 0\n"
+    ), "a section with no output prints its marker and nothing else"

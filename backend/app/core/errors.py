@@ -23,6 +23,12 @@ from starlette.status import (
     HTTP_504_GATEWAY_TIMEOUT,
 )
 
+from app.core.device_failures import (
+    DeviceCallError,
+    DeviceOffline,
+    LinkInterrupted,
+    offline_headers,
+)
 from app.core.sentences import NoticeText, say
 
 
@@ -377,9 +383,7 @@ class AppError(BaseError):
     (ValidationError is an UnprocessableEntityError, and so on), so an
     ``except`` written for either catches both while the raises move over one
     domain at a time. What AppError keeps is its constructor — the message
-    may be left out, and the class's ``message`` stands in — and
-    tests/unit/test_legacy_error_ratchet.py counts every use of these names
-    per file, so the count only goes down meanwhile.
+    may be left out, and the class's ``message`` stands in.
     """
 
     status_code: int = HTTP_400_BAD_REQUEST
@@ -452,15 +456,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register the error handlers: the BaseError family (AppError included),
     HTTP and request-validation errors, the device-link conditions, and the
     catch-all. Shared by main.py and the connection owner."""
-    # Imported here, not at module scope: nothing but this registration needs
-    # the names, and `app.core.obs` (for the logger below) only loads once the
-    # module is being finished.
-    from app.core.device_failures import (
-        DeviceCallError,
-        DeviceOffline,
-        LinkInterrupted,
-        offline_headers,
-    )
 
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.

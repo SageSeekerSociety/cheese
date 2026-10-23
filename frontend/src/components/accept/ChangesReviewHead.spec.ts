@@ -5,7 +5,7 @@ import type { AcceptCard } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -46,5 +46,43 @@ describe('审阅重点', () => {
       '1.5 倍的提速只在冷启动上',
       '2 个接口改了返回形状',
     ])
+  })
+})
+
+function withCredit(ownerCredit: 'none' | 'expired' | 'ok' | null) {
+  return render(ChangesReviewHead as unknown as Component, {
+    props: acceptHeadProps({
+      prChecks: { available: true, pr_number: 7, checks: [], owner_credit: ownerCredit },
+    }),
+    global: { plugins: [createVuetify({ components, directives })], stubs: ['router-link'] },
+  })
+}
+
+describe('负责人自己的 PR 由 AI 队友创建时', () => {
+  it('没有连接 GitHub：入口是连接 GitHub', async () => {
+    const { container, emitted } = withCredit('none')
+    const line = container.querySelector('[data-testid="owner-credit"]')
+    expect(line).not.toBeNull()
+    expect(line!.textContent).toContain('连接 GitHub')
+    await fireEvent.click(line!.querySelector('button')!)
+    expect(emitted()['sign-in-github']).toHaveLength(1)
+  })
+
+  it('授权失效：入口是重新授权 GitHub', async () => {
+    const { container, emitted } = withCredit('expired')
+    expect(container.querySelector('[data-testid="owner-credit"]')!.textContent).toContain('重新授权 GitHub')
+    await fireEvent.click(container.querySelector('[data-testid="owner-credit"] button')!)
+    expect(emitted()['sign-in-github']).toHaveLength(1)
+  })
+
+  it('已经关联：只说结果，没有可点的', () => {
+    const { container } = withCredit('ok')
+    expect(container.querySelector('[data-testid="owner-credit"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="owner-credit"] button')).toBeNull()
+  })
+
+  it('不是负责人、或者 PR 是他自己开的：这一行不出现', () => {
+    const { container } = withCredit(null)
+    expect(container.querySelector('[data-testid="owner-credit"]')).toBeNull()
   })
 })

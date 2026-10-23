@@ -24,6 +24,10 @@ import {
 vi.mock('@/api')
 vi.mock('@/lib/desktopApp', () => ({ goAuthorize: vi.fn(() => true) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+// Connecting asks first (`useProjectMcpSettings`); here every answer is yes.
+vi.mock('@/plugins/dialog', () => ({
+  useDialog: () => ({ confirm: () => ({ wait: () => Promise.resolve(true) }) }),
+}))
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -313,9 +317,13 @@ it('does not open an old project authorization after switching projects', async 
   await flush()
   const server = mcpList().servers[0]
   const first = view.state.connect(server)
+  // Past the confirm, its request on its way.
+  await flush()
+  expect(api.connectMcpServer).toHaveBeenLastCalledWith('a', server.name)
   project.value = 'b'
   await flush()
   const second = view.state.connect(server)
+  await flush()
   old.resolve({ authorization_url: 'https://example.test/a' })
   await first
   expect(goAuthorize).not.toHaveBeenCalled()

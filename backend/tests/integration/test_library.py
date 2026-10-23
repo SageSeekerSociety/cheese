@@ -1,8 +1,8 @@
-"""资料库: 给进项目的文件按原名留着，任何房间都引用得到。
+"""资料库: 保存进项目的文件按原名留着，任何房间都引用得到。
 
-上传落在项目一级，不在某个话题的目录里——「上周那份预算表」这句话是在一个从没见过
-那份文件的房间里说的，所以它的身份是名字，不是随机串。同名不覆盖：撞了取下一个
-`(n)`，两次上传就是两份。
+发进对话的文件先跟着那段对话，有人按「保存到资料库」才落到项目一级（#3828）——
+「上周那份预算表」这句话是在一个从没见过那份文件的房间里说的，所以它在资料库里的
+身份是名字，不是随机串。同名不覆盖：撞了取下一个 `(n)`，保存两次就是两份。
 
 消息里带的是这份资料自己的地址 `library/<名字>`，不是一份拷贝：一个项目里同一份
 资料只有一份字节，哪个房间引用它都读的是那一份。
@@ -10,6 +10,7 @@
 
 from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support import library_uploads
 
 
 def _project(client) -> str:
@@ -26,12 +27,16 @@ def _topic(client, project_id: str, title: str) -> str:
 
 
 def _upload(client, topic_id: str, name: str, content: bytes) -> dict:
+    """发进这个房间，再从这里保存到资料库：一份资料进资料库的那条路。"""
     r = client.post(
         f"/topics/{topic_id}/attachments",
         files={"file": (name, content, "application/octet-stream")},
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    sent = r.json()["data"]
+    saved = client.post(f"/topics/{topic_id}/shown/save", json={"path": sent["path"]})
+    assert saved.status_code == 200, saved.text
+    return {**sent, "path": f"library/{saved.json()['data']['name']}"}
 
 
 def _agent_in(client, project_id: str, topic_id: str) -> dict[str, str]:
@@ -148,15 +153,14 @@ def test_a_library_file_does_not_belong_to_a_task_branch(client):
     assert r.status_code in (404, 422)
 
 
-def test_a_pasted_screenshot_stays_in_the_room(client):
-    """资料库按名字寻址，而剪贴板里那张图没有名字——`image.png` 是浏览器编的。"""
+def test_a_file_sent_in_a_conversation_stays_in_it(client):
+    """发进对话的文件跟着那段对话，资料库里没有它，直到有人保存（#3828）。"""
     project_id = _project(client)
     topic_id = _topic(client, project_id, "房间一")
 
     r = client.post(
         f"/topics/{topic_id}/attachments",
         files={"file": ("image.png", b"\x89PNG\r\n\x1a\n", "image/png")},
-        data={"origin": "clipboard"},
     )
     assert r.status_code == 200, r.text
     att = r.json()["data"]
@@ -387,10 +391,7 @@ def test_the_library_page_takes_a_file_directly(client):
     project_id = _project(client)
 
     def put_in(name: str, content: bytes) -> str:
-        r = client.post(
-            f"/projects/{project_id}/library",
-            files={"file": (name, content, "application/octet-stream")},
-        )
+        r = library_uploads.put_in(client, project_id, name, content)
         assert r.status_code == 200, r.text
         return r.json()["data"]["path"]
 
@@ -411,11 +412,7 @@ def test_replacing_a_file_is_what_every_reference_now_reads(client):
     topic_id = _topic(client, project_id, "房间一")
     att = _upload(client, topic_id, "说明.md", b"old")
 
-    r = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "说明.md"},
-        files={"file": ("说明-新.md", b"new", "application/octet-stream")},
-    )
+    r = library_uploads.replace(client, project_id, "说明.md", b"new")
     assert r.status_code == 200, r.text
 
     [row] = _library(client, project_id)
@@ -445,17 +442,10 @@ def test_the_agent_cannot_put_in_or_replace_a_file(client):
     _upload(client, topic_id, "预算表.xlsx", b"budget")
 
     agent = _agent_in(client, project_id, topic_id)
-    upload = client.post(
-        f"/projects/{project_id}/library",
-        files={"file": ("新.txt", b"x", "text/plain")},
-        headers=agent,
-    )
+    upload = library_uploads.put_in(client, project_id, "新.txt", b"x", headers=agent)
     assert upload.status_code == 403
-    replace = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "预算表.xlsx"},
-        files={"file": ("预算表.xlsx", b"x", "text/plain")},
-        headers=agent,
+    replace = library_uploads.replace(
+        client, project_id, "预算表.xlsx", b"x", headers=agent
     )
     assert replace.status_code == 403
     move = client.post(

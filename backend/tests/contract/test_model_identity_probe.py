@@ -14,6 +14,8 @@ import pytest
 
 from scripts.model_identity_probe import battery
 from scripts.model_identity_probe import reference as reference_mod
+from scripts.model_identity_probe import stats as stats_mod
+from scripts.model_identity_probe import verdict as verdict_mod
 from scripts.model_identity_probe.binding import (
     SeatCheck,
     check_seat,
@@ -252,6 +254,28 @@ def test_split_half_mean_averages_over_cells_not_the_max() -> None:
 )
 def test_decide_jsd_verdict_bands(mean, cells, expected) -> None:
     assert decide_jsd_verdict(mean, cells) == expected
+
+
+def test_the_verdict_reads_two_thresholds_and_no_paper_baseline() -> None:
+    """The paper baselines are quoted, never read.
+
+    The paper's three median baselines used to sit beside the thresholds as
+    module constants, and a ranking table sat beside the four verdicts. Neither
+    was read anywhere, and both read like inputs to the verdict -- a reader
+    could believe a result was checked against the baselines. The numbers stay
+    quoted in ``stats``'s docstring so a band can still be interpreted; this
+    test keeps them from creeping back as apparent inputs, and pins the two
+    thresholds that do decide.
+    """
+    assert JSD_MATCH_THRESHOLD == 0.25
+    assert JSD_MISMATCH_THRESHOLD == 0.35
+    for name in (
+        "JSD_BASELINE_SELF",
+        "JSD_BASELINE_CROSS_PROVIDER",
+        "JSD_BASELINE_DIFFERENT_MODEL",
+    ):
+        assert not hasattr(stats_mod, name), f"{name} is back in stats"
+    assert not hasattr(verdict_mod, "_RANK"), "the verdict ranking table is back"
 
 
 def test_a_wire_name_that_is_not_the_claim_is_a_mismatch_on_its_own() -> None:
@@ -508,7 +532,7 @@ def test_every_preset_samples_25_per_cell() -> None:
 def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("42", "m", {}, {}, 0.0)
 
@@ -523,7 +547,7 @@ def test_the_probe_sends_temperature_and_a_16_token_budget(monkeypatch) -> None:
 def test_the_reasoning_disable_field_reaches_the_body(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("1", "m", {}, {}, 0.0)
 
@@ -548,7 +572,7 @@ def test_the_openai_reasoning_field_is_offered_first() -> None:
 def test_complete_omits_temperature_when_asked(monkeypatch) -> None:
     seen: dict = {}
 
-    def fake_stream(self, client, body):  # noqa: ANN001
+    def fake_stream(self, client, body):
         seen.update(body)
         return Completion("1", "m", {}, {}, 0.0)
 
@@ -562,7 +586,7 @@ def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
 ) -> None:
     calls: list[dict] = []
 
-    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+    def fake_complete(self, system, prompt, **kwargs):
         calls.append(kwargs)
         if kwargs.get("temperature") == 1.0:
             return Completion(
@@ -581,7 +605,7 @@ def test_detect_adapter_drops_temperature_when_the_upstream_rejects_it(
 def test_detect_adapter_picks_the_first_field_that_works(monkeypatch) -> None:
     calls: list[dict] = []
 
-    def fake_complete(self, system, prompt, **kwargs):  # noqa: ANN001
+    def fake_complete(self, system, prompt, **kwargs):
         body = kwargs.get("extra_body") or {}
         calls.append(body)
         if body.get("reasoning_effort") == "none":

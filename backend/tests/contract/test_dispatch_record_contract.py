@@ -112,6 +112,12 @@ class _Chat:
     def replaying(self, topic_id):
         return None
 
+    def draining(self, topic_id, agent_handle):
+        return False
+
+    def tell_draining(self, topic_id, agent_handle):
+        return False
+
     async def converse(self, **kw):
         self.converse_calls.append(kw)
         yield {"type": "done"}
@@ -414,7 +420,6 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
     """一个房间、一条坐在里面的会话、它租到的那台机器，和这个房间的凭据。"""
     async with factory() as session:
         from app.domain.device.models import (
-            DeviceProjectRow,
             DeviceRow,
             HostedDeviceRow,
         )
@@ -440,13 +445,13 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
                 device_id=_MACHINE,
                 name="Machine",
                 token=uuid.uuid4().hex,
+                team_id=project.team_id,
                 owner_user_id=owner.id,
                 created_at=datetime.now(UTC),
             )
         )
         await session.flush()
         session.add(HostedDeviceRow(device_id=_MACHINE, owner_user_id=owner.id))
-        session.add(DeviceProjectRow(device_id=_MACHINE, project_id=project.id))
         session_id, generation = uuid.uuid4(), uuid.uuid4()
         session.add(
             AgentSession(

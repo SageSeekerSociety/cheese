@@ -2854,19 +2854,24 @@ body.dragging .dock-resize::after {
   border-color: var(--accent);
 }
 
-/* The composer's 「交给…」: plain text with an @ in front, as in the product. */
-.dp-btn-quiet {
-  padding: 0 8px;
-  color: var(--text);
-  background: transparent;
-  border-color: transparent;
-  gap: 4px;
+/* The composer's teammate button: the teammate's face beside Send, as in the product. */
+.dp-summon {
+  display: inline-flex;
+  overflow: hidden;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+  flex: none;
+  background: var(--fill-2);
+  border-radius: var(--radius-sm);
+  transition:
+    transform var(--dur-press) var(--ease-standard),
+    box-shadow var(--dur-quick) var(--ease-standard);
 }
 
-.dp-btn-quiet::before {
-  font-weight: 600;
-  color: var(--muted);
-  content: '@';
+.dp-summon img {
+  width: 100%;
+  height: 100%;
 }
 
 /* The one cue in a frame: the button about to be pressed, pressed. */
@@ -3218,16 +3223,22 @@ body.dragging .dock-resize::after {
 /* Parts the walk frames use. */
 .dp-task {
   display: flex;
-  margin: -8px 0 0 38px;
-  padding: 7px 10px;
+  margin: -6px 0 0 38px;
+  padding: 8px 12px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--line-2);
+  background: var(--fill);
   border-radius: var(--radius-md);
   align-items: center;
   gap: 8px;
+}
+
+/* The task's name on top of the 支线 it became: one block with its replies. */
+.dp-thread .dp-task-head {
+  margin: 0 0 4px;
+  padding: 0;
+  background: none;
 }
 
 .dp-task .ico {
@@ -5772,8 +5783,7 @@ html:not(.js) .sm-nojs {
     transform: translateY(100%);
   }
 
-  .dock-resize,
-  .hide-sm {
+  .dock-resize {
     display: none;
   }
 
@@ -5934,6 +5944,37 @@ html:not(.js) .sm-nojs {
 
   .hdr-actions {
     gap: 2px;
+  }
+
+  .hdr {
+    padding-right: 8px;
+  }
+
+  /* The header is full here: without this the menu button is what gives way,
+     down to a sliver, instead of the header fitting. */
+  .hdr .icon-btn {
+    flex: none;
+  }
+
+  /* On a phone this is the header's only way back to the product, so it
+     stays, a size smaller, and fits beside the icons down to 320px. */
+  .hdr-enter {
+    height: 32px;
+    margin-left: 4px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+}
+
+/* Below 320px the controls alone nearly fill the header, so the logo keeps
+   only its mark, which is still the link to the docs home. */
+@media (width < 320px) {
+  .hdr {
+    gap: 4px;
+  }
+
+  .hdr .brand-lockup-word {
+    display: none;
   }
 }
 

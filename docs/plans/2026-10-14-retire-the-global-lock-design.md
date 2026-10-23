@@ -2,6 +2,8 @@
 
 状态：设计定稿（2026-10-14）。这份文档只写盘点与迁移路线，不改任何行为代码。
 
+后来的变化（2026-10-20）：#4459 删掉了 `agent/liveness.py`（`running_tasks`、`moving_topics`、`last_output_at`）。会话在不在跑改由 runner 上报、后端写进 `session_states`（`agent/session_state.py`），下文盘点里提到 `liveness` 的几处只是当时的样子。
+
 一句话：后端今天只有一个进程、一把进程内的锁在兜着轮次准入；这份文档盘点所有进程内状态、给每一项定下跨进程的家，并给出可以分步合入的退役路线。
 
 ## 0. 这份文档回答什么
@@ -113,8 +115,8 @@
 
 - **`admission.Pool` / `admission.Hold` / `Slot` / `adopt`**（同在 `admission.py`）：「Both live in Valkey, so they hold across backend processes and outlive none of them: a slot is leased, renewed while its holder works, and lapses `LEASE_S` after a backend that died stopped renewing it.」`adopt()` 的用途就是「another process is taking the turn over」。
 - **`turn_inputs.py`**：输入归属全在库里，`transition` 走 `SELECT ... FOR UPDATE`，并发的首次认领在主键上分出输赢。没有进程内状态。
-- **`liveness.running_tasks` / `moving_topics`**：已经是双来源——本进程的 `active_turn_ids`，加上库里 `AgentTurn` 那行开着的兜底。`moving_topics` 的文档明确写着「一个进程按不住另一个进程正在跑的那一轮」。
-- **`delivery/receipts.py`（输入结算）**：明确禁止从进程内状态推断完成——「Never infer completion from acceptance, an echo, another work's marker, or missing process-local state.」注册表、回执、终止全在库里。
+- **`liveness.running_tasks` / `moving_topics`**（#4459 已删）：当时是双来源——本进程的 `active_turn_ids`，加上库里 `AgentTurn` 那行开着的兜底。现在会话在不在跑读 `session_states`，那是 runner 按 epoch 上报的库里记录。
+- **`delivery/receipts.py`（输入结算）**：不从进程内状态结算——只有登记的接收者的回显才结算一条输入（「Only an echo for the registered receiver may settle blocks and an agent delivery.」）。注册表、回执、终止全在库里。
 - **`turn_inputs.py` 与 `delivery/receipts.py` 加起来说明一件事**：库里的那半已经进程无关了。退役锁要补的是**活的那半**（准入、轮次上下文、帧扇出、定时器），不是重做持久化。
 
 ## 3. 每一项该搬到哪里
@@ -148,7 +150,7 @@
 
 - 进程内 `asyncio.Lock` 的本质问题是**它不承认进程边界**：两个进程各有一把，各以为自己是唯一的。
 - 换成 Postgres 的 advisory lock 有个坑：advisory lock 挂在**连接**上，而我们的连接来自池。一条请求拿锁、另一条连接检查不到，正是最容易埋的那类雷。所以租约放 Valkey（带 TTL、可续租、可 `adopt`）比放连接锁更稳——`admission.py` 已经把这套写完了。
-- 「这一轮还在不在跑」的正解是**库里一行开着的、带最近活动时刻的记录**，而不是任何一份内存里的集合。`liveness.py` 已经是这个形状，只是兜底还没转正。
+- 「这一轮还在不在跑」的正解是**库里一行开着的、带最近活动时刻的记录**，而不是任何一份内存里的集合。#4459 之后这就是 `session_states`：runner 上报的会话状态，按 epoch 判当前。
 
 ## 5. 反方意见
 
@@ -183,8 +185,10 @@
 **租约和 `asyncio.Lock` 不是一回事，三点要说清**：
 
 1. **可重入。** `seat_admission` 现在靠 `ContextVar` 认「这把锁是不是当前任务已经拿着的」，换成租约后要保留这条——同一个任务嵌套取同一个座位的准入不能自锁。
-2. **不公平。** `admission.Hold` 只是 `SET NX PX`，谁先抢到谁上，没有先来后到；要排队得用 `admission.Pool`（它有 FCFS 队列和 `queued()`）。座位准入今天也没有公平性，所以行为不退步，但要写进文档，别让人以为换了之后变公平了。
+2. **不公平。** `admission.Hold` 只是 `SET NX PX`，谁先抢到谁上，没有先来后到；要排队得用 `admission.Pool`（它有 FCFS 队列和 `queued()`）。进程内那把 `asyncio.Lock` 是排队叫醒的，所以进程内还是先来后到、不退步；没有顺序的是**跨进程**排队——从前根本没有跨进程串行，这不是退步，但新开了一条没有顺序的等待，要写进文档，别让人以为换了之后处处变公平了。
 3. **持有者死了要等 `LEASE_S`（30 s）才放。** `asyncio.Lock` 是任务一取消就放。差别只出现在崩溃路径，正常路径由 `Slot.release()` 主动放。
+
+**已开 PR #3786**（本步只此一件，待验收）。代价实测：一次无人等的准入发三条命令、三个来回——`SET NX PX` 拿下、`admission.enter` 紧接着给刚写上的 TTL 续的 `EVAL`、放手时的 `EVAL`；回环上对真 Redis 8.6.3，两次跑分别 p50 0.73 / 0.74 ms、p95 0.80 / 1.37 ms，一个裸来回（PING）p50 0.19 ms。等不到座位的那一方每 `POLL_S` 一个来回，不是 0（实测：等在 3.2 s 的持有者后面，3.02 s 里问了 4 次座位，共 7 条命令）。复现：`backend/scripts/measure_seat_lease.py --redis-url <服务器>`。**dev 那台的数拿不到**：做这一步的工作机连不到 dev（域名解析得出内网地址，连过去超时，Valkey 端口也不通），换 dev 的地址跑同一条命令才有那个数。三条命令里 `SET` 和紧随的续租可以合成一个来回（量到 p50 0.35 ms），少发那条属于 `admission.enter`，项目准入也走它，没在本步改。
 
 **代价**：每次准入多一次往返。要量，不接受「应该不慢」。
 

@@ -7,8 +7,11 @@ running from another is started again from this one once it is idle. A session
 sits idle for a while and then exits; its conversation stays in its state
 directory, and the next start brings it back on it.
 
-Reading is the runner's journal, mirrored on this backend and handed over one
-item at a time (``read``). The mirror's landing cursor moves only past what the
+Reading is handed over one item at a time (``read``). For a harness whose
+runner reports in the lifecycle protocol (``Reports``, Claude Code) it is what
+the runner reports, acknowledged once applied. For one that keeps a mirror
+(``Mirrors``, pi and Codex) it is the runner's journal, mirrored on this
+backend, and the mirror's landing cursor moves only past what the
 reader took: an item it took is one it asked for the next of, or one it took
 before it stopped reading; an item it failed on is thrown back into the reading
 (``athrow``), re-read on the next pass, and stepped over once it has failed
@@ -16,13 +19,27 @@ often enough (`driven/subscription.py`). So a reader that dies anywhere re-reads
 rather than skips, and the next process to read a session starts where this one
 stopped landing.
 
-Whether a session is gone is decided here, once, for every reader: its runner
-says its harness process exited, or it stays out of reach for longer than the
-spec's ``gone_after_s`` while something said to it is unanswered (``Ended``).
+Whether a session is gone: a reporting runner says its process exited
+(``SessionExited``), and being out of reach for ``LEASE_S`` only tells the
+room. For a mirrored harness it is decided here, once, for every reader: its
+runner says its harness process exited, or it stays out of reach for longer
+than the spec's ``gone_after_s`` while something said to it is unanswered
+(``Ended``).
+
+``SessionHost`` is what the rest of the platform knows the session core by, and
+this module is that door (``block``, ``room``, ``personal``, ``document``, the
+routes). What it is asked of a session is written beside it: bringing one up on
+its host (``starting``), saying something to it (``speaking``), asking after it
+and letting it go (``control``), and what this process holds of one
+(``sessions``) — and those parts name this class through the package
+(``session_host.SessionHost``), because a sibling import both ways is a cycle.
+The reading is this module's own, and so are the waits it
+takes: ``READ_WAIT_S`` holds one read at the runner, ``GIVE_UP_CHECK_S`` is how
+often a start waiting for the host's memory looks again, and neither is read
+from anywhere else.
 """
 
 import asyncio
-import hashlib
 import logging
 import time
 import uuid
@@ -33,45 +50,43 @@ from collections.abc import (
     Iterable,
     Mapping,
 )
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 
 from app.core.config import settings
+from app.domain.agent import session_state
 from app.domain.agent.admission import HostMemory
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceNotReady,
     DeviceOffline,
 )
-from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, PI
+from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
 from app.domain.agent.harness import SessionRef as Seat
-from app.domain.agent.harness.driven.journal import PAGE
-from app.domain.agent.harness.driven.runner import LONG_POLL
-from app.domain.agent.harness.driven.subscription import Subscription
-from app.domain.agent.harness.pi.events import thread_of
+from app.domain.agent.harness.driven import lifecycle
+from app.domain.agent.harness.driven.reporting import Reading
+from app.domain.agent.harness.driven.subscription import Records, Subscription
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.reads import (
     CaughtUp,
-    Completed,
     ControlsMoved,
     Ended,
     Moved,
     Reachable,
     Read,
-    Received,
-    Terminated,
+    Report,
+    SessionExited,
     Working,
     Writing,
 )
+from app.domain.agent.session_host import control, speaking, starting
 from app.domain.agent.session_host.claude_code import ClaudeCodeDriver
 from app.domain.agent.session_host.codex import CodexDriver
 from app.domain.agent.session_host.contract import (
     Access,
     HostFull,
-    InputUnconfirmed,
     Prompt,
     SessionError,
     SessionRef,
@@ -79,8 +94,42 @@ from app.domain.agent.session_host.contract import (
     SessionStatus,
     StartAbandoned,
 )
-from app.domain.agent.session_host.driver import Driver, Launched, Readers, Wire
+from app.domain.agent.session_host.driver import (
+    Driver,
+    Mirrors,
+    Readers,
+    Reports,
+    Wire,
+)
 from app.domain.agent.session_host.pi import PiDriver
+
+# 下面这些 import 都是再导出：`X as X` 是仓库里认的那种写法，读的人一眼看出它
+# 进来不是为了在本文件里用。拆分改的是文件，不是这个模块能取到的名字 —— 谁以前
+# 从 app.domain.agent.session_host.host 拿得到 keeps_memory、RunnerUnsupported 或
+# _Running，拆分之后照样拿得到。
+from app.domain.agent.session_host.sessions import (
+    PICTURES as PICTURES,
+)
+from app.domain.agent.session_host.sessions import (
+    _mirror as _mirror,
+)
+from app.domain.agent.session_host.sessions import (
+    _Running as _Running,
+)
+from app.domain.agent.session_host.sessions import (
+    _seat as _seat,
+)
+from app.domain.agent.session_host.sessions import (
+    keeps_memory as keeps_memory,
+)
+from app.domain.agent.session_host.sessions import key
+from app.domain.agent.session_host.sessions import (
+    with_pictures as with_pictures,
+)
+from app.domain.agent.session_host.starting import (
+    RunnerUnsupported as RunnerUnsupported,
+)
+from app.domain.agent.session_state import SeatKey
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -102,90 +151,20 @@ GIVE_UP_CHECK_S = 1.0
 IDLE_GONE_READ_S = 60.0
 #: How long a reading that failed waits before trying again.
 RETRY_S = 2.0
+#: How long a pass refused under the epoch this process is replacing waits
+#: before it reads again: the registration on its way to the runner lands
+#: within a call's round trip.
+REGISTERING_WAIT_S = 0.05
 #: How long the readings under way may take to finish their pass when this
 #: process stops reading.
 STOP_LISTENING_S = 5.0
 #: Calls that only look: a ping, a stop.
 QUICK_S = 15
-
-
-class _NotThere(Exception):
-    """A call no runner took: the host or the runner was not there."""
-
-
-class RunnerUnsupported(SessionError):
-    """The runner a session was greeted by cannot hold a read (``LONG_POLL``),
-    and every read of a session is one the runner holds until there is news."""
-
-
-@dataclass
-class _Running:
-    """A session this process started or found running."""
-
-    host: str
-    launched: Launched
-    #: Who reads it: the place it is in, and the agent acting there.
-    seat: Seat
-    acting: str
-    mirror: Path
-    spec: SessionSpec | None = None
-    access: Access | None = None
-    #: Whether its runner has answered alive on every read since it was
-    #: started or found: what lets a start from the same launch skip the host.
-    answering: bool = True
-    #: Something said to it is unanswered: its runner going out of reach then
-    #: is a reader left waiting.
-    owed: bool = False
-    #: Whether anything was said to it before this process found it; None
-    #: until asked.
-    spoken_to: bool | None = None
-    #: Cut short a reading's wait when something is said to the session.
-    woken: asyncio.Event = field(default_factory=asyncio.Event)
-    #: The reading under way, when there is one.
-    subscription: Subscription | None = None
-    reading: asyncio.Task | None = None
-    stopping: bool = False
-
-
-def keeps_memory(harness: str) -> bool:
-    """Whether a harness's sessions keep memory as files the platform
-    reconciles (``SessionHost.memory``): the one place the registry's bit is
-    read, so the system prompt's memory section and the reconciliation cannot
-    disagree about it."""
-    entry = HARNESSES.get(harness)
-    return bool(entry and entry.keeps_memory)
-
-
-def _seat(ref: SessionRef, access: Access) -> tuple[Seat, str]:
-    """The session as its subscription names what it reads: the place and the
-    session's name in it, and the agent acting there. A session with no owner
-    reads into no place."""
-    owner = access.owner
-    if owner is None:
-        nobody = uuid.UUID(int=0)
-        return Seat(nobody, nobody, "", harness=ref.harness), ""
-    return (
-        Seat(owner.project_id, owner.place_id, owner.name, harness=ref.harness),
-        owner.handle,
-    )
-
-
-def _mirror(root: Path, ref: SessionRef, access: Access, driver: Driver) -> Path:
-    """Where this backend keeps its copy of the session's journal, under
-    ``root``. A session with an owner keeps it under the owner's place, by the
-    machine and the agent it acts as there, so a reopened place starts a fresh
-    one."""
-    owner = access.owner
-    if owner is None:
-        return root / ref.home / driver.mirror
-    return (
-        root
-        / str(owner.project_id)
-        / str(owner.place_id)
-        / ref.harness
-        / hashlib.sha256(f"{owner.resource_id}{owner.handle}".encode()).hexdigest()
-        / driver.mirror
-    )
+#: How long a runner that reports in the lifecycle protocol may go unheard
+#: before its session is unreachable: longer than the connection owner takes to
+#: come back after a release, and than a device takes to reconnect after a
+#: network blip.
+LEASE_S = 120.0
 
 
 class SessionHost:
@@ -199,11 +178,27 @@ class SessionHost:
         screens: "DeviceChannel | None" = None,
         session_factory=None,
         mirrors: Path | None = None,
+        on_alive: Callable[[uuid.UUID], None] | None = None,
+        records: Records | None = None,
+        register: Callable[[SeatKey], Awaitable[int]] | None = None,
         drivers: Mapping[str, Driver] | None = None,
     ):
         self._hub = hub
+        #: Where every row a session's journal holds is kept as its raw
+        #: record (`session_record.service.append`). None keeps no record.
+        self._records = records
+        #: Issues a seat's runner its worker epoch, for a harness whose runner
+        #: reports in the lifecycle protocol: in the platform's database
+        #: (`session_state.register`) unless told otherwise.
+        self._registrar = register
         self._memory = memory
-        #: Where this backend keeps its copies of the sessions' journals.
+        #: Told the conversation of a session whose runner answered a read, on
+        #: every pass that heard one: proof that the session is still there,
+        #: which no frame carries. The stall verdict reads it
+        #: (`TopicService.stall_signal`), through `realtime.broker.note_alive`.
+        self._on_alive = on_alive
+        #: Where this backend keeps its copies of the journals of the sessions
+        #: of a harness that keeps a mirror (`driver.Mirrors`).
         self._mirrors = mirrors or Path(settings.workspace_root) / ".harness"
         self._screens = screens
         self._session_factory = session_factory
@@ -252,6 +247,26 @@ class SessionHost:
     def _wire(self) -> Wire:
         return Wire(self.hub, self._api)
 
+    async def _register(self, key: SeatKey) -> int:
+        if self._registrar is not None:
+            return await self._registrar(key)
+        # deferred-import: tests replace this name on app.core.db
+        from app.core.db import async_session_factory
+
+        return await session_state.register(
+            self._session_factory or async_session_factory, key
+        )
+
+    def _call(
+        self, running: _Running, ref: SessionRef, method: str, params: dict, **kwargs
+    ):
+        """A call the platform makes of the session's runner, carrying the
+        epoch it registered the runner under when it did: a runner registered
+        since by another process refuses it (`lifecycle.StaleEpoch`)."""
+        if running.launched.epoch:
+            params = {**params, "epoch": running.launched.epoch}
+        return self._wire().call(running.host, ref, method, params, **kwargs)
+
     async def _api(self, host: str) -> str:
         """The platform as ``host`` reaches it."""
         # deferred-import: tests replace this name on app.core.db
@@ -260,6 +275,16 @@ class SessionHost:
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             return await device_api_base(db, host, settings.connector_public_base)
+
+    def _look(
+        self, host: str, ref: SessionRef, method: str, params: dict, *, epoch: int = 0
+    ):
+        """A call that only looks — a ping, a stop — which no runner holds
+        open (``QUICK_S``); one the platform makes as a runner's registration
+        carries its ``epoch``."""
+        if epoch:
+            params = {**params, "epoch": epoch}
+        return self._wire().call(host, ref, method, params, timeout=QUICK_S)
 
     def available(self) -> bool:
         host = settings.agent_session_device_id
@@ -270,7 +295,16 @@ class SessionHost:
         the rest, the reading says when an input was read (``Received``)."""
         return self._driver(ref).receipt_on_accept
 
-    # --- starting ------------------------------------------------------------
+    def _started(self, ref: SessionRef) -> _Running:
+        running = self._running.get(ref)
+        if running is None:
+            raise SessionError("The session was not started by this process")
+        return running
+
+    def _wake(self, running: _Running) -> None:
+        running.woken.set()
+        if running.subscription is not None:
+            running.subscription.unpark()
 
     async def start(
         self,
@@ -281,68 +315,15 @@ class SessionHost:
         on_wait: Callable[[], Awaitable[None]] | None = None,
         give_up: Callable[[], Awaitable[bool]] | None = None,
     ) -> SessionStatus:
-        """Have the session running from ``spec``: the one already running,
-        or one started now. A session that is not running waits up to
-        ``spec.host_wait_s`` for the host to have memory for it, telling
-        ``on_wait`` once when it starts waiting; past that it raises
-        ``HostFull``, and ``StartAbandoned`` once ``give_up`` says so."""
-        driver = self._driver(ref)
-        lock = self._locks.setdefault(ref, asyncio.Lock())
-        async with lock:
-            host = access.host or settings.agent_session_device_id
-            if not host or not self.hub.is_online(host):
-                raise SessionError("The session host is not connected")
-            running = self._running.get(ref)
-            known = (
-                running.launched
-                if running is not None and running.answering and running.host == host
-                else None
-            )
-            if known is None and spec.footprint is not None:
-                await self._wait_for_memory(spec, on_wait, give_up)
-            started = time.monotonic()
-            launched = await driver.launch(self._wire(), host, ref, spec, access, known)
-            if launched is not known:
-                logger.info(
-                    "session started on the host harness=%s home=%s in %.2fs",
-                    ref.harness,
-                    ref.home,
-                    time.monotonic() - started,
-                )
-            if LONG_POLL not in launched.capabilities:
-                raise RunnerUnsupported(
-                    f"The {driver.label} runner on {host} at {ref.state} cannot "
-                    f"hold a read (it announced {sorted(launched.capabilities)}, "
-                    f"without {LONG_POLL!r}); it is not supported"
-                )
-            if (
-                running is None
-                or running.host != host
-                # Its reading heard the runner it had go while this one
-                # started, and let it go with it.
-                or self._running.get(ref) is not running
-            ):
-                seat, acting = _seat(ref, access)
-                running = _Running(
-                    host,
-                    launched,
-                    seat,
-                    acting,
-                    _mirror(self._mirrors, ref, access, driver),
-                )
-                self._running[ref] = running
-            running.launched = launched
-            running.spec, running.access = spec, access
-            running.answering = True
-            running.stopping = False
-            return SessionStatus(
-                working=False,
-                model=spec.model,
-                conversation=launched.conversation,
-                takes_inputs=driver.takes_inputs(
-                    {"input_protocol": launched.input_protocol}
-                ),
-            )
+        return await starting.start(
+            self, ref, spec, access, on_wait=on_wait, give_up=give_up
+        )
+
+    async def adopt(self, found: list[tuple[SessionRef, Access]]) -> None:
+        return await starting.adopt(self, found)
+
+    async def attach(self, ref: SessionRef, access: Access) -> SessionStatus | None:
+        return await starting.attach(self, ref, access)
 
     async def _wait_for_memory(
         self,
@@ -371,298 +352,71 @@ class SessionHost:
                 min(GIVE_UP_CHECK_S, max(0.0, until - time.monotonic()))
             )
 
-    async def adopt(self, found: list[tuple[SessionRef, Access]]) -> None:
-        """Before reading again sessions another process started: have what
-        keeps them on their hosts know them again (Claude Code's screens)."""
-        by_driver: dict[str, list[tuple[str, Access]]] = {}
-        for ref, access in found:
-            host = access.host or settings.agent_session_device_id
-            if host:
-                by_driver.setdefault(ref.harness, []).append((host, access))
-        for harness, sessions in by_driver.items():
-            driver = self._driver(SessionRef(harness, ""))
-            await driver.adopt(self._wire(), sessions)
-
-    async def attach(self, ref: SessionRef, access: Access) -> SessionStatus | None:
-        """Read again a session another process started, as it is, starting
-        nothing. None when its runner could not be asked; a status that is not
-        ``alive`` when the runner answered that its harness process is gone."""
-        driver = self._driver(ref)
-        host = access.host or settings.agent_session_device_id
-        if not host or not self.hub.is_online(host):
-            return None
-        try:
-            status = await self._wire().call(host, ref, "ping", {}, timeout=QUICK_S)
-        except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
-            # A runner that is not there is a session that sat idle and was let
-            # go (``driven.runner``); the next message starts it again. Every
-            # deploy finds dozens. A host that is away or not answering is
-            # worth a warning.
-            missing = isinstance(exc, DeviceCallError) and not isinstance(
-                exc, DeviceNotReady
-            )
-            (logger.info if missing else logger.warning)(
-                "%s session %s on %s could not be asked whether it runs: %s",
-                driver.label,
-                ref.home,
-                host,
-                exc,
-            )
-            if missing and _no_runner(exc, ref.state):
-                # FB-56 forbids reading a question nobody answered as death:
-                # an offline machine, a timeout, a connector not ready yet. This
-                # is not that. The machine is online and answered that the
-                # runner's socket does not exist, and a runner lives exactly as
-                # long as its harness process (``driven.runner``), so the
-                # conversation it ran is over.
-                return SessionStatus(
-                    working=False, model="", alive=False, runner_gone=True
-                )
-            return None
-        alive = status.get("alive")
-        found = SessionStatus(
-            working=driver.working(status),
-            model=str(status.get("model") or ""),
-            conversation=driver.conversation(status),
-            work_id=status.get("work_id"),
-            takes_inputs=driver.takes_inputs(status),
-            # The hub hands the runner's answer through unchecked: only an
-            # explicit False says the process is gone.
-            alive=alive is not False,
-        )
-        if alive is not True:
-            return found if alive is False else None
-        launched = Launched(
-            found.conversation,
-            frozenset(status.get("capabilities") or ()),
-            "",
-            status.get("input_protocol"),
-        )
-        if LONG_POLL not in launched.capabilities:
-            raise RunnerUnsupported(
-                f"The {driver.label} runner on {host} at {ref.state} cannot hold "
-                f"a read (it announced {sorted(launched.capabilities)}, without "
-                f"{LONG_POLL!r}); it is not supported"
-            )
-        seat, acting = _seat(ref, access)
-        running = self._running.get(ref)
-        if running is None or running.host != host:
-            running = _Running(
-                host,
-                launched,
-                seat,
-                acting,
-                _mirror(self._mirrors, ref, access, driver),
-            )
-            self._running[ref] = running
-        else:
-            running.launched = launched
-        running.answering = True
-        running.stopping = False
-        running.owed = found.working
-        return found
-
-    # --- speaking --------------------------------------------------------------
-
     async def send(
         self, ref: SessionRef, prompt: Prompt, *, work_id: uuid.UUID
     ) -> None:
-        """Say ``prompt`` to the session, as work ``work_id``: what it does
-        about it is read (``read``). Raises ``InputUnconfirmed`` when the
-        runner may have taken it and did not say so."""
-        running = self._started(ref)
-        text = prompt.text
-        if prompt.preface and not await self._spoken_to(ref, running):
-            text = f"{prompt.preface}\n\n{text}"
-        try:
-            await self._say(ref, running, "send", prompt, text, work_id)
-        except _NotThere:
-            if running.spec is None or running.access is None:
-                raise InputUnconfirmed(accepted=False) from None
-            # The runner let the session go since it was last read (it sat
-            # idle): started again on its conversation, it is told once more.
-            # The runner keeps the inputs it took by id, so one that did reach
-            # it is not taken twice.
-            running.answering = False
-            await self.start(ref, running.spec, running.access)
-            running = self._started(ref)
-            try:
-                await self._say(ref, running, "send", prompt, text, work_id)
-            except _NotThere as exc:
-                raise InputUnconfirmed(accepted=False) from exc.__cause__
-        running.spoken_to = True
+        return await speaking.send(self, ref, prompt, work_id=work_id)
 
     async def steer(
         self, ref: SessionRef, prompt: Prompt, *, work_id: uuid.UUID
     ) -> None:
-        """Say ``prompt`` to the session in the middle of work ``work_id``,
-        without opening work of its own. Raises ``InputUnconfirmed`` as
-        ``send`` does."""
-        running = self._started(ref)
-        method = self._driver(ref).steer
-        try:
-            await self._say(ref, running, method, prompt, prompt.text, work_id)
-        except _NotThere as exc:
-            raise InputUnconfirmed(accepted=False) from exc.__cause__
-
-    async def _say(
-        self,
-        ref: SessionRef,
-        running: _Running,
-        method: str,
-        prompt: Prompt,
-        text: str,
-        work_id: uuid.UUID,
-    ) -> None:
-        params: dict[str, Any] = {
-            "input_id": str(prompt.id),
-            "work_id": str(work_id),
-            "text": text,
-        }
-        if prompt.images:
-            params["images"] = self._driver(ref).images(prompt.images)
-        if prompt.owes_reply:
-            params["owes_reply"] = True
-        if prompt.acting is not None:
-            params["platform_token"] = prompt.acting
-        running.owed = True
-        try:
-            await self._wire().call(running.host, ref, method, params)
-        except (DeviceOffline, DeviceCallError) as exc:
-            # Nothing on the host took it: the host is not connected, or the
-            # runner is not there to answer.
-            raise _NotThere() from exc
-        except Exception as exc:
-            # Even a transport error can follow admission at the runner.
-            raise InputUnconfirmed(accepted=False) from exc
-        finally:
-            self._wake(running)
-
-    def _started(self, ref: SessionRef) -> _Running:
-        running = self._running.get(ref)
-        if running is None:
-            raise SessionError("The session was not started by this process")
-        return running
+        return await speaking.steer(self, ref, prompt, work_id=work_id)
 
     def answers(self, ref: SessionRef) -> bool | None:
-        """Whether the session's runner answered its last read; False once it
-        stopped — most often because it let its idle session go — and None
-        when this process holds no such session."""
-        running = self._running.get(ref)
-        return None if running is None else running.answering
+        return speaking.answers(self, ref)
 
-    def _wake(self, running: _Running) -> None:
-        running.woken.set()
-        if running.subscription is not None:
-            running.subscription.unpark()
-
-    async def _spoken_to(self, ref: SessionRef, running: _Running) -> bool:
-        """Whether anything was said to the session yet: a session started
-        for a conversation that has history somewhere else has not been."""
-        if running.spoken_to is None:
-            running.spoken_to = False
-            since = None
-            while True:
-                page = (
-                    await self._wire().call(
-                        running.host, ref, "entries", {"since": since}
-                    )
-                )["entries"]
-                for record in page:
-                    since = record.get("id") or since
-                    message = record.get("message") or {}
-                    if not thread_of(record) and message.get("role") == "user":
-                        running.spoken_to = True
-                if len(page) < PAGE:
-                    break
-        return running.spoken_to
-
-    async def stop(self, ref: SessionRef) -> bool:
-        """Stop what the session is doing, whichever process started it; the
-        session and its conversation stay. False when there was nothing to
-        stop or the host could not be reached."""
-        running = self._running.get(ref)
-        host = running.host if running else settings.agent_session_device_id
-        if not host or not self.hub.is_online(host):
-            return False
-        method, key = self._driver(ref).stop
-        try:
-            answer = await self._wire().call(host, ref, method, {}, timeout=QUICK_S)
-        except (DeviceOffline, DeviceCallError, TimeoutError):
-            logger.warning("stopping a session on the host failed", exc_info=True)
-            return False
-        return bool(answer.get(key))
+    async def stop(
+        self, ref: SessionRef, *, host: str | None = None, epoch: int = 0
+    ) -> bool:
+        return await control.stop(self, ref, host=host, epoch=epoch)
 
     def release(self, ref: SessionRef) -> None:
-        """Stop keeping track of the session; it exits once idle. A reading
-        under way ends after its pass."""
-        running = self._running.pop(ref, None)
-        if running is not None:
-            running.stopping = True
-            self._wake(running)
+        return control.release(self, ref)
 
     async def status(self, ref: SessionRef) -> SessionStatus | None:
-        """The session as its runner says it is now; None when it is not
-        running. Starts nothing."""
-        running = self._running.get(ref)
-        host = running.host if running else settings.agent_session_device_id
-        if not host or not self.hub.is_online(host):
-            return None
-        driver = self._driver(ref)
-        try:
-            status = await self._wire().call(host, ref, "ping", {}, timeout=QUICK_S)
-        except (DeviceOffline, DeviceCallError, TimeoutError):
-            return None
-        if not status.get("alive"):
-            return None
-        return SessionStatus(
-            working=driver.working(status),
-            model=str(status.get("model") or ""),
-            conversation=driver.conversation(status),
-            work_id=status.get("work_id"),
-            takes_inputs=driver.takes_inputs(status),
-        )
+        return await control.status(self, ref)
+
+    def frame_snapshots(self, turn_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, dict]:
+        """The last frame each of these live turns' sessions reported.
+
+        One pass over the sessions this process already reads — never one
+        cross-machine call per turn — and only a session whose last frame
+        belongs to a work still in flight contributes. A turn this process
+        does not read, or whose frame belongs to a finished work, is simply
+        absent: the caller must read that as "unknown", not as age 0.
+        """
+        wanted = {str(turn_id) for turn_id in turn_ids}
+        found: dict[uuid.UUID, dict] = {}
+        if not wanted:
+            return found
+        for running in list(self._running.values()):
+            subscription = running.subscription
+            if subscription is None:
+                continue
+            frame = subscription.frame()
+            if frame is None:
+                continue
+            work = frame.get("work_id")
+            if work is None or str(work) not in wanted:
+                continue
+            found[uuid.UUID(str(work))] = frame
+        return found
 
     async def memory(self, ref: SessionRef, request: dict) -> dict | None:
-        """One reconciliation of the memory files the session keeps; None when
-        its harness keeps none, or it cannot be reached. The platform's copy is
-        still the truth then, and the session's edits stay on its disk until
-        it is next reached."""
-        running = self._running.get(ref)
-        if running is None or not keeps_memory(ref.harness):
-            return None
-        try:
-            return await self._wire().call(running.host, ref, "memory", request)
-        except (DeviceCallError, DeviceOffline):
-            return None
+        return await control.memory(self, ref, request)
 
     async def control(self, ref: SessionRef, request: dict) -> dict:
-        """One control request to the session, to its response."""
-        running = self._started(ref)
-        return await self._wire().call(
-            running.host, ref, "control", {"request": request}
-        )
+        return await control.control(self, ref, request)
 
     async def control_state(self, ref: SessionRef) -> dict:
-        """What the session's controls show, from its mirror alone; {} for a
-        harness that has none."""
-        running = self._running.get(ref)
-        driver = self._driver(ref)
-        show = getattr(driver, "control_state", None)
-        if running is None or show is None:
-            return {}
-        return await show(running.mirror)
+        return await control.control_state(self, ref)
 
-    # --- reading ---------------------------------------------------------------
-
-    async def read(
-        self, ref: SessionRef, *, recovered: bool = False
-    ) -> AsyncGenerator[Read]:
+    async def read(self, ref: SessionRef) -> AsyncGenerator[Read]:
         """What the session writes, from where this backend last landed, as it
         is written. The reading goes on until the caller stops it, this process
         stops listening (``stop_listening``), or the session is gone
-        (``Ended``). ``recovered`` first settles what the journal kept of work
-        that ended while nobody read it (Claude Code's).
+        (its runner reports its process gone, or, for a harness that keeps a
+        mirror, ``Ended``).
 
         An item is taken once the caller asks for the next one or stops
         reading. A caller that failed on one throws the failure back in
@@ -684,44 +438,61 @@ class SessionHost:
             running.owed = active
             await hand(Read(str(work), Working(active)))
 
-        async def receipts(receipt):
-            await hand(Read(str(receipt.identity.work_id), Received(receipt)))
-
-        async def completions(completion):
-            await hand(Read(str(completion.work_id), Completed(completion)))
-
-        async def terminations(termination):
-            await hand(Read(str(termination.work_id), Terminated(termination)))
-
         async def moved(work, marks):
             await hand(Read(str(work), Moved(marks)))
 
         async def announce():
             await hand(Read(None, ControlsMoved()))
 
+        async def report(work, reported: Report):
+            if isinstance(reported.fact, SessionExited) and (
+                reported.of_this_registration
+            ):
+                # Its runner says the process this registration holds is gone:
+                # this process holds no session there any more, whatever its
+                # reader does next (a send that follows starts it again). The
+                # reader applies it under this same registration, and one it
+                # refuses as stale means another process holds the seat now,
+                # which ends this process's holding of it either way.
+                self._forget(ref, running)
+            await hand(Read(str(work) if work else None, reported))
+
         async def call(method: str, params: dict) -> dict:
             return await self._wire().call(running.host, ref, method, params)
 
-        running.mirror.parent.mkdir(parents=True, exist_ok=True)
-        subscription = driver.subscription(
-            running.seat,
-            running.acting,
-            running.mirror,
-            call,
-            running.launched,
-            Readers(
-                consume,
-                activity,
-                receipts,
-                completions,
-                terminations,
-                moved,
-                announce,
-            ),
+        readers = Readers(
+            consume,
+            activity,
+            moved,
+            announce,
+            # A session no place owns (a person's 芝士, a document's) has no
+            # conversation to keep a record in (`sessions._seat`).
+            self._records if _owned(running.seat) else None,
+            report,
+            key(ref, running.seat, running.acting),
+            lambda: running.launched.epoch,
         )
+        subscription: Subscription | Reading
+        if isinstance(driver, Reports):
+            subscription = driver.reading(
+                running.seat, running.acting, call, running.launched, readers
+            )
+        else:
+            assert isinstance(driver, Mirrors) and running.mirror is not None
+            running.mirror.parent.mkdir(parents=True, exist_ok=True)
+            subscription = driver.subscription(
+                running.seat,
+                running.acting,
+                running.mirror,
+                call,
+                running.launched,
+                readers,
+            )
         running.subscription = subscription
         pump = asyncio.create_task(
-            self._pump(ref, running, subscription, hand, recovered),
+            self._pump_reports(ref, running, subscription, hand)
+            if isinstance(subscription, Reading)
+            else self._pump(ref, running, subscription, hand),
             name=f"reading {ref.harness} {ref.home}",
         )
         running.reading = pump
@@ -737,15 +508,22 @@ class SessionHost:
                         pump.result()
                     return
                 read, taken = getting.result()
+                # The pump waits on ``taken`` while the caller holds the item.
+                # A stop that outwaited the pass (``stop_listening``) cancels
+                # the pump, and with it ``taken``: nobody is left to tell, and
+                # the next turn of the loop finds the pump done and ends.
                 try:
                     yield read
                 except GeneratorExit:
-                    taken.set_result(None)
+                    if not taken.done():
+                        taken.set_result(None)
                     raise
                 except BaseException as exc:
-                    taken.set_exception(exc)
+                    if not taken.done():
+                        taken.set_exception(exc)
                 else:
-                    taken.set_result(None)
+                    if not taken.done():
+                        taken.set_result(None)
         finally:
             # A reader that stopped while waiting leaves the wait pending.
             if getting is not None and not getting.done():
@@ -760,19 +538,140 @@ class SessionHost:
                 running.reading = None
             await subscription.release()
 
+    async def _pump_reports(
+        self, ref: SessionRef, running: _Running, reading: Reading, hand: Callable
+    ) -> None:
+        """Pass after pass over a runner that reports in the lifecycle
+        protocol, until its process is gone, another registration took it
+        over, or the reading is stopped.
+
+        Every answer renews the lease on its runner. One not renewed for
+        ``LEASE_S`` makes the session unreachable, which the room is told and
+        nothing else: no input is settled and no work ended on it, because a
+        runner that answers again reports what happened meanwhile.
+        """
+        driver = self._driver(ref)
+        first = True
+        failing_since: float | None = None
+        told = False
+        while True:
+            running.woken.clear()
+            # The registration this pass reads under: one this process made
+            # since is its own, and the pass is simply asked again.
+            asked = running.launched.epoch
+            try:
+                await reading.drain(wait=0 if first else READ_WAIT_S)
+            except lifecycle.StaleEpoch as exc:
+                if await self._ours(running, asked):
+                    continue
+                return self._superseded(ref, running, driver, exc)
+            except (DeviceOffline, DeviceCallError, httpx.TransportError) as exc:
+                if lifecycle.stale(exc):
+                    if await self._ours(running, asked):
+                        continue
+                    return self._superseded(ref, running, driver, exc)
+                running.answering = False
+                now = time.monotonic()
+                if failing_since is None:
+                    logger.info(
+                        "%s session %s (%s) waiting for %s: %s",
+                        driver.label,
+                        ref.home,
+                        reading.state.get("worker_status"),
+                        _waiting_for(exc),
+                        exc,
+                    )
+                failing_since = failing_since or now
+                if not told and now - failing_since >= LEASE_S:
+                    told = True
+                    logger.warning(
+                        "a %s session on %s is unreachable: %s",
+                        driver.label,
+                        running.host,
+                        exc,
+                    )
+                    await hand(Read(None, Reachable(False, _why(exc))))
+                if running.stopping:
+                    return
+                missing = isinstance(exc, DeviceCallError) and not isinstance(
+                    exc, DeviceNotReady
+                )
+                if missing and reading.state.get("worker_status") != lifecycle.RUNNING:
+                    # The runner let its idle session go; nobody is waiting.
+                    await self._wait(running, IDLE_GONE_READ_S)
+                else:
+                    await asyncio.sleep(RETRY_S)
+                continue
+            except Exception:
+                # What the reader refused: the event it refused, and every one
+                # after it, is unacknowledged and handed over again next pass.
+                logger.exception("%s home=%s", driver.read_failure, ref.home)
+                if running.stopping:
+                    return
+                await asyncio.sleep(RETRY_S)
+                continue
+            if failing_since is not None:
+                failing_since = None
+                logger.info("%s session %s resumed", driver.label, ref.home)
+                if told:
+                    told = False
+                    await hand(Read(None, Reachable(True)))
+            if first:
+                first = False
+                await hand(Read(None, CaughtUp()))
+            heard = reading.heard
+            # A runner on its way out answers that its process is going: a
+            # send that follows starts it again rather than trusting it.
+            running.answering = heard.get("alive") is not False
+            if isinstance(live := heard.get("live"), dict):
+                await hand(
+                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                )
+            if heard.get("alive") is True and self._on_alive is not None:
+                if (seat := running.seat) is not None:
+                    self._on_alive(seat.conversation_id)
+            if reading.exited is not None:
+                # Its runner said the process is gone, and the room took it.
+                return
+            if running.stopping:
+                return
+
+    @staticmethod
+    async def _ours(running: _Running, asked: int) -> bool:
+        """Whether a stale-epoch refusal of a pass read under ``asked`` came
+        from this process's own registration: one it made since the pass
+        began (read again at once, under it), or one it is handing to the
+        runner right now (read again once that had a moment). Only a newer
+        registration another process made supersedes the reading.
+
+        A runner this process is replacing refuses the old epoch the moment it
+        is launched, before the registration exists to hand it
+        (``relaunching``): that refusal too is this process's own."""
+        if running.launched.epoch != asked:
+            return True
+        if running.registering is not None or running.relaunching:
+            await asyncio.sleep(REGISTERING_WAIT_S)
+            return True
+        return False
+
+    def _superseded(
+        self, ref: SessionRef, running: _Running, driver: Driver, exc: Exception
+    ) -> None:
+        """Another registration holds the session's runner now: this
+        process's reading of it is over, and it changes nothing more."""
+        logger.info("%s session %s superseded: %s", driver.label, ref.home, exc)
+        self._forget(ref, running)
+
     async def _pump(
         self,
         ref: SessionRef,
         running: _Running,
         subscription: Subscription,
         hand: Callable,
-        recovered: bool,
     ) -> None:
         """Pass after pass over the session's journal, each landing what the
         reader took, until the session is gone or the reading is stopped."""
         driver = self._driver(ref)
-        if recovered:
-            await subscription.reconcile_history()
         first = True
         failing_since: float | None = None
         while True:
@@ -845,6 +744,14 @@ class SessionHost:
                 await hand(
                     Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
                 )
+            if heard.get("alive") is True and self._on_alive is not None:
+                # The runner answered. It may have had nothing to answer with:
+                # a turn that is thinking, or running a long command, writes no
+                # record for the whole of it. The answer itself is the only
+                # thing that can be said about such a turn, and saying it is
+                # what keeps a quiet turn from reading as a stopped one.
+                if (seat := running.seat) is not None:
+                    self._on_alive(seat.conversation_id)
             if not heard.get("alive", True) and running.launched is launched:
                 self._forget(ref, running)
                 said = await driver.last_words(
@@ -895,17 +802,10 @@ class SessionHost:
             await asyncio.gather(*stuck, return_exceptions=True)
 
 
-def _no_runner(exc: Exception, state) -> bool:
-    """The connector's own answer that the runner is not there: its socket
-    does not exist (``cli/internal/host/executor_unix.go`` dials it by name),
-    or the session's state directory itself does not (``executor.go`` resolves
-    it with ``EvalSymlinks`` first, and reports its ``lstat``)."""
-    text = str(exc)
-    if "no such file or directory" not in text:
-        return False
-    return "cheese-execution-" in text or (
-        "lstat " in text and Path(str(state)).name in text
-    )
+def _owned(seat: Seat | None) -> bool:
+    """Whether the session reads into a conversation: an ownerless session's
+    seat is the nil conversation (`sessions._seat`)."""
+    return seat is not None and seat.conversation_id.int != 0
 
 
 def _waiting_for(exc: Exception) -> str:

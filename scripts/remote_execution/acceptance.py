@@ -327,7 +327,7 @@ def case(folder, options):
             from app.domain.agent import machine_launcher
             from app.domain.agent.device_provider import DeviceChannel
             from app.domain.agent.harness.claude_code import ClaudeLaunch
-            from app.domain.agent.harness.launch import MachinePlace
+            from app.domain.agent.launch import MachinePlace
             from tests.support.harness_prompts import system_prompt
             from owner_fixture import WireOwner
 

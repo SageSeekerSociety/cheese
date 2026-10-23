@@ -29,9 +29,29 @@ logger = logging.getLogger(__name__)
 # renewals, so a slow beat does not hand a live installation's claim away.
 CLAIM_TTL_S = 30.0
 CLAIM_RENEW_S = 10.0
-# The longest one installation holds the claim, renewed or not: the install
-# command's own deadline (`session_work._start_executor`).
-CLAIM_MOST_S = 660.0
+# The longest an installation of a session's executor may take before the
+# machine it runs on is given up on: the deadline of the install command
+# itself, and of the in-place preparation beside it (`session_work`). One
+# installation burning a whole tool call is what made a hung host look like a
+# machine that never finishes preparing: the call that waited on it was the
+# last the session had. Kept well inside the 660 s one tool call has in full,
+# so the attempt fails and the session is placed again while its caller still
+# has time.
+INSTALL_MOST_S = 120.0
+# The calls into the machine one installation makes one after another: the ping
+# and the prepare that decide how to start the executor, the install itself, and
+# the ping that asks the executor it installed to answer (`session_work._install`).
+# Each is bounded by INSTALL_MOST_S, and they run in sequence under one claim.
+CALLS_IN_AN_INSTALL = 3
+# The longest one installation holds the claim, renewed or not: every call it
+# makes in sequence, and one TTL past the last of them, so the claim cannot
+# lapse while the installation that took it is still running. One TTL past the
+# install command alone was shorter than an installation that spends its whole
+# deadline on the install and then waits on the executor: the claim lapsed with
+# the installation still going, a second request read the lease as free and
+# started a second installation beside it on the same machine — the one thing
+# this claim exists to prevent.
+CLAIM_MOST_S = CALLS_IN_AN_INSTALL * INSTALL_MOST_S + CLAIM_TTL_S
 
 
 def still_preparing(lease: dict | None) -> bool:
@@ -79,7 +99,7 @@ async def _renew(bind, session_id, claim: str, since: datetime) -> None:
                     return
                 row.work_lease = {**lease, "claim_until": until.isoformat()}
                 await db.commit()
-        except Exception:  # noqa: BLE001 — the next beat tries again
+        except Exception:  # the next beat tries again
             # One missed beat is not the installation's death; a database that
             # stays away for the whole TTL lets the claim lapse, as it should.
             logger.warning("could not renew the claim of session %s", session_id)

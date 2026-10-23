@@ -20,8 +20,7 @@
   "tier": {
     "default": "Default · included",
     "included": "Included",
-    "testing": "Beta",
-    "byo": "Bring your own credentials",
+    "byo": "Bring your own",
     "premium": "Premium"
   }
 }

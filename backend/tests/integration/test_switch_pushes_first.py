@@ -30,6 +30,7 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -37,7 +38,9 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
@@ -45,6 +48,7 @@ from app.main import app
 from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 
@@ -82,9 +86,10 @@ async def _room(client, *, on_cloud=False, in_task=False):
                 await devices.start(name),
                 owner_user_id=owner.id,
                 supply=Supply.self_hosted,
+                team_id=await enrollment_team(devices, owner.id),
             )
-            await devices.assign_to_project(
-                device.device_id, project_id, actor_user_id=owner.id
+            await place_in_project_team(
+                devices, device.device_id, project_id, actor_user_id=owner.id
             )
             ids.append(device.device_id)
         old_device, new_device = ids
@@ -267,8 +272,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
-    owner = await _owner_id(client)
-    sandbox = {"kind": "sandbox", "spec": f"devices_of:{owner}"}
+    sandbox = {"kind": "sandbox", "spec": "team_devices"}
 
     switched = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 
@@ -553,7 +557,12 @@ async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as db:
         await TopicService(db).archive(
-            room.topic_id, by="alice", settle_card=settle_card
+            room.topic_id,
+            by="alice",
+            settle_card=settle_card,
+            cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
+            events=platform_line,
         )
         await db.commit()
     entry = {

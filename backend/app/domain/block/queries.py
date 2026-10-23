@@ -22,15 +22,16 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 
 import uuid
 from collections.abc import Iterable
+from datetime import datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.asked import Awaited
 from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS, SHOWN_ROWS
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import READ_FAILED_META_KEY, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
 
 #: A message held back on purpose until its seat is free (`agent.pending_messages
 #: .defer_message`): waiting however old it is.
@@ -56,11 +57,77 @@ def queued_messages(since, topic_id=None):
     return query.order_by(Block.created_at, Block.id)
 
 
+def read_failed_messages(since, topic_id):
+    """The messages of ``topic_id`` since ``since`` that were read into work
+    that then failed (`READ_FAILED_META_KEY`): read, and not answered."""
+    return (
+        select(Block)
+        .where(
+            Block.conversation_id == topic_id,
+            Block.created_at >= since,
+            Block.meta[READ_FAILED_META_KEY].as_string().is_not(None),
+        )
+        .order_by(Block.created_at, Block.id)
+    )
+
+
 async def message_reply_target(
     session: AsyncSession, block_id: uuid.UUID
 ) -> Block | None:
     """Load the same-session reply target for conversation-edge validation."""
     return await BlockRepository(session).get(block_id)
+
+
+async def reply_previews(
+    session: AsyncSession, blocks: Iterable[Block]
+) -> dict[uuid.UUID, dict]:
+    """Previews for the replies among ``blocks``, keyed by the replying block.
+
+    One query for the whole page, not one per reply. A parent from another
+    conversation is not used: a reply is same-conversation by construction, and
+    an older or corrupt edge must not carry a line across conversations.
+    """
+    items = list(blocks)
+    parent_ids = {b.reply_to for b in items if b.reply_to is not None}
+    if not parent_ids:
+        return {}
+    rows = await session.scalars(select(Block).where(Block.id.in_(parent_ids)))
+    parents = {p.id: p for p in rows}
+    previews: dict[uuid.UUID, dict] = {}
+    for b in items:
+        parent = parents.get(b.reply_to) if b.reply_to is not None else None
+        if parent is not None and parent.conversation_id == b.conversation_id:
+            previews[b.id] = reply_preview(parent)
+    return previews
+
+
+async def block_by_id(session: AsyncSession, block_id: uuid.UUID) -> Block | None:
+    """The block a caller was handed by id, read in its own transaction."""
+    return await BlockRepository(session).get(block_id)
+
+
+async def inputs_after(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    after: tuple[datetime, uuid.UUID] | None,
+    limit: int,
+) -> list[Block]:
+    """What a seat has not read: the newest participant messages after its
+    cursor, oldest first."""
+    return await BlockRepository(session).inputs_after(
+        conversation_id, after=after, limit=limit
+    )
+
+
+async def notices_after(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    after: tuple[datetime, uuid.UUID] | None,
+) -> list[Block]:
+    """The platform notices a seat has not read, oldest first."""
+    return await BlockRepository(session).notices_after(conversation_id, after=after)
 
 
 async def client_delivery_bundle(
@@ -81,6 +148,19 @@ async def turn_history(
 ) -> list[Block]:
     """Read the canonical turn-history ordering in the caller's transaction."""
     return await BlockRepository(session).turn_history(conversation_id)
+
+
+async def turn_starts(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[tuple[datetime, uuid.UUID]]:
+    """Read when each of this conversation's turns began, oldest first.
+
+    The usage books need this: the metering proxy's log carries no work id, so
+    a metered call is billed to whichever turn was under way at its timestamp
+    (`usage.subscription_ingest`). Called through the read boundary because
+    that reader sits a layer below this one.
+    """
+    return await BlockRepository(session).turn_starts(conversation_id)
 
 
 async def earlier_message_count(
@@ -127,6 +207,40 @@ async def latest_preview(
     boundary."""
     block = await BlockRepository(db).latest_artifact(conversation_id)
     return BlockOut.model_validate(block) if block is not None else None
+
+
+async def latest_messages(
+    db: AsyncSession, conversation_id: uuid.UUID, limit: int
+) -> list[Block]:
+    """The conversation's latest ``limit`` messages, oldest first."""
+    page = await BlockRepository(db).page_for_topic(
+        conversation_id, limit=limit, kinds=[BlockKind.message]
+    )
+    return list(page.items)
+
+
+async def messages_page(
+    db: AsyncSession, conversation_id: uuid.UUID, *, limit: int, skip: int = 0
+) -> tuple[list[Block], int]:
+    """A page of the conversation's messages read back from its newest, oldest
+    of the page first, and how many messages it has in all. ``skip`` is how
+    many of the newest the page leaves to the pages before it."""
+    shown = (
+        Block.conversation_id == conversation_id,
+        Block.kind == BlockKind.message,
+        SHOWN_ROWS,
+    )
+    rows = (
+        await db.scalars(
+            select(Block)
+            .where(*shown)
+            .order_by(Block.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+    ).all()
+    total = await db.scalar(select(func.count()).select_from(Block).where(*shown))
+    return list(reversed(rows)), int(total or 0)
 
 
 async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:

@@ -29,14 +29,7 @@
       "required": [
         "call_id"
       ],
-      "why": "That step came back an error. It marks the step already on the timeline rather than adding one — and it is NOT the event a tool that returned produces, which is the whole of #1096."
-    },
-    "step_output": {
-      "class": "AgentStepOutput",
-      "required": [
-        "call_id"
-      ],
-      "why": "What that step handed back, for whoever opens its line. Written onto the step already on the timeline, never a line of its own; the room keeps only a capped tail."
+      "why": "That step came back an error, marked on the call it answers rather than as a step of its own — and it is NOT the event a tool that returned produces, which is the whole of #1096. What a tool returned stays in the raw journal."
     },
     "tool_result": {
       "class": "AgentToolResult",
@@ -44,7 +37,7 @@
         "name",
         "text"
       ],
-      "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return is written onto its step (step_output)."
+      "why": "A subagent's conclusion, as its own event: it otherwise reaches only the thread that spawned it. Every other return stays in the raw journal and produces no event."
     },
     "session_info": {
       "class": "AgentSessionInfo",

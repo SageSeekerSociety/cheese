@@ -5,11 +5,12 @@ paths:
   - "frontend/src/views/workspace/ProjectSidebar.vue"
   - "frontend/src/lib/shell.ts"
   - "backend/app/domain/shell/**"
+  - "backend/app/domain/shell_catalog.py"
 ---
 
 # 项目侧栏：项目名下那一行就两格
 
-项目名下面那一行是**总览和资料库**（总览在上），其余的页（全部任务、成员、定时与触发、
+项目名下面那一行是**总览和资料库**（总览在上），其余的页（全部任务、成员、例行事务、
 技能、项目文档、项目设置、转让或退出，以及以后新加的任何一页）都在**点项目名弹出的
 菜单**里。总览只在那一行里，菜单不再重复给它一格。频道清单底部原先还有一行「进行中
 的任务 N」，撤掉了，那个位置不再挂东西。
@@ -37,5 +38,5 @@ paths:
 守着它的是 `frontend/src/lib/shell.spec.ts` 里「项目名下那一行是总览和资料库」，那一行
 的白名单是 `lib/shell.ts` 的 `PROJECT_BAR_PAGES`；屏幕上那一列由
 `e2e/tests/shell-default.spec.ts` 的 `PAGES` 钉住；后端那份「今天长什么样」的声明在
-`backend/app/domain/shell/catalog.py`，`backend/tests/unit/test_shell.py` 里也有同一条
+`backend/app/domain/shell_catalog.py`，`backend/tests/unit/test_shell.py` 里也有同一条
 约定。改白名单会让这几处一起红，这是故意的。

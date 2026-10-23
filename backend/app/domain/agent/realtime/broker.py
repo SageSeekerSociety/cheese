@@ -46,6 +46,10 @@ class InProcessBroker:
         # Who is typing or working here; reads the turn starts above.
         self.activity = RoomActivity(self._active_since)
         self._last_activity_at: dict[str, float] = {}
+        # 最近一次「会话自己应了一声」的时刻。和上一行不是一回事：帧是房间里的
+        # 输出，思考、跑一条长命令的那几十分钟里一帧都没有，可读会话的那一路每
+        # `READ_WAIT_S`（25 秒）就收到 runner 的一声应答。见 `note_alive`。
+        self._last_alive_at: dict[str, float] = {}
         # Every turn end this process relayed, numbered in order: what `adopt`
         # checks a database read against (`books_read`).
         self._ends = 0
@@ -69,6 +73,7 @@ class InProcessBroker:
         self._active_since.clear()
         self.activity.reset()
         self._last_activity_at.clear()
+        self._last_alive_at.clear()
         self._ended.clear()
 
     def books_read(self) -> int:
@@ -146,7 +151,13 @@ class InProcessBroker:
         # Idle state changes and persisted blocks are fanned out live but never
         # retained. This is what stops a queue notice or other system event from
         # making a reconnect look like an agent turn is still running.
-        if self._active.get(channel):
+        #
+        # Nor is `done`. It ends the stream of whoever was listening when a
+        # turn's result landed, which comes before the turn is marked over
+        # (`room.sessions.reading._keep`); replayed in between, it would end the
+        # stream of a page that subscribed to follow the next message. A page
+        # that connects late reads the turn's end from `turn_finished`.
+        if self._active.get(channel) and kind != "done":
             buf = self._buffer.setdefault(channel, [])
             buf.append(frame)
             if len(buf) > self._replay_size:
@@ -220,25 +231,54 @@ class InProcessBroker:
             if (channel, turn_id) in self._active_since
         }
 
-    def active_channels(self) -> set[str]:
-        """Channels whose session or request activity is currently live."""
-        return set(self._active)
-
     def active_count(self) -> int:
         """Number of live attributed work ids across all channels."""
         return sum(len(ids) for ids in self._active.values())
 
+    def note_alive(self, channel: str) -> None:
+        """这个通道上的会话，它的 runner 刚刚应了一声。
+
+        不是一帧：什么都不往外发、什么都不记进缓冲 —— 它记的是另一件事。
+        `publish` 那个戳数的是「房间里落下了新东西」，而思考、一条跑了二十分钟的
+        命令、等机器起来的那些分钟里一帧都没有；这期间会话自己一直是活的，读它的
+        那一路每 ``READ_WAIT_S`` 就收到 runner 的一声应答（`session_host/host.py`）。
+        把这一声记下来，判停（`TopicService.stall_signal`）才分得清「安静」和「停了」。
+        记的是 runner 应没应，和这时候有没有哪一轮开着无关。
+        """
+        self._last_alive_at[channel] = time.monotonic()
+
+    def alive_for_s(self, channel: str) -> float | None:
+        """多久以前这个通道上的会话的 runner 应过一声；这台进程没在读它就是
+        None。"""
+        alive_at = self._last_alive_at.get(channel)
+        return None if alive_at is None else time.monotonic() - alive_at
+
     def activity_snapshot(self, channel: str) -> dict | None:
-        """Current attribution and activity time for one channel."""
+        """Current attribution and activity time for one channel.
+
+        Two clocks, deliberately not one: ``idle_for_s`` is how long since the
+        channel last carried a frame, ``alive_for_s`` how long since the
+        session holding its turn last answered a read (`note_alive`). A turn
+        that is thinking or running a long command has the second fresh and the
+        first stale; a turn nobody is reading has both stale. None means the
+        clock does not say anything — never invent a fresh one from it.
+        """
         ids = self.active_turn_ids(channel)
         if not ids:
             return None
         newest = max(ids, key=lambda work_id: self._active_since[(channel, work_id)])
+        started_at = self._active_since[(channel, newest)]
+        now = time.monotonic()
         last_at = self._last_activity_at.get(channel)
+        alive_for_s = self.alive_for_s(channel)
+        # An answer the runner gave before this turn began is not this turn's.
+        if alive_for_s is not None and time.time() - alive_for_s < started_at:
+            alive_for_s = None
         return {
             "turn_id": newest,
-            "started_at": self._active_since[(channel, newest)],
-            "idle_for_s": (time.monotonic() - last_at if last_at is not None else None),
+            "started_at": started_at,
+            "idle_for_s": (now - last_at if last_at is not None else None),
+            "alive_for_s": alive_for_s,
         }
 
     @contextlib.asynccontextmanager

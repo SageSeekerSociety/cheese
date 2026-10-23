@@ -30,9 +30,35 @@ worktree is removed afterwards unless you pass --keep.
   python3 .claude/scripts/prove-regression.py backend/tests/unit/test_x.py::test_y \
       --without <revision without the fix>
 
+  python3 .claude/scripts/prove-regression.py --auto
+
+The two halves are the same in both forms; --auto derives the pair instead of
+asking you to type it, because the typed pair is the step authors skip. Its
+"without the fix" revision is the merge base with origin/main — the fork point,
+not the tip, so mainline commits that landed after the branch forked cannot fail
+the test for a reason the fix never touched — and its targets are the test files
+this branch added or changed, working tree and untracked files included, since a
+regression test is usually still uncommitted when its author runs this. Support
+files it changed alongside them (shared fixtures under backend/tests and
+frontend/src/test) travel into the worktree with them; the implementation files
+are the fix itself and stay in the working tree, because copying one into the
+worktree would carry the fix into the half that must not have it. For that same
+reason a test whose subject is a changed support file — a new shared fixture and
+the test asserting on it — cannot be proven this way, and it reads as NOT
+PROVEN; the carried files are named in the output so that reads as the rule and
+not as a surprise. Every target
+runs against one worktree, and the branch's verdict is the worst of the targets'
+verdicts. --auto names no runner, so a target whose layout it does not know is
+refused as usual; --command is allowed only when the branch changed a single
+test file, because one command is one run and with two targets it would answer
+for one of them twice — which is the escape hatch for a test whose subject is a
+file that did not exist at the merge base, since that one is refused on the
+inferred runner. A node id with --auto is refused: that is the other form.
+
 The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
-is not a commit here, a layout this script has no runner for, a --copy file that
+is not a commit here, a branch whose changes hold no test file, a layout this
+script has no runner for, a --copy file that
 is missing, unreadable or would land outside the worktree, a runner that is not on PATH,
 an inferred run that did not end in a verdict or that collected no test, a
 command that exited 127 without ever running. If your test is not one of the two layouts below, say how to run it
@@ -94,6 +120,48 @@ SOURCE_ROOTS = ("backend", "frontend")
 #: Every worktree this script makes is named this plus `<sha12>-<pid>` under the
 #: temp dir, which is how a later run recognises one a killed run left behind.
 WORKTREE_PREFIX = "prove-regression-"
+
+#: What `--auto` compares the branch against when the caller names no revision:
+#: the mainline the pull request is merged into. The merge base with it is the
+#: revision that does not carry the fix, and it is derived rather than typed so
+#: that the pair of arguments AGENTS.md asks for is not the step people skip.
+AUTO_BASE = "origin/main"
+
+#: The trees the two inferred runners collect tests from: `backend/tests` is
+#: pytest's `testpaths`, `frontend/src` is where vitest's default include glob
+#: reaches. `frontend/scripts` and `frontend/collab` match that glob and are
+#: excluded by the vitest config (`node:test` and the collab service's own
+#: config run them), so they are outside these trees and not candidates.
+AUTO_TEST_TREES = ("backend/tests/", "frontend/src/")
+
+#: A frontend test's extension, as vitest's default include glob spells it:
+#: `**/*.{test,spec}.?(c|m)[jt]s?(x)`. The marker is part of the *stem*, so the
+#: extension test alone does not make `setup.ts` a spec, and `x.spec.d.ts` — a
+#: type declaration whose stem ends in `.spec.d` — is not one either.
+AUTO_SPEC_SUFFIXES = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+)
+
+#: Trees whose changed files travel into the "without the fix" half without
+#: being tests, as `(prefix, suffixes)`: a conftest, a support module, a shared
+#: fake. A new test that imports one of these is a test that cannot be collected
+#: in the worktree without it, which the inferred runner refuses rather than
+#: judges — so this is what makes `--auto` work on the ordinary fix that also
+#: adds a helper. Only source code: the harness configuration beside it
+#: (`quarantine.txt`, `module_durations.json`, `slow_tests.txt`) decides what
+#: gets collected at all, and the "without" half is supposed to run the base
+#: revision's harness, not the branch's.
+AUTO_SUPPORT_TREES = (
+    ("backend/tests/", (".py",)),
+    ("frontend/src/test/", (".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts")),
+)
 
 TEST_SUFFIXES = (
     ".py",
@@ -336,6 +404,142 @@ def resolve_rev(root: Path, rev: str) -> str:
         print(f"prove-regression: --without {rev} is not a commit here", file=sys.stderr)
         raise SystemExit(2)
     return done.stdout.strip()
+
+
+def merge_base(root: Path, rev: str) -> str:
+    """The commit this branch and `rev` last shared, or "could not judge" (exit 2).
+
+    Passing `rev` itself to `--without` would be wrong in the direction that
+    matters: work merged into the mainline *after* this branch forked is in
+    `origin/main` and not in the branch, so the "without" half would drop code
+    the fix never touched and the test could fail there for that reason. The
+    merge base carries neither side's later work.
+    """
+    done = git("merge-base", rev, "HEAD", cwd=root)
+    base = done.stdout.strip()
+    if done.returncode or not base:
+        print(
+            f"prove-regression: no merge base between {rev} and HEAD "
+            "(is the branch unrelated, or the ref not fetched?)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return base
+
+
+def changed_against(root: Path, base: str) -> list[str]:
+    """Repo-relative paths this branch has changed since `base`, committed or not.
+
+    `--no-renames`: this reads the list for membership, and a rename reported as `old -> new` would put a
+    path with an arrow in it into the copy set. The working tree is included
+    because a regression test is usually still uncommitted when its author runs
+    this — a branch-only diff would make `--auto` refuse the very moment it is
+    most wanted.
+    """
+    done = git(
+        "diff",
+        "--name-only",
+        "--no-renames",
+        base,
+        "--",
+        cwd=root,
+    )
+    if done.returncode:
+        print(
+            f"prove-regression: could not diff against {base}: {done.stderr.strip()}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    tracked = [line.strip() for line in done.stdout.splitlines() if line.strip()]
+    others = git("ls-files", "--others", "--exclude-standard", cwd=root)
+    untracked = [line.strip() for line in others.stdout.splitlines() if line.strip()]
+    # Sorted and deduplicated: the same path can be both modified and named by
+    # the untracked listing (a file staged then edited again), and the plan a
+    # caller reads should not depend on the order git happened to print.
+    return sorted({*tracked, *untracked})
+
+
+def is_test_file(relative: str) -> bool:
+    """Whether one of the two inferred runners would collect this file.
+
+    Mirrors the two runners' own rules rather than a shared guess: pytest's
+    default `python_files = test_*.py` under its `testpaths`, and vitest's
+    default include glob under `frontend/src`. A path outside both trees is not
+    a test whatever it is called — `frontend/scripts/mdi-icons.test.mjs`
+    matches vitest's glob and is excluded by the config, so picking it would aim
+    the whole check at a file the inferred runner never sees.
+    """
+    if relative.startswith("backend/tests/"):
+        return Path(relative).name.startswith("test_") and relative.endswith(".py")
+    if relative.startswith("frontend/src/"):
+        name = Path(relative).name
+        for suffix in AUTO_SPEC_SUFFIXES:
+            if name.endswith(suffix):
+                stem = name[: -len(suffix)]
+                return stem.endswith(".test") or stem.endswith(".spec")
+        return False
+    return False
+
+
+def auto_targets(root: Path, base: str) -> tuple[list[str], list[str]]:
+    """The branch's new/changed tests, and the support files they travel with.
+
+    Both halves of the pair AGENTS.md asks for are inferred from the branch, and
+    both are *refusals* when empty rather than an empty judgement: no test file
+    in what the branch changed is "there is nothing here to prove", and no test
+    path in `AUTO_TEST_TREES` means the branch changed no test at all — the case
+    of a fix that was never given a regression test, which is exactly what the
+    tool exists to notice. An inferred runner on an empty node is not a verdict
+    either way, so saying so is the only honest exit.
+
+    Support files are only what the test halves copy: a changed `.py` under
+    `backend/tests/` that is not itself a `test_*.py`, and a changed `.ts` under
+    `frontend/src/test/`. Copying them is what lets a new test that imports a new
+    fixture be judged at all; without it the worktree half fails to collect and
+    the run is refused, which is the honest answer for a *dependency* the caller
+    did not name but a nuisance for one `--auto` can work out itself.
+    """
+    changed = changed_against(root, base)
+    tests = [path for path in changed if is_test_file(path)]
+    if not tests:
+        outside = [path for path in changed if path.startswith(AUTO_TEST_TREES)]
+        if outside:
+            print(
+                "prove-regression: --auto found no test file among what this "
+                f"branch changed ({len(outside)} file(s) under "
+                f"{', '.join(AUTO_TEST_TREES)} but none named as a test). Name "
+                "the one you mean.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"prove-regression: --auto found no changed test under "
+                f"{' or '.join(AUTO_TEST_TREES)}; there is no regression test "
+                "here to prove. Name a node id instead, or add the test.",
+                file=sys.stderr,
+            )
+        raise SystemExit(2)
+    support = [
+        path
+        for path in changed
+        if path not in tests
+        and any(
+            path.startswith(prefix) and path.endswith(suffixes)
+            for prefix, suffixes in AUTO_SUPPORT_TREES
+        )
+    ]
+    return tests, support
+
+
+def unique(paths: list[str]) -> list[str]:
+    """The same list with repeats dropped, first-seen order kept.
+
+    Two node ids in one file — `test_x.py::test_a` and `::test_b` — name the
+    same file, and so does a `--copy` the caller also spelled out as a target.
+    Copying it twice is not wrong, only pointless, and the report of what was
+    carried is easier to read without the repeats.
+    """
+    return list(dict.fromkeys(paths))
 
 
 def remove_worktree(root: Path, tree: Path) -> None:
@@ -674,31 +878,107 @@ def judge(before: int, after: int, node: str) -> int:
 
 
 def check(root: Path, args: argparse.Namespace) -> int:
-    _, relative = locate(args.node, root)
-    copies = [*args.copy, relative]
-    reports: list[Path | None] = [None, None]
-    if args.command:
-        # An explicit command runs at the repository root in both trees, so it
-        # can reach whatever it needs without this script guessing a runner.
-        argv: list[str] = ["sh", "-c", args.command]
-        subdir = ""
+    if args.auto and args.node is not None:
+        # Silently preferring one of the two would answer a question the caller
+        # did not ask: --auto is "prove everything this branch changed", and a
+        # node id is "prove this one".
+        print(
+            "prove-regression: --auto takes the node ids off the branch's changed "
+            "test files; drop the one you named",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.auto and args.node is None:
+        print(
+            "prove-regression: name the node id to prove, or pass --auto to prove "
+            "every test file this branch changed",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.auto and args.without is None:
+        # --auto is the one case that knows its own "without" revision; a node
+        # id on its own does not, and guessing one would be a comparison against
+        # whatever the guess happened to be.
+        print(
+            "prove-regression: --without is required with a node id — it names the "
+            "revision that does not carry the fix",
+            file=sys.stderr,
+        )
+        return 2
+    copies = list(args.copy)
+    if args.auto:
+        rev = args.without or AUTO_BASE
+        # The merge base, not the tip of the base branch: work that landed there
+        # after this branch forked is not part of the fix, and a before half
+        # checked out at the tip could fail the test for a reason the fix never
+        # touched — which would read as PROVEN.
+        sha = merge_base(root, rev)
+        nodes, support = auto_targets(root, sha)
+        copies.extend(support)
+        print(
+            f"--auto: comparing against {rev}, merge base {sha[:12]} — "
+            f"{len(nodes)} changed test file(s), {len(support)} carried support file(s)"
+        )
+        for node in nodes:
+            print(f"  target {node}")
+        for path in support:
+            # Named, not counted: a support file carried into both halves is one
+            # the reader has to know about to read a NOT PROVEN below. A test
+            # whose subject lives under the test tree — a new shared fixture and
+            # the test that asserts on it — travels with its own subject, and
+            # "already passes without the fix" is what that comparison honestly
+            # gives. Nothing in the file says which of the two it is.
+            print(f"  carried {path}")
     else:
-        inferred = runner_for(args.node, relative)
-        if inferred is None:
-            print(
-                f"prove-regression: no runner for {relative} — this script knows "
-                "pytest over backend/ and vitest over frontend/. Pass --command to "
-                "say how to run it.",
-                file=sys.stderr,
+        # Refused above in the same breath as --auto, so a node id is here.
+        assert args.node is not None
+        sha = resolve_rev(root, args.without)
+        nodes = [args.node]
+    label = args.without or AUTO_BASE
+    if args.auto and args.command and len(nodes) > 1:
+        # A command is one run of whatever it names, so under --auto it answers
+        # for the target it happens to run and says nothing about the others —
+        # the same answer N times, wearing N targets' worth of authority. With
+        # one target it is the "say how to run this one" escape hatch, and with
+        # more the caller has to name the node the command runs.
+        print(
+            f"prove-regression: --auto found {len(nodes)} changed test files and "
+            "--command names a single run of one of them; name that node id "
+            "along with the command, or drop --command",
+            file=sys.stderr,
+        )
+        return 2
+
+    plans: list[tuple[str, list[str], str, list[Path | None]]] = []
+    for node in nodes:
+        _, relative = locate(node, root)
+        copies.append(relative)
+        if args.command:
+            # An explicit command runs at the repository root in both trees, so it
+            # can reach whatever it needs without this script guessing a runner.
+            argv: list[str] = ["sh", "-c", args.command]
+            subdir = ""
+            reports: list[Path | None] = [None, None]
+        else:
+            inferred = runner_for(node, relative)
+            if inferred is None:
+                print(
+                    f"prove-regression: no runner for {relative} — this script knows "
+                    "pytest over backend/ and vitest over frontend/. Pass --command to "
+                    "say how to run it.",
+                    file=sys.stderr,
+                )
+                return 2
+            argv, subdir, wants_report = inferred
+            # One per half: a single path would be overwritten before it was read,
+            # and each half's answer is about that half's tree. The paths are the
+            # same for every target because the targets run one after another —
+            # each half is read before the next target starts.
+            reports = (
+                [report_path("before"), report_path("after")] if wants_report else [None, None]
             )
-            return 2
-        argv, subdir, wants_report = inferred
-        # One per half: a single path would be overwritten before it was read,
-        # and each half's answer is about that half's tree.
-        if wants_report:
-            reports = [report_path("before"), report_path("after")]
-    probe = runner_probe(argv)
-    sha = resolve_rev(root, args.without)
+        plans.append((node, argv, subdir, reports))
+
     reclaim_stale(root)
     trees: list[Path] = []
     tree = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}{sha[:12]}-{os.getpid()}"
@@ -706,16 +986,30 @@ def check(root: Path, args: argparse.Namespace) -> int:
     # here on, has to remove it, and the `finally` can only remove what it knows.
     trees.append(tree)
     try:
-        note = without_fix(root, sha, tree, copies, args.keep)
-        print(f"without the fix ({args.without} → {note})")
-        before = run(argv, tree / subdir if subdir else tree, probe, reports[0])
-        print("with the fix (working tree)")
-        after = run(argv, root / subdir if subdir else root, probe, reports[1])
-        return judge(before, after, args.node)
+        # One tree for every target, holding the union of what they need. The
+        # tree is the expensive half of this script, and a support file two
+        # targets share has to be there once either way.
+        note = without_fix(root, sha, tree, unique(copies), args.keep)
+        print(f"without the fix ({label} → {note})")
+        verdicts = []
+        for node, argv, subdir, reports in plans:
+            probe = runner_probe(argv)
+            if len(plans) > 1:
+                print(f"\n{node}")
+            before = run(argv, tree / subdir if subdir else tree, probe, reports[0])
+            print("with the fix (working tree)")
+            after = run(argv, root / subdir if subdir else root, probe, reports[1])
+            verdicts.append(judge(before, after, node))
+        # One test that does not guard the change is the thing the caller has to
+        # act on, whatever the others said: 1 wins over 0. (A half that could not
+        # be judged never reaches here — it exits 2 from `run` and the run stops,
+        # which is the same answer for the branch: not established.)
+        return max(verdicts)
     finally:
-        for report in reports:
-            if report is not None:
-                report.unlink(missing_ok=True)
+        for _, _, _, reports in plans:
+            for report in reports:
+                if report is not None:
+                    report.unlink(missing_ok=True)
         if not args.keep:
             for path in trees:
                 remove_worktree(root, path)
@@ -794,6 +1088,33 @@ def self_test() -> int:
         with sink:
             got = judge(before, after, "node")
         tally.case(label, got == want)
+
+    # What --auto counts as a test file: the runners' own rules, not a guess.
+    # pytest collects `test_*.py` under `tests` (its `python_files` and
+    # `testpaths`), so a `*_test.py` and a conftest are fixtures, not targets;
+    # vitest's include glob puts the marker in the stem, so `setup.ts` and a
+    # `x.spec.d.ts` declaration are not targets either. Listed literally rather
+    # than read from the constants: a case that iterated them would stay green
+    # with one trimmed, which is the mutation it is here to catch.
+    for relative, want in (
+        ("backend/tests/unit/test_value.py", True),
+        ("backend/tests/unit/value_test.py", False),
+        ("backend/tests/conftest.py", False),
+        ("backend/app/impl.py", False),
+        ("frontend/src/a.spec.ts", True),
+        ("frontend/src/components/a.test.tsx", True),
+        ("frontend/src/a.spec.mjs", True),
+        ("frontend/src/test/setup.ts", False),
+        ("frontend/src/a.spec.d.ts", False),
+        ("frontend/src/a.mjs", False),
+        ("frontend/collab/a.spec.ts", False),
+        ("frontend/scripts/a.test.mjs", False),
+        ("docs/topics/anything.md", False),
+    ):
+        tally.case(
+            f"--auto {'counts' if want else 'does not count'} {relative} as a test",
+            is_test_file(relative) is want,
+        )
 
     argv, subdir, wants_report = runner_for(
         "backend/tests/unit/test_x.py::test_y", "backend/tests/unit/test_x.py"
@@ -2257,6 +2578,281 @@ def self_test() -> int:
             and "run this from inside the repository" not in inside.stderr,
         )
 
+        # --auto decides two things the typed form is told: which revision is
+        # "without the fix", and which files are the tests to prove. Both live
+        # only in what it then runs, so the cases below watch the halves. A fix
+        # carried into the before half and a test that never fails without the
+        # fix produce the same answer, which is why the "not carried" half of
+        # the copy rule is checked by looking in the kept worktree rather than
+        # by the verdict.
+        auto_repo = Path(scratch) / "auto"
+        auto_repo.mkdir()
+
+        def ga(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(auto_repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+
+        def rev_parse(rev: str) -> str:
+            return subprocess.run(
+                ["git", "rev-parse", rev],
+                cwd=str(auto_repo),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+        ga("init", "-q")
+        (auto_repo / "impl.py").write_text("value = 1\n", encoding="utf-8")
+        (auto_repo / "backend" / "tests" / "support").mkdir(parents=True)
+        (auto_repo / "backend" / "tests" / "support" / "shared.py").write_text(
+            "factor = 1\n", encoding="utf-8"
+        )
+        ga("add", "impl.py", "backend/tests/support/shared.py")
+        ga("commit", "-q", "-m", "base")
+        fork = rev_parse("HEAD")
+        # Mainline moves on after this branch forked, and what it carries is a
+        # value that would make the new test pass. A run that checked the before
+        # half out at origin/main's tip would find it green and answer NOT
+        # PROVEN; one that derives the merge base finds the fork point. That is
+        # the whole reason the revision is derived, and it is what the exit 0
+        # below is reading — the ref is left pointing here for the rest of the
+        # block on purpose.
+        (auto_repo / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        ga("add", "impl.py")
+        ga("commit", "-q", "-m", "mainline")
+        tip = rev_parse("HEAD")
+        ga("update-ref", "refs/remotes/origin/main", tip)
+        # Back to the fork point: the fix in this fixture is the working tree,
+        # not a commit, which is the state an author runs this tool in.
+        ga("reset", "-q", "--hard", fork)
+
+        (auto_repo / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        (auto_repo / "backend" / "tests" / "support" / "shared.py").write_text(
+            "factor = 2\n", encoding="utf-8"
+        )
+        (auto_repo / "backend" / "tests" / "unit").mkdir(parents=True)
+        auto_test = auto_repo / "backend" / "tests" / "unit" / "test_value.py"
+        auto_test.write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "HERE = Path(__file__).resolve()\n"
+            "sys.path.insert(0, str(HERE.parents[3]))\n"
+            "sys.path.insert(0, str(HERE.parents[1]))\n"
+            "import impl\n"
+            "from support import shared\n"
+            "raise SystemExit(0 if (impl.value, shared.factor) == (2, 2) else 1)\n",
+            encoding="utf-8",
+        )
+        # Changed files that must not travel: a support file the changed test
+        # imports, and a data file under the same tree that is not source code.
+        (auto_repo / "frontend" / "src" / "test").mkdir(parents=True)
+        (auto_repo / "frontend" / "src" / "test" / "fakes.ts").write_text(
+            "export const fake = 2\n", encoding="utf-8"
+        )
+        (auto_repo / "backend" / "tests" / "quarantine.txt").write_text(
+            "not source\n", encoding="utf-8"
+        )
+
+        auto_shims = Path(scratch) / "auto-shims"
+        auto_shims.mkdir()
+        uv_shim = auto_shims / "uv"
+        uv_shim.write_text(
+            "#!/bin/sh\n"
+            # Answered the way a real `uv` answers it, so the probe does not
+            # become a run of its own.
+            'case "$*" in *--version*) exit 0;; esac\n'
+            'for a in "$@"; do\n'
+            '  case "$a" in\n'
+            f'    *.py) exec "{sys.executable}" "$a";;\n'
+            "  esac\n"
+            "done\n"
+            "exit 127\n",
+            encoding="utf-8",
+        )
+        uv_shim.chmod(0o755)
+        auto_path = f"{auto_shims}{os.pathsep}{env.get('PATH', '')}"
+
+        def auto_run(*extra: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--auto", *extra],
+                cwd=str(auto_repo),
+                env={**env, "PATH": auto_path},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        tally.case(
+            "of a changed test file, a changed fixture, a changed implementation file "
+            "and an unchanged one, --auto takes the test and the fixture",
+            auto_targets(auto_repo, fork)
+            == (
+                ["backend/tests/unit/test_value.py"],
+                ["backend/tests/support/shared.py", "frontend/src/test/fakes.ts"],
+            ),
+        )
+        tally.case(
+            "the revision --auto compares against is the merge base, not the "
+            "tip of the base branch",
+            merge_base(auto_repo, AUTO_BASE) == fork and tip != fork,
+        )
+        # The verdict alone cannot say the implementation file stayed behind —
+        # a carried fix and a proven test both read as green twice — so this is
+        # the case that holds the rule's other half.
+        proven = auto_run()
+        tally.case(
+            "end to end: --auto proves the branch's changed test file",
+            proven.returncode == 0
+            and "PROVEN: backend/tests/unit/test_value.py" in proven.stdout
+            and fork[:12] in proven.stdout,
+        )
+        # A support file is copied into both halves, so it is named: a test whose
+        # subject is one of those is compared against its own copy and answers
+        # NOT PROVEN whatever it does, and the reader has to be able to see that
+        # from the output rather than reconstruct it from the copy rule.
+        tally.case(
+            "end to end: --auto names the files it carried into both halves",
+            "carried backend/tests/support/shared.py" in proven.stdout
+            and "carried frontend/src/test/fakes.ts" in proven.stdout,
+        )
+        kept_auto = auto_run("--keep")
+        auto_trees = [
+            Path(p) for p in _worktrees(auto_repo) if Path(p).resolve() != auto_repo.resolve()
+        ]
+        left_auto = auto_trees[0] if auto_trees else None
+        tally.case(
+            "end to end: --auto carries the new test and the changed fixture into "
+            "the worktree, and leaves the fix outside it",
+            kept_auto.returncode == 0
+            and left_auto is not None
+            and text_of(left_auto / "backend" / "tests" / "unit" / "test_value.py")
+            == auto_test.read_text(encoding="utf-8")
+            and text_of(left_auto / "backend" / "tests" / "support" / "shared.py")
+            == "factor = 2\n"
+            and text_of(left_auto / "impl.py") == "value = 1\n",
+        )
+        if left_auto is not None:
+            remove_worktree(auto_repo, left_auto)
+        tally.case(
+            "end to end: --auto takes the node ids off the branch, not the caller",
+            auto_run("backend/tests/unit/test_value.py").returncode == 2,
+        )
+        one_command = auto_run("--command", "sh -c true")
+        tally.case(
+            "end to end: --auto with --command and one target runs that command, "
+            "and the caller's command owns the verdict",
+            one_command.returncode == 1
+            and "PROVEN: backend/tests/unit/test_value.py" not in one_command.stdout
+            and "--command" not in one_command.stderr,
+        )
+        named_alone = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "backend/tests/unit/test_value.py",
+            ],
+            cwd=str(auto_repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tally.case(
+            "end to end: a node id without --without is not judged",
+            named_alone.returncode == 2 and "--without" in named_alone.stderr,
+        )
+        # One target that guards the change and one that passes either way: the
+        # branch's answer is the worst of them, and both lines have to be there
+        # — a run that stopped at the first target would print one.
+        (auto_repo / "backend" / "tests" / "unit" / "test_always.py").write_text(
+            "raise SystemExit(0)\n", encoding="utf-8"
+        )
+        both = auto_run()
+        tally.case(
+            "end to end: --auto judges every target and answers with the worst",
+            both.returncode == 1
+            and "2 changed test file(s)" in both.stdout
+            and "PROVEN: backend/tests/unit/test_value.py" in both.stdout
+            # The unguarded target is judged first (the targets are the sorted
+            # changed paths) and says nothing about which test it was, so the
+            # order of the two lines is what says both were judged: a run that
+            # stopped at the first target would have no PROVEN line at all.
+            and both.stdout.index("NOT PROVEN") < both.stdout.index("PROVEN: backend/"),
+        )
+        # The same command with more than one target would answer for whichever
+        # one it happens to run and be read as the branch's verdict, so it is
+        # refused once there is more than one to answer for.
+        many_commands = auto_run("--command", "sh -c true")
+        tally.case(
+            "end to end: --auto with --command and two targets is not judged",
+            many_commands.returncode == 2
+            and "names a single run" in many_commands.stderr,
+        )
+
+        # A branch whose changes hold no test has nothing to prove, and the two
+        # ways of having none give different advice: add the test, or name the
+        # one meant. Both are exit 2 — an empty selection wearing a green exit
+        # code is the trap this refuses.
+        plain = Path(scratch) / "plain"
+        (plain / "backend" / "tests").mkdir(parents=True)
+
+        def gp(*args: str) -> None:
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(plain),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+
+        gp("init", "-q")
+        (plain / "impl.py").write_text("value = 1\n", encoding="utf-8")
+        gp("add", "impl.py")
+        gp("commit", "-q", "-m", "base")
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+            cwd=str(plain),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+        def auto_here() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--auto"],
+                cwd=str(plain),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        (plain / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        (plain / "notes.md").write_text("why\n", encoding="utf-8")
+        no_test = auto_here()
+        tally.case(
+            "end to end: a branch whose changes hold no test file is not judged",
+            no_test.returncode == 2
+            and "no changed test under" in no_test.stderr
+            and "NOT PROVEN" not in no_test.stdout,
+        )
+        (plain / "backend" / "tests" / "helpers.py").write_text(
+            "def helper():\n    return 1\n", encoding="utf-8"
+        )
+        named_wrong = auto_here()
+        tally.case(
+            "end to end: a changed file under a test tree that is not named as one "
+            "is refused, and says so",
+            named_wrong.returncode == 2
+            and "none named as a test" in named_wrong.stderr,
+        )
+
     # The line the repo-guards step reads is the process's exit code, so the
     # conversion from a bad count to it is proven the way the gate reads it: a
     # child run forced to fail a case, not this process reporting on itself.
@@ -2391,12 +2987,21 @@ def main() -> int:
         prog="prove-regression.py",
         description="Run a node id without a fix and with it; the first must fail.",
     )
-    parser.add_argument("node", help="the test node id, e.g. tests/unit/x.py::test_y")
+    parser.add_argument(
+        "node",
+        nargs="?",
+        help="the test node id, e.g. tests/unit/x.py::test_y",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="prove every test file this branch changed, against its merge base",
+    )
     parser.add_argument(
         "--without",
-        required=True,
         metavar="REV",
-        help="a revision that does not carry the fix",
+        help="a revision that does not carry the fix; required with a node id, "
+        f"and with --auto it replaces the {AUTO_BASE} merge base",
     )
     parser.add_argument(
         "--copy",

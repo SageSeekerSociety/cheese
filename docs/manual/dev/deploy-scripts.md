@@ -18,6 +18,7 @@ covers:
   - deploy/r2-upload.py
   - deploy/r2-sync-uploads.py
   - deploy/etrip-backup.sh
+  - deploy/gateway-db-backup.sh
   - deploy/dev-box-disk-cleanup.sh
   - deploy/cheesex-disk-pressure-guard.sh
   - deploy/cheesex-healthcheck.sh
@@ -92,7 +93,7 @@ covers:
 |---|---|---|---|
 | `cheese-db-backup.timer` | 每小时整点（`RandomizedDelaySec=120`，`Persistent=true`） | `pg_dump -Fc`、校验、清理旧份、传 R2 | `/home/nictheboy/ops/db-backup.sh` |
 | `cheese-uploads-mirror.timer` | 每小时 :30 | `uploads/` 增量镜像到 R2（`UPLOADS_PREFIX=prod-uploads`） | `~/ops/r2-sync-uploads.py` |
-| `cheese-transcripts-mirror.timer` | 每小时 :45 | 同一个脚本，会话记录归档目录（`UPLOADS_PREFIX=transcripts`） | 同上 |
+| `cheese-transcripts-mirror.timer` | 每小时 :45 | 同一个脚本，旧的会话记录归档目录（`UPLOADS_PREFIX=transcripts`）；没有新归档写进这个目录，归档房间的记录由房间清理直接传进私有桶 `transcripts/rooms/` | 同上 |
 | `cheese-etrip-backup.timer` | 每小时 :15 | etrip 的两个 Postgres 容器 dump + 上传卷 tar → R2 | `/root/ops/etrip-backup.sh` |
 | `cheese-room-cleanup.timer` | 每分钟（`AccuracySec=1s`） | 触发一次归档房间的到期清理 | `/usr/local/lib/cheese/trigger-room-cleanup.sh` |
 | `cheese-disk-cleanup.timer` | 每天 04:00（±30 分钟） | 高于脚本自己的标记（75%）才回收可再生缓存 | `/usr/local/lib/cheese/dev-box-disk-cleanup.sh`，先由 `ExecCondition` 跑 `--needed` |
@@ -128,11 +129,13 @@ covers:
 
 | 脚本 | 一句话 |
 |---|---|
-| `db-backup.sh` | 定时逻辑备份：`pg_dump -Fc`、校验可读、保留 30 天 |
+| `db-backup.sh` | 定时逻辑备份：`pg_dump -Fc`、校验可读、保留 30 天；`~/ops/backup.env` 设了 `CHEESE_BACKUP_HOURLY_DAYS` 时再调 `r2-prune-dumps.py` 分层 |
+| `r2-prune-dumps.py` | 分层保留：最近几天每小时一份，之后每天一份到 30 天；超出部分的本地转储只在 R2 副本大小核对上（或重传后 R2 上的大小核对上）之后才删；超过 30 天的照旧直接删 |
 | `db-restore-test.sh` | 把最新转储恢复进一个用完即弃的 Postgres 容器，抽查 schema 与数据 |
 | `r2-upload.py` | 把校验过的转储传到 Cloudflare R2（异地那一份） |
 | `r2-sync-uploads.py` | 把本地 `uploads/` 增量镜像到 R2，只增不删（远端是超集） |
 | `etrip-backup.sh` | etrip 专用备份：两个库 dump + 上传卷 tar → R2，保留 14 天 |
+| `gateway-db-backup.sh` | 网关数据库的转储：`docker exec` 进 `litellm-db` 跑 `pg_dump -Fc`、校验、本机留最新 28 份；由 `gateway-db-backup.yml` 每 6 小时调用，异地那一份由工作流用 `r2-upload.py` 传 |
 | `dev-box-disk-cleanup.sh` | 回收可再生缓存；`--needed` 判断、`--apply` 执行、`--self-test` 自检 |
 | `cheesex-disk-pressure-guard.sh` | 磁盘 85% 的急刹：确认没有活跃会话后删沙箱容器与陈旧 `/tmp` |
 | `cheesex-healthcheck.sh` | 探本机后端 `/health`，连续 3 次失败重启 `cheese.service` |
@@ -177,7 +180,7 @@ covers:
 
 ## 这些脚本的测试 {#tests}
 
-`deploy/tests/` 是这套脚本的测试，入口是 `.github/workflows/deploy-scripts-test.yml`——`workflow_call`，由 `.github/workflows/required-ci.yml:77` 调进来，所以它是必过检查的一部分。
+`deploy/tests/` 是这套脚本的测试，入口是 `.github/workflows/deploy-scripts-test.yml`——`workflow_call`，由 `.github/workflows/required-ci.yml` 的 `deploy` job 调进来，所以它是必过检查的一部分。
 
 为什么值得单独一个 workflow（workflow 头部自己写的）：`test.yml` 只覆盖 `backend/**`，从前 `deploy/` 下的改动**没被任何人执行过**就这么上了机器；2026-08-11 的 dev 故障（一次归属交接排在还能中止它的检查之前）就是这样带过去的——六个绿 job，没有一个碰过那个文件。
 

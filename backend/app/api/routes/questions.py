@@ -2,21 +2,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.deps import get_discussion_service
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
-from app.domain.delivery.ledger import deliver
-from app.domain.discussion.models import DiscussableModelType
-from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import (
-    DiscussionReactionRepository,
-    DiscussionRepository,
-    ReactionTypeRepository,
-)
-from app.domain.discussion.services import DiscussionService
+from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
     QuestionRepository,
@@ -38,21 +32,6 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
         topic_repo=topic_repo,
         answer_repo=answer_repo,
         profile_repo=profile_repo,
-    )
-
-
-async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
-    discussion_repo = DiscussionRepository(session=db)
-    reaction_repo = DiscussionReactionRepository(session=db)
-    reaction_type_repo = ReactionTypeRepository(session=db)
-    reaction_service = DiscussionReactionService(
-        reaction_repo=reaction_repo, reaction_type_repo=reaction_type_repo
-    )
-    return DiscussionService(
-        repo=discussion_repo,
-        reaction_service=reaction_service,
-        session=db,
-        deliver=deliver,
     )
 
 
@@ -129,9 +108,7 @@ async def search_questions(
 
 
 @router.post(
-    "",
-    summary="Create Question",
-    status_code=201,
+    "", summary="Create Question", status_code=201, dependencies=[ROUTE_DECIDES]
 )
 async def add_question(
     payload: dict = Body(...),
@@ -210,6 +187,7 @@ async def get_question(
     "/{question_id}/followers",
     summary="Follow Question",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def follow_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -228,6 +206,7 @@ async def follow_question(
 @router.delete(
     "/{question_id}/followers",
     summary="Unfollow Question",
+    dependencies=[ROUTE_DECIDES],
 )
 async def unfollow_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -243,8 +222,7 @@ async def unfollow_question(
 
 
 @router.put(
-    "/{question_id}/acceptance",
-    summary="Accept Answer",
+    "/{question_id}/acceptance", summary="Accept Answer", dependencies=[ROUTE_DECIDES]
 )
 async def accept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -259,8 +237,7 @@ async def accept_answer(
 
 
 @router.delete(
-    "/{question_id}/accept",
-    summary="Unaccept Answer",
+    "/{question_id}/accept", summary="Unaccept Answer", dependencies=[ROUTE_DECIDES]
 )
 async def unaccept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -276,8 +253,7 @@ async def unaccept_answer(
 
 
 @router.post(
-    "/{question_id}/vote",
-    summary="Vote on Question",
+    "/{question_id}/vote", summary="Vote on Question", dependencies=[ROUTE_DECIDES]
 )
 async def vote_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -295,6 +271,7 @@ async def vote_question(
 @router.delete(
     "/{question_id}/vote",
     summary="Remove Vote from Question",
+    dependencies=[ROUTE_DECIDES],
 )
 async def remove_question_vote(
     question_id: Annotated[int, Path(ge=0)],
@@ -354,6 +331,7 @@ async def list_question_comments(
     "/{question_id}/comments",
     summary="Create Question Comment",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_question_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -378,6 +356,7 @@ async def create_question_comment(
 @router.delete(
     "/{question_id}/comments/{comment_id}",
     summary="Delete Question Comment",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_question_comment(
     question_id: Annotated[int, Path(ge=0)],
@@ -397,16 +376,14 @@ async def delete_question_comment(
         or discussion["modelId"] != question_id
     ):
         raise NotFoundError("Comment not found for this question")
-    if discussion["sender"]["id"] != auth_user.user_id:
+    # A closed account's comment has no sender left to compare with.
+    if (discussion["sender"] or {}).get("id") != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return ok({"deleted": True})
 
 
-@router.put(
-    "/{question_id}",
-    summary="Update Question",
-)
+@router.put("/{question_id}", summary="Update Question", dependencies=[ROUTE_DECIDES])
 async def update_question(
     question_id: Annotated[int, Path()],
     payload: dict = Body(...),
@@ -446,6 +423,7 @@ async def update_question(
     "/{question_id}",
     summary="Delete Question",
     status_code=204,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_question(
     question_id: Annotated[int, Path()],
@@ -477,6 +455,7 @@ async def list_question_followers(
 @router.put(
     "/{question_id}/followers",
     summary="Follow Question (PUT)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def follow_question_put(
     question_id: Annotated[int, Path(ge=0)],
@@ -489,8 +468,7 @@ async def follow_question_put(
 
 
 @router.put(
-    "/{question_id}/bounty",
-    summary="Set Question Bounty",
+    "/{question_id}/bounty", summary="Set Question Bounty", dependencies=[ROUTE_DECIDES]
 )
 async def set_question_bounty(
     question_id: Annotated[int, Path(ge=0)],
@@ -510,6 +488,7 @@ async def set_question_bounty(
 @router.post(
     "/{question_id}/attitudes",
     summary="Attitude on Question (Vote)",
+    dependencies=[ROUTE_DECIDES],
 )
 async def attitude_question(
     question_id: Annotated[int, Path(ge=0)],
@@ -581,6 +560,7 @@ async def list_question_invitations(
     "/{question_id}/invitations",
     summary="Invite User to Answer",
     status_code=201,
+    dependencies=[ROUTE_DECIDES],
 )
 async def invite_user_to_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -643,6 +623,7 @@ async def get_invitation_detail(
 @router.delete(
     "/{question_id}/invitations/{invitation_id}",
     summary="Delete Invitation",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_invitation(
     question_id: Annotated[int, Path(ge=0)],

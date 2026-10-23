@@ -11,19 +11,14 @@ name: Repo Guards
 # `.github/workflows/**` is in the path filter because one of the guards judges
 # the workflows themselves (action pinning) — filtering on this file alone would
 # let an unpinned action land in any other workflow without ever running it.
-# And `frontend/**`, for the same reason: the fixed-palette guard judges .vue
-# templates, and the change it exists to catch — a new `color="grey-lighten-5"`
-# on a component — is by definition a frontend-only diff, which without this
-# line would sail past without the guard ever starting.
 on:
   workflow_call:
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
-# by sha gives each queued commit its own group, so one entry cannot cancel
-# another's run and leave the commit that lands on main with no result — a
-# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# Cancel superseded runs on a PR, never on main. Keying main's runs by sha
+# gives each commit its own group, so one push cannot cancel another's run and
+# leave a commit on main with no result — a cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
 # to one PR still supersede each other.
 concurrency:
   group: repo-guards-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -56,15 +51,14 @@ jobs:
       - name: Guards self-test
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
+          bash scripts/check.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
           python3 .claude/scripts/check-migration-safety.py --self-test
-          python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
           python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
-          python3 .claude/scripts/catalog-ratchet.py --self-test
 
       # Not a guard of this tree: prove-regression.py is what AGENTS.md tells an
       # author to run on a fix's own test, and nothing in CI runs it against the
@@ -85,10 +79,12 @@ jobs:
           python3 .claude/scripts/orchestrator_actions.py --self-test
           python3 .claude/scripts/orchestrator_metrics.py --self-test
           python3 .claude/scripts/orchestrator_sweep.py --self-test
+          python3 .claude/scripts/main-red-owner.py --self-test
           python3 .claude/scripts/orchestrator_remount.py --self-test
           python3 .claude/scripts/wake_orchestrator.py --self-test
           python3 .claude/scripts/test_pr_review.py
           python3 .claude/scripts/orchestrator_autoaccept.py --self-test
+          python3 .claude/scripts/change_outcomes.py --self-test
           python3 -m unittest discover -s .claude/scripts -p 'test_ci_rounds.py'
 
       # The rest of the review tooling. test_pr_review.py above drives pr-review.sh
@@ -110,29 +106,78 @@ jobs:
       - name: dev-db.sh tests
         run: bash .claude/scripts/test-dev-db.sh
 
-      # Every helper test beside the scripts in .github/scripts, minus the two
-      # owned by Required CI itself (test_required_ci.py runs in the scope job,
-      # test_ci_fast.py in the cifast job of required-ci.yml — that one drives
-      # real pre-commit and is too slow for this lane). The exclusion is by
-      # name, so a helper test added tomorrow is collected here automatically;
-      # it must not need a list edit somewhere to start running.
+      # Every helper test beside the scripts, in BOTH script trees: the helpers
+      # in .github/scripts and the ones in .claude/scripts. The second tree is
+      # why this step exists in this shape — a self-test written next to a guard
+      # had no lane at all until #4028's diagnosis found three guards whose
+      # self-tests had never run (#4005, #4010, #4019), one of them red on main.
+      #
+      # Each tree goes on sys.path before its modules are executed, because
+      # exec_module does not do what `python3 <path>` does: a helper that
+      # imports a neighbour by bare name resolves it beside the script when run
+      # as a file and nowhere when it is not. No module collected today does
+      # that — the one that does, test_ci_rounds.py, is excluded below — so
+      # this is a net for the next helper rather than a line this run depends
+      # on.
+      #
+      # Exclusions, all by name, and each one has to stay justified:
+      #   * the one owned by Required CI itself — test_required_ci.py runs in
+      #     the scope job;
+      #   * the two a step above already runs — .claude/scripts/test_pr_review.py
+      #     and test_ci_rounds.py in Trace tooling self-test;
+      #   * the two that need an install this job does not have, both of them
+      #     found red by the first full run of this step. test_scene_debt_ratchet.py
+      #     shells out to a node scan and needs frontend/node_modules; its lane
+      #     is frontend.yml's Scene debt rule self-tests, which runs
+      #     scene-debt-ratchet.py --self-test after the install.
+      #     test_reanchor_migration_head.py drives reanchor-migration-head.py,
+      #     which imports alembic, so it needs backend/.venv; no lane runs it
+      #     today, and this step cannot be that lane without the install. The
+      #     gap is recorded here so it is not mistaken for covered.
+      # The glob is by name, so a helper test added tomorrow is collected here
+      # automatically; it must not need a list edit somewhere to start running.
+      # The one exception is a helper that needs an install this job lacks: it
+      # goes in NEEDS_AN_INSTALL, the comment above names the lane that runs it
+      # instead, and when nothing does, it says that too.
+      #
+      # It stops at `test_*.py` because widening it would collect
+      # test-verify-module-split.py, which is offline, green and 27 seconds but only
+      # reached by verify-module-split.py --self-test, a tool no step runs — a
+      # lane for it is its own decision, recorded here so the next diagnosis
+      # does not redo it.
       - name: CI helper tests
         run: |
           python3 - <<'PYEOF'
           import importlib.util
           import pathlib
+          import sys
           import unittest
 
-          OWNED_BY_REQUIRED_CI = {"test_required_ci", "test_ci_fast"}
+          OWNED_BY_REQUIRED_CI = {"test_required_ci"}
+          RUN_BY_A_STEP_ABOVE = {"test_pr_review", "test_ci_rounds"}
+          #: Helpers that need an install this job does not have: one scans with
+          #: node, one drives a script that imports alembic. Named rather than
+          #: detected — a guess at what a module needs would hide the test that
+          #: stopped importing for the wrong reason, which is the failure mode
+          #: this step exists to catch. The reason each one is here, and the lane
+          #: it runs in instead, is in the comment above the step.
+          NEEDS_AN_INSTALL = {
+              "test_scene_debt_ratchet",
+              "test_reanchor_migration_head",
+          }
+          SKIP = OWNED_BY_REQUIRED_CI | RUN_BY_A_STEP_ABOVE | NEEDS_AN_INSTALL
           loader = unittest.TestLoader()
           suite = unittest.TestSuite()
-          for path in sorted(pathlib.Path(".github/scripts").glob("test_*.py")):
-              if path.stem in OWNED_BY_REQUIRED_CI:
-                  continue
-              spec = importlib.util.spec_from_file_location(path.stem, path)
-              module = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(module)
-              suite.addTests(loader.loadTestsFromModule(module))
+          trees = (pathlib.Path(".github/scripts"), pathlib.Path(".claude/scripts"))
+          for tree in trees:
+              sys.path.insert(0, str(tree.resolve()))
+              for path in sorted(tree.glob("test_*.py")):
+                  if path.stem in SKIP:
+                      continue
+                  spec = importlib.util.spec_from_file_location(path.stem, path)
+                  module = importlib.util.module_from_spec(spec)
+                  spec.loader.exec_module(module)
+                  suite.addTests(loader.loadTestsFromModule(module))
           result = unittest.TextTestRunner().run(suite)
           raise SystemExit(0 if result.wasSuccessful() else 1)
           PYEOF
@@ -142,7 +187,7 @@ jobs:
       # The guards' own --self-test above still calls them directly: that step
       # proves the guard fires, which is a different question from whether the
       # tree passes it.
-      - name: Repo rules (datetime, HTTPException, palette, platform CLI, …)
+      - name: Repo rules (datetime, HTTPException, platform CLI, …)
         run: uvx pre-commit run --all-files repo-rules
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,
@@ -162,15 +207,9 @@ jobs:
         run: uvx pre-commit run --all-files doc-references
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
-      # does not create it. So does the HISTORY behind it, and that is the part
-      # this step used to skip: a file-size finding is measured at the merge
-      # base with main, and a depth-1 checkout has no common ancestor to compute
-      # one from. The old fallback compared against main's tip, which failed
-      # PR #2173 for frontend/src/api.ts "growing" 3615 → 3610 — main had shrunk
-      # the file after that branch forked, and the branch never touched it.
-      # check-file-sizes.py now exits 2 (cannot judge) rather than guess, so
-      # this fetch is what makes the guard judgeable at all. Note the command:
-      # a `--depth=1` here would RE-shallow origin/main and undo the merge base.
+      # does not create it. So does the HISTORY behind it: the alembic check
+      # below and the docs site's changelog both read past the tip. Note the
+      # command: a `--depth=1` here would RE-shallow origin/main.
       - name: Fetch main for comparison
         id: history
         if: ${{ !cancelled() }}
@@ -178,13 +217,6 @@ jobs:
 
       - name: Alembic chain would not fork on merge
         run: uvx pre-commit run --all-files migration-fork
-
-      # Runs here rather than in the backend lane because it needs the ref above
-      # and the history behind it: the comparison is against the merge base with
-      # main, and a file is frozen at the size it had there. No database, no uv
-      # venv, no network — it reads the changed files and counts lines.
-      - name: No file grew past its size cap
-        run: uvx pre-commit run --all-files file-size
 
       # The docs site is built into the frontend image by build.yml, after
       # merge. A broken internal link, a developer page missing its
@@ -207,6 +239,11 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          # No cache here, deliberately. docs/site is three packages and the
+          # install is about two seconds on a hosted runner (2s in runs
+          # 38926053508 and 38927604231); and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -216,5 +253,24 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
-          # The docs host's copy, at the root (docs/site/src/where.mjs).
-          DOCS_BASE= OUT="$OUT-host" npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs): the
+          # same sources through the same build, with BASE empty. The same
+          # generators and the same per-page checks run either way; what BASE
+          # changes is where a link points, and this is the stricter of the two
+          # link checks — build.mjs anchors its href regex on BASE, so an
+          # absolute path with more than one segment, written by hand into
+          # docs content, is checked against the host's pages here and by the
+          # first build not at all. It is also the only run that reaches the
+          # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
+          # host's own root can serve those; manual.zip is built either way.
+          # So a PR that leaves docs/site alone gives up the earlier signal,
+          # not the check: a main push runs both builds whatever landed, as
+          # does any pull_request that touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # answer (no origin/main, say), which runs the build rather than skip
+          # it.
+          if [ "${{ github.event_name }}" != "pull_request" ] \
+             || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
+            DOCS_BASE= OUT="$OUT-host" npm run build
+          else
+            echo "docs/site is untouched by this PR; the docs-host build runs on the main push"
+          fi

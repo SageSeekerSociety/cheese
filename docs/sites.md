@@ -3,9 +3,9 @@
 The project's home page pins a **网站** row at the top of its 做出了什么 column,
 and the row appears once the project has a published Site or an accepted revision
 holding one. Publishing itself opens a dialog naming the revision and the entry.
-Project owners, project leads and team administrators can publish; project and
-team members can open the published Site. Its access does not become public when
-it is published.
+Project owners and team administrators can publish; whoever may read the
+project can open the published Site, so leaving the project closes it too. Its
+access does not become public when it is published.
 
 ## Topic previews
 
@@ -56,7 +56,9 @@ draggable point to its corners (the shell's `exercise.ts`). One that throws,
 draws nothing, keeps growing or shows NaN, on opening or once used, is refused
 with what was done to it; with no renderer to be had it is kept unchecked and
 without pictures. The light pictures go back to the AI teammate that saved it,
-in the save tool's result, for it to look at what it made.
+in the save tool's result, for it to look at what it made, when the gateway
+marks its model as reading pictures (`supports_vision` on the model page); a
+teammate on any other model gets the text alone, which does not mention them.
 
 ## Publishing
 

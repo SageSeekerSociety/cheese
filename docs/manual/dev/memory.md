@@ -80,7 +80,10 @@ steps:
 | 作用域 | 前缀 | 是谁的 | 看得见的人 |
 |---|---|---|---|
 | team | `team/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
-| private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 + 项目管理员 |
+| private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 |
+| personal | `personal/<handle>/` | **人**：这个人自己的芝士（个人芝士）记得的事，不在任何项目里（`project_id` 为空） | 本人 |
+
+`personal` 只有个人芝士在本人的面板里读写（见[个人芝士的记忆](/dev/assistant#memory)）。它的整理不走下面那套（个人芝士的会话没有文件树），是一次模型调用，见同一节。项目里的芝士读不到它：每一次项目里的读都带着项目，注入只铺 team 和 private，`/memory/files` 不认这个作用域（答 422），对账只认自己点过名的作用域。同类产品在多人场合也都不用个人记忆（ChatGPT 群聊、Copilot Studio 在群聊和频道里）。
 
 注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。这一轮替谁做事，他那一份也读，哪怕他这一轮没说话：周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人，实况文档写给他看（`turn_speakers`）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个和这一轮无关的人的偏好上是白付。
 
@@ -138,10 +141,9 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 | 操作 | 谁可以 |
 |---|---|
 | 读 / 写 / 删 `team` | 项目成员 |
-| 读 `private/<handle>` | 本人；项目管理员也看得见（`MemberService.manages`） |
-| 写 / 删 `private/<handle>` | **只有本人**，管理员也不行 |
+| 读 / 写 / 删 `private/<handle>` | **只有本人**，项目管理员也不行 |
 
-别人的 `private` 答 **403**（不是 404）：「这里有一条，但不是你的」。**读得到的范围不等于写得动的范围**（`_readable` / `_writable`）：管理员看得见是为了出事时能查（比如说有人把密钥写进去了），不是为了替谁改——给他一支笔，那一条记忆就同时有了两个主人，而「这是谁的判断」正是 private 这一层唯一要保住的东西。路径最长 200 字符（`files.PATH_MAX`，和 `memory_files.path` 那一列的宽度一样），超了答 422。写入带 `version`，对不上就 409 并把当前那一版一起还回去——冲突是拒绝，不是合并：两版散文自动合并的唯一结果是两句互相矛盾的话安静地并排躺着。两个同时起手的新建同一个路径也会撞在唯一约束上，那一路同样答 409（对面赢了的证据就是那条约束）。
+别人的 `private` 答 **403**（不是 404）：「这里有一条，但不是你的」。private 多半是芝士从这个人的私聊里记下的；私聊项目管理员进不去，记忆也不能成为后门。路径最长 200 字符（`files.PATH_MAX`，和 `memory_files.path` 那一列的宽度一样），超了答 422。写入带 `version`，对不上就 409 并把当前那一版一起还回去——冲突是拒绝，不是合并：两版散文自动合并的唯一结果是两句互相矛盾的话安静地并排躺着。两个同时起手的新建同一个路径也会撞在唯一约束上，那一路同样答 409（对面赢了的证据就是那条约束）。
 
 界面上的记忆面板（「项目文档 → 记忆」，`GET /memory`，`api/routes/memory.py`）读的就是这棵树：项目共享的那一份，加上读的人自己那一份。它是一条**给人读**的路——正文按能读的样子给（frontmatter 那三行剥掉），修剪走 `MemoryFileStore.forget`，连同索引里指着它的那一行一起删（只删文件的话，下一轮注入的索引里会挂着一条指向不存在文件的指针）。
 
@@ -230,6 +232,6 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 索引每轮注入，正文要 agent 自己去读一个文件——这整套机制成立的前提就是**它会去读**。所以有一个数：`Read` 打到 `.cheese/memory/` 下的、不是 `MEMORY.md` 的那些调用，**按项目、按天**（`domain/memory/reads.py`）。
 
-数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`day_windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
+数的是会话原始记录里的工具调用（`session_record.service.read`，数据库里的行和已经封存进私有桶的段一样读，见[原始记录](/dev/session-records)），所以没有新表、没有新迁移。判据用工具输入里完整的 `file_path`（或 `path`），不用给人看的预览。天按 **UTC** 切（记录时刻 `astimezone(UTC)` 取日期），和 `day_windows.utc_day` 是同一个「一天」。
 
 查：`GET /admin/memory/reads?days=7&project_id=…`（默认七天）。它回答的是「有没有人翻开」，不是「有没有用上」——读了没读懂照样 +1，要回答后者得看别的东西。试点要回答的问题是「一周下来是不是接近 0」；真是 0 的话，下一步是让索引行本身更有信息量，或者把最常要用的几条正文也放进注入预算，不是回去做关键词召回。

@@ -1,8 +1,8 @@
 {
-  "taskUntitled": "New task",
-  "taskStarted": "{actor} started the task “{title}”",
-  "taskCompleted": "The task “{title}” was closed: {conclusion}",
   "taskClosed": "The task “{title}” was closed",
+  "taskCompleted": "The task “{title}” was closed: {conclusion}",
+  "taskQuiet": "No progress on the task \"{title}\" for {days} days",
   "taskReopened": "{actor} reopened the task “{title}”",
-  "taskQuiet": "No progress on the task \"{title}\" for {days} days"
+  "taskUntitled": "New task",
+  "threadBecameTask": "Turned into a task. {owner} owns it"
 }

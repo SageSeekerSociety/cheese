@@ -323,6 +323,7 @@ def test_a_turn_in_a_room_reads_and_writes_the_rooms_document():
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/topics/{_ROOM}/document"),
         ("GET", f"/documents/{_DOC}"),
+        ("GET", f"/documents/{_DOC}/links"),
         ("GET", f"/topics/{_ROOM}/document"),
         ("PUT", f"/documents/{_DOC}"),
     ]
@@ -336,6 +337,7 @@ def test_a_session_opened_on_a_document_needs_no_room():
     run("cheese_doc_set", {"content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/documents/{_DOC}"),
+        ("GET", f"/documents/{_DOC}/links"),
         ("PUT", f"/documents/{_DOC}"),
     ]
     assert _puts(host)[-1]["expected_version"] == 7
@@ -375,9 +377,9 @@ def test_a_clean_write_back_carries_no_warning():
 
 
 def test_a_document_is_written_with_the_machine_out_of_reach():
-    """A task before its owner starts it reads its machine and writes nothing
-    there, yet drafting its document is what it is there to do. A document is
-    the platform's, so writing one asks nothing of the machine."""
+    """A session whose machine is out of reach still writes its task's
+    document: a document is the platform's, so writing one asks nothing of
+    the machine."""
     host = _doc_host()
     host.sync = RuntimeError(cheese_out_of_reach)
 
@@ -391,50 +393,53 @@ def test_a_document_is_written_with_the_machine_out_of_reach():
 # --- tasks and acceptance --------------------------------------------------
 
 
-def test_a_task_someone_asked_for_is_created_started_and_touches_nothing_else():
-    """Asked to do something, an AI teammate creates the task and starts it for
-    the person who asked. Creating one reads no file and pushes no branch."""
+def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
+    """Asked to do something, an AI teammate creates the task for the person
+    who asked. Creating one reads no file and pushes no branch."""
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
                 "id": "task-1",
                 "title": "查一下分页",
                 "owner_handle": "lisi",
-                "started": True,
+                "here": False,
             }
         }
     )
     out = run(
         "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "owner": "lisi", "start": True},
+        {
+            "title": "查一下分页",
+            "summary": "干这个",
+            "owner": "lisi",
+            "source_message_id": _DOC,
+        },
         host,
     )
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
-    assert plan["body"]["start"] is True
+    assert plan["body"]["here"] is False
     assert plan["body"]["owner_handle"] == "lisi"
+    assert plan["body"]["source_message_id"] == _DOC
     assert host.synced == []
     assert "查一下分页" in out
 
 
-def test_a_task_that_could_not_start_tells_the_teammate_to_ask():
+def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_project():
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
-                "id": "task-1",
-                "title": "查一下分页",
+                "id": _ROOM,
+                "title": "登录验证码",
                 "owner_handle": "lisi",
-                "started": False,
-                "not_started_because": "没有审阅人",
+                "here": True,
             }
         }
     )
-    out = run(
-        "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "start": True},
-        host,
-    )
-    assert "没有审阅人" in out
+    out = run("cheese_task", {"title": "登录验证码", "here": True}, host)
+    [plan] = host.requests
+    assert plan["body"]["here"] is True
+    assert "cheese worktree" in out
 
 
 # --- memory, roster, status and the rest -----------------------------------
@@ -501,7 +506,7 @@ def test_library_listing_names_each_file():
     ("delivered", "expected"),
     [
         (True, "便条已递给那条线程。"),
-        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+        (False, "那条线程这会儿没在干活,便条没人接住。"),
     ],
 )
 def test_note_says_whether_anyone_caught_it(delivered, expected):
@@ -575,6 +580,53 @@ def test_a_page_that_could_not_be_read_says_how_each_rung_failed():
         run("cheese_fetch", {"url": "https://example.test"}, host)
 
 
+def test_a_web_search_names_the_room_and_lists_what_it_found():
+    host = Host(
+        {
+            ("GET", "/web-search"): {
+                "results": [
+                    {
+                        "title": "Grid",
+                        "url": "https://x.example/grid",
+                        "snippet": "24 列",
+                        "date": "2026-10-17T08:00:00Z",
+                    }
+                ]
+            }
+        }
+    )
+    said = run("cheese_web_search", {"query": "栅格 布局", "limit": 3}, host)
+    query = parse_qs(urlsplit(host.requests[0]["path"]).query)
+    assert query == {
+        "q": ["栅格 布局"],
+        "topic": [_ROOM],
+        "project": ["project-1"],
+        "limit": ["3"],
+    }
+    assert "1. Grid（2026-10-17）\n   https://x.example/grid\n   24 列" in said
+
+
+def test_a_web_search_with_no_results_says_so():
+    host = Host({("GET", "/web-search"): {"results": []}})
+    assert "没有搜到「冷门词」" in run("cheese_web_search", {"query": "冷门词"}, host)
+
+
+def test_a_persons_cheese_searches_directly_naming_no_room():
+    """Its query goes only to DeepSeek, already the model's provider, so no gate."""
+    host = Host(
+        {
+            ("GET", "/web-search"): {
+                "results": [{"title": "T", "url": "https://t.example/", "snippet": "s"}]
+            }
+        },
+        environ={"CHEESE_TOPIC": "", "CHEESE_PROJECT": ""},
+    )
+    said = run("cheese_web_search", {"query": "DeepSeek"}, host)
+    [searched] = host.requests
+    assert parse_qs(urlsplit(searched["path"]).query) == {"q": ["DeepSeek"]}
+    assert "1. T\n   https://t.example/\n   s" in said
+
+
 def test_a_room_tool_refuses_without_a_room():
     host = Host(environ={"CHEESE_TOPIC": ""})
     with pytest.raises(cheese.PlatformToolError, match="CHEESE_TOPIC"):
@@ -584,6 +636,20 @@ def test_a_room_tool_refuses_without_a_room():
             host,
         )
     assert host.requests == []
+
+
+def test_a_proposal_whose_user_said_nothing_says_so_instead_of_quoting():
+    """「用户没说过话」is a flag the backend can tell apart from the user's
+    words, never a sentence sent in the quote's place."""
+    host = Host()
+    run(
+        "cheese_feedback_propose",
+        {"title": "t", "kind": "bug", "visibility": "public", "user_said_absent": True},
+        host,
+    )
+    body = host.requests[0]["body"]
+    assert body["user_said_absent"] is True
+    assert "user_said" not in body
 
 
 # ---------- the docs ----------
@@ -804,15 +870,30 @@ _WIDE = base64.b64encode(b"wide png").decode()
 _NARROW = base64.b64encode(b"narrow png").decode()
 
 
-def _app_host(saved, document_text=""):
-    return Host(
+class _AppHost(Host):
+    """The save routes as the backend answers them: the pictures only to a
+    save that asked for them (`?pictures=true`)."""
+
+    def request(self, plan):
+        answer = super().request(plan)
+        data = answer["data"]
+        if "pictures=true" not in plan["path"] and isinstance(data, dict):
+            answer["data"] = {k: v for k, v in data.items() if k != "pictures"}
+        return answer
+
+
+def _app_host(saved, document_text="", *, sees_pictures=True):
+    return _AppHost(
         {
             ("POST", f"/documents/{_DOC}/apps"): saved,
             ("POST", "/apps/k1/versions"): saved,
             ("GET", "/apps/k1"): {"document_id": _DOC},
             ("GET", f"/documents/{_DOC}"): {"content": document_text, "version": 1},
         },
-        environ={"CHEESE_DOCUMENT": _DOC},
+        environ={
+            "CHEESE_DOCUMENT": _DOC,
+            **({"CHEESE_PICTURES": "1"} if sees_pictures else {}),
+        },
     )
 
 
@@ -833,8 +914,26 @@ def test_a_saved_app_comes_back_with_its_pictures_and_the_block_still_to_place()
     assert all(i["mimeType"] == "image/png" for i in said.images)
     assert ":::app k1@1 试算" in said
     assert "截图" in said and said.rstrip().endswith("最后都要把块放进文档。")
-    # The pictures are asked for: the backend answers them only then.
-    assert "pictures=true" in host.requests[0]["path"]
+
+
+def test_a_writer_whose_model_cannot_read_pictures_is_neither_handed_nor_told_of_any():
+    """Pictures sent to a model that cannot read them are a refused request or
+    a billed one for nothing, and a text that says they are attached when the
+    model sees none is untrue."""
+    host = _app_host(
+        {
+            "key": "k1",
+            "version": 1,
+            "checked": True,
+            "pictures": {"400": _NARROW, "720": _WIDE},
+        },
+        sees_pictures=False,
+    )
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert getattr(said, "images", ()) == ()
+    assert "截图" not in said
+    assert ":::app k1@1 试算" in said
 
 
 def test_an_app_kept_unchecked_comes_back_without_pictures():
@@ -855,3 +954,125 @@ def test_a_new_version_of_an_app_not_yet_in_the_document_says_which_version_to_p
     said = run("cheese_app_save", {"code": "<p>y</p>", "app": "k1"}, host)
 
     assert ":::app k1@2" in said
+
+
+def test_reading_a_document_names_what_links_to_it_and_what_it_links_to():
+    """芝士 reading a document learns what is around it by title — what it
+    references and what references it — and reads only the one that matters."""
+    host = _doc_host()
+    host.answers[("GET", f"/documents/{_DOC}/links")] = {
+        "links_to": [{"id": "d1", "number": 3, "title": "数据集说明"}],
+        "linked_from": [
+            {"kind": "document", "id": "d2", "number": 7, "title": "标注规范 v2"},
+            {
+                "kind": "conversation",
+                "conversation": {"kind": "room", "id": "r1", "title": "课题组周会"},
+                "count": 3,
+            },
+        ],
+    }
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert "它引用的文档：文档 3《数据集说明》" in said
+    assert "引用它的文档：文档 7《标注规范 v2》" in said
+    assert "引用它的对话：#课题组周会（3 条）" in said
+
+
+def test_a_document_nothing_links_reads_as_before():
+    host = _doc_host()
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert "链接" not in said
+
+
+@pytest.mark.parametrize(
+    ("ref", "page", "plan"),
+    [
+        (
+            "ml-course/channels/3",
+            2,
+            ("/assistant/agent/read", {"ref": "ml-course/channels/3", "page": 2}),
+        ),
+        ("spaces/4/tasks/87", 1, ("/task-drafts/agent/read", {"task": 87})),
+        ("drafts/12", 1, ("/task-drafts/agent/read", {"draft": 12})),
+        ("files/30", 2, ("/task-drafts/agent/file", {"file": 30, "pages": "21-40"})),
+        ("spaces/4", 1, ("/task-drafts/agent/materials", {"space": 4})),
+        (
+            "spaces/4/materials/9",
+            1,
+            (
+                "/task-drafts/agent/materials",
+                {"space": 4, "material": 9, "pages": "1-20"},
+            ),
+        ),
+    ],
+)
+def test_read_takes_a_ref_to_where_that_kind_is_read(ref, page, plan):
+    """One tool reads everything by its ref: a project's own things on 芝士's
+    route, a 题目, a draft, a file or a space's materials where the publish
+    page's tools read them, a PDF twenty pages to a page."""
+    got = cheese.request_plan("cheese_read", {"ref": ref, "page": page}, {})
+    assert (got["path"], got["body"]) == plan
+
+
+def test_a_space_s_materials_are_listed_with_the_refs_that_read_them():
+    host = Host(
+        {
+            ("POST", "/task-drafts/agent/materials"): {
+                "materials": [{"id": 9, "name": "讲义.pdf"}]
+            }
+        }
+    )
+    said = cheese.run_platform_tool("cheese_read", {"ref": "spaces/4"}, host)
+    assert "讲义.pdf（spaces/4/materials/9）" in said
+
+
+@pytest.mark.parametrize(
+    ("args", "plan"),
+    [
+        ({"query": "端口"}, ("/assistant/agent/search", {"query": "端口"})),
+        (
+            {"query": "端口", "where": "ml-course"},
+            ("/assistant/agent/search", {"query": "端口", "project": "ml-course"}),
+        ),
+        (
+            {"where": "spaces/4"},
+            ("/task-drafts/agent/search", {"space": 4, "query": ""}),
+        ),
+    ],
+)
+def test_search_looks_in_projects_or_in_a_space(args, plan):
+    got = cheese.request_plan("cheese_find", args, {})
+    assert (got["path"], got["body"]) == plan
+
+
+def test_help_searches_the_manual_or_reads_one_page_of_it():
+    asked = cheese.request_plan("cheese_help", {"query": "验收"}, {})
+    read = cheese.request_plan("cheese_help", {"page": "accept"}, {})
+    assert (asked["path"], asked["body"]) == ("/docs/agent/search", {"query": "验收"})
+    assert (read["path"], read["body"]) == ("/docs/agent/read", {"page": "accept"})
+
+
+# --- handing work in for review ---------------------------------------------
+
+
+def test_filing_a_card_says_what_it_did_to_the_task():
+    """Filing is the teammate's own change to its task, so the reply says what
+    the board now shows: the task waits on review, the state it reported is
+    gone, and it cannot report again until the card comes back."""
+    host = Host(
+        {("POST", f"/topics/{_ROOM}/accept-card"): {"reviewer_handle": "alice"}}
+    )
+
+    said = run(
+        "cheese_accept_request",
+        {"subject": "feat: add the report", "completes_task": True},
+        host,
+    )
+
+    assert "等审" in said
+    assert "清掉" in said
+    assert "cheese_task_state" in said
+    assert "退回或作废" in said

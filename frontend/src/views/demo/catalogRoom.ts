@@ -17,8 +17,10 @@
  * 值，运行时不构成循环。
  */
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { BoardPhrase, RoomTask } from '@/cx_types'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
+import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
@@ -29,14 +31,19 @@ import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
+import ComposerSummon from '@/components/room/ComposerSummon.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import ThreadHead from '@/components/room/ThreadHead.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
+import { taskState } from '@/lib/taskState'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
- *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
+ *  「外部」、「取消回复」。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 // ---- @ 候选菜单（MentionMenu）------------------------------------------------
@@ -56,7 +63,7 @@ const PEOPLE: MentionItem[] = [
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
 
-/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
+/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面，挂一条分组标题。 */
 const OUTSIDER: MentionItem = {
   label: '陈卡',
   kind: 'member',
@@ -64,6 +71,7 @@ const OUTSIDER: MentionItem = {
   sub: '@carol',
   agent: false,
   outsideTopic: true,
+  group: '不在频道',
   handle: 'carol',
 }
 
@@ -100,16 +108,29 @@ const CHIP_ATTS = [
 
 // ---- 动作行（ComposerActions）------------------------------------------------
 
-/** 那一行除了按钮之外什么都不带（算力 chips 由话题自己从插槽交进来）。 */
+/** 那一行除了按钮之外什么都不带（交给谁那颗头像、已归档那一枚由外面从插槽交进来）。 */
 const ACTIONS_BASE = {
   uploading: false,
   canSend: false,
   showImagePicker: false,
   enterSends: true,
-  alwaysSummon: false,
-  summonOn: false,
-  summonReady: true,
-  agentName: AGENT_NAME,
+  canVoice: true,
+  canChecklist: true,
+  canRemind: true,
+}
+
+// ---- 交给谁（ComposerSummon）------------------------------------------------
+
+const MATE = { handle: 'cheese', label: AGENT_NAME }
+// i18n-data: a demo teammate's name, shown as fixture data
+const OWN_MATE = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
+const SUMMON_BASE = {
+  mates: [MATE, OWN_MATE],
+  shown: [MATE],
+  on: false,
+  fixed: false,
+  ready: true,
+  busy: [] as string[],
 }
 
 /** 芝士问的一道题，`answer_log` 由各格给。 */
@@ -138,6 +159,17 @@ function askBlock(
 
 // ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
 
+/** 一件任务的状态那一格，照 `lib/taskState.ts` 算：看的人是 alice，做它的是房间那位队友。 */
+export function catalogTaskState(phrase: BoardPhrase, over: Partial<RoomTask> = {}, viewer = 'alice'): TaskState {
+  return taskState(
+    { id: 'task-week-1', presentation: { column: 'building', phrase }, ...over },
+    { viewer, agentName: AGENT_NAME, nameOf: (handle) => CATALOG_NAMES[handle] ?? handle }
+  )
+}
+
+/** 预览里出现的几个人。 */
+export const CATALOG_NAMES: Record<string, string> = { alice: 'Alice', bobby: '波比', 'cheese-topica': AGENT_NAME }
+
 /** 频道里的一件任务，画成卡片时用到的那几样。 */
 function taskLine(over: Partial<TaskLine>): TaskLine {
   return {
@@ -145,16 +177,17 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     title: '整理第一周的课件',
     owner: 'cheese',
     creator: 'bob',
-    status: '进行中',
-    tone: 'running',
+    state: catalogTaskState('started'),
+    mine: false,
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    latest: null,
     ...over,
   }
 }
 
-/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
-const TASK_HEADER_PROPS = {
+/** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+export const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
     id: 'demo-task',
@@ -164,10 +197,9 @@ const TASK_HEADER_PROPS = {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'building', phrase: 'started' },
   },
   memberNames: { 'cheese-topica': AGENT_NAME },
   agentName: AGENT_NAME,
@@ -190,10 +222,7 @@ const TASK_HEADER_PROPS = {
     ],
   },
   machineError: false,
-  starting: false,
-  startError: null,
   actionError: null,
-  start: async () => {},
   close: async () => true,
   reopen: async () => true,
   handOver: async () => true,
@@ -216,10 +245,112 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '还没开始',
-        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        name: '开启：队友还没报',
+        note: '一件刚开启的任务：标题在左，状态在后面；队友还没报过，写「进行中」。数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+      {
+        name: '队友说在做',
+        note: '没有卡的时候，队友自己报的「在做」照写，后面跟它的原话。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_note: '在改登录表单，加「记住我」那个勾选框',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说在等结果',
+        note: '会话停着时，状态是 AI 队友自己报的，后面跟着它的原话；悬停看是谁、什么时候报的。它的会话又跑起来、而它在这一次里没报过，就显示在做。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说卡住了',
+        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；后面跟它说卡在哪。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'blocked' },
+            progress_state: 'blocked',
+            progress_note: '没有预发环境的测试账号，登不进去验证',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '递了卡，等人审阅',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对验收人本人这一句是「待你审阅」。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+            waiting_on: 'bob',
+          },
+        },
+        expect: '待审阅',
+      },
+      {
+        name: '递了卡，平台在跑检查',
+        note: '卡还在检查这一步：下一步在平台手上，没人被点到。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
+        },
+        expect: '平台在跑检查',
+      },
+      {
+        name: '卡被退回，回到在做',
+        note: '验收人退回（或卡被作废）后，平台把任务放回「在做」；没有原话，等队友自己再报。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_set_by: null,
+            progress_set_at: '2026-10-05T02:00:00Z',
+          },
+        },
+        expect: '在做',
+      },
+      {
+        name: '报完之后会话结束了',
+        note: '它报的那一句照旧，旁边写「已离开」：会话结束不改它报的状态。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+            agent_left_at: '2026-10-05T01:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-agent-left"]',
       },
     ],
   },
@@ -270,7 +401,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '进行中',
-        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
+        note: '状态那一格是任务状态的记号（图标 + 那一句），各种状态的样子见「任务状态」那几页。',
         props: { task: taskLine({}), ownerName: AGENT_NAME },
         expect: '整理第一周的课件',
       },
@@ -278,10 +409,101 @@ const TASK_ENTRIES: CatalogEntry[] = [
         name: '采纳过几步',
         note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
         props: {
-          task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
+          task: taskLine({
+            accepted: '已采纳 2 次',
+            state: catalogTaskState('awaiting_review', { waiting_on: 'bobby' }),
+          }),
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
+      },
+      {
+        name: '单独成块',
+        note: '单独成块时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
+        props: {
+          task: taskLine({
+            latest: '发送验证码的接口写好了，正在写校验那一个',
+            state: catalogTaskState('running', { session_running: true }),
+          }),
+          ownerName: '王一鸣',
+          ownerAvatar: '',
+        },
+        expect: '正在写校验那一个',
+      },
+      {
+        name: '支线顶上',
+        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        props: {
+          task: taskLine({ latest: '这一句不画', state: catalogTaskState('running', { session_running: true }) }),
+          ownerName: '王一鸣',
+          head: true,
+        },
+        expect: '王一鸣',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-root',
+    title: 'ThreadRoot',
+    about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
+    file: 'src/components/room/ThreadRoot.vue',
+    component: ThreadRoot,
+    needs: UI_T,
+    states: [
+      {
+        name: '一条人说的话',
+        note: '署名、时间、正文；长了收起，点「展开」看全。',
+        props: {
+          root: {
+            id: 'b-root',
+            conversation_id: 'demo-room',
+            kind: 'message',
+            author_type: 'participant',
+            author: 'wangyiming',
+            content: '登录要不要加手机验证码？老师上次好像提过',
+            created_at: '2026-10-15T02:15:00Z',
+          },
+          name: '王一鸣',
+          avatar: '',
+          refs: { mentionNames: {}, topicTitles: {} },
+        },
+        expect: '登录要不要加手机验证码',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-head',
+    title: 'ThreadHead',
+    about:
+      '支线的页头一行：它挂着的那条消息说的事和「转为任务」；转成以后是任务名、状态、负责人和「整页打开」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    file: 'src/components/room/ThreadHead.vue',
+    component: ThreadHead,
+    needs: UI_T,
+    args: { viewer: 'alice', members: [], memberNames: { alice: 'Alice' }, canToTask: true },
+    states: [
+      {
+        name: '还是支线',
+        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, closable: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成了任务',
+        note: '同一行换成任务：任务名、状态、负责人，「整页打开」进任务页。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, closable: true },
+        expect: '登录页加「记住我」',
+      },
+      {
+        name: '在手机顶栏里',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成任务，在手机顶栏里',
+        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
+        expect: '登录页加「记住我」',
       },
     ],
   },
@@ -424,53 +646,115 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'room-composer-editor',
+    title: 'ComposerEditor',
+    about: '打字的那一块：正文是要发出去的那段字，里面点到的人、频道画成标签，标签当一个字删。',
+    file: 'src/components/room/ComposerEditor.vue',
+    component: ComposerEditor,
+    needs: UI_T,
+    states: [
+      {
+        name: '点了一个人，还贴了一段代码',
+        note: '标签和对话里的样子一样；``` 围起来的几行画成代码块，里面按 Tab 是缩进。',
+        props: {
+          modelValue: '请 <@alice> 看一下这段：\n```\ndef f(x):\n    return x * 2\n```',
+          names: { mentionNames: { alice: 'Alice' }, topicTitles: {}, notified: true },
+        },
+        expect: '@Alice',
+      },
+      {
+        name: '还没打字',
+        note: '空着的时候是一行提示语，打了字就没了。',
+        props: { modelValue: '', names: { mentionNames: {}, topicTitles: {} }, placeholder: `给${AGENT_NAME}发消息` },
+        expect: `给${AGENT_NAME}发消息`,
+      },
+    ],
+  },
+  {
     id: 'room-composer-actions',
     title: 'ComposerActions',
-    about: '输入框下面那一行：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。',
+    about:
+      '输入框下面那一行：左边「+」收着上传文件、照片、清单、提醒和键盘快捷键；右边依次是麦克风、交给谁那颗头像和发送。',
     file: 'src/components/room/ComposerActions.vue',
     component: ComposerActions,
     needs: UI_T,
     states: [
       {
         name: '什么都没写',
-        note: '发送键是灰的（这一行唯一的实心块）。「交给芝士」开着的时候只改一条描边和墨色，形态不变——一行里只有一个实心块，那个位置是发送的。',
+        note: '左边只有「+」，右边是麦克风和发送。发送键是灰的（这一行唯一的实心块）。交给谁那颗头像由外面从 `summon` 插槽交进来，预览站的格子只喂默认插槽，所以这一格里没有它。',
         props: ACTIONS_BASE,
-        expect: '交给芝士',
-      },
-      {
-        name: '这条会开着芝士跑',
-        note: '正文里 @ 了它：按钮是填充的，一眼认得出这条消息会真的开出一轮，和「只是说了句话」是两回事。',
-        props: { ...ACTIONS_BASE, canSend: true, summonOn: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-plus',
       },
       {
         name: '有字了，能发',
         note: '灰键过渡成琥珀；按下去沉一下，不等松手。',
         props: { ...ACTIONS_BASE, canSend: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '手机上多一颗「照片」',
-        note: '那儿没有截图可贴、也没有东西可拖，从文件选择器里翻相册要绕好几步。',
-        props: { ...ACTIONS_BASE, showImagePicker: true },
-        expect: '交给芝士',
-      },
-      {
-        name: '名册还没到，芝士是谁还不知道',
-        note: '这一瞬间「交给芝士」是关着的：解析不出 handle，替人写进正文的那个 @ 只是一行字，消息照发、它不动。少一个入口，好过一个点了不算数的入口。',
-        props: { ...ACTIONS_BASE, summonReady: false },
-        expect: '交给芝士',
+        expectSelector: '.composer-send:not([disabled])',
       },
       {
         name: '上传还没回来',
         note: '这一刻发不出去，所以发送键是灰的——而不是把字吞掉。',
         props: { ...ACTIONS_BASE, canSend: true, uploading: true },
-        expect: '交给芝士',
+        expectSelector: '.composer-send[disabled]',
       },
       {
-        name: '私聊：没有「交给芝士」这一颗',
-        note: '那儿每条都是说给它听的，所以这一格只剩发送——`alwaysSummon` 一开，按钮整颗不画。算力那一枚是话题从 `chips` 具名插槽交进来的，预览站的格子只喂默认插槽、喂不进去，少的那一枚在这一格看不见。',
-        props: { ...ACTIONS_BASE, alwaysSummon: true, canSend: true },
+        name: '录音中：发送键变成 ✓',
+        note: '录音条从麦克风往左展开（外面的 `voice` 插槽），发送键原地变成「说完了」。',
+        props: { ...ACTIONS_BASE, voice: 'recording' },
+        expectSelector: '.composer-actions--voice',
+      },
+      {
+        name: '刚说进来一段：可以还原原话',
+        note: '「+」旁边一颗小药丸，底下细线 8 秒走完就收起；正文一动它也走开。',
+        props: { ...ACTIONS_BASE, canSend: true, voiceSwap: 'raw' },
+        expect: '还原原话',
+      },
+    ],
+  },
+  {
+    id: 'room-composer-summon',
+    title: 'ComposerSummon',
+    about:
+      '发送键左边那颗 AI 队友头像：这条发出去，谁会接手。它是正文的镜子——正文里 @ 了队友就亮、睁眼，没 @ 就灰着、闭眼。点一下交给头像上那位；右键、长按或按 ↑ 换一位。',
+    file: 'src/components/room/ComposerSummon.vue',
+    component: ComposerSummon,
+    needs: UI_T,
+    states: [
+      {
+        name: '不交给',
+        note: '灰底、闭眼。悬停时眯眼，预告点一下它就醒了。',
+        props: SUMMON_BASE,
+        expectSelector: '.summon__btn:not(.summon__btn--on)',
+      },
+      {
+        name: '交给它',
+        note: '换成它自己的底色、睁眼；底色先到，眼睛晚 40ms。',
+        props: { ...SUMMON_BASE, on: true },
+        expectSelector: '.summon__btn--on',
+      },
+      {
+        name: '它正在忙',
+        note: '往右上看、冒泡：它正在这个频道里跑一轮，这条它会接着看。',
+        props: { ...SUMMON_BASE, busy: [MATE.handle] },
+        expectSelector: '.summon__btn--busy',
+      },
+      {
+        name: '同时 @ 了两位',
+        note: '后端的做法是 @ 到的每位各起一轮，头像就叠着画两位。',
+        props: { ...SUMMON_BASE, on: true, shown: [MATE, OWN_MATE] },
+        expectSelector: '.summon__stack',
+      },
+      {
+        name: '任务负责人：规则常亮',
+        note: '任务里负责人说的话都交给队友，这是规则不是开关，点了只说明。',
+        props: { ...SUMMON_BASE, on: true, fixed: true },
+        expectSelector: '.summon__btn--fixed',
+      },
+      {
+        name: '名册还没到',
+        note: '解析不出 handle 的那一瞬间不接受点击：少一个入口，好过一个点了不算数的入口。',
+        props: { ...SUMMON_BASE, ready: false },
+        expectSelector: '.summon__btn[disabled]',
       },
     ],
   },

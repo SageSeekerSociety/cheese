@@ -12,7 +12,7 @@ from sqlalchemy import delete, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
-from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
+from app.domain.block.input_effects import apply_input_echo, mark_read_failed
 from app.domain.block.models import Block
 from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
@@ -187,10 +187,11 @@ async def _lock_blocks(session, identity: InputIdentity, ids: set[uuid.UUID]):
 async def held_blocks(
     session, *, project_id, topic_id, recipient_handle, exclude_input_id=None
 ):
-    """Registered inputs own their batch, independently of work completion.
-
-    An echo cannot release an initial batch for another prompt before its Stop.
-    Re-admission requires explicit reconciliation, never a different input UUID.
+    """The blocks inputs still hold: a batch is held from the moment its input
+    is registered until the session reads it (the echo consumes and releases
+    it, `record_receipt`) or its runner says it never will (`drop_input`). An
+    input given up on with its fate unknown keeps holding its batch, so nothing
+    the session may have read is offered again.
 
     One row is not a hold: an input nobody ever read whose work the platform has
     already ended (:func:`unread_input_with_over_work`). Nothing can settle its
@@ -234,82 +235,6 @@ async def inputs_answered_inside(session, topic_id, work_id) -> list[uuid.UUID]:
     )
 
 
-async def complete_work_inputs(
-    session,
-    *,
-    project_id,
-    conversation_id,
-    recipient_handle,
-    harness,
-    native_session_id,
-    work_id,
-    require_registered=False,
-    input_ids=None,
-):
-    """Commit consumption and durable release for this exact successful work.
-
-    Called from the clean native result transaction. Never infer completion from
-    acceptance, an echo, another work's marker, or missing process-local state.
-    """
-    rows = list(
-        await session.scalars(
-            select(NativeInput)
-            .where(
-                NativeInput.project_id == project_id,
-                NativeInput.conversation_id == conversation_id,
-                NativeInput.recipient_handle == recipient_handle,
-                NativeInput.harness == harness,
-                NativeInput.native_session_id == native_session_id,
-                NativeInput.execution_work_id == work_id,
-                NativeInput.input_id.in_(input_ids)
-                if input_ids is not None
-                else true(),
-            )
-            .order_by(NativeInput.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-    )
-    if require_registered and (
-        not rows
-        or any(row.echoed_at is None for row in rows)
-        or input_ids is None
-        or {row.input_id for row in rows} != set(input_ids)
-    ):
-        raise ValidationError("Native completion has no confirmed registered work")
-    owned = {
-        uuid.UUID(block)
-        for row in rows
-        if row.echoed_at is not None
-        for block in set(row.held_block_ids) - set(row.released_block_ids)
-    }
-    consumed = owned
-    stamp = datetime.now(UTC)
-    for row in rows:
-        if row.echoed_at is not None:
-            row.completed_at = row.completed_at or stamp
-    if not consumed:
-        return set()
-    identity = InputIdentity(
-        project_id,
-        conversation_id,
-        recipient_handle,
-        harness,
-        native_session_id,
-        rows[0].input_id if rows else work_id,
-        work_id,
-    )
-    await _lock_blocks(session, identity, consumed)
-    await consume_input_blocks(session, consumed, work_id)
-    for row in rows:
-        if row.echoed_at is not None:
-            released = set(row.released_block_ids) | (
-                set(row.held_block_ids) & {str(block) for block in consumed}
-            )
-            row.released_block_ids = sorted(released)
-    return consumed
-
-
 async def withdraw_input(session, identity: InputIdentity, effects: InputEffects):
     """Undo a registration whose send stopped before anything left.
 
@@ -326,7 +251,6 @@ async def withdraw_input(session, identity: InputIdentity, effects: InputEffects
             NativeInput.input_id == identity.input_id,
             NativeInput.accepted_at.is_(None),
             NativeInput.echoed_at.is_(None),
-            NativeInput.completed_at.is_(None),
             NativeInput.terminated_at.is_(None),
         )
     )
@@ -342,80 +266,167 @@ async def withdraw_input(session, identity: InputIdentity, effects: InputEffects
         )
 
 
-async def terminate_work_inputs(
-    session,
-    *,
-    project_id,
-    conversation_id,
-    recipient_handle,
-    harness,
-    native_session_id,
-    work_id,
-    input_ids,
-    reason,
-):
-    """Record a confirmed terminal outcome for this exact work interval.
+async def drop_input(
+    session, *, harness, native_session_id, input_id, reason
+) -> NativeInput | None:
+    """The runner says the input will never be read: the build settled it
+    unread, or its process ended with it unread.
 
-    A native result that is an error, or that a Stop interrupted, is not a
-    completion, so it can never reach :func:`complete_work_inputs`. Without a
-    fact of its own the input rows stay unfinished forever and the seat stops
-    accepting anything.
-
-    This writes only ``terminated_at`` / ``termination``. ``completed_at`` stays
-    NULL, held blocks stay held and are never consumed: whether an answer was
-    taken is still unknown, and an unknown is not permission to send it again.
-    The rows it may touch are one execution work's whole interval on one seat,
-    so another interval or another seat is never in it.
+    That is the one way an input written to a session comes back to the
+    platform. The seat stops waiting on it, the blocks it held are released
+    (nothing read them, so offering them again repeats nothing), and a delivery
+    attempt it carried goes back to be retried. An input that was read is
+    delivered and stays so; one settled already keeps its outcome.
     """
-    if not input_ids:
-        return set()
-    # Selected without narrowing to ``input_ids`` on purpose: the whole interval
-    # this execution work holds is what has to agree with the journal's list.
+    row = await session.scalar(
+        select(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
+            NativeInput.input_id == input_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is None or row.echoed_at is not None or row.terminated_at is not None:
+        return None
+    row.terminated_at = datetime.now(UTC)
+    row.termination = reason
+    row.released_block_ids = sorted(
+        set(row.held_block_ids) | set(row.released_block_ids)
+    )
+    if row.delivery_id is not None:
+        await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.id == row.delivery_id,
+                Delivery.attempt_id == row.attempt_id,
+                Delivery.state == "sending",
+            )
+            .values(state="claimed")
+        )
+    return row
+
+
+async def drop_unread_of_session(session, *, harness, native_session_id, reason) -> int:
+    """Every input written to this native session that it has neither read
+    nor been reported never to read, dropped as its runner would drop it
+    (``drop_input``): the process that held them was replaced, and nothing
+    will read them. Their blocks are offered again."""
+    unread = list(
+        await session.scalars(
+            select(NativeInput.input_id).where(
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.echoed_at.is_(None),
+                NativeInput.terminated_at.is_(None),
+            )
+        )
+    )
+    dropped = 0
+    for input_id in unread:
+        if (
+            await drop_input(
+                session,
+                harness=harness,
+                native_session_id=native_session_id,
+                input_id=input_id,
+                reason=reason,
+            )
+            is not None
+        ):
+            dropped += 1
+    return dropped
+
+
+async def read_inputs_of_session(
+    session, *, harness, native_session_id, input_ids, work_id: uuid.UUID | None
+) -> int:
+    """These inputs of this native session, not yet recorded as read nor
+    dropped, recorded as read, into ``work_id`` when it names one: its runner
+    reported its works read them, in the one report this release can read of
+    a runner another release started (its ping's ``endings``,
+    ``room.sessions.lifecycle``). Read is delivered: nothing in them is
+    offered again."""
+    wanted = [uuid.UUID(str(input_id)) for input_id in input_ids]
+    unread = list(
+        await session.scalars(
+            select(NativeInput).where(
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.input_id.in_(wanted),
+                NativeInput.echoed_at.is_(None),
+                NativeInput.terminated_at.is_(None),
+            )
+        )
+    )
+    read = 0
+    for row in unread:
+        identity = InputIdentity(
+            *(getattr(row, field) for field in InputIdentity.__dataclass_fields__)
+        )
+        if (
+            await record_receipt(
+                session,
+                InputReceipt(
+                    identity,
+                    "native_echo",
+                    execution_work_id=row.execution_work_id or work_id,
+                ),
+            )
+            is not None
+        ):
+            read += 1
+    return read
+
+
+async def fail_read_inputs(
+    session, *, harness, native_session_id, input_ids, failure
+) -> int:
+    """The work these inputs were read into failed: say so on each of them, and
+    on the messages they carried (``READ_FAILED_META_KEY``).
+
+    They stay delivered — a read input is — and nothing about them is offered
+    again. What this records is that somebody's words were read and then got
+    no answer, which is what a task close and an edit ask about.
+    """
+    ids = list(input_ids)
+    if not ids:
+        return 0
     rows = list(
         await session.scalars(
             select(NativeInput)
             .where(
-                NativeInput.project_id == project_id,
-                NativeInput.conversation_id == conversation_id,
-                NativeInput.recipient_handle == recipient_handle,
                 NativeInput.harness == harness,
                 NativeInput.native_session_id == native_session_id,
-                NativeInput.execution_work_id == work_id,
+                NativeInput.input_id.in_(ids),
+                NativeInput.echoed_at.is_not(None),
+                NativeInput.failed_at.is_(None),
             )
-            .order_by(NativeInput.id)
             .with_for_update()
-            .execution_options(populate_existing=True)
         )
     )
-    # The interval the journal names has to be the interval the rows hold.
-    # Anything less means part of the work is unaccounted for, and a terminal
-    # stamp on half of it would free inputs that may still be live.
-    if not rows or {row.input_id for row in rows} != set(input_ids):
-        raise ValidationError("Native termination has no matching registered work")
     stamp = datetime.now(UTC)
-    touched = set()
+    blocks: set[uuid.UUID] = set()
     for row in rows:
-        # A clean completion already said more than a terminal can. An earlier
-        # terminal keeps its own reason; replaying a journal is not a rewrite.
-        if row.completed_at is not None or row.terminated_at is not None:
-            continue
-        row.terminated_at = stamp
-        row.termination = reason
-        touched.add(row.input_id)
-    return touched
+        row.failed_at = stamp
+        row.failure = failure
+        blocks |= {uuid.UUID(block) for block in row.held_block_ids + row.block_ids}
+    await mark_read_failed(session, sorted(blocks), failure)
+    return len(rows)
 
 
 async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
-    """Record a terminal outcome for every unfinished input of these works.
+    """Give up on every unread input of these works whose fate nobody reported.
 
-    For works the platform has established are dead, by the orphan sweep: the
-    session behind them is gone, so no result and no terminal will ever come
-    from it, and without this its inputs would refuse the seat every later
-    message. An input belongs to a work if it was sent into it or taken in it.
+    For works the platform has established are dead, by the orphan sweep or a
+    task closing: no runner will say any more whether they were read, and
+    without this they would refuse the seat every later message. An input
+    belongs to a work if it was sent into it or taken in it.
 
-    As with :func:`terminate_work_inputs`, only ``terminated_at`` /
-    ``termination`` are written: holds stay held and nothing is consumed, so
-    nothing inside these inputs is sent again.
+    Only ``terminated_at`` / ``termination`` are written: unlike an input the
+    runner dropped (:func:`drop_input`), these may have been read, so their
+    holds stay held and nothing inside them is sent again.
     """
     ids = list(work_ids)
     if not ids:
@@ -427,7 +438,7 @@ async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
                 NativeInput.work_id.in_(ids),
                 NativeInput.execution_work_id.in_(ids),
             ),
-            NativeInput.completed_at.is_(None),
+            NativeInput.echoed_at.is_(None),
             NativeInput.terminated_at.is_(None),
         )
         .values(terminated_at=datetime.now(UTC), termination=reason)
@@ -495,9 +506,8 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         raise ValidationError("Native input has a different execution owner")
     if execution_work is None and row.execution_work_id is None:
         # An echo that names no execution work is an echo under the input's own
-        # work: that is the one ``identity.work_id`` names, and the only work a
-        # completion for this input may later claim. Leaving it empty would make
-        # the input uncompletable — its holds could never be released again.
+        # work: that is the one ``identity.work_id`` names, and the work the
+        # echo below consumes the input's batch under.
         execution_work = identity.work_id
     if row.settled_at is not None:
         if execution_work is not None:
@@ -530,9 +540,15 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
     if summon is not None:
         seen_ids.append(summon)
+    # Read is delivered: the batch the input held is consumed with it, and the
+    # hold released (`held_blocks`).
+    held = set(row.held_block_ids) - set(row.released_block_ids)
+    row.released_block_ids = sorted(set(row.released_block_ids) | held)
     await apply_input_echo(
         session,
-        consumed_ids=[uuid.UUID(block) for block in row.block_ids],
+        consumed_ids=[
+            uuid.UUID(block) for block in dict.fromkeys(row.block_ids + sorted(held))
+        ],
         work_id=execution_work,
         seen_ids=seen_ids,
         seen_by=row.seen_by or row.recipient_handle,

@@ -15,11 +15,13 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTopicEnvironment = vi.fn()
+const getProject = vi.fn()
 const archiveTopic = vi.fn(async (id: string) => ({ id, status: 'archived' }))
 const unarchiveTopic = vi.fn(async (id: string) => ({ id, status: 'active' }))
 
 vi.mock('@/api', () => ({
   getTopicEnvironment: (...args: unknown[]) => getTopicEnvironment(...args),
+  getProject: (...args: unknown[]) => getProject(...args),
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
@@ -29,7 +31,7 @@ vi.mock('@/api', () => ({
 
 import TopicHeader from './TopicHeader.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 const Header = TopicHeader as unknown as Component
 
@@ -106,7 +108,7 @@ describe('话题头', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
-    expect(document.body.textContent).not.toContain('新会话默认')
+    expect(document.body.textContent).not.toContain('新 AI 队友')
     expect(bar().textContent).not.toContain('沙箱')
   })
 })
@@ -138,6 +140,13 @@ describe('桌面上话题头的 ⋯', () => {
     await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
 
     expect(archiveTopic).toHaveBeenCalledWith('topic-1')
+  })
+
+  it('频道里还有进行中的任务时不显示归档', async () => {
+    mountHeader({ can_manage: true, my_tasks: { shown: [], open: 1 } })
+
+    await openMore()
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
   })
 
   it('用量还在菜单里：它是这段的口径，不是一件能做的事', async () => {
@@ -189,20 +198,13 @@ describe('删除频道', () => {
 
 // 手机上话题列表的行尾没有 ⋯，改名、归档在房间顶栏的 ⋯ 里也得找得到。
 describe('手机上话题头的 ⋯', () => {
-  let slot: HTMLElement
-
   beforeEach(() => {
     window.innerWidth = 390
     getTopicEnvironment.mockResolvedValue(profile())
-    // 手机上这一行画进外壳顶栏里的那一格。
-    slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
   })
 
   afterEach(() => {
     window.innerWidth = 1280
-    slot.remove()
   })
 
   async function openMore() {
@@ -267,5 +269,26 @@ describe('手机上话题头的 ⋯', () => {
 
     expect(unarchiveTopic).toHaveBeenCalledWith('topic-1')
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
+  })
+})
+
+describe('频道成员名单里的添加', () => {
+  // 每个用例一个项目：项目那一份读进共享的查询缓存里，换个角色得换个项目。
+  async function openRosterAs(projectId: string, permissions: string[]) {
+    getTopicEnvironment.mockResolvedValue(profile())
+    getProject.mockResolvedValue({ id: projectId, name: 'P', my_permissions: permissions })
+    mountHeader({ project_id: projectId, joined: true })
+    await fireEvent.click(bar().querySelector('.members-mini') as HTMLElement)
+    await screen.findByPlaceholderText(t('work.room.roster.addPlaceholder')).catch(() => null)
+  }
+
+  it('角色允许拉人进频道的人，在自己所在的频道里能添加', async () => {
+    await openRosterAs('p-member', ['speak', 'create_channels'])
+    expect(await screen.findByRole('button', { name: t('work.room.roster.add') })).toBeTruthy()
+  })
+
+  it('角色不允许的人，人在频道里也添加不了', async () => {
+    await openRosterAs('p-mentor', ['speak', 'ask_agent', 'comment'])
+    await waitFor(() => expect(screen.queryByRole('button', { name: t('work.room.roster.add') })).toBeNull())
   })
 })

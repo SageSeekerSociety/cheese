@@ -7,33 +7,20 @@ messages are answered where they were said.
 """
 
 import uuid
+from collections.abc import Sequence
 
-from sqlalchemy import Boolean, String, Uuid, column, or_, select, table
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import (
-    CONSUMED_TURN_META_KEY,
-    Block,
-    BlockKind,
-    consumed_turn,
-)
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation, ConversationKind
-from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
+from app.domain.topic.models import Topic, not_a_private_chat
 from app.domain.topic_membership.services import TopicMemberService
-
-# The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
-# 支线 (`room_task.place`), and importing them back would make a cycle.
-_rooms = table(
-    "topics",
-    column("id", Uuid),
-    column("is_private", Boolean),
-    column("status", String),
-)
 
 
 async def _main_line_room(session: AsyncSession, block: Block):
@@ -47,8 +34,8 @@ async def _main_line_room(session: AsyncSession, block: Block):
     # A private chat has no 支线: only a channel's main line does.
     return (
         await session.execute(
-            select(_rooms.c.id, _rooms.c.status).where(
-                _rooms.c.id == block.conversation_id, _rooms.c.is_private.is_(False)
+            select(Topic.id, Topic.status).where(
+                Topic.id == block.conversation_id, not_a_private_chat()
             )
         )
     ).first()
@@ -81,6 +68,11 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
     return thread
 
 
+async def thread_of(session: AsyncSession, thread_id: uuid.UUID) -> Thread | None:
+    """The 支线 ``thread_id`` names, also once it became a task in place."""
+    return await session.get(Thread, thread_id)
+
+
 async def answer_place(
     sessions, block_id: uuid.UUID | None, posted_in: uuid.UUID
 ) -> uuid.UUID:
@@ -103,36 +95,97 @@ async def answered_in(session: AsyncSession, block: Block) -> uuid.UUID:
     said in a channel's main line, otherwise where it was said — and there too
     when its channel is archived, where no 支线 opens and the turn is refused
     as any turn in an archived channel is."""
-    room = await _main_line_room(session, block)
-    if room is None or room.status == "archived" or block.kind != BlockKind.message:
-        return block.conversation_id
-    return (await open_thread(session, block.id, by=block.author)).id
+    return (await answered_in_many(session, [block]))[block.id]
 
 
-async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uuid.UUID]:
-    """The conversations of a room — its 支线 and tasks — where a message to
-    芝士 is still waiting for an answer, oldest message first. A message still
-    waiting in the main line is waiting in its 支线."""
-
-    blocks = await session.scalars(
-        select(Block)
-        .where(
-            of_room(Block.conversation_id, room_id),
-            Block.kind == BlockKind.message,
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+async def _main_line_rooms(
+    session: AsyncSession, conversation_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """`_main_line_room` for many conversations: the status of each channel among
+    them, whose id is the key. What is not a channel is absent — a task, a 支线,
+    a private chat, an id nothing names."""
+    if not conversation_ids:
+        return {}
+    rooms = set(
+        await session.scalars(
+            select(Conversation.id).where(
+                Conversation.id.in_(conversation_ids),
+                Conversation.kind == ConversationKind.room,
+            )
         )
-        .order_by(Block.created_at, Block.id)
     )
-    waiting: list[uuid.UUID] = []
-    for block in blocks:
-        if CONSUMED_TURN_META_KEY not in (block.meta or {}):
-            continue
-        if consumed_turn(block) is not None:
-            continue
-        conversation = await answered_in(session, block)
-        if conversation not in waiting:
-            waiting.append(conversation)
-    return waiting
+    if not rooms:
+        return {}
+    rows = await session.execute(
+        select(Topic.id, Topic.status).where(Topic.id.in_(rooms), not_a_private_chat())
+    )
+    return {topic_id: status for topic_id, status in rows.all()}
+
+
+async def _threads_under(
+    session: AsyncSession, roots: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """The 支线 each of these messages already has, keyed by its root block."""
+    rows = await session.execute(
+        select(Thread.root_block_id, Thread.id).where(Thread.root_block_id.in_(roots))
+    )
+    return {root: thread for root, thread in rows.all()}
+
+
+async def answered_in_many(
+    session: AsyncSession, blocks: Sequence[Block]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """`answered_in` for a batch, reading each table it consults once.
+
+    A message's answer place is its 支线 only when it was said in a channel's
+    main line: the scan asks that of every waiting message, and all of them are
+    about a handful of conversations. Same judgement as `answered_in`,
+    including opening the 支线 a main-line message has none for — only the
+    reads are shared.
+    """
+    blocks = list(blocks)
+    if not blocks:
+        return {}
+    conversation_ids = {block.conversation_id for block in blocks}
+    rooms = await _main_line_rooms(session, conversation_ids)
+    opens = [
+        block
+        for block in blocks
+        if block.kind == BlockKind.message
+        and block.conversation_id in rooms
+        and rooms[block.conversation_id] != "archived"
+    ]
+    threads: dict[uuid.UUID, uuid.UUID] = {}
+    if opens:
+        roots = [block.id for block in opens]
+        threads = await _threads_under(session, roots)
+        missing = [block for block in opens if block.id not in threads]
+        if missing:
+            await session.execute(
+                insert(Thread)
+                .values(
+                    [
+                        {
+                            "id": uuid.uuid4(),
+                            "project_id": block.project_id,
+                            "room_id": block.conversation_id,
+                            "root_block_id": block.id,
+                            "created_by": block.author,
+                        }
+                        for block in missing
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=[Thread.root_block_id])
+            )
+            # A 支线 another process opened first wins; read the ids back.
+            threads = await _threads_under(session, roots)
+    answers = {block.id: block.conversation_id for block in blocks}
+    answers.update(threads)
+    # A message that should have a 支线 has one now. `open_thread` asserts the
+    # same thing; without it a write lost between the insert and the read would
+    # answer in the channel's main line, where 芝士 has no session.
+    assert all(block.id in threads for block in opens)
+    return answers
 
 
 async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
@@ -165,6 +218,27 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     return seat
 
 
+async def files_sent_with(session: AsyncSession, root: Block) -> list[Block]:
+    """The files sent together with a message, in the order they were stored.
+
+    A send with a message stores each file as an attachment block under that
+    message's id (``turn_id``). An image-only send has no message: its first
+    attachment is the root itself, and it has no files of its own.
+    """
+    if root.kind == BlockKind.attachment:
+        return []
+    rows = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == root.conversation_id,
+            Block.turn_id == root.id,
+            Block.kind == BlockKind.attachment,
+        )
+        .order_by(Block.created_at, Block.id)
+    )
+    return list(rows)
+
+
 async def thread_opening(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> list[Block]:
@@ -179,16 +253,7 @@ async def thread_opening(
     root = await session.get(Block, root_id)
     if root is None:
         return []
-    files = await session.scalars(
-        select(Block)
-        .where(
-            Block.conversation_id == root.conversation_id,
-            Block.turn_id == root.id,
-            Block.kind == BlockKind.attachment,
-        )
-        .order_by(Block.created_at, Block.id)
-    )
-    return [root, *files]
+    return [root, *await files_sent_with(session, root)]
 
 
 async def conversation_inputs(

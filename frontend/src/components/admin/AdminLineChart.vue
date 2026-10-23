@@ -7,7 +7,9 @@
  *  那条最该被看见的尾巴整个不存在。 */
 export interface ChartSeries {
   name: string
-  values: number[]
+  /** `null` = 那一格没有可画的值（比如那天没有样本可算中位数）：线在那里断开，点不画，
+   *  读数和数据表写「—」。画成 0 会把「没量到」读成「量到了、是零」。 */
+  values: (number | null)[]
   style: 'solid' | 'dashed' | 'dotted'
 }
 </script>
@@ -116,7 +118,9 @@ const hollow = (s: ChartSeries): boolean => s.style !== 'solid'
 const empty = computed(() => props.xLabels.length === 0 || props.series.length === 0)
 
 /** 纵轴上界。全是 0 时取 1，否则所有点都落在 y=0、看起来像没画出东西。 */
-const maxValue = computed(() => Math.max(1, ...props.series.flatMap((s) => s.values)))
+const maxValue = computed(() =>
+  Math.max(1, ...props.series.flatMap((s) => s.values.filter((v): v is number => v !== null)))
+)
 
 /** y 轴四条刻度：上界、2/3、1/3、0。**相邻等值去重** —— max ≤ 2 时中间档会和两端
  *  撞成同一个数（max=1 的刻度表是 1/1/0/0），重画一遍只是在同一个位置叠两遍字。
@@ -141,7 +145,17 @@ const step = computed(() => (props.xLabels.length > 1 ? plotW.value / (props.xLa
 const x = (i: number): number => padLeft.value + i * step.value
 const y = (v: number): number => PAD_TOP + PLOT_H - (v / maxValue.value) * PLOT_H
 
-const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)} ${y(v)}`).join('')
+/** 遇到 `null` 抬笔：下一个有值的点用 `M` 重新起一段，断处是一段空白而不是一条斜线。 */
+const path = (s: ChartSeries): string =>
+  s.values
+    .map((v, i) => {
+      if (v === null) return ''
+      const lift = i === 0 || s.values[i - 1] === null
+      return `${lift ? 'M' : 'L'}${x(i)} ${y(v)}`
+    })
+    .join('')
+
+const shown = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : fmtNum(v))
 
 /** 末点直标：不开 tooltip 也有结论（「今天走到哪」）。多系列只标**第一条**（主系列）：
  *  每条线都标一个数，右缘就是一列数字墙。系列**全相等**时不标 —— 零流量周标一个
@@ -154,8 +168,8 @@ const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M'
 const endLabels = computed(() => {
   const s = props.series[0]
   if (!s || s.values.length === 0) return []
-  const v = s.values[s.values.length - 1]!
-  if (s.values.every((x) => x === v)) return []
+  const v = s.values[s.values.length - 1]
+  if (v === null || v === undefined || s.values.every((x) => x === v)) return []
   return [{ text: fmtNum(v), x: x(s.values.length - 1) - 6, y: y(v) - 8 }]
 })
 
@@ -310,19 +324,20 @@ const tooltipLeft = computed(() => {
                还是实心的。点数 > 45 不画（见 `POINTS_LIMIT`）。 -->
           <template v-for="s in series" :key="`pt-${s.name}`">
             <template v-if="s.values.length <= POINTS_LIMIT">
-              <circle
-                v-for="(v, i) in s.values"
-                :key="i"
-                class="alc__point"
-                :cx="x(i)"
-                :cy="y(v)"
-                r="2"
-                :stroke-width="hollow(s) ? 2 : 0"
-                :style="{
-                  fill: hollow(s) ? 'var(--surface)' : SERIES_COLOR[s.style],
-                  stroke: SERIES_COLOR[s.style],
-                }"
-              />
+              <template v-for="(v, i) in s.values" :key="i">
+                <circle
+                  v-if="v !== null"
+                  class="alc__point"
+                  :cx="x(i)"
+                  :cy="y(v)"
+                  r="2"
+                  :stroke-width="hollow(s) ? 2 : 0"
+                  :style="{
+                    fill: hollow(s) ? 'var(--surface)' : SERIES_COLOR[s.style],
+                    stroke: SERIES_COLOR[s.style],
+                  }"
+                />
+              </template>
             </template>
           </template>
           <line
@@ -366,6 +381,7 @@ const tooltipLeft = computed(() => {
           </text>
           <!-- 整块绘图区是一张点击面，放在最后（在最上层才收得到指针）。它同时管 hover
                竖线：竖线本身是 1px、收不到指针，只能由这一层算。 -->
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a pointer layer inside an aria-hidden chart: the numbers it reads out are in the data table below, but choosing a day here has no keyboard counterpart yet -->
           <rect
             class="alc__hit"
             x="0"
@@ -397,7 +413,7 @@ const tooltipLeft = computed(() => {
               />
             </svg>
             <span class="alc__tip-name">{{ s.name }}</span>
-            <span class="alc__tip-val t-dense t-num">{{ fmtNum(s.values[hover] ?? 0) }}</span>
+            <span class="alc__tip-val t-dense t-num">{{ shown(s.values[hover]) }}</span>
           </span>
         </div>
       </div>
@@ -414,7 +430,7 @@ const tooltipLeft = computed(() => {
           <tbody>
             <tr v-for="(label, i) in xLabels" :key="i">
               <th scope="row" class="alc__rowhead">{{ label }}</th>
-              <td v-for="s in series" :key="s.name" class="alc__cell t-num">{{ s.values[i] ?? 0 }}</td>
+              <td v-for="s in series" :key="s.name" class="alc__cell t-num">{{ shown(s.values[i]) }}</td>
             </tr>
           </tbody>
         </table>

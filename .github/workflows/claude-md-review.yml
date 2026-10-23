@@ -22,8 +22,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
+    # The gate's own script and self-test are triggers for the same reason
+    # AGENTS.md is: a change to the proof must run the proof, or a gate that
+    # stopped judging correctly merges with its own check never having run.
     paths:
       - 'AGENTS.md'
+      - '.claude/scripts/check-claude-md-review.py'
+      - '.claude/scripts/test_check_claude_md_review.py'
   # Without this the gate would go red once and stay red: approving a PR does not
   # re-run its pull_request checks, so there would be no way to turn it green
   # short of pushing an empty commit.

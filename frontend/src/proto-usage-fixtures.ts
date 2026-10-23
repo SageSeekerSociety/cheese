@@ -3,10 +3,10 @@
  * 这两块也各有各的来源：额度来自 grants，池子来自那台代理机器上的快照），以及每小时的
  * 序列和最近的几行账本（`withUsageExtras` 一并贴上）。
  *
- * 为什么单开一个文件：`proto-feedback-fixtures.ts` 已经越过 1000 行的尺寸上限
+ * 为什么单开一个文件：`proto-feedback-fixtures.ts` 当时已经越过 1000 行的尺寸上限
  * （`.claude/scripts/check-file-sizes.py`），按要求只许变小 —— 往那边加东西的唯一办法
- * 就是先搬出去一块。这一份只被 `proto-feedback-fixtures.ts` 引用，进预览构建、不进真实
- * 构建，理由同它（见那个文件顶部的说明）。
+ * 就是先搬出去一块。这一份只被 `proto-feedback-fixtures/` 那一组引用，进预览构建、不进真实
+ * 构建，理由同它们（见 `proto-feedback-fixtures.ts` 顶部的说明）。
  */
 
 /** Claude 账号池。三张账号各一种状态（可用 / 冷却 / 已停用），解冻时刻从这一刻起算

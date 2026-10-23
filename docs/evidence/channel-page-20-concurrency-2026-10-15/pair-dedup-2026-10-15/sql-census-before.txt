@@ -1,0 +1,21 @@
+ids {"project": "81d88117-e1a3-40d4-b97d-1e3103904714", "room": "026c457c-db2d-46cb-9e1e-99bc9e3ee329", "task": "1c1fa696-8b85-4ded-8074-a16dcd8c651c"} rounds=5 loadavg=62.14 65.42 79.49 25/8232 36585
+
+===== channel detail  (5 req, wall 103 ms)  statements/req 34.0  db/req 26.5 ms =====
+       4.5 ms/req    5.0 calls/req  SELECT blocks
+       3.8 ms/req    1.0 calls/req  SELECT blocks,threads,topic_read_states
+       2.7 ms/req    4.0 calls/req  SELECT tasks
+       2.4 ms/req    5.0 calls/req  SELECT threads
+       1.8 ms/req    1.0 calls/req  SELECT blocks,tasks,topics
+       1.8 ms/req    3.0 calls/req  SELECT accept_cards
+       1.6 ms/req    1.0 calls/req  SELECT tasks,threads,notification,unnest
+       1.4 ms/req    1.0 calls/req  SELECT tasks,blocks
+
+===== awaiting-me (reference)  (5 req, wall 95 ms)  statements/req 12.0  db/req 20.3 ms =====
+       3.7 ms/req    1.0 calls/req  SELECT blocks,tasks
+       3.1 ms/req    1.0 calls/req  SELECT unnest,LATERAL,blocks
+       2.8 ms/req    1.0 calls/req  SELECT blocks
+       2.5 ms/req    1.0 calls/req  SELECT accept_cards
+       1.7 ms/req    1.0 calls/req  SELECT tasks
+       1.5 ms/req    1.0 calls/req  SELECT topics,topic_memberships
+       1.4 ms/req    1.0 calls/req  SELECT topics
+       0.8 ms/req    1.0 calls/req  SELECT projects,project_members

@@ -17,11 +17,13 @@ from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.topic_member_rows import roster_rows
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.own_calls import ask_owner_to_join
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_instance.adapters import project_team, seat_project
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -34,16 +36,17 @@ async def list_topic_members(
 ) -> dict:
 
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    items = await roster_rows(db, topic)
+    viewer = actor.handle if actor.authenticated else None
+    items = await roster_rows(db, topic, viewer=viewer)
     return ok(page(items, len(items)))
 
 
-@router.post("/{topic_id}/members")
+@router.post("/{topic_id}/members", dependencies=[ROUTE_DECIDES])
 async def add_topic_member(
     topic_id: uuid.UUID,
     body: TopicMemberCreate,
@@ -60,13 +63,14 @@ async def add_topic_member(
         seat_project=seat_project,
         team=project_team,
     )
+    await ask_owner_to_join(db, (await place_or_404(db, topic_id)).room, body.handle)
     await db.commit()
     # A private channel appears in the list of whoever was brought in.
     await tell_project(topic_id, TOPICS)
     return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))
 
 
-@router.delete("/{topic_id}/members/{handle}")
+@router.delete("/{topic_id}/members/{handle}", dependencies=[ROUTE_DECIDES])
 async def remove_topic_member(
     topic_id: uuid.UUID,
     handle: str,

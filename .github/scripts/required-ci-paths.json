@@ -8,14 +8,14 @@
     ".pre-commit-config.yaml",
     ".github/scripts/ensure-apt.sh",
     ".github/scripts/allow-user-namespaces.sh",
-    ".github/workflows/test.yml"
+    ".github/workflows/test.yml",
+    ".github/scripts/backend_imports.py",
+    ".github/scripts/coverage_map.py"
   ],
   "frontend": [
     "frontend/**",
-    "backend/openapi.sha256",
     ".github/workflows/frontend.yml",
     ".claude/scripts/frontend_grade.py",
-    ".claude/scripts/catalog-ratchet.py",
     ".claude/scripts/scene-ratchet.py",
     ".claude/scripts/scene-debt-ratchet.py",
     ".claude/scripts/test_scene_debt_ratchet.py",
@@ -26,7 +26,15 @@
     "backend/app/domain/skill_library/doc_form.md"
   ],
   "e2e": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/alembic.ini",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/scripts/seed_fusion_demo.py",
+    "backend/tests/forgejo/**",
     "frontend/**",
     "e2e/**",
     ".github/scripts/ci-test-evidence.py",
@@ -75,7 +83,15 @@
     ".github/workflows/harness-contract.yml"
   ],
   "remote": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/alembic.ini",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/tests/**",
+    "backend/scripts/device_connection_lifecycle_acceptance.py",
     "cli/**",
     "scripts/remote_execution/**",
     ".dockerignore",
@@ -99,6 +115,7 @@
     "backend/app/domain/agent/harness/claude_code/remote_execution/*",
     "backend/app/domain/agent/harness/claude_code/cli.py",
     "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/task_checkout.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/app/domain/agent/project_hooks.py",
     "backend/sandbox/cheese",
@@ -116,26 +133,11 @@
     "backend/app/domain/agent/harness/claude_code/remote_execution/*",
     "backend/app/domain/agent/harness/claude_code/cli.py",
     "backend/app/domain/agent/executor_transport.py",
+    "backend/app/domain/agent/task_checkout.py",
     "backend/app/domain/agent/cli_worker.py",
     "backend/app/domain/agent/project_hooks.py",
     "backend/sandbox/cheese",
     ".github/scripts/ensure-claude-cli.sh",
-    ".github/scripts/allow-user-namespaces.sh",
-    ".github/scripts/ensure-apt.sh",
     ".github/workflows/mcp-equivalence.yml"
-  ],
-  "cifast": [
-    ".cheese/pre-push",
-    ".github/scripts/ci-fast.py",
-    ".github/scripts/ci_fast_backend.py",
-    ".github/scripts/ci_fast_checks.py",
-    ".github/scripts/ci_fast_process.py",
-    ".github/scripts/ci_fast_pytest_plugin.py",
-    ".github/scripts/test_ci_fast.py",
-    ".github/scripts/required-ci.py",
-    ".github/scripts/required-ci-paths.json",
-    ".pre-commit-config.yaml",
-    "Taskfile.yml",
-    ".github/workflows/ci-fast.yml"
   ]
 }

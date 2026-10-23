@@ -5,6 +5,7 @@ import { useEventListener } from '@vueuse/core'
 import { listAwaitingMe } from '@/api'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
+import { onInboxChange } from '@/lib/inboxLive'
 
 /** 两次读之间至少隔这么久：换路由很频繁，而这个数字晚几十秒变不要紧。 */
 const MIN_INTERVAL_MS = 30_000
@@ -30,7 +31,8 @@ export function awaitingCountByProject(): Readonly<Ref<Record<string, number>>> 
  * 待我处理的件数：桌面首页那一格与手机底栏「待办」各画一颗角标。
  *
  * 和待办页读同一个接口（`/awaiting-me`），所以角标上的数就是点进去看到的行数。
- * 没有推送通道告诉它「有新的一件」，于是在人**做了点什么**的时候再读：换页面、
+ * 新的一件多半随一条通知落到人手上，收件箱多出一行时服务端会说一声
+ * （`lib/inboxLive.ts`），那时当场重读；此外在人**做了点什么**的时候再读：换页面、
  * 窗口重新拿到焦点。离开待办页那一下、以及人在哪儿做成了一件会了结待办的事（拍板、
  * 回答提问、采纳或退回……那些端点自己会说，见 `api/awaitingChanged.ts`）不受节流——
  * 人刚处理完事情，数字应该立刻跟上。读失败就保持原来的数，不把一次网络抖动画成
@@ -56,7 +58,9 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
       if (mine !== latest) return
       count.value = items.length
       const perProject: Record<string, number> = {}
-      for (const item of items) perProject[item.projectId] = (perProject[item.projectId] ?? 0) + 1
+      // 邀请和申请不属于哪个项目（还没进去，或是团队的事）：只算进总数。
+      for (const item of items)
+        if (item.kind === 'work') perProject[item.projectId] = (perProject[item.projectId] ?? 0) + 1
       byProject.value = perProject
     } catch {
       // 保持原数。
@@ -104,6 +108,13 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
   })
   // 人做成了一件会了结待办的事，端点自己会说一声，当场重读：这已经远在首帧之后。
   onScopeDispose(onAwaitingChanged(() => void refresh(true)))
+  // 收件箱来了新的一行，多半是有一件事刚落到人手上（一道提问、一张验收卡、一条邀请）：
+  // 那一行只负责把人叫回来，事情本身在这份清单里，所以当场重读。首帧之前不问，理由同上。
+  onScopeDispose(
+    onInboxChange(() => {
+      if (firstPaintDone.value) void refresh(true)
+    })
+  )
 
   return count
 }

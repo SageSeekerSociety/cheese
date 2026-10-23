@@ -29,6 +29,7 @@ from tests.integration.test_accept import _make_card as _make_card
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
+from tests.integration.test_project_roles import _invite
 
 
 def _make_project(client) -> str:
@@ -194,7 +195,7 @@ def test_reassign_without_auth_401(client):
 
     r = client.post(
         f"/accept-cards/{cid}/reassign",
-        json={"reviewer_handle": "mallory", "focus": "x"},
+        json={"reviewer_handle": "mallory"},
     )
     assert r.status_code == 401
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -272,7 +273,7 @@ def test_reassign_to_self_then_accept_is_refused_for_a_non_member(client):
 
     r = client.post(
         f"/accept-cards/{cid}/reassign",
-        json={"reviewer_handle": "mallory", "focus": "我最懂"},
+        json={"reviewer_handle": "mallory"},
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
@@ -300,7 +301,7 @@ def test_reassign_to_self_then_accept_is_refused_for_a_non_member(client):
 _CARD_DECISION_ROUTES = [
     ("accept", {"decided_by": "mallory"}),
     ("reject", {"decided_by": "mallory", "note": "不行"}),
-    ("reassign", {"reviewer_handle": "mallory", "focus": "我最懂"}),
+    ("reassign", {"reviewer_handle": "mallory"}),
     ("void", {"decided_by": "mallory", "note": "作废"}),
     ("approve", {"approver_handle": "mallory"}),
     ("revoke", {"decided_by": "mallory"}),
@@ -338,10 +339,47 @@ def test_every_card_decision_route_refuses_a_non_member(client, route, body):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403, r.text
-    assert "你不是这个频道的成员" in r.json()["message"]
+    assert "只有这个频道的成员" in r.json()["message"]
 
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["status"] == "pending"
     assert card["reviewer_handle"] == "alice"
     assert card["decided_by"] is None
     assert card["approvals"] == []
+
+
+# What a task hands in for review, and what changes the review it is waiting
+# on. Each is the task side of the project (``tasks``), like deciding a card.
+_TASK_SIDE_ROUTES = [
+    ("accept-card", {"change_subject": "chore: 导师递的", "reviewer_handle": "alice"}),
+    ("accept-card/describe", {"change_subject": "chore: 导师改的标题"}),
+    ("accept-card/redeliver", {"deliver_url": "https://site.example/r"}),
+    ("ready", None),
+    ("push-fix", None),
+]
+
+
+@pytest.mark.parametrize(
+    ("route", "body"),
+    _TASK_SIDE_ROUTES,
+    ids=[route for route, _ in _TASK_SIDE_ROUTES],
+)
+def test_a_person_whose_role_has_no_tasks_hands_in_nothing(client, route, body):
+    """A mentor reads the task's room and speaks in it; handing its work in for
+    review, or changing the review it waits on, is not theirs."""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid, "alice")
+    _invite(client, pid, "teacher", role="mentor", by="owner")
+    before = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
+
+    r = client.post(
+        f"/topics/{delivery_task_id(client, tid)}/{route}",
+        json=body,
+        headers=session_auth_headers("teacher"),
+    )
+
+    assert r.status_code == 403, r.text
+    after = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
+    assert [c["id"] for c in after] == [cid]
+    assert after[0]["change_subject"] == before[0]["change_subject"]

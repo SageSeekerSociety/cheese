@@ -25,7 +25,6 @@ other three open:
 """
 
 import base64
-import hashlib
 import hmac
 import json
 import secrets
@@ -35,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from app.core.config import settings
+from app.core.hmac_token import sign_body
 
 # Signing secret. Stable across restarts by construction — pinned via
 # SANDBOX_TOKEN, else derived from jwt_secret; see
@@ -42,15 +42,10 @@ from app.core.config import settings
 # outage rather than a hardening measure. Never sent to a container as-is when
 # scoped tokens are used; it only signs them.
 SANDBOX_TOKEN: str = settings.sandbox_signing_secret
-_SECRET = SANDBOX_TOKEN.encode()
+_SECRET = SANDBOX_TOKEN
 
 # Default scoped-token lifetime — a turn is minutes; this is a safe ceiling.
 _SCOPED_TTL_S = 3600
-
-
-def _sign(body: str) -> str:
-    digest = hmac.new(_SECRET, body.encode(), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 def mint_scoped_token(
@@ -117,7 +112,7 @@ def mint_scoped_token(
         payload["d"] = document_id
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{body}.{_sign(body)}"
+    return f"{body}.{sign_body(_SECRET, body)}"
 
 
 def bind_resource_token(
@@ -134,10 +129,10 @@ def bind_resource_token(
     ``reading`` makes it a credential that only reads the machine's files
     (``routes/execution.py``): a document's 芝士 looking at the room's work.
 
-    ``scratch`` makes it one whose work is not kept: a 支线, or a task its
-    owner has not started. On a machine that is its session's own it does
-    anything there but carry the work into the project; on one shared with
-    others it only reads (``routes/execution.py``). It carries ``ro`` as well:
+    ``scratch`` makes it one whose work is not kept: a 支线's. On a machine
+    that is its session's own it does anything there but carry the work into
+    the project; on one shared with others it only reads
+    (``routes/execution.py``). It carries ``ro`` as well:
     the executor route is served by the device connection's owner, which an
     app release leaves on its image, and an owner that predates ``scratch``
     reads only ``ro`` and keeps the session to reading until it is released."""
@@ -161,7 +156,7 @@ def bind_resource_token(
         # Old owners must reject this capability, even at their legacy URL.
         # The signed prefix cannot be stripped to obtain an older credential.
         body = "cxss_" + body
-    return f"{body}.{_sign(body)}"
+    return f"{body}.{sign_body(_SECRET, body)}"
 
 
 def token_agent_handle(token: str) -> str | None:
@@ -201,7 +196,7 @@ def scoped_token_claims(token: str) -> dict | None:
         body, sig = token.split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, _sign(body)):
+    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
         return None
     if body.startswith("cxss_"):
         body = body.removeprefix("cxss_")
@@ -280,7 +275,7 @@ def mint_project_agent_credential(
     }
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
     return f"{AGENT_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -294,7 +289,9 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         body, signature = token[len(AGENT_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(signature, _sign(f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")):
+    if not hmac.compare_digest(
+        signature, sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
+    ):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)
@@ -352,7 +349,7 @@ def mint_personal_credential(
     payload = {"u": user_id, "c": conversation_id, "iat": now, "exp": now + ttl_s}
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
     return f"{PERSONAL_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -366,7 +363,7 @@ def personal_claims(token: str) -> PersonalClaims | None:
         body, signature = token[len(PERSONAL_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    expected = _sign(f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
+    expected = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
     if not hmac.compare_digest(signature, expected):
         return None
     try:
@@ -388,6 +385,69 @@ def personal_claims(token: str) -> PersonalClaims | None:
     if not isinstance(expires, int) or expires < time.time():
         return None
     return PersonalClaims(user_id=user_id, conversation_id=conversation)
+
+
+# What a person's 芝士 carries into its own sandbox (``routes/execution.py``):
+# whose 芝士, which conversation's sandbox, which session and which of its
+# leases, as ``bind_resource_token`` says them for a room's. It opens that
+# sandbox and nothing else: its prefix and signing domain make it no credential
+# to every route that reads another kind, an execution route of an older
+# release included.
+PERSONAL_EXECUTION_PREFIX = "cxpx_"
+_PERSONAL_EXECUTION_DOMAIN = "cxpx1"
+
+
+def mint_personal_execution_credential(
+    *,
+    user_id: int,
+    conversation_id: str,
+    session_id: str,
+    lease_generation: str,
+    ttl_s: int = PERSONAL_CREDENTIAL_TTL_S,
+) -> str:
+    now = int(time.time())
+    payload = {
+        "u": user_id,
+        "t": conversation_id,
+        "r": conversation_id,
+        "session": session_id,
+        "lease": lease_generation,
+        "iat": now,
+        "exp": now + ttl_s,
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
+    return f"{PERSONAL_EXECUTION_PREFIX}{body}.{signature}"
+
+
+def personal_execution_claims(token: str) -> dict | None:
+    """The claims of a well-formed, correctly-signed, unexpired personal
+    execution credential, else ``None``."""
+    if not token.startswith(PERSONAL_EXECUTION_PREFIX):
+        return None
+    try:
+        body, signature = token[len(PERSONAL_EXECUTION_PREFIX) :].split(".", 1)
+    except ValueError:
+        return None
+    expected = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user_id, expires = payload.get("u"), payload.get("exp")
+    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
+        return None
+    if not isinstance(expires, int) or expires < time.time():
+        return None
+    if not all(isinstance(payload.get(k), str) for k in ("t", "r", "session", "lease")):
+        return None
+    return payload
 
 
 # A 芝士 answering someone's question acts for that person: what it reads is
@@ -420,6 +480,12 @@ class DelegatedClaims:
     work: str
     #: A question that may only be answered changes nothing.
     read_only: bool
+    #: Whether the answer is shown to every reader of the document, not only
+    #: the asker: then it reads only what all of them may.
+    shown_to_readers: bool = False
+    #: A person's own 芝士: the conversation the question was asked in, whose
+    #: words its gate reads (`assistant.gate`).
+    conversation: str | None = None
 
 
 def mint_delegated_credential(
@@ -432,9 +498,12 @@ def mint_delegated_credential(
     project_id: str | None = None,
     topic_id: str | None = None,
     read_only: bool = True,
+    shown_to_readers: bool = False,
+    conversation: str | None = None,
 ) -> str:
     now = int(time.time())
     payload = {
+        **({"c": conversation} if conversation else {}),
         "u": user_id,
         "h": handle,
         "a": agent,
@@ -442,12 +511,13 @@ def mint_delegated_credential(
         "t": topic_id,
         "w": work,
         "ro": read_only,
+        "sh": shown_to_readers,
         "iat": now,
         "exp": now + ttl_s,
     }
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    signature = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
     return f"{DELEGATED_CREDENTIAL_PREFIX}{body}.{signature}"
 
 
@@ -464,7 +534,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
         body, signature = token[len(DELEGATED_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    expected = _sign(f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
+    expected = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
     if not hmac.compare_digest(signature, expected):
         return None
     try:
@@ -501,6 +571,8 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
         topic_id=topic,
         work=work,
         read_only=payload.get("ro") is not False,
+        shown_to_readers=payload.get("sh") is True,
+        conversation=payload["c"] if isinstance(payload.get("c"), str) else None,
     )
 
 

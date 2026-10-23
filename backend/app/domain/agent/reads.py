@@ -7,14 +7,12 @@ below the core and below the harness packages it reads with, so neither has to
 know the other.
 """
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from app.domain.agent.service import AgentEvent
-from app.domain.delivery.input_identity import (
-    InputReceipt,
-    WorkCompletion,
-    WorkTermination,
-)
+from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 
 
 @dataclass(frozen=True)
@@ -41,8 +39,8 @@ class Ended:
 @dataclass(frozen=True)
 class Abandoned:
     """A work whose session is gone with its inputs still unfinished, and
-    nobody left to report on them: the runner that would have written a
-    completion or a terminal is the process that died. Read with the work it
+    nobody left to report on them: the runner that would have reported them
+    read or dropped is the process that died. Read with the work it
     belongs to, so the room can end those inputs itself."""
 
 
@@ -59,21 +57,6 @@ class Received:
     echoed back by the harness itself."""
 
     receipt: InputReceipt
-
-
-@dataclass(frozen=True)
-class Completed:
-    """The harness's own record that the work finished, and which inputs it
-    answered."""
-
-    completion: WorkCompletion
-
-
-@dataclass(frozen=True)
-class Terminated:
-    """The work ended without completing: taken away, or failed."""
-
-    termination: WorkTermination
 
 
 @dataclass(frozen=True)
@@ -101,7 +84,134 @@ class CaughtUp:
 
 @dataclass(frozen=True)
 class ControlsMoved:
-    """What the session's controls show changed (Claude Code's)."""
+    """What the session's controls show changed: its background tasks."""
+
+
+# --- what a runner reports in the lifecycle protocol --------------------------
+#
+# A runner that speaks the protocol (`harness/driven/lifecycle.py`) reports
+# facts, and each one is read as a ``Report`` naming the event it came from. Its
+# reader applies it and its effects in one transaction (``session_state.take``)
+# and only then lets the reading go on; the reading acknowledges it to the
+# runner after that.
+
+
+@dataclass(frozen=True)
+class InputWritten:
+    """The input is on the agent's input: written, not read yet."""
+
+    identity: InputIdentity
+
+
+@dataclass(frozen=True)
+class InputRead:
+    """The agent took the input in: it is delivered."""
+
+    receipt: InputReceipt
+
+
+@dataclass(frozen=True)
+class InputDropped:
+    """The agent will never read the input (``reason``, the runner's)."""
+
+    identity: InputIdentity
+    reason: str
+
+
+@dataclass(frozen=True)
+class SessionRunning:
+    """The session started working, on ``work_id`` (the room's work it is
+    attributed to; one the session started on its own when ``unsolicited``)."""
+
+    work_id: uuid.UUID | None
+    unsolicited: bool = False
+
+
+@dataclass(frozen=True)
+class SessionIdle:
+    """The session went idle. ``result`` is how the work it was doing ended,
+    in the room's vocabulary; ``read_inputs`` the platform inputs it read since
+    it last went idle, which a failure (``result.is_error``) is attached to."""
+
+    work_id: uuid.UUID | None
+    result: AgentResult
+    read_inputs: tuple[uuid.UUID, ...] = ()
+    #: The failure's kind (`lifecycle`), None for a clean ending.
+    failure: str | None = None
+    unsolicited: bool = False
+
+
+@dataclass(frozen=True)
+class SessionExited:
+    """The agent process ``launch`` is gone. The event carries the epoch that
+    process was registered under (a runner also reports the ending of the
+    process before it, when that one died with its runner, under that one's
+    epoch): only an exit of the seat's current registration ends its session
+    (``Report.of_this_registration``)."""
+
+    launch: str
+    exit_code: int | None = None
+    #: What it said, when it ended before it ever came up.
+    said: str = ""
+
+
+@dataclass(frozen=True)
+class Report:
+    """One event a runner reported, and where it came from: the seat, the
+    epoch of the runner that delivered it, and its own ``(epoch, seq)``."""
+
+    conversation_id: uuid.UUID
+    agent_handle: str
+    harness: str
+    worker_epoch: int
+    epoch: int
+    seq: int
+    at: datetime
+    fact: (
+        InputWritten
+        | InputRead
+        | InputDropped
+        | SessionRunning
+        | SessionIdle
+        | SessionExited
+    )
+
+    @property
+    def of_this_registration(self) -> bool:
+        """Whether the event describes the process the delivering registration
+        holds: it was written under that registration's epoch. Applying it
+        checks the delivering epoch is the seat's current one
+        (``session_state.take``), so for an applied report this is whether it
+        is about the seat's current process."""
+        return self.epoch == self.worker_epoch
+
+
+@dataclass(frozen=True)
+class Replaced:
+    """The process holding native session ``conversation`` was replaced by one
+    of this release's (a runner another release started). The platform's
+    inputs its runner reported its works read (``read``: each work's id and the
+    input ids it read) were read, into that work; whatever else it was written
+    and has no record of reading, it never will read."""
+
+    conversation: str
+    read: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+@dataclass(frozen=True)
+class ResultLanded:
+    """The room landed the closing result ``report`` carries: delivered again,
+    it is not handed to the room a second time (``runner_reports.landed``)."""
+
+    report: Report
+
+
+@dataclass(frozen=True)
+class Followed:
+    """Everything that follows from ``report`` was done, the room's books
+    included: delivered again, it asks nothing more (``runner_reports``)."""
+
+    report: Report
 
 
 @dataclass(frozen=True)
@@ -117,8 +227,10 @@ class Read:
         | Abandoned
         | Working
         | Received
-        | Completed
-        | Terminated
+        | Report
+        | Followed
+        | ResultLanded
+        | Replaced
         | Reachable
         | Moved
         | CaughtUp

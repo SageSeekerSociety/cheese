@@ -57,8 +57,8 @@ const props = withDefaults(
   }
 )
 const emit = defineEmits<{
-  (e: 'retry'): void
-  (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  retry: []
+  install: [payload: { url: string; kind: 'skill' | 'plugin' }]
 }>()
 
 const { t } = useI18n()
@@ -69,7 +69,6 @@ const tab = defineModel<'tasks' | 'pools' | 'skills'>('tab', { default: 'tasks' 
 const TIER_LABEL: Record<string, string> = {
   default: 'market.tier.default',
   included: 'market.tier.included',
-  testing: 'market.tier.testing',
   byo: 'market.tier.byo',
   premium: 'market.tier.premium',
 }

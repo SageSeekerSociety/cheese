@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
+from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
 
-#: Rows of model calls. A compute charge (``usage.compute``) is a usage row
-#: too, for its credits, but it has no tokens and is no call: every count of
+#: Rows of model calls. A compute charge (``usage.compute``) or a web search
+#: the platform asked for (``SEARCH_ROUTE``) is a usage row too, for its credits, but
+#: it has no tokens and is no call: every count of
 #: tokens, cost and calls below leaves it out, and only the credit reads of a
 #: team's spend take it in.
-MODEL_CALLS = ResourceUsage.route != COMPUTE_ROUTE
+MODEL_CALLS = ResourceUsage.route.notin_(NOT_MODEL_CALLS)
 
 
 def unpriced_tokens() -> Any:
@@ -63,6 +64,7 @@ class UsageRepository:
         route: str = "",
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
+        credit_owner_handle: str | None = None,
         team_id: int | None = None,
         credits: float = 0.0,
         calls: int = 1,
@@ -88,6 +90,7 @@ class UsageRepository:
         row = ResourceUsage(
             project_id=project_id,
             user_id=user_id,
+            credit_owner_handle=credit_owner_handle,
             conversation_id=conversation_id,
             turn_id=turn_id,
             model=model,
@@ -143,6 +146,54 @@ class UsageRepository:
             .group_by(ResourceUsage.project_id)
         )
         return {pid: float(spent or 0.0) for pid, spent in rows}
+
+    async def credits_by_work(
+        self, work_ids: list[uuid.UUID], *, since: datetime, until: datetime
+    ) -> dict[uuid.UUID, float]:
+        """每件活 ``work_ids`` 在这个窗口里扣掉的额度（点），一次问完。
+
+        `work_id` 就是那一轮的 id：一条规则的一次执行、一条活的一次轮次，轮次结束时
+        把这一轮的花费写成 `resource_usage.turn_id`。所以「这条规则本月花了多少」是
+        对它的许多个轮次 id 求和，而不是另一种聚合 —— 账本里没有按规则记的那一笔。
+
+        **这里不过滤 `MODEL_CALLS`。** 那个过滤说的是「算不算一次模型调用」，而问题
+        是「扣了团队多少额度」：网页搜索那几行没有 token 也照样扣点数
+        （`usage.models.NOT_MODEL_CALLS` 的注释）。团队额度页算的也是这个口径，两边
+        必须是同一个数。云端的算力不在里面 —— 它按频道按分钟记，挂不到某一轮上。
+
+        没有花费的 id 不出现在结果里（不是 0）：调用方用 `dict.get` 取，缺就是没花，
+        省掉一次「这个 id 到底有没有行」的判断。
+        """
+        if not work_ids:
+            return {}
+        rows = await self._session.execute(
+            select(
+                ResourceUsage.turn_id,
+                func.coalesce(func.sum(ResourceUsage.credits), 0.0),
+            )
+            .where(
+                ResourceUsage.turn_id.in_(work_ids),
+                ResourceUsage.created_at >= since,
+                ResourceUsage.created_at < until,
+            )
+            .group_by(ResourceUsage.turn_id)
+        )
+        return {work_id: float(credits) for work_id, credits in rows.all()}
+
+    async def task_gateway_spend(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> float:
+        return float(
+            await self._session.scalar(
+                select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
+                    ResourceUsage.project_id == project_id,
+                    ResourceUsage.conversation_id == task_id,
+                    ResourceUsage.credit_owner_handle == owner_handle,
+                    ResourceUsage.route == "gateway",
+                )
+            )
+            or 0
+        )
 
     async def _agg(self, where) -> dict:
         # The public `turns` key is retained for wire compatibility, but its

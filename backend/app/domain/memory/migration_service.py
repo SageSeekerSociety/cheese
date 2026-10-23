@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -37,7 +38,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, say
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.living_doc.services import Documents
+from app.domain.living_doc.overview import pointed_overview
 from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.roster import roster
 from app.domain.memory.files import MemoryFileScope, prefix_of
@@ -139,14 +140,14 @@ class MemoryMigrationService:
                 KeySpec(
                     name="memory-migration-gateway-key",
                     alias="memory-migration",
-                    model=settings.memory_migration_model,
+                    model=model_roles.model("memory_migration_model"),
                     budget_usd=settings.memory_migration_budget_usd,
                     rpm=60,
                 ),
             )
             if key is not None:
                 self._chat = GatewayChat(
-                    key, settings.memory_migration_model, max_tokens=8192
+                    key, model_roles.model("memory_migration_model"), max_tokens=8192
                 )
         return self._chat
 
@@ -200,11 +201,12 @@ class MemoryMigrationService:
                     content=row.content,
                 )
             )
-        if project.overview_document_id is not None:
-            doc = await Documents(self._session).get(project.overview_document_id)
-            for entry in overview_entries(doc.content if doc else ""):
-                if entry.source_id not in moved:
-                    entries.append(entry)
+        # 指针从库里读，不读 ``project.overview_document_id``：它也可能过时
+        # （``pointed_overview`` 里写了为什么）。
+        doc = await pointed_overview(self._session, project_id)
+        for entry in overview_entries(doc.content if doc else ""):
+            if entry.source_id not in moved:
+                entries.append(entry)
         # 「这个项目里有谁」只有 `roster()` 一个读法（`test_one_roster_agents_
         # included` 守着这件事）：直接读 `people()` 是第二份名册。私人记忆的主人
         # 只能是**人**，所以这里把名册上那些 `agent=True` 的席位滤掉——它们是队友，

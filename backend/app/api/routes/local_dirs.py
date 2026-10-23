@@ -1,31 +1,11 @@
-"""本机目录授权 over HTTP — the「我的电脑」screen's grants, revocations and audit.
+"""Directory grants on team-managed devices.
 
-Four endpoints, all under the owner's own login and all scoped to one of their
-own machines:
+Current team administrators list, grant and revoke directories on a device.
+The grant creator and revoker remain audit facts. The account access log
+continues to show the caller's own access history.
 
-* ``GET    /connector/my/devices/{device_id}/directories`` — the grants on that
-  machine, with the revoked ones available on request so the screen can show
-  history rather than a list that mysteriously shortened.
-* ``POST   /connector/my/devices/{device_id}/directories`` — authorize one
-  directory. A path that cannot be authorized comes back as a plain validation
-  error carrying the Chinese reason, which is criterion five: the refusal has to
-  be something a person reads, not a silent no.
-* ``DELETE /connector/my/devices/{device_id}/directories/{grant_id}`` — revoke.
-* ``GET    /connector/my/access-log`` — every decision across the owner's
-  machines, allowed and denied alike.
-
-Authorizing and revoking both push the machine's whole live grant set at it (see
-``app.domain.local_fs.enforcement``) and report what happened in a ``delivery``
-field beside the grant. The push is best-effort on purpose: the owner's computer
-is not always on, and a grant that could only be created while it happened to be
-online would make 「本机离线时项目照常可用」 false at the first step. The grant is
-recorded either way, and the set is pushed again when the machine reattaches.
-
-Two things this module deliberately does NOT have. There is no endpoint that
-lets a directory be attached to anything shareable — a grant is not a resource
-and has no id another user may be handed (本机目录不参与共享). And no endpoint
-reaches a grant without checking that the caller owns the device it is on: the
-only id ever accepted from outside is one of the caller's own machines.
+Writes push the device's whole live grant set after committing. An offline
+device receives the current set when it reconnects.
 """
 
 import uuid
@@ -37,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     NotFoundError,
     UnauthorizedError,
@@ -82,14 +63,16 @@ async def _require_user(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) -> None:
-    """Refuse unless the caller owns this machine.
+async def _require_managed_device(
+    db: AsyncSession, user_id: int, device_id: str
+) -> None:
+    """Refuse unless the caller administers this device's team.
 
     A device that exists but belongs to somebody else is reported as missing, so
     the endpoint cannot be used to enumerate other people's machines.
     """
     device = await sql_device_service(db).get_hosted_device(device_id)
-    if device is None or device.owner_user_id != user_id:
+    if device is None or not await sql_device_service(db).may_manage(device, user_id):
         raise NotFoundError(say("deviceNotYours"))
 
 
@@ -148,14 +131,14 @@ async def list_directories(
 ) -> dict[str, Any]:
     """The directories authorized on this machine."""
     user_id = await _require_user(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    await _require_managed_device(db, user_id, device_id)
     grants = await sql_local_directory_service(db).list_grants(
-        user_id, device_id=device_id, include_revoked=include_revoked
+        device_id, include_revoked=include_revoked
     )
     return {"directories": [_grant_view(g) for g in grants]}
 
 
-@router.post("/my/devices/{device_id}/directories")
+@router.post("/my/devices/{device_id}/directories", dependencies=[ROUTE_DECIDES])
 async def grant_directory(
     device_id: str,
     body: GrantDirectoryRequest,
@@ -164,7 +147,7 @@ async def grant_directory(
 ) -> dict[str, Any]:
     """Authorize a directory, or refuse with a reason the screen can show."""
     user_id = await _require_user(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    await _require_managed_device(db, user_id, device_id)
     service: LocalDirectoryService = sql_local_directory_service(db)
     try:
         grant = await service.grant_directory(
@@ -188,7 +171,9 @@ async def grant_directory(
     return {**_grant_view(grant), "delivery": _delivery_view(outcome)}
 
 
-@router.delete("/my/devices/{device_id}/directories/{grant_id}")
+@router.delete(
+    "/my/devices/{device_id}/directories/{grant_id}", dependencies=[ROUTE_DECIDES]
+)
 async def revoke_directory(
     device_id: str,
     grant_id: uuid.UUID,
@@ -197,10 +182,10 @@ async def revoke_directory(
 ) -> dict[str, Any]:
     """Revoke a grant. Effective on the next question asked, with no restart."""
     user_id = await _require_user(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    await _require_managed_device(db, user_id, device_id)
     service = sql_local_directory_service(db)
-    grant = await service.revoke(grant_id, owner_user_id=user_id)
-    if grant is None or grant.device_id != device_id:
+    grant = await service.revoke(grant_id, actor_user_id=user_id, device_id=device_id)
+    if grant is None:
         raise NotFoundError(say("localDirGrantNotFound"))
     await db.commit()
     # Pushed immediately, and that is the point of a revocation: the device holds
@@ -225,7 +210,7 @@ async def my_access_log(
         # would just come back empty — which reads as 「没有记录」 for a machine
         # that is not yours. Saying so plainly is better than an empty list that
         # means two different things.
-        await _require_owned_device(db, user_id, device_id)
+        await _require_managed_device(db, user_id, device_id)
     records = await sql_local_directory_service(db).list_access(
         user_id, device_id=device_id, limit=limit
     )

@@ -143,6 +143,38 @@ class UserRealNameService:
             module_entity_id=module_entity_id,
         )
 
+    async def log_accesses(
+        self,
+        *,
+        accessor_id: int,
+        target_ids: Sequence[int],
+        access_reason: str,
+        access_type: str,
+        ip_address: str,
+        module_type: str | None = None,
+        module_entity_id: int | None = None,
+    ) -> list[int]:
+        """``log_access`` for many targets: the accessor is checked once and the
+        targets in one query, so a roster export costs two user reads, not two
+        per person. Returns the target ids that no longer exist (skipped, no log)."""
+        await self._ensure_user_exists(accessor_id)
+        existing = await self._user_repo.get_by_ids(target_ids)
+        missing: list[int] = []
+        for target_id in target_ids:
+            if target_id not in existing:
+                missing.append(target_id)
+                continue
+            await self._realname_repo.create_access_log(
+                accessor_id=accessor_id,
+                target_id=target_id,
+                access_reason=access_reason,
+                ip_address=ip_address,
+                access_type=access_type,
+                module_type=module_type,
+                module_entity_id=module_entity_id,
+            )
+        return missing
+
     async def get_access_logs(
         self,
         *,
@@ -159,20 +191,20 @@ class UserRealNameService:
             offset=offset,
         )
         accessor_ids: Sequence[int] = [row.accessor_id for row in rows]
-        profiles = await self._profile_repo.get_profiles_by_user_ids(accessor_ids)
+        # A reader who has since closed their account still read the record:
+        # the entry stays, under the name closing gave them.
+        profiles = await self._profile_repo.get_profiles_by_user_ids(
+            accessor_ids, include_closed=True
+        )
         # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了
         # 全局默认（见 UserProfileRepository.chosen_avatar_ids），直接回它会让所有没
         # 挑过头像的人共用同一张脸。没挑过的人不在映射里，回 None，画头像的地方据此
         # 画彩色首字母。
         chosen_avatars = await self._profile_repo.chosen_avatar_ids(accessor_ids)
 
-        accessor_users: dict[int, User] = {}
-        for uid in accessor_ids:
-            if uid in accessor_users:
-                continue
-            user = await self._user_repo.get_by_id(uid)
-            if user is not None:
-                accessor_users[uid] = user
+        accessor_users: dict[int, User] = await self._user_repo.get_by_ids(
+            list(dict.fromkeys(accessor_ids)), include_closed=True
+        )
 
         # Where each access happened: a board, named, and said to be a course
         # or not, looked up for the whole page at once.
@@ -221,12 +253,14 @@ class UserRealNameService:
                 }
             )
 
-        returned = len(logs)
-        has_more = offset + returned < total
-        next_start = offset + returned if has_more and returned > 0 else None
+        # Paged by the rows read, not the entries shown: an entry skipped above
+        # must not stop the next page or hide the rows after it.
+        read = len(rows)
+        has_more = offset + read < total
+        next_start = offset + read if has_more and read > 0 else None
         page = {
             "pageStart": offset,
-            "pageSize": returned,
+            "pageSize": len(logs),
             "hasMore": has_more,
             "nextStart": next_start,
             "total": total,

@@ -51,9 +51,7 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.review.github_pr_status import PullRequestStatus
     from app.domain.review.ports import (
         Announce,
-        RecordAgent,
         RecordInstruction,
-        SeatInstanceId,
         TaskTeammate,
     )
 
@@ -66,8 +64,6 @@ class AcceptService:
         announce: Announce | None = None,
         settle_card: SettleCard | None = None,
         record_instruction: RecordInstruction | None = None,
-        seat_instance_id: SeatInstanceId | None = None,
-        record_agent: RecordAgent | None = None,
         task_teammate: TaskTeammate | None = None,
         roster_team: ProjectTeam | None = None,
         executor: ExecutorCall | None = None,
@@ -80,11 +76,9 @@ class AcceptService:
 
         另外几个同理（`ports.py`）：结掉一张卡等着的那些话（`SettleCard`，形状就是
         `delivery/ledger.settle_card`）、给任务自己的席位留一句指令
-        （`RecordInstruction`）、认一个席位是谁（`SeatInstanceId`）、往席位那本报账
-        上记一行（`RecordAgent`）、这个任务现在的 AI 队友是哪一个席位
-        （`TaskTeammate`）。前两个在说给任务听的那条路上，后两个在叫醒调度
-        座位的那条路上，最后一个在交付落地的那条路上 —— 都是上面一层的动作，
-        本包够不着。
+        （`RecordInstruction`）、这个任务现在的 AI 队友是哪一个席位
+        （`TaskTeammate`）。前两个在说给任务听的那条路上，最后一个在交付落地的
+        那条路上 —— 都是上面一层的动作，本包够不着。
 
         ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
         （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
@@ -95,8 +89,6 @@ class AcceptService:
         self._announce = announce
         self._settle_card = settle_card
         self._record_instruction = record_instruction
-        self._seat_instance_id = seat_instance_id
-        self._record_agent = record_agent
         self._task_teammate = task_teammate
         self._roster_team = roster_team
         self._executor = executor
@@ -171,6 +163,18 @@ class AcceptService:
             deliver_url=deliver_url,
             completes_task=completes_task,
             admits_reviewer=admits_reviewer,
+        )
+
+    async def redeliver(
+        self,
+        task_id: uuid.UUID,
+        *,
+        actor: str,
+        deliver: str | None = None,
+        deliver_url: str | None = None,
+    ) -> AcceptCard:
+        return await cards.redeliver(
+            self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
         )
 
     async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
@@ -265,6 +269,11 @@ class AcceptService:
     ) -> list[uuid.UUID]:
         return await cards.open_pr_card_ids(self, project_id=project_id)
 
+    async def missing_merge_actor_card_ids(
+        self, *, since: datetime, limit: int
+    ) -> list[uuid.UUID]:
+        return await cards.missing_merge_actor_card_ids(self, since=since, limit=limit)
+
     async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
         return await cards.anybody_still_waiting(self, place_ids=place_ids)
 
@@ -293,12 +302,14 @@ class AcceptService:
         card_id: uuid.UUID,
         reviewer_handles: list[str] | None = None,
         admits_reviewer: ReviewerAdmission,
+        by: str,
     ) -> AcceptCard:
         return await reviewers.reassign(
             self,
             card_id=card_id,
             reviewer_handles=reviewer_handles,
             admits_reviewer=admits_reviewer,
+            by=by,
         )
 
     def _forbid_ai(self, project: Project | None, handle: str, action: str) -> None:
@@ -363,10 +374,19 @@ class AcceptService:
         )
 
     async def accept(
-        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str | None = None
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        head_sha: str | None = None,
+        deliverable_revision: str | None = None,
     ) -> AcceptCard:
         return await _accept.accept(
-            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            head_sha=head_sha,
+            deliverable_revision=deliverable_revision,
         )
 
     async def _accept_github(
@@ -536,6 +556,9 @@ class AcceptService:
             self, card_id=card_id, chat_service=chat_service, runner=runner
         )
 
+    async def fill_merged_by(self, card_id: uuid.UUID) -> bool:
+        return await polling.fill_merged_by(self, card_id)
+
     async def refresh_stale_pr_snapshots(self, cards: Sequence[AcceptCard]) -> None:
         return await polling.refresh_stale_pr_snapshots(self, cards=cards)
 
@@ -567,7 +590,7 @@ class AcceptService:
             self, card=card, delivered_head=delivered_head
         )
 
-    async def _app_pr_client(self, topic: Topic):  # noqa: ANN202 — GitHubPRClient
+    async def _app_pr_client(self, topic: Topic):  # GitHubPRClient
         return await polling._app_pr_client(self, topic=topic)
 
     async def mark_ready(self, room_id: uuid.UUID, task_id: uuid.UUID) -> dict:
@@ -683,6 +706,7 @@ class AcceptService:
         protection: BranchProtection,
         chat_service,
         runner,
+        opened_by: str | None = None,
     ) -> None:
         return await merge_queue._merge_armed_card(
             self,
@@ -695,6 +719,7 @@ class AcceptService:
             protection=protection,
             chat_service=chat_service,
             runner=runner,
+            opened_by=opened_by,
         )
 
     async def _note_needs_human(
@@ -720,7 +745,7 @@ class AcceptService:
         return await _accept._void_closed_pr_card(self, card=card, topic=topic)
 
     async def _record_task_nudge(
-        self, *, topic, task, content, headline, meta, dispatch: str | None = None
+        self, *, topic, task, content, headline, meta, replaces=None
     ):
         return await notices._record_task_nudge(
             self,
@@ -729,7 +754,7 @@ class AcceptService:
             content=content,
             headline=headline,
             meta=meta,
-            dispatch=dispatch,
+            replaces=replaces,
         )
 
     async def _note_merge_blocked(
@@ -841,6 +866,9 @@ class AcceptService:
         return await _accept._stop_accept_pr_unavailable(
             self, card=card, topic=topic, reason=reason
         )
+
+    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
+        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str

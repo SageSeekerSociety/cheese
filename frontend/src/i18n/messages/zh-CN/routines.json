@@ -1,14 +1,12 @@
 {
   "action": {
     "edit": "修改",
-    "drop": "不要了",
     "pause": "暂停",
     "resume": "恢复",
     "runNow": "立即执行一次",
     "hideRuns": "收起记录",
     "showRuns": "执行记录",
     "delete": "删除",
-    "confirm": "确认启用",
     "more": "更多操作",
     "refresh": "刷新",
     "new": "新建"
@@ -26,9 +24,10 @@
     "hourly": "每小时"
   },
   "state": {
-    "draft": "待确认",
-    "active": "执行中",
-    "paused": "已暂停"
+    "active": "启用中",
+    "paused": "已暂停",
+    "queued": "排队中，这就跑",
+    "missed": "上一次没能执行"
   },
   "line": {
     "chip": "例行 · {title}",
@@ -47,63 +46,120 @@
     "skipped": "未执行"
   },
   "goneRoom": "（已不在的频道）",
-  "loadFailed": "未能读取定时与触发规则",
+  "loadFailed": "未能读取例行事务",
   "runsFailed": "未能读取执行记录",
   "actionFailed": "操作没有成功",
   "deleteFailed": "未能删除",
-  "newTitle": "新建规则",
   "editTitle": "修改「{title}」",
   "pickRoom": "先选一个频道：工作在那个频道里执行，结果也放在那里",
-  "saveFailed": "没有保存成功",
-  "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会起草一条，等你在这里确认",
-  "loading": "读取规则",
-  "waiting": "等你确认",
-  "spec": {
-    "work": "工作内容",
-    "scope": "资料范围",
-    "unlimited": "未限定",
-    "output": "结果放在",
-    "outputDir": "频道 {dir}",
-    "rootDir": "根目录",
-    "agent": "执行者",
-    "draftedBy": "{agent}（由 {author} 起草）"
-  },
-  "next": "下次 {time}",
+  "saveFailed": "保存失败",
+  "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会建一条，存下来就在跑。",
+  "loading": "读取例行事务",
+  "today": "今天 {time}",
+  "yesterday": "昨天 {time}",
   "neverRun": "还没有执行过",
-  "finishedAt": "结束于 {time}",
   "noReason": "没有给出原因",
-  "outputs": "结果：",
   "listSeparator": "、",
-  "empty": "还没有定时或触发规则",
+  "spend": {
+    "points": "{n} 点",
+    "pending": "结算中",
+    "thisMonth": "本月 {points}",
+    "recordsTotal": "本月 {points}",
+    "hint": "本月这条规则从团队额度里扣掉的点数。只算模型调用，不含云端算力。"
+  },
+  "zone": {
+    "beijing": "北京时间"
+  },
+  "records": {
+    "all": "看全部",
+    "title": "{title} · 执行记录",
+    "count": "共 {n} 次",
+    "missedOnly": "只看未能执行",
+    "back": "返回",
+    "reason": "原因",
+    "noneMissed": "没有未能执行的",
+    "prev": "上一页",
+    "next": "下一页",
+    "pageBefore": "第",
+    "pageAfter": "/ {pages} 页",
+    "pageInput": "跳到第几页"
+  },
+  "empty": "还没有例行事务",
   "emptyHint": "点「新建」，或在频道里让 AI 队友帮你起草一条",
+  "compose": {
+    "tab": {
+      "label": "新建例行事务的两页",
+      "new": "新建",
+      "template": "模板"
+    }
+  },
+  "template": {
+    "preset": "平台预置",
+    "mine": "项目里存的",
+    "mineNote": "（项目成员共用）",
+    "saveFailed": "模板保存失败",
+    "when": {
+      "daily": "每天 {time}",
+      "weekly": "每{days} {time}",
+      "monthly": "每月 {day} 日 {time}",
+      "hourly": "每小时的 {minute} 分"
+    },
+    "editTitle": "改模板「{title}」",
+    "nameLabel": "模板名字",
+    "presets": {
+      "weekly": {
+        "title": "周报",
+        "goal": "把上周各频道完成的事汇总成一页",
+        "note": "按频道分块；每块先写做完了什么，再写还在等的。只写这周发生的，往前的不用翻。结果放频道文件区。"
+      },
+      "quiz": {
+        "title": "周测",
+        "goal": "照本周学过的内容出一份小测",
+        "note": "题和答案各一个文件，都放进频道里「周测」那个文件夹。题目十道以内，照这周频道和资料库里出现的内容出。答案文件里写清每题为什么。"
+      },
+      "daily": {
+        "title": "日报",
+        "goal": "把今天频道里决定的事和还没回音的线索整理成一页",
+        "note": "分两段：定了的、还在等的。定了的写清是谁定的；还在等的写清卡在谁那儿。当天没事就写一句没有，别硬凑。"
+      },
+      "archive": {
+        "title": "归档",
+        "goal": "资料库里添了新文件，就归到该去的文件夹，并写一句它是干什么的",
+        "note": "按项目分文件夹；说明写在文件开头，一句话。拿不准归哪儿的，别动它，在频道里问一句。"
+      },
+      "unit": {
+        "title": "单元总结",
+        "goal": "把一个学习任务里的重要知识点总结成一页",
+        "note": "只写这个任务里真正学到的：新概念、怎么用、踩过的坑。跟任务里已有的资料库文档对照，已经有了的不重复。结果放这个任务的成果里。"
+      }
+    }
+  },
+  "cancel": "取消",
   "form": {
-    "room": "在哪个频道执行",
-    "roomHint": "执行者是这个频道里的 AI 队友，结果也放在这个频道",
-    "name": "名称",
-    "namePlaceholder": "例如：每周项目进展",
-    "instructions": "要做的工作",
-    "instructionsPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
-    "context": "使用哪些资料",
-    "contextPlaceholder": "例如：本项目所有频道的任务和决策；只用资料库里的文件",
-    "outputDir": "结果放在频道的哪个目录",
-    "outputDirPlaceholder": "例如：周报",
-    "trigger": "什么时候开工",
+    "room": "频道",
+    "name": "标题",
+    "goal": "目标",
+    "goalPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
+    "note": "补充说明",
+    "notePlaceholder": "例如：结果按频道分开列；只用资料库里的文件",
+    "autoHint": "未填项，由{agent}参照目标生成，生成完毕后开始执行。",
+    "timeOn": "时间",
+    "conditionOn": "条件",
+    "keepTemplate": "存成模板",
+    "goalRequired": "目标要填：{agent}照它开工。",
+    "weekdaysRequired": "挑一天：每周一次得说清是哪一天。",
     "freq": "频率",
-    "time": "时间",
-    "minute": "第几分钟",
-    "day": "几号",
+    "time": "几点",
+    "minute": "分钟",
+    "day": "日期",
     "timezone": "时区",
-    "scope": "范围",
-    "scopeRoom": "只看这个频道",
-    "scopeProject": "整个项目",
-    "machineNote": "AI 队友的环境在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，两小时内没开始会记为失败并通知你"
+    "triggerUnset": "两个都不选也行：先存下来不跑，之后在「修改」里定"
   },
   "deleteTitle": "删除「{title}」",
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",
   "roomsFailed": "未能读取这个项目的频道",
   "archivedStopped": "已随频道归档停止",
-  "readonly": "这条规则由 {owner} 管，只有他和项目管理员能改",
-  "refreshAria": "刷新规则",
+  "refreshAria": "刷新例行事务",
   "save": "保存",
   "weekday": {
     "mon": "周一",
@@ -113,5 +169,6 @@
     "fri": "周五",
     "sat": "周六",
     "sun": "周日"
-  }
+  },
+  "unnamed": "未命名"
 }

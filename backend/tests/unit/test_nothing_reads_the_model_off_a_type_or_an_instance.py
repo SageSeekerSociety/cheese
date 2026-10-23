@@ -251,11 +251,16 @@ _A_TYPE = {
 
 
 def test_a_saved_configuration_carries_a_role_and_how_its_model_runs() -> None:
-    assert set(AgentConfiguration.model_fields) == _A_ROLE | {
-        "model",
-        "effort",
-        "compact_percent",
-    }, (
+    assert (
+        set(AgentConfiguration.model_fields)
+        == _A_ROLE
+        | {
+            "model",
+            "effort",
+            "compact_percent",
+            "execution_device_id",  # #3717: each project teammate chooses its execution device.
+        }
+    ), (
         "A teammate stores its role, an optional model override, and how that "
         "model thinks and compacts; not the harness or MCP servers."
     )

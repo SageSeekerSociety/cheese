@@ -136,15 +136,13 @@ function onProject(path: string, project: Project): boolean {
 }
 
 /**
- * 上次待的那个地方，落在什么地址上。
+ * 上次待的那一页，落在什么地址上。
  *
- * 记着的是**频道**时落回那个频道；记着的是**任务**时落回那件任务——只落回它所在的
- * 频道，「回到我昨天做的那件事」就还差最后一步。任务的地址里不带频道：它自己的编号
- * 就够了（频道由 `addressProps` 补上），这也是这个应用里任务页的规范地址。
+ * 记的是项目里那一段地址（`tasks/318`、`overview`……），项目那一段在这里补上：短名
+ * 会变，存的那一份里不写它。项目首页那一段是空的，就落项目本身。
  */
 export function placeHref(projectRef: string, place: RememberedPlace): string {
-  if (place.kind === 'task') return `/projects/${projectRef}/tasks/${place.id}`
-  return `/projects/${projectRef}/channels/${place.id}`
+  return place.path ? `/projects/${projectRef}/${place.path}` : `/projects/${projectRef}`
 }
 
 /**
@@ -172,7 +170,7 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
           // 上次待的地方还在，就直接落回它——每天的主路径是「回到昨天那个房间」，
           // 先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
           to: lastPlace ? placeHref(ref, lastPlace) : `/projects/${ref}`,
-          // 项目里的每一页（频道、看板、设置）都算站在这一格上。左边的竖条靠这个画：
+          // 项目里的每一页（频道、看板、设置）都算站在这一格上。选中竖条靠这个画：
           // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
           // 会盖掉链接本来算出的激活态。地址里的项目可能是短名、旧短名或 UUID
           // （旧链接、还没换成短名的那一瞬），三种都要认。

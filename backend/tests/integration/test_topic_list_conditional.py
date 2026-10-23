@@ -5,7 +5,9 @@
 """
 
 import time
+import uuid
 
+from app.domain.agent import session_state
 from app.domain.agent.realtime.broker import get_broker
 from tests.integration.conftest import (
     new_project,
@@ -92,12 +94,17 @@ def test_a_typing_member_does_not_break_the_etag(client):
     headers = session_auth_headers("alice")
     broker = get_broker()
 
-    # 一个队友在这个房间里干活 —— 它必须出现在清单里（侧栏那行要带绿点）。
-    client.portal.call(
-        broker.publish,
-        room,
-        {"type": "turn_started", "turn_id": "t1", "agent": "cheese-a1"},
-    )
+    # 一个队友在这个房间里干活（它的 runner 这么报）—— 它必须出现在清单里（侧栏
+    # 那行要带绿点）。
+    key = session_state.SeatKey(uuid.UUID(room), "cheese-a1", "claude-code")
+
+    async def at_work() -> None:
+        await session_state.register(client.test_factory, key)
+        async with client.test_factory() as session:
+            await session_state.declare(session, key, "running")
+            await session.commit()
+
+    client.portal.call(at_work)
     # 同时有人在打字。房间 socket 上那份 activity 仍是完整的，含打字
     # （`test_member_activity` 钉着它）；这份列表不带它。
     broker.activity.typing(room, "alice", True)

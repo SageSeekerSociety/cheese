@@ -1,0 +1,111 @@
+{
+  "page": {
+    "subtitle": "CI on the platform's own repository: how long PRs wait in the merge queue, how long jobs wait for a runner, and how long each job and step takes on each runner"
+  },
+  "window": {
+    "aria": "Time window",
+    "days": "{n} days"
+  },
+  "unit": {
+    "minutes": "{n} min",
+    "seconds": "{n} s"
+  },
+  "state": {
+    "loadFailed": "Could not load the CI data",
+    "retry": "Retry",
+    "loading": "Loading…"
+  },
+  "sweep": {
+    "never": "Not swept yet: the backend reads GitHub every 5 minutes, and this page is empty until the first sweep",
+    "current": "Last sweep {at}",
+    "owed": "Last sweep {at}; jobs of {owed} runs not read yet",
+    "backfilling": "Last sweep {at}. Still backfilling: the data covers only {from} onwards; jobs of {owed} runs not read yet",
+    "error": "The last sweep did not finish: {error}"
+  },
+  "kpi": {
+    "queue": "Merge queue time p50",
+    "waitHosted": "Runner wait p50 (GitHub-hosted)",
+    "waitSelf": "Runner wait p50 (self-hosted)",
+    "ciPr": "CI required mean (PR)",
+    "ciQueue": "CI required mean (merge queue)",
+    "rounds": "CI rounds per PR",
+    "flaky": "Passed only on re-run",
+    "busy": "Jobs running at once"
+  },
+  "note": {
+    "noSample": "Nothing to measure in this window.",
+    "spread": "{n} samples; p50 {p50}, p90 {p90}, longest {max}.",
+    "queue": "From a PR's first entry into the merge queue to its merge, including time spent ejected and re-queued.",
+    "wait": "From a job being created (everything it needs has finished) to it starting on a runner.",
+    "ci": "The first attempt of a full-tier Required CI run: from the run being created to its last job finishing. Draft-tier and cancelled runs are left out, and so is the wait before a re-run.",
+    "rounds": "Across {prs} merged PRs, the mean number of Required CI runs on pull_request events that reached a result (success or failure); {more} needed more than one. In the merge queue: {queue} runs on average.",
+    "roundsIncomplete": "CI history starts at {from}; {n} merged PRs may have earlier CI rounds missing from these counts.",
+    "historyUnknown": "CI history coverage has not been recorded; the round counts may be incomplete.",
+    "flaky": "{runs} of {of} Required CI runs with a result: the latest attempt passed after an earlier attempt on the same commit had a failed job.",
+    "busy": "Mean of per-minute samples; peak {peak}. Of busy runner time, PR CI took {pr}, the merge queue {queue}, builds and deploys on main {main}.",
+    "busyChart": "Mean of per-minute samples within each hour.",
+    "depth": "The most PRs in the merge queue in each hour, and the most jobs running at once in the same hour."
+  },
+  "chart": {
+    "queue": "Merge queue time (min, by merge day)",
+    "ci": "CI required p50 (min)",
+    "wait": "Runner wait p50 (s)",
+    "busy": "Jobs running at once (hourly)",
+    "depth": "Merge queue length and job peak (hourly)",
+    "hourOfDay": "Mean jobs running in each hour of the day (UTC)",
+    "rounds": "PR CI rounds per merged PR",
+    "ejections": "Why the merge queue removed PRs"
+  },
+  "series": {
+    "pr": "PR",
+    "queue": "Merge queue",
+    "hosted": "GitHub-hosted",
+    "selfHosted": "Self-hosted",
+    "busy": "All",
+    "depth": "Queue length peak",
+    "peak": "Job peak"
+  },
+  "hourOfDay": {
+    "label": "{hour}:00"
+  },
+  "rounds": {
+    "exactly": "{n} rounds",
+    "atLeast": "{n} or more rounds"
+  },
+  "ejections": {
+    "label": "{reason} · {actor}"
+  },
+  "runners": {
+    "title": "Runners",
+    "empty": "No jobs",
+    "hostedPrefix": "GitHub-hosted: ",
+    "col": {
+      "runner": "Runner",
+      "jobs": "Jobs",
+      "busy": "Busy hours",
+      "utilisation": "Busy share",
+      "wait": "Wait p50",
+      "duration": "Job time p50",
+      "failed": "Failed"
+    }
+  },
+  "jobs": {
+    "title": "Slowest jobs",
+    "titleOn": "Slowest jobs on {runner}",
+    "allRunners": "All runners",
+    "empty": "No jobs",
+    "col": {
+      "job": "Job",
+      "runs": "Runs",
+      "max": "Longest",
+      "wait": "Wait p50",
+      "failed": "Failed"
+    }
+  },
+  "steps": {
+    "empty": "No steps",
+    "col": {
+      "step": "Step"
+    }
+  }
+}

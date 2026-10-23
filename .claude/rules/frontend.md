@@ -10,13 +10,16 @@ any non-trivial styling work. This file is only the part that bites on turn one 
 where it names a section of that spec, the spec is the authority, this is the
 reminder.
 
-The gates pass on a tree that still holds violations: the existing ones are
-frozen in a baseline and only NEW ones are blocked. So a green gate does not
-mean the file open in front of you is clean — it may well be one of the frozen
-ones. `frontend/stylelint-baseline.json` and `frontend/palette-baseline.json`
-say which files have an allowance; check there before copying a neighbour. After
-a change, `frontend-design` (a skill) walks the whole checklist including the
-parts no gate can see.
+Run `lint:style` for the three colour rules; any violation fails. After a
+change, `frontend-design` walks the checklist for the parts no gate can see.
+
+## 沙箱里不要跑全树检查
+
+**不要在沙箱里跑全树 `pnpm run typecheck` / `node scripts/typecheck.mjs` / `vue-tsc` / `pnpm run build`，也不要跑不带文件参数的 `pnpm exec vitest run`——会被 3 GiB 内存上限杀掉。只跑你改的单个测试文件，全树的检查交给 PR 的 CI。**
+
+`pnpm run lint` 和 `pnpm run lint:style` 轻量，到哪都能跑；`pnpm exec vitest run
+--dir src` 这类整目录跑法、`pnpm run build` 和 `pnpm run typecheck` 都吃内存，
+能不能跑取决于这台机器有多大。
 
 ## The product has a dark theme. Every colour you write must survive it.
 
@@ -31,12 +34,14 @@ parts no gate can see.
   `var(--text)` / `var(--muted)` / `var(--surface)` in CSS; use `background` /
   `surface` / `surface-light` / `surface-bright` / `on-surface-variant` /
   `primary` in Vuetify, **including in `withDefaults` prop defaults**. Both
-  halves are gates (see the ratchets below). Replacement table: §1.2.
+  halves are gates (see below). Replacement table: §1.2.
   - Exception, and write the reason in the code when you take it: where the
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
-    its `#fff` text is correct and "fixing" it to a token breaks it.
+    its ink is a token that is the same in both themes too: `--avatar-ink`
+    (the value lives in style.css; the ratchets ban the hex). A theme-following
+    token there — `--ink`, `on-surface` — is what breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
   Pick by how important the information is, not by how it looks. `--faint` is not a
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
@@ -50,8 +55,11 @@ parts no gate can see.
   the MARK (dot, border, icon), `--danger-ink` is the TEXT, `--danger-wash` is
   the BACKGROUND. Same shape for `--ok` and `--accent`. Using the mark colour for
   text is the single most common defect and fails contrast in light theme (§1.5).
+  The one deliberate exception is `.name-ref` — a merely-mentioned name, which
+  design-system §1.6 has carrying `--accent` as its text on purpose.
 - Amber (`--accent`) is reserved for the main action of an area, unread markers,
-  the current nav position, and the brand mark (§1.6). A page may have several
+  the current nav position, the brand mark, an @ that notified someone, and the
+  text of a name that was merely mentioned (§1.6). A page may have several
   areas, but a group of sibling buttons has only one amber button. Not avatars,
   not status chips, not ordinary icons — ~95% of any screen is neutral.
 
@@ -87,7 +95,7 @@ avoid a white flash before first paint. Change the storage key
 
 Font size, line height and spacing are in
 [`docs/design-system.md` §3](../../docs/design-system.md#3-尺度); radius is a
-four-step ladder stylelint enforces — `--radius-sm` 6 / `--radius-md` 8 /
+four-step ladder — `--radius-sm` 6 / `--radius-md` 8 /
 `--radius-lg` 12 / `--radius-pill` 999, nothing else, picked by what the element
 is and not by the pixels it used to carry. Two things from §3 that are not
 visible in the code:
@@ -179,42 +187,30 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   reason fails.
 - The gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run
   --dir src/i18n` and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, none allowed except annotated data lines).
+  catalog, none allowed except annotated data lines; comments are not scanned,
+  but a Chinese `<!-- -->` in a template reaches the DOM vitest renders, so the
+  no-Chinese specs read it — write template comments in English).
 
-## The two ratchets
+## The colour gates
 
-`frontend/stylelint-baseline.json` freezes the pre-existing violations and the
-gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
-same reason: a rule that goes red on hundreds of existing sites gets switched off.
+The three colour rules gate with zero tolerance. Formatting, ordering and
+naming stay outside the gate; `lint:style:fix` keeps their autofixes.
 
 ```bash
 cd frontend
 pnpm run lint:style          # check (what CI runs — read-only)
-pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 ```
 
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
 therefore never see a `<template>` attribute or a `<script>` prop default. It
-lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
-(`frontend/palette-baseline.json`) and runs in `task check` and in CI's Repo
-Guards:
+lives in `.claude/scripts/check-repo-rules.sh`, has no baseline (the tree holds
+none), and runs in `task check` and in CI's Repo Guards:
 
 ```bash
-bash .claude/scripts/check-repo-rules.sh                            # check
-bash .claude/scripts/check-repo-rules.sh --update-palette-baseline  # ratchet DOWN
-bash .claude/scripts/check-repo-rules.sh --self-test                # prove it still fires
+bash .claude/scripts/check-repo-rules.sh              # check
+bash .claude/scripts/check-repo-rules.sh --self-test  # prove it still fires
 ```
-
-`--update-palette-baseline` refuses to raise an entry and names the file it
-refused on, and `lint:style:update` clamps every count with `Math.min` against
-the baseline it already holds, so neither can be used to launder a regression in.
-Do not raise a baseline to make a gate green; baselines only go down.
 
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and
 `lint:fix`, kept separate from the checking forms on purpose.
-
-## 哪些检查在小机器上跑不动
-
-`pnpm exec vitest run --dir src`、`pnpm run lint`、`pnpm run lint:style` 轻量,
-到哪都能跑。`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大。

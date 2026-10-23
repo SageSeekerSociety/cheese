@@ -2,10 +2,10 @@
 //
 // 新建模型时的第一条线路、给已有模型加线路、改一条线路，三处收的是同一组字段，所以
 // 草稿、校验与「草稿 → 请求体」都放在这里，表单组件只管画。校验与服务端
-// （`backend/app/domain/agent/schemas.py`、`gateway_models.py`）同一套规则，写在界面上
+// （`backend/app/domain/agent/schemas.py`、`gateway_models/`）同一套规则，写在界面上
 // 是为了省一次往返，判据仍以服务端为准。
 
-import type { GatewayProtocol, GatewaySourceFields } from '@/api/admin/gateway'
+import type { GatewayPrices, GatewayProtocol, GatewaySourceFields } from '@/api/admin/gateway'
 import type { SourceRow } from './adminModels'
 
 import { apiBaseAllowed } from '@/utils/apiBase'
@@ -41,7 +41,7 @@ export interface SourceDraft {
   apiKey: string
   order: string
   free: boolean
-  prices: { input: string; output: string; cacheRead: string; cacheCreation: string }
+  prices: { input: string; output: string; cacheRead: string; cacheCreation: string; cacheCreation1h: string }
   /** 编辑时请求头的值不回显，所以「改头」是一个显式动作：没动过就整份不发。 */
   headersTouched: boolean
   headers: HeaderDraft[]
@@ -50,6 +50,14 @@ export interface SourceDraft {
   sessionHeader: string
   /** 加线路时，这个优先级会让它接走在用线路的流量：要人明确勾上才放行（`wouldLead`）。 */
   makePrimary: boolean
+  /** 编辑时：上游模型的累计消费上限（美元），空是没有上限。 */
+  spendCap: string
+  /** 编辑时这条线路现有的上限：没改就不发，免得一次无关的编辑去改同一上游的别的线路。 */
+  spendCapWas: number | null
+  /** 编辑时这条线路现有的单价与免费标记：价没改就不发，一次只改优先级的保存不该去重验
+   *  单价（一条没价的老线路照样能改别的）。加线路时是 null。 */
+  pricesWas: GatewayPrices | null
+  freeWas: boolean | null
 }
 
 export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
@@ -60,12 +68,16 @@ export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
     apiKey: '',
     order: String(order),
     free: false,
-    prices: { input: '', output: '', cacheRead: '', cacheCreation: '' },
+    prices: { input: '', output: '', cacheRead: '', cacheCreation: '', cacheCreation1h: '' },
     headersTouched: true,
     headers: [],
     existingHeaderNames: [],
     sessionHeader: '',
     makePrimary: false,
+    spendCap: '',
+    spendCapWas: null,
+    pricesWas: null,
+    freeWas: null,
   }
 }
 
@@ -90,12 +102,17 @@ export function draftFromSource(source: SourceRow): SourceDraft {
       output: perMillionText(source.prices.output),
       cacheRead: perMillionText(source.prices.cache_read),
       cacheCreation: perMillionText(source.prices.cache_creation),
+      cacheCreation1h: perMillionText(source.prices.cache_creation_1h),
     },
     headersTouched: false,
     headers: [],
     existingHeaderNames: [...source.header_names],
     sessionHeader: source.session_header ?? '',
     makePrimary: false,
+    spendCap: source.spend_cap_usd == null ? '' : String(source.spend_cap_usd),
+    spendCapWas: source.spend_cap_usd ?? null,
+    pricesWas: { ...source.prices },
+    freeWas: source.free,
   }
 }
 
@@ -129,6 +146,14 @@ function perToken(text: string): number | null | undefined {
   const n = Number(v)
   if (!Number.isFinite(n) || n < 0) return undefined
   return n / 1_000_000
+}
+
+/** 上限框的文本 → 美元。空串给 null（没有上限），不是正数给 undefined（不合法）。 */
+function spendCapUsd(text: string): number | null | undefined {
+  const v = text.trim()
+  if (v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/
@@ -166,21 +191,32 @@ export interface DraftProblems {
   apiBase: boolean
   order: boolean
   prices: boolean
-  /** 免费线路填了非零价，或没标免费却把输入 / 输出写成 0。 */
+  /** 免费线路填了非零价，或没标免费却把输入、输出都写成 0（那就是免费，要明说）。 */
   free: boolean
+  /** 动了价、没标免费，输入或输出却空着：每条线路两向都要写价（一向可以是 0，比如语音
+   *  转写的输出），服务端同一条。没动价的编辑不查：一条没价的老线路照样能改优先级。 */
+  unpriced: boolean
+  /** 编辑时把一档已有的价清空了：价只能改，不能清空（服务端同一条）。 */
+  cleared: boolean
   headers: boolean
   sessionHeader: boolean
+  spendCap: boolean
 }
 
 export function draftProblems(draft: SourceDraft): DraftProblems {
   const order = Number(draft.order)
   const input = perToken(draft.prices.input)
   const output = perToken(draft.prices.output)
-  const anyPriceInvalid = [draft.prices.input, draft.prices.output, draft.prices.cacheRead, draft.prices.cacheCreation]
+  const anyPriceInvalid = [
+    draft.prices.input,
+    draft.prices.output,
+    draft.prices.cacheRead,
+    draft.prices.cacheCreation,
+    draft.prices.cacheCreation1h,
+  ]
     .map(perToken)
     .some((v) => v === undefined)
   const zero = (v: number | null | undefined) => v === 0
-  const positiveOrEmpty = (v: number | null | undefined) => v === null || (v !== undefined && v > 0)
   const names = draft.headers.map((h) => h.name.trim().toLowerCase())
   return {
     upstream: draft.upstream.trim() === '',
@@ -189,12 +225,17 @@ export function draftProblems(draft: SourceDraft): DraftProblems {
     prices: anyPriceInvalid,
     free: draft.free
       ? !((input === null || zero(input)) && (output === null || zero(output)))
-      : !(positiveOrEmpty(input) && positiveOrEmpty(output)),
+      : zero(input) && zero(output),
+    unpriced: pricesTouched(draft) && !draft.free && (input === null || output === null),
+    cleared:
+      draft.pricesWas !== null &&
+      PRICE_ORDER.some((key) => draft.pricesWas?.[key] != null && draftPrices(draft)[key] === null),
     headers:
       draft.headersTouched &&
       (draft.headers.some((h) => headerNameProblem(h.name) !== null || !headerValueOk(h.value)) ||
         new Set(names).size !== names.length),
     sessionHeader: draft.sessionHeader.trim() !== '' && headerNameProblem(draft.sessionHeader) !== null,
+    spendCap: spendCapUsd(draft.spendCap) === undefined,
   }
 }
 
@@ -211,21 +252,37 @@ export function draftPriced(draft: SourceDraft): boolean {
   return typeof input === 'number' && input > 0 && typeof output === 'number' && output > 0
 }
 
-/** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头都不发（不发 =
- *  不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：服务端写 0。 */
+/** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头、没改的消费上限
+ *  都不发（不发 = 不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：
+ *  服务端写 0。 */
+/** 草稿里的单价，按要提交的样子（每 token；空是 null）。免费线路的输入、输出是 0。 */
+export function draftPrices(draft: SourceDraft): Required<GatewayPrices> {
+  return {
+    input: draft.free ? 0 : perToken(draft.prices.input) ?? null,
+    output: draft.free ? 0 : perToken(draft.prices.output) ?? null,
+    cache_read: perToken(draft.prices.cacheRead) ?? null,
+    cache_creation: perToken(draft.prices.cacheCreation) ?? null,
+    cache_creation_1h: perToken(draft.prices.cacheCreation1h) ?? null,
+  }
+}
+
+/** 编辑时动没动价或免费标记；加线路时总算动了（定价就是这一步）。 */
+export function pricesTouched(draft: SourceDraft): boolean {
+  if (draft.pricesWas === null) return true
+  return draft.free !== draft.freeWas || priceChanges(draft.pricesWas, draftPrices(draft)).length > 0
+}
+
 export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): GatewaySourceFields {
   const out: GatewaySourceFields = {
     protocol: draft.protocol === 'other' ? null : draft.protocol,
     upstream_model: draft.upstream.trim(),
     order: Number(draft.order),
-    free: draft.free,
-    prices: {
-      input: draft.free ? 0 : perToken(draft.prices.input) ?? null,
-      output: draft.free ? 0 : perToken(draft.prices.output) ?? null,
-      cache_read: perToken(draft.prices.cacheRead) ?? null,
-      cache_creation: perToken(draft.prices.cacheCreation) ?? null,
-    },
     session_header: draft.sessionHeader.trim(),
+  }
+  // 价没动就整份不发（不发 = 不动）：发了，服务端就按现在的规则重验这一行的价。
+  if (mode === 'add' || pricesTouched(draft)) {
+    out.free = draft.free
+    out.prices = draftPrices(draft)
   }
   if (draft.apiBase.trim()) out.api_base = draft.apiBase.trim()
   if (draft.apiKey.trim()) out.api_key = draft.apiKey.trim()
@@ -234,5 +291,75 @@ export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): Gateway
   if (draft.headersTouched) {
     out.upstream_headers = Object.fromEntries(draft.headers.map((h) => [h.name.trim(), h.value]))
   }
+  const cap = spendCapUsd(draft.spendCap)
+  if (mode === 'edit' && cap !== undefined && cap !== draft.spendCapWas) out.spend_cap_usd = cap
   return out
+}
+
+/** 改价确认里的一项：哪一档价，改前改后（每 token，`null` 是原来没有这一档）。 */
+export interface PriceChange {
+  key: keyof GatewayPrices
+  before: number | null
+  after: number
+}
+
+const PRICE_ORDER: (keyof GatewayPrices)[] = ['input', 'output', 'cache_read', 'cache_creation', 'cache_creation_1h']
+
+/** 价 → 词条。写成字面量表，不在模板里拼键：键要能被静态找到。 */
+export const PRICE_LABEL_KEY: Record<keyof GatewayPrices, string> = {
+  input: 'models.price.input',
+  output: 'models.price.output',
+  cache_read: 'models.price.cacheRead',
+  cache_creation: 'models.price.cacheCreation',
+  cache_creation_1h: 'models.price.cacheCreation1h',
+}
+
+/** 这次提交改了哪几档价。没填的（`null`）不算改：服务端不许清空一档已有的价，
+ *  那由它拒并说原因，这里只列真会写下去的新价。 */
+export function priceChanges(before: GatewayPrices, after: GatewayPrices | undefined): PriceChange[] {
+  if (!after) return []
+  const out: PriceChange[] = []
+  for (const key of PRICE_ORDER) {
+    const next = after[key]
+    if (next === null || next === undefined) continue
+    const prev = before[key] ?? null
+    if (prev !== null && Math.abs(prev - next) <= 1e-15) continue
+    out.push({ key, before: prev, after: next })
+  }
+  return out
+}
+
+/** 每 token → 「每百万 token 的美元」那一格的字。 */
+export function perMillionUsd(v: number | null): string {
+  return v === null ? '—' : `$${Number((v * 1_000_000).toFixed(6))}`
+}
+
+/** 上限用到这个比例起，页面标成警告色。 */
+export const CAP_WARN_AT = 0.8
+
+export interface CapProgress {
+  used: number
+  cap: number
+  /** 已用 / 上限，可能超过 1：拦截之前已经在跑的调用会越过上限一点。 */
+  ratio: number
+  level: 'ok' | 'warn' | 'over'
+}
+
+/** 一条线路的消费上限用到了哪里；没设上限、或服务端没读到已用多少时是 null。 */
+export function capProgress(source: Pick<SourceRow, 'spend_cap_usd' | 'spend_cap_used_usd'>): CapProgress | null {
+  const cap = source.spend_cap_usd
+  const used = source.spend_cap_used_usd
+  if (cap == null || cap <= 0 || used == null) return null
+  const ratio = used / cap
+  return { used, cap, ratio, level: ratio >= 1 ? 'over' : ratio >= CAP_WARN_AT ? 'warn' : 'ok' }
+}
+
+/** 一个模型各条线路里用得最满的那份上限进度：列表上只给一眼。 */
+export function fullestCap(sources: SourceRow[] | undefined): CapProgress | null {
+  let best: CapProgress | null = null
+  for (const s of sources ?? []) {
+    const p = capProgress(s)
+    if (p && (!best || p.ratio > best.ratio)) best = p
+  }
+  return best
 }

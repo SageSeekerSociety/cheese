@@ -57,8 +57,8 @@ class PassageEditsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edits: list[PassageEdit] = Field(min_length=1, max_length=50)
-    #: "suggest" proposes the changes instead of making them. Left out, the
-    #: platform decides (see ``app.api.doc_edits``).
+    #: "suggest": an AI teammate proposes the changes instead of making them.
+    #: Left out, or from a person, the changes are made.
     mode: Literal["direct", "suggest"] | None = None
     #: Why, in a sentence: shown next to a suggestion.
     reason: str | None = Field(default=None, max_length=500)
@@ -108,7 +108,8 @@ def document_snapshot(doc: Document) -> dict:
     """What a reader of a document gets: its text and which version that is."""
     return {
         "id": str(doc.id),
-        "project_id": str(doc.project_id),
+        "team_id": doc.team_id,
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
@@ -116,23 +117,57 @@ def document_snapshot(doc: Document) -> dict:
         "doc_version": doc.version,
         "content_hash": content_hash(doc.content),
         "author": doc.author,
+        "created_by": doc.created_by,
+        "drafted_by": doc.drafted_by,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
+        # Whether the library lists it: one a conversation keeps is not there
+        # until someone saves it (#3828).
+        "in_library": doc.room_id is None or doc.kept_at is not None,
     }
+
+
+class DocumentRowOut(BaseModel):
+    """A document as a list names it (`document_row`)."""
+
+    id: str
+    #: The team it belongs to; a person's own documents are their personal team's.
+    team_id: int
+    #: The project of that team; None for a document of the team's own (#3774).
+    project_id: str | None
+    number: int | None
+    kind: str
+    title: str | None
+    doc_version: int
+    #: Who made its latest version.
+    author: str
+    #: Its authors, fixed when it was made: the person it is theirs, and the AI
+    #: teammate that wrote it when one did. Either may be None.
+    created_by: str | None
+    drafted_by: str | None
+    created_at: str
+    updated_at: str
+    #: Whether the library lists it: one a conversation keeps is not there
+    #: until someone saves it (#3828).
+    in_library: bool
 
 
 def document_row(doc: Document) -> dict:
     """A document as a list names it: everything but what it says."""
     return {
         "id": str(doc.id),
-        "project_id": str(doc.project_id),
+        "team_id": doc.team_id,
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
         "doc_version": doc.version,
         "author": doc.author,
+        "created_by": doc.created_by,
+        "drafted_by": doc.drafted_by,
         "created_at": doc.created_at.isoformat(),
         "updated_at": doc.updated_at.isoformat(),
+        "in_library": doc.room_id is None or doc.kept_at is not None,
     }
 
 
@@ -142,7 +177,7 @@ def node_out(node: DocumentNode, doc: Document) -> dict:
     return {
         "id": str(node.id),
         "kind": "doc_node",
-        "project_id": str(doc.project_id),
+        "project_id": str(doc.project_id) if doc.project_id else None,
         "struct_parent": str(doc.id),
         "struct_order": node.position,
         "node_type": node.node_type,

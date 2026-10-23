@@ -4,7 +4,7 @@
   "skillAbsorbsTeamOnly": "Only team memories can be absorbed (like team/xxx.md): a project skill is shared by the whole project, so personal preferences stay out: {path}",
   "skillAdd": "add a skill",
   "skillConfirmSave": "confirm and save this skill",
-  "skillDecline": "decline a skill a teammate proposed",
+  "skillDecline": "decline a skill {agent} proposed",
   "skillDelete": "delete this skill",
   "skillDraftNotOpen": "Can't write a skill draft right now. Try again later",
   "skillFieldsRequired": "A skill needs a title, a purpose and a body",

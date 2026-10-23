@@ -1,6 +1,8 @@
 """The pure parts of task naming: cleaning a title, reading the model's
 answer, and building what the model reads (room_task/naming.py)."""
 
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.room_task import naming
 from app.domain.room_task.naming import Line
 
@@ -65,6 +67,25 @@ def test_a_mention_is_the_handle_and_not_the_rest_of_the_sentence():
     assert len(opener) >= naming._SUBSTANTIVE_CHARS
     # An empty opener is still empty.
     assert len(naming._said("@芝士")) < naming._SUBSTANTIVE_CHARS
+
+
+def test_an_unread_attachment_is_not_mistaken_for_its_filename():
+    lines = naming._messages(
+        [
+            Block(
+                kind=BlockKind.attachment,
+                author_type=AuthorType.participant,
+                author="alice",
+                content="uploads/misleading-title.png",
+                mime_type="image/png",
+            )
+        ]
+    )
+    assert len(lines) == 1 and lines[0].person
+    assert lines[0].attachment == "image/png" and lines[0].text == ""
+    material = naming._render(stage="name", current=None, goal="", lines=lines)
+    assert "image/png" in material
+    assert "misleading-title" not in material
 
 
 def test_the_latest_messages_survive_the_budget():

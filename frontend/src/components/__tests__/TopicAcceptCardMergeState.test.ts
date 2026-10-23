@@ -26,6 +26,11 @@ const acceptCard = vi.fn()
 // 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
 // 看卡的人就是卡上点名的审阅人：采纳和退回只给他。
 vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
+// 审阅人是我的卡一出现，会先看一眼我的邀请码（composables/useInvitePrompt.ts）；这里测的是卡。
+vi.mock('@/api/invites', async (actual) => ({
+  ...(await actual<typeof import('@/api/invites')>()),
+  getMyInvites: vi.fn().mockResolvedValue({ unlocked: true }),
+}))
 vi.mock('@/api/reviewComments', () => ({
   listReviewComments: vi.fn(async () => ({ comments: [] })),
   writeReviewComment: vi.fn(),
@@ -202,7 +207,53 @@ describe('合的是人看到的那个 commit', () => {
     expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '采纳')).toBe(false)
     acceptCard.mockRejectedValue({ message: 'PR 已创建，请重新查看提交' })
     await fireEvent.click(create)
-    expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null)
+    expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null, null)
+  })
+
+  it.each(['file', 'link'] as const)('交独立文件或链接（%s）且无分支改动的卡直接显示采纳而非创建 PR', async (kind) => {
+    const pending = githubCard({
+      pr_number: null,
+      pr_url: null,
+      deliverable:
+        kind === 'file'
+          ? { kind: 'file', filename: '报告.pdf', url: null, revision: 'rev-seen' }
+          : { kind: 'link', filename: null, url: 'https://example.com/demo', revision: 'rev-seen' },
+      merge_state: mergeState({
+        state: 'clean',
+        who: 'human',
+        reasons: [],
+      }),
+    })
+    acceptCard.mockResolvedValue({ ...pending, status: 'accepted' })
+    const { container } = await mountWith([pending])
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '创建 PR')).toBe(
+      false
+    )
+    const btn = acceptButton(container)
+    expect(btn.disabled).toBe(false)
+    await fireEvent.click(btn)
+    await flush()
+    expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null, 'rev-seen')
+  })
+
+  it.each(['file', 'link'] as const)('带分支改动但尚未创建 PR 的文件或链接卡（%s）仍提供创建 PR', async (kind) => {
+    const pending = githubCard({
+      pr_number: null,
+      pr_url: null,
+      deliverable:
+        kind === 'file'
+          ? { kind: 'file', filename: '报告.pdf', url: null }
+          : { kind: 'link', filename: null, url: 'https://example.com/demo' },
+      merge_state: mergeState({
+        state: 'unknown',
+        who: 'platform',
+        reasons: [{ kind: 'no_signal', checks: [], detail: 'PR 尚未创建，检查状态未知' }],
+      }),
+    })
+    const { container, getByRole } = await mountWith([pending])
+    const create = getByRole('button', { name: '创建 PR' }) as HTMLButtonElement
+    expect(create.disabled).toBe(false)
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '采纳')).toBe(false)
   })
 
   it('采纳带上卡面渲染时的那个 head sha', async () => {
@@ -223,7 +274,7 @@ describe('合的是人看到的那个 commit', () => {
     await fireEvent.click(acceptButton(container))
     await flush()
 
-    expect(acceptCard).toHaveBeenCalledWith(card.id, expect.any(String), seen)
+    expect(acceptCard).toHaveBeenCalledWith(card.id, expect.any(String), seen, null)
   })
 })
 
@@ -461,7 +512,7 @@ describe('绿了自动合', () => {
     setAutoMerge.mockResolvedValue(armed)
     const { container } = await mountWith([armed])
 
-    expect(container.textContent).toContain('@bob 已开启检查通过后自动合并')
+    expect(container.textContent).toContain('bob 已开启检查通过后自动合并')
 
     await chooseMore(container, '关闭自动合并')
     // 布防等于提前采纳，所以这个开关也声明「我看的是哪一版」（见「合的是人看到

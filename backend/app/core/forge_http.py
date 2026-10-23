@@ -24,13 +24,14 @@ costs no quota.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from typing import Any, Literal
 
 import httpx
 
-from app.core import forge_etags, forge_quota
+from app.core import forge_etags, forge_quota, metrics
 
 #: GitHub closes a connection that has sat idle somewhere between 20 and 60
 #: seconds (measured from the deployment). Letting go of it first means a call
@@ -56,6 +57,141 @@ class _Borrowed(httpx.AsyncBaseTransport):
 
 
 _shared: tuple[asyncio.AbstractEventLoop, _Borrowed] | None = None
+
+#: The `job` label: the registered name of the periodic job whose tick is
+#: running, or `other` for any call made outside one. Job names come from the
+#: static registration list, never from a user id, a task title or a URL.
+JOB_OTHER = "other"
+
+_job: ContextVar[str] = ContextVar("forge_request_job", default=JOB_OTHER)
+
+
+@contextmanager
+def background_job(name: str) -> Iterator[None]:
+    """Attribute forge requests made inside to ``name``'s periodic job.
+
+    ``name`` must be a static, registered job name. Sync on purpose:
+    ``PeriodicRunner`` wraps only the awaited job call, so the context reaches
+    the task's async sends without changing the scheduler. It is reset in
+    ``finally`` even when the job raises or is cancelled.
+    """
+    token = _job.set(name)
+    try:
+        yield
+    finally:
+        _job.reset(token)
+
+
+def _response_bucket(request: httpx.Request, status_code: int) -> str:
+    """Which response counter one raw answer belongs to.
+
+    The ETag layer turns a 304 into a cached 200 *after* the transport answers,
+    so this reads the original status. ``GET /rate_limit`` is free and search
+    spends a quota other than core, so neither is a core REST charge; nothing
+    here is an exact bill, only a count by resource and original status.
+    """
+    path = request.url.path.rstrip("/")
+    if path.endswith("/graphql"):
+        return "graphql"
+    if path.endswith("/rate_limit"):
+        return "free_rate_limit"
+    if status_code == 304:
+        return "core_rest_304"
+    if "/search/" in path:
+        return "other"
+    return "core_rest_non_304"
+
+
+type _OtherRestEndpoint = Literal[
+    "pull_requests",
+    "checks",
+    "actions_runs",
+    "actions_jobs",
+    "repository",
+    "branches",
+    "comparisons",
+    "files",
+    "non_get",
+    "other",
+]
+
+
+def _other_rest_endpoint(request: httpx.Request) -> _OtherRestEndpoint:
+    """A fixed resource family, never a URL, repository, ref or user value."""
+    if request.method != "GET":
+        return "non_get"
+    path = request.url.path
+    if path.startswith("/api/v3/"):
+        path = path.removeprefix("/api/v3")
+    match path.strip("/").split("/"):
+        case ["repositories", _, *resource] | ["repos", _, _, *resource]:
+            match resource:
+                case []:
+                    return "repository"
+                case ["pulls", *_]:
+                    return "pull_requests"
+                case ["commits", _, "check-runs" | "check-suites" | "status", *_]:
+                    return "checks"
+                case ["actions", "runs", _, "jobs", *_] | ["actions", "jobs", *_]:
+                    return "actions_jobs"
+                case ["actions", "runs", *_]:
+                    return "actions_runs"
+                case ["git", "ref" | "refs", "heads", *_] | ["branches", *_]:
+                    return "branches"
+                case ["compare", *_]:
+                    return "comparisons"
+                case ["contents", *_] | ["git", "trees" | "blobs", *_]:
+                    return "files"
+    return "other"
+
+
+async def _count_request(request: httpx.Request) -> None:
+    """Count one attempt that is about to be sent, when it is attributable.
+
+    Only requests carrying a token the platform minted for an installation are
+    counted; token minting (App JWT), Forgejo and anonymous calls are not.
+    The installation and job ride on the request so the response hook needs no
+    second owner lookup.
+    """
+    installation = forge_quota.installation_of(request)
+    if installation is None:
+        return
+    job = _job.get()
+    request.extensions["forge_installation"] = installation
+    request.extensions["forge_job"] = job
+    metrics.registry.counter(
+        "forge_requests_started_total",
+        {"job": job, "installation": str(installation)},
+    ).inc()
+
+
+async def _count_response(response: httpx.Response) -> None:
+    """Count one raw response in its resource/status bucket.
+
+    Called from the client's hooks, before ``forge_etags`` replaces a 304 with
+    the cached 200. Started minus the response buckets is requests that never
+    answered (or are still in flight), not a count of charges.
+    """
+    request = response.request
+    installation = request.extensions.get("forge_installation")
+    job = request.extensions.get("forge_job")
+    if installation is None or job is None:
+        return
+    bucket = _response_bucket(request, response.status_code)
+    metrics.registry.counter(
+        f"forge_responses_{bucket}_total",
+        {"job": job, "installation": str(installation)},
+    ).inc()
+    if job == JOB_OTHER and bucket == "core_rest_non_304":
+        # A breakdown of the existing other bucket, not additional requests or
+        # an exact bill. Ten fixed values bound series even for arbitrary URLs.
+        metrics.registry.counter(
+            "forge_other_core_rest_non_304_by_endpoint_total",
+            {
+                "installation": str(installation),
+                "endpoint": _other_rest_endpoint(request),
+            },
+        ).inc()
 
 
 @asynccontextmanager
@@ -84,7 +220,16 @@ def forge_client(
     if transport is not None:
         kwargs["transport"] = transport
     hooks = dict(kwargs.pop("event_hooks", None) or {})
-    hooks["response"] = [*hooks.get("response", []), forge_quota.observe]
+    # Callers' request hooks stay first: a hook that refuses before sending
+    # (the CI reader yields on low quota) must not be counted as an attempt.
+    # Response hooks run inside the transport call, before `forge_etags` can
+    # turn a raw 304 into a cached 200.
+    hooks["request"] = [*hooks.get("request", []), _count_request]
+    hooks["response"] = [
+        *hooks.get("response", []),
+        forge_quota.observe,
+        _count_response,
+    ]
     client = httpx.AsyncClient(event_hooks=hooks, **kwargs)
     plain = client.send
 

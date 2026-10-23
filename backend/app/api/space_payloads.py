@@ -1,7 +1,7 @@
 import json
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated, Protocol
+from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,31 +85,33 @@ class TeachingRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    #: system prompt 模板；`{current_week}` / `{allowed_topics}` /
-    #: `{avoid_in_code}` / `{learning_goals}` 在里面会被本周的值替换掉。
+    #: How the AI teammate helps: ``guide`` | ``example`` | ``spec`` | ``free``;
+    #: None = this level does not say (a 题目 keeps its space's).
+    mode: Literal["guide", "example", "spec", "free"] | None = None
+    #: The teacher's own requirements, in their words.
     system_prompt: str | None = Field(default=None, alias="systemPrompt")
     #: 出题人的**私有**指导（#944 第二种可见性）：进 AI 队友的 prompt、**不进学生
     #: 可读的响应**。写它和写 `systemPrompt` 同一条路，读它只在出题人/管理员那几条
     #: 读写上（`teaching_to_api(include_private=True)`）。
     private_prompt: str | None = Field(default=None, alias="privatePrompt")
-    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
-    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
-    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
-    #: 本节学习目标。写上它这份指导就按教育性走：`system_prompt` 留空时带上
-    #: 平台的默认教学要求（`harness.prompt.DEFAULT_TEACHING_PROMPT`）。
+    #: 本节学习目标。写上它这份指导就按教育性走：`systemPrompt` 留空时带上
+    #: 平台的默认教学要求（`harness.opening.DEFAULT_TEACHING_PROMPT`）。
     learning_goals: list[str] = Field(default_factory=list, alias="learningGoals")
     #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
     #: 存指向它们的 id。
     material_ids: list[Annotated[int, Field(gt=0)]] = Field(
         default_factory=list, alias="materialIds"
     )
-    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
-        default_factory=list, alias="knowledgeIds"
-    )
+    #: The team documents the course points its AI teammates at (#3774).
+    document_ids: list[
+        Annotated[
+            str, Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+        ]
+    ] = Field(default_factory=list, alias="documentIds")
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
-    """The read side of `TeachingRequest`: the same six camelCase keys.
+    """The read side of `TeachingRequest`: the same camelCase keys.
 
     The column stores snake_case (the spelling `Teaching.from_json` reads), and
     every response that carries a 指导 goes through here rather than returning
@@ -123,13 +125,11 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
     did not ask is a student's, and a forgotten call site then leaks nothing.
     """
     data = {
+        "mode": teaching.mode,
         "systemPrompt": teaching.system_prompt,
-        "currentWeek": teaching.current_week,
-        "allowedTopics": list(teaching.allowed_topics),
-        "avoidInCode": list(teaching.avoid_in_code),
         "learningGoals": list(teaching.learning_goals),
         "materialIds": list(teaching.material_ids),
-        "knowledgeIds": list(teaching.knowledge_ids),
+        "documentIds": list(teaching.document_ids),
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt
@@ -156,11 +156,6 @@ class PatchSpaceCategoryRequest(BaseModel):
     display_order: int | None = Field(default=None, alias="displayOrder")
     archived: bool | None = None
     archived_at: int | None = Field(default=None, alias="archivedAt")
-    #: 课程级教学配置。Sending it replaces the WHOLE teaching config (the
-    #: protocol's whole-key semantics — a half-merged week is harder to reason
-    #: about than either version alone); omitting it leaves it exactly as it is,
-    #: so a PATCH that only renames a 项目集 does not wipe the 教学安排.
-    teaching: TeachingRequest | None = None
     #: 项目集级默认队友 (#944) — a platform-shipped agent type name every 题目
     #: under this 分组 starts from. Omitting it leaves the stored value alone; an
     #: empty string clears it (the 题目 then inherits nothing at this level).
@@ -323,13 +318,6 @@ def _category_to_api_model(
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
-        # 课程级教学配置 (#8d772257) — the edit form reads it back, so it has to be
-        # here rather than only on the write path. `include_private` mirrors the
-        # space above: only a board manager gets the 私有指导.
-        "teaching": teaching_to_api(
-            Teaching.from_json(getattr(cat, "teaching", None)),
-            include_private=include_private,
-        ),
         # 项目集级默认队友 (#944) — the edit form reads it back too.
         "defaultRole": getattr(cat, "default_role", None),
         "createdAt": created_at_ms,

@@ -22,6 +22,7 @@ Protocol-agnostic on purpose: whatever path the client asks for is forwarded
 as-is, so a client-side protocol change needs no change here.
 """
 
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -34,7 +35,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
+from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
@@ -52,11 +55,11 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
 )
 from app.core.sentences import listing, say
+from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
-from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
@@ -91,6 +94,9 @@ async def open_streams() -> dict:
 # time-to-first-token, not the request's total length.
 _TIMEOUT = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
 
+#: The header the gateway names a request's conversation by.
+SESSION_HEADER = "x-litellm-session-id"
+
 # Hop-by-hop and identity-bearing headers: forwarding them would either break
 # the upstream connection or leak the caller's own credential past the swap.
 _DROP_REQUEST_HEADERS = frozenset(
@@ -119,17 +125,6 @@ def _caller_token(request: Request) -> str:
     return request.headers.get("x-api-key", "").strip()
 
 
-async def _dreams(db: AsyncSession, project, claims: dict) -> bool:
-    """Whether this call is the project's memory consolidation: made in the
-    overview room (the place its scoped token names) while a dream runs.
-    The dream holds the overview's turn lock for as long as it runs, so no
-    room turn there makes calls meanwhile (`memory.dream.dreaming`)."""
-    place = claims.get("t")
-    if project is None or not place or place != str(project.root_topic_id):
-        return False
-    return await dream.dreaming(db, project.id)
-
-
 def _upstream_url(path: str) -> str:
     base = (settings.anthropic_base_url or "").rstrip("/")
     return f"{base}/{path.lstrip('/')}"
@@ -140,15 +135,14 @@ def _default_catalog_id(choices: dict[str, dict]) -> str | None:
     return default["id"] if default else None
 
 
-def _offerable_model_ids(project, choices: dict[str, dict]) -> set[str]:
-    """这个项目能指定的模型集合：目录里属于本项目池的那些 id。
+def _offerable_model_ids(choices: dict[str, dict]) -> set[str]:
+    """主 agent 能随意给分身指定的模型：目录里由平台模型池（gateway）供给的那些 id。
 
-    池外的目录项（gateway 项目里的订阅短名、订阅项目里的网关模型）对主
-    agent 不可指定：绑上它们请求就得走另一条供给路，而那条路这个项目没有
-    凭据 —— 列进可选等于教人吃拒绝。
+    供给是模型自己的事实（目录每一项都带 ``supply``），不是项目的设置。订阅
+    短名不在这里：绑上它就得走订阅那条路，凭据是某一个骨架自己的，列进可选
+    等于教人吃拒绝。项目或席位已经选定的订阅模型由调用方另外放行。
     """
-    pool = configuration.project_pool(project.settings if project else None)
-    return {cid for cid, c in choices.items() if c.get("supply") == pool}
+    return {cid for cid, c in choices.items() if c.get("supply") == GATEWAY}
 
 
 async def _bind_requested_subagent_model(
@@ -157,6 +151,7 @@ async def _bind_requested_subagent_model(
     choices: dict[str, dict],
     requested: str,
     parent_handle: str | None,
+    policy: gate.Policy,
 ):
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目模型目录内。
 
@@ -183,7 +178,7 @@ async def _bind_requested_subagent_model(
         or settings_.get("default_model")
         or _default_catalog_id(choices)
     )
-    allowed = _offerable_model_ids(project, choices)
+    allowed = _offerable_model_ids(choices)
     # 父会话的模型和项目显式配的两个默认（主模型、分身默认）也合法：它们跨
     # 池也真跑得起来（供给跟着绑定走），主 agent 复述它们不该吃到一个拒绝。
     # 但只列目录里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另
@@ -192,6 +187,7 @@ async def _bind_requested_subagent_model(
         parent_id,
         settings_.get("default_model"),
         settings_.get("default_subagent_model"),
+        model_catalog.subagent_default(settings_, choices, policy),
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
@@ -240,7 +236,7 @@ async def _projects_own_agent(
 
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
-@router.post("/admission", include_in_schema=False)
+@router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def admission(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -284,8 +280,10 @@ async def admission(
                 }
             )
     refused = None
+    credit_context = None
     if project is not None:
-        refused = await UsageService(db).admit_project(project_uuid)
+        credit_context = await task_credit_context_of(db, project, claims)
+        refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
     # it run" and "where does it go" keeps the data plane from needing a second
@@ -322,15 +320,28 @@ async def admission(
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = configuration.catalog(project.settings if project else None)
+    choices = model_catalog.catalog(project.settings if project else None)
+    # What the project's subagents may run without asking: the gate below
+    # judges the bound model by it, and the platform subagent default is only
+    # offered to a project entitled to it by the same gate.
+    policy = (
+        gate.policy_of(
+            project.settings,
+            await UsageService(db).plan_model_tiers(project.team_id),
+            overseas_approved=await UsageService(db).overseas_approved(project.team_id),
+        )
+        if project is not None and is_subagent
+        else None
+    )
     try:
-        if project is not None and is_subagent and requested:
+        if project is not None and policy is not None and requested:
             bound = await _bind_requested_subagent_model(
                 agents,
                 project,
                 choices,
                 requested,
                 claims.get("a"),
+                policy,
             )
         else:
             bound = binding.resolve(
@@ -338,13 +349,14 @@ async def admission(
                 choices,
                 agent_model=agent.configuration.get("model") if agent else None,
                 default_model=(
-                    (project.settings or {}).get("default_subagent_model")
-                    if project and is_subagent
-                    else None
+                    model_catalog.subagent_default(project.settings, choices, policy)
+                    if policy is not None
+                    else (project.settings or {}).get("default_model")
                 )
-                or ((project.settings or {}).get("default_model") if project else None),
+                if project
+                else None,
             )
-        if is_subagent and requested and project:
+        if policy is not None and project is not None:
             choice = choices[bound.model]
             place = claims.get("t")
             try:
@@ -360,11 +372,9 @@ async def admission(
                     label=choice["label"],
                     tier=choice["tier"],
                     approver=project.owner_handle or "",
+                    overseas=choice["overseas"],
                 ),
-                gate.policy_of(
-                    project.settings,
-                    await UsageService(db).plan_model_tiers(project.team_id),
-                ),
+                policy,
                 actor=claims.get("a") or "",
             )
             if outcome is not None:
@@ -391,7 +401,7 @@ async def admission(
     # consolidated is the dream's: it runs on the project's dream key, and the
     # metering proxy writes the dream's kind on its usage line. Read before the
     # read session is handed back below.
-    dreaming = await _dreams(db, project, claims)
+    dreaming = await dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -399,6 +409,10 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
+    if credit_context is not None:
+        supply["work_id"] = (
+            str(credit_context.work_id) if credit_context.work_id else ""
+        )
     if dreaming:
         supply["kind"] = dream.DREAM_KIND
 
@@ -431,7 +445,14 @@ async def admission(
     ):
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
-        supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
+        if credit_context is not None:
+            supply["key"] = await chat.project_gateway_key(
+                project_uuid,
+                task_id=credit_context.task_id,
+                credit_owner_handle=credit_context.owner_handle,
+            )
+        else:
+            supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
 
     return ok(
         {
@@ -475,7 +496,12 @@ async def _person_key(claims: PersonalClaims) -> str | None:
         return await stored_key(session, claims.user_id)
 
 
-@router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+@router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
 async def proxy(
     path: str,
     request: Request,
@@ -501,12 +527,44 @@ async def proxy(
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
         await _require_model_caller(db, token, project_uuid)
-        dreaming = await _dreams(
-            db, await ProjectRepository(db).get(project_uuid), claims
+        project = await ProjectRepository(db).get(project_uuid)
+        credit_context = (
+            await task_credit_context_of(db, project, claims)
+            if project is not None
+            else None
         )
+        if project is not None and request.method == "POST":
+            refused = await credit_refusal(db, project, credit_context)
+            if refused is not None:
+                message = "cheese project budget: " + str(refused.message)
+                return StreamingResponse(
+                    iter(
+                        [
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": {
+                                        "type": "invalid_request_error",
+                                        "message": message,
+                                    },
+                                }
+                            )
+                        ]
+                    ),
+                    status_code=400,
+                    media_type="application/json",
+                )
+        dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        key = await chat.project_gateway_key(project_uuid, dream=dreaming)
+        if credit_context is not None:
+            key = await chat.project_gateway_key(
+                project_uuid,
+                task_id=credit_context.task_id,
+                credit_owner_handle=credit_context.owner_handle,
+            )
+        else:
+            key = await chat.project_gateway_key(project_uuid, dream=dreaming)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.
@@ -522,6 +580,13 @@ async def proxy(
     }
     headers["authorization"] = f"Bearer {key}"
     headers["x-api-key"] = key
+    if person is not None:
+        # The gateway keeps a conversation on the upstream node it first used,
+        # whose prompt cache holds it, by the session the request names
+        # (``router_settings`` in deploy/gateway/config.yaml). Claude Code names
+        # its own; pi names none, so each call of a person's 芝士 landed on any
+        # node and its cache hit only the system prompt.
+        headers[SESSION_HEADER] = person.conversation_id
     body = await request.body()
 
     client = httpx.AsyncClient(timeout=_TIMEOUT)

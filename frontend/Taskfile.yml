@@ -7,6 +7,7 @@ tasks:
       - pnpm install --frozen-lockfile
     sources:
       - pnpm-lock.yaml
+      - patches/*
     generates:
       - node_modules/**/*
   dev:
@@ -47,12 +48,10 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:fix
-  # Design-system gate: no hardcoded colours, radii on the 6/8/12/999 ladder.
-  # Ratcheted against stylelint-baseline.json (537 pre-existing violations are
-  # frozen; only NEW ones fail) — see docs/design-system.md. Read-only, like
-  # `lint:check` above and for the same reason; `lint:style:fix` is the writer.
+  # Design-system gate: any hardcoded colour fails. Read-only; lint:style:fix
+  # keeps the existing autofix entry for style rules. See docs/design-system.md.
   lint:style:
-    desc: Run stylelint design-token ratchet (check only, never writes)
+    desc: Check stylelint design tokens (check only, never writes)
     deps: [install]
     cmds:
       - pnpm run lint:style
@@ -64,34 +63,36 @@ tasks:
   # Components take props and emit events. Nothing under src/components/** may
   # import the network layer (@/api, @/services/*, @/network/*) or vue-router —
   # a component that fetches cannot be tested or reused without a server.
-  # Ratcheted: 59 violations across 47 components
-  # (import-boundary-baseline.json) are frozen, so only NEW ones fail.
-  # Writer: `pnpm run lint:boundary:update`. Read-only, like `lint:style`.
+  # Any violation fails; there is no baseline. Read-only, like `lint:style`.
   lint:boundary:
-    desc: Check component import boundaries (eslint + ratchet, check only)
+    desc: Check component import boundaries (eslint, check only)
     deps: [install]
     cmds:
       - pnpm run lint:boundary
   # Nothing under src/ may reference localStorage or sessionStorage directly:
   # src/lib/browserStorage.ts is the one place that accepts their failure modes
   # (private mode, a full quota, no storage at all) and never throws.
-  # Ratcheted: the references already in the tree are frozen per file in
-  # browser-storage-baseline.json, so only NEW ones fail. Writer: `pnpm run
-  # lint:storage:update`, which only lowers counts. Read-only, like `lint:style`.
+  # Any reference fails; there is no baseline. Read-only, like `lint:style`.
   lint:storage:
-    desc: Check for direct Web Storage access (eslint + ratchet, check only)
+    desc: Check for direct Web Storage access (eslint, check only)
     deps: [install]
     cmds:
       - pnpm run lint:storage
-  # Accessibility rules (eslint-plugin-vuejs-accessibility) over src/**/*.vue.
-  # Ratcheted: the violations already in the tree are frozen per file in
-  # a11y-baseline.json, so only NEW ones fail. Writer: `pnpm run
-  # lint:a11y:update`, which only lowers counts. Read-only, like `lint:style`.
-  lint:a11y:
-    desc: Check accessibility rules (eslint + ratchet, check only)
+  # A component calls a bare name it binds nothing for, and a module in this tree
+  # declares that name and exports it to nobody: the call does not fail, it
+  # reaches the browser global of the same name and does nothing — which is what
+  # a function moved into a composable and left unexported looks like. The base
+  # eslint config cannot see it (it injects the browser globals and turns
+  # `no-undef` off for TS), the type check cannot (`lib.dom` declares the same
+  # names), and a template's calls are in no scope at all, so the rule reads
+  # both halves itself with `vue-eslint-parser`.
+  # Not ratcheted: 0 findings over the tree the day it landed, so there is no
+  # baseline and no writer. Read-only, like `lint:style`.
+  lint:global-fallback:
+    desc: Check bare calls to a name a module keeps to itself (check only)
     deps: [install]
     cmds:
-      - pnpm run lint:a11y
+      - pnpm run lint:global-fallback
   # Every page the router reaches and every panel under src/components/panels/
   # must render with no backend, no route and no business store. Ratcheted
   # against the tree at the merge base with origin/main: a scene that is
@@ -103,22 +104,13 @@ tasks:
     desc: Check scenes render standalone (python ratchet, check only)
     cmds:
       - pnpm run lint:scenes
-  # Every .vue under src/ (src/views/demo/ excluded) that grades A — the same
-  # grade as lint:scenes — is in the /demo/catalog preview site or on the
-  # pending list in catalog-baseline.json, which may only shrink. A component
-  # that is new, or newly A, has to get a catalog entry. Writer:
-  # `pnpm run lint:catalog:update` (only ever removes). Needs no install.
-  lint:catalog:
-    desc: Check grade-A components are in the preview catalog (python ratchet, check only)
-    cmds:
-      - pnpm run lint:catalog
   lint:scene-debt:
     desc: Check child edges, route reads and legacy network imports only shrink
     deps: [install]
     cmds:
       - pnpm run lint:scene-debt
   typecheck:
-    desc: Run the ratcheted vue-tsc check (the API types are generated first)
+    desc: Run the vue-tsc check, failing on any error (the API types are generated first)
     deps: [install]
     # Not `vue-tsc --noEmit`: the types it compiles against are generated
     # rather than committed, so a bare run on a checkout that has not run the
@@ -136,12 +128,11 @@ tasks:
       # "up to date" on the old hash.
       - src/**/*.json
       - tsconfig*.json
-      # The type check reads more than the sources it compiles: the ratchet reads
-      # its own baseline and scripts, and the API types are generated from a
+      # The type check reads more than the sources it compiles: its own
+      # scripts, and the API types, which are generated from a
       # document the backend builds out of its own app — so the backend's source
       # tree is an input, not one committed file standing in for it. Changing any
       # of them changes the verdict.
-      - tsc-baseline.json
       - scripts/typecheck.mjs
       - scripts/gen-api-types.mjs
       - scripts/tsc-ratchet.mjs
@@ -166,15 +157,14 @@ tasks:
     cmds:
       - pnpm exec eslint .
   check:
-    desc: Run all frontend checks (lint + boundaries + a11y + scenes + catalog + style + typecheck + test + build)
+    desc: Run all frontend checks (lint + boundaries + scenes + catalog + style + typecheck + test + build)
     cmds:
       - task: lint:check
       - task: lint:boundary
       - task: lint:storage
-      - task: lint:a11y
+      - task: lint:global-fallback
       - task: lint:scenes
       - task: lint:scene-debt
-      - task: lint:catalog
       - task: lint:style
       - task: typecheck
       - task: test

@@ -60,6 +60,23 @@
   --accent-press: #d96e0a;
   --accent-ink: #9a5413; /* amber text on light */
   --accent-wash: #fdf1e2; /* rare tint */
+  /* Text ON a solid --accent fill (the notifying @chip): cream on #f57f17 (2.5:1).
+     The dark set's --accent is brighter (#ffa733), where cream falls to 1.8:1, so
+     dark flips this token to the dark ink instead. */
+  --accent-on: #fff8e1;
+
+  /* ---- Brand mark ----
+     The logo has one colour (docs/brand.md §2/§5): the home tile goes flat brand
+     paint on hover and while current, with the mark on it in #23242a. Both values
+     are the same in the two themes on purpose — brand.md §5 fixes that one tile
+     at #FFA20F with a #23242a mark in both themes. Not every brand asset is like
+     this: the lockups ship a light and a dark file (§4), and the wordmark is one
+     file drawn in `currentColor`, so it follows the text colour around it (§9).
+     The boot splash in index.html paints the same #ffa20f. So this is not --accent:
+     --accent is the UI amber and it *does* follow the theme
+     (#f57f17 / #ffa733). Do not unify the two. */
+  --brand-fill: #ffa20f;
+  --brand-ink: #23242a;
 
   /* ---- Status (ONLY for real status; dot + neutral text) ----
      Each status has three parts, and they are NOT interchangeable:
@@ -167,6 +184,23 @@
   --inverse-surface: #23242a;
   --inverse-ink: #fff;
   --inverse-fill: rgba(255, 255, 255, 0.14);
+
+  /* ---- Avatar initials ----
+     A fallback avatar — person, team, space or project tile — is avatarColor():
+     one fixed OKLCH lightness, the SAME value in both themes, so the initial on
+     it cannot follow the theme either (docs/design-system.md §1.2's one
+     exception). The dark block repeats the value deliberately; do not "fix" it
+     to --ink. */
+  --avatar-ink: #fff;
+
+  /* ---- Terminal ground ----
+     DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
+     theme.background is this same #1e1e1e), so the ground under it, and the
+     status label that sits on that ground, cannot follow the theme either. The
+     dark block repeats the values deliberately. */
+  --terminal-ground: #1e1e1e;
+  --terminal-status-ink: #9aa0a6;
+  --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
@@ -402,6 +436,11 @@
   --accent-press: #ffbc5e; /* pressing LIGHTENS on dark, unlike light theme */
   --accent-ink: #ffc670;
   --accent-wash: #2e2216;
+  --accent-on: #191a1c; /* cream on the brighter dark --accent is 1.8:1; this flips */
+
+  /* ---- Brand mark ---- */
+  --brand-fill: #ffa20f; /* same as light, deliberately: brand.md §5 fixes the tile */
+  --brand-ink: #23242a;
 
   /* ---- Status ---- */
   --ok: #3fbf7f;
@@ -458,6 +497,13 @@
   --inverse-surface: #3a3d44;
   --inverse-ink: #f3f4f6; /* 9.9:1 on --inverse-surface */
   --inverse-fill: rgba(255, 255, 255, 0.1);
+
+  --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+
+  /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
+  --terminal-ground: #1e1e1e;
+  --terminal-status-ink: #9aa0a6;
+  --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;
@@ -1340,19 +1386,44 @@ button:not(.v-btn) {
    产出，用它的地方却早就不止一处——对话栏、现场、动作卡、文档。以前它写在组件自己的
    scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
    看不出来能点。
-   @人 是浅琥珀底、琥珀墨色字：它会叫到一个人，是这段字里要紧的那一处。话题和文件只是
-   去处，中性底、正文色。悬停只加深底色。 */
-.mention {
+   一个人有两种样子，和飞书一样分「提醒」和「提到」（lib/refChip 的 notified）：
+   - `.mention`（@人）：这一处真的通知到了他。带「@」，实心琥珀底（`--accent`）、
+     奶白字（`--accent-on`），是这段字里最要紧的那一处（docs/design-system.md §1.6）。
+   - `.name-ref`：只是提到他，没有通知（平台提示里的操作人、通知卡、周报、文档里
+     芝士写的名字……）。不带「@」，不给底，主色橙当字色。
+   话题和文件只是去处，中性底、正文色。悬停只改底色。 */
+.mention,
+.name-ref {
   padding: 0 4px;
   border-radius: var(--radius-sm);
   font-weight: 500;
-  color: var(--accent-ink);
-  background: var(--accent-wash);
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
+/* 实心琥珀底配奶白字：浅色 #f57f17 上 2.5:1（按下 #d96e0a 上 3.2:1）。深色那套的琥珀更亮
+   （#ffa733），奶白只剩 1.8:1，所以 `--accent-on` 在深色段是深色字，9.0:1。
+   类名写两遍是为了压过 Vuetify 的 `[role=button] { color: inherit }`：可聚焦的 chip 带着
+   `role="button"`，而 Vuetify 的样式表在这份文件之后注入（main.ts），单写一个类同为 (0,1,0)
+   会被它把字色盖回正文色。 */
+.mention.mention {
+  color: var(--accent-on);
+  background: var(--accent);
+}
 .mention:hover {
-  background: color-mix(in srgb, var(--accent) 18%, var(--accent-wash));
+  background: var(--accent-press);
+}
+/* 只是提到他的那颗不给底：主色橙直接落在消息底上（浅色 #f57f17 上 2.7:1，深色 #ffa733 上 8.0:1）。
+   悬停改成加一道下划线，不换底色——这颗字是亮橙，任何比消息底更暖的浅底都会把它压淡：
+   原来那层 18% 的琥珀混色是 #fcdcbd，压在上面只剩 2.0:1（纯 --accent-wash 上 2.4:1）。
+   下划线是不动对比度的那个「点得动」的信号。同样写两遍压过 `[role=button] { color: inherit }`。 */
+.name-ref.name-ref {
+  color: var(--accent);
+  background: transparent;
+}
+.name-ref:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .mention:is(.file-ref, .topic-ref) {
   color: var(--ink);
@@ -1368,9 +1439,50 @@ button:not(.v-btn) {
   background: var(--fill);
   cursor: default;
 }
-/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
-.mention--static {
+/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。
+   悬停什么也不加——不给它下划线，也别亮出底色，那两种都是「点得动」的假信号。 */
+.name-ref--static {
   cursor: default;
+}
+.name-ref--static:hover {
+  background: transparent;
+  text-decoration: none;
+}
+/* 输入框里 @ 了一位 AI 队友（lib/refChip 的 agentFaces）：前面多一枚它的小头像，说的是
+   「这条交给它」。底色和字跟消息里那颗实心 @ 完全一样——同一句 @ 在输入框、发出去的消息、
+   点开编辑三处必须长同一个样子，它原来自己一套浅琥珀底，三处三个样子。 */
+.mention.agent-ref {
+  padding: 0 5px 0 3px;
+  color: var(--accent-on);
+  background: var(--accent);
+}
+.mention.agent-ref:hover {
+  background: var(--accent-press);
+}
+.agent-ref__face {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 3px;
+  vertical-align: -0.17em;
+}
+.agent-ref__face path {
+  fill: var(--agent-tone-0);
+}
+.agent-ref__face[data-tone='1'] path {
+  fill: var(--agent-tone-1);
+}
+.agent-ref__face[data-tone='2'] path {
+  fill: var(--agent-tone-2);
+}
+.agent-ref__face[data-tone='3'] path {
+  fill: var(--agent-tone-3);
+}
+.agent-ref__face[data-tone='4'] path {
+  fill: var(--agent-tone-4);
+}
+.agent-ref__face rect {
+  fill: var(--agent-ink);
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {

@@ -26,7 +26,7 @@ class SweepCheckouts(Protocol):
     """在一台机器上删掉某间房那几个已关任务留下的检出目录。
 
     本包在「等着收尾那一轮、时间到了由平台替它关掉」这条路上用它
-    （`landing_watch.watch_landings` 里的 `close_overdue`）：一个任务关掉之后，它
+    （`pr_poll.sweep_closings` 里的 `close_overdue`）：一个任务关掉之后，它
     在那台机器上的工作目录要跟着走，而这件事要过 `agent` 和 `agent_session`，本包
     够不着。形状和 `room_task.ports.SweepCheckouts` 一样，两边各写一遍是这条规矩
     本身（上面那句：声明按消费者分开写）；两份由类型检查照着实现对齐。
@@ -45,7 +45,7 @@ class Chat(Protocol):
 
     形状是 `app.domain.agent.chat.ChatService` 的形状。`session_factory` 是本包自己
     开事务要的那一样；`work_runner` 本包不碰，只跟着 `chat` 一起往下递给合并路径上
-    那几层；`stop_work` 是 `landing_watch` 那边替平台关掉过期任务时要的
+    那几层；`stop_work` 是 `pr_poll.sweep_closings` 替平台关掉过期任务时要的
     （`room_task.closing.close_overdue` 的 ``work``，本包把这个对象原样交出去）。
 
     三个都写成只读属性或方法，而不是可写的字段：`ChatService` 上前两个本来就是
@@ -93,9 +93,8 @@ class Announce(Protocol):
 class RecordInstruction(Protocol):
     """给任务自己的席位留一句话，等它下一轮读到。
 
-    形状是 `app.domain.delivery.agent.record_task_instruction` 的形状；返回的是
-    记下的那一行投递的 id（一个任务同时只有一个席位，所以这一行也认得出是谁），
-    没记下就是 ``None`` —— 同一次事件里要投给别的席位时按它去重。
+    形状是 `app.domain.delivery.agent.record_task_instruction` 的形状。返回值不透明：
+    那个实现记完就完，本包不看。
 
     收任务的 id 而不是那一行：那一行是第 4 层 `room_task` 的模型，被递进来的
     那几个函数要的是它里面的四个字段，读表的事留在投递包自己做。"""
@@ -107,35 +106,7 @@ class RecordInstruction(Protocol):
         *,
         task_id: uuid.UUID,
         content: str,
-    ) -> uuid.UUID | None: ...
-
-
-class RecordAgent(Protocol):
-    """把一条事件记进某个 agent 席位那本报账，不开工，只投递。
-
-    形状是 `app.domain.delivery.agent.record_agent` 的形状。返回值不透明：那个实现
-    落下的行本包不看，记完就完。"""
-
-    async def __call__(
-        self,
-        session: AsyncSession,
-        event: DeliveryEvent,
-        *,
-        conversation_id: uuid.UUID,
-        instance_id: uuid.UUID,
-        content: str,
-    ) -> object: ...
-
-
-class SeatInstanceId(Protocol):
-    """这个项目里某个席位的实例 id；没有这个席位就是 ``None``。
-
-    形状是 `app.domain.delivery.agent.seat_instance_id` 的形状。递回来的是 id 而
-    不是席位那一行：`AgentInstance` 是第 5 层的模型，本包认不出它。"""
-
-    async def __call__(
-        self, session: AsyncSession, project_id: uuid.UUID, seat: str
-    ) -> uuid.UUID | None: ...
+    ) -> None: ...
 
 
 class TaskTeammate(Protocol):

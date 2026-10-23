@@ -200,6 +200,32 @@ def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, task)
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 
+def test_a_suggestion_that_cannot_be_made_is_not_sent_back_to_reread(client, task):
+    """Quoting the document again cannot turn a change a suggestion cannot
+    mark (a row added to a table) into one it can, so the refusal says what
+    can be done instead."""
+    host = BackendHost(client, *task)
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
+    client.collab.refuse_suggestions = True
+
+    with pytest.raises(cheese.PlatformToolError) as refused:
+        cheese.run_platform_tool(
+            "cheese_doc_edit",
+            {
+                "edits": [{"old": "本周交初稿。", "new": "本周交初稿。\n\n下周评审。"}],
+                "suggest": True,
+            },
+            host,
+        )
+
+    said = str(refused.value)
+    assert "一处都没改" in said
+    assert "重读" not in said
+    assert "直接改" in said and "在对话里说" in said
+    assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
+
+
 def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
     """`cheese_task` creates the task for the person who asked for it. Creating
     one needs no machine."""
@@ -208,7 +234,7 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
 
     said = cheese.run_platform_tool(
         "cheese_task",
-        {"title": "数据清洗", "summary": "按新口径", "owner": "alice", "start": False},
+        {"title": "数据清洗", "summary": "按新口径", "owner": "alice"},
         host,
     )
 
@@ -217,7 +243,6 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
     [task] = client.get(f"/topics/{topic}/tasks").json()["data"]["data"]
     assert task["title"] == "数据清洗"
     assert task["owner_handle"] == "alice"
-    assert task["started_at"] is None
 
 
 def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, room):
@@ -233,7 +258,6 @@ def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, ro
                 "title": "把这一条过于冗长的任务标题改短到侧栏一行里放得下",
                 "summary": "按新口径",
                 "owner": "alice",
-                "start": False,
             },
             host,
         )

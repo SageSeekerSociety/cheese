@@ -20,16 +20,17 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.delivery.timer import deliver_at
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/deliveries")
+@router.post("/{topic_id}/deliveries", dependencies=[ROUTE_DECIDES])
 async def ask_for_a_delivery(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -42,7 +43,7 @@ async def ask_for_a_delivery(
     收件人不在正文里，因为这条原语只有一个收件人规则——**就是请求它的那个参与者**。
     给别人设闹钟是另一件事：往别人的收件箱里放一条对方没要过的提醒，没有人要过它。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

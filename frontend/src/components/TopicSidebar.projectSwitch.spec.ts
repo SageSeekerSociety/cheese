@@ -16,6 +16,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { screenHeader } from '@/composables/useScreenHeader'
+
+import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale, t } from '@/i18n'
@@ -62,20 +65,24 @@ function makeRouter() {
   })
 }
 
+// Reads the declared header in its own render, after the sidebar beside it has set up.
+const BarTitle = defineComponent({
+  setup: () => () => h(ScreenHeaderTitle, { header: screenHeader.value, fallback: '' }),
+})
+
 const Host = defineComponent({
   props: { inner: { type: Object, required: true } },
   setup(props) {
-    return () => h(VLayout, null, { default: () => [h(Sidebar, props.inner as Record<string, unknown>)] })
+    // ScreenHeaderTitle stands in for the phone top bar: in page form the project row
+    // is the bar's content, declared by the sidebar (useScreenHeader).
+    return () =>
+      h(VLayout, null, {
+        default: () => [h(Sidebar, props.inner as Record<string, unknown>), h(BarTitle)],
+      })
   },
 })
 
 function mount(inner: Record<string, unknown> = {}) {
-  // 整页形态下项目头 Teleport 进顶栏那一格（真实环境里由 MobileAppBar 画）。
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   const router = makeRouter()
   const utils = render(Host, {
@@ -171,73 +178,36 @@ describe('手机上的切换项目', () => {
   it('只有一个项目时不列：没有可换的地方', async () => {
     const { container, baseElement } = mount({ page: true, projects: [projects[0]] })
     const rows = await openProjectMenu(container, baseElement)
-    // 菜单里仍然有那几页（定时与触发、成员、项目设置），但没有一行是项目 —— 没得换。
+    // 菜单里仍然有那几页（例行事务、成员、项目设置），但没有一行是项目 —— 没得换。
     expect(rows).not.toContain('P1')
     expect(rows).toContain('项目设置')
   })
 })
 
-// 「转让项目」现在也在这个菜单里（成员页那颗按钮保留）。谁能转，项目行自己说得出：
-// 所有者本人，或者管得了成员的团队管理员。判据读不出来的人（比如只是团队成员）
-// 不该看到这一行 —— 递到退不掉/转不动的人手里，就是把人骗进一个会被拒的弹窗。
-describe('项目菜单里的「转让项目」', () => {
+// 「转让项目」和「退出项目」也在这个菜单里（成员页那两颗按钮保留）。判据是我在这个项目
+// 里的角色（#3830），项目行上的 `my_role` 说得出：只有所有者能把项目交出去，也只有他
+// 退不掉；别的角色——包括管理员——都只能退出。递错了，就是把人骗进一个会被拒的弹窗。
+describe('项目菜单里的「转让项目」和「退出项目」', () => {
   const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
-  // 菜单行按当前语言渲染，别把中文写进断言里（测试环境的语言跟着 navigator 走）；
-  // `openProjectMenu` 把行文字里的空白都压掉了，比对的那一份也要一样压。
-  const label = t('work.members.transfer').replace(/\s+/g, '')
-
-  // 「我是谁」读的是登录后落下的那一份账号（`myHandle()`），照 DmView.spec.ts 那样种上。
-  beforeEach(() => {
-    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
-  })
-
-  it('我自己的项目：看得到', async () => {
-    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
-    const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(label))).toBe(true)
-  })
-
-  it('不是我、也管不了成员：看不到', async () => {
-    const { container, baseElement } = mount({ page: false, projects })
-    const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(label))).toBe(false)
-  })
-
-  it('管得了成员的团队管理员：看得到', async () => {
-    const { container, baseElement } = mount({
-      page: false,
-      projects: current({ owner_handle: 'someone-else', can_manage_members: true }),
-    })
-    const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(label))).toBe(true)
-  })
-})
-
-// 另一半：「退出项目」也在这个菜单里（成员页那颗按钮保留）。判据只有「我不是所有
-// 者」——所有者看到的上一条就是它的替代，他退不掉，只能先把项目交出去；其余的人
-// 都能退，退的是这个项目的成员身份，不是小队。
-describe('项目菜单里的「退出项目」', () => {
-  const current = (extra: Record<string, unknown>) => [{ ...projects[0], ...extra }, ...projects.slice(1)]
+  // 菜单行按当前语言渲染；`openProjectMenu` 把行文字里的空白都压掉了，比对的那一份也要一样压。
   const leave = t('work.members.leave').replace(/\s+/g, '')
   const transfer = t('work.members.transfer').replace(/\s+/g, '')
 
-  beforeEach(() => {
-    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
-  })
-
-  it('不是我自己的项目：看得到', async () => {
-    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'alice' }) })
+  it('所有者：能转让，不能退出', async () => {
+    const { container, baseElement } = mount({ page: false, projects: current({ my_role: 'owner' }) })
     const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(leave))).toBe(true)
-    expect(rows.some((r) => r.includes(transfer))).toBe(false)
-  })
-
-  it('我自己的项目：看不到——换给我是「转让项目」，不是「退出项目」', async () => {
-    const { container, baseElement } = mount({ page: false, projects: current({ owner_handle: 'me' }) })
-    const rows = await openProjectMenu(container, baseElement)
-    expect(rows.some((r) => r.includes(leave))).toBe(false)
     expect(rows.some((r) => r.includes(transfer))).toBe(true)
+    expect(rows.some((r) => r.includes(leave))).toBe(false)
   })
+
+  for (const role of ['admin', 'member', 'mentor'] as const) {
+    it(`${role}：能退出，不能转让`, async () => {
+      const { container, baseElement } = mount({ page: false, projects: current({ my_role: role }) })
+      const rows = await openProjectMenu(container, baseElement)
+      expect(rows.some((r) => r.includes(leave))).toBe(true)
+      expect(rows.some((r) => r.includes(transfer))).toBe(false)
+    })
+  }
 })
 
 // 手机上话题列表只留「全局」和话题：资料库、成员、项目文档收进项目菜单。它们得在那里

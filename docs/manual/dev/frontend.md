@@ -1,7 +1,7 @@
 ---
 title: 前端结构
 kind: 参考
-summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求、i18n 债务表和八道质量闸。
+summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求、i18n 债务表和九道质量闸。
 covers:
   - frontend/src/main.ts
   - frontend/src/demo-main.ts
@@ -50,7 +50,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 `main.ts` 在挂载前后各做两件容易漏的事：
 
 - `watchForStaleBuild()` / `clearStaleBuildGuard()`：一个标签页跨过一次发版之后，懒加载的 chunk 在新构建里已经不存在，点一下就是一个 rejected import 而不是一页。启动时先接住这个失败，挂载成功就是「刷一下确实修好了」的证据，于是把一次性开关放开给下一次发版。
-- `installErrorReporter(app)`：浏览器侧的报错上报进当前话题的「现场」，这样读不到用户控制台的 agent 也能拿到它。
+- `installErrorReporter(app)`：浏览器侧的报错上报进当前频道的「现场」，这样读不到用户控制台的 agent 也能拿到它。
 
 ## 组件预览站 {#catalog}
 
@@ -71,12 +71,11 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 加一个组件：
 
-1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架；`--pending <目录前缀>` 一次打出白名单里这个目录下的全部。
-2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面、测试和收录闸都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。每格的 `expect`（一句字）或 `expectSelector`（一个选择器）要能证明画出来的是这一格，而不是兄弟格也有的东西。骨架里要人补的句子和占位值都标着 `TODO(catalog)`，不改完目录测试会报红。
+1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架。
+2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面和测试都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。每格的 `expect`（一句字）或 `expectSelector`（一个选择器）要能证明画出来的是这一格，而不是兄弟格也有的东西。骨架里要人补的句子和占位值都标着 `TODO(catalog)`，不改完目录测试会报红。
 3. 跑 `pnpm exec vitest run src/views/demo/catalog.spec.ts`。它按每格声明的插件逐格挂载，有任何 warning 或 error 就红。
-4. 跑 `pnpm run lint:catalog:update`，把这个组件从白名单里划掉。
 
-**收录闸**（`pnpm run lint:catalog`，CI 里跑）：评级为 A（只靠 props 和事件就能渲染，判据见[架构指标](/dev/arch-metrics#metrics)）的组件，要么进目录，要么在白名单 `frontend/catalog-baseline.json` 里。白名单是今天的存量，只许缩短：新写的或刚改成 A 级的组件，从第一个提交起就要进目录。「进目录」看代码不看 `file:` 标签：`catalog.ts` 本身或它导入并展开的分册（递归；`*Fixtures.ts` 不读）里，`import` 了这个 `.vue` 并写成某条条目的 `component:`。`demoRouter.ts` 里路由的 `component:`、没被导入的分册、注释里的 `component:` 都不算。详见[场景清单](/dev/scenes#catalog-ratchet)。
+「进目录」看代码不看 `file:` 标签：`catalog.ts` 本身或它导入并展开的分册（递归；`*Fixtures.ts` 不读）里，`import` 了这个 `.vue` 并写成某条条目的 `component:`。`demoRouter.ts` 里路由的 `component:`、没被导入的分册、注释里的 `component:` 都不算。哪些组件在目录里、哪些 A 级还没进，[组件总览](/dev/ref-components)每次构建从代码读一遍。
 
 ## 壳与路由 {#shell}
 
@@ -94,7 +93,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 | `beforeEach(carryLoginRedirect)` + `requireEmail(router, …)` | 未登录跳登录、未验证邮箱先补邮箱 |
 | `beforeEach`（动态标题） | 有 `meta.getDynamicTitle` 的路由把标题算出来交给 `stores/title.ts` |
 | `afterEach` | 触发标题更新；`recordEntry(to, from, …)` 记下来路，顶栏那颗 ← 靠它回得去。名字**必须在这一刻**抓下来跟着路由一起存 —— 按 ← 的时候那一页早就卸载了 |
-| `beforeEach`（话题预取） | 进 `workspace-topic` 且已登录时，立刻起消息请求并预热 pdf.js。**不在这里起头**的话，消息要等话题页那串 chunk 下完、ChatPanel 挂上之后才开始请求，冷打开一个话题时那条最大的消息晚半秒以上 |
+| `beforeEach`（频道预取） | 进 `workspace-topic` 且已登录时，立刻起消息请求并预热 pdf.js。**不在这里起头**的话，消息要等频道页那串 chunk 下完、ChatPanel 挂上之后才开始请求，冷打开一个频道时那条最大的消息晚半秒以上 |
 
 懒加载页面在导航时下载，所以 `router.onError(reloadForNewBuild)` 兜住「发版撞上这次点击」。
 
@@ -116,9 +115,9 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 ## 房间：一列对话，一块工作面板 {#room}
 
-房间是 `views/workspace/` 那一棵：`ProjectShell.vue` 是项目壳（左栏 `ProjectSidebar`），话题在 `TopicView.vue` —— 一个话题头，然后 `TopicChatColumn.vue`（左）和 `WorkPanel.vue`（右）分栏。手机上两栏放不下，对话变成工作面板那条 tab 栏的第一格。
+房间是 `views/workspace/` 那一棵：`ProjectShell.vue` 是项目壳（左栏 `ProjectSidebar`），频道在 `TopicView.vue` —— 一个频道头，然后 `TopicChatColumn.vue`（左）和 `WorkPanel.vue`（右）分栏。手机上两栏放不下，对话变成工作面板那条 tab 栏的第一格。
 
-`ProjectShell` 按 topicId 给 `TopicView` 打 key，所以**每个话题一个全新实例**，下面（或任何子组件里）不会有上一个话题的状态被带过来。
+`ProjectShell` 按 topicId 给 `TopicView` 打 key，所以**每个频道一个全新实例**，下面（或任何子组件里）不会有上一个频道的状态被带过来。
 
 工作面板开在哪个页签写进 URL（`?tab=`），所以「你来看一眼这个 diff」是一条能发出去的链接。地址是页面的事，不是面板的：面板只报告自己动了，页面负责写回 query。
 
@@ -139,15 +138,15 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 平台事件的契约是**后端只发码、文案在前端**：`kind=event` 的 block 带 `meta`（`event_type`、`severity`、`who`、`detail`、`detail_label`…），正文只有一行 ≤40 字的人话。`meta.in_room` 单独一格管「露不露面」，缺省是露面 —— 它过去和「谁写的」挤在 `author_type` 一个字段里（system 出现、ai 不出现），于是「确实由芝士产生、又该让人看见的事件」无法表达。对消息同样生效：一条通篇没有中文的 AI 消息照常落库、照常在历史里，只是聊天区不显示。
 
-多个队友并行跑时，工作面板的「现场」页签标签上带名字和跳动的点，见[同一话题里的几个 AI 队友](/dev/turn#seats-ui)。
+多个队友并行跑时，工作面板的「现场」页签标签上带名字和跳动的点，见[同一频道里的几个 AI 队友](/dev/turn#seats-ui)。
 
 ## 工作面板与页签 {#workpanel}
 
 `WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本，带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，不在改动里的文件从「打开其他文件」按名字找。
 
-固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（定时与触发）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
+固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（例行事务）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
-总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目目标的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近关闭），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteStepOutput`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
+总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目目标的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近关闭），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteRecordTree` / `SiteRecordRow`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
 
 ## 空间页 {#space}
 
@@ -173,7 +172,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 `network/` 这个目录已经不存在了，别再往回引：ESLint 里有一条 `no-restricted-imports` 专门拦 `@/network`（`eslint.config.mjs`，报文里指到 `@/api`），棘轮的 `legacy-network` 那本账也从 140 条收到 0，只能减不能加。
 
-`stores/` 是 pinia：`workspace.ts`（项目与话题）、`feedback.ts`（反馈，含缓存、分页、陈旧判断）、`space.ts`、`discussionStore.ts`、`navigation.ts`、`signup.ts`、`title.ts`。房间 chrome、聊天和工作面板挂载时会各自请求同一份名册/任务摘要，所以 `api.ts` 里有一个 `pendingRoomReads` 表**只共享在飞行中的读**：写请求（任何非 GET）一进来就整表清空，下一次读一定打到服务器。
+`stores/` 是 pinia：`workspace.ts`（项目与频道）、`feedback.ts`（反馈，含缓存、分页、陈旧判断）、`space.ts`、`discussionStore.ts`、`navigation.ts`、`signup.ts`、`title.ts`。房间 chrome、聊天和工作面板挂载时会各自请求同一份名册/任务摘要，所以 `api.ts` 里有一个 `pendingRoomReads` 表**只共享在飞行中的读**：写请求（任何非 GET）一进来就整表清空，下一次读一定打到服务器。
 
 ## 请求的信封、重试、401 与预算 {#api}
 
@@ -199,7 +198,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 两边的键一一对应：`zh-CN` 的每个键在 `en` 里都有非空的英文，每个键都有源码引用，没有例外清单。缺译文就补上，没人用就删掉。语言名和切换标签是母语写法（每种语言里都是同一个字符串），所以它们根本不住在目录里，而是 `languages.ts` 的常量：于是「英文目录里出现 CJK 是正确的」这件事没有豁免可躲。
 
-目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。规则全文在 `docs/i18n.md` §4、§5。
+目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。注释不扫；但模板 HTML 注释在 vitest 和 `vite dev` 里会留在 DOM 上，带汉字的会撞上检查 DOM 的测试，所以模板注释写英文。规则全文在 `docs/i18n.md` §4、§5。
 
 `fallbackLocale` 是 `zh-CN`：少一个 key 退化成可读的中文而不是原始 key；这个回退在运行时是**静默的**，保证不缺 key 的是 `catalog.spec.ts`。开发构建对每一次缺失和回退都告警。
 
@@ -210,17 +209,18 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
-| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `frontend/scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
-| 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings` / `storageKeys` / `storageAvailable`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
-| 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
-| 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
-| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 生成 `src/api/openapi.d.ts`，它给后端要一份现造的 OpenAPI 文档（`uv run python -m scripts.export_openapi --stdout`）再拿它生成。**两份都不进仓库**：文档 1.8MB、类型 1.4MB，每改一条路由两份一起重写，任何两个都动路由的分支就会在这儿撞车。代价是这个检查要后端的 Python 环境（uv、解释器、应用依赖），所以 `check` 作业现在也装后端依赖。进仓库的是同一份文档的一行摘要（`backend/openapi.sha256`）：路径表盯它决定前端套件跑不跑（原来盯的就是那份 1.8MB 文档，改动的提交集合一样），后端作业拿它跟现造的文档对账，对不上就红并让你重跑一次 `backend/` 里的生成器把它提交上来 |
-| 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
-| 渲染对比度 | `pnpm --dir e2e exec playwright test contrast-ratchet` | 公开页（`/`、`/solutions`、`/download`）两个主题下**渲染出来**的每一段文字和每一个图标字形，新增的或变得比基线更差的对比度不足（正文 4.5:1，大字与图标字形 3:1），以及同一个选择器下量不出来的实例变多——一个 key 上既有能测的段落、又有压在渐变上的段落时，两边都记下来，不会因为前者过线就把后者丢掉。量的是画出来的东西，所以继承色、半透明叠色、`::before` 画的字形都算在内——这三样正是源码里看不出来的那部分，也是这道闸门立在 `fe-` 其他颜色闸门之外的原因（`.mjs` 头里写了为什么不用 axe-core）。规则、棘轮算法和报文在 `frontend/scripts/contrast-ratchet-core.mjs`，存量冻在 `frontend/contrast-baseline.json`。它跑在 e2e 那套里：量对比度要一个真浏览器，而 Playwright 在 `e2e/`，所以命令和更新方式（`CONTRAST_UPDATE=1` / `CONTRAST_FREEZE_NEW=1`）与其他棘轮不同，见 `e2e/tests/contrast-ratchet.spec.ts` |
+| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里任何一处 `@/api`、`@/services/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `frontend/scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
+| 浏览器存储 | `pnpm run lint:storage` | `src/` 里任何一处直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings` / `storageKeys` / `storageAvailable`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
+| 无障碍 | `pnpm run lint`（同上面 ESLint 那一道） | 所有 `.vue` 模板里的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，在 `eslint.config.mjs` 里，直接报错、没有基线；只改了一处：`label-has-for` 认「包住控件」或「`for` 指向控件」任一种）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
+| 全局回退 | `pnpm run lint:global-fallback` | 组件里对某个名字的裸调用（`foo()`），而树的某个模块自己声明了同一个名字却没把它交出去——两半都读：`<script setup>` 里落的全局引用，以及模板里的调用。模板里的名字不在任何作用域里，`eslint` 的配置又注入了浏览器全局、TS 侧由 `lib.dom` 声明同名成员，所以别的闸门一个都看不见。2026-10-16 #1618 拆 `DesignImage.vue` 时 `blur()` 就是这样没导出、落到 `window.blur` 里一声不响。规则与报文在 `frontend/scripts/global-fallback-ratchet-core.mjs`、`frontend/scripts/check-global-fallback-ratchet.mjs`。**不是棘轮**：落地那天全树 752 个组件、957 个模块 0 命中，没有存量可冻，也就没有 `--update` |
+| 设计 token | `pnpm run lint:style` | 写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`），一处就红；格式、排序、命名不门控，`lint:style:fix` 保留自动修复 |
+| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的任何一条报错；跑之前先由 `scripts/typecheck.mjs` 生成 `src/api/openapi.d.ts`，它给后端要一份现造的 OpenAPI 文档（`uv run python -m scripts.export_openapi --stdout`）再拿它生成。**两份都不进仓库**：文档 1.8MB、类型 1.4MB，每改一条路由两份一起重写，任何两个都动路由的分支就会在这儿撞车。代价是这个检查要后端的 Python 环境（uv、解释器、应用依赖），所以 `check` 作业现在也装后端依赖。文档的摘要也不进仓库：只改后端的 PR 跑不跑前端套件，由 Required CI 的 `api` job 定，它在基点和这次改动上各造一份文档逐字节比较，变了就跑（见 [CI 设计](/dev/ci#required)） |
+| 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的）。要跑几分钟，本地只在改了 `scripts/`、`eslint*.config.mjs` 或某份 `*-baseline.json` 时跑，而且只跑对应的那个文件（`node --test scripts/<名字>.test.mjs`）。CI 在每次前端改动上跑全套，其中几份也读树里别的文件（`src/` 里的 `mdi-` 图标名、`index.html`、`demo.html`、`nginx.conf`、`src/styles/fonts.css`、`src/views/demo/`、`tsconfig.app.json`），所以普通改动也可能在 CI 上让它变红 |
+| 渲染对比度 | `pnpm --dir e2e exec playwright test contrast-ratchet` | 公开页（`/`、`/solutions`、`/download`）两个主题下**渲染出来**的每一段文字和每一个图标字形，任何一处对比度不足（正文 4.5:1，大字与图标字形 3:1），以及任何量不出来的实例——一个选择器下既有能测的段落、又有压在渐变上的段落时，两边都报，不会因为前者过线就把后者丢掉。量的是画出来的东西，所以继承色、半透明叠色、`::before` 画的字形都算在内——这三样正是源码里看不出来的那部分，也是这道闸门立在 `fe-` 其他颜色闸门之外的原因（`.mjs` 头里写了为什么不用 axe-core）。规则、判定和报文在 `frontend/scripts/contrast-ratchet-core.mjs`，没有基线。它跑在 e2e 那套里：量对比度要一个真浏览器，而 Playwright 在 `e2e/`，所以命令与其他闸门不同，见 `e2e/tests/contrast-ratchet.spec.ts` |
 
-棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `a11y-baseline.json` / `browser-storage-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。读 eslint 的 JSON 报告这件事由 `frontend/scripts/eslint-ratchet-json.mjs` 一处做（按规则 id 计数、把绝对路径变成相对路径、把解析不了的文件单列为「判不了」），边界、无障碍、存储三道都从这里取。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），其余四份各冻着多少存量违规，看基线本身（`frontend/stylelint-baseline.json`、`frontend/import-boundary-baseline.json`、`frontend/a11y-baseline.json`、`frontend/browser-storage-baseline.json`）——数字不抄进文档，各账户的计数独立变化（`.claude/rules/metric-snapshots.md`）。`lint:a11y:update` 遇到新增会拒绝写入，冻结新违规要显式加 `--freeze-new`。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
+组件边界、浏览器存储、类型、渲染对比度、无障碍、设计 token 都没有基线，有一处就红。读 eslint 的 JSON 报告这件事由 `frontend/scripts/eslint-ratchet-json.mjs` 一处做（按规则 id 计数、把绝对路径变成相对路径、把解析不了的文件单列为「判不了」），边界、存储两道都从这里取。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
 
-仓库根还有两道：调色板（`color="grey-*"`、`bg-white` 这类固定色）与 `src/` 单文件行数上限（后端 1500、前端 1000，只判与 `origin/main` 不同的文件），分别在 `.claude/scripts/check-repo-rules.sh` 和 `.claude/scripts/check-file-sizes.py`，样式表那条的存量冻在 `frontend/palette-baseline.json`。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
+仓库根还有一道：调色板（`color="grey-*"`、`bg-white` 这类固定色），在 `.claude/scripts/check-repo-rules.sh`，没有基线，一处就红。`docs/design-system.md` §7 列了没有闸门、只能靠 review 的部分（圆角、排版、文案、动效）。
 
 ## 测试约定 {#tests}
 

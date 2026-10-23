@@ -7,7 +7,12 @@ request had gone to any AI service, and the build's own words for what went
 wrong were dropped.
 """
 
-from app.domain.agent.harness.claude_code.events import Assembler
+import uuid
+from pathlib import Path
+
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness.claude_code.runner import Runner
+from app.domain.agent.harness.driven.reporting import Whose, result_of
 
 # The record the pinned build printed for that failure, less its usage counters.
 COULD_NOT_RESUME = {
@@ -26,8 +31,23 @@ COULD_NOT_RESUME = {
 }
 
 
-def test_the_room_reads_why_the_run_failed_not_that_the_service_refused():
-    [ended] = Assembler({}, "session-1").accept(COULD_NOT_RESUME)
+def test_the_room_reads_why_the_run_failed_not_that_the_service_refused(
+    tmp_path: Path,
+):
+    """How the work failed, as the runner types it from the build's record,
+    and as the room is told it."""
+    runner = Runner(tmp_path)
+    try:
+        failure = runner._failure(COULD_NOT_RESUME)
+    finally:
+        runner.journal.close()
+    seat = SessionRef(uuid.uuid4(), uuid.uuid4(), "cheese", harness=CLAUDE_CODE)
+    whose = Whose(seat, "cheese", seat.topic_id, "cheese", CLAUDE_CODE, "Claude Code")
+    ended, kind = result_of(
+        whose,
+        {"text": "", "failure": failure, "inputs": []},
+        session_id="session-1",
+    )
 
     assert ended.is_error
     assert "No conversation found with session ID" in ended.text

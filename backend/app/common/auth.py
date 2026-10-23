@@ -7,7 +7,7 @@ import jwt
 from fastapi import Header
 
 from app.core.config import settings
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import AuthenticationRequiredError, BaseError
 
 
 def _utcnow() -> datetime:
@@ -156,6 +156,7 @@ class SudoPurpose(StrEnum):
     REALNAME_VIEW = "realname:view"
     REALNAME_UPDATE = "realname:update"
     REALNAME_DELETE = "realname:delete"
+    ACCOUNT_DELETE = "account:delete"
 
 
 class MintedSudoTicket(NamedTuple):
@@ -235,6 +236,12 @@ class AccessClaims(NamedTuple):
     # in silence.
     handle_from_claim: bool
     sid: uuid.UUID | None
+    # When the token was issued (``iat``): a closed account refuses the tokens
+    # issued before it closed (``app.core.deleted_accounts``).
+    issued_at: int | None = None
+    # When the token was issued (``iat``): a closed account refuses the tokens
+    # issued before it closed (``app.core.deleted_accounts``).
+    issued_at: int | None = None
 
 
 def create_notice_token(user_id: int, sid: uuid.UUID) -> str:
@@ -346,11 +353,13 @@ def verify_access_token(token: str) -> AccessClaims | None:
         name, handle_from_claim = stated, True
     else:
         name, handle_from_claim = sub, False
+    iat = decoded.get("iat")
     return AccessClaims(
         user_id=int(sub) if sub.isdigit() else None,
         handle=name,
         handle_from_claim=handle_from_claim,
         sid=sid,
+        issued_at=iat if isinstance(iat, int) else None,
     )
 
 
@@ -381,8 +390,6 @@ async def get_current_user_id(
         return claims.user_id
 
     if x_user_id is not None:
-        from app.core.config import settings
-
         if settings.deployed_via_compose or settings.environment not in (
             "development",
             "test",
@@ -414,8 +421,6 @@ async def get_optional_user_id(
     用于那些「可选」依赖当前用户上下文的查询（例如 task 列表的 joined 过滤），
     不强制要求调用方携带认证信息。
     """
-    from app.core.errors import BaseError
-
     try:
         return await get_current_user_id(
             x_user_id=x_user_id, authorization=authorization

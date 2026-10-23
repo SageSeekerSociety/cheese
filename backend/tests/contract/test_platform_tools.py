@@ -24,6 +24,7 @@ import pytest
 from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import mcp_process
+from tests.support.session_runner import standing_runner
 
 TASK = "9f8e7d6c-0000-4000-8000-000000000000"
 #: The conversation these sessions run in (CHEESE_TOPIC): a task's own
@@ -90,10 +91,20 @@ CALLS = {
         f"/topics/{TOPIC}/teammate-tasks",
     ),
     "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
+    "cheese_task_state": (
+        {"state": "waiting", "note": "等 CI"},
+        "PUT",
+        f"/topics/{TOPIC}/task/progress",
+    ),
     "cheese_describe": (
         {"subject": "fix: x"},
         "POST",
         f"/topics/{TOPIC}/accept-card/describe",
+    ),
+    "cheese_redeliver": (
+        {"deliver_url": "https://site.example/r"},
+        "POST",
+        f"/topics/{TOPIC}/accept-card/redeliver",
     ),
     "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
     "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
@@ -103,6 +114,7 @@ CALLS = {
         "/projects/fixture-project/alerts",
     ),
     "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
+    "cheese_web_search": ({"query": "芝士"}, "GET", "/web-search"),
     "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
     "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_members": ({}, "GET", f"/topics/{TOPIC}/members"),
@@ -125,7 +137,7 @@ CALLS = {
             "title": "工具清单短了一截",
             "kind": "bug",
             "visibility": "public",
-            "user_said": "用户没有就这个问题说过话",
+            "user_said_absent": True,
         },
         "POST",
         f"/topics/{TOPIC}/feedback-proposals",
@@ -159,6 +171,7 @@ CALLS = {
             "title": "每周整理一次进展",
             "instructions": "把这一周的进展整理成一页",
             "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+            "owner_handle": "alice",
         },
         "POST",
         f"/topics/{TOPIC}/routines",
@@ -217,12 +230,11 @@ NEEDS_THE_MACHINE = {
 #: 只等那台机器、什么也不写到平台上的那一样。
 WAITS_FOR_THE_MACHINE = {"cheese_wait_environment"}
 
-#: 这条传输自己的四个口子，不是产品动作。
+#: 这条传输自己的三个口子，不是产品动作。
 TRANSPORT = {
     "invoke",
     "permission",
     "send_user_file",
-    "project_tools",
 }
 
 
@@ -279,7 +291,7 @@ def _serve(executor):
     return server, platform_calls, executor_calls
 
 
-def _session(tmp_path, server, target):
+def _session(tmp_path, server, target, extra_env=None, *, runner_socket):
     config = tmp_path / "central.json"
     config.write_text(
         json.dumps({"workspace": str(tmp_path), "central_hooks": {}, **target})
@@ -295,14 +307,25 @@ def _session(tmp_path, server, target):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": TOPIC,
             "CHEESE_PROJECT": "fixture-project",
+            # The session's runner, which names the run each platform call
+            # is made in (`executor_transport.PlatformHost.run`).
+            "CHEESE_SESSION_SOCKET": runner_socket,
+            **(extra_env or {}),
         },
         log,
     )
     return process, log
 
 
+@pytest.fixture
+def runner_socket():
+    """The session's runner: it names the run every platform call is made in."""
+    with standing_runner("claude-code/1/1") as path:
+        yield path
+
+
 @pytest.fixture(params=["answers-503", "unavailable", "deferred"])
-def machine_is_gone(tmp_path, request):
+def machine_is_gone(tmp_path, request, runner_socket):
     """一个平台在、机器不在的会话，三种不在法。"""
     server, platform_calls, executor_calls = _serve(lambda _: (503, b""))
     port = server.server_port
@@ -311,7 +334,7 @@ def machine_is_gone(tmp_path, request):
         "unavailable": {"kind": "unavailable"},
         "deferred": {"kind": "deferred"},
     }[request.param]
-    process, log = _session(tmp_path, server, target)
+    process, log = _session(tmp_path, server, target, runner_socket=runner_socket)
     try:
         yield process, platform_calls, executor_calls
     finally:
@@ -325,7 +348,7 @@ DOC = "# 实况\n\n数据口径定为新版。\n"
 
 
 @pytest.fixture
-def machine_is_here(tmp_path):
+def machine_is_here(tmp_path, runner_socket):
     """机器在：推分支的那条命令和等机器的空命令答成功。"""
 
     def executor(payload):
@@ -339,6 +362,7 @@ def machine_is_here(tmp_path):
         tmp_path,
         server,
         {"kind": "device", "url": f"http://127.0.0.1:{server.server_port}/execution"},
+        runner_socket=runner_socket,
     )
     try:
         yield process, platform_calls, executor_calls
@@ -464,7 +488,9 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
     """
     process, platform_calls, executor_calls = machine_is_gone
 
-    outcome = _call(process, "cheese_routine_draft", arguments)
+    outcome = _call(
+        process, "cheese_routine_draft", {**arguments, "owner_handle": "alice"}
+    )
 
     assert said in outcome["deny"], outcome
     assert platform_calls == [], platform_calls
@@ -583,3 +609,54 @@ def test_the_feedback_tool_says_when_to_use_it(machine_is_gone):
     assert "什么时候不该提" in description
     assert "用户的使用方式" in description
     assert "中途" in description
+
+
+def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
+    """The tool's file reaches the machine on its own, so its states are a copy;
+    a state the backend refuses, or one it takes that the tool never offers,
+    shows up here instead of as a 422 in someone's task."""
+    from app.domain.agent.harness.codex.tools import platform_tools
+    from app.domain.room_task.models import TaskProgress
+    from app.domain.room_task.progress import NOTE_MAX_CHARS
+
+    tools = platform_tools()
+    schema = next(
+        t for t in tools.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_task_state"
+    )
+    offered = schema["inputSchema"]["properties"]["state"]["enum"]
+    assert set(offered) == {state.value for state in TaskProgress}
+    assert tools.TASK_PROGRESS_NOTE_CHARS == NOTE_MAX_CHARS
+
+
+def test_the_switch_decides_whether_the_tool_is_on_the_listing(tmp_path, runner_socket):
+    """`cheese_compact` 默认关着，这一条钉的是**清单**：会话侧那份 `tools/list`
+    里没有它，agent 连它的名字都看不到；部署在会话的环境里写下那一句，它才在清单
+    上。表本身两种情况下都完整（上面那条用例读的就是它）。"""
+    server, _, _ = _serve(lambda _: (503, b""))
+    try:
+        target = {"kind": "unavailable"}
+        (tmp_path / "off").mkdir()
+        (tmp_path / "on").mkdir()
+        off, log = _session(
+            tmp_path / "off", server, target, runner_socket=runner_socket
+        )
+        on, log_on = _session(
+            tmp_path / "on",
+            server,
+            target,
+            {"CHEESE_COMPACT_TOOL": "1"},
+            runner_socket=runner_socket,
+        )
+        try:
+            assert "cheese_compact" not in _listing(off)
+            assert "cheese_compact" in _listing(on)
+            # 别的行不受影响：开关动的只有这一样。
+            assert set(_listing(off)) == set(_listing(on)) - {"cheese_compact"}
+        finally:
+            off.close()
+            on.close()
+            log.close()
+            log_on.close()
+    finally:
+        server.shutdown()
+        server.server_close()

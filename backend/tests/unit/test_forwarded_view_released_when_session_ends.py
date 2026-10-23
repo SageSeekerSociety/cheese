@@ -82,10 +82,10 @@ def seat(root, name, mounts):
     return directory, view
 
 
-def serve(directory, view, start, tmp_path):
+def serve(directory, view, start):
     """The view's server: started by the session, so it carries the session's
     variable too, and it outlives the session."""
-    program = tmp_path / release.VIEW_SERVER
+    program = directory / release.VIEW_SERVER
     program.write_text(SLEEP)
     return start(
         [sys.executable, str(program), str(directory / "execution.json"), str(view)],
@@ -102,7 +102,7 @@ def test_a_running_session_keeps_its_view_and_an_ended_one_lets_it_go(
     tmp_path, mounts, processes
 ):
     directory, view = seat(tmp_path, "seat", mounts)
-    serve(directory, view, processes, tmp_path)
+    serve(directory, view, processes)
     build = processes([sys.executable, "-c", SLEEP], directory)
 
     assert release.release_abandoned(directory) is False
@@ -139,18 +139,18 @@ def test_one_look_ends_every_abandoned_view_on_the_host(tmp_path, mounts, proces
     do their servers: a server outlives its unmount for as long as any session
     holds a copy of the view, which on a busy host is always."""
     running, kept = seat(tmp_path, "running", mounts)
-    kept_server = serve(running, kept, processes, tmp_path)
+    kept_server = serve(running, kept, processes)
     processes([sys.executable, "-c", SLEEP], running)
     ended, servers = [], []
     for name in ("ended-1", "ended-2"):
         directory, view = seat(tmp_path, name, mounts)
-        servers.append(serve(directory, view, processes, tmp_path))
+        servers.append(serve(directory, view, processes))
         stopped(processes([sys.executable, "-c", SLEEP], directory))
         ended.append(view)
     # One already unmounted here, by a look before servers were ended with it.
     directory, view = seat(tmp_path, "unmounted-before", mounts)
     mounts[0].discard(view)
-    servers.append(serve(directory, view, processes, tmp_path))
+    servers.append(serve(directory, view, processes))
 
     assert release.release_abandoned_views() == 3
     assert sorted(mounts[1]) == sorted(ended)

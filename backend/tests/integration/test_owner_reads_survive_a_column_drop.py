@@ -28,7 +28,7 @@ async def _project(db_session, handle: str = "alice") -> uuid.UUID:
             "INSERT INTO projects"
             " (id, name, owner_handle, team_id, ai_mode, settings,"
             " created_at, updated_at)"
-            " VALUES (:id, :name, :owner, :team, 'off', '{}', now(), now())"
+            " VALUES (:id, :name, :owner, :team, 'collaborative', '{}', now(), now())"
         ),
         {
             "id": project_id,
@@ -160,7 +160,7 @@ def test_viewer_authorization_survives_unrelated_membership_column_drops(
 ):
     from types import SimpleNamespace
 
-    from app.api.routes.connector import _may_view_screen
+    from app.api.routes.connector.screen import _may_view_screen
     from app.common.auth import verify_access_token
     from app.domain.project.models import ProjectMember
     from app.domain.topic.models import TopicMembership

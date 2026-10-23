@@ -19,7 +19,6 @@
 | 中文 | 英文 | 依据 / 不采用什么 |
 |---|---|---|
 | 频道 | **channel** | 项目里人说话的地方（`work.sidebar.topics`、`navigation.term.topic`），默认那一个叫「综合 = General」。后端和路由仍叫 topic（`/topics/{topic_id}`），界面上不再出现 room 和 topic |
-| 话题 | **topic** | 只在空间里用：`views/spaces/detail/ManageTopics.vue`、`addTopic`，是给题目贴的分类标签。**不用 thread**：thread 是支线。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
 | 支线 | **thread** | 频道主线一条消息下面的讨论（`work.room.thread.title = Thread`，页签 `Threads`）。**不用 reply chain / sub-channel** |
 | 项目目标 | **project goals** | 项目自己的那份文档，只写要做成什么、什么时候做成、这阶段不做什么（`work.channel.overview.project = Project goals`，后端 `projects.overview_document_id`）。**不用 project overview / charter**：overview 是进项目落地的那一页 |
 | 项目总览 | **project overview** | 进项目落地的那一页（`navigation.project.overview`，路由 `workspace-overview`）。面板开关「概览」和页签「总览」是 **Overview**，不带 project |
@@ -28,29 +27,31 @@
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
 | 赛题 | **challenge** | 注册页邮箱提示「部分题目仅对特定邮箱开放」对应的 `account.rule.emailHint` 写的是 `Some challenges are open only to…`。出现 25 次，是这套 catalog 里最大的一个术语。**不用 problem / contest**：problem 是算法题，contest 是比赛本身而非题目。见 §5 第 3 条，这里有个命名陷阱 |
 | 任务 | **task** | 指平台里的工作单元时（`publicSite.taskProgress = 任务进展`、`/topics/{topic_id}/tasks`）。**不用 job**：job 在技术语境里是后台作业。中文「任务」在 catalog 里还有第二种用法，指的其实是**赛题 = challenge**，见 §5 第 3 条 |
-| 分类 | **category** | `views/spaces/detail/ManageCategories.vue`、`spaces.detail.manageCategories.*`。**不用 tag**：tag 是另一套东西（`network/api/tags/`） |
+| 分类 | **category** | `views/spaces/detail/ManageCategories.vue`、`spaces.detail.manageCategories.*`。**不用 tag**：tag 是标签，见下 |
 | 域名组 | **domain group** | `views/spaces/detail/ManageDomainGroups.vue`、`spaces.domainGroups.*`。域 = **domain**，不用 field / realm |
 | 模板 | **template** | `views/spaces/detail/ManageTemplates.vue`、`views/spaces/detail/SelectTemplate.vue`、`views/spaces/detail/TemplateForm.vue`。**不用 boilerplate / preset** |
 | 公告 | **announcement** | `views/spaces/detail/Announcements.vue`。**不用 notice**：notice 更像「系统提示」，且和通知混淆 |
-| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
+| 邀请 | **invitation**（名词）/ **invite**（动词） | 后端 `/invitations/{invitation_id}`、`en/account/index.json` 既有 `invitationCode = "Invitation code"`。邀请码固定为 **invitation code** |
 | 回复 | **reply** | 代码里 `reply` 出现 148 次（`reply_to`、`replyTarget`、`repliesCount`）。**和「回答」不是一个词**，见下条 |
 | 回答 | **answer** | `views/question/`、`network/api/answers/`。**不用 response / reply**：reply 是「回复某条发言」 |
 | 提问 | **question** | `network/api/questions/` |
 | 通知 | **notification** | `network/api/notifications/`、`notifications.common.notificationCenter = 通知中心`。**不用 alert**：alert 是弹窗 |
 | 附件 | **attachment** | `network/api/attachments/` |
-| 标签 | **tag** | `network/api/tags/` |
+| 标签 | **tag** | 给题目和问题贴的分类，在空间、问答和发题表单里用（`spaces.detail.manageTopics`、`tasks.form.topics`、`network/api/tags/`）。代码标识符仍叫 topic（`ManageTopics.vue`、`addTopic`、`topic_ids`），界面上不出现「话题」和 topic。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
 | 环境 | **environment** | AI 队友干活的地方：云端的写 **cloud environment**，项目设置那一页是 **Environment**（在哪运行、准备脚本与环境变量、额度）。**不用 work computer / sandbox / machine**：点名一台设备时才说 **computer**，成员接入的电脑统称 **device** |
 | 工作台 | **workspace** | 既有 `publicSite.openWorkspace = "Open workspace"`、`navigation.workspace = "Workspace"`。**不用 dashboard / console**：dashboard 在本产品另有位置（空间的数据看板）。中文自己也不统一——`navigation.workspace` 写「工作区」、`publicSite.openWorkspace` 写「进入工作台」，英文一律 workspace |
 
 **「活」不是界面词。** 房间对话里说的「这条活」是**平台内部的黑话**，对应的界面概念就是「任务」= **task**。
 `zh-CN` 目录里出现的「活」只有「活跃」（= active）这一处。译文里不要出现 "work" 或 "job" 来表达「活」。
 
+**「会话」不是界面词。** 代码里的会话（session，`agent_sessions`）是一位 AI 队友在一个频道、支线或任务里的工作状态，连同它运行的 CLI 程序（`docs/design-system.md` §8.10）。用户点不开它，所以界面上不出现「会话」和 session。说的是在干活的那一位，写「AI 队友」= **AI teammate**，或项目给它起的名字；说的是它留下的东西，写「它的工作记录」= **its work record**。登录状态（「登录已过期」= Your session expired）是另一个意思，不在此列。
+
 ## 2. 动作与状态
 
 | 中文 | 英文 | 不采用什么 |
 |---|---|---|
 | 发布 | **publish** | 不用 release / post |
-| 创建 | **create** | 不用 add：add 用于往已有集合里添一项（添加话题 = add topic） |
+| 创建 | **create** | 不用 add：add 用于往已有集合里添一项（添加标签 = add tag） |
 | 删除 | **delete** | 不用 remove：remove 用于从集合里移出，不销毁 |
 | 编辑 | **edit** |  |
 | 归档 | **archive** / 取消归档 **unarchive** | 不用 disable：那是停用，不是归档 |
@@ -123,7 +124,7 @@
 - **不要保留中文语序。** 「确认后提交」不是 `After confirmation submit`，是 `Confirm, then submit`。
 - **「X 成功」译成过去分词短语，不要 `X success`。** 中文把结果名词化（发布成功 / 删除成功 / 创建任务成功），
   英文这类 toast 用被动、过去式，不加感叹号：`发布成功 = Published`、`删除成功 = Deleted`、
-  `创建任务成功 = Task created`、`模板更新成功 = Template updated`、`添加话题成功 = Topic added`。
+  `创建任务成功 = Task created`、`模板更新成功 = Template updated`、`添加标签成功 = Tag added`。
   `悬赏成功，等待回答 = Bounty added — awaiting answers`（破折号接后续状态）。
   **例外是已经有宾语的名词短语**：`保存成功` 这类没有具体对象的，用 `Saved` 就够，别写 `Save successful`。
 - **「X 失败」统一用 `Couldn't <动词>`，带原因时用冒号。** `删除失败 = Couldn't delete`、
@@ -145,15 +146,15 @@ Delete this question? All of its answers will be deleted too.`
 
 ## 5. 存疑——需要产品 owner 拍板
 
-第 1、2、4 条我不擅自定（1 和 4 要 owner 给个话，2 只影响键的组织方式、不影响译法），
-写在这里防止翻译任务各译各的；**第 3 条已经查清并落定，不再是存疑项**。
+第 1、4 条我不擅自定（要 owner 给个话），
+写在这里防止翻译任务各译各的；**第 2、3 条已经落定，不再是存疑项**。
 
 1. **「芝士」作为悬赏单位。** `questions.detail.bountyTip` 里「可获得 {bounty} 芝士」的「芝士」是**积分单位**，
    不是平台名。直接译成 `{bounty} Cheese` 会读成「获得 50 个 Cheese」，语义不通。
    英文目前不写单位，说 `the {bounty} bounty`，和旁边徽标上的 `Bounty {bounty}` 一致。
    要不要给它一个英文单位名（`credits`? `Cheese credits`?）待 owner 定。
-2. **「话题」只剩空间里那一个。** 项目里的话题已改叫频道（channel），`spaces.detail.manageTopics` 里给题目贴的
-   分类标签仍叫话题（topic）。键的组织方式可能需要调整。
+2. **「话题」不是界面词。** 项目里说话的地方叫频道（channel），给题目贴的分类叫标签（tag），见 §1。
+   键名和代码标识符（`manageTopics`、`Topic`、`topic_id`）不跟着改名。
 
 3. **中文把「赛题」和「任务」当成同一个东西在叫——已经查清，按 challenge 统一。**
 

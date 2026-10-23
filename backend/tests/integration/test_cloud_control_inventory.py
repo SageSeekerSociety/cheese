@@ -18,9 +18,11 @@ from pathlib import Path
 
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, WarmMachine
 from tests.conftest import TEST_DATABASE_URL
+from tests.support.devices import enrollment_team
 
 CONTROL = Path(__file__).resolve().parents[3] / "deploy/cloud-control.py"
 
@@ -45,10 +47,12 @@ def test_the_inventory_lists_the_pools_live_hosts_and_ready_warm_machines(client
             identity = IdentityService(db)
             owner = await identity.ensure_agent_user(handle="cheese-host-pool")
             now = datetime.now(UTC)
+            team_id = await enrollment_team(sql_device_service(db), owner.id)
 
             def device(device_id, private=True):
                 db.add(
                     DeviceRow(
+                        team_id=team_id,
                         device_id=device_id,
                         name=device_id,
                         token=f"token-{device_id}",

@@ -23,6 +23,12 @@ import httpx
 #: time to wait.
 UNNAMED_WAIT_S = 60.0
 
+BACKGROUND_HALF_QUOTA = 0.50
+BACKGROUND_QUARTER_QUOTA = 0.25
+BACKGROUND_STOP_QUOTA = 0.20
+BACKGROUND_HALF_INTERVAL_S = 180.0
+BACKGROUND_QUARTER_INTERVAL_S = 300.0
+
 
 @dataclass(frozen=True)
 class Reading:
@@ -36,6 +42,46 @@ class Reading:
 _owners: dict[str, tuple[int, float]] = {}
 _readings: dict[int, Reading] = {}
 _refused_until: dict[int, float] = {}
+
+
+def background_interval_seconds(base_interval_s: float) -> float | None:
+    """The next background interval for the lowest known installation quota.
+
+    ``None`` means all background work stays stopped until a known reset.
+    """
+    if base_interval_s <= 0:
+        return base_interval_s
+    now = time.time()
+    readings = [reading for reading in _readings.values() if reading.reset > now]
+    if any(until > now for until in _refused_until.values()) or any(
+        reading.remaining < reading.limit * BACKGROUND_STOP_QUOTA
+        for reading in readings
+    ):
+        return None
+    if any(
+        reading.remaining <= reading.limit * BACKGROUND_QUARTER_QUOTA
+        for reading in readings
+    ):
+        return max(base_interval_s, BACKGROUND_QUARTER_INTERVAL_S)
+    if any(
+        reading.remaining <= reading.limit * BACKGROUND_HALF_QUOTA
+        for reading in readings
+    ):
+        return max(base_interval_s, BACKGROUND_HALF_INTERVAL_S)
+    return base_interval_s
+
+
+def background_resume_after() -> float:
+    """Seconds until the earliest active stop condition can be reconsidered."""
+    now = time.time()
+    expiries = [until for until in _refused_until.values() if until > now]
+    expiries.extend(
+        reading.reset
+        for reading in _readings.values()
+        if reading.reset > now
+        and reading.remaining < reading.limit * BACKGROUND_STOP_QUOTA
+    )
+    return max(0.1, min(expiries) - now) if expiries else UNNAMED_WAIT_S
 
 
 def own(token: str, installation_id: int, expires_at: float) -> None:

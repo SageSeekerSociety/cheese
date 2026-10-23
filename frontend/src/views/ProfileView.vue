@@ -10,32 +10,17 @@
 // 自己的主页多两样：「编辑资料」（去设置里的个人资料），和「芝士眼中的你」——各个
 // 项目里的芝士记下的关于你的事，只有你看得到，可以一条条删掉。
 //
-// 活动图上点一格，下面的话题列表就只看那一周；再点一次同一周，或者点「回到最近」，
-// 回到最近参与的那几个。
-import type {
-  MemberSummary,
-  ProfileProject,
-  ProfileProjectRole,
-  ProfileTopic,
-  ProfileUnderstanding,
-  ProjectAgent,
-  UserProfile,
-} from '@/cx_types'
-import type { ActivityWeek } from '@/lib/activityYear'
+// 取数、那一周的话题、删一条笔记，分别在同目录 `profile/` 下的三个 composable 里；
+// 这一页自己的样式在 `profile/profile.css`。
+import type { ProfileProject, ProfileProjectRole } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
-import { useQuery } from '@tanstack/vue-query'
 
-import { getAvatarUrl } from '@/utils/materials'
+import { useProfileNotes } from './profile/useProfileNotes'
+import { useProfilePage } from './profile/useProfilePage'
+import { useProfileTopics } from './profile/useProfileTopics'
 
-import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
-import { usePageActive } from '@/composables/usePageActive'
-import { usePageTitle } from '@/composables/usePageTitle'
-import { holdRevealUntil } from '@/composables/useRevealGate'
-
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics, listProjectAgents } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -43,102 +28,88 @@ import ExternalTag from '@/components/common/ExternalTag.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import ActivityHeatmap from '@/components/profile/ActivityHeatmap.vue'
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
-import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
+import { activityWeeks, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
 import { skillIcon } from '@/lib/skillIcons'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
-import { patchQuery, queryClient } from '@/query/client'
 
 defineOptions({ name: 'ProfileView' })
 
 const props = defineProps<{ handle: string; projectId?: string }>()
 
-/** 「最近参与的话题」列几个；选中一周时列那一周的全部（接口上限 50）。 */
-const RECENT_TOPICS = 8
-const WEEK_TOPICS = 50
-
 const { mdAndUp } = useDisplay()
 const compact = computed(() => !mdAndUp.value)
 const isSelf = computed(() => myHandle() === props.handle)
 
-ensureDefaultAvatarId()
-
-interface Page {
-  profile: UserProfile
-  member: MemberSummary | null
-  /** 最近参与的话题；这一段单独失败时是 null，页面其余部分照常。 */
-  recent: ProfileTopic[] | null
-  /** 这个项目里他名下的 AI 队友；「带的技能」从这儿取。取不到就是空的。 */
-  agents: ProjectAgent[]
-}
-
-// 回到看过的主页先照着上一次的画，背后重取（query/client）。
-const pageKey = computed(() => ['user', props.handle, 'profile', props.projectId ?? null] as const)
-// 保活着离开时停下，回来时过期了的再读（usePageActive）。
-const pageActive = usePageActive()
-const page = useQuery(
-  computed(() => ({
-    enabled: pageActive.value,
-    queryKey: pageKey.value,
-    queryFn: async (): Promise<Page> => {
-      const [profile, member, recent, agents] = await Promise.all([
-        getUserProfile(props.handle),
-        props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
-        getUserTopics(props.handle, { limit: RECENT_TOPICS })
-          .then((r) => r.topics)
-          .catch(() => null),
-        props.projectId
-          ? listProjectAgents(props.projectId)
-              .then((r) => r.data)
-              .catch(() => [])
-          : Promise.resolve([]),
-      ])
-      return { profile, member, recent, agents }
-    },
-  })),
-  queryClient
+const {
+  data,
+  pageKey,
+  loading,
+  error,
+  refresh,
+  profile,
+  member,
+  missing,
+  remark,
+  originalName,
+  displayName,
+  saveRemark,
+  avatarUrl,
+  locale,
+  joined,
+} = useProfilePage(
+  () => props.handle,
+  () => props.projectId
 )
-holdRevealUntil(() => !page.isPending.value)
-const data = page.data
-// 只在没有任何内容可画时转圈、报错；有内容时背后那次没取到就照常显示。
-const loading = page.isPending
-const error = computed(() => (page.data.value ? null : page.error.value))
-function refresh() {
-  void page.refetch()
-}
 
-const profile = computed(() => data.value?.profile ?? null)
-const member = computed(() => data.value?.member ?? null)
-// 平台上没有这个 handle 的账号：后端照样回一份空的主页，加入时间是空的。
-const missing = computed(() => profile.value !== null && profile.value.joined_at === null)
-const displayName = computed(() => profile.value?.name || props.handle)
-
-const avatarUrl = computed(() => {
-  const id = profile.value?.avatar_id
-  return isChosenAvatar(id) ? getAvatarUrl(id!) : ''
-})
-
-const locale = computed(() => i18n.global.locale.value)
-const joined = computed(() => {
-  const at = profile.value?.joined_at
-  if (!at) return ''
-  const date = new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'long' }).format(new Date(at))
-  return t('users.profile.joined', { date })
-})
-
-// 顶栏（手机）和标签页标题写这个人的名字，而不是路由上那个泛泛的「成员」。
-const { setDynamicTitle } = usePageTitle()
+const editingRemark = ref(false)
+const remarkDraft = ref('')
+const remarkSaving = ref(false)
+const remarkError = ref<string | null>(null)
 watch(
-  () => (profile.value ? displayName.value : ''),
-  (name) => {
-    if (name) setDynamicTitle(name, props.projectId ? 'member' : 'UserPage')
-  },
-  { immediate: true }
+  () => props.handle,
+  () => {
+    editingRemark.value = false
+    remarkError.value = null
+  }
+)
+function startRemarkEdit() {
+  remarkDraft.value = remark.value
+  remarkError.value = null
+  editingRemark.value = true
+}
+function cancelRemarkEdit() {
+  editingRemark.value = false
+  remarkError.value = null
+}
+async function submitRemark(nextValue?: string | Event) {
+  if (remarkSaving.value) return
+  const raw = typeof nextValue === 'string' ? nextValue : remarkDraft.value
+  remarkSaving.value = true
+  remarkError.value = null
+  try {
+    await saveRemark(raw.trim())
+    editingRemark.value = false
+  } catch (e) {
+    remarkError.value = e instanceof Error && e.message ? e.message : t('users.profile.remark.saveFailed')
+  } finally {
+    remarkSaving.value = false
+  }
+}
+const { selectedWeek, weekPending, pickWeek, clearWeek, topicsTitle, topics, topicsFailed, topicsEmpty } =
+  useProfileTopics(
+    () => props.handle,
+    () => data.value?.recent,
+    () => locale.value
+  )
+const { forget } = useProfileNotes(
+  () => pageKey.value,
+  () => data.value
 )
 
 // ---- 活动 ----
@@ -169,85 +140,8 @@ function bars(weekly: number[]): number[] {
   return weekly.map((n) => (n === 0 ? 2 : Math.max(4, Math.round((n / most) * 24))))
 }
 
-// ---- 话题：最近，或者选中的那一周 ----
-const selectedWeek = ref<ActivityWeek | null>(null)
-const weekTopics = ref<ProfileTopic[] | null>(null)
-const weekPending = ref(false)
-const weekFailed = ref(false)
-let weekRequest = 0
-
-function clearWeek() {
-  weekRequest += 1
-  selectedWeek.value = null
-  weekTopics.value = null
-  weekPending.value = false
-  weekFailed.value = false
-}
-
-async function pickWeek(week: ActivityWeek) {
-  if (selectedWeek.value?.from === week.from) {
-    clearWeek()
-    return
-  }
-  const seq = ++weekRequest
-  selectedWeek.value = week
-  weekPending.value = true
-  weekFailed.value = false
-  try {
-    const { topics } = await getUserTopics(props.handle, { from: week.from, to: week.to, limit: WEEK_TOPICS })
-    if (seq !== weekRequest) return
-    weekTopics.value = topics
-  } catch {
-    if (seq !== weekRequest) return
-    weekTopics.value = null
-    weekFailed.value = true
-  } finally {
-    if (seq === weekRequest) weekPending.value = false
-  }
-}
-
-// 换了一个人，上一个人选中的那一周不跟过来。
-watch(() => props.handle, clearWeek)
-
-const topicsTitle = computed(() => {
-  const week = selectedWeek.value
-  if (!week) return t('users.profile.topics.recent')
-  const day = (d: string) => formatUtcDay(d, locale.value, { month: 'long', day: 'numeric' })
-  return t('users.profile.topics.range', { from: day(week.from), to: day(week.to) })
-})
-
-// 选中一周、新的那一份还没回来时，列表先留着原来的几行（淡一点），不先清空再填满。
-const topics = computed<ProfileTopic[]>(() => {
-  if (selectedWeek.value && weekTopics.value) return weekTopics.value
-  return data.value?.recent ?? []
-})
-const topicsFailed = computed(() => (selectedWeek.value ? weekFailed.value : data.value?.recent === null))
-const topicsEmpty = computed(() => !weekPending.value && !topicsFailed.value && topics.value.length === 0)
-
 function topicDot(status: string): string {
   return status === 'active' ? 'status-dot--ok' : 'status-dot--muted'
-}
-
-// 先从列表里拿掉，再去删；服务器不肯就放回原处。
-async function forget(note: ProfileUnderstanding) {
-  const key = pageKey.value
-  const notes = data.value?.profile.understanding
-  const at = notes?.findIndex((n) => n.id === note.id) ?? -1
-  if (at < 0) return
-  const withNotes = (change: (notes: ProfileUnderstanding[]) => ProfileUnderstanding[]) =>
-    patchQuery<Page>(key, (held) => ({
-      ...held,
-      profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) },
-    }))
-  await withNotes((list) => list.filter((n) => n.id !== note.id))
-  try {
-    await deleteUnderstanding(note.id)
-  } catch {
-    await withNotes((list) =>
-      list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]
-    )
-    toast.error(t('users.profile.notes.deleteFailed'))
-  }
 }
 
 // ---- 在这个项目里 ----
@@ -321,8 +215,67 @@ const carriedSkills = computed<string[]>(() => {
           <div class="profile__who">
             <UserAvatar :avatar="avatarUrl" :name="displayName" :size="compact ? 64 : 96" class="profile__avatar" />
             <div class="profile__names">
-              <h1 class="t-page-title profile__name">{{ displayName }}</h1>
-              <div class="t-meta-read profile__handle">{{ handle }}</div>
+              <div class="profile__name-row">
+                <h1 class="t-page-title profile__name" data-user-content>{{ displayName }}</h1>
+                <button
+                  v-if="!isSelf && !editingRemark"
+                  type="button"
+                  class="profile__remark-btn"
+                  data-testid="profile-remark-trigger"
+                  :title="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  :aria-label="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  @click="startRemarkEdit"
+                >
+                  <v-icon size="14" icon="mdi-pencil-outline" aria-hidden="true" />
+                  <span v-if="!remark">{{ t('users.profile.remark.add') }}</span>
+                </button>
+              </div>
+              <div v-if="remark && originalName && originalName !== remark" class="t-meta-read profile__original-name">
+                <span data-user-content>{{ t('users.profile.remark.originalName', { name: originalName }) }}</span>
+                <span> · </span>
+                <span class="profile__handle">{{ handle }}</span>
+              </div>
+              <div v-else class="t-meta-read profile__handle">{{ handle }}</div>
+              <form v-if="!isSelf && editingRemark" class="profile__remark-form" @submit.prevent="submitRemark()">
+                <input
+                  v-model="remarkDraft"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="32"
+                  class="profile__remark-input t-body"
+                  data-testid="profile-remark-input"
+                  :aria-label="t('users.profile.remark.placeholder')"
+                  :placeholder="t('users.profile.remark.placeholder')"
+                  :disabled="remarkSaving"
+                  @keydown.esc.prevent="cancelRemarkEdit"
+                />
+                <div class="profile__remark-actions">
+                  <BaseButton
+                    type="submit"
+                    size="sm"
+                    :loading="remarkSaving"
+                    data-testid="profile-remark-save"
+                    @click="submitRemark()"
+                  >
+                    {{ t('users.profile.remark.save') }}
+                  </BaseButton>
+                  <BaseButton
+                    v-if="remark"
+                    type="button"
+                    kind="ghost"
+                    size="sm"
+                    :disabled="remarkSaving"
+                    data-testid="profile-remark-clear"
+                    @click="submitRemark('')"
+                  >
+                    {{ t('users.profile.remark.clear') }}
+                  </BaseButton>
+                  <BaseButton type="button" kind="ghost" size="sm" :disabled="remarkSaving" @click="cancelRemarkEdit">
+                    {{ t('users.profile.remark.cancel') }}
+                  </BaseButton>
+                </div>
+                <p v-if="remarkError" class="t-meta profile__remark-error" role="alert">{{ remarkError }}</p>
+              </form>
               <div v-if="roleInProject" class="profile__role">
                 <ExternalTag v-if="roleInProject === 'external'" />
                 <span v-else class="chip-neutral">{{ roleLabel(roleInProject) }}</span>
@@ -607,4 +560,4 @@ const carriedSkills = computed<string[]>(() => {
   </component>
 </template>
 
-<style scoped src="@/styles/profile-view.css"></style>
+<style scoped src="./profile/profile.css"></style>

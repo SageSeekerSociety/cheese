@@ -1,5 +1,5 @@
-// 文档那一条横条：平常只有谁也在这儿。只读是偶尔才进的状态——入口在 ⋯ 里，进去之后
-// 这一条上写着只读，点它就回来；没有编辑权限时它只是说明，回不去。
+// 文档那一条横条：只读和编辑、建议是同一个「编辑方式」里的三种，切进去、切回来都在那里；
+// 没有编辑权限时这一条只说只读，没有编辑方式可切。
 import type { Component } from 'vue'
 import type { Topic } from '../../cx_types'
 
@@ -10,6 +10,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The document's version history: the last edit is read on open; none here.
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
@@ -92,9 +96,9 @@ function bar(container: Element): HTMLElement {
   return container.querySelector('.doc-top-bar') as HTMLElement
 }
 
-async function fromMenu(container: Element, name: string) {
-  await fireEvent.click(bar(container).querySelector('[aria-label="更多"]')!)
-  await fireEvent.click(await screen.findByText(name, { selector: '.v-list-item-title' }))
+async function pickMode(container: Element, name: string) {
+  await fireEvent.click(bar(container).querySelector('[data-testid="doc-mode"]')!)
+  await fireEvent.click(await screen.findByRole('menuitemradio', { name: new RegExp(name) }))
 }
 
 describe('文档横条', () => {
@@ -105,15 +109,15 @@ describe('文档横条', () => {
     expect(labels).not.toContain('只读')
   })
 
-  it('从 ⋯ 设为只读后，这一条上写着只读，点它回到编辑', async () => {
+  it('在编辑方式里切到只读，这一条上写着只读，再切回编辑', async () => {
     const { container } = await mountDoc()
 
-    await fromMenu(container, '设为只读')
-    const readOnly = Array.from(bar(container).querySelectorAll('button')).find((b) => b.textContent?.trim() === '只读')
-    expect(readOnly, '只读了却看不出来').toBeTruthy()
+    await pickMode(container, '只读')
+    const mode = bar(container).querySelector('[data-testid="doc-mode"]')
+    expect(mode?.textContent?.trim(), '只读了却看不出来').toBe('只读')
     expect(container.querySelector('.doc-body')?.classList.contains('readonly')).toBe(true)
 
-    await fireEvent.click(readOnly!)
+    await pickMode(container, '编辑')
     expect(container.querySelector('.doc-body')?.classList.contains('readonly')).toBe(false)
   })
 
@@ -124,8 +128,6 @@ describe('文档横条', () => {
     expect(container.querySelector('.doc-prose')?.getAttribute('contenteditable')).toBe('false')
     const readOnly = Array.from(bar(container).querySelectorAll('button')).find((b) => b.textContent?.trim() === '只读')
     expect(readOnly?.hasAttribute('disabled'), '没有权限还能点回编辑').toBe(true)
-    await fireEvent.click(bar(container).querySelector('[aria-label="更多"]')!)
-    await screen.findByText('导出 Markdown', { selector: '.v-list-item-title' })
-    expect(screen.queryByText('回到编辑', { selector: '.v-list-item-title' }), '没有权限还能在 ⋯ 里切回编辑').toBeNull()
+    expect(bar(container).querySelector('[data-testid="doc-mode"]'), '没有权限还能切编辑方式').toBeNull()
   })
 })

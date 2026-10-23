@@ -1,17 +1,7 @@
-"""「记忆正文被读过几次」这个数，是从工具调用记录里数出来的。
+"""Memory read counts use complete native Read paths, including sealed records.
 
-数的东西是**已经落在库里的**事件块（`blocks.kind='event'`，`meta` 是
-`chat._tool_event_meta` 写的那一份 JSON），所以这个功能没有自己的表、没有自己的
-迁移，历史是免费的。
-
-这里钉四件事：
-
-* **判据**：只有 `Read` + `.cheese/memory/` 下面的文件 + 不是 `MEMORY.md` 才算；
-  写进去不算，读索引不算，读别的文件不算。
-* **纯函数和 SQL 是同一句话**：同一批输入喂两边，答案必须一样。两份实现分叉的
-  那一天，接口上的数和单测钉的数会各说各话，而没人会发现（两边都「对」）。
-* **按项目、按天**：回答的是「这个项目这一周每天读了多少次」，不是平台总数。
-* **窗口是左闭右开的**。
+Read calls below .cheese/memory/ count by UTC day; MEMORY.md indexes, other
+tools and paths outside that directory do not. The time window is half-open.
 """
 
 import uuid
@@ -20,8 +10,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.memory.reads import body_reads, is_body_read
+from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import project_service, registered, session_auth_headers
 
 # 这个文件里两种都有：域里那几个是 async（`business_db_factory`），接口那两个走
@@ -56,22 +47,38 @@ def _call(
     arg: object = None,
     at: datetime = _NOW,
     kind: BlockKind = BlockKind.event,
-) -> Block:
-    """一条工具调用记录。`meta` 的形状就是 `chat._tool_event_meta` 写的那一份。"""
-    meta: dict = {"tool": tool}
-    if arg is not None:
-        meta["arg"] = arg
-    if detail is not None:
-        meta["detail"] = detail
-    return Block(
-        project_id=project.id,
+) -> SessionRecord:
+    """A native tool call or ordinary text record."""
+    sequence = uuid.uuid4().int % (2**62)
+    content = (
+        [
+            {
+                "type": "tool_use",
+                "name": tool,
+                "id": str(sequence),
+                "input": {"file_path": detail},
+            }
+        ]
+        if kind == BlockKind.event
+        else [{"type": "text", "text": str(detail)}]
+    )
+    return SessionRecord(
         conversation_id=project.root_topic_id,
-        kind=kind,
-        author_type=AuthorType.platform,
-        author="system",
-        content="",
-        meta=meta,
-        created_at=at,
+        agent_handle="cheese",
+        harness="claude_code",
+        first_sequence=sequence,
+        last_sequence=sequence,
+        first_at=at,
+        last_at=at,
+        count=1,
+        bytes=1,
+        records=[
+            {
+                "sequence": sequence,
+                "at": at.isoformat(),
+                "record": {"type": "assistant", "message": {"content": content}},
+            }
+        ],
     )
 
 
@@ -91,10 +98,10 @@ async def test_only_reads_of_body_files_are_counted(business_db_factory):
                 _call(project, tool="Write", detail=f"{_MEMORY}/team/x.md"),
                 # 不算：别的文件。
                 _call(project, detail="/home/cheese/work/wt-dream/CLAUDE.md"),
-                # 不算：`meta.arg` 是给人看的预览（长路径被剪成 `…/team/x.md`），
+                # 不算：预览是给人看的短文本（长路径被剪成 `…/team/x.md`），
                 # 拿它判目录是不准的 —— 判据必须是未截断的 `detail`。
                 _call(project, arg="…/team/x.md"),
-                # 不算：只有事件块才进这个数。
+                # 不算：普通文本不算工具调用。
                 _call(
                     project,
                     detail=f"{_MEMORY}/team/x.md",
@@ -116,12 +123,7 @@ async def test_only_reads_of_body_files_are_counted(business_db_factory):
 
 
 async def test_the_pure_predicate_and_the_query_agree(business_db_factory):
-    """同一批输入喂两边，答案一样。
-
-    一边是 `is_body_read`（能被单测钉、能被人读），一边是那两条 SQL 谓词（要在库
-    里跑）。它们分叉的那一天不会报错，只会让两个地方各说各话。每条候选给一个自己
-    的时间点，然后按一分钟的窗口单独数它 —— 这样每条候选的答案都是独立的一次查询。
-    """
+    """The public path predicate and persisted raw-record counts agree."""
     candidates: list[tuple[object, object]] = [
         ("Read", f"{_MEMORY}/team/a.md"),
         ("Read", f"{_MEMORY}/private/alice/a.md"),

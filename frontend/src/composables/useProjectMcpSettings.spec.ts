@@ -30,6 +30,14 @@ vi.mock('@/lib/desktopApp', async (importOriginal) => {
   return { ...actual, goAuthorize }
 })
 
+// The confirm in front of connecting: answered as each test says.
+const confirmed = vi.hoisted(() => ({ answer: true, later: null as Promise<boolean> | null }))
+vi.mock('@/plugins/dialog', () => ({
+  useDialog: () => ({
+    confirm: () => ({ wait: () => confirmed.later ?? Promise.resolve(confirmed.answer) }),
+  }),
+}))
+
 // 一次性动作的结果走全局 toast（§3.11）：这里只验它说了什么。
 const sonner = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: sonner.success, error: sonner.error } }))
@@ -40,9 +48,13 @@ const tracker: McpServer = {
   name: 'tracker',
   transport: 'http',
   host: 'mcp.example.test',
+  command: null,
+  run: null,
   auth: 'oauth',
   status: 'disconnected',
   declared_by: null,
+  added: null,
+  shadowed: false,
   authorized_by: null,
   authorized_at: null,
   variables: [],
@@ -109,6 +121,31 @@ describe('useProjectMcpSettings', () => {
     expect(connectMcpServer).toHaveBeenCalledWith('p', 'tracker')
     expect(goAuthorize).toHaveBeenCalledWith('https://as.example.test/authorize')
     expect(state.busy.value).toBe('')
+  })
+
+  it('cancelling the confirm leaves the connection unstarted', async () => {
+    confirmed.answer = false
+    const { state } = await host()
+    await tick()
+    await state.connect(tracker)
+    expect(connectMcpServer).not.toHaveBeenCalled()
+    expect(goAuthorize).not.toHaveBeenCalled()
+    confirmed.answer = true
+  })
+
+  it('a confirm answered after switching projects connects nothing', async () => {
+    const project = ref('a')
+    let answer!: (yes: boolean) => void
+    confirmed.later = new Promise<boolean>((resolve) => (answer = resolve))
+    const { state } = await host(() => project.value)
+    await tick()
+    const asking = state.connect(tracker)
+    project.value = 'b'
+    answer(true)
+    await asking
+    confirmed.later = null
+    expect(connectMcpServer).not.toHaveBeenCalled()
+    expect(goAuthorize).not.toHaveBeenCalled()
   })
 
   it('disconnecting reloads the list', async () => {

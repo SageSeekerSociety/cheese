@@ -1,0 +1,11 @@
+{
+  "avatar": "Avatar (optional)",
+  "cancel": "Cancel",
+  "failed": "Couldn't create the space. Try again later.",
+  "intro": "Introduction (optional)",
+  "name": "Space name",
+  "open": "New space",
+  "ownership": "A platform admin reviews it first. Once approved, you can publish challenges.",
+  "placeholder": "e.g. Programming exercises",
+  "submit": "Submit for review"
+}

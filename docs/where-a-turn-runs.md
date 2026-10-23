@@ -8,7 +8,7 @@
 
 ## Central sessions and private chat execution
 
-All Claude Code sessions run, each under its runner, on the central device configured by `AGENT_SESSION_DEVICE_ID`, except a member's own Claude Code on a machine's login, which runs on that machine of its owner's and works in its own execution environment like any session; one on a key its owner's account holds runs here too (`remote-execution.md`, "A member's own Claude Code"). Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host, which also runs the stdio MCP servers the teammate's agent type declares. A missing or offline session host produces an explicit setup failure.
+All Claude Code sessions run, each under its runner, on the central device configured by `AGENT_SESSION_DEVICE_ID`, except a member's own Claude Code on a machine's login, which runs on that machine of its owner's and works in its own execution environment like any session; one on an encrypted team API key or model service runs here too (`remote-execution.md`, "A member's own Claude Code"). Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Platform tools (chat, living document, task cards, acceptance, memory) run on the session host against the backend and do not depend on that machine. Private chats use a temporary container on the central host, which also runs the stdio MCP servers the teammate's agent type declares. A missing or offline session host produces an explicit setup failure.
 
 A person's 芝士 outside any project (the task page's 问芝士) also runs on the session host: one pi session per conversation, with no machine and no execution environment at all, only its three read-only tools, which call the platform's own routes with a credential minted for each question that acts as that person. It needs no machine and claims none. Each such session has its own 512 MB memory cap, exits after three idle minutes, and a person keeps at most two running. The details are in [个人芝士](manual/dev/assistant.md#session). A comment on a document that names the document's agent (a task's agent for its living document, the project's own for any other), and a question from the document's selection box, are answered the same way, by a session of their own: the document's tools and project lookups, a 512 MB cap, exits after a minute idle. It claims no machine; while the task's sessions hold their machine, it reads the task's checkout there with a credential that only reads. The details are in [文档里的芝士](manual/dev/doc-agent.md#session).
 
@@ -16,7 +16,7 @@ Each chat gets a separate execution container with a read-only image and 64 MiB 
 
 The build workflow publishes the executor from `backend/sandbox/Dockerfile.private` as the `private-executor` image, and each deploy pulls the deployed commit's copy and tags it with the local name in its `com.cheese.local-image` label, which is the name `PRIVATE_CHAT_EXECUTOR_IMAGE` selects by default. A deploy that cannot fetch it logs a warning and continues; private chats then fail with a setup error until a later deploy delivers it. Backend authorization governs platform operations.
 
-The container reaches the public internet and the platform endpoint in its `CHEESE_API`, and no other internal address: not the host's own services, the other hosts on its LAN, the deployment's other containers, or a cloud metadata endpoint. Internal means not public by the definition `/fetch` refuses by (`backend/app/domain/fetch/addresses.py`). The container runs on the Docker network `cheese-private-chats`, which is internal (no route out) and carries no address of the host. The one thing it reaches there is the session host's egress proxy, `cheese-private-egress` (`remote_execution/private_egress.py`): one container per host, shared by every private chat, started from the executor image without added capabilities and also attached to the default bridge. It serves HTTP (with `CONNECT`) and SOCKS5 on port 3128, and the container's commands are given `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (`socks5h`) pointing at it; a program that ignores them has no other way out. For each connection the proxy resolves the destination itself, asks DNS over HTTPS (`FETCH_DNS_OVER_HTTPS`) for the real addresses when the host's resolver answers only with fake-IP placeholders (`198.18.0.0/15`), as dev's does, refuses the connection unless every address is public, and connects to an address it checked rather than resolving the name again. The platform's exact `host:port` is the only internal destination it allows. The launcher creates the network and the proxy when a private chat starts, adopts a running proxy started with the same image and settings, and replaces one that is missing, stopped or configured differently. While the proxy is down, the containers have no network at all. Private chats on one host share the network and can reach each other's containers on it.
+The container reaches the public internet and the platform endpoint in its `CHEESE_API`, and no other internal address: not the host's own services, the other hosts on its LAN, the deployment's other containers, or a cloud metadata endpoint. Internal means not public by the definition `/fetch` refuses by (`backend/app/domain/fetch/addresses.py`). The container runs on the Docker network `cheese-private-chats`, which is internal (no route out) and carries no address of the host. The one thing it reaches there is the session host's egress proxy, `cheese-private-egress` (`remote_execution/private_egress.py`): one container per host, shared by every private chat, started from the executor image without added capabilities and also attached to the default bridge. It serves HTTP (with `CONNECT`) and SOCKS5 on port 3128, and the container's commands are given `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (`socks5h`) pointing at it; a program that ignores them has no other way out. For each connection the proxy resolves the destination itself, asks DNS over HTTPS (`FETCH_DNS_OVER_HTTPS`) for the real addresses when the host's resolver answers only with fake-IP placeholders (`198.18.0.0/15`), as dev's does, refuses the connection unless every address is public, and connects to an address it checked rather than resolving the name again. The platform's exact `host:port` is the only internal destination it allows. The chat's WebSearch runs at the model's provider and opens no connection from the host. Its WebFetch reads pages from Claude Code on the host, outside the container, so the WebFetch transport preload (`webfetch_transport.cjs`) tunnels every page read through the same proxy with `CONNECT`, at the address the launcher gives it in `CHEESE_WEBFETCH_EGRESS`; the proxy takes the default bridge's gateway, which is the host, as a client. A page read is refused exactly where the container's connection would be. A session started without that preload is not given WebFetch. The launcher creates the network and the proxy when a private chat starts, adopts a running proxy started with the same image and settings, and replaces one that is missing, stopped or configured differently. While the proxy is down, the containers have no network at all. Private chats on one host share the network and can reach each other's containers on it.
 
 The remaining sections describe ordinary work topics and their selected compute providers.
 
@@ -30,8 +30,8 @@ The remaining sections describe ordinary work topics and their selected compute 
 |---|---|---|
 | **沙箱**，规格 `standard` | 平台机器上的一个沙箱，每条会话一个；放在哪台宿主机上由平台调度，多个项目的沙箱共用一台 | 平台的，随时可以销毁重建，按时长计费 |
 | **沙箱**，规格 `vm` | 一整台虚拟机做的沙箱，有 sudo，能跑 Docker、要 KVM 的任务和内核模块 | 平台的，会话用完就删，按规格和时长计费 |
-| **沙箱**，规格 `devices_of:<用户>` | 这个人接入这个项目、给得出沙箱的某一台电脑上的沙箱 | 那个人的，不收费 |
-| **不进沙箱**（`self_hosted`） | 直接跑在选定的那台人自己的电脑上，看得见整台机器 | 那个人的；只有他本人能选 |
+| **沙箱**，规格 `team_devices` | 项目所属团队中能提供沙箱的一台设备上的沙箱 | 团队的，不收费 |
+| **不进沙箱**（`self_hosted`） | 直接跑在选定的那台人自己的电脑上，看得见整台机器 | 团队的；只有团队管理员能选 |
 
 规格之间是平级的，沙箱从不点名机器：放在哪台由规格说（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）。平台的规格只在这个部署配了云平台的地址和密钥时可选；`vm` 还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`）。
 
@@ -92,7 +92,9 @@ HOME 必须各自独立（会话的配置、记录和凭证都在它下面）—
 **按项目分，不按机器分。** 同一个项目的房间本来就共用一个仓库、能读彼此的 checkout，
 store 在这条线以内；跨项目则是一条真实存在的线，沙箱里只挂进本项目的 store（§四）。
 **硬链接跨不过 bind mount**（`link(2)` → EXDEV，同一个文件系统内也一样，dev 上实测过）：
-沙箱里会话目录和 store 是两个挂载点，所以那里 uv 直接复制（`UV_LINK_MODE=copy`）。
+沙箱里会话目录和 store 是两个挂载点，平台宿主机上还各是一个 project quota，硬链接两样都跨不过；
+所以那里 uv 和 pnpm 改用克隆（`UV_LINK_MODE=clone`、`npm_config_package_import_method=clone-or-copy`），
+在宿主机的 XFS 数据盘上共享 store 的块，别处退回复制。
 隔离和去重不是同一个开关。
 
 **存量房间会在下一次启动时回收掉自己那份死缓存。** 重定向之后，房间 HOME 里原来那几份
@@ -133,11 +135,11 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目里每位有电脑给得出沙箱的人各有一个 `devices_of:<用户>`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
 
 ## 三、放不下的时候
 
-**一个沙箱没地方放时，这次工具调用得到一句明确的话，对话和平台工具照常。** 平台的规格在没配云平台的部署上放不下，会说这个部署没有平台的机器、可以换一种规格；某个人的设备都不在线或都给不了沙箱时，说这个规格的电脑现在用不了。不会悄悄换到别的规格上。
+**一个沙箱没地方放时，这次工具调用得到一句明确的话，对话和平台工具照常。** 平台的规格在没配云平台的部署上放不下，会说这个部署没有平台的机器、可以换一种规格；团队设备都不在线或都给不了沙箱时，说这个规格的电脑现在用不了。不会悄悄换到别的规格上。
 
 配了云平台时，一条会话第一次要动手，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。项目的额度用完时，平台的规格拒绝，并说额度用完了。`vm` 规格每条会话第一次要动手时都现开一台，房间里收到的是「正在准备虚拟机沙箱」；虚拟机不休眠，会话闲置后推送、释放，下次要用再开一台。
 
@@ -147,7 +149,7 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在会话能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连会话自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。停房间时，会话的进程一起结束，用 `setsid` 脱离、被 launchd 收养的也在内：认它们靠的是每个进程甩不掉的 Seatbelt 规则——在沙箱里、能写这个会话的目录、不能写装着各会话目录的那一层（`environment_runner.end_seatbelt`，系统的 `sandbox_check`）。Windows 没有沙箱：Windows 设备上不放沙箱，只能不进沙箱地用。沙箱怎么搭见 `docs/remote-execution.md`。
 
-不进沙箱的会话看得见整台机器：能操作上面的服务、进得去别的会话的目录。只有那台电脑的主人本人以人的身份登录时能选（`PUT /topics/{id}/sessions/{session}/environment`），会话凭据选不了。
+不进沙箱的会话看得见整台机器：能操作上面的服务、进得去别的会话的目录。只有设备所属团队的管理员以人的身份登录时能选（`PUT /topics/{id}/sessions/{session}/environment`），会话凭据选不了。
 
 `vm` 规格的虚拟机就是这条会话自己的，执行器不再套沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址也连不上它的 8006 和 22 端口：直连由虚拟机的防火墙挡住，按域名经实验室路由器的那条路由路由器的规则挡住。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
 
@@ -163,7 +165,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 - **地址永远不在线上。** 机器那半只拨一个地方：`cheese serve` 在**那台机器的磁盘上**写下的那个端口。平台发下去的帧里根本没有主机字段，所以平台就算被攻陷也没法让一台笔记本去扫别的端口。
 - **不是连接器那条链路。** 连接器那条是一轮活的命脉（提示词、控制、会话记录），两端都用一把锁串行发帧；dev server 的静态资源和热更新排在 prompt 前面就是活活拖死一轮。同一条网络路径、同一个网关、同样是拨出——但另一条连接，另一个失效域。
-- **能看的人，本来就能让芝士在那台机器上跑命令。** 预览的门槛是话题所在项目的成员/所有者，这些人在房间里说一句话，芝士就在那台机器上执行，所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
+- **能看的人，本来就能让芝士在那台机器上跑命令。** 预览的门槛是频道所在项目的成员/所有者，这些人在房间里说一句话，芝士就在那台机器上执行，所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
 
 **一位队友一条通道。** 一个房间可以坐几位队友，每位在自己的工作树里起自己的 dev server、拨自己的一条通道（按凭据里的房间和队友两项认）；房间的预览跟着登记它的那位队友走。同一位队友换了机器或重开，签发更晚的那份凭据接管，旧的那条被告知原因后退出，不再重拨。
 
@@ -171,7 +173,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 ## 六、已定但还没做完的
 
-**芝士自己提交、推送、开 PR。** 平台不再替它写工作树。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
+**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_ready` 把它标成可评审、用 `cheese_accept_request` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
 ## 七、归档退掉什么
 
@@ -192,14 +194,17 @@ including subprocesses that could outlive a timed-out caller. Unpublished source
 cleanup pending. The platform does not create a
 separate backup of dirty working trees or unpushed commits.
 
-Transcripts are not uploaded; the platform keeps no copy of them. Claude Code runs
-on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files,
-subagent files included, are in its home there. Removing that home first
-compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
-the same host. The same cleanup operation deletes the archive 30 days later, for
-the reason given beside `TRANSCRIPT_RETENTION` in `room_cleanup/retire.py`: they are kept
-for debugging after the fact, and handing the work on needs only the room's chat,
-living doc and action timeline.
+The CLI's own transcript files are kept permanently in the private bucket,
+beside what the runner journaled (`session_records`, see
+[原始记录](manual/dev/session-records.md)). Every session runs on the central
+session host: a room's raw `.claude/projects/**/*.jsonl` files, subagent files
+included, are in its home there, and Codex's and pi's session files are under the
+resource's harness state (`~/.cheese/harness/<project>/<resource>/`). Removing the
+resource there, whether or not the room has a home on that host, first compresses
+them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on the same host, which
+is then sent to `transcripts/rooms/<project>/<room>/<resource>.tar.gz` in the
+private bucket. The host's archive is deleted 30 days later (`TRANSCRIPT_RETENTION`
+in `room_cleanup/retire.py`), and only once the bucket is found to hold it as sent.
 
 Before cleanup takes ownership of deletion, unarchive cancels it and reuses the
 room's resources. If a stop or worktree move has an unresolved outcome, unarchive reports

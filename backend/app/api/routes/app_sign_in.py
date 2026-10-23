@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_user_auth_service
 from app.api.response import ok
 from app.api.users_deps import _require_same_origin, issue_session
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -47,7 +48,11 @@ class AppSignInFinish(BaseModel):
     verifier: str = Field(min_length=43, max_length=128)
 
 
-@router.post("/auth/app-sign-in", summary="Hand this sign-in to the desktop app")
+@router.post(
+    "/auth/app-sign-in",
+    summary="Hand this sign-in to the desktop app",
+    dependencies=[ROUTE_DECIDES],
+)
 async def start_app_sign_in(
     payload: AppSignInStart,
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -62,7 +67,11 @@ async def start_app_sign_in(
     return ok({"code": code})
 
 
-@router.post("/auth/app-sign-in/finish", summary="Take over a browser sign-in")
+@router.post(
+    "/auth/app-sign-in/finish",
+    summary="Take over a browser sign-in",
+    dependencies=[ROUTE_DECIDES],
+)
 async def finish_app_sign_in(
     payload: AppSignInFinish,
     request: Request,

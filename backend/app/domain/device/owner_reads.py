@@ -34,11 +34,11 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, Uuid, column, select, table
+from sqlalchemy import Boolean, Integer, Uuid, column, select, table, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.device.models import DeviceRow, HostedDeviceRow
+from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredentialHost
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
@@ -48,6 +48,7 @@ from app.domain.topic.models import TopicMembership
 class DeviceIdentity:
     device_id: str
     name: str
+    credential_host: bool = False
 
 
 async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
@@ -58,7 +59,16 @@ async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity 
             select(DeviceRow.device_id, DeviceRow.name).where(DeviceRow.token == token)
         )
     ).one_or_none()
-    return DeviceIdentity(row.device_id, row.name) if row is not None else None
+    if row is not None:
+        return DeviceIdentity(row.device_id, row.name)
+    host = (
+        await session.execute(
+            select(ModelCredentialHost.id, ModelCredentialHost.name).where(
+                ModelCredentialHost.token == token
+            )
+        )
+    ).one_or_none()
+    return DeviceIdentity(host.id, host.name, True) if host else None
 
 
 async def execution_device_authorized(
@@ -88,22 +98,41 @@ async def project_member(
     )
 
 
-# Which room a task hangs in, read as two bare columns for the same reason as
-# everything else here.
+# Which room a conversation is in, read as bare columns for the same reason as
+# everything else here — and as one statement, the shape
+# `conversation/services.py`'s `room_of` asks (`_inside`). Two functions with
+# one docstring must not answer with two questions: the old loop here asked
+# `tasks` and then `threads`, two round trips for every room, while the other
+# copy asked once.
 _tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
 _threads = table("threads", column("id", Uuid), column("room_id", Uuid))
+_inside = union_all(
+    select(_tasks.c.id, _tasks.c.room_id), select(_threads.c.id, _threads.c.room_id)
+).subquery("inside")
 
 
 async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
     """The room a conversation is in: itself for a room, its room for a task
     or a 支线."""
-    for inner in (_tasks, _threads):
-        room = await session.scalar(
-            select(inner.c.room_id).where(inner.c.id == conversation_id)
-        )
-        if room is not None:
-            return room
-    return conversation_id
+    room = await session.scalar(
+        select(_inside.c.room_id).where(_inside.c.id == conversation_id)
+    )
+    return room or conversation_id
+
+
+_personal = table(
+    "assistant_conversations", column("id", Uuid), column("user_id", Integer)
+)
+
+
+async def personal_owner(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> int | None:
+    """Whose own 芝士 conversation this is; None when it is no such
+    conversation."""
+    return await session.scalar(
+        select(_personal.c.user_id).where(_personal.c.id == conversation_id)
+    )
 
 
 _rooms = table("topics", column("id", Uuid), column("members_only", Boolean))

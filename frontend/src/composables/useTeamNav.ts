@@ -3,9 +3,9 @@
 // `views/home/HomeNav.vue` 只吃 props 出事件（A 档），四个弹窗也只吃 props 出事件；
 // 真去问后端、真去跳地址、真去确认「退不退得掉」的都在这一层。两端（桌面侧栏
 // `HomeSidebar`、手机整页 `HomeHub`）各挂一份目录，判断只有这一份。
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
@@ -15,19 +15,15 @@ import { useJoinSpace } from '@/composables/useJoinSpace'
 
 import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
+import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { SpacesApi } from '@/api/spaces'
+import { onSpacesChanged } from '@/api/spacesChanged'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
-
-/** 目录里一个空间那一行只要 id 和名字；点进去是那个空间自己的目录。 */
-export interface SpaceLink {
-  id: number
-  name: string
-}
 
 export function useTeamNav(options: { active?: () => boolean } = {}) {
   const route = useRoute()
@@ -59,10 +55,24 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     }
   }
 
+  // 空间那一组 = 我加入的空间，加上我建的、还没过审的那几个（待审核或被驳回）。
+  // 后者不在空间列表里（没过审的空间谁的列表里都没有），只能从「我的申请」里读；
+  // 过审的申请就是一个普通空间，已经在前一份里了。和团队名单一样只认最后发出的那一次读。
+  let spacesRead = 0
   async function loadSpaces() {
+    const read = ++spacesRead
     try {
-      const data = await SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' })
-      spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
+      const [listed, applied] = await Promise.all([
+        SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' }),
+        // 申请读不到不该连累已加入的空间：退回一份空的。
+        SpacesApi.applications().catch(() => ({ items: [] })),
+      ])
+      const next: SpaceLink[] = listed.spaces.map((space) => ({ id: space.id, name: space.name }))
+      for (const item of applied.items) {
+        if (item.reviewStatus === 'APPROVED' || next.some((space) => space.id === item.id)) continue
+        next.push({ id: item.id, name: item.name, review: item.reviewStatus })
+      }
+      if (read === spacesRead) spaces.value = next
     } catch {
       // 同上。
     }
@@ -86,6 +96,18 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   useEventListener(window, 'focus', () => {
     if (active()) void loadTeams()
   })
+  // 在哪一页建了、删了、加入或退出了一个空间，或者改了一份申请：空间那一组当场重读。
+  onScopeDispose(
+    onSpacesChanged(() => {
+      if (active()) void loadSpaces()
+    })
+  )
+  // 在待办里接受了一条团队邀请（或别的会了结待办的事）：名单可能多了一个团队，当场重读。
+  onScopeDispose(
+    onAwaitingChanged(() => {
+      if (active()) void loadTeams()
+    })
+  )
   // 窗口从窄变宽，侧栏这时才露出来，此前一次没读过：补一次。
   watch(active, (now) => {
     if (!now) return
@@ -104,6 +126,31 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
 
   // ---- 用邀请码加入空间：问后端、成了进那个空间，和待办页共用 `useJoinSpace`。
   const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace(() => void loadSpaces())
+
+  // ---- 新建空间：提交以后就是一份待审核的申请，落到那份申请上。侧栏那一组由
+  // `onSpacesChanged` 重读，这里不用管。
+  const createOpen = ref(false)
+  const createBusy = ref(false)
+  const createError = ref('')
+  watch(createOpen, (open) => {
+    if (open) createError.value = ''
+  })
+  async function createSpace(payload: { name: string; intro: string; avatarFile?: File }) {
+    const name = payload.name.trim()
+    if (createBusy.value || !name) return
+    createBusy.value = true
+    createError.value = ''
+    try {
+      const avatarId = payload.avatarFile ? (await createAvatar(payload.avatarFile)).avatarId : undefined
+      const { space } = await SpacesApi.create({ name, intro: payload.intro.trim(), avatarId })
+      createOpen.value = false
+      void router.push({ name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } })
+    } catch {
+      createError.value = t('spaces.create.failed')
+    } finally {
+      createBusy.value = false
+    }
+  }
 
   // ---- 改资料。名字全站唯一，撞名要落在名字那一格，别和「没网」「没权限」混成一句。
   const editing = ref<Team | null>(null)
@@ -274,6 +321,10 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     joinBusy,
     joinError,
     joinSpace,
+    createOpen,
+    createBusy,
+    createError,
+    createSpace,
     editing,
     editingBusy,
     editingError,

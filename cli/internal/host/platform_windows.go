@@ -3,10 +3,12 @@ package host
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/procscreen"
 )
 
@@ -29,12 +31,19 @@ func newTerminalManager() (screens, error) {
 	return procScreens{m}, nil
 }
 
+// screensDir is where this enrollment's screens are recorded: the default's
+// where they always were, so an update adopts the screens it left running, and
+// a named profile's beside that profile's own config.
 func screensDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "cheese", "screens"), nil
+	dir := filepath.Join(base, "cheese")
+	if root := place.CurrentRoot(); root != place.Root {
+		dir = filepath.Join(dir, "profiles", path.Base(root))
+	}
+	return filepath.Join(dir, "screens"), nil
 }
 
 // procScreens is procscreen, seen as screens.

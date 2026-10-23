@@ -55,9 +55,14 @@ export interface Thread {
   created_by?: string
   created_at?: string
   root?: Block | null
+  /** 它挂着的那条消息一起发出去的附件（图片、文件）：留在主线里，画这段对话最上面
+   *  那条消息时，也按主线的样子画在它下面。还没读回来、或手上只有预览时没有这一项。 */
+  files?: Block[]
   /** 这条支线正在和它说话的 AI 队友（席位 handle）：最近被叫来的那位，还在频道里时。
    *  没人叫过、或它已离开频道时是 null。在这里不 @ 任何人说的话就是说给它的。 */
   teammate?: string | null
+  /** 这条支线已经原地转成了任务：任务的 id，就是支线自己的 id。还没转是 null。 */
+  task?: string | null
 }
 
 /** 频道概览「支线」那一页的一行。 */

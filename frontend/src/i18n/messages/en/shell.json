@@ -36,8 +36,8 @@
     "ok": "OK"
   },
   "topicSelector": {
-    "label": "Add topics",
-    "placeholder": "Search topics or create one"
+    "label": "Add tags",
+    "placeholder": "Search tags or create one"
   },
   "notFound": {
     "text": "This page doesn’t exist",
@@ -47,14 +47,13 @@
     "actionFailed": "Something went wrong",
     "teamLockedBy": "This team is locked: it’s taking part in {tasks}",
     "teamLocked": "This team is locked, so its members can’t be changed",
-    "noPermission": "You don’t have permission to do this",
+    "noPermission": "This action needs a permission this account doesn't have",
     "sessionExpired": "Your session expired. Sign in again",
-    "network": "Network request failed",
-    "server": "Server error"
+    "network": "Couldn't connect. Check your network and try again",
+    "server": "The service couldn't handle this request. Try again later"
   },
   "agentDefaultName": "Cheese",
   "restore": {
-    "restoring": "Restoring your session…",
     "unreachable": "Can’t reach the server to confirm your sign-in",
     "unreachableHint": "It retries automatically when the network is back; you can also retry now.",
     "retry": "Retry",

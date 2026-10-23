@@ -1,19 +1,19 @@
 <script setup lang="ts">
-// 输入框下面那一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是唯一的
-// 实心按钮，其余一律是安静的图标。
+// 输入框下面那一行：左边「+」，右边依次是麦克风、AI 队友头像、发送。
 //
-// 从 `RoomComposer.vue` 里拆出来的（#2143）。它只吃 props、只往上发事件：挑文件、
-// 挑照片、发送、开关召唤，四件事都不在这里决定。
+// 桌面和手机是同一个结构，只是尺寸不同。左边是往这条消息里放东西的入口——上传文件、
+// 照片或视频、清单、提醒、键盘快捷键都收在「+」里；右边是「这条怎么发出去」：说一段、
+// 交给谁、发。麦克风挨着发送，录音时录音条从它的位置往左展开（外面的 `voice` 插槽），
+// 发送键原地变成 ✓，按下和说完都在右下角这一块，手机上拇指正好够得着。
 //
-// 位置负责表达语义：左边是「这条消息本身」的动作（贴什么上去），右边是「它会怎么
-// 发出去」（谁在跑、叫不叫芝士、发）。话题级的设置——谁在跑、在哪跑——由外面从
-// `chips` 插槽交进来，这一行不必认识算力池。
+// 发送是这一行唯一的实心按钮，其余一律是安静的图标。
 //
-// 手机上这一行放不下每一颗：清单、提醒收进一颗 ⋯，从底部升起一个面板
-// （设计系统 §10.4，`AdaptiveMenu`）。附件和照片留在外面，它们是最常点的。
+// 从 `RoomComposer.vue` 里拆出来的（#2143）。它只吃 props、只往上发事件：挑文件、发送、
+// 录音，几件事都不在这里决定。交给谁那颗头像由外面从 `summon` 插槽交进来。
 import type { MenuAction } from '@/components/common/menuAction'
+import type { VoiceState } from '@/composables/useVoiceInput'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, useSlots } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
@@ -28,48 +28,51 @@ const props = defineProps<{
   uploading: boolean
   /** 现在能不能发（有字或者有附件）。 */
   canSend: boolean
-  /** 桌面上不给「照片」那一颗——那儿贴一张截图或者拖进来就完事了。 */
+  /** 「+」里有没有「照片或视频」——桌面上贴一张截图或者拖进来就完事了。 */
   showImagePicker: boolean
   /** 回车是发送（触摸屏上是换行），这一行的间距跟着它走。 */
   enterSends: boolean
-  /** 界面导览能指「交给芝士」这颗按钮（见 RoomComposer 的 `guided`）。 */
+  /** 界面导览能指发送键（见 RoomComposer 的 `guided`）。 */
   guided?: boolean
-  /** 和芝士私聊：每条都是说给它听的，没有「交给它」这颗按钮。 */
-  alwaysSummon: boolean
-  /** 这条消息现在叫不叫它。读的是正文，不是一个单独存着的开关值。 */
-  summonOn: boolean
-  /** 这个房间的芝士是谁，现在知道了吗。名册还没到时这颗按钮关着。 */
-  summonReady: boolean
-  agentName: string
-  /** 能不能在这儿发一张清单（房间给了发清单的路才有这一颗）。 */
+  /** 能不能在这儿发一张清单（房间给了发清单的路才有这一项）。 */
   canChecklist?: boolean
-  /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
+  /** 「提醒我」那一项。房间还没定下来（没有话题）时不给。 */
   canRemind?: boolean
-  /** 窄屏：清单、提醒收进一颗 ⋯。 */
-  collapseExtras?: boolean
+  /** 有没有麦克风这一颗（这个房间能语音输入）。 */
+  canVoice?: boolean
+  /** 录音进行到哪一步：录着时发送键是 ✓，整理中转圈。 */
+  voice?: VoiceState
+  /** 刚说进来一段：能换成哪一种写法（`raw` 原话 / `polished` 整理后的）；没有就是 null。 */
+  voiceSwap?: 'raw' | 'polished' | null
+  /** 这里不收文件（题目页问芝士）：「+」不画。 */
+  noFiles?: boolean
+  /** 「+」里传文件那一项的字（芝士面板走的是另一条上传，限额不同）；不给就是频道的那句。 */
+  filesLabel?: string
+  /** 对方正在答（芝士面板）：发送键换成停止。 */
+  busy?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'files', files: File[]): void
-  (e: 'pick-files'): void
-  (e: 'pick-images'): void
   (e: 'checklist'): void
-  (e: 'toggle-summon'): void
   (e: 'remind'): void
   (e: 'send'): void
+  /** 录着的时候按了发送键那个位置上的 ✓：说完了。 */
+  (e: 'voice-done'): void
+  /**
+   * 麦克风：`tap` 点一下开始，`hold` 按住开始（带按着的那个指针和按下时的横坐标），
+   * `release` 按住之后松手，`cancel` 系统收走了这个指针。
+   */
+  (e: 'voice', how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number, x?: number): void
+  (e: 'voice-swap'): void
+  (e: 'stop'): void
 }>()
+
+const slots = useSlots()
+const voiceOpen = computed(() => !!props.voice && props.voice !== 'idle')
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const imageInput = ref<HTMLInputElement | null>(null)
-
-function pickFiles() {
-  fileInput.value?.click()
-}
-
-// 手机上单开相册入口，允许照片和视频。桌面上仍用附件选择或拖入。
-function pickImages() {
-  imageInput.value?.click()
-}
 
 function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
@@ -77,10 +80,30 @@ function onFilePicked(e: Event) {
   input.value = '' // allow re-picking the same file
 }
 
-// 清单、提醒：桌面上是两颗图标，手机上是 ⋯ 里的两行。只剩一样时不收，
-// 一颗 ⋯ 里只有一行，比那一颗本身还多点一下。
-const extras = computed<MenuAction[]>(() => {
-  const list: MenuAction[] = []
+// 触屏上没有键盘，「键盘快捷键」那一项在那儿是一句空话。按输入方式判断，不按视口宽度
+// （和 useChatRowActions 同一条判据）：插上鼠标或触控板的平板，`hover: none` 不再匹配，它自己回来。
+const touchQuery = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const touchOnly = ref(!!touchQuery?.matches)
+useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
+
+const plusOpen = ref(false)
+const plusActions = computed<MenuAction[]>(() => {
+  const list: MenuAction[] = [
+    {
+      key: 'files',
+      label: props.filesLabel ?? t('work.room.composer.attachFiles'),
+      icon: 'mdi-paperclip',
+      onSelect: () => fileInput.value?.click(),
+    },
+  ]
+  // 手机上单开相册入口：那儿没有截图可贴、也没有东西可拖，从文件选择器里翻相册要绕好几步。
+  if (props.showImagePicker)
+    list.push({
+      key: 'photos',
+      label: t('work.room.composer.sendPhotos'),
+      icon: 'mdi-image-outline',
+      onSelect: () => imageInput.value?.click(),
+    })
   if (props.canChecklist)
     list.push({
       key: 'checklist',
@@ -95,53 +118,100 @@ const extras = computed<MenuAction[]>(() => {
       icon: 'mdi-bell-outline',
       onSelect: () => emit('remind'),
     })
+  if (!touchOnly.value)
+    list.push({
+      key: 'shortcuts',
+      label: t('global.shortcuts.open'),
+      icon: 'mdi-keyboard-outline',
+      divider: list.length > 1,
+      onSelect: openShortcutSheet,
+    })
   return list
 })
-const extrasCollapsed = computed(() => !!props.collapseExtras && extras.value.length > 1)
 
-// 触屏上没有键盘，「键盘快捷键」那一项在那儿是一句空话：手机上它本来收在 ⋯ 里，
-// 点开是一整页用不上的按键表。按输入方式判断，不按视口宽度（和 useChatRowActions
-// 同一条判据）：插上鼠标或触控板的平板，两种都不匹配 `hover: none`，它自己回来。
-const touchQuery = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
-const touchOnly = ref(!!touchQuery?.matches)
-useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.value = e.matches))
+// 麦克风：点一下是开始（再点 ✓ 结束），按住超过 250ms 是「按住说话」，松手就结束。
+// 指针一按下就抓住它，手指滑出按钮再松开也算松手。键盘的回车/空格走 click（detail 为 0），
+// 鼠标和手指走 pointer，两条路不会各算一次。
+const HOLD_MS = 250
+let holdTimer = 0
+let held = false
+// 按着这颗麦克风的那根手指。只认它：录音结束、动作行重新出现后，原来那根手指的松手
+// 会落在新画出来的麦克风上，它没按过，不能当成一次轻点又开一段录音。
+let downId: number | null = null
+function micDown(e: PointerEvent) {
+  if (e.button !== 0 || downId !== null) return
+  downId = e.pointerId
+  held = false
+  ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+  const pointer = e.pointerId
+  const x = e.clientX
+  holdTimer = window.setTimeout(() => {
+    held = true
+    emit('voice', 'hold', pointer, x)
+  }, HOLD_MS)
+}
+function micUp(e: PointerEvent) {
+  if (e.button !== 0 || e.pointerId !== downId) return
+  window.clearTimeout(holdTimer)
+  downId = null
+  const wasHeld = held
+  held = false
+  emit('voice', wasHeld ? 'release' : 'tap')
+}
+function micCancel(e: PointerEvent) {
+  if (e.pointerId !== downId) return
+  window.clearTimeout(holdTimer)
+  downId = null
+  const wasHeld = held
+  held = false
+  if (wasHeld) emit('voice', 'cancel')
+}
+function micKey(e: MouseEvent) {
+  if (e.detail === 0) emit('voice', 'tap')
+}
+onBeforeUnmount(() => window.clearTimeout(holdTimer))
 
-// 收进 ⋯ 时，键盘快捷键那颗也跟进去（桌面上那儿用得上），但不算进「要不要收」：
-// 触屏上收不收都只有 extras 那几项，一颗 ⋯ 里只剩一行的话比那一颗本身还多点一下。
-const menuExtras = computed<MenuAction[]>(() => [
-  ...extras.value,
-  ...(touchOnly.value
-    ? []
-    : [
-        {
-          key: 'shortcuts',
-          label: t('global.shortcuts.open'),
-          icon: 'mdi-keyboard-outline',
-          onSelect: openShortcutSheet,
-        },
-      ]),
-])
-
-// 那颗按钮上的字。「交给谁」是这颗按钮的全部意思，所以名字在哪儿都写着；名字长了
-// 由 CSS 截断，不换一个字。
-const summonText = computed(() => ({
-  label: t('work.room.composer.summon', { name: props.agentName }),
-  on: t('work.room.composer.summonOn', { name: props.agentName }),
-  off: t('work.room.composer.summonOff', { name: props.agentName }),
-}))
+function onSend() {
+  if (props.voice === 'recording') emit('voice-done')
+  else if (!voiceOpen.value) emit('send')
+}
+const sendLabel = computed(() => {
+  if (props.voice === 'recording') return t('work.room.composer.voice.done')
+  if (props.voice === 'thinking') return t('work.room.composer.voice.thinking')
+  return props.uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')
+})
+// 整理中不禁用：禁用的键会褪成灰色，而这一刻它是唯一在说「机器正在做」的地方，要保持琥珀色
+// 转圈。点它什么也不做（onSend 里拦着），读屏由 aria-disabled 说明。
+const sendDisabled = computed(() => {
+  if (voiceOpen.value) return false
+  return props.uploading || !props.canSend
+})
 </script>
 
 <template>
-  <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
-       唯一的实心按钮，其余一律是安静的图标。 -->
-  <div class="composer-actions d-flex align-center" :class="enterSends ? 'ga-1' : 'ga-4'">
+  <div
+    class="composer-actions"
+    :class="{
+      'composer-actions--touch': !enterSends,
+      'composer-actions--summon': !!slots.summon,
+      'composer-actions--voice': voiceOpen,
+    }"
+  >
     <!-- 这两个 input 是藏起来的，但**不能**用 display:none / visibility:hidden：
              iOS Safari 拒绝用脚本打开一个被隐藏掉的文件选择框，按钮点下去
              毫无反应。所以按 .visually-hidden 的老办法藏——留在布局里、只是
              看不见。旁边 components/common/FileSelect.vue 里也是这么藏的。
-             They are opened only by script from the visible buttons below, so
+             They are opened only by script from the menu below, so
              keep them out of the Tab order. -->
-    <input ref="fileInput" type="file" multiple class="visually-hidden" tabindex="-1" @change="onFilePicked" />
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      class="visually-hidden"
+      tabindex="-1"
+      :aria-label="t('work.room.composer.attachFiles')"
+      @change="onFilePicked"
+    />
     <input
       ref="imageInput"
       type="file"
@@ -149,132 +219,220 @@ const summonText = computed(() => ({
       multiple
       class="visually-hidden"
       tabindex="-1"
+      :aria-label="t('work.room.composer.sendPhotos')"
       @change="onFilePicked"
     />
-    <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
-           时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
-    <BaseButton
-      kind="ghost"
-      class="composer-icon"
-      icon="mdi-paperclip"
-      size="sm"
-      :title="t('work.room.composer.attachFiles')"
-      @click="pickFiles"
-    />
-    <!-- 手机上多一颗「照片」：那儿没有截图可贴、也没有东西可拖，从文件
-             选择器里翻相册要绕好几步。 -->
-    <BaseButton
-      v-if="showImagePicker"
-      kind="ghost"
-      class="composer-icon"
-      icon="mdi-image-outline"
-      size="sm"
-      :title="t('work.room.composer.sendPhotos')"
-      @click="pickImages"
-    />
-    <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
-      <template #activator="{ props: menu }">
-        <BaseButton
-          v-bind="menu"
-          kind="ghost"
-          class="composer-icon"
-          icon="mdi-dots-horizontal"
-          size="sm"
-          :title="t('work.room.composer.more')"
-          :aria-label="t('work.room.composer.more')"
-        />
-      </template>
-    </AdaptiveMenu>
-    <!-- 发一张自己的清单：也是「这条消息本身」，所以和附件站在左边。 -->
-    <BaseButton
-      v-if="canChecklist && !extrasCollapsed"
-      kind="ghost"
-      class="composer-icon"
-      icon="mdi-format-list-checks"
-      size="sm"
-      :title="t('work.room.checklist.compose')"
-      :aria-label="t('work.room.checklist.compose')"
-      @click="emit('checklist')"
-    />
-    <!-- 「提醒我」：到点给自己发一条通知。它说的是这个房间里的一件事，不是这条
-         消息本身，但和附件一样是安静的图标，不跟右边「怎么发出去」那几样并列。 -->
-    <BaseButton
-      v-if="canRemind && !extrasCollapsed"
-      kind="ghost"
-      class="composer-icon"
-      icon="mdi-bell-outline"
-      size="sm"
-      :title="t('work.room.reminder.open')"
-      :aria-label="t('work.room.reminder.open')"
-      @click="emit('remind')"
-    />
-    <!-- The visible way into the shortcut sheet: Enter / Shift+Enter / Cmd+Enter used
-         to live only in a title tooltip. Not on touch — there is no keyboard to press. -->
-    <BaseButton
-      v-if="!extrasCollapsed && !touchOnly"
-      kind="ghost"
-      class="composer-icon"
-      icon="mdi-keyboard-outline"
-      size="sm"
-      :title="t('global.shortcuts.open')"
-      :aria-label="t('global.shortcuts.open')"
-      @click="openShortcutSheet"
-    />
-    <v-spacer />
-    <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
-           「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
+    <div class="composer-actions__start">
+      <AdaptiveMenu v-if="!noFiles" v-model="plusOpen" :actions="plusActions" location="top start">
+        <template #activator="{ props: menu }">
+          <BaseButton
+            v-bind="menu"
+            kind="ghost"
+            class="composer-icon composer-plus"
+            :class="{ 'composer-plus--open': plusOpen }"
+            icon="mdi-plus"
+            size="sm"
+            :title="t('work.room.composer.more')"
+            :aria-label="t('work.room.composer.more')"
+          />
+        </template>
+      </AdaptiveMenu>
+      <!-- 刚说进来一段：换成原话 / 换回整理后的。底下那条细线走完就收起，正文一动也走开。 -->
+      <Transition name="voice-swap">
+        <button v-if="voiceSwap && !voiceOpen" type="button" class="voice-swap" @click="emit('voice-swap')">
+          <v-icon size="14">{{ voiceSwap === 'raw' ? 'mdi-undo-variant' : 'mdi-auto-fix' }}</v-icon>
+          {{ voiceSwap === 'raw' ? t('work.room.composer.voice.useRaw') : t('work.room.composer.voice.usePolished') }}
+          <i :key="voiceSwap" class="voice-swap__left" aria-hidden="true" />
+        </button>
+      </Transition>
+    </div>
+    <span class="composer-actions__spacer" />
+    <!-- 话题的状态（已归档）从外面交进来。它是状态不是动作，所以最安静。 -->
     <slot name="chips" />
-    <!-- 「交给芝士」：它不是一个自己存着状态的开关，它是正文的镜子——
-           点一下把 @ 写进输入框（你看得见、也能自己删），手打 @ 它就自己
-           亮。一个能和正文说不一样的话的开关（亮着、正文里却没有 @），会
-           让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
-    <button
-      v-if="!alwaysSummon"
-      v-guide-anchor="guided ? 'composer-summon' : ''"
-      type="button"
-      class="summon-btn"
-      :class="{ 'summon-btn--on': summonOn }"
-      :disabled="!summonReady"
-      :aria-pressed="summonOn"
-      :aria-label="summonText.label"
-      :title="summonOn ? summonText.on : summonText.off"
-      @click="emit('toggle-summon')"
-    >
-      <v-icon size="14">mdi-at</v-icon>
-      <span class="summon-btn-label" aria-hidden="true">{{ summonText.label }}</span>
-    </button>
-    <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
-           按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。
-           附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
-           为什么按不动（灰着不解释，看起来像是它坏了）。 -->
-    <BaseButton
-      v-guide-anchor="guided ? 'composer-send' : ''"
-      class="composer-send"
-      kind="primary"
-      icon="mdi-send"
-      size="sm"
-      :title="uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')"
-      :disabled="uploading || !canSend"
-      @click="emit('send')"
-    />
+    <div class="composer-actions__end">
+      <!-- 麦克风：说一段，整理成字落在光标处。挨着发送：录音条从这里往左长，✓ 就在旁边。 -->
+      <BaseButton
+        v-if="canVoice"
+        kind="ghost"
+        class="composer-icon composer-mic"
+        icon="mdi-microphone-outline"
+        size="sm"
+        :title="t('work.room.composer.voice.start')"
+        :aria-label="t('work.room.composer.voice.start')"
+        @pointerdown="micDown"
+        @pointerup="micUp"
+        @pointercancel="micCancel"
+        @click="micKey"
+        @contextmenu.prevent
+      />
+      <slot name="summon" />
+      <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。附件还在传时是
+           例外：这一刻发出去会少带附件，所以要等，并在 title 里说清为什么按不动。
+           录音时它原地变成 ✓（说完了），整理中转圈。 -->
+      <BaseButton
+        v-if="busy"
+        class="composer-send"
+        kind="primary"
+        size="sm"
+        icon="mdi-stop"
+        :title="t('work.room.composer.stop')"
+        :aria-label="t('work.room.composer.stop')"
+        @click="emit('stop')"
+      />
+      <BaseButton
+        v-else
+        v-guide-anchor="guided ? 'composer-send' : ''"
+        class="composer-send"
+        kind="primary"
+        size="sm"
+        :title="sendLabel"
+        :aria-label="sendLabel"
+        :disabled="sendDisabled"
+        :aria-disabled="voice === 'thinking' ? 'true' : undefined"
+        @click="onSend"
+      >
+        <span class="composer-send__face">
+          <v-icon :class="{ 'composer-send__icon--off': voiceOpen }" size="16">mdi-send</v-icon>
+          <v-icon :class="{ 'composer-send__icon--off': voice !== 'recording' }" size="18">mdi-check</v-icon>
+          <span
+            class="composer-send__spin"
+            :class="{ 'composer-send__icon--off': voice !== 'thinking' }"
+            aria-hidden="true"
+          />
+        </span>
+      </BaseButton>
+    </div>
+    <!-- 录音条：从麦克风的位置往左展开，盖住「+」，停在麦克风的右边缘，不盖头像和发送。 -->
+    <div class="composer-actions__voice">
+      <slot name="voice" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 /* 动作行的规矩，三条：
-   1. 一行一个高度。原来是 24 / 32 / 24 / 30 四种，这是它看起来像一堆零件的主因。
+   1. 一行一个高度：28px。
    2. 静止时谁也不画边框、不画底色——状态用墨色说，不用盒子说。
-   3. 整行只有一个实心块，就是发送。
-   位置负责表达语义：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。 */
+   3. 整行只有一个实心块，就是发送。 */
 .composer-actions {
+  --gap: 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
   min-height: 28px;
   margin-top: 2px;
+}
+.composer-actions__start,
+.composer-actions__end {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+}
+.composer-actions__spacer {
+  flex: 1;
 }
 .composer-icon,
 .composer-send {
   width: 28px;
   height: 28px;
 }
+.composer-send {
+  min-width: 0;
+  padding: 0;
+}
+/* 「+」打开时转成 ×：同一颗按钮，开和关是一件事的两头。 */
+.composer-plus :deep(.v-icon) {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.composer-plus--open {
+  background: var(--fill);
+  color: var(--ink);
+}
+.composer-plus--open :deep(.v-icon) {
+  transform: rotate(45deg);
+}
+/* 按住说话时长按不该弹出系统菜单、选中文字。 */
+.composer-mic {
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 录音条的位置：左边齐这一行，右边齐麦克风的右边缘（让出头像和发送）。 */
+.composer-actions__voice {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: calc(28px + var(--gap));
+  pointer-events: none;
+}
+.composer-actions--summon .composer-actions__voice {
+  right: calc(2 * (28px + var(--gap)));
+}
+.composer-actions__voice > :deep(*) {
+  pointer-events: auto;
+}
+
+/* 「还原原话」：安静的一颗小药丸，从左边一点点滑进来，走的时候快一档（§9.3）。
+   底下那条细线匀速走完 8 秒，告诉人它待多久。 */
+.voice-swap {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.voice-swap:hover {
+  background: var(--fill-2);
+  color: var(--ink);
+}
+.voice-swap__left {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--faint);
+  opacity: 0.6;
+  transform-origin: left;
+  animation: voice-swap-left 8s linear both;
+}
+@keyframes voice-swap-left {
+  to {
+    transform: scaleX(0);
+  }
+}
+.voice-swap-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.voice-swap-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.voice-swap-enter-from,
+.voice-swap-leave-to {
+  opacity: 0;
+  transform: translateX(-4px);
+}
+
 /* 能发了，灰色的键过渡成琥珀；按下去沉一下，不等松手。 */
 .composer-send {
   transition:
@@ -286,72 +444,47 @@ const summonText = computed(() => ({
 .composer-send:active:not(:disabled) {
   transform: scale(0.92);
 }
-/* 「交给芝士」。它和发送并排，但绝不能也是实心琥珀——一行里只有一个实心块，
-   那个位置是发送的。亮起来只改一条描边和墨色，形态不变。 */
-.summon-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0; /* 窄到下不去时缩自己，别把发送推出屏幕 */
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  font-size: 13px;
-  line-height: 1;
-  color: var(--muted);
-  cursor: pointer;
+/* 发送、✓、转圈叠在同一个位置，换的时候交叉淡化。 */
+.composer-send__face {
+  display: grid;
+  place-items: center;
+}
+.composer-send__face > * {
+  grid-area: 1 / 1;
   transition:
-    color var(--dur-quick) var(--ease-standard),
-    background-color var(--dur-quick) var(--ease-standard);
+    opacity var(--dur-quick) var(--ease-standard),
+    transform var(--dur-quick) var(--ease-standard);
 }
-.summon-btn:hover:not(:disabled) {
-  background: var(--fill);
-  color: var(--text);
+.composer-send__icon--off {
+  opacity: 0;
+  transform: scale(0.7);
 }
-.summon-btn:disabled {
-  cursor: default;
-  opacity: 0.5;
+.composer-send__spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: composer-send-spin 0.8s linear infinite;
 }
-/* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
-   一条 1px 的描边抢不过旁边那颗实心的发送按钮，所以开态是填充的：比 hover 深一档
-   的底、墨色的字。只变底色，不加粗——字一加粗按钮就变宽，开关一下整行跟着挪。
-   不用琥珀：琥珀是旁边那颗发送按钮的，两个琥珀的东西并排，人就分不出该点哪个。 */
-.summon-btn--on {
-  background: var(--line-2);
-  color: var(--ink);
-}
-.summon-btn--on:hover:not(:disabled) {
-  background: var(--line-2);
-  color: var(--ink);
-}
-/* 交给谁：名字一直写着。收掉名字的话，这颗按钮只剩一个 @ 图标，读起来是「插入一个
-   @」而不是「这条交给它处理」——手机上最缺的恰好就是这个信息。名字长了往回收
-   （省略号），不挤发送：这行是 flex 且不换行，名字不收，宽的就会被推到看不见的地方。 */
-.summon-btn-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 图标不跟着缩：缩掉一半的 @ 比没有更糟。 */
-.summon-btn :deep(.v-icon) {
-  flex: none;
+@keyframes composer-send-spin {
+  to {
+    rotate: 360deg;
+  }
 }
 
 /* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到
    44×44（同 style.css 的 .tap-target）。撑开的范围不能互相盖住，所以按钮之间拉开到
-   16px（模板里按输入方式换 ga-4）；这一行也长到 44px，不让它伸进上面的输入框。 */
+   16px；这一行也长到 44px，不让它伸进上面的输入框。 */
+.composer-actions--touch {
+  --gap: 16px;
+}
 @media (pointer: coarse) {
   .composer-actions {
     min-height: 44px;
   }
-  .summon-btn {
-    position: relative;
-  }
   .composer-icon::before,
-  .composer-send::before,
-  .summon-btn::before {
+  .composer-send::before {
     content: '';
     position: absolute;
     top: 50%;
@@ -359,6 +492,13 @@ const summonText = computed(() => ({
     width: max(100%, 44px);
     height: max(100%, 44px);
     transform: translate(-50%, -50%);
+  }
+}
+/* 关掉动画之后意思还在：细线停在满格，转圈换成静止的半圈。 */
+@media (prefers-reduced-motion: reduce) {
+  .voice-swap__left,
+  .composer-send__spin {
+    animation: none;
   }
 }
 </style>

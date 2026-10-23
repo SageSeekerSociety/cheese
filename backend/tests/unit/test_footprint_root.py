@@ -26,6 +26,7 @@ from app.domain.agent import (
     device_provider,
     environment_runner,
     machine_launcher,
+    place,
     resource_cleanup,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -36,14 +37,17 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 )
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
-    MODEL_SERVICE_FILE,
+    CLAUDE_LOGINS_DIR,
     SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
     launcher_path,
     session_platform_dirs,
 )
+from app.domain.device.login_kind import FIRST_LOGIN, LOGIN_ID
+from app.domain.machine import sandbox_home
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
@@ -84,8 +88,23 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     sandbox whose names never resolve."""
     assert resource_cleanup.SANDBOX_HOST == bootstrap.SANDBOX_HOST
     assert environment_runner.SANDBOX_CGROUP == sandbox_host.CGROUP.name
-    assert bootstrap.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
+    # The machines page reads each sandbox's memory from the same cgroups.
+    assert sandbox_home.SANDBOX_CGROUPS == sandbox_host.CGROUP
+    assert confinement.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
     assert confinement.SITE_ADDRESS == sandbox_host.SITE_ADDRESS
+    # The helper gives the executor's state its own quota where the install
+    # makes it; elsewhere a full home would leave the executor no room.
+    assert sandbox_host.STATE_DIR == f"{bootstrap.PLATFORM_DIR}/executor"
+    # The helper runs root's copies of the host tools, which the bootstrap
+    # installs: one it runs that is not installed fails every sandbox start.
+    assert sandbox_host.TOOLS == bootstrap.SANDBOX_TOOLS
+    ran = {
+        sandbox_host.IP,
+        sandbox_host.XFS_QUOTA,
+        sandbox_host.IPTABLES_SAVE[0],
+        sandbox_host.IPTABLES_RESTORE[0],
+    }
+    assert ran == {f"{bootstrap.SANDBOX_TOOLS}/{name}" for name in bootstrap.HOST_TOOLS}
 
 
 @pytest.mark.parametrize("total_mb", [2048, 4096, 8192, 16384, 65536])
@@ -145,9 +164,24 @@ def test_the_connector_logs_claude_code_in_where_the_backend_asks_about_it():
     declared = re.search(r'ClaudeLogin\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring the Claude Code login directory"
     assert declared.group(1) == CLAUDE_LOGIN_DIR
-    service = re.search(r'ModelService\s*=\s*"([^"]+)"', source)
-    assert service, "the connector stopped declaring the model service file"
-    assert service.group(1) == MODEL_SERVICE_FILE
+    keychain = re.search(r'ClaudeKeychain\s*=\s*"([^"]+)"', source)
+    assert keychain, "the connector stopped naming its migrated Keychain command"
+    assert keychain.group(1) == CLAUDE_KEYCHAIN_DIR
+    more = re.search(r'ClaudeLogins\s*=\s*"([^"]+)"', source)
+    assert more, "the connector stopped declaring where further logins go"
+    assert more.group(1) == CLAUDE_LOGINS_DIR
+    first = re.search(r'FirstClaudeLogin\s*=\s*"([^"]+)"', source)
+    assert first, "the connector stopped naming its first login"
+    assert first.group(1) == FIRST_LOGIN
+
+
+def test_the_connector_and_the_backend_agree_on_what_a_login_may_be_called():
+    """The backend reports and launches only the logins whose names it accepts;
+    one the connector makes and the backend refuses is a login nobody can use."""
+    source = (REPOSITORY / "cli/internal/claudecode/claudecode.go").read_text()
+    declared = re.search(r"loginID = regexp\.MustCompile\(`\^(.+)\$`\)", source)
+    assert declared, "the connector stopped declaring what a login may be called"
+    assert declared.group(1) == LOGIN_ID.pattern
 
 
 # What the sandbox CLI hangs off its own home: `Path.home() / "x"` and
@@ -214,6 +248,7 @@ def inside_the_footprint(text: str) -> None:
     somewhere a new one may be *written*.
     """
     root = f"$HOME/{footprint_root()}"
+    text = text.replace("${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root())
     for reference in re.findall(r"\$HOME/[A-Za-z0-9._/-]+", text):
         assert reference == root or reference.startswith(f"{root}/"), (
             f"{reference} is outside the footprint root, so `cheese uninstall` "
@@ -263,6 +298,23 @@ def test_the_teardown_looks_where_the_launcher_built():
         inside_the_footprint("$HOME" + str(path).removeprefix(str(machine_home)))
 
 
+def test_the_teardown_archives_the_harness_sessions_where_the_launcher_put_them(
+    tmp_path,
+):
+    """Codex's and pi's session files are under the state directory the
+    launcher names; a teardown that looks one directory over keeps none of
+    them, and says nothing."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    for harness, inside in (("codex", "codex/sessions"), ("pi", "sessions")):
+        state = machine_launcher.state_dir(project, resource, harness, "cheese")
+        built = state.replace(
+            "$HOME/" + place.ROOT_PLACEHOLDER, str(tmp_path / ".cheese")
+        )
+        (Path(built) / inside).mkdir(parents=True)
+    kept = resource_cleanup.harness_sessions(tmp_path, project, resource)
+    assert {name.split("/")[0] for _path, name in kept} == {"codex", "pi"}
+
+
 # Where the launch script puts something on the machine. Two shapes, because a
 # shell write verb takes its target at either end: right after the verb for a
 # redirection or a `mkdir -p`/`touch`/`tee`, and at the far end of the line for
@@ -302,7 +354,9 @@ def test_the_launcher_installs_only_inside_the_footprint():
     fails when that happens: the room launches, works, and leaves its files on
     a machine whose owner has been told the platform is gone.
     """
-    script = machine_launcher.launch_script(command="$AGENT")
+    script = machine_launcher.launch_script(command="$AGENT").replace(
+        "${CHEESE_PROFILE_ROOT:-.cheese}", footprint_root()
+    )
     written = launcher_write_points(script)
     assert written, "the launcher stopped writing anything under the home"
     for directory in written:

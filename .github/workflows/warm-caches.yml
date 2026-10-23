@@ -1,21 +1,28 @@
 name: Warm dependency caches
 
-# Required CI runs in pull requests and the merge queue, never on main. A cache
-# saved from a pull-request or merge-queue ref is visible to that ref alone,
-# while one saved on main is visible to every ref, so the suites only restore
-# and this workflow is the one place their dependency caches are saved. Each
+# Required CI's suites run on pull requests and main pushes, and in both they
+# only restore caches. A cache saved from a pull-request ref is visible to that
+# ref alone, while one saved
+# on main is visible to every ref, so this workflow is the one place their
+# dependency caches are saved. Each
 # job installs dependencies the way its suite does, under the suite's exact
 # key, and runs no tests. A key that already exists is left as it is.
 #
 # Keys, and the suites that restore them:
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
 #   npm-harness-pins-*                 test.yml, harness-contract.yml
+#   harness-bins-v2-*                  test.yml (its arm64 shards)
+#   apt-debs-v1-*                      test.yml (its arm64 shards)
 #   pre-commit uv (setup-uv inputs)    repo-guards.yml
 #   npm-remote-execution-*             mcp-contract.yml, mcp-equivalence.yml
 #   go-*                               cli.yml
 #   pnpm-hosted-v2-*                   frontend.yml
 # Changing a key or an install step in one of those suites means changing it
 # here in the same PR.
+#
+# The `plan` job reads the push's own commit range and skips the jobs whose
+# dependency did not move, so a guard-only push starts one runner instead of
+# six. Anything it cannot establish starts all six.
 on:
   push:
     branches: [main]
@@ -25,12 +32,20 @@ on:
       - backend/app/domain/agent/harness/claude_code/device_launch.py
       - backend/app/domain/agent/harness/claude_code/remote_execution/client.py
       - backend/app/domain/agent/harness/codex/**
+      # The pi pin: the tarball in `harness-bins-*` is the build this version
+      # names, so a bump here has to re-warm that key the same way a Claude
+      # Code or Codex bump re-warms `npm-harness-pins-*`.
+      - backend/app/domain/agent/harness/pi/launch.py
       - scripts/remote_execution/package-lock.json
       - cli/go.mod
       - cli/go.sum
       - frontend/pnpm-lock.yaml
       - frontend/package.json
       - .github/workflows/warm-caches.yml
+      # The selector and its test: a change to either can change which jobs a
+      # push warms, so it re-plans against everything.
+      - .github/scripts/warm-cache-plan.py
+      - .github/scripts/test_warm_cache_plan.py
   # Re-saves a key that eviction removed while no dependency changed.
   schedule:
     - cron: "17 3 * * *"
@@ -39,14 +54,61 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: warm-caches
-  cancel-in-progress: true
-
 jobs:
+  # Planning costs seconds; every job below waits on it. There is no
+  # workflow-wide concurrency group: one arriving push must not cancel the
+  # half of the previous push's warm that is still useful, and a job-level
+  # group cannot be named after `github.job` (it is not available there), so
+  # each job spells out its own domain.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: warm-caches-plan-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      backend: ${{ steps.plan.outputs.backend }}
+      harness_bins: ${{ steps.plan.outputs.harness_bins }}
+      guards: ${{ steps.plan.outputs.guards }}
+      remote_execution_npm: ${{ steps.plan.outputs.remote_execution_npm }}
+      go: ${{ steps.plan.outputs.go }}
+      pnpm: ${{ steps.plan.outputs.pnpm }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The pushed commit is all the checkout has to give; the base comes
+          # from the fetch below, which is also where its absence is noticed.
+          fetch-depth: 1
+
+      # Fetching by raw SHA asks for the commit, not a ref, and the server may
+      # refuse it. The planner reads the failure as "cannot establish a base"
+      # and selects everything, so this step must not fail the job first.
+      - name: Fetch the push's base commit
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Plan the dependency domains this push invalidated
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/warm-cache-plan.py
+
   backend:
+    needs: plan
+    # `always()` is what makes a failed plan run this job: its outputs are then
+    # empty, which is not the literal `false`, so the domain still warms.
+    if: always() && !cancelled() && needs.plan.outputs.backend != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: warm-caches-backend-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -92,9 +154,142 @@ jobs:
           read -r -a pinned_packages <<< "$packages"
           npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
 
+  # The unpacked tools test.yml's shards put on PATH, under the key they
+  # restore. This is the one job here that is not on ubuntu-latest: the shards
+  # run on arm64 (test.yml's `runner` input) and what gets cached is native —
+  # the npm packages carry platform binaries, pi's tarball is built per
+  # platform — so a directory unpacked on x64 is one the shards can never use.
+  #
+  # `npm-harness-pins-*` is here for the same reason: the key the `backend` job
+  # above saves has x64 in it, so the shards' restore of that key never
+  # matched, and every one of them pulled both packages from the registry on
+  # every run.
+  harness-bins:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.harness_bins != 'false'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    concurrency:
+      group: warm-caches-harness-bins-${{ github.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: true
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.13
+          uv sync --frozen --all-extras
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+
+      - name: Resolve pinned harness versions
+        id: harness-pins
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          pins = written()
+          print("key=" + "-".join(pins[name].pinned_version for name in (CLAUDE_CODE, CODEX, PI)))
+          PY
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
+        with:
+          # An absolute path under $HOME, so a shard that restores it lands on
+          # the same one this job unpacked into. $RUNNER_TEMP cannot be used
+          # here: it names this run's own directory, not a path a later run can
+          # ask for.
+          path: ~/.cache/cheese-harness-bins
+          # Match the shards by build versions, independent of launcher edits.
+          key: harness-bins-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.harness-pins.outputs.key }}
+
+      # The unpacking test.yml does on a miss, so the cache holds exactly what
+      # a shard would have produced on its own. It runs only when this key had
+      # nothing to restore, which is also the condition actions/cache saves
+      # under: leaving an existing key alone is what stops this job from
+      # overwriting a cache the shards are already reading.
+      - name: Unpack the pinned harness binaries
+        if: steps.harness-bins.outputs.cache-hit != 'true'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
+
+      # The .deb files of the tools test.yml's arm64 shards install, under the
+      # key they restore (test.yml: "Name the cached tool packages"). The image
+      # version is in the key, so a runner image update starts a new one, which
+      # the daily run here fills. Changing the package list means changing it
+      # in both places.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: apt-debs-cache
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+      - name: Download the tool packages
+        if: steps.apt-debs-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs" \
+            .github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          ls "$HOME/.cache/cheese-apt-debs"
+
   guards:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.guards != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: warm-caches-guards-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -108,23 +303,39 @@ jobs:
         run: uvx pre-commit --version
 
   remote-execution-npm:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.remote_execution_npm != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: warm-caches-remote-execution-npm-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: npm-cache
         with:
           path: ~/.npm
           key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
+      # An exact hit here is the key that already exists, and actions/cache
+      # never replaces an existing key — so this job has nothing left to warm
+      # and reinstalling would only spend a runner. Partial and empty hits
+      # still install: those fill the key the suites will look for.
       - name: Install scripts/remote_execution the way mcp-contract.yml does
+        if: steps.npm-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
 
   go:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.go != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: warm-caches-go-${{ github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: cli
@@ -135,6 +346,7 @@ jobs:
           go-version-file: cli/go.mod
           cache: false
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: go-cache
         with:
           path: |
             ~/go/pkg/mod
@@ -143,7 +355,13 @@ jobs:
           restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
       # Builds what cli.yml builds; `-run '^$'` compiles the test binaries and
       # runs none of them.
+      #
+      # On an exact hit this key is already stored and cannot be rewritten, so
+      # the warmed artifacts are the ones the suites will get anyway. It skips
+      # a compile that is not a gate (this workflow runs no tests); cli.yml
+      # still builds and vets the change itself.
       - name: Build the module, its vet targets and its test binaries
+        if: steps.go-cache.outputs.cache-hit != 'true'
         run: |
           go mod download
           go build ./...
@@ -153,8 +371,13 @@ jobs:
           go test -tags claudee2e -run '^$' ./e2e/
 
   pnpm:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.pnpm != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: warm-caches-pnpm-${{ github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: frontend
@@ -168,9 +391,11 @@ jobs:
       - name: Enable corepack
         run: corepack enable
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: pnpm-cache
         with:
           path: ${{ github.workspace }}/.pnpm-store
           key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
           restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Install dependencies the way frontend.yml does
+        if: steps.pnpm-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"

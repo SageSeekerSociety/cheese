@@ -14,19 +14,25 @@ import type { RefNames } from './refChip'
 import { isAgentBlock } from './authorship'
 import { docReadNow } from './docReadLoad'
 import { fileLabel, videoMimeOf } from './fileKind'
-import { plainRefs } from './refChip'
+import { plainRefs, toldByMessage } from './refChip'
 
 import { t } from '@/i18n'
 
 /** 附件块里装的是不是一张图。图要直接画出来，别的给一个下载入口。 */
-export function isImageBlock(block: Block): boolean {
+export function isImageBlock(block: Pick<Block, 'kind' | 'mime_type'>): boolean {
   return block.kind === 'attachment' && (block.mime_type || '').startsWith('image/')
 }
 
 // The raw endpoint only serves whitelisted suffixes. A video MIME can still
 // describe a download-only container such as AVI or MKV.
-export function isVideoBlock(block: Block): boolean {
+export function isVideoBlock(block: Pick<Block, 'kind' | 'content'>): boolean {
   return block.kind === 'attachment' && !!videoMimeOf(block.content)
+}
+
+/** What a quote cue needs from the message it quotes: a line, not the whole block. */
+export type QuoteSource = Pick<Block, 'kind' | 'author_type' | 'author' | 'content'> & {
+  meta?: Block['meta']
+  mime_type?: Block['mime_type']
 }
 
 /**
@@ -40,14 +46,22 @@ export function isVideoBlock(block: Block): boolean {
  * 步骤清单另说一句：正文里一步一行，折成一行之后只剩一串记号，认不出说的是什么，
  * 所以摘要不从正文取，取的是清单自己的结构（`checklistSnippet`）。
  */
-export function replySnippet(block: Block, maps: RefNames, max = 24): string {
+export function replySnippet(block: QuoteSource, maps: RefNames, max = 24): string {
   if (block.kind === 'attachment')
     return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
   const step = checklistSnippet(block)
   if (step !== null) return clip(step, max)
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
-  return clip(plainRefs(source, maps).replace(/\s+/g, ' ').trim(), max)
+  // A message's @ told its person, so its quote keeps the "@" its chip shows.
+  const names = block.kind === 'message' ? toldByMessage(maps) : maps
+  return clip(plainRefs(source, names).replace(/\s+/g, ' ').trim(), max)
+}
+
+/** 一条支线的标题：它挂着的那条消息，去掉开头点的名（「@芝士 」），只留说的事。 */
+export function threadHeading(block: Block, maps: RefNames): string {
+  const said = block.content.replace(/^(\s*<@[^>\s]+>)+\s*/, '')
+  return replySnippet({ ...block, content: said || block.content }, maps, 120)
 }
 
 function clip(text: string, max: number): string {
@@ -77,7 +91,7 @@ const RESULT_MARK = '✅'
  * 后端随着回复一起带上的（`replyBlock`）。迁移前的清单只有一个 `true`，结构得从正文
  * 一行一步里读回来（`legacySnippet`）。
  */
-function checklistSnippet(block: Block): string | null {
+function checklistSnippet(block: Pick<Block, 'meta' | 'content'>): string | null {
   const checklist = block.meta?.checklist
   if (checklist === true) return legacySnippet(block.content)
   if (!checklist || typeof checklist !== 'object') return null

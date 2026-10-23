@@ -11,7 +11,7 @@ import pytest
 
 from app.domain.review.models import AcceptStatus
 from app.domain.review.notes import NoteCode
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.models import TaskProgress, TaskStatus
 from app.domain.room_task.presentation import (
     Archived,
     Building,
@@ -20,26 +20,31 @@ from app.domain.room_task.presentation import (
     Delivering,
     Done,
     NeedsYou,
-    NotStarted,
     RoomFacts,
+    Run,
     TaskFacts,
+    owner_acts_on,
     room_presentation,
     task_presentation,
-    work_moving,
+    waiting_on,
 )
 from app.domain.topic.models import TopicStatus
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 JUST_NOW = NOW - timedelta(minutes=1)
+#: 做这条活的那位队友的座位，和它会话的两次跑。
+SEAT = "cheese-teammate"
+LAST_RUN = Run(SEAT, "claude-code", 3, 41)
+THIS_RUN = Run(SEAT, "claude-code", 3, 57)
+RUNNING = frozenset({THIS_RUN})
 
 
 def task(**kw) -> TaskFacts:
-    """A started task doing nothing at all, plus whatever the case is about."""
+    """An open task doing nothing at all, plus whatever the case is about."""
     base = {
         "status": TaskStatus.open,
         "accepted_at": None,
         "card": None,
-        "started": True,
     }
     return TaskFacts(**{**base, **kw})
 
@@ -68,25 +73,34 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
-    # 负责人还没点「开始」：还在讨论，芝士只聊、只写文档。
-    ("还在讨论", task(started=False), Column.not_started, NotStarted.discussing),
-    # 讨论时芝士在回话，也还是讨论：「运行中」说的是它在改项目。
+    # 芝士问了一个问题，下一步在人手上。
     (
-        "讨论中，芝士正在回话",
-        task(started=False, running=True),
-        Column.not_started,
-        NotStarted.discussing,
-    ),
-    # 讨论中芝士问了一个问题，下一步在人手上。
-    (
-        "讨论中，芝士在等回答",
-        task(started=False, awaiting_answer=True),
+        "芝士在等回答",
+        task(awaiting_answer=True),
         Column.needs_you,
         NeedsYou.awaiting_answer,
     ),
-    ("开始了，在跑", task(running=True), Column.building, Building.running),
-    # 开始了，此刻没有在跑的一轮，也还没递出改动。
-    ("开始了，停着", task(), Column.building, Building.started),
+    # 队友自己报的状态：没有会话在跑时，它说在做、在等、卡住了，看板就照说。
+    (
+        "队友说在做",
+        task(progress=TaskProgress.working),
+        Column.building,
+        Building.running,
+    ),
+    (
+        "队友说在等结果",
+        task(progress=TaskProgress.waiting),
+        Column.building,
+        Building.waiting,
+    ),
+    (
+        "队友说卡住了",
+        task(progress=TaskProgress.blocked),
+        Column.needs_you,
+        NeedsYou.blocked,
+    ),
+    # 队友还没说过什么，也还没递出改动。
+    ("停着", task(), Column.building, Building.started),
     # 递出去的那一版被退回，而没有一轮在改：停在人手上。
     (
         "改动被退回",
@@ -100,14 +114,27 @@ TASK_CASES = [
         Column.delivering,
         Delivering.gate_running,
     ),
-    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。
+    # 等采纳的卡按合并态镜像的「谁的活」分列 (#718)。必跑检查还在跑是 blocked：
+    # 结论还没出来，采纳点不了，等 CI。
     (
-        "CI 在跑",
+        "必跑检查还在跑",
         task(
-            card=card(AcceptStatus.pending, merge_state_word="unstable", merge_who="ci")
+            card=card(AcceptStatus.pending, merge_state_word="blocked", merge_who="ci")
         ),
         Column.delivering,
         Delivering.awaiting_checks,
+    ),
+    # unstable 是「可采纳」那一档：只剩非必跑检查还在跑，采纳按钮是亮的，球在
+    # 验收人手上。写成「等 CI」会让这张卡永远不亮黄灯（#4562 的现场）。
+    (
+        "只剩非必跑检查在跑，可以采纳",
+        task(
+            card=card(
+                AcceptStatus.pending, merge_state_word="unstable", merge_who="human"
+            )
+        ),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
     ),
     # 同一个「CI 红了」，平台已经派芝士去修 → 平台在推，不该催人。
     (
@@ -246,6 +273,101 @@ TASK_CASES = [
     ),
     # 什么都没留下就关了：不做了。
     ("没留结论就关了", task(status=TaskStatus.closed), Column.done, Done.closed),
+    # —— 队友的会话在跑（runner 报的事实）和它报的话：看是不是同一次跑 ——
+    # 它的会话在跑，它还没报过：在做，不是「开启」。
+    (
+        "会话在跑，队友没报过",
+        task(teammate_runs=RUNNING),
+        Column.building,
+        Building.running,
+    ),
+    # 它在上一次跑里说在等构建，构建跑完把它叫醒了：那句「在等」说的是上一次的事。
+    (
+        "上一次跑里说了在等，现在又在跑",
+        task(
+            progress=TaskProgress.waiting, progress_run=LAST_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 它在上一次跑里说卡住了，有人回了它、它又跑起来：在做，不再点负责人。
+    (
+        "上一次跑里说了卡住，现在又在跑",
+        task(
+            progress=TaskProgress.blocked, progress_run=LAST_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 改动被退回，它的会话在跑：它在改，球不在负责人手上。
+    (
+        "改动被退回，会话在改",
+        task(card=card(AcceptStatus.rejected), teammate_runs=RUNNING),
+        Column.building,
+        Building.running,
+    ),
+    # 它就在这一次跑里说的在等、卡住：说的时候它就在这一次里，照它说的。
+    (
+        "这一次跑里说了在等",
+        task(
+            progress=TaskProgress.waiting, progress_run=THIS_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.waiting,
+    ),
+    (
+        "这一次跑里说了卡住",
+        task(
+            progress=TaskProgress.blocked, progress_run=THIS_RUN, teammate_runs=RUNNING
+        ),
+        Column.needs_you,
+        NeedsYou.blocked,
+    ),
+    # 换了一个进程、日志从头记：上一个进程那一次和这一次 seq 相同，epoch 不同，
+    # 不是同一次。
+    (
+        "上一个进程里同号的那一次",
+        task(
+            progress=TaskProgress.blocked,
+            progress_run=Run(SEAT, "claude-code", 2, 57),
+            teammate_runs=RUNNING,
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 它的会话在跑，但平台没记下是哪一次：它在这一次
+    # 里说过什么，平台认不出来，在做。
+    (
+        "会话在跑、runner 没说是哪一次",
+        task(
+            progress=TaskProgress.blocked,
+            progress_run=THIS_RUN,
+            teammate_runs=frozenset(),
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 卡说下一步在谁手上，会话在跑盖不过它：它在答审阅人的话，任务还是在等审阅。
+    (
+        "等人采纳时会话在跑",
+        task(card=card(AcceptStatus.pending), teammate_runs=RUNNING),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
+    ),
+    # 题还没人回答：这一次问完就停，下一步在人手上。
+    (
+        "提问未回答时会话在跑",
+        task(awaiting_answer=True, teammate_runs=RUNNING),
+        Column.needs_you,
+        NeedsYou.awaiting_answer,
+    ),
+    # 关了就是结束：会话在跑也不把它说回在做。
+    (
+        "关闭后会话还在跑",
+        task(status=TaskStatus.closed, teammate_runs=RUNNING),
+        Column.done,
+        Done.closed,
+    ),
 ]
 
 
@@ -263,15 +385,44 @@ def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
 # —— 事实是从行上读出来的 ————————————————————————————————————————
 
 
-def test_being_started_is_read_off_the_row():
-    """「开始」从库里那一列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
-    发现这一位压根没接上，那样一来每个任务都会停在「讨论中」。"""
+def test_a_conclusion_is_read_off_the_row():
+    """结论从库里那一列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
+    发现这一位压根没接上。"""
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).started is False
-    assert facts_for_task(Task(started_at=JUST_NOW)).started is True
-    assert facts_for_task(Task(conclusion="查清了")).has_conclusion is True
+    assert facts_for_task(Task(), teammate_runs=None).has_conclusion is False
+    assert (
+        facts_for_task(Task(conclusion="查清了"), teammate_runs=None).has_conclusion
+        is True
+    )
+
+
+def test_what_the_teammate_said_is_read_off_the_row():
+    """队友报的状态从库里那一列读出来，每个读看板的地方都读到同一份（待我处理、
+    画布、停滞提醒，没有一处另去问轮次）。"""
+    from app.domain.room_task.models import Task
+    from app.domain.room_task.presentation import facts_for_task
+
+    assert facts_for_task(Task(), teammate_runs=None).progress is None
+    said = Task(
+        progress_state=TaskProgress.waiting,
+        progress_set_by=SEAT,
+        progress_run_harness="claude-code",
+        progress_run_epoch=3,
+        progress_run_seq=41,
+    )
+    facts = facts_for_task(said, teammate_runs=None)
+    assert facts.progress is TaskProgress.waiting
+    assert facts.progress_run == LAST_RUN
+
+
+def test_a_blocked_task_is_its_owners_to_act_on():
+    """队友说它卡住了，下一步在负责人手上，和检查红了清不掉、被退回没人改一样。"""
+    blocked = task_presentation(task(progress=TaskProgress.blocked), now=NOW)
+    assert owner_acts_on(blocked) is True
+    working = task_presentation(task(progress=TaskProgress.working), now=NOW)
+    assert owner_acts_on(working) is False
 
 
 # —— 一个房间的每一格 ————————————————————————————————————————————
@@ -330,7 +481,7 @@ def test_a_task_closed_on_its_last_accepted_step_reads_accepted():
     shown = task_presentation(
         task(
             accepted_at=JUST_NOW,
-            running=True,
+            progress=TaskProgress.working,
             status=TaskStatus.closed,
             card=card(AcceptStatus.pending),
         ),
@@ -341,33 +492,38 @@ def test_a_task_closed_on_its_last_accepted_step_reads_accepted():
 
 def test_a_task_that_goes_on_after_an_accepted_step_is_still_in_progress():
     """分步交付：前一步被采纳、任务还开着，它就还在做，不是「已采纳」。"""
-    running = task_presentation(
-        task(accepted_at=JUST_NOW, started=True, running=True), now=NOW
+    working = task_presentation(
+        task(accepted_at=JUST_NOW, progress=TaskProgress.working), now=NOW
     )
-    assert (running.column, running.phrase) == (Column.building, Building.running)
-    asked = task_presentation(
-        task(accepted_at=JUST_NOW, started=True, awaiting_answer=True), now=NOW
-    )
+    assert (working.column, working.phrase) == (Column.building, Building.running)
+    asked = task_presentation(task(accepted_at=JUST_NOW, awaiting_answer=True), now=NOW)
     assert asked.phrase == NeedsYou.awaiting_answer
 
 
-def test_the_live_fact_beats_the_paperwork():
-    """在跑压过卡：卡描述的是它可能马上就要顶掉的那一版。"""
-    shown = task_presentation(
-        task(running=True, card=card(AcceptStatus.pending)),
-        now=NOW,
-    )
-    assert (shown.column, shown.phrase) == (Column.building, Building.running)
+def test_a_card_waiting_on_its_reviewer_beats_what_the_teammate_said():
+    """一张在等验收人的卡点的是验收人，不管卡递上来之前队友报过什么：卡在等审，
+    任务就是等审。"""
+    for state in TaskProgress:
+        shown = task_presentation(
+            task(progress=state, card=card(AcceptStatus.pending)), now=NOW
+        )
+        assert (shown.column, shown.phrase) == (
+            Column.needs_you,
+            NeedsYou.awaiting_review,
+        )
+        assert waiting_on(shown, reviewer="bob", asked=None) == "bob"
 
 
-def test_an_unanswered_question_beats_the_live_fact():
-    """提问压过「在跑」—— 规矩 2 唯一的例外，而且是同一个道理。
-
-    进程可能还在，但「在跑」已经不是此刻成立的事实：它停在那个问题上等回答，不会
-    自己往下走。而看板显示「运行中」，正是让人不来看的那一句。
+def test_an_unanswered_question_beats_what_the_teammate_said():
+    """提问压过它说的「在做」：它停在那个问题上等回答，不会自己往下走。而看板显示
+    「在做」，正是让人不来看的那一句。
     """
     shown = task_presentation(
-        task(awaiting_answer=True, running=True, card=card(AcceptStatus.pending)),
+        task(
+            awaiting_answer=True,
+            progress=TaskProgress.working,
+            card=card(AcceptStatus.pending),
+        ),
         now=NOW,
     )
     assert (shown.column, shown.phrase) == (
@@ -433,11 +589,13 @@ def test_a_settled_card_stops_answering(status):
 
 @pytest.mark.parametrize("status", BOUNCED, ids=[str(s) for s in BOUNCED])
 def test_a_returned_task_nobody_is_reworking_waits_on_a_person(status):
-    """退回之后芝士在改，任务就在运行中；没有一轮在改、也没递新的，就停在人手上
+    """退回之后芝士说它在改，任务就在做；它没说、也没递新的，就停在人手上
     —— 不能还说「已开始」，好像有人在推。"""
     idle = task_presentation(task(card=card(status)), now=NOW)
     assert (idle.column, idle.phrase) == (Column.needs_you, NeedsYou.bounced)
-    reworking = task_presentation(task(card=card(status), running=True), now=NOW)
+    reworking = task_presentation(
+        task(card=card(status), progress=TaskProgress.working), now=NOW
+    )
     assert reworking.phrase == Building.running
 
 
@@ -483,17 +641,9 @@ def test_every_phrase_is_reachable():
     assert reached == every
 
 
-def test_a_task_not_started_shows_no_paperwork():
-    """还没开始的任务没有改动可审：即使有一张旧卡挂着，它也还在讨论。"""
-    shown = task_presentation(
-        task(started=False, card=card(AcceptStatus.pending)), now=NOW
-    )
-    assert (shown.column, shown.phrase) == (Column.not_started, NotStarted.discussing)
-
-
 def test_it_reads_nothing_but_the_facts_it_was_given():
     """纯函数：同样的事实 = 同样的答案，跑多少次都一样。"""
-    facts = task(running=True)
+    facts = task(progress=TaskProgress.working)
     assert task_presentation(facts, now=NOW) == task_presentation(facts, now=NOW)
 
 
@@ -598,79 +748,3 @@ def test_a_narrow_listed_room_folds_into_the_same_facts_as_the_orm_row():
     _, listed_facts = both(status=TopicStatus.archived, accepted_at=NOW)
     assert listed_facts.status == "archived"
     assert listed_facts.accepted_at == NOW
-
-
-# —— 侧栏那盏呼吸绿问的那件事 ————————————————————————————————————
-
-
-@pytest.mark.parametrize(
-    ("facts", "moving"),
-    [
-        # 有一轮在跑：就是它在往前走。
-        (task(running=True), True),
-        # 房间那一头同理（在跑的是它自己那条线）。
-        (room(running=True), True),
-        # 递出去了、走在交付链路上：等闸门 / 等 CI / 修检查 / 换基，都算 ——
-        # 侧栏上这几格长得一样，都是「有活正在往前走」。
-        (task(card=card(AcceptStatus.pending_gate)), True),
-        (
-            task(
-                card=card(
-                    AcceptStatus.pending, merge_state_word="unstable", merge_who="ci"
-                )
-            ),
-            True,
-        ),
-        (task(card=card(AcceptStatus.pending, note_code=NoteCode.checks_failed)), True),
-        (room(card=card(AcceptStatus.pending_gate)), True),
-        # 还没开工、在等人、做完了：都不算「正在往前走」。
-        (task(started=False), False),
-        (task(), False),
-        (task(card=card(AcceptStatus.pending)), False),
-        (task(card=card(AcceptStatus.rejected)), False),
-        (task(accepted_at=JUST_NOW), False),
-        (room(awaiting_answer=True), False),
-        (room(accepted_at=JUST_NOW), False),
-    ],
-    ids=[
-        "活在跑",
-        "房间在跑",
-        "等待闸门",
-        "等待 CI",
-        "芝士在修检查",
-        "房间在等闸门",
-        "还没开工",
-        "开始了但停着",
-        "等人采纳",
-        "被退回",
-        "交付完了",
-        "在等人回答",
-        "房间交付完了",
-    ],
-)
-def test_moving_means_a_turn_is_running_or_a_delivery_is_on_its_way(facts, moving):
-    """呼吸绿的判据只有这一处（`presentation.work_moving`）。
-
-    前面那些格子测的是「落在哪一列」，这一条单独钉「哪些格子算在往前走」：
-    列相同不等于这件事相同 —— `needs_you` 里「等人采纳」和「被退回」都不动，
-    而 `delivering` 里每一格都在动。
-    """
-    shown = (
-        task_presentation(facts, now=NOW)
-        if isinstance(facts, TaskFacts)
-        else room_presentation(facts, now=NOW)
-    )
-    assert work_moving(shown) is moving
-
-
-def test_a_room_counts_a_delivery_under_it_as_moving_even_when_it_is_idle():
-    """房间自己那条线闲着，名下的活却走在交付链路上 —— 也算这间房在走。
-
-    这一半是 `also` 带来的（`routes/topics._delivering_rooms`）：缺了它，一间
-    自己没在跑、名下的活正在等 CI 的房在侧栏上会一直不亮。
-    """
-    idle = room_presentation(room(), now=NOW)
-    assert work_moving(idle) is False
-    assert work_moving(idle, also=True) is True
-    # 反过来说不出话（None 已经在调用方那层挡掉了，这里只确认它也认得）。
-    assert work_moving(idle, also=False) is False

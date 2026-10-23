@@ -11,16 +11,19 @@
 // 的 stores），这一层据此重读最近一次编辑和修改建议的理由。
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
+import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
+import type { MentionMember } from '../lib/expandMentions'
 import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getDocNodes } from '../api'
+import { AgentChangesApi } from '../api/agentChanges'
 import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
-import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
+import { applyDocEdits, getNotifiedMentions, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
 import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
@@ -31,12 +34,14 @@ import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+import { useDocLinks } from './useDocLinks'
+import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
-export interface PanelDocument {
+export interface PanelDocument extends AuthoredDocument {
   id: string
   projectId: string
   title: string
@@ -61,13 +66,23 @@ export interface PanelDocProps {
 /** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
 export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 
-/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
-export function usePanelDoc(props: PanelDocProps) {
+/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。
+ *
+ *  `mentionPool` 是评论发送前把「@名字」认成人用的那份候选（备注名、原名、handle）；
+ *  由接线外壳给，因为那份名册只有它读得到（`usePanelDocWiring`）。不给时只认 AI 队友，
+ *  和加这一条之前一样。 */
+export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMember[]) {
   const AUTHOR = myHandle()
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
   const collab = useDocCollab(() => documentId.value)
+  // 我存回的一版 @ 了打不开这份文档的人：问我要不要把他们加进频道（和发消息一样）。名字
+  // 由画的那一层按名册读，这里只记 handle。
+  const mentionOutside = useMentionOutside({ place: () => documentId.value, nameOf: (handle) => handle })
+  watch(collab.mentionedOutside, (outside) => {
+    if (outside) mentionOutside.offer({ mentioned_outside: outside })
+  })
 
   let disposed = false
   let documentSequence = 0
@@ -97,6 +112,25 @@ export function usePanelDoc(props: PanelDocProps) {
   // 最近一次编辑（谁、什么时候）：顶栏左边那一句，跟着每一次存回重读。
   const lastEdit = ref<{ actor: string; at: string } | null>(null)
   let lastEditSequence = 0
+  // 正文 @ 到并通知过谁：只有他们的名字画成 @chip。刚存的那一版可能刚通知了一个人，
+  // 所以跟着每一次存回重读。
+  // 正文里有了 @ 才去读（画的那一半说一声），之后每次存回跟着重读。
+  const notifiedMentions = ref<string[]>([])
+  let notifiedSequence = 0
+  let notifiedWanted = false
+  async function loadNotifiedMentions(did: string) {
+    const sequence = ++notifiedSequence
+    const told = await getNotifiedMentions(did)
+    if (disposed || documentId.value !== did || sequence !== notifiedSequence) return
+    notifiedMentions.value = told
+  }
+
+  /** 正文里出现了 @：读这份文档通知过谁。 */
+  function fetchNotifiedMentions() {
+    const did = documentId.value
+    notifiedWanted = true
+    if (did) void loadNotifiedMentions(did).catch(() => {})
+  }
 
   // ---- 读 ----
   async function loadSuggestionReasons(did: string) {
@@ -113,10 +147,17 @@ export function usePanelDoc(props: PanelDocProps) {
     if (did) void loadSuggestionReasons(did).catch(() => {})
   }
 
-  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
+  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到；
+      人也一样 —— 备注名不是名册上的名字，后端认不出来，写成字没人收到通知。
+
+      `broadcast: false`：评论文档没有「所有人」可通知，候选菜单也不给这两个词
+      （`useCommentMentions`）。开着的话手打一个 `@all` 会变成谁都不通知的 `<@all>`，
+      正文里那个 @ 还不见了。 */
   function withMentions(content: string): string {
     const handle = props.agentHandle
-    return handle ? expandMentions(content, [{ handle, label: props.agentName }]) : content
+    const pool: MentionMember[] = [...(mentionPool?.() ?? [])]
+    if (handle) pool.unshift({ handle, label: props.agentName })
+    return pool.length ? expandMentions(content, pool, [], { broadcast: false }) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */
@@ -127,6 +168,13 @@ export function usePanelDoc(props: PanelDocProps) {
   function toggleEditable() {
     if (collab.readOnly.value) return
     wantsEditable.value = !wantsEditable.value
+  }
+
+  // 建议模式（修订）：自己切的；只能提建议的人（导师）一直在里面。
+  const wantsSuggesting = ref(false)
+  const suggesting = computed(() => collab.suggestOnly.value || wantsSuggesting.value)
+  function setSuggesting(on: boolean) {
+    wantsSuggesting.value = on
   }
 
   /** 文档的节点树：正文里那些段落在服务端那一侧的身份（id、出自哪一次活）。 */
@@ -168,6 +216,13 @@ export function usePanelDoc(props: PanelDocProps) {
     const did = documentId.value
     if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
     return applyDocEdits(did, edits)
+  }
+
+  /** 撤销（或恢复）AI 队友这一次回答对这篇文档的修改：服务端以自己的名义把那几处换回去。
+   *  一次回答对一篇文档的几处改动是一起撤销的，给第一处就够了。 */
+  function undoAgentChanges(changes: number[], redo: boolean) {
+    if (!changes.length) return Promise.resolve()
+    return redo ? AgentChangesApi.redo(changes[0]) : AgentChangesApi.undo(changes[0])
   }
 
   // 文档里引用的一张图拿什么画：按这份文档去取（读得了文档的人才看得到），路径落在
@@ -239,6 +294,9 @@ export function usePanelDoc(props: PanelDocProps) {
     reasonsWanted = false
     lastEdit.value = null
     lastEditSequence++
+    notifiedMentions.value = []
+    notifiedSequence++
+    notifiedWanted = false
     if (id) void loadLastEdit(id).catch(() => {})
   })
 
@@ -285,7 +343,13 @@ export function usePanelDoc(props: PanelDocProps) {
   watch([() => props.activityTick, collab.stores], () => {
     const id = documentId.value
     if (id) void loadLastEdit(id).catch(() => {})
+    if (id && notifiedWanted) void loadNotifiedMentions(id).catch(() => {})
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
+  })
+
+  const links = useDocLinks({
+    projectId: () => props.document?.projectId ?? props.topic?.project_id ?? null,
+    documentId: () => documentId.value,
   })
 
   onBeforeUnmount(() => {
@@ -293,6 +357,9 @@ export function usePanelDoc(props: PanelDocProps) {
   })
 
   return {
+    // 文档之间的链接：打 # 能引用的，和引用了它的地方
+    linkable: links.linkable,
+    backlinks: links.backlinks,
     // 协同文档
     session: collab.session,
     connection: collab.connection,
@@ -301,14 +368,20 @@ export function usePanelDoc(props: PanelDocProps) {
     renames: collab.renames,
     peers: collab.peers,
     readOnly: collab.readOnly,
+    suggestOnly: collab.suggestOnly,
+    suggesting,
     // 这一篇现在是什么状态
     editable,
     loading,
     errorMsg,
     // 这份文档
     documentId,
+    /** 我 @ 了打不开这份文档的人：要不要加进频道。 */
+    mentionOutside,
     suggestionReasons,
     fetchSuggestionReasons,
+    notifiedMentions,
+    fetchNotifiedMentions,
     // 动作
     commentAuthor: AUTHOR,
     sendComment: (content: string, quote: string) => {
@@ -336,10 +409,12 @@ export function usePanelDoc(props: PanelDocProps) {
       return did ? (await getDocumentAbout(did)).title ?? '' : null
     },
     toggleEditable,
+    setSuggesting,
     setError,
     fetchDocNodes,
     imageSrc,
     canvas,
     applyEdits,
+    undoAgentChanges,
   }
 }

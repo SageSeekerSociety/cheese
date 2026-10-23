@@ -1,7 +1,7 @@
 import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
-/** 登录的人该落在哪：上次待的项目；一个项目都没有、也没走过新手引导的人去引导；
- *  其余落在待办。
+/** 登录的人该落在哪：上次待的那个项目的上次待的地方；那个项目里没记过地方就落到项目
+ *  首页；一个项目都没有、也没走过新手引导的人去引导；其余落在待办。
  *
  *  根路由守卫用它，会话恢复层（components/common/SessionRestoreGate.vue）也用它
  *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
@@ -9,8 +9,8 @@ export async function landingForMember(): Promise<RouteLocationRaw> {
   const [
     { queryClient },
     { projectsQuery },
-    { workspaceProject },
-    { lastOpenedProjectId },
+    { workspaceProject, placeHref },
+    { lastOpenedProjectId, lastPlaceOf },
     { default: AccountService },
   ] = await Promise.all([
     import('@/query/client'),
@@ -23,7 +23,14 @@ export async function landingForMember(): Promise<RouteLocationRaw> {
     // 和左边栏读的是同一份：刚读过就不再问。
     const projects = await queryClient.fetchQuery(projectsQuery())
     const projectId = workspaceProject(projects, null, lastOpenedProjectId())
-    if (projectId) return { name: 'workspace-project', params: { projectId } }
+    if (projectId) {
+      // 手机把后台那一页从内存里收走之后，再打开不是回到原来那一页，而是从入口重新落
+      // 一次：落到上次待的那件任务/那个频道，才接得上「回到刚才那件事」。桌面 rail 上
+      // 的项目格子早就是这么落的（`destinations.ts`），落在项目首页等于多加一跳。
+      const place = lastPlaceOf(projectId)
+      if (place) return placeHref(projects.find((p) => p.id === projectId)?.slug || projectId, place)
+      return { name: 'workspace-project', params: { projectId } }
+    }
     // 走过引导（或跳过了）又退出、删光了项目的人不再被拉回引导：待办上有起步的路。
     if (!AccountService.user?.onboarded_at) return { name: 'welcome' }
   } catch {
@@ -129,12 +136,21 @@ export default {
       },
     },
     {
+      // 原来的「全部空间」页。空间只靠邀请码加入、没有公开浏览，它能做的事首页侧栏都在
+      // 做（加入的空间、用邀请码加入、新建空间、还没过审的申请），于是拿掉了；旧链接
+      // 回首页。
       path: 'spaces',
-      name: 'HomeSpaces',
-      component: () => import('@/views/spaces/Index.vue'),
+      redirect: { name: 'inbox' },
+    },
+    {
+      // 我建的空间还没过审时，侧栏那一行点进来是这份申请。
+      path: 'space-applications/:spaceId',
+      name: 'HomeSpaceApplication',
+      component: () => import('@/views/spaces/SpaceApplication.vue'),
       meta: {
-        titleKey: 'navigation.spaces',
+        titleKey: 'spaces.application.title',
         isFullPage: true,
+        backTo: 'HomeHub',
       },
     },
     {

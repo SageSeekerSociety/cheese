@@ -15,6 +15,8 @@ The rules, as a person would state them:
 
 import uuid
 
+import pytest
+
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -123,13 +125,14 @@ def test_a_document_naming_nothing_is_written_and_its_writer_told(client):
     assert not _warnings_naming(client.get(doc, headers=OWNER).json(), nothing)
 
 
-def test_an_agent_message_naming_nothing_gets_a_line_beside_it(client):
+@pytest.mark.parametrize("sigil", ["#", "@"], ids=["conversation", "member"])
+def test_an_agent_message_naming_nothing_leaves_a_warning_in_site(client, sigil):
     project = new_project(client)
     room = project["root_topic_id"]
     thread = in_thread(client, room, "owner")
     nothing = str(uuid.uuid4())
 
-    for content in (f"截图在 <#{thread}> 里", f"旧讨论在 <#{nothing}>"):
+    for content in (f"截图在 <#{thread}> 里", f"引用 <{sigil}{nothing}>"):
         sent = client.post(
             f"/topics/{room}/messages",
             json={"request_id": str(uuid.uuid4()), "content": content},
@@ -137,7 +140,12 @@ def test_an_agent_message_naming_nothing_gets_a_line_beside_it(client):
         )
         assert sent.status_code == 200, sent.text
 
-    blocks = client.get(f"/topics/{room}/blocks", headers=OWNER).json()["data"]["data"]
-    lines = [b["content"] for b in blocks if b["kind"] == "event"]
-    assert [line for line in lines if nothing in line]
+    site = client.get(f"/topics/{room}/transcript", headers=OWNER)
+    assert site.status_code == 200, site.text
+    lines = [
+        item["content"]
+        for item in site.json()["data"]["data"]
+        if item.get("run_record")
+    ]
+    assert len([line for line in lines if nothing in line]) == 1
     assert not [line for line in lines if thread in line]

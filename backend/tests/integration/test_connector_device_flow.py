@@ -8,13 +8,14 @@ human.
 import asyncio
 import socket
 import time
+import uuid
 
 import httpx
 import pytest
 import uvicorn
 
 from tests.conftest import seed_user
-from tests.integration.conftest import join_project_team, post_project
+from tests.integration.conftest import post_project
 
 
 def _login(client, handle: str) -> str:
@@ -30,7 +31,7 @@ def _bearer(token: str) -> dict:
 
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
-    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    post_project(client, json={"name": "P"}, owner="alice")
     token = _login(client, "alice")
 
     # 1. start — the client (frozen cli) gets a code + an approve link.
@@ -54,7 +55,6 @@ def test_full_device_flow_start_approve_poll(client):
         "/connector/connect",
         json={
             "device_code": code,
-            "project_id": project["id"],
             "device_name": "alice-studio",
         },
         headers=_bearer(token),
@@ -66,7 +66,7 @@ def test_full_device_flow_start_approve_poll(client):
     assert "agent_handle" not in approved
     # The human-chosen name won over the cli-proposed one (fixes an "unnamed" node).
     assert approved["device_name"] == "alice-studio"
-    assert approved["project_id"] == project["id"]
+    assert approved["team_id"] is not None
 
     # 4. poll after approval → durable token + id the cli persists.
     done = client.post("/connector/auth/device/poll", json={"device_code": code})
@@ -174,17 +174,23 @@ def test_device_code_is_committed_before_start_http_response():
 def test_the_human_door_creates_the_hosted_subtype(client):
     """Enrollment identifies human-owned supply; visibility is chosen per topic."""
     from app.api.request_deps import DbSession
-    from app.api.routes.connector import get_device_service
+    from app.api.routes.connector.devices import get_device_service
     from app.domain.device.service import DeviceService
     from app.domain.device.supply import Supply
 
     recorded: list[Supply] = []
 
     class Recording(DeviceService):
-        async def approve(self, code_value, *, owner_user_id, supply, name=None):
+        async def approve(
+            self, code_value, *, owner_user_id, team_id, supply, name=None
+        ):
             recorded.append(supply)
             return await super().approve(
-                code_value, owner_user_id=owner_user_id, supply=supply, name=name
+                code_value,
+                owner_user_id=owner_user_id,
+                supply=supply,
+                name=name,
+                team_id=team_id,
             )
 
     def _recording_service(db: DbSession) -> DeviceService:
@@ -239,37 +245,25 @@ def test_connect_requires_login(client):
     assert r.status_code == 401
 
 
-@pytest.mark.parametrize("member", [False, True])
-def test_project_binding_requires_membership_before_approval(client, member):
-    owner = _login(client, "binding-owner")
-    project = post_project(
-        client,
-        json={"name": "Private project"},
-        headers=_bearer(owner),
-        owner="binding-owner",
-    ).json()["data"]
+def test_removed_project_assignment_is_rejected_without_consuming_code(client):
     token = _login(client, "device-owner")
-    if member:
-        join_project_team(client, project["id"], "device-owner")
     code = client.post(
         "/connector/auth/device/start", json={"device_name": "test-device"}
     ).json()["device_code"]
     response = client.post(
         "/connector/connect",
-        json={"device_code": code, "project_id": project["id"]},
+        json={"device_code": code, "project_id": str(uuid.uuid4())},
         headers=_bearer(token),
     )
-    assert response.status_code == (200 if member else 403), response.text
+    assert response.status_code == 400, response.text
     polled = client.post(
         "/connector/auth/device/poll", json={"device_code": code}
     ).json()
-    assert polled["status"] == ("approved" if member else "pending")
-    if not member:
-        # A denied project binding must leave the enrollment usable.
-        retry = client.post(
-            "/connector/connect", json={"device_code": code}, headers=_bearer(token)
-        )
-        assert retry.status_code == 200, retry.text
+    assert polled["status"] == "pending"
+    retry = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(token)
+    )
+    assert retry.status_code == 200, retry.text
 
 
 def test_agent_ws_rejects_unknown_token(client):
@@ -312,7 +306,7 @@ def test_a_closed_device_link_records_who_hung_up(client, monkeypatch, caplog):
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
-    with caplog.at_level(logging.INFO, logger="app.api.routes.connector"):
+    with caplog.at_level(logging.INFO, logger="app.api.routes.connector.devices"):
         with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
             ws.close()
 
@@ -333,11 +327,11 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
     """#356 regression, against a real Postgres.
 
     The device control channel stays connected for the machine's whole uptime, and
-    its token check (``verify_token`` → the ``device_team`` read) runs on a
+    its token check (``verify_token`` → the ``device`` read) runs on a
     ``Depends(get_db)`` session. A get_db session injected into a WebSocket route is
     finalized only when the socket CLOSES — so unless the handler ends that read
     transaction before parking in its receive loop, the connection sits
-    ``idle in transaction`` for hours, holding an AccessShareLock on ``device_team``.
+    ``idle in transaction`` for hours, holding an AccessShareLock on ``device``.
     That lock made an ``ALTER TABLE`` (ACCESS EXCLUSIVE) on the device tables queue
     behind it until it timed out → site-wide brownout. Here we enrol a real device,
     open the control channel, and assert no such parked transaction exists while it
@@ -347,7 +341,7 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
     from sqlalchemy import text
 
     # Enrol a device the human-flow way so the durable token is real and its lookup
-    # runs the exact device_team read the leak parked.
+    # runs the device read that must end before the receive loop.
     owner = _login(client, "dave")
     code = client.post(
         "/connector/auth/device/start", json={"device_name": "daves-box"}
@@ -370,34 +364,33 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
-    async def _parked_on_device_team() -> int:
+    async def _parked_on_device() -> int:
         # Superuser test role → pg_stat_activity exposes other backends' query text,
-        # so this counts sessions frozen mid-`device_team` read (the leak's fingerprint,
-        # matching the 2.8h idle-in-transaction found on dev).
+        # Auth reads and last-seen writes must both finish before the socket waits.
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             n = await session.scalar(
                 text(
                     "SELECT count(*) FROM pg_stat_activity "
                     "WHERE datname = current_database() "
                     "AND state = 'idle in transaction' "
-                    "AND query ILIKE '%device_team%'"
+                    "AND query ILIKE '%device%'"
                 )
             )
             return int(n or 0)
 
     # Baseline: nothing parked before the socket exists.
-    assert asyncio.run(_parked_on_device_team()) == 0
+    assert asyncio.run(_parked_on_device()) == 0
 
     with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
         # The handshake has completed → the handler ran verify_token and is parked in
         # its receive loop. With the fix its auth transaction is already committed;
-        # without it the connection is idle-in-transaction on the device_team read.
-        parked = asyncio.run(_parked_on_device_team())
+        # without it the connection is idle-in-transaction on the device read.
+        parked = asyncio.run(_parked_on_device())
         ws.close()
 
     assert parked == 0, (
         f"the device control channel left {parked} session(s) idle-in-transaction on "
-        "the device_team read — the #356 leak that blocks device-table migrations"
+        "the device transaction — the #356 leak that blocks device-table migrations"
     )
     assert recovered == [device_id]
 

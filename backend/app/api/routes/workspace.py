@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.deps import get_chat_service
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.caller import may_access_project
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
@@ -21,10 +23,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.review import forge_clients
+from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
 from app.domain.room_task.services import TaskService
-from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
@@ -190,7 +193,9 @@ async def read_file_raw(
     )
 
 
-@router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])
+@router.put(
+    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_project_access)]
+)
 async def write_file(
     project_id: uuid.UUID,
     body: dict,
@@ -210,6 +215,12 @@ async def write_file(
     teammate is told before its next tool call to re-read the file.
     """
     await ProjectService(db).get_or_404(project_id)
+    await require_role(
+        db,
+        await resolver.resolve(project_id=project_id),
+        project_id,
+        Permission.edit_content,
+    )
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
     version = body.get("version") or None
@@ -235,7 +246,7 @@ async def write_file(
         await db.commit()
         if said is not None:
             line, told = said
-            await chat.notify_running_turn(row.id, told, blocks=[line.id])
+            await chat.notify_running_session(row.id, told, blocks=[line.id])
     return ok(
         {
             "path": path,
@@ -260,7 +271,12 @@ async def git_diff(
     return ok(
         {
             "diff": await ProjectFiles(
-                db, project_id, task, release_session=True, executor=execution.call
+                db,
+                project_id,
+                task,
+                release_session=True,
+                executor=execution.call,
+                compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }
     )
@@ -290,7 +306,7 @@ async def topic_work_summary(
     every open task in a busy channel took past the timeout on every visit.
     """
     await ProjectService(db).get_or_404(project_id)
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     one = (
         await TaskService(db).get(place.task_id) if place.task_id is not None else None
     )

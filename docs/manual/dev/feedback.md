@@ -38,7 +38,7 @@ covers:
 
 ## 提案：芝士举手，人决定 {#proposals}
 
-`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是话题里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
+`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
 
 **agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback_propose`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
 
@@ -51,14 +51,14 @@ covers:
 | 顺序 | 限流 | 判据 | 记忆存在哪 |
 | --- | --- | --- | --- |
 | 1 | 拒绝要有记忆 | 指纹在 `FeedbackProposalDismissal` 里 | 表 |
-| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 话题里的消息块 |
-| 3 | 每日配额 | 24 小时内这个话题的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
+| 2 | 指纹去重 | 24 小时内同一个指纹提过 | 频道里的消息块 |
+| 3 | 每日配额 | 24 小时内这个频道的卡达到 `settings.feedback_proposals_per_topic_per_day`（默认 2） | 同上 |
 
-指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个话题里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
+指纹是 `what_happened` + `repro` **归一化**（折空白、去标点、折大小写）后的 sha256 前 32 位十六进制。这两段为空时才退回去哈希 `title` + `problem`：两个都空的提案会共用空串的哈希，于是同一个频道里的第二张会被「这个问题刚提过」拒掉。指纹**挡不住换一种说法的重提**，那需要嵌入模型；日报配额是它漏掉的那些的兜底 —— 这层限制就这么强，写在这里免得有人把它读得更强。
 
 「一天」是滚动的 24 小时，不是自然日：自然日午夜清零，紧挨午夜的两分钟里可以提两条一样的。
 
-三道全是「先读后写」，所以 `check` 第一件事是拿话题级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
+三道全是「先读后写」，所以 `check` 第一件事是拿频道级事务锁（`pg_advisory_xact_lock`，键 `feedback-proposal:{topic_id}`），持到路由 commit。没有用 `(topic_id, fingerprint)` 唯一索引：指纹不是永久身份，24 小时窗口过了同一个问题可以正当地再提，唯一约束会把那一次变成 500。
 
 ## 谁能看见 {#visibility}
 
@@ -108,7 +108,7 @@ covers:
 
 谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
 
-领取走 `advance` 记「处理中」，所以已经修好、上线、不修复的，领了也不动它的状态。放弃只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好，详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮。
+领取走 `advance` 记「处理中」。已经办完的（`CLOSED_STATUSES` = 已修复 + 已上线 + 不修复）不接领取：回 409（`feedbackClaimClosed`），不改持有人、不写时间线——领取记的是「谁在修」，这几档已经没有要修的了，挂一个处理人只会让详情自相矛盾。同样也不接放弃：回 409（`feedbackReleaseClosed`），持有人保持原样；领取和放弃是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人，走管理端的改派（`patch_admin` 把 `assignee_handle` 置空），那是数据修正，不是放弃领取。放弃本身只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好（两者都要求状态没办完），详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮；办完且没人领着的，那一格不出现，有人领着的只显示处理人。
 
 ## agent 读反馈中心 {#agent-reads}
 
@@ -136,7 +136,7 @@ Fixes-feedback: FB-12, FB-15
 
 这一行要顶格写，和 git 的 trailer 一样；缩进的行算引用，不生效，所以在提交信息里举例说明这个写法时要缩进。`FB-` 前缀不能省：在 GitHub 上 `#12` 是第 12 号 issue 或 PR，`Fixes #12` 还会把那个 issue 关掉。行首的键大小写都认，同一行可以列多条。**写在提交信息里，不写在 PR 描述里**：main 是 squash 合并，squash 提交的正文是这个 PR 里各个提交的信息拼起来的，PR 描述进不了 main 的历史。
 
-测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），先通过 `advance` 记「已修复」，时间是那个 PR 的合并时间，再通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。合并时间取 PR 的 `merged_at`（部署那一步对每个提交查一次 `commits/{sha}/pulls`，所以工作流有 `pull-requests: read`）：squash 提交自己的时间是它进合并队列的时间，比真正合进 main 早十几分钟；没有 PR 的直推提交用它的提交时间。已经是「已修复」的（有人手动设过）不再记第二条。还停在「已收录」的（没人指派过），同一次查询拿到的 PR `created_at` 记成「处理中」，备注「PR #N 已打开」——PR 打开就是有人开始动它的时刻；直推提交没有这个时间，就不补。提交者收到的这条通知是有意的：修复上线就告诉提的人，和管理员手动改状态时一样。这一步没有推它的人（`by_handle` 为 NULL），时间线上这几步的 `note` 分别写「PR #N 已打开」「已由 PR #N 修复」「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
+测试环境的部署（`deploy-dev.yml`）在部署前记下正在跑的版本，最后一步（前面每一步都成功之后）用 GitHub 的 compare 取出「被替换的版本 → 这次的版本」之间的提交，交给正在跑的后端容器里的 `scripts/ship_feedback.py`。它按上面那行找到每条反馈（`shipping.py`），先通过 `advance` 记「已修复」，时间是那个 PR 的合并时间，再通过 `set_status` 推到 `deployed`——和管理员按按钮是同一条路，所以时间线照写、提交者的未读数照涨。合并时间取 PR 的 `merged_at`（部署那一步对每个提交查一次 `commits/{sha}/pulls`，所以工作流有 `pull-requests: read`）；没有 PR 的直推提交用它的提交时间。已经是「已修复」的（有人手动设过）不再记第二条。还停在「已收录」的（没人指派过），同一次查询拿到的 PR `created_at` 记成「处理中」，备注「PR #N 已打开」——PR 打开就是有人开始动它的时刻；直推提交没有这个时间，就不补。提交者收到的这条通知是有意的：修复上线就告诉提的人，和管理员手动改状态时一样。这一步没有推它的人（`by_handle` 为 NULL），时间线上这几步的 `note` 分别写「PR #N 已打开」「已由 PR #N 修复」「已由 PR #N 修复并上线」加 PR 链接，PR 号取自 squash 标题末尾的 `(#N)`，没有就链到提交。
 
 - 只读这次新增的提交：一条后来被重新打开的反馈，不会被一次不相干的部署改回去。下一个写了它编号的修复上线时，它会再被推一次。
 - 已经是 `deployed` 的不动（不写第二条时间线）；编号不存在或已删除的跳过，照样打一行日志。
@@ -164,13 +164,13 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 
 ## 每日分诊：定时规则带一批没人处理的反馈 {#triage}
 
-一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、人确认，结果交回给规则的主人。
+一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、存下来就在跑，结果交回给规则的主人。
 
 - **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，还停在「已收录」的就是没人碰过的。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。
-- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的提议成任务，由规则的主人开始，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线与未开始的任务](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
+- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
 - **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据），别处建或改成这样的规则会被拒：那里的队友领不了反馈。
-- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineFormDialog.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine_draft` 起草或直接调 `POST /topics/{id}/routines`。
+- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine_draft` 起草或直接调 `POST /topics/{id}/routines`。
 
 ## 栏位是过滤器，不是分区 {#tabs}
 
@@ -202,8 +202,8 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 ## 边界与坑 {#traps}
 
 - **两处判据会各自漂开。** `may_delete_comment` / `may_delete_feedback` 既在删除前问、又用来填 `can_delete`，只有一处的写法（两处各写一遍就是「按钮画得出来、点下去 403」）。客户端**从不**自己重推这条规则，按钮照 `can_delete` 画。
-- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被话题配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
+- **作者配额只算直接提交。** 每人每 24 小时 `settings.feedback_reports_per_author_per_day`（默认 30）条，且**删除的不减配额** —— 上限管的是「你在产出多少」，删掉一条不是买回额度的方法。提案卡路径不走这条：它已经被频道配额、指纹和「不用」的记忆挡过一遍，而它的作者是那个 agent，不是按发送的人。两处同样是先锁后数。
 - **`Block.meta` 是普通 JSON 列。** `mark_accepted` 整块写一个新 dict，就地改会被 SQLAlchemy 静默丢掉；症状是「同一个请求里生效、下一个请求就失效」。
-- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和话题锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
+- **接受用一把按卡命名的锁**（`feedback-proposal-accept:{block_id}`），和频道锁是两个命名空间。读 `meta` 必须在拿锁**之后**重新 SELECT，READ COMMITTED 下这条 SELECT 才看得见赢家提交的 `accepted_feedback_id`；反过来就是两条逐字相同、而人只按了一次发送的反馈。
 - **`hot` 计数和 `hot` 列表曾是两条规则。** 有人把「办完了」写成一个字面量 `!= resolved`，`deployed` 加进来时那份拷贝悄悄慢了一个状态。`CLOSED_STATUSES` 就是为这个存在的。
 - **提案卡是快照，正文不是。** 发送时正文取请求体（抽屉是预填的，人可以改完再发），房子（`topic_id` / `project_id`）取 URL 和卡 —— 客户端能说错的东西一律不采信。

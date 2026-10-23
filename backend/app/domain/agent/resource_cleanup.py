@@ -4,12 +4,15 @@
 # macOS's own 3.9 among them, which cannot evaluate `dict | None`.
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import runpy
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -54,8 +57,15 @@ SANDBOXES = "sandboxes"
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
-# the cleanup that retained them deletes them (room_cleanup/retire.py sets how long).
+# their copy in the private bucket is confirmed and their retention is over
+# (room_cleanup/retire.py).
 TRANSCRIPTS_ROOT = "transcripts"
+
+# Where a resource's harness sessions keep their state under FOOTPRINT_ROOT — a
+# copy of the directory `machine_launcher.state_dir` names, held to it by
+# test_footprint_root.py: Codex's and pi's own session files are in there, not
+# in the room's home.
+HARNESS_ROOT = "harness"
 
 # Where the seats of a room keep the files that belong to one teammate's session
 # rather than to the room — a copy of `place.SEATS_DIR`, held to it by
@@ -182,6 +192,280 @@ def windows_holders(paths: list[Path]) -> list[int]:
     return found
 
 
+#: Where Linux shows each process's working directory, root, executable, open
+#: files and mapped files. Read there rather than by lsof, which a stock Linux
+#: image need not have: the Debian cloud image behind the MicroCloud VM offering
+#: has none, and every sandbox destroy on those hosts failed for it (dev,
+#: 2026-10-20). macOS has no /proc and ships lsof.
+PROC = Path("/proc")
+
+
+def proc_index(paths: list[Path]) -> set:
+    """Every file and directory under these, as (device, inode): what a process
+    holding something of the room holds, whatever path it reaches it by. A
+    process in another mount namespace names the room differently (a private
+    session sees its directory as `/work`), and on a platform host the homes are
+    also reachable through the data disk they are bound from; the inode is the
+    same in every case. `lsof +D` matches the same way.
+
+    The walk goes by directory descriptors and never follows a symlink below
+    the paths given: what is inside the room is the room's to change while it
+    is walked, and a directory it swaps for a link to `/usr/lib` must not make
+    every process with libc mapped one to end.
+
+    A part of the room it cannot read is a RuntimeError, never a part left out:
+    an index missing a subtree finds nothing holding it and lets the room be
+    deleted under whoever does. Only an entry that is gone, or is no longer a
+    directory, is passed over. One descriptor is held per level, so a tree
+    deeper than the descriptors left (about a thousand levels under the usual
+    limit) is refused this way; `remove_tree` holds one per level too and
+    could not delete it either."""
+    found = set()
+
+    def unreadable(path: str, error: OSError) -> RuntimeError:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        return RuntimeError(
+            "could not establish whether the resource has active writers: "
+            f"cannot read {path}: {error.strerror or error}"
+        )
+
+    def enter(descriptor: int, path: str) -> tuple:
+        """Index this directory and its files; the subdirectories it lists are
+        opened one at a time as the walk reaches them, so the descriptors held
+        open are as many as the tree is deep."""
+        try:
+            info = os.fstat(descriptor)
+            found.add((info.st_dev, info.st_ino))
+            subdirectories = []
+            for entry in os.scandir(descriptor):
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        subdirectories.append(entry.name)
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                found.add((info.st_dev, info.st_ino))
+        except OSError as error:
+            os.close(descriptor)
+            raise unreadable(path, error) from error
+        return descriptor, path, iter(subdirectories)
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for path in paths:
+        try:
+            top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise unreadable(str(path), error) from error
+        stack = [enter(top, str(path))]
+        try:
+            while stack:
+                descriptor, where, pending = stack[-1]
+                name = next(pending, None)
+                if name is None:
+                    os.close(descriptor)
+                    stack.pop()
+                    continue
+                inside = os.path.join(where, name)
+                try:
+                    child = os.open(name, flags, dir_fd=descriptor)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue  # gone, or no longer a directory
+                except OSError as error:
+                    if error.errno == errno.ELOOP:
+                        continue  # now a link: nothing of the room's to follow
+                    raise unreadable(inside, error) from error
+                stack.append(enter(child, inside))
+        finally:
+            for descriptor, _, _ in stack:
+                os.close(descriptor)
+    return found
+
+
+#: statx(2), which can be told to answer from what the kernel already knows
+#: of a file (`AT_STATX_DONT_SYNC`) instead of asking its filesystem: a
+#: process may have a file open on a FUSE mount whose daemon has stopped
+#: answering, and a plain stat of it waits for that daemon for as long as it is
+#: stuck. The device and inode never need asking for. (On NFS, following the
+#: /proc link can still revalidate the file with its server first.)
+#:
+#: Called by its number rather than through libc's wrapper, which glibc has
+#: only from 2.28 and musl only from 1.2.5; the kernel has had the call since
+#: 4.11. The numbers are each architecture's own (`asm/unistd.h`).
+_STATX_NUMBER = {
+    "x86_64": 332,
+    "i386": 383,
+    "i686": 383,
+    "aarch64": 291,
+    "arm64": 291,
+    "riscv64": 291,
+    "loongarch64": 291,
+    "armv7l": 397,
+    "armv6l": 397,
+    "ppc64le": 383,
+    "ppc64": 383,
+    "s390x": 379,
+}
+_STATX_DONT_SYNC = 0x4000
+_STATX_TYPE_INO = 0x0001 | 0x0100
+_AT_FDCWD = -100
+#: What statx answers when it cannot look at anything at all (an old kernel, a
+#: seccomp profile that refuses it), as against at this one file: taking those
+#: for "nothing here" would report every room free.
+_STATX_UNUSABLE = {errno.ENOSYS, errno.EPERM, errno.EINVAL, errno.EFAULT}
+
+
+def _statx():
+    """A lookup of (device, inode, mode) by path that never waits on the
+    filesystem the path leads into. It answers None when this one file cannot
+    be looked at (gone, or another user's process), and raises when statx
+    cannot be used here at all."""
+    number = _STATX_NUMBER.get(os.uname().machine)
+    if number is None:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        raise RuntimeError(
+            "could not establish whether the resource has active writers: "
+            f"no statx call known for {os.uname().machine}"
+        )
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    buffer = ctypes.create_string_buffer(256)
+
+    def statx(path: str) -> tuple | None:
+        answer = libc.syscall(
+            ctypes.c_long(number),
+            ctypes.c_int(_AT_FDCWD),
+            ctypes.c_char_p(os.fsencode(path)),
+            ctypes.c_int(_STATX_DONT_SYNC),
+            ctypes.c_uint(_STATX_TYPE_INO),
+            buffer,
+        )
+        if answer == 0:
+            # struct statx: stx_mode at 28, stx_ino at 32, stx_dev_major and
+            # stx_dev_minor at 136.
+            (mode,) = struct.unpack_from("=H", buffer, 28)
+            (inode,) = struct.unpack_from("=Q", buffer, 32)
+            major, minor = struct.unpack_from("=II", buffer, 136)
+            return os.makedev(major, minor), inode, mode
+        failure = ctypes.get_errno()
+        if failure in _STATX_UNUSABLE:
+            # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+            raise RuntimeError(
+                "could not establish whether the resource has active writers: "
+                f"statx: {os.strerror(failure)}"
+            )
+        return None
+
+    return statx
+
+
+def _bound_sockets(pid: Path, cache: dict) -> dict:
+    """Socket inode -> the path it is bound at, for the network namespace this
+    process is in (`/proc/<pid>/net/unix` is its namespace's list), read once
+    per namespace. A name relative to where the binder then was, and an
+    abstract one, lead nowhere that can be looked up and are left out."""
+    try:
+        namespace = os.stat(pid / "ns" / "net").st_ino
+    except OSError:
+        return {}
+    if namespace not in cache:
+        bound = {}
+        try:
+            with open(pid / "net" / "unix") as table:
+                next(table, None)
+                for line in table:
+                    fields = line.split(None, 7)
+                    if len(fields) == 8 and fields[7].startswith("/"):
+                        bound[fields[6]] = fields[7].rstrip("\n")
+        except OSError:
+            pass
+        cache[namespace] = bound
+    return cache[namespace]
+
+
+def _holds(pid: Path, index: set, statx, sockets: dict) -> bool:
+    """Whether this process's working directory, root, executable, an open file,
+    a mapped file or a unix socket it has bound is one of `index`. A link the
+    kernel does not let this user follow (another user's process) is not this
+    user's to end either.
+
+    A bound socket is held through a descriptor that leads to the socket, not to
+    the file naming it in the room, so it is found by its name instead: looked
+    up from the process's own root, where that name was bound. A process whose
+    only hold on the room is the socket it listens on there (gpg-agent with its
+    home in the room works from `/`) is found this way. Looking that name up
+    walks its directories, which on a mount that has stopped answering can
+    still wait; only processes with a socket bound pay for it."""
+    links = [str(pid / "cwd"), str(pid / "root"), str(pid / "exe")]
+    held = set()
+    try:
+        for fd in os.scandir(pid / "fd"):
+            try:
+                target = os.readlink(fd.path)
+            except OSError:
+                continue
+            if target.startswith("socket:["):
+                held.add(target[8:-1])
+            else:
+                links.append(fd.path)
+    except OSError:
+        pass
+    for link in links:
+        found = statx(link)
+        if found is not None and found[:2] in index:
+            return True
+    if held:
+        for inode, path in _bound_sockets(pid, sockets).items():
+            if inode not in held:
+                continue
+            found = statx(f"{pid}/root{path}")
+            if found and stat.S_ISSOCK(found[2]) and found[:2] in index:
+                return True
+    try:
+        with open(pid / "maps") as maps:
+            for line in maps:
+                fields = line.split(None, 5)
+                if len(fields) < 5 or fields[4] == "0":
+                    continue
+                major, minor = fields[3].split(":")
+                device = os.makedev(int(major, 16), int(minor, 16))
+                if (device, int(fields[4])) in index:
+                    return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def proc_holders(paths: list[Path], index: set | None = None) -> list[int]:
+    """What `lsof +D` answers, read from /proc: the processes whose working
+    directory, root, executable, an open file, a mapped file or a bound unix
+    socket lies inside these. `index` is `proc_index(paths)`, when the caller
+    already has it."""
+    if index is None:
+        index = proc_index(paths)
+    own = {os.getpid(), os.getppid()}
+    statx = _statx()
+    sockets = {}
+    found = []
+    for entry in os.scandir(PROC):
+        if not entry.name.isdigit() or int(entry.name) in own:
+            continue
+        if _holds(Path(entry.path), index, statx, sockets):
+            found.append(int(entry.name))
+    return sorted(found)
+
+
+def proc_command(pid: int) -> str:
+    """A process's pid and command line, as `ps -o pid=,args=` would print it."""
+    try:
+        args = (PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return str(pid)
+    return f"{pid} " + " ".join(a.decode(errors="replace") for a in args if a)[:150]
+
+
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
 ) -> subprocess.CompletedProcess:
@@ -191,7 +475,13 @@ def run_command(
 
 
 def sandbox_marker(home: Path) -> Path:
-    return Path.home() / FOOTPRINT_ROOT / SANDBOXES / home.parent.name / home.name
+    return (
+        Path.home()
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / SANDBOXES
+        / home.parent.name
+        / home.name
+    )
 
 
 def sandbox_release(home: Path) -> Path | None:
@@ -282,6 +572,16 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
         rooms = []
         for path in paths:
             rooms += ["--bind", str(path), str(path)]
+        # The git the connector placed under the owner's home where the system
+        # had none good enough (`cli/internal/devenv`), shown back read-only;
+        # nothing else of the home is.
+        placed = (
+            Path.home()
+            / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+            / "runtime/git"
+        )
+        if placed.is_dir():
+            rooms += ["--ro-bind", str(placed), str(placed)]
         argv = [
             "bwrap",
             "--unshare-all",
@@ -306,7 +606,8 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
-    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    On Linux the processes are read from /proc (`proc_holders`); elsewhere
+    by lsof. ONE lsof call, never one per path. `lsof +D` spends about two seconds
     walking every process's descriptors before it so much as looks at the
     directory, so its cost is per INVOCATION and not per tree: measured
     2026-09-18, an empty directory costs the same 1.97s as a repository, five
@@ -320,12 +621,17 @@ def check_no_writers(paths: list[Path]) -> None:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
-    if sys.platform == "win32":
-        pids = windows_holders([Path(path) for path in present])
+    if sys.platform == "win32" or PROC.is_dir():
+        if sys.platform == "win32":
+            pids = windows_holders([Path(path) for path in present])
+            named = [str(pid) for pid in pids]
+        else:
+            pids = proc_holders([Path(path) for path in present])
+            named = [proc_command(pid) for pid in pids]
         if pids:
             raise StillRunning(
                 "resource still has processes holding files or working "
-                "directories: " + ", ".join(str(pid) for pid in pids)
+                "directories: " + ", ".join(named)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
@@ -354,6 +660,8 @@ def holders(paths: list[Path]) -> list[int]:
         return []
     if sys.platform == "win32":
         return windows_holders([Path(path) for path in present])
+    if PROC.is_dir():
+        return proc_holders([Path(path) for path in present])
     result = run_command(["lsof", "-t", "+D", *present])
     own = {os.getpid(), os.getppid()}
     return [
@@ -366,11 +674,19 @@ def holders(paths: list[Path]) -> list[int]:
 def end_holders(paths: list[Path]) -> None:
     """Terminate whatever still holds the room, gently first, then not.
 
-    lsof names the processes; each gets SIGTERM, ten seconds to act on it,
+    `holders` names the processes; each gets SIGTERM, ten seconds to act on it,
     then SIGKILL. A tmux pane whose process dies reads as dead to the next
     `request_exit`, which closes the session the ordinary way.
     """
-    pids = holders(paths)
+    index = None
+    if sys.platform != "win32" and PROC.is_dir():
+        # The room is walked once; only the processes are read again each poll.
+        index = proc_index([path for path in paths if path.exists()])
+
+    def current() -> list[int]:
+        return holders(paths) if index is None else proc_holders(paths, index)
+
+    pids = current()
     for signal_number, wait in ((15, 10.0), (9, 2.0)):
         helper = portable(paths) if sys.platform == "win32" else None
         if helper is not None:
@@ -385,7 +701,7 @@ def end_holders(paths: list[Path]) -> None:
         deadline = time.monotonic() + wait
         while pids and time.monotonic() < deadline:
             time.sleep(0.1)
-            pids = [pid for pid in pids if pid in set(holders(paths))]
+            pids = [pid for pid in pids if pid in set(current())]
         if not pids:
             return
 
@@ -461,33 +777,41 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
         return None
     if not url:
         raise RuntimeError("the room holds files and there is no bucket to keep them")
-    scratch = Path.home() / FOOTPRINT_ROOT / "cleanup"
+    scratch = (
+        Path.home() / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT) / "cleanup"
+    )
     scratch.mkdir(parents=True, exist_ok=True)
     archive = scratch / (str(uuid.UUID(resource)) + ".room.tar.gz")
     try:
         with tarfile.open(archive, "w:gz") as bundle:
             bundle.add(room, arcname=CHECKOUT_DIR, recursive=True)
-        digest = hashlib.md5()  # noqa: S324 — the bucket's ETag of one PUT
-        with archive.open("rb") as source:
-            for block in iter(lambda: source.read(1 << 20), b""):
-                digest.update(block)
-        size = archive.stat().st_size
-        with archive.open("rb") as source:
-            request = urllib.request.Request(
-                url,
-                data=source,
-                method="PUT",
-                headers={
-                    "Content-Length": str(size),
-                    "Content-Type": "application/gzip",
-                },
-            )
-            with urllib.request.urlopen(request, timeout=600) as response:
-                if response.status // 100 != 2:
-                    raise RuntimeError(f"bucket answered {response.status}")
-        return {"size": size, "md5": digest.hexdigest()}
+        return put_archive(archive, url)
     finally:
         archive.unlink(missing_ok=True)
+
+
+def put_archive(archive: Path, url: str) -> dict:
+    """Send `archive` by one PUT to `url` (presigned by the platform); its size
+    and MD5, which the platform holds against what the bucket reports."""
+    digest = hashlib.md5()  # the bucket's ETag of one PUT
+    with archive.open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    size = archive.stat().st_size
+    with archive.open("rb") as source:
+        request = urllib.request.Request(
+            url,
+            data=source,
+            method="PUT",
+            headers={
+                "Content-Length": str(size),
+                "Content-Type": "application/gzip",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=600) as response:
+            if response.status // 100 != 2:
+                raise RuntimeError(f"bucket answered {response.status}")
+    return {"size": size, "md5": digest.hexdigest()}
 
 
 def remove_tree(path: Path) -> None:
@@ -604,7 +928,11 @@ def resource_paths(
 ) -> tuple[Path, Path]:
     project, resource = str(uuid.UUID(project)), str(uuid.UUID(resource))
     paths = tuple(
-        machine_home / FOOTPRINT_ROOT / kind / project / resource
+        machine_home
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / kind
+        / project
+        / resource
         for kind in ("home", "work")
     )
     for path in paths:
@@ -619,10 +947,15 @@ def resource_paths(
     return paths[0], paths[1]
 
 
-def resource_tmp(resource: str) -> Path:
+def resource_tmp(resource: str) -> Path | None:
     """The room's TMPDIR, where the launcher pointed its sessions: under this
     account's own directory in `/var/tmp`, by resource alone, so a socket made
-    inside it still fits a socket path."""
+    inside it still fits a socket path. None on Windows, where the launcher
+    leaves sessions on the account's own temporary directory and makes none
+    per room (`machine_launcher`), and where there is no uid to name one by:
+    asking for it there failed every removal on a Windows machine."""
+    if sys.platform == "win32":
+        return None
     path = Path(SESSION_TMP) / f"cheese-{os.getuid()}" / str(uuid.UUID(resource))
     if path.is_symlink() or path.parent.is_symlink():
         raise RuntimeError("resource path is a symlink")
@@ -638,7 +971,7 @@ def retained_transcripts(machine_home: Path, project: str, room: str, resource: 
     project, room = str(uuid.UUID(project)), str(uuid.UUID(room))
     return (
         machine_home
-        / FOOTPRINT_ROOT
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
         / TRANSCRIPTS_ROOT
         / project
         / room
@@ -646,18 +979,68 @@ def retained_transcripts(machine_home: Path, project: str, room: str, resource: 
     )
 
 
-def retain_transcripts(home: Path, archive: Path) -> None:
-    """Compress the home's Claude Code session files before the home goes.
+def harness_sessions(machine_home: Path, project: str, resource: str):
+    """The session files the resource's harnesses wrote, each with the name it
+    goes under in the archive (its path under the resource's harness root).
 
-    `.claude/projects` holds every session of the room — the main transcript
-    and each subagent's beside it. A link is stored as a link and never
-    followed: Claude Code links a resumed session's subagent files to the
-    originals in the same tree, and a link out of the home is not ours to read.
+    Every harness keeps a seat's state in `<harness>/<seat>/` there
+    (`machine_launcher.state_dir`) and its own session files in a `sessions`
+    directory at most two levels into it: Codex's under its `CODEX_HOME`, pi's
+    under `--session-dir` and each pi subagent's under its own. Nothing removes
+    these directories; they are archived with the room's other transcripts so
+    that the bucket has them too. A seat's `workspace` and `home` are the
+    session's working directory and `HOME`, the agent's own files rather than
+    the harness's, and are not looked in."""
+    root = (
+        machine_home
+        / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+        / HARNESS_ROOT
+        / str(uuid.UUID(project))
+        / str(uuid.UUID(resource))
+    )
+    if any(path.is_symlink() for path in (root, root.parent, root.parent.parent)):
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        raise RuntimeError("harness path is a symlink")
+    found = []
+    for seat in sorted(root.glob("*/*")):
+        for pattern in ("sessions", "*/sessions", "*/*/sessions"):
+            for path in sorted(seat.glob(pattern)):
+                inside = path.relative_to(seat).parts
+                if inside[0] in ("workspace", "home"):
+                    continue
+                # A link anywhere from the harness root down is not followed:
+                # the session could have pointed it anywhere on the machine.
+                chain = [
+                    root / Path(*path.relative_to(root).parts[:n])
+                    for n in range(1, len(path.relative_to(root).parts) + 1)
+                ]
+                if any(part.is_symlink() for part in chain) or not path.is_dir():
+                    continue
+                found.append((path, path.relative_to(root).as_posix()))
+    return found
+
+
+def retain_transcripts(home: Path, archive: Path, harnesses=()) -> None:
+    """Compress the resource's session files before the home goes.
+
+    `.claude/projects` holds every Claude Code session of the room — the main
+    transcript and each subagent's beside it; `harnesses` are the Codex and pi
+    ones (`harness_sessions`). A link is stored as a link and never followed:
+    Claude Code links a resumed session's subagent files to the originals in
+    the same tree, and a link out of the home is not ours to read.
     Written under a temporary name and renamed, so an archive under the final
-    name is always whole; a retry after a crash rewrites it from the same home.
+    name is always whole. One already there is kept as it is: it was written
+    before anything of the home was removed, and a retry of a removal that
+    stopped partway would find less of the home than it holds.
     """
-    source = home / ".claude/projects"
-    if source.is_symlink() or not source.is_dir():
+    if archive.is_file():
+        return
+    sources = []
+    claude = home / ".claude/projects"
+    if not claude.is_symlink() and claude.is_dir():
+        sources.append((claude, "projects"))
+    sources += list(harnesses)
+    if not sources:
         return
     archive.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = archive.with_name(archive.name + ".part")
@@ -667,7 +1050,8 @@ def retain_transcripts(home: Path, archive: Path) -> None:
             os.fdopen(descriptor, "wb") as output,
             tarfile.open(fileobj=output, mode="w:gz") as bundle,
         ):
-            bundle.add(source, arcname="projects", recursive=True)
+            for source, name in sources:
+                bundle.add(source, arcname=name, recursive=True)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, archive)
@@ -687,6 +1071,17 @@ def sync_directory(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def send_transcripts(archive: Path, url: str):
+    """Send the retained archive to the bucket (`put_archive`); None when this
+    machine holds none for the resource."""
+    if not archive.is_file():
+        return None
+    if not url:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        raise RuntimeError("there is no bucket to send the transcripts to")
+    return put_archive(archive, url)
 
 
 def expire_transcripts(archive: Path) -> None:
@@ -922,7 +1317,12 @@ def main() -> None:
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
-        directory = Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
+        directory = (
+            Path.home()
+            / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+            / "cleanup"
+            / str(uuid.UUID(cleanup))
+        )
         directory.mkdir(parents=True, exist_ok=True)
         receipt = directory / (str(uuid.UUID(resource)) + ".ready")
         with receipt.with_suffix(".lock").open("a") as receipt_lock:
@@ -975,12 +1375,16 @@ def main() -> None:
         if found is not None and found[0]["kind"] == "private":
             helper = runpy.run_path(str(private_helper(home, found[1])))
             helper["release"](found[0])
-        if room != "-" and home.exists():
+        # Whether or not the room has a home here: a Codex or pi room's seats
+        # leave only their harness state on the session host.
+        if room != "-":
             retain_transcripts(
-                home, retained_transcripts(Path.home(), project, room, resource)
+                home,
+                retained_transcripts(Path.home(), project, room, resource),
+                harness_sessions(Path.home(), project, resource),
             )
         for path in (work, home, resource_tmp(resource)):
-            if path.exists():
+            if path is not None and path.exists():
                 remove_tree(path)
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.
@@ -989,7 +1393,18 @@ def main() -> None:
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
         print(json.dumps(remove_task_checkouts(home, tasks)))
+    elif action == "send-transcripts":
+        # The URL to send to is in the environment, as for `keep-room`; the
+        # platform checks the bucket against the answer before anything here
+        # may expire.
+        sent = send_transcripts(
+            retained_transcripts(Path.home(), project, room, resource),
+            os.environ.get("CHEESE_KEEP_URL", ""),
+        )
+        print(json.dumps({"sent": sent}))
     elif action == "expire":
+        # Run only once the platform found the archive in the bucket as this
+        # machine sent it (`retire._expire_transcripts`).
         expire_transcripts(retained_transcripts(Path.home(), project, room, resource))
         print(json.dumps({"expired": True}))
     else:

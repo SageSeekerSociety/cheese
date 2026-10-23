@@ -25,6 +25,7 @@ import {
   mentionNotification,
   reactionNotification,
   replyNotification,
+  taskNotification,
   teamInvitationAcceptedNotification,
   teamInvitationCanceledNotification,
   teamInvitationDeclinedNotification,
@@ -33,10 +34,14 @@ import {
   teamRequestRejectedNotification,
 } from './catalogNotificationsFixtures'
 
+import InboxRow from '@/components/common/Notification/InboxRow.vue'
+import NotificationAvatar from '@/components/common/Notification/NotificationAvatar.vue'
+import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import RenderDeviceInUseNotification from '@/components/common/Notification/renders/RenderDeviceInUseNotification.vue'
 import RenderMentionNotification from '@/components/common/Notification/renders/RenderMentionNotification.vue'
 import RenderReactionNotification from '@/components/common/Notification/renders/RenderReactionNotification.vue'
 import RenderReplyNotification from '@/components/common/Notification/renders/RenderReplyNotification.vue'
+import RenderTaskNotification from '@/components/common/Notification/renders/RenderTaskNotification.vue'
 import RenderTeamInvitationAcceptedNotification from '@/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue'
 import RenderTeamInvitationCanceledNotification from '@/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue'
 import RenderTeamInvitationDeclinedNotification from '@/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue'
@@ -44,6 +49,7 @@ import RenderTeamRequestApprovedNotification from '@/components/common/Notificat
 import RenderTeamRequestCanceledNotification from '@/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue'
 import RenderTeamRequestRejectedNotification from '@/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue'
 import RenderThreadReplyNotification from '@/components/common/Notification/renders/RenderThreadReplyNotification.vue'
+import WaitingList from '@/components/common/Notification/WaitingList.vue'
 
 /** 只画词条和人名（`UserRef` 认 props）：`useI18n` 那几件够了。 */
 const TEXT: CatalogNeed[] = ['i18n']
@@ -52,6 +58,204 @@ const TEXT: CatalogNeed[] = ['i18n']
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'notification-item',
+    title: 'NotificationItem',
+    about:
+      '动态里的一条：画成待办页那一种行，中间是这一类通知自己的渲染器，右边是时间；指针停上来时时间换成「标为已读」「删除」。',
+    file: 'src/components/common/Notification/NotificationItem.vue',
+    component: NotificationItem,
+    needs: UI_T,
+    args: { time: '14:20', onMarkAsRead: () => {}, onDelete: () => {} },
+    states: [
+      {
+        name: '没读过的 @',
+        note: '左边是 @ 你的那个人，标题加粗、最左边一颗琥珀小点；下面引着被 @ 的那句话。',
+        props: { notification: mentionNotification(true) },
+        expect: '下周三的课改到线上，有课件的提前发我。',
+        expectSelector: '.inbox-row--unread',
+      },
+      {
+        name: '读过的回复',
+        note: '读过以后小点不亮、标题不加粗，其余照旧。',
+        props: { notification: { ...replyNotification(true), read: true } },
+        expect: '我按你说的把第二节重写了一遍。',
+      },
+      {
+        name: '题目的提交评审了',
+        note: '学生的动态：标题是哪道题、通过没有、几分，下面是空间；点开去「我的提交」。',
+        props: { notification: taskNotification('reviewed') },
+        expect: '系统与网络实验室',
+      },
+      {
+        name: '截止不到一天',
+        note: '已领取还没交：离个人提交截止不到 24 小时的这一条也推送到手机和桌面。',
+        props: { notification: taskNotification('dueSoon') },
+        expect: '距提交截止不到 24 小时',
+      },
+    ],
+  },
+  {
+    id: 'notification-avatar',
+    title: 'NotificationAvatar',
+    about:
+      '动态那一行左边那一格：有人发来的画那个人的头像（没挑过就是彩色首字母），没有人可画时画这一类事的淡色小图标。',
+    file: 'src/components/common/Notification/NotificationAvatar.vue',
+    component: NotificationAvatar,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '有人',
+        note: '@ 你的那个人：他没挑过头像，画的是他的首字母和他的颜色。',
+        props: { notification: mentionNotification(true) },
+        expectSelector: '.user-avatar-char',
+      },
+      {
+        name: '没有人可画',
+        note: '频道里的 @ 只带着名字、没有人的实体：画一个淡色的 @ 小图标，不垫色块。',
+        props: { notification: channelMessageNotification('MENTION') },
+        expectSelector: '.mdi-at',
+      },
+    ],
+  },
+  {
+    id: 'waiting-list',
+    title: 'WaitingList',
+    about: '待办页的「等你处理」：项目里的事按项目分组，邀请和加入申请按要加入的项目或团队分组，回答的按钮就在行上。',
+    file: 'src/components/common/Notification/WaitingList.vue',
+    component: WaitingList,
+    needs: ['vuetify', 'i18n'],
+    args: {
+      loading: false,
+      failed: false,
+      errorReason: '',
+      actionError: '',
+      acting: null,
+      clearing: null,
+      replying: null,
+    },
+    states: [
+      {
+        name: '一件拍板、一条邀请',
+        note: '要你拍板的，选项摆在问题下面；邀请的「接受」「拒绝」一直摆在右边，没有「标为已读」。',
+        props: {
+          items: [
+            {
+              kind: 'work',
+              projectId: 'p-1',
+              projectName: '课程平台',
+              topicId: 't-1',
+              topicTitle: '课程安排',
+              taskId: null,
+              taskTitle: null,
+              phrase: 'decision',
+              reason: 'decide',
+              alertId: 7,
+              headline: '知识库里导入的旧文档怎么处理',
+              options: ['全部保留', '只留最近一年'],
+              at: '2026-10-07T10:00:00Z',
+            },
+            {
+              kind: 'team_invite',
+              id: '42',
+              placeId: '7',
+              place: { name: '数据组', handle: 'data', avatarUrl: null },
+              person: { name: '林夏', handle: 'linxia', avatarUrl: null },
+              role: 'ADMIN',
+              message: '',
+              at: '2026-10-06T10:00:00Z',
+            },
+          ],
+        },
+        expect: '知识库里导入的旧文档怎么处理',
+      },
+      {
+        name: '题目上等你的',
+        note: '你出的题目上有领取要批准、提交要评审：按空间分组，一道题一行，点开去「领取者」页签。',
+        props: {
+          items: [
+            {
+              kind: 'task_queue',
+              taskId: 88,
+              taskName: '基于 eBPF 的容器网络延迟分析工具',
+              spaceId: 7,
+              spaceName: '系统与网络实验室',
+              claims: 2,
+              reviews: 1,
+              at: '2026-10-07T10:00:00Z',
+            },
+            {
+              kind: 'task_queue',
+              taskId: 89,
+              taskName: '校园网 DNS 日志中的异常域名检测',
+              spaceId: 7,
+              spaceName: '系统与网络实验室',
+              claims: 0,
+              reviews: 3,
+              at: '2026-10-06T10:00:00Z',
+            },
+          ],
+        },
+        expect: '2 份领取待批准，1 份提交待评审',
+      },
+      {
+        name: '没有要处理的',
+        note: '一件都没有时只说一句「暂无等你处理的事项」。',
+        props: { items: [] },
+        expect: '暂无等你处理的事项',
+      },
+    ],
+  },
+  {
+    id: 'inbox-row',
+    title: 'InboxRow',
+    about:
+      '待办页的一行：「等你处理」和「动态」共用。左边一格画人或小图标，中间标题和细节，右边是时间；未读点一颗琥珀小点，办完的标题退成次要色。',
+    file: 'src/components/common/Notification/InboxRow.vue',
+    component: InboxRow,
+    needs: [],
+    states: [
+      {
+        name: '未读',
+        note: '最左边那颗琥珀小点只在没读时亮，标题跟着加粗。',
+        props: { time: '14:20', unread: true },
+        slot: '侧栏那条竖条要不要跟项目色走',
+        expect: '侧栏那条竖条要不要跟项目色走',
+        expectSelector: '.inbox-row--unread',
+      },
+      {
+        name: '已办完',
+        note: '事情办完了，这一行还留着当记录：标题退成次要色，不再像在等人。',
+        props: { time: '昨天', done: true },
+        slot: '已回答：A 左侧白色竖条',
+        expect: '已回答：A 左侧白色竖条',
+        expectSelector: '.inbox-row--done',
+      },
+    ],
+  },
+  {
+    id: 'render-task-notification',
+    title: 'RenderTaskNotification',
+    about:
+      '空间里一道题目上的事：领取通过与否、提交评审了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，评审结果去「我的提交」。',
+    file: 'src/components/common/Notification/renders/RenderTaskNotification.vue',
+    component: RenderTaskNotification,
+    needs: TEXT,
+    states: [
+      {
+        name: '提交评审了',
+        note: '学生的动态：哪道题、通过没有、几分；点开去「我的提交」。',
+        props: { notification: taskNotification('reviewed') },
+        expect: '的提交已通过，88 分',
+      },
+      {
+        name: '截止不到一天',
+        note: '已领取还没交、离个人提交截止不到 24 小时：这一条也推送到手机和桌面。',
+        props: { notification: taskNotification('dueSoon') },
+        expect: '距提交截止不到 24 小时',
+      },
+    ],
+  },
   {
     id: 'render-device-in-use-notification',
     title: 'RenderDeviceInUseNotification',

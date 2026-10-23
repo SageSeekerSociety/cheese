@@ -17,6 +17,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.living_doc import document_of
+from tests.support.session_records import assistant_texts, records
 
 
 def _doc(client, task) -> str:
@@ -105,7 +106,6 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert types == [
         "user_block",
         "turn_started",
-        "event_block",
         "done",
     ]
 
@@ -113,9 +113,9 @@ def test_blocks_empty_then_populated_after_chat(client):
     agent = room_agent_seat(client, topic_id)
     assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
 
-    assistant = next(f for f in frames if f["type"] == "event_block")["block"]
-    assert assistant["content"] == "Hello world"
-    assert assistant["author"] == agent
+    output = records(client, topic_id, owner="user-1")
+    assert assistant_texts(output) == ["Hello world"]
+    assert {item["agent_handle"] for item in output} == {"cheese"}
 
     user = next(f for f in frames if f["type"] == "user_block")["block"]
     # 正文里的 @ 在落库前被规范成席位 token，和 @ 一个人完全一样 —— 时间线上那条
@@ -129,9 +129,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Neither displayed text nor Stop publishes a chat message.
     r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
-    assert [b["author"] for b in blocks] == ["user-1", agent]
-    assert blocks[1]["meta"]["progress"] is True
-    assert blocks[1]["meta"]["in_room"] is False
+    assert [b["author"] for b in blocks] == ["user-1"]
     assert not any(b["author"] == agent and b["kind"] == "message" for b in blocks)
     assert blocks[0]["meta"]["consumed_turn"]
 

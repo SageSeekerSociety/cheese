@@ -25,6 +25,7 @@ async def _enrolled() -> tuple[DeviceService, Device, uuid.UUID, uuid.UUID]:
         token="dev-token",
         owner_user_id=owner,
         created_at=datetime(2026, 7, 9, tzinfo=UTC),
+        team_id=1,
     )
     await repo.save_device(device)
     return DeviceService(repo), device, owner, agent

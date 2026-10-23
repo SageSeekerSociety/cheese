@@ -3,13 +3,10 @@
 from app.domain.block.repositories import BlockRepository
 
 
-async def consume_input_blocks(session, block_ids, work_id):
-    """Mark owned block UUIDs consumed; return no rows and never commit.
-
-    Delivery owns evidence authentication, stable block locking and the enclosing
-    transaction. This entry owns the block mutation, not input ownership release.
-    """
-    await BlockRepository(session).mark_consumed(list(block_ids), work_id)
+async def mark_read_failed(session, block_ids, failure):
+    """Say on read blocks that the work they were read into failed; never
+    commits. Delivery owns which inputs failed; this owns the blocks' mark."""
+    await BlockRepository(session).mark_read_failed(list(block_ids), failure)
 
 
 async def apply_input_echo(session, *, consumed_ids, work_id, seen_ids, seen_by):
@@ -22,5 +19,5 @@ async def apply_input_echo(session, *, consumed_ids, work_id, seen_ids, seen_by)
     blocks = BlockRepository(session)
     if work_id is not None:
         await blocks.mark_consumed(list(consumed_ids), work_id)
-    for block_id in seen_ids:
-        await blocks.add_reaction_if_absent(block_id, "👀", seen_by)
+    if seen_ids:
+        await blocks.add_reactions_if_absent(list(seen_ids), "👀", seen_by)

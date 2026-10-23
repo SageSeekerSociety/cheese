@@ -192,6 +192,8 @@ COPY --chown=cheese:python scripts/ship_feedback.py ./scripts/
 COPY --chown=cheese:python scripts/feedback_status.py ./scripts/
 # An operator lists and fetches the files kept before deletion with this.
 COPY --chown=cheese:python scripts/retained_files.py ./scripts/
+# An operator mails the 「知是正在内测」 letter with this (dry run unless --send).
+COPY --chown=cheese:python scripts/send_beta_notice.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads
@@ -220,4 +222,15 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # stop_grace_period ran out and SIGKILL cut it off.
 # No uvicorn access log: the app logs every request itself (`req` in main.py,
 # with user, client and request id), and a second line per request doubled it.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--timeout-graceful-shutdown", "10", "--no-access-log"]
+#
+# `BACKEND_WORKERS` is how many worker processes this container runs. 1 is the
+# single process every deployment has run so far; a deploy raises it in
+# deploy/compose/docker-compose.base.yml. Each worker is a process of its own
+# with a pool of its own, so the app reads this SAME variable and hands each
+# worker its share of the container's connection budget
+# (Settings.db_connections_per_worker): four workers on the old per-process
+# pool ask a server that has 97 connections to give 4 x 36.
+# An exec-form CMD cannot expand a variable, so this goes through a shell;
+# `exec` keeps uvicorn the process Docker starts and signals.
+ENV BACKEND_WORKERS=1
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8081 --timeout-graceful-shutdown 10 --no-access-log --workers \"${BACKEND_WORKERS:-1}\""]

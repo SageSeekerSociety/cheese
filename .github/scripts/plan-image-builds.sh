@@ -159,12 +159,16 @@ else
 
     # The docs site ships inside the frontend image, built in CI from these
     # sources (build.yml). Its CLI and settings references are generated from
-    # these two files, so they are docs sources too. (The CI reference, from
-    # the workflows, catches up with the next frontend build rather than make
-    # every workflow edit rebuild an image.)
+    # these files, so they are docs sources too: the CLI, and `Settings` —
+    # config.py plus the modules it inherits settings from, each of which the
+    # settings page lists. (The CI reference, from the workflows, catches up
+    # with the next frontend build rather than make every workflow edit rebuild
+    # an image.)
     case "$changed_path" in
       docs/manual/* | docs/site/* | backend/sandbox/cheese \
-        | backend/app/core/config.py)
+        | backend/app/core/config.py \
+        | backend/app/core/sandbox_config.py \
+        | backend/app/core/machine_config.py)
         frontend=true
         ;;
     esac
@@ -184,7 +188,7 @@ else
     # dependencies both are installed from.
     case "$changed_path" in
       frontend/collab/* | frontend/src/lib/docSchema/* \
-        | frontend/package.json | frontend/pnpm-lock.yaml)
+        | frontend/package.json | frontend/pnpm-lock.yaml | frontend/patches/*)
         collab=true
         ;;
     esac
@@ -195,6 +199,10 @@ else
       backend/sandbox/Dockerfile.private \
         | backend/sandbox/cheese \
         | backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py \
+        | backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/private.py \
         | backend/app/domain/agent/harness/claude_code/remote_execution/private_egress.py \

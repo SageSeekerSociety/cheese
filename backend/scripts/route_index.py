@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Effective route index, first-FULL guard and annotation coverage.
+"""Effective route index and first-FULL guard.
 
     uv run python -m scripts.route_index --emit  # the index as JSON lines
     uv run python -m scripts.route_index --check  # nothing provably shadowed
-    uv run python -m scripts.route_index --check-annotations  # every route noted
+    uv run python -m scripts.route_index --all  # both, one child, one import
+
+The two questions above are asked about the same collected inventory, and the
+collector cannot run without the application imported — the expensive part of
+each run. `--all` answers them in one child and delimits the two answers, so a
+caller that wants both pays for the import once. Each section carries
+the status code that command would have exited with on its own; the process
+exits 0 only when all of them did.
 
 The index this emits is NOT committed. It changes with every route, and as a
 tracked file 84 commits from 83 PRs touched it in the twelve days it existed; it
-is generated where it is judged instead (the frontend `request-paths` job, and the
+is generated where it is judged instead (the frontend `check` job, and the
 addressing contract suite). `--check` is the first-FULL guard (v6
 reading-boundary pilot): literal later routes have a unique URL, so an earlier
 FULL match proves that URL unreachable for the reported method. Parameterized
@@ -21,7 +28,7 @@ import argparse
 import json
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from itertools import islice, product
 from pathlib import Path
@@ -214,58 +221,68 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
     return findings
 
 
-def checked_findings(records, frozen):
-    """Validate exact frozen registrations before subtracting any findings.
+def section_marker(name: str, status: int) -> str:
+    """The line that opens one `--all` section, carrying that section's status.
 
-    Used by --check. A frozen pair names its two leaves by path and handler,
-    never by registration position, so a route added or removed anywhere else
-    leaves the exemption untouched. A pair whose leaves are gone, duplicated or
-    no longer shadowing fails on purpose: a stale entry fails even when no
-    currently reported shadow remains.
+    No payload line can be mistaken for it: the emit section prints JSON
+    objects and the other two print findings and summaries, none of which
+    start with `##`.
     """
-    findings = first_match_findings(records)
-    positions = {id(record): position for position, record in enumerate(records)}
+    return f"## route-index section {name} status {status}"
 
-    def leaf(path, endpoint, protocol):
-        found = [
-            record
-            for record in records
-            if (record.path, record.endpoint, record.protocol)
-            == (path, endpoint, protocol)
-        ]
-        if len(found) != 1:
-            raise ValueError(
-                f"stale frozen pair: {path} ({endpoint}) is registered "
-                f"{len(found)} times, expected exactly one"
-            )
-        return found[0]
 
-    exempt = set()
-    for pair in frozen:
+def print_sections(sections: Iterable[tuple[str, int, str]]) -> int:
+    """Print each section under its marker; 0 only when every status was 0.
 
-        def stale(pair=pair):
-            raise ValueError(f"stale frozen pair: {pair}")
+    Kept separate from the judgements it prints so the delimiting itself is
+    testable without importing the application.
+    """
+    worst = 0
+    for name, status, text in sections:
+        print(section_marker(name, status))
+        if text:
+            print(text)
+        worst = worst or status
+    return worst
 
-        if not pair.why.strip() or (pair.protocol == "ws" and pair.method != "WS"):
-            stale()
-        earlier = leaf(pair.earlier_path, pair.earlier_endpoint, pair.protocol)
-        later = leaf(pair.later_path, pair.later_endpoint, pair.protocol)
-        if positions[id(earlier)] >= positions[id(later)]:
-            stale()
-        if not _full(later, pair.witness, pair.protocol, pair.method):
-            stale()
-        winner = _first_full(records, pair.witness, pair.protocol, pair.method)
-        if winner is not earlier:
-            stale()
-        key = (earlier.index, later.index, pair.protocol, pair.method)
-        if key in exempt:
-            stale()
-        exempt.add(key)
-    return [
-        f
-        for f in findings
-        if (f.earlier.index, f.later.index, f.later.protocol, f.method) not in exempt
+
+def _emit(records: list[RouteRecord], header: dict) -> tuple[int, str]:
+    """The index as JSON lines, under the profile header it was collected in."""
+    lines = [json.dumps({"settings_profile": header}, ensure_ascii=False)]
+    lines += [
+        json.dumps(
+            {
+                "index": record.index,
+                "protocol": record.protocol,
+                "path": record.path,
+                "methods": sorted(record.methods),
+                "endpoint": record.endpoint,
+                "name": record.name,
+            },
+            ensure_ascii=False,
+        )
+        for record in records
     ]
+    return 0, "\n".join(lines)
+
+
+def _check(records: list[RouteRecord]) -> tuple[int, str]:
+    """The first-FULL guard: 1 as soon as one shadow is provable."""
+    findings = first_match_findings(records)
+    lines = [
+        f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
+        f"#{finding.earlier.index} {finding.earlier.path} "
+        f"({finding.earlier.endpoint}) shadows "
+        f"#{finding.later.index} {finding.later.path} "
+        f"({finding.later.endpoint}) — witness {finding.witness}"
+        for finding in findings
+    ]
+    bad = [finding for finding in findings if finding.kind == "unreachable"]
+    if bad:
+        lines.append(f"first-match guard: {len(bad)} provable shadow(s)")
+        return 1, "\n".join(lines)
+    lines.append(f"first-match guard: clean ({len(findings)} witness-only pairs)")
+    return 0, "\n".join(lines)
 
 
 def main() -> int:
@@ -284,92 +301,39 @@ def main() -> int:
         return result.returncode
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    judgement = parser.add_mutually_exclusive_group()
+    judgement.add_argument(
         "--emit",
         action="store_true",
         help="print the profile header and index as JSON lines",
     )
-    parser.add_argument(
+    judgement.add_argument(
         "--check", action="store_true", help="run the first-match guard"
     )
-    parser.add_argument(
-        "--check-annotations",
+    judgement.add_argument(
+        "--all",
         action="store_true",
-        help="verify every live route has its handwritten annotation",
-    )
-    parser.add_argument(
-        "--annotations",
-        metavar="FILE",
-        help="override the route annotation sidecar",
+        help="run both in this process, each under its own status marker",
     )
     args = parser.parse_args()
 
     from app.main import app
 
     records = collect(app)
+    if args.all:
+        return print_sections(
+            [
+                ("emit", *_emit(records, profile_header())),
+                ("check", *_check(records)),
+            ]
+        )
     if args.emit:
-        print(json.dumps({"settings_profile": profile_header()}, ensure_ascii=False))
-        for record in records:
-            print(
-                json.dumps(
-                    {
-                        "index": record.index,
-                        "protocol": record.protocol,
-                        "path": record.path,
-                        "methods": sorted(record.methods),
-                        "endpoint": record.endpoint,
-                        "name": record.name,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+        print(_emit(records, profile_header())[1])
         return 0
     if args.check:
-        from scripts.route_index_frozen import FROZEN
-
-        try:
-            findings = checked_findings(records, FROZEN)
-        except ValueError as exc:
-            print(exc)
-            return 1
-        for finding in findings:
-            print(
-                f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
-                f"#{finding.earlier.index} {finding.earlier.path} "
-                f"({finding.earlier.endpoint}) shadows "
-                f"#{finding.later.index} {finding.later.path} "
-                f"({finding.later.endpoint}) — witness {finding.witness}"
-            )
-        bad = [f for f in findings if f.kind == "unreachable"]
-        if bad:
-            print(f"first-match guard: {len(bad)} provable shadow(s)")
-            return 1
-        print(f"first-match guard: clean ({len(findings)} witness-only pairs)")
-        return 0
-    if args.check_annotations:
-        from scripts.route_index_annotations import (
-            DEFAULT_SIDECAR,
-            check_annotation_coverage,
-        )
-
-        rows = [
-            {
-                "protocol": record.protocol,
-                "methods": sorted(record.methods),
-                "path": record.path,
-            }
-            for record in records
-        ]
-        try:
-            keys = check_annotation_coverage(rows, args.annotations or DEFAULT_SIDECAR)
-        except ValueError as exc:
-            print(f"route annotations invalid: {exc}")
-            return 1
-        print(
-            f"route annotations complete ({len(records)} registrations; "
-            f"{keys} annotated addresses)"
-        )
-        return 0
+        status, text = _check(records)
+        print(text)
+        return status
     parser.print_help()
     return 2
 

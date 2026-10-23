@@ -24,6 +24,10 @@
     "taskNaming": {
       "title": "智能命名",
       "summary": "任务标题的自动命名：花了多少、几个阶段在动、人后来改掉了多少"
+    },
+    "personalAssistant": {
+      "title": "个人芝士",
+      "summary": "代用户执行的操作、需确认比例与费用，以及提示词缓存命中率"
     }
   },
   "unit": {
@@ -100,7 +104,7 @@
   "naming": {
     "kpi": {
       "calls": "命名调用",
-      "callsNote": "网关那把命名专用密钥上的请求数。命名跑在后台，不在任何人的回合里，所以这些调用不计入任何项目的用量。",
+      "callsNote": "网关那把命名专用密钥上的请求数。命名在后台进行，不属于任何人叫起的那次运行，所以这些调用不计入任何项目的用量。",
       "callsFailed": "其中失败 {failed} 次",
       "successRate": "调用成功率",
       "successRateNote": "网关自己的口径：请求打到了模型、并且回来了。模型回一段截断的、或者包坏了的答案，在网关那里同样是成功 —— 那种只写在日志里，所以这一页没有「命名成功率」这个数。",
@@ -142,6 +146,53 @@
       "note": "人自己给任务改的名字。改过之后平台不再动这个名字。",
       "caption": "共 {n} 次改名",
       "rename": "改标题"
+    }
+  },
+  "assistant": {
+    "kpi": {
+      "checks": "授权判断",
+      "checksSplit": "直接执行 {allowed}，请用户确认 {asked}",
+      "checksNote": "芝士代用户执行其他人可见的操作前，各做一次授权判断",
+      "askedShare": "需确认比例",
+      "askedNote": "需要确认的操作会在面板中显示为确认卡片；比例偏高说明判断偏严",
+      "cost": "授权判断费用",
+      "costNote": "由平台承担，不计入个人额度",
+      "gateCache": "授权判断缓存命中率",
+      "gateCacheNote": "授权判断的提示词中，由模型服务缓存命中的比例",
+      "answerCache": "回答缓存命中率",
+      "answerCacheNote": "每次回答的模型调用中，提示词由模型服务缓存命中的比例",
+      "answerCacheSplit": "{answers} 次回答，{calls} 次模型调用",
+      "latency": "判断耗时中位数",
+      "latencyP90": "90% 在 {p90} 毫秒以内",
+      "latencyNote": "仅统计调用了模型的判断，按用户设置直接确认的不计"
+    },
+    "trend": {
+      "title": "每日授权判断",
+      "note": "虚线为其中需要用户确认的次数",
+      "checks": "授权判断",
+      "asked": "需要确认"
+    },
+    "stages": {
+      "title": "判断方式",
+      "note": "按用户设置和低风险的不调用模型；快速判断只输出结论，未通过的再复核一次",
+      "asked:rule": "按用户设置或固定规则请用户确认",
+      "allowed:low": "低风险直接执行",
+      "allowed:quick": "快速判断后执行",
+      "allowed:reasoned": "复核后执行",
+      "asked:reasoned": "复核后请用户确认",
+      "asked:error": "无法判断，请用户确认"
+    },
+    "kinds": {
+      "title": "按操作类型",
+      "note": "各类操作直接执行与请用户确认的次数",
+      "row": "执行 {allowed}，确认 {asked}",
+      "message": "发消息",
+      "task": "开任务",
+      "review": "处理审阅",
+      "respond": "答复待办",
+      "member": "管理成员",
+      "channel": "新建频道",
+      "fetch": "读取网页"
     }
   }
 }

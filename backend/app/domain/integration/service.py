@@ -39,7 +39,7 @@ from app.domain.integration.models import (
     Integration,
     MailDraft,
 )
-from app.domain.integration.ports import RoomFiles
+from app.domain.integration.ports import RoomFiles, TeammateNames
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
@@ -273,7 +273,7 @@ def _real_addresses(host: str) -> list[IPAddress]:
                 params={"name": host, "type": kind},
                 timeout=8,
             ).json()
-        except Exception:  # noqa: BLE001 — any failure means "not verified"
+        except Exception:  # any failure means "not verified"
             continue
         for record in answer.get("Answer") or []:
             if record.get("type") in (1, 28):
@@ -322,9 +322,12 @@ def guard_mail_hosts(config: dict) -> None:
 
 
 class IntegrationService:
-    def __init__(self, session: AsyncSession, room_files: RoomFiles):
+    def __init__(
+        self, session: AsyncSession, room_files: RoomFiles, teammates: TeammateNames
+    ):
         self._session = session
         self._room_files = room_files
+        self._teammates = teammates
 
     async def owned(self, owner_user_id: int) -> list[Integration]:
         return list(
@@ -598,7 +601,18 @@ class IntegrationService:
                 draft.project_id, draft.topic_id, item["path"]
             )
             if hashlib.sha256(data).hexdigest() != item["sha256"]:
-                raise ValidationError(say("mailAttachmentChanged", name=item["name"]))
+                # The teammate who drafted it is the one to ask for a new
+                # draft, called by its name: the refusal is read in a toast
+                # on 「我的连接」 as well as on the room's card.
+                raise ValidationError(
+                    say(
+                        "mailAttachmentChanged",
+                        name=item["name"],
+                        agent=await self._teammates.name_of(
+                            draft.project_id, draft.created_by
+                        ),
+                    )
+                )
             files.append((item["name"], data))
         message = self._message(row, draft, files)
         try:

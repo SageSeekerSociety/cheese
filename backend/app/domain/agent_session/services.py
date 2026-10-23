@@ -14,12 +14,16 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
-from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.agent_session.repositories import (
+    AgentReadRepository,
+    AgentSessionRepository,
+)
 
 
 class AgentSessionService:
     def __init__(self, session: AsyncSession):
         self._repo = AgentSessionRepository(session)
+        self._reads = AgentReadRepository(session)
 
     async def ensure(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
@@ -60,6 +64,28 @@ class AgentSessionService:
         """The project state this agent's conversation was last told, by section."""
         row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.told if row is not None else None
+
+    async def read_cursor(
+        self, conversation_id: uuid.UUID, agent_handle: str
+    ) -> tuple[datetime, uuid.UUID] | None:
+        """Where this seat's reading of the conversation stands, or None."""
+        return await self._reads.cursor(conversation_id, agent_handle)
+
+    async def advance_read(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        at: datetime,
+        block_id: uuid.UUID,
+    ) -> None:
+        """Move this seat's reading forward to ``(at, block_id)``."""
+        await self._reads.advance(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            at=at,
+            block_id=block_id,
+        )
 
     async def remember_told(
         self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
@@ -160,13 +186,30 @@ class AgentSessionService:
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
         of the same room. None while no session of it has taken a machine:
-        nothing holds a working copy of it yet."""
+        nothing holds a working copy of it yet.
+
+        A lease that is not ready and names no executor has not taken its
+        machine either: it is a reservation whose executor is still being
+        installed there, or whose installation failed and waits for the next
+        tool call to retry, and there is nothing on the machine to ask. One
+        that is not ready but already records where its executor is (an
+        installation that got that far) does hold the machine's copy, and that
+        copy may carry work nobody has pushed, so it is still read."""
         for row in await self._repo.placed_in_conversation(conversation_id):
             place = row.place()
             if place is None or place.resource_id != generation:
                 continue
-            if place.lease is not None and place.lease.get("kind") == "device":
-                return place.lease, bool((row.execution_request or {}).get(LOST_KEY))
+            lease = place.lease
+            if (
+                lease is not None
+                and lease.get("kind") == "device"
+                and (
+                    lease.get("status", "ready") == "ready"
+                    or lease.get("state")
+                    or lease.get("home")
+                )
+            ):
+                return lease, bool((row.execution_request or {}).get(LOST_KEY))
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
@@ -238,6 +281,30 @@ class AgentSessionService:
             agent_handle=agent_handle,
             harness=harness,
             placed_before=placed_before,
+        )
+
+    async def drain(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
+    ) -> datetime:
+        """When the drain of this session's runner began; see the repository."""
+        return await self._repo.drain(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            launch=launch,
+        )
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over; see the repository."""
+        await self._repo.drained(
+            conversation_id=conversation_id, agent_handle=agent_handle, harness=harness
         )
 
     async def has_run(self, room_id: uuid.UUID) -> bool:

@@ -26,6 +26,10 @@ import i18n, { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 // The document's version history: the last edit is read on open; none here.
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),
@@ -331,12 +335,17 @@ describe('工作面板 · Tab 容器', () => {
   // 读的是「这件任务手上有什么」。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('频道是人说话的地方：只有总览、支线、定时与触发', async () => {
+  it('频道是人说话的地方：只有总览、支线、文件、例行事务', async () => {
     const { container } = mountChannel()
     await flush()
 
     // 总览上挂着这个频道有几件任务；这里只看有哪几格。
-    expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '定时与触发'])
+    expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual([
+      '概览',
+      '支线',
+      '文件',
+      '例行事务',
+    ])
   })
 
   it('频道不去问预览和改动：那两格它没有，一轮干完也不问', async () => {

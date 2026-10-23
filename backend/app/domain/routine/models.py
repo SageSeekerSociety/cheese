@@ -4,6 +4,9 @@ A routine is a rule; a run is one time the rule fired. The run row is written
 before any work is dispatched and is unique per (routine, occurrence), so a
 second sweep, a second backend process or a restart finds the same row instead
 of dispatching the same scheduled moment or event twice.
+
+A template is neither: it is a filled-in form kept to fill the next one from,
+and it belongs to the project rather than to the room or to the person.
 """
 
 import enum
@@ -37,8 +40,8 @@ class RoutineTrigger(enum.StrEnum):
 
 
 class RoutineState(enum.StrEnum):
-    #: Proposed by an AI teammate; runs nothing until a person confirms it.
-    draft = "draft"
+    #: Saved and running. Nothing waits on a person: an AI teammate creating a
+    #: rule and a person creating one both leave it here.
     active = "active"
     paused = "paused"
 
@@ -54,6 +57,41 @@ class RunStatus(enum.StrEnum):
 TERMINAL_RUN_STATUSES = frozenset(
     {RunStatus.succeeded, RunStatus.failed, RunStatus.skipped}
 )
+
+
+class RoutineTemplate(UuidPk, Timestamps, Base):
+    """「存成模板」收下来的那一张表：一个项目一份，项目里的人共用。
+
+    它不是规则：没有谁在跑、没有执行记录，删掉也不影响已经建出来的规则。所以它只有
+    填表要的那几格，没有 ``owner_handle`` / ``agent_handle`` / ``state`` 这些只有规则
+    才有的字段 —— 挑一条模板只是把这几格铺进表里，人还得看一眼再存。
+
+    跟项目走，不跟人走。它此前存在各自的浏览器里（一个项目一个键），换台机器就没了；
+    2026-10-15 lz123y 定下搬进项目：同一个项目里的人看到的是同一份，换机器也还在。
+
+    不记谁存的，也没有 ``can_delete``：模板是项目共用的一份起点，删它不改变任何人在跑
+    的东西，所以权限不挂在这张表上 —— 读得到这个项目就读得到、也删得掉。
+    """
+
+    __tablename__ = "routine_templates"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_routine_templates_project_id",
+        ),
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    #: 「目标」 — the words a rule's ``instructions`` holds, under the name the
+    #: form preset goes by on the screen (``RoutineTemplate.goal``).
+    goal: Mapped[str] = mapped_column(Text)
+    #: 「补充说明」, empty when the form's was.
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    trigger: Mapped[str] = mapped_column(String(32))
+    #: Same shape a rule's is: a schedule's fields, or an event's ``scope``.
+    spec: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class Routine(UuidPk, Timestamps, Base):
@@ -74,27 +112,33 @@ class Routine(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(200))
+    #: 「目标」: what the rule is for, in the person's own words. The one field
+    #: that has to be filled in.
     instructions: Mapped[str] = mapped_column(Text)
-    #: Which material the work may draw on, in the words the person confirmed.
-    context_scope: Mapped[str] = mapped_column(Text, default="", server_default="")
-    #: Room-relative folder the results are saved under.
-    output_dir: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    #: 「补充说明」: anything else the teammate should know. A new name on the
+    #: column that held 「使用哪些资料」, not a rename — the release still serving
+    #: reads that name. What a rule used to keep in that column and in
+    #: ``output_dir`` was folded in here by migration ``3e8b1d5a72c4``.
+    note: Mapped[str] = mapped_column(
+        "context_scope", Text, default="", server_default=""
+    )
+    # No ``output_dir``: where the results go is the teammate's call each time it
+    # runs, so nothing asks for it any more.
     trigger: Mapped[str] = mapped_column(String(32))
     #: schedule: {"freq": hourly|daily|weekly|monthly, "time": "HH:MM",
     #: "minute": int, "weekdays": [0..6], "day": 1..31}.
     #: Events: {"scope": room|project}.
     spec: Mapped[dict] = mapped_column(JSONB, default=dict)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
-    state: Mapped[str] = mapped_column(String(16), default=RoutineState.draft.value)
+    state: Mapped[str] = mapped_column(String(16), default=RoutineState.active.value)
     #: The AI teammate seat that does the work.
     agent_handle: Mapped[str] = mapped_column(String(64))
     #: Who asked for it; the person notified of every result.
     owner_handle: Mapped[str] = mapped_column(String(64))
-    proposed_by: Mapped[str] = mapped_column(String(64))
-    confirmed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    #: Who created it — a person's handle, or the handle of the teammate that
+    #: created it on someone's behalf. The column still carries its birth name:
+    #: a rename is a new name on the old column, so it is still `proposed_by`.
+    created_by: Mapped[str] = mapped_column("proposed_by", String(64))
     next_run_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

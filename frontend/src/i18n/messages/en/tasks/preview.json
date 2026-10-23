@@ -1,0 +1,17 @@
+{
+  "appUnavailable": "The preview connection is active, but the app is not responding. Ask {agent} to check whether the app is running.",
+  "connectionUnavailable": "The preview connection has not been established or has disconnected. {agent} may still be working. Check its status in Live; this panel updates automatically when the connection returns.",
+  "roomOutputs": {
+    "cancel": "Cancel",
+    "createAndOpen": "Create and open",
+    "createFailed": "Could not create the file",
+    "newFromTemplate": "New from template",
+    "newFromTemplateLabel": "New from {name}, save as",
+    "openFile": "Open {path}",
+    "readingTemplates": "Reading templates…",
+    "saveFailed": "Could not save it to the library",
+    "saveToLibrary": "Save to library",
+    "savedToLibrary": "Saved to library: {name}"
+  },
+  "unavailable": "App preview unavailable"
+}

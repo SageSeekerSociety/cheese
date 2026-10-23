@@ -41,11 +41,9 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.services import TeamService
-from app.domain.usage import pricing
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
@@ -88,10 +86,6 @@ async def get_task_submission_review_service(
 async def get_team_service(db=Depends(get_db)) -> TeamService:
     repo = TeamRepository(session=db)
     return TeamService(repo)
-
-
-async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    return await TaskPdfDraftService.on_gateway(db, await pricing.model_rates())
 
 
 def _task_attachment_service(db) -> TaskAttachmentService:

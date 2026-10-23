@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Say whether one PR is ready to be delivered, or what is missing (§8 of the workflow).
 
-    ready.py --dir /tmp/pr-review-7-abcdef123456.input [--repo OWNER/NAME] [--self-test]
+    ready.py --dir $HOME/.cheese/review-cache/pr-review-7-abcdef123456.input
+             [--repo OWNER/NAME] [--self-test]
 
 `pr-review.sh ready DIR` runs this. DIR is a `prepare` directory: it holds meta (the PR and
 the commit that was reviewed) and REVIEW-RESULT.md (what the seat pastes into the card).
@@ -11,9 +12,12 @@ Two things gate a delivery, and this checks both:
   2. There is a review conclusion with no blocker/major on that head. A review of an older
      commit still counts when everything after it is an increment §4 does not re-review:
      commits that came in by merging the base branch, and changes that are only tests,
-     copy or docs. Anything else needs an increment review first.
+     copy or docs. Anything else needs an increment review first. A head that only merged
+     `origin/main` is the first of those: the original review's conclusion line is used
+     as it is, and no prepare runs again.
 
-It reads GitHub for the head and the check run; everything else is the local review. It
+With --pr it reads one PR snapshot and its last stamped conclusion; --dir reads
+the explicitly selected local result. Local cache order never selects a round. It
 does not deliver anything and does not write to the card. Exit 0 for 可递, 1 for 缺, 2 for a
 usage error.
 """
@@ -32,12 +36,20 @@ import tiers  # noqa: E402
 DEFAULT_REPO = "SageSeekerSociety/cheese"
 #: The check the acceptance gate reads, same name as orchestrator_autoaccept.CI_CHECK.
 CI_CHECK = "CI required"
+#: What a draft aggregates as. On a draft `CI required` is always skipped (GitHub counts a
+#: skipped required check as met, so the full name must not run there), and reading it
+#: told the seat to wait for a check that only appears once the PR leaves draft.
+DRAFT_CHECK = "CI required (draft quick)"
 RED = ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")
 UNREADABLE = "读不到"
-#: §4's exempt increment: 改文案. The message files only. The A tier also calls
-#: `backend/app/core/sentences.py` 文案, but that module loads the templates and formats the
-#: notices, so editing it is editing code: it needs its increment read like any other code.
-COPY = ("frontend/src/i18n/messages/",)
+#: §4's exempt increment: 改文案. The message files only — the strings a person reads. The
+#: A tier also calls `backend/app/core/sentences.py` 文案, but that module loads the templates
+#: and formats the notices, so editing it is editing code: it needs its increment read like
+#: any other code. The same holds for `catalog.ts` and the `index.ts`/`sentences.ts` beside
+#: the message files: they were exempt on the directory prefix alone, and editing the loader
+#: can drop or reword every string in the tree without any review of the increment.
+COPY = "frontend/src/i18n/messages/"
+COPY_SUFFIX = ".json"
 
 
 def gh(*args):
@@ -52,12 +64,19 @@ def newest_run(runs):
     return max(runs, key=lambda r: r.get("started_at") or "")
 
 
-def ci_on(repo, sha):
-    """The newest "CI required" check run on `sha`: its conclusion, its status while it is
-    still running, None when it never ran, or UNREADABLE. Mirrors orchestrator_autoaccept
-    so that 可递 here means what the acceptance gate will do with the same commit."""
+def check_for(draft):
+    """The aggregator that speaks for a PR in this state."""
+    return DRAFT_CHECK if draft else CI_CHECK
+
+
+def ci_on(repo, sha, draft):
+    """The newest aggregator check run on `sha` — the draft tier's on a draft, "CI required"
+    otherwise: its conclusion, its status while it is still running, None when it never
+    ran, or UNREADABLE. On a ready PR this mirrors orchestrator_autoaccept, so that 可递
+    here means what the acceptance gate will do with the same commit."""
+    name = check_for(draft)
     out = gh(f"repos/{repo}/commits/{sha}/check-runs", "--paginate",
-             "--jq", f'[.check_runs[] | select(.name == "{CI_CHECK}")] | .[]')
+             "--jq", f'[.check_runs[] | select(.name == "{name}")] | .[]')
     if out is None:
         return UNREADABLE
     try:
@@ -72,43 +91,55 @@ def ci_on(repo, sha):
 
 def exempt(path):
     """True when §4 lets this file change without a new review. Not the tier: a copy change
-    is tier A for a whole review, and still exempt as an increment."""
-    return tiers.is_test(path) or tiers.is_doc(path) or any(tiers.under(path, p) for p in COPY)
+    is tier A for a whole review, and still exempt as an increment.
 
-
-def _blob(repo, rev, path):
-    """The blob of `path` in `rev`, or None when the path is not in that tree."""
-    out = tiers._git(repo, "rev-parse", "--verify", "--quiet", f"{rev}:{path}")
-    return out.strip() if out and out.strip() else None
+    The copy exemption is the message files AND the suffix, not the prefix: `catalog.ts`
+    and the `index.ts` beside the messages are loaders, and exempting them let an increment
+    that only rewires or rewords what the interface shows go unread."""
+    if tiers.is_test(path) or tiers.is_doc(path):
+        return True
+    return path.endswith(COPY_SUFFIX) and tiers.under(path, COPY)
 
 
 def author_files(repo, base, since, head):
-    """The files whose content at `head` differs from the reviewed commit's version AND from
-    the base branch's: what the author changed after the review, plus anything a merge
-    brought in that is neither of those two versions — a conflict resolution the author
-    wrote. A merge of the base branch therefore does not count: every file it brought in
-    comes out at the base branch's own version, or unchanged from `since`.
+    """Net changed paths authored since review, excluding automatic merges of the base.
 
-    The comparison is between trees (`git diff since head`), not the commit graph. A merge
-    commit's own `diff-tree` prints nothing, so a log walk that skips merges never sees the
-    resolution a merge carries — it lives only in the tree that merge produced."""
-    out = tiers.paths_of(repo, since, head)
-    if out is None:
+    Recreate each base merge from its own two parents via remerge-diff. Only the
+    difference from that automatic merge is authored resolution; a later origin/main
+    cannot change the answer. Ordinary commits and non-base merges keep their diff.
+    Intersect with the net diff so a change reverted before head needs no review.
+    Keep both paths of a rename: an authored edit may be under the old path
+    while a clean base merge carries it to the new path.
+    """
+    net = tiers.paths_of(repo, "--no-renames", since, head)
+    commits = tiers._git(repo, "rev-list", "--first-parent", f"{since}..{head}")
+    if net is None or commits is None:
         return None
-    files = []
-    for path in out:
-        here = _blob(repo, head, path)
-        # Without a base branch there is nothing to compare against: keep the file. 判不了
-        # 按 B — a file nobody can clear is re-reviewed, not waved through.
-        if base and here == _blob(repo, f"origin/{base}", path):
-            continue
-        files.append(path)
-    return sorted(files)
+    authored = set()
+    for commit in commits.splitlines():
+        parents = tiers._git(repo, "show", "-s", "--format=%P", commit)
+        if parents is None or not parents.strip():
+            return None
+        parents = parents.split()
+        if (len(parents) == 2 and base
+                and tiers._git(repo, "merge-base", "--is-ancestor", parents[1],
+                               f"origin/{base}") is not None):
+            out = tiers._git(repo, "show", "--remerge-diff", "--format=", "--name-only",
+                             "-z", commit)
+            paths = None if out is None else [p for p in out.split("\0") if p]
+        else:
+            paths = tiers.paths_of(repo, parents[0], commit)
+        if paths is None:
+            return None
+        authored.update(paths)
+    return sorted(set(net) & authored)
 
 
 def increment(repo, base, since, head):
     """What stands between the reviewed commit and the head: {"needs": bool, "detail": str}.
     `needs` False means the review still covers the head under §4."""
+    if tiers._git(repo, "merge-base", "--is-ancestor", since, head) is None:
+        return {"needs": True, "detail": "审查提交不是当前 head 的祖先"}
     files = author_files(repo, base, since, head)
     if files is None:
         return {"needs": True, "detail": "读不到这两个提交之间改了什么"}
@@ -142,17 +173,20 @@ def verdict(f):
                 f"缺一次增量审：prepare <PR> --since {rv['head'][:8]}")
         else:
             notes.append(f"审查是 {rv['head'][:8]} 的，之后{inc['detail']}，不用重审")
-    ci = f.get("ci")
+    ci, draft = f.get("ci"), bool(f.get("draft"))
+    check = check_for(draft)
     if ci == UNREADABLE:
-        missing.append(f"{CI_CHECK} 读不到")
+        missing.append(f"{check} 读不到")
     elif ci in RED:
-        missing.append(f"{CI_CHECK} 在 head 上是 {ci}")
+        missing.append(f"{check} 在 head 上是 {ci}")
     elif ci != "success":
-        missing.append(f"{CI_CHECK} 在 head 上是 {ci or '没跑'}，等它绿")
+        missing.append(f"{check} 在 head 上是 {ci or '没跑'}，等它绿")
+    elif draft:
+        notes.append(f"草稿档已绿；递卡会自动转正，转正后要等完整的 {CI_CHECK}")
     if missing:
         return False, ["还不能递："] + [f"- {m}" for m in missing] + [f"- 说明：{n}" for n in notes]
     tier = f"｜档位 {rv['tier']}" if rv and rv.get("tier") else ""
-    line = (f"可递：head {head[:8]}｜{CI_CHECK} {ci}"
+    line = (f"可递：head {head[:8]}｜{check} {ci}"
             f"｜review {rv['head'][:8]}{'（增量）' if rv.get('since') else ''} "
             f"结论 {rv['verdict']}{tier}")
     return True, [line] + [f"- {n}" for n in notes]
@@ -164,12 +198,34 @@ def review_from(directory):
     file = Path(directory) / "REVIEW-RESULT.md"
     if not file.exists():
         return None
-    m = render.CARD_LINE.search(file.read_text())
-    if not m:
+    return review_line(file.read_text())
+
+
+def review_line(text):
+    """The last stamped conclusion supersedes earlier rounds, including blockers."""
+    matches = [match for line in text.splitlines()
+               if (match := render.CARD_LINE.fullmatch(line.strip()))]
+    if not matches:
         return None
+    m = matches[-1]
     return {"head": m.group("head"), "since": m.group("since"),
             "verdict": m.group("verdict"),
             "serious": int(m.group("serious") or 0), "tier": m.group("tier") or ""}
+
+
+def gather_pr(number, repo, root):
+    """Read one PR snapshot; local prepare directories are not delivery evidence."""
+    raw = gh(f"repos/{repo}/pulls/{number}")
+    if raw is None:
+        return {"error": "GitHub 读不到这个 PR"}
+    pr = json.loads(raw)
+    head, draft = pr["head"]["sha"], pr["draft"]
+    review = review_line(pr.get("body") or "")
+    facts = {"head": head, "draft": draft, "review": review,
+             "ci": ci_on(repo, head, draft), "error": None}
+    if review and not head.startswith(review["head"]):
+        facts["increment"] = increment(root, pr["base"]["ref"], review["head"], head)
+    return facts
 
 
 def meta_of(directory):
@@ -181,15 +237,22 @@ def meta_of(directory):
     return out
 
 
-def gather(directory, repo, root):
+def gather(directory, repo, root, head=None):
+    """`head` is the sha `POST /topics/<id>/ready` answered with (it already counts a
+    rebase); given, the PR's head is not read from GitHub a second time."""
     meta = meta_of(directory)
     f = {"head": None, "ci": None, "review": review_from(directory), "error": None}
-    got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", ".head.sha")
-    if got is None:
-        f["error"] = "GitHub 读不到这个 PR"
-        return f
-    f["head"] = got.strip()
-    f["ci"] = ci_on(repo, f["head"])
+    if head:
+        # `/ready` answered with it, and `/ready` is what turned the PR ready: no draft.
+        f["head"], f["draft"] = head.strip(), False
+    else:
+        got = gh(f"repos/{repo}/pulls/{meta['pr']}", "--jq", "[.head.sha, .draft] | @tsv")
+        if got is None or "\t" not in got:
+            f["error"] = "GitHub 读不到这个 PR"
+            return f
+        sha, draft = got.strip().split("\t")
+        f["head"], f["draft"] = sha, draft == "true"
+    f["ci"] = ci_on(repo, f["head"], f["draft"])
     if f["review"] and f["head"] != f["review"]["head"]:
         f["increment"] = increment(root, meta.get("base"), f["review"]["head"], f["head"])
     return f
@@ -206,13 +269,20 @@ def resolve_root(arg_root, directory):
 
 def main(argv=None):
     p = argparse.ArgumentParser(add_help=True, description=__doc__)
-    p.add_argument("--dir", dest="directory")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--dir", dest="directory")
+    source.add_argument("--pr", type=int)
     p.add_argument("--root", default=None, help="the repository the commits live in")
     p.add_argument("--repo", default=DEFAULT_REPO)
+    p.add_argument("--head", default=None, help="the head sha /ready answered with")
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args(argv)
     if args.self_test:
         return self_test()
+    if args.pr:
+        ready, lines = verdict(gather_pr(args.pr, args.repo, args.root or "."))
+        print("\n".join(lines))
+        return 0 if ready else 1
     if not args.directory:
         p.print_help(sys.stderr)
         return 2
@@ -221,7 +291,7 @@ def main(argv=None):
         print(f"ready: {directory} 没有 meta；先跑 prepare", file=sys.stderr)
         return 2
     root = resolve_root(args.root, directory)
-    ready, lines = verdict(gather(directory, args.repo, root))
+    ready, lines = verdict(gather(directory, args.repo, root, args.head))
     print("\n".join(lines))
     return 0 if ready else 1
 
@@ -365,6 +435,27 @@ def self_test():
         check("改动落在非 ASCII 路径上：仍要补增量审",
               increment(repo, "main", docs, nonascii),
               {"needs": True, "detail": "改了 backend/app/中文模块.py"})
+        # The loader beside the message files: the path starts with the copy prefix, so it
+        # read as 改文案 and the increment went unread — a change that rewires every string in
+        # the tree waved through as the change that rewords one.
+        write("frontend/src/i18n/messages/catalog.ts", "export const load = () => ({})\n")
+        loader = commit("the message loader")
+        check("文案目录下的 .ts 是逻辑：要补增量审",
+              increment(repo, "main", nonascii, loader),
+              {"needs": True, "detail": "改了 frontend/src/i18n/messages/catalog.ts"})
+        # The other prefix. `docs/` exempted whatever was under it, so an increment that
+        # only edited the shell script the site's package.json runs read as 改文档 and went
+        # unread — a change to what the docs build executes, waved through as prose.
+        write("docs/site/gen/diagrams.sh", "#!/bin/sh\nnode cli.js\n")
+        script = commit("the diagram entry script")
+        check("docs 下的构建脚本是逻辑：要补增量审",
+              increment(repo, "main", loader, script),
+              {"needs": True, "detail": "改了 docs/site/gen/diagrams.sh"})
+        write("docs/design-system.md", "prose\n")
+        prose = commit("prose only")
+        check("docs 下只改散文：不用重审",
+              increment(repo, "main", script, prose),
+              {"needs": False, "detail": "只改了测试、文档或文案：docs/design-system.md"})
         # The base branch now changes the same file this branch changed, so the merge has to
         # be resolved by hand. That resolution is the author's code: a merge commit's own
         # diff-tree is empty, so only the tree it produced says what came in.
@@ -396,6 +487,28 @@ def self_test():
               "frontend/src/i18n/messages/en/ask.json")), (True, "A"))
     check("sentences.py 是逻辑，不是文案：不豁免",
           exempt("backend/app/core/sentences.py"), False)
+    # The exemption is the copy AND the suffix. Both directions are pinned, because each
+    # one alone leaves the same hole open from the other side: the prefix alone exempts the
+    # loader beside the messages, the suffix alone exempts any .json anywhere, which is the
+    # route table and the lock-step data files.
+    for path, want in (
+        ("frontend/src/i18n/messages/catalog.ts", False),  # the loader, not a message
+        ("frontend/src/i18n/messages/zh-CN/index.ts", False),
+        ("frontend/src/i18n/messages/zh-CN/sentences.ts", False),
+        ("frontend/src/i18n/messages/zh-CN/ask.json", True),
+        ("frontend/src/i18n/messages/en/ask.json", True),
+        ("backend/scripts/route_index.json", False),  # a .json that is not copy
+        ("docs/site/build.mjs", False),  # a .mjs that is not a doc
+        # Under docs/, the exemption is prose only. `package.json` runs the diagram build,
+        # and the first code-extension list left its `.sh` — and every `.json` — exempt, so
+        # an increment changing what the docs build executes needed no review.
+        ("docs/site/gen/diagrams.sh", False),
+        ("docs/site/package.json", False),
+        ("docs/site/diagrams/turn.sequence.json", False),  # the generator reads it
+        ("docs/design-system.md", True),
+        ("AGENTS.md", True),
+    ):
+        check(f"增量豁免看内容和后缀两头：{path}", exempt(path), want)
 
     for line in bad:
         print("FAIL " + line)

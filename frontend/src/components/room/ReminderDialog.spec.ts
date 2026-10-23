@@ -63,6 +63,7 @@ function mount() {
         topic: TOPIC,
         mentionPool: [],
         topicList: [],
+        refs: { mentionNames: {}, topicTitles: {} },
         agentSeat: null,
         agentName: '芝士',
         alwaysSummon: false,
@@ -88,7 +89,8 @@ function local(d: Date): string {
 
 async function openDialog() {
   const utils = mount()
-  await fireEvent.click(utils.getByTitle('提醒我'))
+  await fireEvent.click(utils.getByTitle('更多操作'))
+  await fireEvent.click(await screen.findByRole('menuitem', { name: '提醒我' }))
   await flush()
   const when = document.querySelector<HTMLInputElement>('[data-testid="reminder-when"] input')!
   const content = document.querySelector<HTMLTextAreaElement>('[data-testid="reminder-content"] textarea')!

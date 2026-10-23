@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.room_task.schemas import PresentationOut
+from app.domain.presentation_meta import PresentationOut
 from app.domain.topic.models import TopicKind, TopicStatus
 
 
@@ -67,19 +67,15 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 上一次有**输出**是什么时候：在跑的那一轮最后一帧（`agent/turn/intake/
-    # status.live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块
-    # 落了地；这一位说「队友还在输出」。一次长工具调用期间多半没有新块、只有帧，
-    # 所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
+    # 这间房里**还没恢复**的失败从什么时候开始（`block/waits.MemberWaits.
+    # unresolved_failures`）：一条活/一轮停下报错，五分钟了没人接手，侧栏画红灯。
+    # None = 没有未恢复的失败（恢复了、或本来就没坏过），不亮。
     #
-    # None：此刻没有在跑的轮次，或者记录里没有这个戳（那种「不知道」不当成「很新」
-    # 用，读的人自己决定，前后端都不许自己编一个）。
-    #
-    # 取整到分钟再发。清单的条件请求靠整份 body 的指纹（`conditional_json`），一帧
-    # 一个时间戳会让「有任何一轮在跑」期间每一次轮询都命中不了 304、几百 KB 原样重
-    # 传一遍 —— 和 `activity` 不带 `expires_in` 是同一条理由。取整把它压到一分钟
-    # 最多变一次；灯判的是五分钟，误差最多一分钟，够了。
-    last_output_at: datetime | None = None
+    # 汇总的是这间房自己那条线、它的支线，以及它名下**还没关**的活里最早的一条：
+    # 名下一件活报错停下，上面那间房就是在出问题；一件活自己恢复只清它自己，别的
+    # 活、这间房自己那条线照旧。只有 list/get 话题时填，别处一律 None（「没人算过」，
+    # 不是「没有」）。
+    incomplete_since: datetime | None = None
     # 交到这里、且**读的人还没点开看过**的活：这个频道名下有这么一件「卡片被采纳
     # 过、而他从那以后没在这间房或那件活上点开过」（`room_task/repositories.
     # unseen_deliveries`）。侧栏的**长绿**问的就是它——「这里做过事、都交付完了、
@@ -92,15 +88,13 @@ class TopicOut(BaseModel):
     # 登录的人一律 False。借了 `Unread` 那份判断的同一个理由：别人的交付不该在我
     # 的侧栏上喊我。
     unseen_delivery: bool = False
-    # 这间房里有没有活在往前走：有一轮在跑（这间房自己那条线、它名下的活、它的支线
-    # —— `agent.liveness.moving_topics` 已经把它们折回这间房），或者走在交付链路上
-    # （这间房自己那张卡在 `Delivering` 那一列，或者**它名下的活**在那条链路上：
-    # 等闸门、等 CI、修检查、解冲突、换基）。侧栏的**呼吸绿**问的就是它
-    # （`room_task/presentation.work_moving`，判据只写在那一处）。
+    # 这间房此刻在不在往前走：它自己那条线、它的支线、它名下的活里，任意一处有
+    # runner 报着在跑的会话；或者名下的活（或房间自己那张卡）走在交付链路上。
+    # 侧栏的**呼吸绿**问的就是它——「有一轮在跑，或者活已经递出去」。
     #
-    # 和 `unseen_delivery` 一样算在频道这一行上：活在侧栏是挂在频道下面的一行，而
-    # 「这间房有没有在往前走」是频道那一行的灯。只对 list/get 话题成立，别处一律
-    # False —— 私聊和项目本体没有「名下的活」这一层。
+    # 和 `unseen_delivery` 分开：呼吸绿说的是「现在还在动」，常亮绿说的是「做完了、
+    # 你还没看过」。只有 list/get 话题时填，别处一律 False（「没人算过」，不是
+    # 「没有」）。
     moving: bool = False
     # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友。
     # 来源：`agent/realtime/activity.py`。
@@ -111,6 +105,10 @@ class TopicOut(BaseModel):
     # 打字，几百 KB 的清单每 30 秒都命中不了 304、原样重传一遍（`routes/topics.py`）。
     # 房间 socket 上那份 `activity_snapshot` 仍是完整的（含打字）—— 那是房内实时显示。
     activity: list[MemberActivityOut] = Field(default_factory=list)
+    # 这间房的 AI 队友：没人点名的话交给名册上的哪一席（`TopicMemberService.
+    # addressable_agent_handle`），一位都没坐就是 None。行上那句状态说到队友时
+    # （「{agent}在做」）叫的是它，项目可以给它改名。同样只有 list/get 话题时填。
+    agent_handle: str | None = None
     # 这个房间在等哪位成员、从什么时候开始、为什么（`block/waits.py`）：它那一轮
     # 报错了、有人点了它的名还没回、卡停在要它修的地方。多久算太久在前端按当下的
     # 钟判。同样只有 list/get 话题时填。

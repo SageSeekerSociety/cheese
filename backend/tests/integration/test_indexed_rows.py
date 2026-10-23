@@ -27,9 +27,10 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.waits import MemberWaits, StuckCard
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository
@@ -92,10 +93,8 @@ async def _seed(session) -> dict[str, object]:
     those reads do is free, the partial index is dearer than the index already
     there, and the plan says which path is cheapest instead of whether the
     index can be used at all — the two things these assertions exist to tell
-    apart. Behind the cases, because the bulk is signed by the agent handle: a
-    bulk block newer than a question in the same conversation reads as the asker
-    speaking again, which `_awaiting_an_answer` takes for the question
-    withdrawn.
+    apart. The bulk predates the cases so the wait lookups still encounter each
+    case as the latest event of its kind.
 
     The table is truncated first, inside the test's transaction (so the
     rollback at the end restores it). The worker's database is emptied between
@@ -342,30 +341,12 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
 
 
 @pytest.mark.anyio
-async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factory):
-    """`_awaiting_an_answer` asks, for each place, whether anyone spoke after the
-    question it is still holding. The batch asks it in one read, each place
-    carrying its own question as the bound — without a bound the read brings
-    back every message of every place and groups them, which on dev is 80k
-    blocks over 426 places for an answer that was almost always "nobody"
-    (2026-10-12: 89ms, twice per `/awaiting-me` before the two calls were
-    merged).
-
-    The bound is what lets the read walk an index keyed on (conversation_id,
-    created_at) instead of the place's whole run. Both halves are asserted — the
-    predicate is in the SQL, and the plan reads through an index on both of
-    those rather than scanning the blocks of every place. Which of the two
-    conversation-scoped indexes the planner takes is its business (at fixture
-    size it takes `ix_blocks_conversation_kind_created`, which also covers it);
-    what must hold is that the time bound is part of what the scan cuts on.
-
-    The bound has to be the asking place's own question, not one time for the
-    batch, so a place is seeded whose question is the oldest of the three and
-    whose asked person answers it after it was asked but before the other two
-    asked theirs. A batch-wide bound could only be the newest question, which
-    would cut that answer away and leave the place on the list — the case the
-    answer assertion reads, and the only one that tells a per-place bound apart
-    from a batch-wide one here.
+async def test_later_talk_keeps_the_question_waiting_without_scanning_messages(
+    db_factory,
+):
+    """Unrecorded later talk does not settle a question. The batch still reads
+    through the questions index once, rather than scanning the conversation's
+    message history to infer an outcome.
     """
     async with db_factory() as session:
         seeded = await _seed(session)
@@ -422,32 +403,14 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
         assert {place: w.waiting() for place, w in asked.items()} == {
             rooms["asks"].id: ("u1",),
             tasks["asks"].id: ("u1",),
+            spoken_since.id: ("u1",),
         }
 
         conn = await session.connection()
-        # Who spoke since the question is one question, not two: the same read
-        # answers it for the agents and for the participants, split in Python on
-        # the shape of the author's handle.
-        reads = [
-            (sql, params) for sql, params in seen if "max(blocks.created_at)" in sql
-        ]
-        assert len(reads) == 1, seen
-        for sql, params in reads:
-            # The bound is the row's own question, carried in alongside the place
-            # ids (`anon_1.asked_at`), not one time picked for the batch: a
-            # batch-wide bound would come back as a bind parameter and read the
-            # same way here, so this is asserted against the column it compares.
-            assert re.search(r"blocks\.created_at > \w+\.asked_at", sql), sql
-            plan = await _generic_plan(conn, "probe_spoke", sql, params)
-            assert "Seq Scan on blocks" not in plan, plan
-            # The bound has to be something the index cuts on, not a `Filter:`
-            # the scan throws rows away with afterwards. A plan that only cuts
-            # on the conversation and filters on the time passes a bare
-            # `"created_at >" in plan` while reading the place's whole run.
-            cuts_on_the_bound = re.search(
-                r"(Index Cond|Recheck Cond):[^\n]*created_at >", plan
-            )
-            assert cuts_on_the_bound, plan
+        [(sql, params)] = seen
+        plan = await _generic_plan(conn, "probe_questions_after_talk", sql, params)
+        assert "ix_blocks_questions" in plan, plan
+        assert "Seq Scan on blocks" not in plan, plan
         await session.rollback()
 
 

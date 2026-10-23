@@ -9,7 +9,7 @@
 // 文件 x.py」。各自都不假，别承诺两句一字不差。
 //
 // 参数从还在流的 JSON 里取，取哪个键由 backend 的 `_TOOL_ARG`
-// (domain/agent/tool_preview.py) 定：这一步在动什么，就取那个参数。表里没有的
+// (domain/session_record/preview.py) 定：这一步在动什么，就取那个参数。表里没有的
 // 工具只显示动词 —— 硬找一个参数填进去，比留空更让人读不懂。
 
 import type { LiveBlock } from '../types/live'
@@ -58,7 +58,9 @@ const ARG_KEY: Record<string, string> = {
   cheese_doc_edit: 'reason',
   cheese_task: 'title',
   cheese_close_task: 'conclusion',
+  cheese_task_state: 'note',
   cheese_fetch: 'url',
+  cheese_web_search: 'query',
   cheese_decision: 'text',
   cheese_title: 'text',
   cheese_notify: 'title',

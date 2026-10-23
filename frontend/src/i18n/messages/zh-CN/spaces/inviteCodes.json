@@ -1,0 +1,42 @@
+{
+  "cancel": "取消",
+  "confirmRevoke": "确认撤销",
+  "copy": "复制",
+  "create": "新建",
+  "current": "当前使用中的码",
+  "edit": "调整",
+  "empty": "暂无邀请码",
+  "expiresAt": "有效期至 {date}",
+  "expiresOn": "有效期至（不填 = 永不过期）",
+  "expiresOnEdit": "有效期至（留空 = 永不过期）",
+  "generate": "生成",
+  "maker": "建码人",
+  "maxUses": "可用人数",
+  "neverExpires": "永不过期",
+  "newTitle": "新建一个码",
+  "noNote": "没写说明",
+  "noneUsable": "暂无可用的码",
+  "note": "说明（这张码给谁 / 干什么用，可不填）",
+  "noteEdit": "说明（留空 = 清掉）",
+  "revoke": "撤销",
+  "save": "保存",
+  "status": {
+    "exhausted": "已用尽",
+    "expired": "已过期",
+    "usable": "可用"
+  },
+  "toast": {
+    "createFailed": "生成失败",
+    "created": "已生成",
+    "loadFailed": "邀请码加载失败",
+    "maxUsesBelowUsed": "可用人数不能少于已经用掉的 {n} 人",
+    "maxUsesInvalid": "可用人数要是正整数",
+    "revokeFailed": "撤销失败",
+    "revoked": "已撤销，这个码从此加入不了",
+    "updateFailed": "更新失败",
+    "updated": "已更新"
+  },
+  "unknownMaker": "未知",
+  "usage": "{used} / {max} 人已用",
+  "usageUnlimited": "{used} / 不限 人已用"
+}

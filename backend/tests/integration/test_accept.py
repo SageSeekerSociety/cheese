@@ -431,7 +431,7 @@ def test_accept_sends_the_cards_words_to_the_forge(client):
     assert merge["commit_title"].startswith("chore(test): file an accept card (#")
     assert "Reviewed-by: alice <alice@zhishi.local>" in merge["commit_message"]
     assert f"/topics/{tid}" in merge["commit_message"]
-    assert f"Cheese-Card: {cid}" in merge["commit_message"]
+    assert "Cheese-" not in merge["commit_message"]
 
 
 def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client):
@@ -448,7 +448,12 @@ def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client)
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 422, response.text
-    assert "dirty" in response.json()["message"]
+    # 拒绝的那句话要说清是冲突，而不是报一个合并态的词：冲突有自己要解的活，
+    # 不是一个重试就过去的抖动（2026-10-16：这句话以前是「现在不能采纳（合并态：
+    # dirty）」）。两个断言都要：旧的「合并态：dirty」那句里也有「冲突」两个字
+    # （它来自 `acceptBlocked` 的 detail），只断言「冲突」的话，退回去照样绿。
+    assert "冲突" in response.json()["message"]
+    assert "现在不能采纳" not in response.json()["message"]
     assert fake.merge_calls == []
     task = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"]
     assert task["status"] == "open"

@@ -43,9 +43,7 @@ from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
 from tests.support.review_ports import (
     pumping,
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
     settle_card,
 )
 
@@ -409,8 +407,6 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 announce,
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
-                seat_instance_id=seat_instance_id,
-                record_agent=record_agent,
                 dispatch_pending=pumping(chat),
             )
         )
@@ -536,9 +532,9 @@ def _push_with_cli(binding, token, root, author):
         thread.join(timeout=5)
 
 
-@pytest.mark.parametrize("requester_credit", [True, False])
+@pytest.mark.parametrize("owner_credit", [True, False])
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
-    db_factory, monkeypatch, tmp_path, requester_credit
+    db_factory, monkeypatch, tmp_path, owner_credit
 ):
     from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
@@ -574,17 +570,18 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             branch_name="task/report",
             base_branch="main",
             created_by="cheese",
+            owner_handle="requester",
         )
         session.add(task)
         await session.commit()
         scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(room.id))
         metadata = await open_task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == ["requester <requester@zhishi.local>"]
-        project.settings = {"forge_requester_coauthor": requester_credit}
+        project.settings = {"commit_credit": "owner" if owner_credit else "agent"}
         await session.commit()
         metadata = await task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == (
-            ["requester <requester@zhishi.local>"] if requester_credit else []
+            ["requester <requester@zhishi.local>"] if owner_credit else []
         )
         from app.domain.repository.identity import attribution
 
@@ -725,8 +722,8 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         assert merged_author["email"] == author.email
         assert (
             "Co-authored-by: requester <requester@zhishi.local>" in message
-        ) == requester_credit
-        assert f"Cheese-Card: {card.id}" in message
+        ) == owner_credit
+        assert "Cheese-" not in message
         assert f"/topics/{room.id}" in message
         assert f"/tasks/{task.id}" in message
         assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in message

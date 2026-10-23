@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import type { FeedbackKind } from '@/cx_types'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 
+import { useFeedbackAttachments } from '@/composables/useFeedbackAttachments'
+
+import FeedbackAttachmentField from './FeedbackAttachmentField.vue'
 import { kindLabel } from './feedbackLabels'
+import { useFeedbackSubmitCopy } from './useFeedbackSubmitCopy'
+import { useFeedbackTags } from './useFeedbackTags'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import { t } from '@/i18n'
-import { cleanTags, EXPECTATION_KINDS, MAX_TAGS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
+import { agentNames } from '@/lib/agentNames'
+import { EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 标题上限。以前只写在输入框的 maxlength 上，粘一段长标题进来会被悄悄截掉；现在同一个
 // 数字同时喂给 maxlength 和计数器。
@@ -53,13 +60,17 @@ const TITLE_MAX = 300
 // `feedback.kind.*`，卡片、详情页、管理台读的也是它）。这一份新界面再从词表里写一遍
 // 同样的三个词，就是同一个事实的第二份拷贝，而那种漂开的表现是「列表里叫建议、表单里
 // 叫功能请求」。新加的**句子**（每类一句后果说明、必填/选填的分界说明）才进词表。
+//
+// 跟着类型走的那一份说法（类型有哪几档、每一档下面那几句话）在
+// `useFeedbackSubmitCopy`，标签那一栏的芯片输入在 `useFeedbackTags`；这一份只剩表单
+// 自己的骨架：哪些字段是必填的、按类型问哪两栏、提交和取消。
 const props = defineProps<{ shell: 'page' | 'dialog' }>()
 const emit = defineEmits<{ (e: 'submitted', id: string): void; (e: 'cancel'): void }>()
 
 const store = useFeedbackStore()
-
-/** 词表来自服务端；meta 还没到时用这三个 —— 它们是 `FeedbackKind` 的全部取值。 */
-const kinds = computed<FeedbackKind[]>(() => store.meta?.kinds ?? ['bug', 'suggestion', 'other'])
+const { kinds, titlePlaceholder, bodyLabel, bodyPlaceholder, kindHint } = useFeedbackSubmitCopy()
+const { tagDraft, tagFocused, tagSuggestions, addTag, removeTag, onTagKeydown } = useFeedbackTags()
+const attachments = useFeedbackAttachments()
 
 /** 从提案卡打开的那条：作者是提案的 agent、提交者是我，所以两个入口的说法不一样。 */
 const fromProposal = computed(() => !!store.draft.proposal)
@@ -67,6 +78,13 @@ const fromProposal = computed(() => !!store.draft.proposal)
 /** agent 带过来的现场。单独取一份是为了模板里能 `v-if` 之后再读它的三段 —— 在
  *  `store.draft.fromAgent` 那条链上做窄化，模板里读到的类型仍可能是 undefined。 */
 const origin = computed(() => store.draft.fromAgent)
+
+/** 提这张卡的那位队友叫什么：它的 handle 在项目名册上的名字，名册里没有才写项目默认那位。 */
+const workspace = useWorkspaceStore()
+const originAgent = computed(() => {
+  const handle = origin.value?.agentHandle
+  return (handle && agentNames([], workspace.members).get(handle)) || workspace.agentName
+})
 
 /** 手上这份是刚从盘上捞回来的。说出来，而不是静默发生 —— 打开表单看到一段不是自己
  *  刚打的字，不解释一句就像串了别人的内容。 */
@@ -79,121 +97,42 @@ const restoredNotice = computed(() => store.draftRestored)
 const askRepro = computed(() => REPRO_KINDS.includes(store.draft.kind))
 const askExpectation = computed(() => EXPECTATION_KINDS.includes(store.draft.kind))
 
-/** 提交按钮能不能按。查的是**同一个门槛**，见文件头。 */
-const canSubmit = computed(() => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting)
-
-/** 说明那一栏的标题、占位语和类型说明**跟着类型走**。三份都写成**字面量的表**，不拼键：
- *  i18n 的闸门（`src/i18n/catalog.spec.ts`）是照着源码里的字面量认「这个键有人用」的，
- *  拼出来的键既不会被算作一次调用，真正那三个叶子又会被判成「没有任何文件引用」——
- *  一边报「键不存在」、一边报「没人用」，两句话都不指向真正的原因。
+/** 提交按钮能不能按。查的是**同一个门槛**，见文件头。
  *
- *  表值写成**函数**而不是字符串：`t()` 要在求值的那一刻读当前语言。写成常量会在 setup
- *  时求值一次，之后切语言这一栏就不跟着变了（而语言是可以在这一页上切的）。 */
-const BODY_COPY: Record<FeedbackKind, () => { label: string; placeholder: string }> = {
-  bug: () => ({
-    label: t('feedback.submit.field.body.bug.label'),
-    placeholder: t('feedback.submit.field.body.bug.placeholder'),
-  }),
-  suggestion: () => ({
-    label: t('feedback.submit.field.body.suggestion.label'),
-    placeholder: t('feedback.submit.field.body.suggestion.placeholder'),
-  }),
-  other: () => ({
-    label: t('feedback.submit.field.body.other.label'),
-    placeholder: t('feedback.submit.field.body.other.placeholder'),
-  }),
-}
-/** 标题那一栏的占位语也跟着类型走：建议和其他不是「发生了什么」。字面量表，理由同上。 */
-const TITLE_PLACEHOLDER: Record<FeedbackKind, () => string> = {
-  bug: () => t('feedback.submit.field.title.placeholder.bug'),
-  suggestion: () => t('feedback.submit.field.title.placeholder.suggestion'),
-  other: () => t('feedback.submit.field.title.placeholder.other'),
-}
-const titlePlaceholder = computed(() => TITLE_PLACEHOLDER[store.draft.kind]())
-const bodyLabel = computed(() => BODY_COPY[store.draft.kind]().label)
-const bodyPlaceholder = computed(() => BODY_COPY[store.draft.kind]().placeholder)
+ *  `!attachments.uploading.value` 也是其中一条：还在传的时候按下去，那条请求带的是
+ *  一个**没有这几份附件**的条 —— 屏幕上明明列着它们，发出去却没有，而人不会回头
+ *  再看一遍。宁可让人多等一秒（进度条就在那一行上），也不静默丢东西。 */
+const canSubmit = computed(
+  () => !!store.draft.title.trim() && !!store.draft.body.trim() && !store.submitting && !attachments.uploading.value
+)
 
-/** 每一类下面那句后果说明，同样是字面量表，理由同上。 */
-const KIND_HINT: Record<FeedbackKind, () => string> = {
-  bug: () => t('feedback.submit.kind.hint.bug'),
-  suggestion: () => t('feedback.submit.kind.hint.suggestion'),
-  other: () => t('feedback.submit.kind.hint.other'),
+// 附件的两个上限跟着服务端报的数走（`GET /feedback/meta` 的 `max_attachments` /
+// `max_attachment_bytes`）：一份文件多大算大是服务端执行的规则，客户端先拦一道只是
+// 为了让用户在选中的那一刻就知道，而不是传完才被拒。meta 没到或拿不到时用默认值
+// （见 composable 里那两条常量）。
+watch(
+  () => store.meta,
+  (meta) => {
+    if (!meta) return
+    attachments.setLimits(meta.max_attachments ?? 0, meta.max_attachment_bytes ?? 0)
+  },
+  { immediate: true }
+)
+
+/** 表单里任何地方按 Ctrl+V：剪贴板里的图片和文件都进附件栏，正文粘贴照旧。
+ *
+ *  挂在 `form` 上而不是那一栏上：人刚截完图时焦点可能在标题框里，点回附件那一栏才
+ *  能粘贴，就把这个功能最顺手的部分拿掉了。 */
+function onPaste(event: ClipboardEvent) {
+  const files = attachments.fromClipboard(event)
+  if (files.length) void attachments.add(files)
 }
-const kindHint = computed(() => KIND_HINT[store.draft.kind]())
 
 /** 类型那一排按钮就地改草稿。分成一个函数是因为它同时要落盘 —— 不落盘的话，选完类型
  *  刷新回来又变回 Bug，而这一页的其余部分（正文那一栏的问法）是跟着类型变的。 */
 function setKind(kind: FeedbackKind) {
   store.draft.kind = kind
   store.touchDraft()
-}
-
-/** 标签候选：**从已经加载到的那两份列表里**出现的标签汇总。数据现成，不引新依赖、
- *  也不为它加一个后端接口 —— 候选只是省打字，拿不到候选时这个输入框照样能用。
- *  已经填在表单里的那些要排掉，否则选完一次它还会再提一次同一个词。 */
-const tagSuggestions = computed(() => {
-  const seen = new Set<string>()
-  for (const item of [...store.items, ...store.mineItems]) {
-    for (const tag of item.tags) seen.add(tag)
-  }
-  for (const tag of store.draft.tags) seen.delete(tag)
-  return [...seen].sort()
-})
-
-/** 正在输入的那一个标签。它**不进草稿**：半截的词不是标签，写进草稿的话刷新回来会
- *  多出一个「登」。 */
-const tagDraft = ref('')
-
-/** 输入框有焦点（画焦点环用）。`:focus-within` 在带 chip 的容器上不好使 —— 焦点在
- *  里面那个 input 上，容器要的是「自己看起来被聚焦了」。 */
-const tagFocused = ref(false)
-
-/** 规范化在 store 里（`cleanTags`，同时也是 `toCreateBody` 用的那一个），这里先收一遍
- *  只是为了当场去掉重复的 chip：存进草稿的必须和发出去的是同一个形状。 */
-function setTags(value: string[]) {
-  store.draft.tags = cleanTags(value)
-  store.touchDraft()
-}
-
-function commitTag() {
-  const raw = tagDraft.value
-  if (!raw.trim()) {
-    tagDraft.value = ''
-    return
-  }
-  tagDraft.value = ''
-  addTag(raw)
-}
-
-/** 加一个标签。到顶（`MAX_TAGS`）之后静默丢掉 —— 上限是后端的，先在这里截住，
- *  比写完几百字正文再被 422 退回来便宜得多。 */
-function addTag(tag: string) {
-  if (store.draft.tags.length >= MAX_TAGS) return
-  setTags([...store.draft.tags, tag])
-}
-
-function removeTag(tag: string) {
-  setTags(store.draft.tags.filter((it) => it !== tag))
-}
-
-/** 输入框已经空着的时候按退格，删掉最后一个芯片 —— 芯片输入框的老规矩，没有它，
- *  想删掉刚打错的那个词只能用鼠标去点那个 16px 的叉。 */
-function onTagBackspace() {
-  if (tagDraft.value || !store.draft.tags.length) return
-  removeTag(store.draft.tags[store.draft.tags.length - 1])
-}
-
-/** 回车和逗号都是「这一个标签写完了」。逗号不能写成 `@keydown.comma` —— Vue 的按键
- *  修饰符里没有 `comma` 这个别名（自带的只有 enter/tab/delete/esc/space 和方向键），
- *  写出来是一条不生效的规则，eslint 也会当场报出来。所以按 `event.key` 自己判。
- *  两个键都要 `preventDefault`：不然回车会提交表单、逗号会跟着一起进输入框。 */
-function onTagKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' || event.key === ',') {
-    event.preventDefault()
-    commitTag()
-    return
-  }
-  if (event.key === 'Backspace') onTagBackspace()
 }
 
 /** 「丢弃草稿」——盘上两份槽位一起抹掉，见 store 里那个同名 action。 */
@@ -217,15 +156,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <form class="sb-form" :class="`sb-form--${shell}`" @submit.prevent="submit">
+  <form class="sb-form" :class="`sb-form--${shell}`" @submit.prevent="submit" @paste="onPaste">
     <!-- 从 agent 提案卡进来的那条：先把「这条从哪来」说完，再说字段。以前那三样
          （说明、勾选框、隐私提示）散在表单中段，读起来像三件互不相干的事。 -->
     <section v-if="origin" class="sb-origin">
       <div class="sb-origin__head">
         <v-icon size="16" aria-hidden="true">mdi-robot-outline</v-icon>
-        <span class="t-title">{{ t('feedback.submit.agent.title') }}</span>
+        <span class="t-title">{{ t('feedback.submit.agent.title', { agent: originAgent }) }}</span>
       </div>
-      <p class="sb-origin__note t-body">{{ t('feedback.submit.agent.note') }}</p>
+      <p class="sb-origin__note t-body">{{ t('feedback.submit.agent.note', { agent: originAgent }) }}</p>
       <dl class="sb-origin__facts">
         <template v-if="origin.whatHappened">
           <dt>{{ t('feedback.submit.agent.whatHappened') }}</dt>
@@ -410,6 +349,21 @@ onMounted(() => {
       <p class="sb-hint t-meta-read">{{ t('feedback.submit.field.tags.helper') }}</p>
     </div>
 
+    <!-- 附件。摆在可见范围**之前**：它和正文、复现步骤是同一类东西（这条反馈说的是
+         什么、证据是什么），而可见范围是「提完之后谁能看见」那一个决定 —— 表单最后
+         两栏问的是发布，不是内容。
+         这一栏也是**粘贴的来源**：`@paste` 听的是整个表单，理由见 `onPaste`。 -->
+    <div class="sb-field">
+      <FeedbackAttachmentField
+        :rows="attachments.rows.value"
+        :max-bytes="attachments.maxBytes.value"
+        :max-files="attachments.maxFiles.value"
+        @add="(files) => void attachments.add(files)"
+        @remove="attachments.remove"
+        @retry="(key) => void attachments.retry(key)"
+      />
+    </div>
+
     <!-- 可见范围是一次**决定**，不是一栏「选填」：它有默认值（公开），而且提完之后
          谁也改不了。所以它摆在页脚上方，不进上面那段选填区。两张整块的选项卡而不是
          两个 radio 点：两边的后果不一样长，读的人要在**选之前**读完，所以每一档自己
@@ -475,351 +429,4 @@ onMounted(() => {
   </form>
 </template>
 
-<style scoped>
-/* 一列到底，宽度收在 --content-readable 那一档：这一页要读的是一段一段的话，铺满
-   1440px 的输入框每行一百多个字，读起来会串行。
-   靠左而不居中：页壳的标题靠左，表单居中的话标题会比表单往左突出一截，页面上就有
-   两条左沿。 */
-.sb-form {
-  width: 100%;
-  max-width: 720px;
-}
-/* 每一栏之间留的是**标题之外**的那点距离：标签在上、输入框在下，两栏之间要能一眼
-   看出是两个问题，所以间距比输入框自己的高度小、比行距大。 */
-.sb-field {
-  margin-top: 20px;
-}
-/* 标签：13px 600 --ink。它和 `.t-eyebrow`（12px 大写间距）不是一档 —— 这是要人读着
-   填的东西，不是分区标题。 */
-.sb-label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: var(--lh-13);
-  color: var(--ink);
-}
-/* 必填的星号。**不进无障碍树**：必填这件事真正的说明是下面那行「带 * 的是必填」，
-   而且它同时挂在 `aria-required` 上，读屏报一次就够了。 */
-.sb-req {
-  color: var(--danger-ink);
-}
-.sb-hint {
-  margin: 8px 0 0;
-}
-.sb-legend {
-  margin: 20px 0 0;
-}
-.sb-divider {
-  margin: 28px 0 0;
-  border: 0;
-  border-top: 1px solid var(--line);
-}
-.sb-optional {
-  margin: 12px 0 0;
-}
-.sb-restored {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 20px;
-  padding: 6px 6px 6px 12px;
-  border-radius: var(--radius-md);
-  background: var(--fill);
-}
-/* Agent 带过来的那一份：说明它从哪来的。用 wash 而不是左边的竖条 —— 这一列的规矩
-   是「强调靠 wash 底色，左条纹只留给引用块和结构线」。 */
-.sb-origin {
-  margin-bottom: 24px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: var(--fill);
-}
-.sb-origin__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.sb-origin__note {
-  margin: 0 0 8px;
-}
-/* 现场那三段用 dl：它们是「字段名 + 值」，不是正文。 */
-.sb-origin__facts {
-  margin: 0 0 10px;
-  font-size: 12px;
-}
-.sb-origin__facts dt {
-  margin-top: 6px;
-  color: var(--muted);
-}
-.sb-origin__facts dd {
-  margin: 0;
-  color: var(--ink);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-/* 「把这段现场一起提交」。原生 checkbox 自己画：`v-checkbox` 的触控区有 40px 高，
-   在这一块 12px 的事实下面会把底边撑出一截空白。 */
-.sb-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--ink);
-  cursor: pointer;
-}
-.sb-check__box {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-/* 整块的说明（现场里可能有什么、服务端的原话）。两种语气同一副骨架：warn 的底是
-   `--warn-wash`，error 的是 `--danger-wash`，都配对应的文字色 —— 深色主题下也读得清。 */
-.sb-note {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  line-height: var(--lh-12);
-}
-.sb-note--warn {
-  background: var(--warn-wash);
-  color: var(--warn-ink);
-}
-.sb-note--error {
-  margin-top: 20px;
-  background: var(--danger-wash);
-  color: var(--danger-ink);
-}
-/* ---- 输入框：一条线、一个圆角、一圈焦点环 ---- */
-.sb-input,
-.sb-textarea {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.sb-textarea {
-  min-height: 72px;
-  resize: vertical;
-}
-.sb-input::placeholder,
-.sb-textarea::placeholder {
-  color: var(--faint);
-}
-/* 焦点环跟着全局那一套走（`--focus-ring`）：只换边框色，不再套一层 outline ——
-   输入框的框本身就是焦点指示的载体，32px 高的格子里多一圈会顶到邻居。 */
-.sb-input:focus,
-.sb-textarea:focus {
-  border-color: var(--focus-ring);
-  outline: none;
-}
-/* ---- 类型：分段控件 ---- */
-.sb-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 4px;
-  background: var(--fill);
-  border-radius: var(--radius-md);
-}
-.sb-seg__item {
-  height: 24px;
-  padding: 0 12px;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-.sb-seg__item:hover {
-  color: var(--text);
-}
-/* 选中的那颗抬到底色之上（`--surface` + 一圈描边）。中性色 —— 类型是一个位置，
-   不是一条告警，琥珀只留给这一页的主操作「提交反馈」。 */
-.sb-seg__item--on {
-  color: var(--ink);
-  background: var(--surface);
-  border-color: var(--line);
-}
-/* ---- 标签：芯片 + 输入 ---- */
-.sb-tags {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 38px;
-  padding: 5px 6px;
-  box-sizing: border-box;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.sb-tags--focus {
-  border-color: var(--focus-ring);
-}
-.sb-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 22px;
-  padding: 0 4px 0 8px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-}
-.sb-tag__x {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  color: var(--faint);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.sb-tag__x:hover {
-  color: var(--ink);
-  background: var(--fill-2);
-}
-/* 输入框在芯片后面接着长：它自己不画框（框在外面那层 `.sb-tags` 上），所以光标停
-   在最后一个芯片右边，看着就是「接着打」。 */
-.sb-tags__input {
-  flex: 1 1 120px;
-  min-width: 120px;
-  height: 26px;
-  padding: 0 4px;
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  background: transparent;
-  border: 0;
-  outline: none;
-}
-.sb-tags__input::placeholder {
-  color: var(--faint);
-}
-/* 候选排在输入框底下，点一下加一个 —— 不弹层。候选只是省打字，弹层会挡住上面刚
-   写好的正文，而候选值不值得看，人是当场知道的。 */
-.sb-suggest {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-.sb-suggest__label {
-  margin-right: 2px;
-}
-.sb-suggest__item {
-  height: 22px;
-  padding: 0 8px;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.sb-suggest__item:hover {
-  color: var(--ink);
-  background: var(--fill);
-}
-/* ---- 可见范围：两张整块的选项卡 ---- */
-.sb-opts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.sb-opt {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-.sb-opt--on {
-  border-color: var(--line-2);
-  background: var(--fill);
-}
-.sb-opt__radio {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.sb-opt__body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.sb-opt__title {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: var(--lh-13);
-  color: var(--ink);
-}
-/* 提示文字用 --muted 而不是 --faint：--faint 在它最好的底色上也只有 4.08:1，够不着
-   14px 正文要的 4.5。 */
-.sb-opt__hint {
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-.sb-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 28px;
-}
-/* 页面壳：操作条黏在底部 —— 这张表单长到一屏装不下，而「提交」是填完之后唯一要按的
-   那一个。黏住之后它一直在，人不必先滚到底才知道能不能交。 */
-.sb-form--page .sb-actions {
-  position: sticky;
-  bottom: 0;
-  margin-top: 24px;
-  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-}
-/* 对话框壳：操作条在原地，对话框自己会滚。 */
-.sb-form--dialog .sb-actions {
-  margin-top: 24px;
-}
-</style>
+<style scoped src="./submit-feedback-form.css"></style>

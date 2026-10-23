@@ -10,8 +10,9 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 
 async def append_output(
@@ -29,12 +30,13 @@ async def append_output(
     meta: dict | None = None,
     created_at: datetime | None = None,
     own_output: bool = False,
+    block_id: uuid.UUID | None = None,
 ) -> Block:
     """Append an attributable timeline row with the canonical pending-input rules.
 
-    Flush and refresh are part of the block write; committing is not. Returning
-    this same-session row lets the caller attach question/mention effects in the
-    very transaction that makes the output durable.
+    The flush is part of the block write; committing is not. Returning this
+    same-session row lets the caller attach question/mention effects in the very
+    transaction that makes the output durable.
     """
     return await BlockRepository(session).add(
         project_id=project_id,
@@ -49,6 +51,7 @@ async def append_output(
         meta=meta,
         created_at=created_at,
         own_output=own_output,
+        block_id=block_id,
     )
 
 
@@ -71,17 +74,3 @@ async def consume_prompt(
 ) -> None:
     """Consume a non-native prompt in the encompassing stop transaction."""
     await BlockRepository(session).mark_consumed(block_ids, turn_id)
-
-
-async def fail_step(
-    session: AsyncSession, block_id: uuid.UUID, error: str
-) -> Block | None:
-    """Mark the timeline step failed in the caller's current transaction."""
-    return await BlockRepository(session).mark_step_failed(block_id, error)
-
-
-async def retain_step_output(
-    session: AsyncSession, block_id: uuid.UUID, tail: str, total: int
-) -> Block | None:
-    """Attach the already bounded output tail and its original length."""
-    return await BlockRepository(session).record_step_output(block_id, tail, total)

@@ -1,10 +1,6 @@
 {
   "title": "Getting started",
   "intro": "Cheese has an AI teammate. Hand it a piece of work and it shows you a plan before it starts, then gives the result to you to review. Let's take a minute to get you set up.",
-  "name": {
-    "q": "What should your AI teammate call you?",
-    "why": "It uses this name in conversations, and your teammates see it too."
-  },
   "role": {
     "q": "What do you mainly use Cheese for?",
     "why": "Your AI teammate uses this to suggest a first task and to know who it is working with.",
@@ -48,7 +44,7 @@
         "label": "Make revision notes",
         "hint": "Slides and notes into an outline",
         "name": "Revision notes",
-        "text": "Turn the slides and notes I attached into a revision outline with key points and worked examples. Show me the structure first, and write it in full once I confirm. The course is: "
+        "text": "Turn my slides and notes into a revision outline with key points and worked examples. Show me the structure first, and write it in full once I confirm. The course is: "
       },
       "group": {
         "label": "Split up group work",
@@ -68,19 +64,19 @@
         "label": "Organise course materials",
         "hint": "Handouts, outlines, examples",
         "name": "Course handout",
-        "text": "Turn the material I attached into a handout with key points and worked examples per section. Show me the structure first, and write it in full once I confirm. The lesson is about: "
+        "text": "Turn my material into a handout with key points and worked examples per section. Show me the structure first, and write it in full once I confirm. The lesson is about: "
       },
       "feedback": {
         "label": "Draft feedback on work",
         "hint": "Feedback against a rubric",
         "name": "Assignment feedback",
-        "text": "Draft feedback on the attached submissions against the rubric. Show me how you plan to grade first, and write each one once I confirm. The rubric is: "
+        "text": "Draft feedback on the submissions against the rubric. Show me how you plan to grade first, and write each one once I confirm. The rubric is: "
       },
       "course": {
         "label": "Catalogue course materials",
         "hint": "One line per file",
         "name": "Course materials",
-        "text": "Organise the attached course materials into a catalogue with one line on each. Show me the categories first, and organise them once I confirm. The course is: "
+        "text": "Organise the course materials into a catalogue with one line on each. Show me the categories first, and organise them once I confirm. The course is: "
       }
     },
     "office": {
@@ -94,7 +90,7 @@
         "label": "Clean up spreadsheet data",
         "hint": "Totals, checks, charts",
         "name": "Data cleanup",
-        "text": "Clean up the attached spreadsheet and sum it up clearly. Tell me how you plan to handle it first, and start once I confirm. What I need is: "
+        "text": "Clean up the spreadsheet and sum it up clearly. Tell me how you plan to handle it first, and start once I confirm. What I need is: "
       },
       "tool": {
         "label": "Build a small tool",
@@ -120,7 +116,7 @@
         "label": "Analyse data",
         "hint": "Clean, summarise, plot",
         "name": "Data analysis",
-        "text": "Analyse the attached data and give me the statistics and plots. Tell me how you plan to analyse it first, and start once I confirm. What I want to know is: "
+        "text": "Analyse the data and give me the statistics and plots. Tell me how you plan to analyse it first, and start once I confirm. What I want to know is: "
       },
       "section": {
         "label": "Write a section of a paper",
@@ -140,7 +136,7 @@
         "label": "Tidy up or rewrite a document",
         "hint": "Slides, articles, reports, spreadsheets",
         "name": "Document cleanup",
-        "text": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: "
+        "text": "Tidy up or rewrite my material. Show me how you plan to change it first, and start once I confirm. What I want is: "
       },
       "research": {
         "label": "Research a topic into a report",
@@ -162,51 +158,24 @@
       }
     }
   },
-  "who": {
-    "q": "Who are you doing this with?",
-    "why": "People you work with can talk with you and your AI teammate in the project, and can review its work.",
-    "solo": "Just me for now",
-    "soloHint": "You can invite people any time",
-    "team": "With classmates or colleagues",
-    "teamHint": "Enter their usernames or emails",
-    "invitees": "Usernames or emails, separated by spaces"
-  },
-  "where": {
-    "q": "Your AI teammate needs a computer to work on",
-    "why": "It reads files, writes files and runs programs there. It keeps working after you close the page.",
-    "cloud": "Use the cloud (recommended)",
-    "cloudHint": "Nothing to set up. The first start takes a minute or two, and usage comes out of your credits.",
-    "device": "Use this computer",
-    "deviceHint": "It works in a separate folder and cannot see your other files.",
-    "webNote": "Install the Cheese desktop app first; then switch the project to this computer.",
-    "download": "Download the desktop app",
-    "deviceWeb": "Use your own computer"
-  },
   "preview": {
     "title": "Your project",
     "brief": "Brief",
     "files": "Files",
     "members": "Members",
     "about": "Knows that",
-    "where": "Works on",
-    "cloud": "The cloud",
-    "device": "This computer",
     "hint": "Each answer adds to this card. The project is made when you click Create project.",
     "nameFallback": "{name}'s project",
     "listSep": ", ",
     "aboutSep": ", ",
-    "invited": "{name} (invited)",
     "aboutLine": "{name}: {about}"
   },
   "next": "Continue",
   "back": "Back",
-  "skip": "Skip",
   "skipAll": "Skip the guide",
   "finish": "Create project",
   "finishing": "Creating…",
   "failed": "The project was not created: {reason}",
-  "notInvited": "These people could not be invited (no such account): {names}. You can invite them from the project's members page.",
-  "deviceFailed": "This computer could not be connected, so your AI teammate works in the cloud for now. You can switch in the project.",
   "tour": {
     "aria": "Interface tour",
     "next": "Next",
@@ -214,29 +183,14 @@
     "done": "Done",
     "skip": "Skip the tour",
     "gotIt": "Got it",
-    "auto": "Moves on once you do it"
+    "auto": "Moves on once you do it",
+    "dragHint": "Drag to move"
   },
   "stepOf": "Step {n} of {total}",
   "guide": {
-    "channels": {
-      "title": "Channels",
-      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another from All channels."
-    },
-    "composer": {
-      "title": "Message box",
-      "text": "The first task you picked is already written here. Pressing Enter sends to project members only; {agent} does not pick it up."
-    },
-    "overview": {
-      "title": "Overview",
-      "text": "Where the project stands: who is on which task, recent progress, and what has been made."
-    },
-    "library": {
-      "title": "Library",
-      "text": "Files and results live here. Once a delivery is accepted, its files appear here."
-    },
     "send": {
       "title": "Hand off to {agent}",
-      "text": "Now hand your first task to {agent}: finish the message and send it from here. Hand off to {agent} is already on."
+      "text": "Your first request is already in the box, and Hand off to {agent} is on. Fill in the rest and send it from here."
     },
     "reply": {
       "title": "{agent}'s reply",
@@ -251,18 +205,22 @@
     },
     "task": {
       "title": "Task",
-      "text": "{agent} turned this into a task. Open it to follow progress and changes.",
-      "textWaiting": "Once it starts, {agent} turns this into a task listed under your message."
+      "text": "{agent} turned this thread into a task. Open it to follow progress and changes.",
+      "textWaiting": "Before it starts, {agent} turns this thread into a task listed under your message."
     },
     "taskPage": {
       "title": "Task page",
-      "text": "Progress, changes and the delivery are all here. When it is done {agent} hands the result to you to review; a task it raised on its own waits for you to click Start.",
+      "text": "Progress, changes and the delivery are all on the task page. When it is done {agent} hands the result to you to review.",
       "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
     },
     "accept": {
       "title": "Accept",
       "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason.",
       "textWaiting": "When it is done, {agent} hands the result to you to review and the review card appears here. You can leave and will be notified."
+    },
+    "overview": {
+      "title": "Overview",
+      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress."
     }
   }
 }

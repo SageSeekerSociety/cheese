@@ -4,7 +4,7 @@
 // the download instead.
 import { reactive } from 'vue'
 
-import { ApiError, connectDevice, deviceProposedName, listMyDevices } from '../api'
+import { ApiError, connectDevice, deviceProposedName, listAccessibleDevices, listMyTeams } from '../api'
 
 import { storageGet, storageSet } from './browserStorage'
 import { desktopCan } from './desktopApp'
@@ -69,26 +69,30 @@ interface TauriGlobal {
 
 export interface ConnectOptions {
   knownDeviceIds: string[]
+  teamId: number
   approve: (code: string) => Promise<void>
   onStep: (step: ConnectStep) => void
   onPercent: (value: number) => void
 }
 
 export interface DesktopBridge {
+  modelCredentialLogin: boolean
   connectThisMachine: (options: ConnectOptions) => Promise<void>
   cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
-  claudeLogin: (console: boolean, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
+  preventSleep: (enabled?: boolean) => Promise<boolean>
+  thisDevices: () => Promise<string[]>
+  enrollmentProfiles: () => Promise<Record<string, string>>
+  /** Logs in the login this computer calls `loginId` again, or adds one when it is null. */
+  claudeLogin: (
+    loginId: string | null,
+    onStep: (step: ClaudeLoginStep) => void,
+    profile?: string,
+    authorization?: { server: string; ticket: string }
+  ) => Promise<void>
   cancelClaudeLogin: () => Promise<void>
-  claudeLogout: () => Promise<void>
-  /** Points this computer's Claude Code at another model service; null in an app
-   *  that predates it. */
-  claudeModelService:
-    | ((
-        service: { baseUrl: string; token: string; model: string },
-        onStep: (step: ClaudeLoginStep) => void
-      ) => Promise<void>)
-    | null
+  /** Logs out the login this computer calls `loginId`; its other logins stay. */
+  claudeLogout: (loginId: string, profile?: string) => Promise<void>
   disconnectThisMachine: () => Promise<void>
 }
 
@@ -101,10 +105,11 @@ function failure(err: unknown): ConnectFailure {
  *  predates connecting step by step (it updates itself within hours). */
 export function desktopBridge(): DesktopBridge | null {
   const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__
-  if (!tauri?.core || !desktopCan('device')) return null
+  if (!tauri?.core || !desktopCan('teamEnrollment')) return null
   const { invoke, Channel } = tauri.core
   return {
-    async connectThisMachine({ knownDeviceIds, approve, onStep, onPercent }) {
+    modelCredentialLogin: desktopCan('modelCredentialLogin'),
+    async connectThisMachine({ knownDeviceIds, teamId, approve, onStep, onPercent }) {
       let approveError: ConnectFailure | null = null
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
@@ -117,7 +122,7 @@ export function desktopBridge(): DesktopBridge | null {
         })
       }
       try {
-        await invoke('connect_this_machine', { knownDeviceIds, progress })
+        await invoke('connect_this_machine', { knownDeviceIds, teamId, progress })
       } catch (err) {
         throw approveError ?? failure(err)
       }
@@ -128,13 +133,28 @@ export function desktopBridge(): DesktopBridge | null {
     async thisDevice() {
       return (await invoke('this_device')) as string | null
     },
-    async claudeLogin(console, onStep) {
+    async preventSleep(enabled) {
+      return (await invoke('prevent_sleep', { enabled: enabled ?? null })) as boolean
+    },
+    async thisDevices() {
+      return (await invoke('this_devices')) as string[]
+    },
+    async enrollmentProfiles() {
+      return (await invoke('enrollment_profiles')) as Record<string, string>
+    },
+    async claudeLogin(loginId, onStep, profile = 'default', authorization) {
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
         if (message.kind === 'step' && (message.id === 'preparing' || message.id === 'browser')) onStep(message.id)
       }
       try {
-        await invoke('claude_login', { console, progress })
+        await invoke('claude_login', {
+          loginId,
+          progress,
+          profile,
+          server: authorization?.server ?? null,
+          ticket: authorization?.ticket ?? null,
+        })
       } catch (err) {
         throw failure(err)
       }
@@ -142,22 +162,9 @@ export function desktopBridge(): DesktopBridge | null {
     async cancelClaudeLogin() {
       await invoke('cancel_claude_login')
     },
-    async claudeLogout() {
-      await invoke('claude_logout')
+    async claudeLogout(loginId, profile = 'default') {
+      await invoke('claude_logout', { loginId, profile })
     },
-    claudeModelService: desktopCan('modelService')
-      ? async ({ baseUrl, token, model }, onStep) => {
-          const progress = new Channel<Progress>()
-          progress.onmessage = (message) => {
-            if (message.kind === 'step' && message.id === 'preparing') onStep(message.id)
-          }
-          try {
-            await invoke('claude_model_service', { baseUrl, token, model, progress })
-          } catch (err) {
-            throw failure(err)
-          }
-        }
-      : null,
     async disconnectThisMachine() {
       await invoke('disconnect_this_machine')
     },
@@ -166,7 +173,7 @@ export function desktopBridge(): DesktopBridge | null {
 
 async function myDevices() {
   try {
-    return (await listMyDevices()).devices
+    return (await listAccessibleDevices()).devices
   } catch (e) {
     // The connector answers a user with no device yet as if nobody were signed in.
     if (e instanceof ApiError && e.status === 401) return []
@@ -184,6 +191,8 @@ export const deviceFlow = reactive({
   percent: null as number | null,
   failure: null as ConnectFailure | null,
   deviceId: null as string | null,
+  deviceName: '',
+  teamId: null as number | null,
 })
 
 const CORE_STEPS: ConnectStep[] = ['download', 'approve', 'start']
@@ -212,48 +221,70 @@ async function untilOnline(deviceId: string | null): Promise<boolean> {
   return false
 }
 
+/** How a connection ended: it is this computer's device now, the person
+ *  stopped it, or it did not work. */
+export type ConnectOutcome = 'connected' | 'cancelled' | 'failed'
+
 /** Connects this computer, showing each step in the dialog; `quiet`, for a
  *  computer connected before, shows the dialog only when a step needs the
  *  person, and closes it again once connected. Asked while one is under way,
- *  it shows that one. */
-export async function startConnecting(options: { quiet?: boolean } = {}) {
+ *  it shows that one and answers null. */
+export async function startConnecting(
+  options: { quiet?: boolean; teamId?: number } = {}
+): Promise<ConnectOutcome | null> {
   const bridge = desktopBridge()
-  if (!bridge) return
+  if (!bridge) return null
   if (deviceFlow.stage === 'progress') {
     // Asked for while a reconnect runs out of sight: show it, through to the end.
     if (!options.quiet) {
       deviceFlow.open = true
       quiet = false
     }
-    return
+    return null
   }
   quiet = !!options.quiet
   Object.assign(deviceFlow, { open: !quiet, stage: 'progress', failure: null, deviceId: null, percent: null })
   deviceFlow.steps = [...CORE_STEPS]
   deviceFlow.current = null
   try {
+    const teams = await listMyTeams()
+    const teamId = options.teamId ?? teams.find((team) => team.personal)?.id
+    if (teamId === undefined) throw new Error('No team selected')
+    deviceFlow.teamId = teamId
+    const before = await bridge.thisDevices()
+    const known = (await myDevices()).filter((device) => device.team_id === teamId)
     await bridge.connectThisMachine({
-      knownDeviceIds: (await myDevices()).map((d) => d.device_id),
+      knownDeviceIds: known.map((d) => d.device_id),
+      teamId,
       onStep: enter,
       onPercent: (value) => (deviceFlow.percent = value),
       approve: async (code) => {
         const { device_name } = await deviceProposedName(code)
-        await connectDevice(code, device_name ?? undefined)
+        await connectDevice(code, device_name ?? undefined, teamId)
       },
     })
     enter('start')
-    deviceFlow.deviceId = await bridge.thisDevice()
+    const ids = await bridge.thisDevices()
+    const after = await myDevices()
+    const enrolled =
+      after.find((d) => ids.includes(d.device_id) && d.team_id === teamId && !before.includes(d.device_id)) ??
+      after.find((d) => ids.includes(d.device_id) && d.team_id === teamId)
+    deviceFlow.deviceId = enrolled?.device_id ?? null
+    deviceFlow.deviceName = enrolled?.name ?? ''
     if (!(await untilOnline(deviceFlow.deviceId))) {
       stop({ step: 'start', detail: '' })
-      return
+      return 'failed'
     }
     deviceFlow.current = null
     if (quiet) {
       deviceFlow.open = false
       deviceFlow.stage = 'ask'
     } else deviceFlow.stage = 'done'
+    return 'connected'
   } catch (err) {
-    stop(failure(err))
+    const why = failure(err)
+    stop(why)
+    return why.step === 'cancelled' ? 'cancelled' : 'failed'
   } finally {
     quiet = false
   }
@@ -271,38 +302,56 @@ function stop(why: ConnectFailure) {
   deviceFlow.stage = 'failed'
 }
 
+export function requestConnecting(teamId?: number) {
+  deviceFlow.teamId = teamId ?? null
+  Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null })
+}
+
 export async function cancelConnecting() {
   await desktopBridge()?.cancelConnect()
 }
 
-// Whether this person was already asked to connect this computer: asked once,
-// and from then on it is the settings page's to change.
-const askedKey = (userId: number) => `cheese.desktop.askedToConnect.${userId}`
+// Whether this person answered 「暂不接入」 about this computer. Connecting on
+// its own at sign-in must not overrule that answer.
+const declinedKey = (userId: number) => `cheese.desktop.connectDeclined.${userId}`
 
-export function markAsked(userId: number) {
-  // A write that does not land only means the question may come again at the
-  // next launch — which is what it does when it cannot be asked at all.
-  storageSet(askedKey(userId), '1')
+export function markDeclinedToConnect(userId: number) {
+  // A write that does not land only means the machine may be connected at the
+  // next launch — which is what happens when the answer cannot be kept.
+  storageSet(declinedKey(userId), '1')
 }
 
-function asked(userId: number) {
-  return storageGet(askedKey(userId)) === '1'
+function declined(userId: number) {
+  return storageGet(declinedKey(userId)) === '1'
 }
 
 /** At sign-in: a computer connected before and now away comes back on its
- *  own; one never connected is asked about, once. */
+ *  own, and one never connected is connected on its own too — installing the
+ *  app is meant to end with this computer serving a team, not with a question.
+ *  It serves the person's own team, which every account has. The dialog shows
+ *  the steps and the download's progress; it is never a question. */
 export async function offerToConnect(userId: number) {
   const bridge = desktopBridge()
   if (!bridge) return
-  const [stored, devices] = await Promise.all([bridge.thisDevice(), myDevices().catch(() => null)])
+  // Every enrollment on this computer, not only the default profile: the app's
+  // first connection is filed under the team's profile.
+  const [ids, devices] = await Promise.all([bridge.thisDevices(), myDevices().catch(() => null)])
   if (devices === null) return
-  const mine = stored ? devices.find((d) => d.device_id === stored) : undefined
-  if (mine?.online) return
-  if (mine) {
-    // Connected before: bring it back without asking.
-    await startConnecting({ quiet: true })
+  const mine = devices.filter((device) => ids.includes(device.device_id))
+  if (mine.length) {
+    // Connected before: bring back each one that is away. One enrollment up
+    // says nothing about another — a computer serves several teams, each its
+    // own connector — so this is per device, not "is this computer online".
+    for (const device of mine.filter((d) => !d.online)) {
+      await startConnecting({ quiet: true, teamId: device.team_id })
+    }
     return
   }
-  if (asked(userId)) return
-  Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null, steps: [], current: null, percent: null })
+  // Enrolled here but none of them this person's: removed from its team, or
+  // another account's. Do not enroll it again behind their back.
+  if (ids.length) return
+  if (declined(userId)) return
+  // Stopping the first connection is a 「暂不接入」 like any other: the next
+  // launch must not start it again. A failure is not.
+  if ((await startConnecting()) === 'cancelled') markDeclinedToConnect(userId)
 }

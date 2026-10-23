@@ -64,8 +64,6 @@ class WebSnippetVersion(UuidPk, Base):
     #: What changed, in a sentence, for the version menu.
     note: Mapped[str] = mapped_column(String(200), default="")
     author: Mapped[str] = mapped_column(String(128))
-    #: Who asked for the change, when someone did.
-    requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     #: Whether the platform's browser ran it before it was kept. False when no
     #: browser could be had; it is then kept unchecked, with no pictures.
     checked: Mapped[bool] = mapped_column(default=False)

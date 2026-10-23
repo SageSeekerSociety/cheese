@@ -1,0 +1,9 @@
+{
+  "crumb": "Edit",
+  "discard": "Discard changes",
+  "loadFailed": "Could not load the changes to this task",
+  "resubmitted": "Resubmitted — waiting for an admin to review it",
+  "saveAndResubmit": "Save and resubmit for review",
+  "saveChanges": "Save changes",
+  "unsaved": "Unsaved changes"
+}

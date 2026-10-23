@@ -83,6 +83,15 @@ def say(text: str) -> tuple[str, str]:
     return ("say", text)
 
 
+def monitor(command: str) -> tuple[str, str]:
+    """The model starts a `Monitor` on `command` (Codex and pi)."""
+    return ("monitor", command)
+
+
+def watching(command: str) -> dict:
+    return {"command": command, "description": "fixture watch"}
+
+
 class Backend:
     """The platform as a session reaches it: the room's message route, and
     the connector's relay to the room machine's executor."""
@@ -386,7 +395,17 @@ async def claude_code(tmp_path: Path, steps: list):
         stderr=log,
     )
 
+    registered = False
+
     async def call(method, params):
+        # The platform registers the runner before anything else it asks, and
+        # every later call carries that registration (`lifecycle`).
+        nonlocal registered
+        if method != "ping" and not registered:
+            registered = True
+            await asyncio.to_thread(_ask, socket_path(state), "register", {"epoch": 1})
+        if method != "ping":
+            params = {**params, "epoch": 1}
         return await asyncio.to_thread(_ask, socket_path(state), method, params)
 
     session = Session(machine, model.state["requests"], call)
@@ -455,6 +474,8 @@ async def codex(tmp_path: Path, steps: list):
             [
                 {"tool": "Bash", "arguments": {"command": value}}
                 if kind == "shell"
+                else {"tool": "Monitor", "arguments": watching(value)}
+                if kind == "monitor"
                 else {"text": value}
                 if kind == "say"
                 else {"tool": "cheese_chat_list", "arguments": {}}
@@ -531,6 +552,8 @@ async def pi(tmp_path: Path, steps: list):
         [
             {"tool": "bash", "arguments": {"command": value}}
             if kind == "shell"
+            else {"tool": "Monitor", "arguments": watching(value)}
+            if kind == "monitor"
             else {"text": value}
             if kind == "say"
             else {"tool": "cheese_chat_list", "arguments": {}}

@@ -17,10 +17,12 @@ lives in `agent_sessions`, one row per agent (spec §9).
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
     BigInteger,
+    ColumnElement,
     DateTime,
     Enum,
     ForeignKey,
@@ -173,6 +175,34 @@ class Topic(UuidPk, Timestamps, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+# Whether a room is a private chat is asked through these: in Python of a loaded
+# room, in SQL of a row, and once more where one is created.
+# `tests/unit/test_is_private_read_points.py` fails on any other Python read of
+# the attribute. Raw SQL text is outside what it sees: `agent/project_feed.py`'s
+# `_PLACE` still selects `t.is_private` as text.
+
+
+def is_private_chat(room: Topic) -> bool:
+    """A 1:1 private chat: two seats in the project's roster (结论 19). It is
+    the room's nature, not how many seats it holds right now."""
+    return room.is_private
+
+
+def private_chat() -> ColumnElement[bool]:
+    """SQL: the ``Topic`` row is a private chat."""
+    return Topic.is_private.is_(True)
+
+
+def not_a_private_chat() -> ColumnElement[bool]:
+    """SQL: the ``Topic`` row is any room but a private chat."""
+    return Topic.is_private.is_(False)
+
+
+def new_private_chat(**columns: Any) -> Topic:
+    """An unsaved room that is a private chat; its two seats are the caller's."""
+    return Topic(is_private=True, **columns)
 
 
 class RoomCleanup(UuidPk, Timestamps, Base):

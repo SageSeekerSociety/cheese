@@ -12,10 +12,11 @@ from dataclasses import replace
 
 from sqlalchemy import select
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import record_receipt, register_input
+from app.domain.event_author import AuthorType
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 
@@ -58,7 +59,7 @@ asyncio.run(run())
 """
 
 
-def test_new_process_finds_only_the_addressed_batch_and_echo_does_not_release_it(
+def test_new_process_finds_only_the_addressed_batch_and_the_echo_releases_it(
     client,
 ):
     project = uuid.UUID(_project(client, "durable holds"))
@@ -120,12 +121,13 @@ def test_new_process_finds_only_the_addressed_batch_and_echo_does_not_release_it
         async with factory() as session:
             await record_receipt(session, InputReceipt(identity, "native_echo"))
             await session.commit()
-        assert await read_from_new_process() == {str(block) for block in blocks}
+        # Read is delivered: the batch is no longer held, wherever it is asked.
+        assert await read_from_new_process() == set()
         async with factory() as session:
             row = await session.scalar(
                 select(NativeInput).where(NativeInput.input_id == identity.input_id)
             )
             assert row.settled_at is not None
-            assert row.block_ids == [], "A hold must not imply model consumption"
+            assert set(row.released_block_ids) == {str(block) for block in blocks}
 
     client.portal.call(run)

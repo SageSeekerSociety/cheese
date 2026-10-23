@@ -5,20 +5,24 @@
 // composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在 doc/DocSurface.vue：这里画出
 // 它的位置，把取来的东西递下去，把底下发上来的动作接住。正文不经过这里：编辑器直接绑
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
+import type { DocBacklink } from '../../api/docLinks'
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
+import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 import type { CanvasData } from '../../types/canvas'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -27,10 +31,13 @@ import { useDocFind } from '../../composables/useDocFind'
 import { useDocOutline } from '../../composables/useDocOutline'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
+import { isAgentHandle } from '../../lib/authorship'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
+import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
+import DocBacklinks from './doc/DocBacklinks.vue'
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFindBar from './doc/DocFindBar.vue'
@@ -41,6 +48,8 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
+import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -60,10 +69,20 @@ const props = withDefaults(
     mentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
+    /** 这份文档 @ 到并通知过的人（只有他们的 `<@handle>` 画成 @chip）。 */
+    notifiedMentions?: string[]
+    /** 正文里（或某个旧版本里）有了 `<@handle>` 时调一下：读这份文档通知过谁。 */
+    fetchNotifiedMentions?: () => void
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
+    /** 打 # 时能引用的文档。 */
+    documentList?: LinkableDocument[]
+    /** 引用了这份文档的地方，画在正文末尾。 */
+    backlinks?: DocBacklink[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
+    /** 文档的作者（`lib/docAuthors.ts`）：画在大标题下面，并列的头像和名字。没有就不画。 */
+    authors?: DocAuthor[]
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
     untitled?: boolean
     /** 顶栏画到页面上的这个位置（CSS 选择器），和页面自己的那一行并成一行。 */
@@ -77,6 +96,11 @@ const props = withDefaults(
     editable: boolean
     /** 没有编辑权限（凭证说的），切不回编辑。 */
     readOnly: boolean
+    /** 只能提修改建议（导师）：能打字，打的都记成修订；不接受、不拒绝、不改标题。 */
+    suggestOnly?: boolean
+    /** 打的字记成修订。 */
+    suggesting?: boolean
+    setSuggesting?: (on: boolean) => void
     /** 正文还在路上。 */
     loading: boolean
     connection: DocConnection
@@ -93,6 +117,8 @@ const props = withDefaults(
     sendComment?: (content: string, quote: string) => Promise<{ id: string }>
     /** 重读评论串。 */
     refreshThreads?: () => Promise<void>
+    /** 我刚写的评论 @ 了打不开这份文档的人：评论栏顶上问一句。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
     // ---- 装饰的原料（原样递给正文那一半） ----
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
@@ -115,6 +141,8 @@ const props = withDefaults(
     answerToComment?: (conversation: string, quote: string, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
+    /** 撤销、恢复 AI 队友一次回答对这篇的修改（`/assistant/changes`）。 */
+    undoAgentChanges?: (changes: number[], redo: boolean) => Promise<unknown>
     // ---- 修改记录 ----
     /** 最近一次编辑：谁（读成名字）、什么时候。 */
     lastEdit?: { name: string; at: string } | null
@@ -124,16 +152,27 @@ const props = withDefaults(
     avatarOf?: (handle: string) => string
     loadVersions?: (before?: number) => Promise<DocVersionPage>
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
+    // ---- 我在文档里 @ 了打不开它的人 ----
+    /** 要不要把他们加进频道：名字已经连成一串；没有就是 null。 */
+    mentionOutside?: { names: string; membersOnly: boolean; mayAdd: boolean; adding: boolean } | null
   }>(),
   {
     document: null,
     deleted: false,
+    suggestOnly: false,
+    suggesting: false,
+    setSuggesting: undefined,
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
     mentionPeople: () => [],
+    notifiedMentions: () => [],
+    fetchNotifiedMentions: undefined,
     topicList: () => [],
+    documentList: () => [],
+    backlinks: () => [],
     bare: false,
+    authors: () => [],
     untitled: false,
     barTo: undefined,
     flow: false,
@@ -141,29 +180,52 @@ const props = withDefaults(
     commentAuthor: '',
     sendComment: undefined,
     refreshThreads: undefined,
+    commentOutside: undefined,
     askAgent: undefined,
     stopAgent: undefined,
     answerToComment: undefined,
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
+    undoAgentChanges: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    mentionOutside: null,
     canvas: null,
   }
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
-  (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string): void
+  'open-topic': [topicId: string, blockId?: string]
+  'mention-click': [handle: string]
+  'open-file': [path: string]
   /** 资料库文档的标题改成了这样。 */
-  (e: 'rename', title: string): void
-  (e: 'delete'): void
+  rename: [title: string]
+  delete: []
+  /** 「移动到…」（#3774）。 */
+  move: []
+  share: []
+  'mention-outside-add': []
+  'mention-outside-dismiss': []
 }>()
+
+// 顶栏画到页面上的那个位置（`barTo`）。这个位置在页面自己那一行里，要等页面挂进文档
+// 里才找得到；而项目目标那一页是保活的：人走开时它整棵树摘在文档外面，文档要是这时候
+// 才打开，按选择器去找什么也找不到。Teleport 拿着一个找不到的目标照样挂上，顶栏就哪儿
+// 都没画，之后它的每一次更新、卸下都踩在一棵没挂上的子树上，页面跟着坏掉。所以位置由
+// 这里自己找：挂上之后、页面回到屏幕上时各找一次，找到了才把顶栏送过去。
+const barTarget = shallowRef<HTMLElement | null>(null)
+function findBarTarget() {
+  barTarget.value = props.barTo ? document.querySelector<HTMLElement>(props.barTo) : null
+}
+onMounted(findBarTarget)
+onActivated(findBarTarget)
+watch(() => props.barTo, findBarTarget, { flush: 'post' })
+// 页面不再要顶栏画过去时（`barTo` 没了），当场就画回原处，不等上面那次重找。
+const barEl = computed(() => (props.barTo ? barTarget.value : null))
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
 const docTitle = computed(() =>
@@ -176,7 +238,9 @@ const titleDraft = ref(props.document?.title ?? '')
 const titleEditing = ref(false)
 watch(
   () => [props.document?.id, props.document?.title] as const,
-  ([id, name], [beforeId]) => {
+  ([id, name], [beforeId, beforeName]) => {
+    // 外层每次重画都递来一个新的 document 对象：编号和名字都没变就不是「文档改名了」。
+    if (id === beforeId && name === beforeName) return
     if (id !== beforeId || !titleEditing.value) titleDraft.value = name ?? ''
   }
 )
@@ -293,12 +357,15 @@ const mentionNames = computed<Record<string, string>>(
   () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
 
+/** 能决定正文：能改，且不只是提修改建议（导师只提建议，接受、拒绝、改标题、恢复旧版都不归他）。 */
+const decides = computed(() => props.editable && !props.suggestOnly)
+
 const agentOptions = {
   editor: () => surfaceRef.value?.editor ?? null,
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
-  editable: () => props.editable,
-  applyEdits: () => props.applyDocEdits,
+  editable: () => decides.value,
+  undoChanges: () => props.undoAgentChanges,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
   onError: (message: string) => props.setError(message),
@@ -306,8 +373,34 @@ const agentOptions = {
 // 选中一段找 AI 队友（浮条上那一个），和对整篇找它（顶栏上那一个）。
 const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
 const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
-const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
+const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent && !props.suggestOnly)
+// 总览页上点了「让 AI 队友起草」，跳到了这一篇：编辑器在了、能问、能改，就由对整篇的
+// 那个 AI 队友接着起草（`lib/overviewDraft`）。
+watch(
+  [() => props.document?.id, () => surfaceRef.value?.editor, canAskDocument, () => props.editable],
+  ([id, editor, canAsk, editable]) => {
+    if (!id || !editor || !canAsk || !editable || !draftWaiting(id)) return
+    const note = takeDraft(id)
+    if (note !== null) docAgent.draft(note)
+  },
+  { immediate: true }
+)
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+/** 人的 handle 读成名字：自己是「你」、在线的人是他们的名字，都读不出来时用名册。 */
+function personName(handle: string): string {
+  const resolved = props.nameOf(handle)
+  return resolved === handle ? mentionNames.value[handle] ?? handle : resolved
+}
+/** 建议条上的名字：全出自一个人时写那个人的名字，混着几个人时不写名字。 */
+function suggestionAuthorName(authors: string[]): string | null {
+  const unique = [...new Set(authors.filter(Boolean))]
+  if (unique.length !== 1) return null
+  const handle = unique[0]
+  if (handle === props.agentHandle || isAgentHandle(handle)) return props.agentName
+  return personName(handle)
+}
+const pendingSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.list.value.map((s) => s.author)))
+const decidedSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.decided.value.authors))
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
 const suggestionsOpen = ref(false)
 function toggleSuggestions() {
@@ -336,6 +429,31 @@ watch(
     if (ids && ids.split(' ').some((id) => !before?.split(' ').includes(id))) props.fetchSuggestionReasons?.()
   }
 )
+// 正文里第一次出现 `<@handle>`（打开时就有，或后来有人写进来），或者翻开修改记录：
+// 读一次这份文档通知过谁，之后由取数那一层跟着存回重读。没有 @ 的文档不去问。
+let mentionsAsked = false
+watch(
+  () => props.session,
+  () => (mentionsAsked = false)
+)
+function askMentions() {
+  if (mentionsAsked) return
+  mentionsAsked = true
+  props.fetchNotifiedMentions?.()
+}
+watch(
+  () => surfaceRef.value?.editor,
+  (editor, _old, onCleanup) => {
+    if (!editor) return
+    const look = () => {
+      if (!mentionsAsked && editor.state.doc.textContent.includes('<@')) askMentions()
+    }
+    look()
+    editor.on('update', look)
+    onCleanup(() => editor.off('update', look))
+  }
+)
+watch(historyOpen, (open) => open && askMentions())
 const review = useDocReview({
   editor: () => surfaceRef.value?.editor ?? null,
   applyEdits: () => props.applyDocEdits,
@@ -394,7 +512,7 @@ defineExpose({
     <template v-else>
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-        <Teleport :to="barTo || 'body'" defer :disabled="!barTo">
+        <Teleport v-if="!barTo || barEl" :to="barEl || 'body'" :disabled="!barEl">
           <DocTopBar
             class="doc-top"
             :class="{ 'doc-top--inline': !!barTo }"
@@ -414,11 +532,16 @@ defineExpose({
             :mention-names="mentionNames"
             :headings="outlineHeadings"
             :find-open="findOpen"
-            :deletable="!!document && !readOnly"
+            :deletable="!!document && !readOnly && !suggestOnly"
+            :suggest-only="suggestOnly"
+            :suggesting="suggesting"
             @delete="emit('delete')"
+            @move="emit('move')"
+            @share="emit('share')"
             @toggle-suggestions="toggleSuggestions"
             @toggle-comments="commentsRef?.toggle()"
             @toggle-editable="toggleEditable"
+            @set-suggesting="(on: boolean) => setSuggesting?.(on)"
             @history="historyOpen = true"
             @export="exportDoc"
             @open-thread="locateComment"
@@ -440,7 +563,6 @@ defineExpose({
           <DocReviewStrip
             v-if="review.request.value"
             :agent-name="agentName"
-            :requester="review.request.value.requester"
             :count="review.live.value.length"
             @step="review.step"
             @close="review.close"
@@ -449,16 +571,28 @@ defineExpose({
         <Transition name="doc-menu">
           <DocSuggestionStrip
             v-if="suggestionsOpen"
-            :agent-name="agentName"
+            :author="pendingSuggestionAuthor"
+            :decided-author="decidedSuggestionAuthor"
             :count="suggestions.list.value.length"
             :decided="suggestions.decided.value"
-            :editable="editable"
+            :editable="decides"
             @step="suggestions.step"
             @accept-all="suggestions.decideAll(true)"
             @reject-all="suggestions.decideAll(false)"
             @dismiss="dismissSuggestions"
           />
         </Transition>
+        <MentionOutsidePrompt
+          v-if="mentionOutside"
+          class="doc-mention-outside"
+          in-document
+          :names="mentionOutside.names"
+          :members-only="mentionOutside.membersOnly"
+          :may-add="mentionOutside.mayAdd"
+          :adding="mentionOutside.adding"
+          @add="emit('mention-outside-add')"
+          @dismiss="emit('mention-outside-dismiss')"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <!-- 顶栏下面、正文上面的那一格：任务把芝士这一轮的清单放在这里。 -->
         <slot name="lead" />
@@ -473,6 +607,8 @@ defineExpose({
           :place-of="placeOfThread"
           :agent-name="agentName"
           :mention-names="mentionNames"
+          :mention-people="mentionPeople"
+          :outside="commentOutside"
           :name-of="nameOf"
           :avatar-of="avatarOf"
           :writable="!readOnly"
@@ -493,25 +629,31 @@ defineExpose({
                 autocomplete="off"
                 :placeholder="t('work.room.doc.titlePlaceholder')"
                 :aria-label="t('work.room.doc.titleLabel')"
-                :readonly="!editable"
+                :readonly="!decides"
                 maxlength="200"
                 @focus="titleEditing = true"
                 @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
                 @blur="commitTitle"
               />
               <h1 v-else-if="!bare && !untitled" class="doc-page__title">{{ docTitle }}</h1>
+              <DocAuthors v-if="!bare && authors.length" class="doc-page__authors t-meta c-muted" :authors="authors" />
               <!-- 正文本身。 -->
               <DocSurface
                 ref="surfaceRef"
                 :editable="editable"
+                :suggesting="suggesting"
+                :author="commentAuthor"
                 :loading="loading"
                 :session="session"
                 :title="docTitle"
                 :placeholder="document ? t('work.room.doc.emptyPlaceholderLibrary') : ''"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
+                :document-list="documentList"
+                :document-id="document?.id ?? null"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
+                :notified-mentions="notifiedMentions"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"
                 :active-thread="openId"
@@ -534,13 +676,21 @@ defineExpose({
               <DocEditLayer
                 :editor="surfaceRef?.editor ?? null"
                 :agent-name="agentName"
-                :editable="editable"
+                :agent-handle="agentHandle"
+                :name-of="nameOf"
+                :avatar-of="avatarOf"
+                :editable="decides"
                 :rewrite="rewrite"
                 :review="review"
                 :suggestions="suggestions"
                 :suggestion-reasons="suggestionReasons"
                 :mention-names="mentionNames"
                 @open-thread="locateComment"
+              />
+              <DocBacklinks
+                :items="backlinks"
+                :names="agentHandle ? { ...mentionNames, [agentHandle]: agentName } : mentionNames"
+                @open="(id: string, block?: string) => emit('open-topic', id, block)"
               />
             </div>
           </div>
@@ -553,9 +703,10 @@ defineExpose({
         v-model:open="historyOpen"
         :load="loadVersions"
         :restore="restoreVersion"
-        :editable="editable"
+        :editable="decides"
         :name-of="nameOf"
         :mention-names="mentionNames"
+        :notified-mentions="notifiedMentions"
       />
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the
@@ -641,6 +792,13 @@ defineExpose({
   letter-spacing: -0.02em;
   color: var(--ink);
 }
+/* 作者一行贴在大标题下面，和标题同宽同起点；正文的间距照旧留在它下面。 */
+.doc-page__authors {
+  display: flex;
+  max-width: 720px;
+  margin: -16px auto 24px;
+}
+
 /* A library document's title is typed in place. */
 .doc-page__title--input {
   display: block;
@@ -726,6 +884,10 @@ defineExpose({
   overflow-x: auto;
 }
 
+/* 贴在正文上方，和横条之间留一行的空。 */
+.doc-mention-outside {
+  margin-top: 8px;
+}
 .doc-error-toast {
   position: absolute;
   left: 50%;

@@ -15,6 +15,7 @@ from app.domain.notification.entity_resolvers import (
 )
 from app.domain.notification.legacy_queue import import_legacy_queue
 from app.domain.notification.letter import letter_for, render_html, render_text
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.outbox import drain_channel
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
@@ -50,6 +51,9 @@ async def send_email(sessions, item):
             select(User.email).where(User.id == item["recipientId"])
         )
         names = await display_names(session, item.get("payload"))
+        # An email names people by name, not by the room's <@handle> token.
+        people = await names_for(session, item.get("payload"))
+    item = {**item, "payload": with_names(item.get("payload"), people)}
     if not email or is_placeholder_email(email):
         raise ValueError("Email recipient has no address")
     letter = letter_for(item, names)
@@ -60,6 +64,9 @@ async def send_email(sessions, item):
         body_text=render_text(letter),
     ):
         raise RuntimeError("SMTP delivery returned false")
+    # Nothing is retired here: an address that bounces is a failed attempt, not
+    # a subscription that went away. The count exists for the push driver.
+    return 0
 
 
 async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
@@ -75,6 +82,7 @@ async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
     result = await drain_channel(
         sessions,
         channel="email",
+        sender=send_email,
         batch_size=settings.notification_email_batch_size,
         max_attempts=max(1, settings.notification_email_max_retries),
     )

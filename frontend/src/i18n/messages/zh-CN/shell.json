@@ -36,8 +36,8 @@
     "ok": "确定"
   },
   "topicSelector": {
-    "label": "添加话题",
-    "placeholder": "搜索已有话题或创建新话题"
+    "label": "添加标签",
+    "placeholder": "搜索已有标签或创建新标签"
   },
   "notFound": {
     "text": "页面不存在",
@@ -47,14 +47,13 @@
     "actionFailed": "操作失败",
     "teamLockedBy": "团队已锁定：参与了任务 {tasks}",
     "teamLocked": "团队已锁定，无法修改成员",
-    "noPermission": "你没有权限执行此操作",
+    "noPermission": "无权执行这个操作",
     "sessionExpired": "身份过期，请重新登录",
-    "network": "网络请求失败",
-    "server": "服务器错误"
+    "network": "网络连接失败，检查网络后重试",
+    "server": "服务暂时无法处理这个请求，稍后重试"
   },
   "agentDefaultName": "芝士",
   "restore": {
-    "restoring": "正在恢复登录状态…",
     "unreachable": "连不上服务器，暂时确认不了登录状态",
     "unreachableHint": "网络恢复后会自动重试，也可以现在手动重试。",
     "retry": "重试",

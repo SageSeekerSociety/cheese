@@ -911,7 +911,7 @@ def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path)
     asked: list[dict] = []
 
     class Backend(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 — the stdlib's name
+        def do_POST(self):  # the stdlib's name
             asked.append({k.lower(): v for k, v in self.headers.items()})
             body = json.dumps(
                 {
@@ -1006,6 +1006,48 @@ def test_a_gateway_session_stays_on_the_gateway_while_admission_is_down(
     assert during.request.headers["authorization"] == "Bearer sk-virtual-project-key"
     out = during.request.stream(b'{"model":"deepseek-flash","messages":[]}')
     assert json.loads(out)["model"] == "deepseek-flash"
+
+
+def test_task_handover_outage_never_spends_the_previous_owners_key(
+    monkeypatch, tmp_path
+):
+    secret = "s3cr3t"
+    url = "http://control-plane.invalid/admission"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret, admission_url=url)
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise core.urllib.error.URLError("backend restart")
+        owner = "alice" if len(calls) == 1 else "bob"
+        return _verdict(
+            pool="gateway", key=f"key-{owner}", model="deepseek-flash", work_id=owner
+        )
+
+    monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=post))
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    def turn():
+        flow = _session_flow(conn="c1")
+        asyncio.run(mod.requestheaders(flow))
+        return flow
+
+    before = turn()
+    assert before.response is None
+    assert before.request.headers["authorization"] == "Bearer key-alice"
+    during = turn()
+    assert during.response is not None and during.response.status_code == 503
+    assert json.loads(during.response.content)["error"]["type"] == "api_error"
+    assert during.request.host == "api.anthropic.com"
+    assert during.request.headers["authorization"] == f"Bearer {SESSION_CREDENTIAL}"
+    after = turn()
+    assert after.response is None
+    assert after.request.headers["authorization"] == "Bearer key-bob"
+    assert after.metadata["cheese_work_id"] == "bob"
 
 
 def _no_login_turn(
@@ -2057,6 +2099,67 @@ async def test_a_gateway_body_cut_mid_stream_carries_its_event_count(
     # the message, so a number in it would split one recurring failure in two
     # every time the cut landed somewhere else.
     assert "2" not in error["message"]
+
+
+async def _gateway_answer_naming(mod, status: int, body: dict, named: str | None):
+    """A gateway answer, with the rows it names as out of credit, if any."""
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    await mod.requestheaders(flow)
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    if named is not None:
+        flow.response.headers["x-cheese-upstream-out-of-credit"] = named
+    flow.response.content = json.dumps(body).encode()
+    mod.responseheaders(flow)
+    mod.response(flow)
+    return flow.response
+
+
+async def test_rows_the_gateway_found_out_of_credit_are_told_to_the_admins(
+    monkeypatch, tmp_path
+):
+    """Only the platform can top up a provider account. Every row the gateway
+    names as out of credit reaches the error intake as its own record, from
+    the room whose request met it, whether a later row answered the request or
+    no row could; an answer naming none reports nothing."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    answered = {
+        "type": "message",
+        "content": [],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+    await _gateway_answer_naming(
+        mod,
+        200,
+        answered,
+        "deepseek-flash deepseek/deepseek-chat 1a2b3c4d; deepseek-flash opencode/flash 9c0d1e2f",
+    )
+    await _gateway_answer_naming(
+        mod,
+        402,
+        {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": "cheese_upstream_credit_exhausted: ...",
+            },
+        },
+        "glm-5.3 anthropic/glm-5.3 5e6f7a8b",
+    )
+    await _gateway_answer_naming(mod, 200, answered, None)
+    await asyncio.gather(*mod._failure_reports)
+    records = [error for _url, body in posted for error in body["errors"]]
+    assert [r["upstream_failure"] for r in records] == ["provider_credit"] * 3, records
+    named = [r["where"] for r in records]
+    assert any("deepseek/deepseek-chat 1a2b3c4d" in w for w in named), named
+    assert any("opencode/flash 9c0d1e2f" in w for w in named), named
+    assert any("anthropic/glm-5.3 5e6f7a8b" in w for w in named), named
+    assert all(body["project_id"] == "project" for _url, body in posted), posted
 
 
 async def test_a_gateway_that_never_answers_is_recorded_as_a_lost_call(

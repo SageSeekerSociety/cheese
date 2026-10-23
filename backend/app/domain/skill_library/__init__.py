@@ -1,8 +1,9 @@
 """The platform's skill guides, and what a session is shipped of them.
 
-The markdown next to this file is the platform's own prompt text, and four of
-them (`doc_writing.md`, `doc_blocks.md`, `doc_apps.md`, `doc_live.md`) are
-also packed into a `cheese-docs` skill and sent to a session. The reader of
+The markdown next to this file is the platform's own prompt text, and five of
+them are also packed into skills and sent to a session: `doc_writing.md`,
+`doc_blocks.md` and `doc_live.md` into `cheese-docs`, `miniapp.md` and
+`doc_apps.md` into `miniapp`. The reader of
 that directory and the vocabulary of what travels are therefore the same thing,
 and both are read by packages further down than the one that writes prompts —
 `repository` builds a session directory, `project_skill` refuses a name the
@@ -12,10 +13,27 @@ first needed them.
 
 import functools
 import json
+import uuid
 from pathlib import Path
+
+from app.core.config import settings
 
 #: Where the guides live: next to this file.
 SKILL_DIR = Path(__file__).parent
+
+
+def project_skills_root(project_id: uuid.UUID | str) -> Path:
+    """Where a project's confirmed skills are mirrored on disk for a session to
+    read: one directory per project under the platform's workspace.
+
+    Written by `project_skill.service`, rebuilt after every change. The
+    convention lives here, below both the writer and one of its readers —
+    `repository.service.session_dir` copies that directory into a session
+    directory — because where a path is is not worth an upward import;
+    `event_author` and `event_about` came down here for the same reason.
+    `project_skill.service` keeps its own name for the call, `mirror_root`.
+    """
+    return Path(settings.workspace_root) / ".project-skills" / str(project_id)
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -83,7 +101,7 @@ SKILL_FILE_SUFFIXES = (
 
 
 #: Folder names a project's own skill may not take: the platform ships these.
-RESERVED_SKILL_NAMES = frozenset({*_SHIPPED_NATIVE_SKILLS, "cheese-docs"})
+RESERVED_SKILL_NAMES = frozenset({*_SHIPPED_NATIVE_SKILLS, "cheese-docs", "miniapp"})
 
 #: Platform skills machines received before each one kept a list of what it was
 #: shipped (`.cheese-platform-skills`). A machine with no list yet is treated as
@@ -163,8 +181,17 @@ def _native_skill_files() -> dict[str, str]:
     )
     _, blocks = parse_frontmatter(SKILL_DIR / "doc_blocks.md")
     files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
-    _, apps = parse_frontmatter(SKILL_DIR / "doc_apps.md")
-    files["skills/cheese-docs/references/apps.md"] = apps + "\n"
     _, live = parse_frontmatter(SKILL_DIR / "doc_live.md")
     files["skills/cheese-docs/references/live-doc.md"] = live + "\n"
+    # Mini-apps are their own skill because they are not only a document's:
+    # one can be sent straight into a chat, and a skill named for documents is
+    # the one an agent about to answer in a chat would not think to load.
+    meta, body = parse_frontmatter(SKILL_DIR / "miniapp.md")
+    files["skills/miniapp/SKILL.md"] = (
+        f"---\nname: miniapp\n"
+        f"description: {json.dumps(meta['description'], ensure_ascii=False)}\n"
+        f"---\n\n{body}\n"
+    )
+    _, apps = parse_frontmatter(SKILL_DIR / "doc_apps.md")
+    files["skills/miniapp/references/apps.md"] = apps + "\n"
     return files

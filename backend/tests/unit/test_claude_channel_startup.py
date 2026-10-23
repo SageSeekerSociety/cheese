@@ -27,11 +27,12 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.driven.runner import socket_path
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host import claude_code as claude_driver
 from app.domain.agent.session_host.contract import StartRefused
 from app.domain.agent.session_host.host import SessionHost
+from tests.support.machine_path import on_machine
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 AGENT = "cheese-agent"
@@ -79,7 +80,7 @@ class Host:
         )
 
     def expand(self, state: str) -> Path:
-        return Path(state.replace("$HOME", str(self.home)))
+        return Path(on_machine(state, self.home))
 
     async def precheck(self, session, *, needs_place):
         return Placement(DEVICE, 1, AGENT, rented=False)
@@ -287,7 +288,7 @@ async def test_a_runner_that_fails_itself_is_reported_at_once(tmp_path):
             lock.close()
 
     assert waited < 30, f"the room waited {waited:.0f}s for a runner already gone"
-    assert host.refusal == "Claude Code 启动失败：这个频道上一个会话进程还没有退出"
+    assert host.refusal == "Claude Code 启动失败：这个频道上一次运行的程序还没有退出"
     assert host.refused is not None and "BlockingIOError" in host.refused.log
 
 

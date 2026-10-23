@@ -19,7 +19,7 @@ import { canPromptInstall, detectIos, isInstalled, promptInstall } from '@/lib/p
 // （router/home.ts）。截图由 e2e/download-shots.mjs 从真实前端截出来。
 
 const ios = detectIos()
-const phone = ios || /Android/i.test(navigator.userAgent)
+const phone = ios || (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent))
 
 const primary = ref<Download>(DOWNLOADS[0])
 const version = ref<string | null>(null)
@@ -46,8 +46,10 @@ const firstOpenTip = computed(() =>
 )
 const shownDays = computed(() => (showAll.value ? days.value : days.value.slice(0, 3)))
 
-const pageUrl = `${window.location.origin}/download`
-const qr = renderSVG(pageUrl, { border: 0, blackColor: 'currentColor', whiteColor: 'transparent' })
+const pageUrl = ref('/download')
+const qr = computed(() =>
+  renderSVG(pageUrl.value, { border: 0, blackColor: 'currentColor', whiteColor: 'transparent' })
+)
 
 function dayLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number)
@@ -62,7 +64,7 @@ async function install() {
 
 async function copyLink() {
   try {
-    await navigator.clipboard.writeText(pageUrl)
+    await navigator.clipboard.writeText(pageUrl.value)
     copied.value = true
     setTimeout(() => (copied.value = false), 2000)
   } catch {
@@ -71,6 +73,7 @@ async function copyLink() {
 }
 
 onMounted(async () => {
+  pageUrl.value = `${window.location.origin}/download`
   primary.value = await downloadForThisComputer()
   const release = await fetchDesktopRelease()
   version.value = release.version
@@ -227,18 +230,31 @@ onMounted(async () => {
   align-items: center;
 }
 
+/* 和 .vision 同一条：光晕挪到独立一层。画在 .dl-hero 自己的 background 上时，
+   标题正好压在它上面，「这个标题坐在什么底色上」就是一张读不出来的图，对比度
+   整段量不出来。独立一层画面不变，底色重新可算。 */
 .dl-hero {
   display: flex;
+  position: relative;
+  isolation: isolate;
   width: 100%;
   padding-top: 88px;
+  text-align: center;
+  flex-direction: column;
+  align-items: center;
+}
+
+.dl-hero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
   background: radial-gradient(
     640px 320px at 50% 30%,
     color-mix(in srgb, var(--logo-primary) 12%, transparent),
     transparent 70%
   );
-  text-align: center;
-  flex-direction: column;
-  align-items: center;
+  content: '';
 }
 
 /* The app's own icon, its rounded tile drawn into the picture. */

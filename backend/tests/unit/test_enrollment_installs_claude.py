@@ -14,7 +14,9 @@ ORIGIN = "https://cheese.example.com"
 
 
 def script() -> str:
-    return bootstrap_script(origin=ORIGIN, token="TOK", device_id="DEV")
+    return bootstrap_script(
+        origin=ORIGIN, token="TOK", device_id="DEV", sandbox_disk=False
+    )
 
 
 def test_claude_is_installed_at_the_pinned_version():
@@ -37,7 +39,7 @@ def test_the_machine_owners_claude_is_left_alone():
     never consults ~/.local/bin for the pin.
     """
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("cheesehost.new")]
+    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
     assert "ln -s" not in claude_block, "must not repoint the owner's claude"
     assert "$HOME/.local/bin/claude" not in claude_block
 
@@ -47,7 +49,7 @@ def test_the_pin_is_installed_even_when_a_newer_claude_exists():
     their next upgrade becomes our behaviour change. Pinning has to mean the
     version we put there, not the version we found."""
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("cheesehost.new")]
+    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
     # The only condition guarding the download is the pin's own absence.
     assert 'if [ ! -x "$claude_pin" ]; then' in claude_block
     assert "command -v claude" not in claude_block
@@ -101,5 +103,5 @@ def test_claude_is_fatal_at_enrollment_like_tmux_and_git():
     """Same reasoning as the tools above it: a failure discovered later is a
     failure nobody attributes to enrollment."""
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("cheesehost.new")]
+    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
     assert ">&2" in claude_block and "exit 1" in claude_block

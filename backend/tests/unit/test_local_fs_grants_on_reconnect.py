@@ -22,19 +22,21 @@ import httpx
 import pytest
 
 from app import device_connection_app
-from app.api.routes import connector
+from app.api.routes.connector import devices
 from app.core import background
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceRow, HostedDeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import GrantMode, GrantScope
 from app.domain.local_fs.wiring import sql_local_directory_service
 from app.domain.user.models import User
 from tests.support import wire
+from tests.support.devices import enrollment_team
 from tests.support.hang import HANG_S
 
 SECRET = "test-owner-secret"
@@ -56,7 +58,7 @@ async def _no_login_check(*_args) -> None:
 @pytest.fixture
 def hub(monkeypatch, db_factory):
     monkeypatch.setattr(owner_login, "refresh_on_connect", _no_login_check)
-    monkeypatch.setattr(connector, "_check_sandbox", _no_login_check)
+    monkeypatch.setattr(devices, "_check_sandbox", _no_login_check)
     monkeypatch.setattr(device_hub, "_devices", {})
     monkeypatch.setattr(device_hub, "_screens", {})
     monkeypatch.setattr(device_hub, "_by_screen_token", {})
@@ -79,8 +81,8 @@ async def rolling_backend(monkeypatch, hub):
     )
     # What `main.lifespan` does on a backend configured with an owner, whose
     # `device_hub` is then this remote hub everywhere it is imported.
-    monkeypatch.setattr(connector, "device_hub", remote)
-    remote.set_online_callback(connector.recover_business_state)
+    monkeypatch.setattr(devices, "device_hub", remote)
+    remote.set_online_callback(devices.recover_business_state)
     await remote.start()
     yield remote
     await remote.close()
@@ -100,6 +102,7 @@ async def _owner_of_the_machine(db_factory) -> int:
         await session.flush()
         session.add(
             DeviceRow(
+                team_id=await enrollment_team(sql_device_service(session), user.id),
                 device_id=MACHINE,
                 name=MACHINE,
                 token=f"tok-{uuid.uuid4().hex}",
@@ -135,7 +138,10 @@ async def _revoke(db_factory, link, owner: int, grant_id: uuid.UUID) -> PushOutc
     """What revoking does: record it, commit, push the set."""
     async with db_factory() as session:
         service = sql_local_directory_service(session)
-        assert await service.revoke(grant_id, owner_user_id=owner) is not None
+        assert (
+            await service.revoke(grant_id, actor_user_id=owner, device_id=MACHINE)
+            is not None
+        )
         await session.commit()
         return await push_grants(service, link, MACHINE)
 
@@ -244,7 +250,7 @@ async def test_a_set_the_machine_refused_on_connect_is_sent_again_next_time(
 async def _connect_in_process() -> wire.RecordingDevice:
     # What the device socket does when this process holds the machines itself.
     machine = await _connect()
-    await connector.recover_business_state(MACHINE)
+    await devices.recover_business_state(MACHINE)
     return machine
 
 

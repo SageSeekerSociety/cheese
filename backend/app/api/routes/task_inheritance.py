@@ -46,7 +46,7 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 def _teaching_to_api(
     teaching, source: str | None, material_ids: list[int], *, include_private: bool
 ) -> dict:
-    """合成后的教学指导摆成接口形状 —— 与空间、项目集、题目那几份读回来的同一套
+    """合成后的教学指导摆成接口形状 —— 与空间、题目那几份读回来的同一套
     camelCase（``teaching_to_api``）；``materialIds`` 换成过滤后的那份，再加一格
     ``source``。
 
@@ -60,8 +60,9 @@ def _teaching_to_api(
     return {
         **teaching_to_api(teaching, include_private=include_private),
         "materialIds": list(material_ids),
-        # 这一份来自哪一层：space / category / task / project，或 null（四层都没
-        # 说）。界面据此写「来自项目集」，不是一个只有结果的字符串。
+        # 两层都说了时，空间那一份要求单独一格（``systemPrompt`` 是题目的）。
+        "spacePrompt": teaching.space_prompt,
+        # 这一份来自哪里：space / task / both / project，或 null（都没说）。
         "source": source,
     }
 

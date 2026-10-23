@@ -12,6 +12,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import { MODEL_TIERS, TIER_KEY } from '@/lib/adminCredits'
 import { blockedReasonText, displayName, failRate, originKey, statusQuiet } from '@/lib/adminModels'
+import { fullestCap } from '@/lib/adminSources'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
 // 模型那一段：网关上有哪些模型、上没上架、什么价、跑了多少。页面的主语。
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   block: [row: ModelRow]
   delete: [row: ModelRow]
   tier: [row: ModelRow, tier: 'included' | 'premium' | 'frontier']
+  overseas: [row: ModelRow, overseas: boolean]
 }>()
 
 const { t } = useI18n()
@@ -48,6 +50,14 @@ const tierOptions = computed(() => MODEL_TIERS.map((value) => ({ value, title: t
 
 /** 失败率那一格的 title。0 请求时是空串（那一格画的是 `—`，没有比率可解释）——
  *  这一句要 `t`，所以拼不成纯函数，留在画的那一边。 */
+function capOf(row: ModelRow) {
+  return fullestCap(row.sources)
+}
+
+function capPct(row: ModelRow): string {
+  return `${Math.floor((capOf(row)?.ratio ?? 0) * 100)}%`
+}
+
 function rateTitle(row: ModelRow): string {
   if (!row.usage.requests) return ''
   return t('models.table.failRate', { rate: failRate(row).text })
@@ -58,8 +68,8 @@ function rateTitle(row: ModelRow): string {
   <div class="amd__gridwrap">
     <BaseTable
       :label="t('models.table.label')"
-      :cols="[null, '96px', '150px', '150px', '210px', '180px', '110px', '140px']"
-      :bone-widths="['64%', '54%', '70%', '60%', '58%', '62%', '50%', '46%']"
+      :cols="[null, '96px', '150px', '150px', '96px', '210px', '180px', '110px', '140px']"
+      :bone-widths="['64%', '54%', '70%', '60%', '40%', '58%', '62%', '50%', '46%']"
       :loading="props.loading && !props.models"
       :skeleton-rows="6"
       :state="props.state"
@@ -72,6 +82,7 @@ function rateTitle(row: ModelRow): string {
           <th scope="col">{{ t('models.table.column.origin') }}</th>
           <th scope="col">{{ t('models.table.column.price') }}</th>
           <th scope="col">{{ t('models.table.column.tier') }}</th>
+          <th scope="col">{{ t('models.table.column.overseas') }}</th>
           <th scope="col">{{ t('models.table.column.usage') }}</th>
           <th scope="col">{{ t('models.table.column.offered') }}</th>
           <th scope="col">{{ t('models.table.column.status') }}</th>
@@ -132,6 +143,17 @@ function rateTitle(row: ModelRow): string {
             @update:model-value="emit('tier', row, $event)"
           />
         </td>
+        <td class="amd__cell" :data-label="t('models.table.column.overseas')">
+          <!-- 和档位同一条：配置文件里来的模型改不了，只显示。 -->
+          <v-checkbox
+            :model-value="!!row.overseas"
+            density="compact"
+            hide-details
+            :disabled="row.origin === 'config'"
+            :aria-label="t('models.table.overseas')"
+            @update:model-value="emit('overseas', row, !!$event)"
+          />
+        </td>
         <td class="amd__cell" :data-label="t('models.table.column.usage')">
           <span class="amd__usage">
             <span class="amd__usageRow">
@@ -157,6 +179,13 @@ function rateTitle(row: ModelRow): string {
             <span v-if="row.blocked" class="amd__tag amd__tag--off">{{ t('models.table.blocked') }}</span>
             <span v-else-if="row.offered" class="amd__tag amd__tag--on">{{ t('models.table.offered.on') }}</span>
             <span v-else class="amd__tag">{{ t('models.table.offered.off') }}</span>
+            <!-- 消费上限用到八成起在这里标一下：上限是终身累计的，窗口里的花费看不出离顶多远。 -->
+            <span v-if="capOf(row)?.level === 'over'" class="amd__tag amd__tag--off" data-testid="model-cap">{{
+              t('models.table.capOver')
+            }}</span>
+            <span v-else-if="capOf(row)?.level === 'warn'" class="amd__tag amd__tag--warn" data-testid="model-cap">{{
+              t('models.table.capWarn', { pct: capPct(row) })
+            }}</span>
             <span
               v-if="!row.offered && blockedReasonText(row)"
               class="t-meta-read amd__dim amd__reason"
@@ -299,6 +328,11 @@ function rateTitle(row: ModelRow): string {
 .amd__tag--on {
   background: var(--ok-wash);
   color: var(--ok-ink);
+}
+
+.amd__tag--warn {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
 }
 
 .amd__tag--off {

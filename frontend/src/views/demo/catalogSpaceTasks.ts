@@ -17,9 +17,12 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
-  PUBLISH_DRAFT_MANY,
-  PUBLISH_DRAFT_ONE,
+  PANEL_DONE,
+  PANEL_LIVE,
+  PANEL_SPLIT,
+  PUBLISH_DRAFTS,
   SPACE_CATEGORY,
+  SPACE_MATERIAL_TEXT,
   SPACE_MATERIALS,
   SPACE_SETTINGS_GROUPS,
   SPACE_TASK_BOARD,
@@ -31,18 +34,28 @@ import {
   TASK_REVIEWS,
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
+import {
+  ASSISTANT_MEMORY,
+  ASSISTANT_RECENT,
+  ASSISTANT_ROUTINES,
+  ASSISTANT_RULES,
+} from './catalogViewSettingsWorkspaceFixtures'
 
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
+import SpaceLibraryView from '@/views/spaces/detail/library/SpaceLibraryView.vue'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
+import MyDraftsView from '@/views/spaces/detail/MyDraftsView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
 import IndexView from '@/views/spaces/detail/settings/IndexView.vue'
 import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.vue'
-import SpaceMaterialsView from '@/views/spaces/detail/settings/SpaceMaterialsView.vue'
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
+import AssistantView from '@/views/user/settings/AssistantView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -75,7 +88,276 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'assistant-panel',
+    title: 'AssistantPanel',
+    get about() {
+      return t('catalog.assistantPanel.about')
+    },
+    file: 'src/components/assistant/AssistantPanel.vue',
+    component: AssistantPanel,
+    needs: UI_T_R,
+    args: {
+      messages: [],
+      streaming: null,
+      tool: null,
+      notice: null,
+      busy: false,
+      context: '',
+      get greeting() {
+        return t('tasks.assistant.draft.greeting')
+      },
+      get starters() {
+        return [t('tasks.assistant.draft.starters.rubric'), t('tasks.assistant.draft.starters.check')]
+      },
+      get placeholder() {
+        return t('tasks.assistant.draft.placeholder')
+      },
+      get hint() {
+        return t('tasks.assistant.draft.hint')
+      },
+      canAttach: true,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.assistantPanel.s1.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s1.note')
+        },
+        props: {},
+        expect: '起草提交内容和评分要点',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s2.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s2.note')
+        },
+        props: { ...PANEL_LIVE, busy: true, streaming: '' },
+        expect: '填写题目',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s3.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s3.note')
+        },
+        props: PANEL_DONE,
+        expect: '待你确认',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s4.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s4.note')
+        },
+        props: PANEL_SPLIT,
+        expectSelector: '.at__card--one',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s5.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s5.note')
+        },
+        props: {
+          ...PANEL_DONE,
+          earlier: [{ id: 'old', title: '实验三从哪入手', at: '2026-10-19T08:00:00Z', messages: PANEL_DONE.messages }],
+          hasOlder: true,
+          dockable: true,
+          docked: true,
+        },
+        expect: '更早的话题',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s6.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s6.note')
+        },
+        // 在项目的频道里问：芝士读了记录，起草一条回复和一个任务，都等人确认。
+        props: {
+          messages: [
+            { role: 'user', text: '我三天没看，有什么需要我处理的？', at: '2026-10-21T08:00:00Z' },
+            {
+              role: 'assistant',
+              text: '和你有关的有两件：李老师问演示视频能否由你负责；路线规划超时还没有人认领。',
+              at: '2026-10-21T08:00:12Z',
+              steps: [
+                { key: 'c1', verb: '搜索聊天记录', arg: '演示视频', state: 'done' },
+                { key: 'c2', verb: '起草消息', arg: '', state: 'done' },
+                { key: 'c3', verb: '起草任务', arg: '排查路线规划超时', state: 'done' },
+              ],
+              proposals: [
+                {
+                  id: 1,
+                  kind: 'message',
+                  state: 'pending',
+                  where: '综合',
+                  text: '@李老师 演示视频我来负责，11月7日前给出初版。',
+                },
+                {
+                  id: 2,
+                  kind: 'task',
+                  state: 'sent',
+                  where: '综合',
+                  title: '排查路线规划超时',
+                  text: '复现超时，超时 3 秒后重试一次，补测试。',
+                  task: 't-1',
+                },
+              ],
+            },
+          ],
+        },
+        expect: '待你确认',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s7.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s7.note')
+        },
+        // 例行事务的一次运行：平台开的，芝士起草了一条回复留给人确认；上一次留下的已过期。
+        props: {
+          earlier: [
+            {
+              id: 'run-1',
+              title: '有人找我',
+              at: '2026-10-21T09:00:00Z',
+              messages: [
+                {
+                  role: 'platform',
+                  text: '',
+                  at: '2026-10-21T09:00:00Z',
+                  shown: { routine: '有人找我' },
+                },
+                {
+                  role: 'assistant',
+                  text: '赵一鸣在「综合」问周报什么时候交，我起草了一条回复。',
+                  at: '2026-10-21T09:00:20Z',
+                  proposals: [{ id: 9, kind: 'message', state: 'expired', where: '综合', text: '周五前交。' }],
+                },
+              ],
+            },
+          ],
+          messages: [
+            { role: 'platform', text: '', at: '2026-10-22T09:00:00Z', shown: { routine: '有人找我' } },
+            {
+              role: 'assistant',
+              text: '李老师在「综合」@ 你，问演示视频能否由你负责。你建这条例行事务时没有说可以替你答应，我起草了一条回复，等你确认。',
+              at: '2026-10-22T09:00:18Z',
+              steps: [
+                { key: 'r1', verb: '读取', arg: 'ml-course/channels/1', state: 'done' },
+                { key: 'r2', verb: '发消息', arg: 'ml-course/channels/1', state: 'done' },
+              ],
+              proposals: [
+                {
+                  id: 10,
+                  kind: 'message',
+                  state: 'pending',
+                  where: '综合',
+                  text: '@李老师 演示视频我来负责，11月7日前给出初版。',
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已过期',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s8.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s8.note')
+        },
+        // 芝士记下一条关于你的事：面板里一张「记忆」卡片，能撤销。
+        props: {
+          messages: [
+            { role: 'user', text: '记住，我给老师写东西都要用书面语，别太口语。', at: '2026-10-22T10:00:00Z' },
+            {
+              role: 'assistant',
+              text: '记住了。以后替你写给老师的消息和邮件都用书面语。',
+              at: '2026-10-22T10:00:06Z',
+              steps: [{ key: 'm1', verb: '读写记忆', arg: '给老师写东西用书面语', state: 'done' }],
+              changes: [
+                {
+                  id: 21,
+                  draft: -21,
+                  created: false,
+                  name: '',
+                  title: '记忆',
+                  canUndo: true,
+                  rows: [{ change: 21, key: 'memory', label: '已记住', value: '给老师写东西用书面语', undone: false }],
+                  notes: [],
+                },
+              ],
+            },
+          ],
+        },
+        expect: '已记住',
+      },
+    ],
+  },
+  {
+    id: 'settings-assistant-view',
+    title: 'AssistantView',
+    get about() {
+      return t('catalog.settingsAssistantView.about')
+    },
+    file: 'src/views/user/settings/AssistantView.vue',
+    component: AssistantView,
+    needs: UI_T,
+    args: {
+      rules: ASSISTANT_RULES,
+      memory: ASSISTANT_MEMORY,
+      routines: ASSISTANT_ROUTINES,
+      routineLimit: 20,
+      recent: ASSISTANT_RECENT,
+      loading: false,
+      failed: false,
+      saving: false,
+      saved: false,
+      error: '',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s1.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s1.note')
+        },
+        props: {},
+        expect: '例行事务',
+      },
+      {
+        get name() {
+          return t('catalog.settingsAssistantView.s2.name')
+        },
+        get note() {
+          return t('catalog.settingsAssistantView.s2.note')
+        },
+        props: {
+          routines: [],
+          memory: { enabled: false, items: [] },
+          rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
+        },
+        expect: '暂无例行事务',
+      },
+    ],
+  },
+  {
     id: 'publish-task-view',
+    // 芝士的面板停在页面外框的右边（导航抽屉），外框要有。
+    layout: true,
     title: 'PublishTaskView',
     get about() {
       return t('catalog.publishTaskView.about')
@@ -93,8 +375,6 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       selectedCategoryId: SPACE_CATEGORY.id,
       domainGroups: [DOMAIN_GROUP],
       templates: SPACE_TEMPLATES,
-      importing: false,
-      importedFile: null,
       attachments: [],
       uploading: false,
       maxFileBytes: 20_000_000,
@@ -102,13 +382,16 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       materialsState: 'ready',
       libraryTo: spaceLibraryPath('7'),
       publishing: false,
-      drafts: PUBLISH_DRAFT_ONE,
       teaching: {},
       teachingOwn: false,
       // 这道题指定的默认队友（#944）：发题页没有原始值，起手就是「继承」。
       defaultRole: '',
       agentTypes: AGENT_TYPES,
       agentTypesFailed: false,
+      drafts: PUBLISH_DRAFTS,
+      currentDraftId: 41,
+      saveState: 'saved',
+      agentName: t('work.agentAvatar.defaultName'),
     },
     states: [
       {
@@ -119,19 +402,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.publishTaskView.s1.note')
         },
         props: {},
-        // 单道题才有「题目内容」那一块，它右上角那两颗动作按钮里有一颗是稳定的锚：装好
-        // 了（`ready`）且不是从文件读出的多道（否则只留选题参数、不下这一块）才在。
-        expectSelector: '[data-testid="publish-import"]',
-      },
-      {
-        get name() {
-          return t('catalog.publishTaskView.s2.name')
-        },
-        get note() {
-          return t('catalog.publishTaskView.s2.note')
-        },
-        props: { drafts: PUBLISH_DRAFT_MANY, importedFile: '第十章习题.pdf' },
-        expect: '第十章习题.pdf · 识别出 3 道题，已选 2 道',
+        expect: '草稿已保存',
       },
       {
         get name() {
@@ -142,6 +413,78 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: { ready: false },
         expectSelector: '[data-testid="publish-submit"].v-btn--disabled',
+      },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s4.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s4.note')
+        },
+        props: {
+          currentDraftId: 41,
+          strip: {
+            source: '第二单元实验与作业.pdf',
+            flagged: true,
+            publishing: false,
+            note: null,
+            items: [
+              { id: 41, name: 'Lab 3 缓存模拟器', writing: false, missing: [], published: true },
+              { id: 42, name: 'Lab 4 矩阵转置优化', writing: false, missing: ['难度'], published: false },
+              { id: 43, name: '作业 6 虚拟内存', writing: true, missing: [], published: false },
+            ],
+          },
+        },
+        expectSelector: '[data-testid="draft-strip"]',
+      },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s5.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s5.note')
+        },
+        props: { agentOpen: false },
+        expectSelector: '[data-testid="publish-agent-open"]',
+      },
+    ],
+  },
+  {
+    id: 'my-drafts-view',
+    title: 'MyDraftsView',
+    get about() {
+      return t('catalog.myDraftsView.about')
+    },
+    file: 'src/views/spaces/detail/MyDraftsView.vue',
+    component: MyDraftsView,
+    needs: UI_T_R,
+    args: {
+      drafts: PUBLISH_DRAFTS,
+      loading: false,
+      failed: false,
+      removing: false,
+      publishTo: '/spaces/7/tasks/publish',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.myDraftsView.s1.name')
+        },
+        get note() {
+          return t('catalog.myDraftsView.s1.note')
+        },
+        props: {},
+        expect: 'Lab 4 矩阵转置优化',
+      },
+      {
+        get name() {
+          return t('catalog.myDraftsView.s2.name')
+        },
+        get note() {
+          return t('catalog.myDraftsView.s2.note')
+        },
+        props: { drafts: [] },
+        expect: '暂无草稿',
       },
     ],
   },
@@ -266,55 +609,130 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'space-materials-view',
-    title: 'SpaceMaterialsView',
-    get about() {
-      return t('catalog.spaceMaterialsView.about')
-    },
-    file: 'src/views/spaces/detail/settings/SpaceMaterialsView.vue',
-    component: SpaceMaterialsView,
+    id: 'teaching-fields',
+    title: 'TeachingFields',
+    about:
+      '「AI 队友辅导」那几格，空间设置和发题页、改题页共用。题目那一层多一张「沿用空间设置」，底下折着空间那一份要求。',
+    file: 'src/components/common/TeachingFields.vue',
+    component: TeachingFields,
     needs: UI_T,
-    args: { materials: SPACE_MATERIALS, canManage: true, loading: false, busy: false, uploadOpen: false },
+    args: { materials: SPACE_MATERIALS, materialsState: 'ready' },
+    states: [
+      {
+        name: '题目那一层，沿用空间的方式',
+        note: '没选方式就用空间的「引导为主」；本题补充要求只写这道题自己的，空间那一份折在最下面。',
+        props: {
+          inherit: true,
+          spaceTeaching: SPACE_TEACHING,
+          modelValue: {
+            mode: null,
+            systemPrompt: '这道题考调度算法。学生问到时间片轮转时，先让他画出甘特图，再讨论时间片大小。',
+            materialIds: [],
+            documentIds: [],
+          },
+        },
+        expectSelector: '[data-testid="teaching-space-prompt"]',
+      },
+      {
+        name: '空间那一层',
+        note: '四种方式，没有「沿用」；选中的那张描深色边。',
+        props: { modelValue: SPACE_TEACHING },
+        expect: '引导为主',
+      },
+    ],
+  },
+  {
+    id: 'space-library-view',
+    title: 'SpaceLibraryView',
+    get about() {
+      return t('catalog.spaceLibraryView.about')
+    },
+    file: 'src/views/spaces/detail/library/SpaceLibraryView.vue',
+    component: SpaceLibraryView,
+    needs: UI_T,
+    args: {
+      materials: SPACE_MATERIALS,
+      canManage: true,
+      loading: false,
+      failed: false,
+      error: null,
+      selected: null,
+      wide: true,
+      busy: false,
+      uploadOpen: false,
+      read: () => async () => new TextEncoder().encode(SPACE_MATERIAL_TEXT).buffer,
+    },
     states: [
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s1.name')
+          return t('catalog.spaceLibraryView.s1.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s1.note')
+          return t('catalog.spaceLibraryView.s1.note')
         },
         props: {},
         expect: '实验指导书.pdf',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s2.name')
+          return t('catalog.spaceLibraryView.s2.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s2.note')
+          return t('catalog.spaceLibraryView.s2.note')
+        },
+        props: { canManage: false, materials: SPACE_MATERIALS.filter((m) => m.visibility === 'members') },
+        expect: '实验指导书.pdf',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s3.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s3.note')
+        },
+        props: { selected: SPACE_MATERIALS[0] },
+        expectSelector: '[data-testid="slib-detail"]',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s4.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s4.note')
         },
         props: { materials: [] },
         expect: '暂无资料',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s3.name')
+          return t('catalog.spaceLibraryView.s5.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s3.note')
+          return t('catalog.spaceLibraryView.s5.note')
         },
-        props: { loading: true },
+        props: { materials: [], loading: true },
         expectSelector: '[role="progressbar"]',
       },
       {
         get name() {
-          return t('catalog.spaceMaterialsView.s4.name')
+          return t('catalog.spaceLibraryView.s6.name')
         },
         get note() {
-          return t('catalog.spaceMaterialsView.s4.note')
+          return t('catalog.spaceLibraryView.s6.note')
+        },
+        props: { selected: SPACE_MATERIALS[0], wide: false },
+        expectSelector: '[data-testid="slib-detail"]',
+      },
+      {
+        get name() {
+          return t('catalog.spaceLibraryView.s7.name')
+        },
+        get note() {
+          return t('catalog.spaceLibraryView.s7.note')
         },
         props: { uploadOpen: true },
-        expect: '上传一份资料',
+        // The dialog teleports out of the frame's root; the list behind it is what mounts here.
+        expect: '实验指导书.pdf',
       },
     ],
   },
@@ -348,9 +766,28 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.briefView.s2.note')
         },
-        props: { attachments: [] },
+        props: { attachments: [], taskData: { ...TASK_DEMO, submissionSchema: [] } },
         // 只剩一节时，它既是第一个也是最后一个：上一格那个兄弟选择器在这边匹配不到东西。
         expectSelector: '.tb__sec:first-child:last-child',
+      },
+      {
+        get name() {
+          return t('catalog.briefView.s3.name')
+        },
+        get note() {
+          return t('catalog.briefView.s3.note')
+        },
+        props: {
+          taskData: {
+            ...TASK_DEMO,
+            rubricPublic: false,
+            rubric: [
+              { item: '正确性', points: 60, criteria: '样例全部通过，调度顺序与参考输出一致' },
+              { item: '报告', points: 40, criteria: '说明优先级反转如何避免' },
+            ],
+          },
+        },
+        expect: '仅批改的人可见',
       },
     ],
   },
@@ -392,7 +829,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.insightsView.s2.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '这道题的数据没读出来',
+        expect: '这道题的数据加载失败',
       },
       {
         get name() {
@@ -474,7 +911,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s4.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '领取者名单没读出来',
+        expect: '领取者名单加载失败',
       },
       {
         get name() {

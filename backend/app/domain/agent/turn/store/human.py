@@ -10,16 +10,34 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import NotFoundError
 from app.core.sentences import say
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.core.work_context import parse_work_id
+from app.domain.block.adapters import dump_blocks_json
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import client_delivery_bundle, message_reply_target
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
+from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.membership.roster import Member
 from app.domain.project.models import Project
 from app.domain.room_task.place import Place, PlaceResolver
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class HumanHandoff:
+    """What the request already read before the writer opens its own session.
+
+    The writer's session is its own on purpose; these rows are what it would
+    otherwise read again. Each field is optional: ``None`` means the request
+    did not read it, and the writer reads it as before. ``roster`` is the
+    :func:`~app.domain.membership.roster.roster` read of the room's project.
+    """
+
+    project: Project | None = None
+    roster: tuple[Member, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,15 +80,6 @@ class HumanEffects(Protocol):
         quoted_context: dict | None,
         /,
     ) -> list[Block]: ...
-
-
-def _parse_uuid(raw: str | None) -> uuid.UUID | None:
-    if not raw:
-        return None
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        return None
 
 
 async def persist_human_message(
@@ -131,10 +140,7 @@ async def persist_human_message(
                     for block in legacy_blocks
                     if (block.meta or {}).get("client_id") == client_id
                 )
-                payloads = [
-                    BlockOut.model_validate(block).model_dump(mode="json")
-                    for block in legacy_blocks
-                ]
+                payloads = await dump_blocks_json(legacy_blocks)
                 block_ids = [block.id for block in legacy_blocks]
                 await idem.record_result(
                     session,
@@ -160,8 +166,9 @@ async def persist_human_message(
         # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
         # from. Drop the edge, keep the message: losing the thread link is
         # recoverable, refusing the send is not.
-        reply_uuid = _parse_uuid(reply_to)
+        reply_uuid = parse_work_id(reply_to)
         reply_author: str | None = None
+        reply_parent: Block | None = None
         if reply_uuid is not None:
             parent = await message_reply_target(session, reply_uuid)
             if parent is None or parent.conversation_id != place.conversation_id:
@@ -175,11 +182,18 @@ async def persist_human_message(
                 # 回谁的话就是对着谁说的：被回复的那条的作者定这一句的收件人
                 # （#3210），由 `refuse` 认。
                 reply_author = parent.author
+                reply_parent = parent
         if content:
             content = prepared.content
             admission = await refuse(
                 session, place, prepared, recipient, author, reply_author
             )
+            # A participant's own message groups under itself when the send
+            # carries no ambient turn: `turn_id` is what puts a send's blocks
+            # together. Mint that id here so the self-reference is one INSERT
+            # column — assigning it after the flush cost an UPDATE and a
+            # whole-row read to resynchronise.
+            self_grouping_id = uuid.uuid4() if attribution_id is None else None
             user_block = await append_output(
                 session,
                 project_id=topic.project_id,
@@ -188,7 +202,8 @@ async def persist_human_message(
                 author_type=AuthorType.participant,
                 content=content,
                 kind=BlockKind.message,
-                turn_id=turn_id,
+                block_id=self_grouping_id,
+                turn_id=self_grouping_id or turn_id,
                 reply_to=reply_uuid,  # B3: thread under another
                 # The sender's own id for this send, echoed straight back on
                 # the broadcast. A client that showed the message the instant
@@ -207,7 +222,6 @@ async def persist_human_message(
             )
             if attribution_id is None:
                 attribution_id = user_block.id
-                user_block.turn_id = attribution_id
             answered = await record_effects(
                 session,
                 place,
@@ -258,6 +272,14 @@ async def persist_human_message(
             BlockOut.model_validate(block).model_dump(mode="json")
             for block in created_blocks
         ]
+        # The reply cue needs a line from the parent, and the reader's timeline
+        # may not hold it. It rides with the reply; the parent stays out of the
+        # page. Written before the idempotency record so a retry carries it too.
+        if reply_parent is not None:
+            preview = reply_preview(reply_parent)
+            for block, payload in zip(created_blocks, payloads, strict=True):
+                if block.reply_to is not None:
+                    payload["reply_preview"] = preview
         block_ids = [block.id for block in created_blocks]
         if delivery_key:
             await idem.record_result(

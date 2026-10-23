@@ -6,9 +6,12 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.memory.models import MemoryDreamRun
 from app.domain.project.services import ProjectService
+from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
@@ -94,6 +97,7 @@ def test_an_archived_project_is_hidden_frozen_and_comes_back_whole(client):
         client.post(f"/topics/{done}/archive", json={}, headers=AS_OWNER).status_code
         == 200
     )
+    _register(client, "archive-guest")
     invited = client.post(
         f"/projects/{pid}/invitations",
         json={"user_handle": "archive-guest"},
@@ -210,9 +214,13 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
                 kind="chat",
                 turn_id=None,
             )
-            await ProjectService(session, settle_card=settle_card).archive(
-                project.id, by=OWNER
-            )
+            await ProjectService(
+                session,
+                settle_card=settle_card,
+                cards=close_cards_for_archived_topic,
+                close_tasks=close_room_tasks,
+                events=platform_line,
+            ).archive(project.id, by=OWNER)
             project_id = project.id
             await session.commit()
         await chat.sweep_memory_dreams()

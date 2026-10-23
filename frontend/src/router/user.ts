@@ -31,12 +31,6 @@ export default {
           component: () => import('@/views/user/settings/Security.vue'),
         },
         {
-          // 芝士额度：自己本月用了多少，按协作、问答、写作分。
-          path: 'usage',
-          name: 'UserSettingsUsage',
-          component: () => import('@/views/user/settings/Usage.vue'),
-        },
-        {
           path: 'realname',
           name: 'UserSettingsRealName',
           component: () => import('@/views/user/settings/RealName.vue'),
@@ -48,19 +42,17 @@ export default {
           component: () => import('@/views/user/settings/Notifications.vue'),
         },
         {
-          // 接入的电脑：这个人的工作电脑，哪个项目都能用。
-          path: 'devices',
-          name: 'UserSettingsDevices',
-          component: () => import('@/views/MyDevicesView.vue'),
-          meta: { palette: { label: 'account.settings.devices', icon: 'mdi-laptop' } },
+          // 芝士：哪些事一定先问、用自己的话补充的规矩，和最近替这个人做了什么。
+          path: 'assistant',
+          name: 'UserSettingsAssistant',
+          component: () => import('@/views/user/settings/Assistant.vue'),
         },
         {
-          // 模型连接：这个人的 Claude Code 在各台设备上登录的账号或模型服务（#2991），
-          // 在哪个浏览器里都能看、能解除。
-          path: 'model-connections',
-          name: 'UserSettingsModelConnections',
-          component: () => import('@/views/user/settings/ModelConnections.vue'),
-          meta: { palette: { label: 'account.settings.modelConnections', icon: 'mdi-robot-outline' } },
+          // 邀请好友：自己的邀请码、还剩几个名额、邀请得了什么、邀请来的人走到了哪一步。
+          path: 'invites',
+          name: 'UserSettingsInvites',
+          component: () => import('@/views/user/settings/Invites.vue'),
+          meta: { palette: { label: 'account.settings.invites', icon: 'mdi-account-plus-outline' } },
         },
         {
           // 芝士替这个人用的邮箱和飞书。
@@ -77,7 +69,7 @@ export default {
           component: () => import('@/views/user/settings/ThisDevice.vue'),
           beforeEnter: async () => {
             const { desktopCan } = await import('@/lib/desktopApp')
-            return desktopCan('device') ? true : { name: 'UserSettingsDevices' }
+            return desktopCan('device') ? true : { name: 'UserSettings' }
           },
         },
         {

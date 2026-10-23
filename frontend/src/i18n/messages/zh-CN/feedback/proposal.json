@@ -1,0 +1,15 @@
+{
+  "byline": "{name} 认为这是平台的问题，不是你的用法",
+  "collapse": "收起详情",
+  "dismiss": "不用",
+  "expand": "查看详情",
+  "logs": "日志",
+  "logsAttached": "已附上（{n} 字），跟着反馈一起提交",
+  "progress": "反馈中心里能看到它的进展。",
+  "submit": "提交反馈",
+  "submitted": "已提交",
+  "userSaid": "你当时说的",
+  "userSaidNothing": "用户没有就此说过话（{name} 主动发现）",
+  "view": "查看这条反馈",
+  "why": "判断依据（为什么这不是你的使用方式）"
+}

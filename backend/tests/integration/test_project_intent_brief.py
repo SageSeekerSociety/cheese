@@ -11,6 +11,7 @@
 from anyio.from_thread import BlockingPortal
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.living_doc.overview import overview_document
 from tests.integration.conftest import post_project, project_service, registered
 
 
@@ -37,7 +38,7 @@ def test_intent_becomes_the_new_projects_overview(
         )
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
-        doc = await projects.overview_document(project)
+        doc = await overview_document(db_session, project.id)
         assert doc.version > 0, "说了要做什么的项目，项目目标该带着这句话开门"
         # 署名是「system」：平台产的，不是芝士，也不是某个人。
         assert doc.author == "system"
@@ -60,7 +61,7 @@ def test_no_intent_leaves_the_overview_unwritten(
         )
 
         assert project.intent == ""
-        assert (await projects.overview_document(project)).version == 0
+        assert (await overview_document(db_session, project.id)).version == 0
 
     _portal.call(_run)
 
@@ -81,7 +82,7 @@ def test_whitespace_only_intent_is_not_an_intent(
             name="空白", intent="   \n\t ", owner_handle=await _owner(db_session)
         )
 
-        assert (await projects.overview_document(project)).version == 0
+        assert (await overview_document(db_session, project.id)).version == 0
 
     _portal.call(_run)
 

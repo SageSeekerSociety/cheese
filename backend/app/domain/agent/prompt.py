@@ -22,6 +22,7 @@ import uuid
 from collections import Counter
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import raster_images
@@ -72,7 +73,7 @@ def _progress_lines(items: list[dict]) -> list[str]:
     """
     if not items:
         return []
-    lines = ["- 上次的任务清单（跨轮、跨机器保留下来的进度，不是这一轮新建的）："]
+    lines = ["- 上次的任务清单（之前几次留下的进度，换了机器也还在，不是这次新建的）："]
     for item in items:
         mark = _PROGRESS_MARK.get(str(item.get("status", "")), " ")
         subject = str(item.get("subject", "")).strip() or "（任务）"
@@ -185,8 +186,8 @@ def _platform_preamble(notices: list[Block]) -> str:
 def _resume_notice() -> str:
     """The one thing that is true of a turn rather than of its session."""
     return (
-        "本轮接着上一轮跑：上一轮中途断了，这是同一件事的继续。"
-        "先确认上一轮做到哪了再继续（翻消息记录、git status），别凭印象重做。"
+        "这次接着上次做：上次中途断了，这是同一件事的继续。"
+        "先确认上次做到哪了再继续（翻消息记录、git status），别凭印象重做。"
     )
 
 
@@ -226,18 +227,35 @@ def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
     return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
 
 
+async def _blocks_by_id(
+    session: AsyncSession, ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Block]:
+    """One IN query for ``ids``; ids with no row are simply absent."""
+    if not ids:
+        return {}
+    rows = await session.execute(select(Block).where(Block.id.in_(set(ids))))
+    return {b.id: b for b in rows.scalars()}
+
+
 async def live_inputs(
     session: AsyncSession, block_ids: list[uuid.UUID]
 ) -> tuple[Block | None, Block | None]:
     """Read the persisted authored message, quote and validated reply edge."""
-    stored = replied = None
+    found = await _blocks_by_id(session, block_ids)
+    stored = reply_id = None
     for block_id in block_ids:
-        block = await session.get(Block, block_id)
+        block = found.get(block_id)
         if block is not None:
             if block.kind == BlockKind.message:
                 stored = block
             if block.reply_to is not None:
-                replied = await session.get(Block, block.reply_to)
+                reply_id = block.reply_to
+    if reply_id is None:
+        replied = None
+    elif reply_id in found:
+        replied = found[reply_id]
+    else:
+        replied = (await _blocks_by_id(session, [reply_id])).get(reply_id)
     return stored, replied
 
 
@@ -260,12 +278,22 @@ async def model_images(
     """
     images: dict[str, Image] = {}
     undecodable: set[str] = set()
+    wanted: list[tuple[str, bool]] = []
     for path, media_type in files:
         claimed = is_inline_image(media_type)
         suffix = path[path.rfind(".") :].lower() if "." in path else ""
         if not claimed and suffix not in raster_images.SUFFIX_MEDIA_TYPE:
             continue
-        data = await library_records.read_attachment(session, project_id, room_id, path)
+        wanted.append((path, claimed))
+    if not wanted:
+        return images, undecodable
+    # One read for the whole message: a path the message does not call a picture
+    # and whose name does not say one needs no bytes at all (`wanted`).
+    stored = await library_records.read_attachments(
+        session, project_id, room_id, [path for path, _ in wanted]
+    )
+    for path, claimed in wanted:
+        data = stored[path]
         decoded = await asyncio.to_thread(model_media_type, data)
         if decoded is None:
             undecodable.add(path)
@@ -291,14 +319,13 @@ async def offered_attachments(
     says it is gone (`prompt_line(gone=True)`) and the turn goes on.
     """
     attachments = [b for b in pending if b.kind == BlockKind.attachment and b.content]
-    gone = {
-        b.id
-        for b in attachments
-        if not await library_records.attachment_exists(
-            session, project_id, room_id, b.content
-        )
-    }
-    present = [b for b in attachments if b.id not in gone]
+    # One answer for the whole message: asking per attachment was a query and a
+    # disk call each, on the first-byte path of every turn.
+    present_paths = await library_records.attachments_present(
+        session, project_id, room_id, [b.content for b in attachments]
+    )
+    gone = {b.id for b in attachments if b.content not in present_paths}
+    present = [b for b in attachments if b.content in present_paths]
     images, undecodable = await model_images(
         session,
         project_id,

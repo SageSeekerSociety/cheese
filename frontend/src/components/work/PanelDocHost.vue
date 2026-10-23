@@ -14,13 +14,12 @@
 // 文档页的项目目标、任务概览里的实况文档、「综合」概览里的项目目标。
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { ProjectMemberRow, Topic } from '../../cx_types'
+import type { DocAuthor } from '../../lib/docAuthors'
 import type { DocReviewRequest } from '../../lib/docReview'
 
 import { ref } from 'vue'
 
-import { useDocPeople } from '../../composables/useDocPeople'
-import { useDocThreads } from '../../composables/useDocThreads'
-import { usePanelDoc } from '../../composables/usePanelDoc'
+import { usePanelDocWiring } from '../../composables/usePanelDocWiring'
 import PanelDoc from '../panels/PanelDoc.vue'
 
 import { t } from '@/i18n'
@@ -42,6 +41,8 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     /** 画在一整页里（项目文档页的项目目标），见 PanelDoc。 */
     bare?: boolean
+    /** 文档的作者，见 PanelDocView。 */
+    authors?: DocAuthor[]
     /** 顶栏画到页面上的哪个位置，见 PanelDoc。 */
     barTo?: string
     /** 跟着外面那一列一起滚，见 PanelDocView。 */
@@ -55,28 +56,28 @@ const props = withDefaults(
     agentHandle: null,
     members: () => [],
     bare: false,
+    authors: () => [],
     barTo: undefined,
     flow: false,
   }
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   (e: 'titled', title: string): void
   (e: 'delete'): void
+  /** 「移动到…」：挪到自己名下、团队或团队的一个项目（#3774）。 */
+  (e: 'move'): void
+  /** 「分享…」：给这份文档一条只读链接（#3774）。 */
+  (e: 'share'): void
 }>()
 
 const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
 
-const docPanel = usePanelDoc(props)
-const docThreads = useDocThreads(() => docPanel.documentId.value)
-const docPeople = useDocPeople({
-  members: () => props.members,
-  agentHandle: () => props.agentHandle,
-  agentName: () => props.agentName,
-})
+const { docPanel, docThreads, docPeople, commentOutside } = usePanelDocWiring(props)
 
 // 面板那半边的外部接口原样透出去 —— 拿着外壳的 ref 调它们（资料库文档卡上的「查看
 // 改动」、高亮某一轮、闪一下），中间多一层不该让这些线断掉。
@@ -93,6 +94,7 @@ defineExpose({
     :doc-panel="docPanel"
     :doc-threads="docThreads"
     :doc-people="docPeople"
+    :comment-outside="commentOutside"
     :topic="props.topic"
     :task-id="props.taskId"
     :document="props.document"
@@ -101,13 +103,16 @@ defineExpose({
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :bare="props.bare"
+    :authors="props.authors"
     :bar-to="props.barTo"
     :flow="props.flow"
-    @open-topic="emit('open-topic', $event)"
+    @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
     @titled="emit('titled', $event)"
     @delete="emit('delete')"
+    @move="emit('move')"
+    @share="emit('share')"
   >
     <template #lead><slot name="lead" /></template>
   </PanelDoc>

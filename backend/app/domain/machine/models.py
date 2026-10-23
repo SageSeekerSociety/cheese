@@ -23,6 +23,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -136,6 +137,9 @@ class WarmMachine(UuidPk, Timestamps, Base):
         nullable=True,
         unique=True,
     )
+    # What the machine's data disk holds, found when it enrolled; handed to the
+    # host it becomes (``CloudHost.sandbox_disk_gb``).
+    sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class CloudHost(UuidPk, Timestamps, Base):
@@ -188,6 +192,11 @@ class CloudHost(UuidPk, Timestamps, Base):
     enrolled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The size of the data disk the host keeps its sandboxes' homes on
+    # (`/data`, each home with a project quota: `sandbox_host.py`), found when
+    # it enrolled (`enrollment.bootstrap_script`). A pool host enrolls only with
+    # one; NULL on a whole VM, which runs no sandbox.
+    sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Why the last attempt failed. Kept so a stuck host explains itself.
     enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -210,7 +219,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     )
     # Since when the pool sweep has found the enrolled host's connector away;
     # NULL while it is linked. Kept on the row, not in the hub's memory, so a
-    # backend restart does not start the count again (``services.LOST_AFTER``).
+    # backend restart does not start the count again (``reaper.LOST_AFTER``).
     offline_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -220,9 +229,9 @@ class CloudHost(UuidPk, Timestamps, Base):
     failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Since when the disk guard has found the host's disk below its floor, in
-    # bytes or in inodes (``disk_guard``); NULL while it has room. Such a host
-    # takes no new sandbox until a later reading finds room again.
+    # Since when the host's disk was found short of room, in bytes or in
+    # inodes, by the disk guard's reading (``disk_guard``); NULL while it has
+    # room. Such a host takes no new sandbox until a reading finds room again.
     disk_full_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -298,13 +307,15 @@ class SandboxHome(UuidPk, Timestamps, Base):
     )
     # The spec of the sandbox (``agent.environment``): how long it is kept idle.
     spec: Mapped[str] = mapped_column(String(80))
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    # None for a sandbox of a conversation in no project (``holder``).
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
             name="fk_sandbox_homes_project_id_projects",
         ),
         index=True,
+        nullable=True,
     )
     # The room the home was made for. A room that has since become a task keeps
     # its id as that task's conversation, and its cleanup still finds the home
@@ -365,6 +376,68 @@ class RetainedHomeArchive(UuidPk, Timestamps, Base):
     )
 
 
+class HostReading(UuidPk, Base):
+    """What one platform host used at one disk check (``disk_guard``): its
+    disk and inodes, its memory, the CPU time its processes had taken and its
+    load, and how many sandboxes it was running. Written once a check, kept
+    for ``readings.KEEP``: the admin machines page shows the last and the
+    shape of the hours before it. A value the host could not give is NULL."""
+
+    __tablename__ = "host_readings"
+    __table_args__ = (Index("ix_host_readings_host_id_read_at", "host_id", "read_at"),)
+
+    host_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "cloud_hosts.id",
+            ondelete="CASCADE",
+            name="fk_host_readings_host_id_cloud_hosts",
+        )
+    )
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    disk_bytes: Mapped[int] = mapped_column(BigInteger)
+    disk_free_bytes: Mapped[int] = mapped_column(BigInteger)
+    inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    inodes_free: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_available_bytes: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    # A counter since the host started: what share of its cores it kept busy
+    # is the difference between two readings.
+    cpu_usage_usec: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    load1: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sandboxes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class SandboxUsage(Base):
+    """What one sandbox on a platform host holds, as last read: its memory,
+    now and at most, every disk check, and its home's bytes and inodes every
+    walk (``disk_guard``). One row a sandbox, gone with it. Apart from
+    ``sandbox_homes``, whose rows the sandbox lifecycle locks: a write every
+    minute there would queue behind it."""
+
+    __tablename__ = "sandbox_usages"
+
+    home_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "sandbox_homes.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_usages_home_id_sandbox_homes",
+        ),
+        primary_key=True,
+    )
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_peak_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disk_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    disk_inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    disk_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 def sandboxes_memory_mb(total_mb: int) -> int:
     """What every sandbox on a host of ``total_mb`` may hold together. A copy of
     ``sandbox_host.sandboxes_memory``, which sets it as the sandboxes' shared
@@ -375,17 +448,18 @@ def sandboxes_memory_mb(total_mb: int) -> int:
 def capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once: per core, by the deployment's
     setting, and no more than fit in the memory the host gives its sandboxes,
-    each at its full limit, or on its disk, each at what one is expected to
-    take. Counted by cores alone, a 4 GiB host took four 3 GiB sandboxes; two
-    of them were enough to stall it for five hours (dev, 2026-10-05). A whole
-    cloud VM has none to give: it is its one session's."""
-    if host.whole_machine:
+    each at its full limit, or on its data disk, each at what one is expected
+    to take. Counted by cores alone, a 4 GiB host took four 3 GiB sandboxes;
+    two of them were enough to stall it for five hours (dev, 2026-10-05). A
+    whole cloud VM has none to give: it is its one session's. Nor has a host
+    with no data disk recorded, which cannot hold a sandbox to a disk limit."""
+    if host.whole_machine or host.sandbox_disk_gb is None:
         return 0
     by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
     by_memory = (
         sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
     )
     by_disk = (
-        int(host.disk_gb) - settings.cloud_host_disk_reserve_gb
+        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb
     ) // settings.cloud_sandbox_disk_gb
     return max(0, min(by_cores, by_memory, by_disk))

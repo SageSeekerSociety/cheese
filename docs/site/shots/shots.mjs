@@ -37,7 +37,7 @@ async function signIn(page) {
   if (!project) throw new Error(`run fixture.py first: no project named ${PROJECT_NAME}`)
   const topics = (await (await page.request.get(`${APP}/api/topics?project_id=${project.id}`, { headers })).json()).data
   const rooms = Object.fromEntries((topics.data ?? topics).map((t) => [t.title, t.id]))
-  const listed = (await (await page.request.get(`${APP}/api/channels/${rooms['报名表单改版']}/tasks`, { headers })).json()).data
+  const listed = (await (await page.request.get(`${APP}/api/topics/${rooms['报名表单改版']}/tasks`, { headers })).json()).data
   const tasks = Object.fromEntries((listed.data ?? listed).map((t) => [t.title, t.id]))
   return { pid: project.id, rooms, tasks }
 }
@@ -59,7 +59,7 @@ const SHOTS = {
     await page.waitForTimeout(500)
     return { clip: { x: 0, y: 0, width: 720, height: 520 } }
   }],
-  overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page, 2000); return { clip: { x: 340, y: 30, width: 1100, height: 640 } } }],
+  overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page, 2000); return { clip: { x: 340, y: 30, width: 1100, height: 845 } } }],
   // The accept card above the task's input box, with a margin of the page around it.
   'task-card': [desktop, async (page, { pid, rooms, tasks }) => {
     await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)

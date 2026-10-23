@@ -18,6 +18,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 from app.domain.agent.harness.claude_code.remote_execution.private import target
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from tests.pinned_claude import claude_binary
+from tests.support.machine_path import on_machine
 
 
 def test_the_scratch_area_sits_on_the_machine_it_is_handed(monkeypatch):
@@ -150,7 +151,7 @@ def test_releasing_a_private_room_reaches_the_root_it_was_installed_in(
     does not name is not an error there — it is silence, and the seat the room
     holds is never given back. Run for real against a home laid out each way."""
     project, topic = uuid.uuid4(), uuid.uuid4()
-    home = private_chat.device_home_dir(project, topic).replace("$HOME", str(tmp_path))
+    home = on_machine(private_chat.device_home_dir(project, topic), tmp_path)
     directory = Path(home) / installed_in
     session = directory / "seats" / seat_name if seat_name else directory
     (session / "remote-execution").mkdir(parents=True)
@@ -190,7 +191,7 @@ def test_controlling_a_private_room_reaches_the_seat_that_prepared_it(
     room's control request is answered as 「no private executor is installed」."""
     project, resource = uuid.uuid4(), uuid.uuid4()
     config = private_chat.scratch_target(project, resource, device_id="dev1")
-    home = config["home"].replace("$HOME", str(tmp_path))
+    home = on_machine(config["home"], tmp_path)
     directory = Path(home) / installed_in
     session = directory / "seats/4b9f7d802648/remote-session"
     session.mkdir(parents=True)
@@ -229,12 +230,12 @@ _DOCKER_REFUSALS = {
         "Unable to find image 'cheese-private-executor:2.1.299' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor, repository does not exist.",
-        "Claude Code 启动失败：环境里缺少执行容器的镜像",
+        "Claude Code 启动失败：环境里缺少运行用的容器镜像",
     ),
     "name": (
         "docker: Error response from daemon: Conflict. The container name "
         '"/cheese-private-0f0f" is already in use by container "abc123".',
-        "Claude Code 启动失败：上一个执行容器还没有清理掉",
+        "Claude Code 启动失败：上一个运行用的容器还没有清理掉",
     ),
     "daemon": (
         "docker: Cannot connect to the Docker daemon at "
@@ -243,7 +244,7 @@ _DOCKER_REFUSALS = {
     ),
     "other": (
         "docker: Error response from daemon: OCI runtime create failed.",
-        "Claude Code 启动失败：执行容器没能创建",
+        "Claude Code 启动失败：运行用的容器没能创建",
     ),
 }
 

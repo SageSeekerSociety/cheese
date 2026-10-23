@@ -6,7 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.unit.test_platform_tool_runner import cheese as tools
 
@@ -139,6 +140,72 @@ def test_replies_include_parent_reactions_and_nested_reply_links(client):
     nested = _history(client, room, reply_to=str(child))
     assert nested["data"][0]["id"] == str(grandchild)
     assert nested["data"][0]["reply_to"] == str(child)
+
+
+def test_a_reply_carries_a_one_line_preview_of_an_older_parent(client):
+    project, room = _room(client)
+    parent, child = uuid.uuid4(), uuid.uuid4()
+    _seed(
+        client,
+        project,
+        room,
+        [
+            {"id": parent, "content": "报价按 3 万走"},
+            *[{} for _ in range(55)],
+            {"id": child, "content": "这个价格我同意", "reply_to": parent},
+        ],
+    )
+    # The parent is the oldest row and is not on the newest page.
+    latest = _history(client, room)
+    assert str(parent) not in [b["id"] for b in latest["data"]]
+    item = next(b for b in latest["data"] if b["id"] == str(child))
+    assert item["reply_preview"] == {
+        "id": str(parent),
+        "kind": "message",
+        "author_type": "participant",
+        "author": "alice",
+        "content": "报价按 3 万走",
+        "mime_type": None,
+    }
+    # Reading the one message gives the same cue; a page that carries the
+    # parent itself does not need the preview repeated.
+    single = client.get(f"/topics/{room}/history/{child}")
+    assert single.json()["data"]["reply_preview"] == item["reply_preview"]
+
+
+def test_a_reply_preview_stops_at_the_cap(client):
+    project, room = _room(client)
+    parent, child = uuid.uuid4(), uuid.uuid4()
+    _seed(
+        client,
+        project,
+        room,
+        [
+            {"id": parent, "content": "很长的报价说明" * 50},
+            *[{} for _ in range(55)],
+            {"id": child, "content": "同意", "reply_to": parent},
+        ],
+    )
+    page = _history(client, room)
+    item = next(b for b in page["data"] if b["id"] == str(child))
+    assert len(item["reply_preview"]["content"]) == 200
+
+
+def test_a_parent_on_the_same_page_needs_no_preview(client):
+    project, room = _room(client)
+    parent, child = uuid.uuid4(), uuid.uuid4()
+    _seed(
+        client,
+        project,
+        room,
+        [
+            {"id": parent, "content": "报价按 3 万走"},
+            {"id": child, "content": "同意", "reply_to": parent},
+        ],
+    )
+    page = _history(client, room)
+    item = next(b for b in page["data"] if b["id"] == str(child))
+    assert "reply_preview" not in item
 
 
 @pytest.mark.parametrize("kind", list(BlockKind))

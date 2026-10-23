@@ -27,12 +27,16 @@ from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
-from tests.integration.conftest import project_service, put_on_plan, registered
+from tests.integration.conftest import (
+    approve_overseas,
+    project_service,
+    put_on_plan,
+    registered,
+)
 from tests.unit.test_device_provider import FakeHub
 
 
@@ -56,6 +60,7 @@ async def _room(factory) -> dict[str, uuid.UUID]:
         project = await project_service(session).create(name="P", owner_handle="alice")
         # The work here binds Claude subscription models, which Free leaves out.
         await put_on_plan(session, project.team_id, "reserve")
+        await approve_overseas(session, project.team_id)
         room = await TopicService(session).create(
             project_id=project.id, title="房间", created_by="alice"
         )
@@ -87,14 +92,6 @@ async def _rebind(factory, ids, model: str) -> None:
     async with factory() as session:
         work = await session.get(Task, ids["work"])
         work.model = model
-        await session.commit()
-
-
-async def _use_the_pool(factory, ids) -> None:
-    """把这个项目挪到网关池 —— 供给是项目自己的设置，不是部署的开关。"""
-    async with factory() as session:
-        project = await session.get(Project, ids["project"])
-        project.settings = {**(project.settings or {}), "supply": "gateway"}
         await session.commit()
 
 
@@ -174,7 +171,6 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
     monkeypatch.setattr(app_settings, "subscription_ca_backend_path", str(ca))
     monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
     ids = client.portal.call(lambda: _room(client.test_request_factory))
-    client.portal.call(lambda: _use_the_pool(client.test_request_factory, ids))
     chat = _chat(client.test_request_factory, tmp_path)
     hub = FakeHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")

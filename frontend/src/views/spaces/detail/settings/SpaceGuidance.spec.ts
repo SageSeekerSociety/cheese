@@ -45,16 +45,14 @@ const MATERIALS = [
 ]
 
 /**
- * 这块板存着的那一份，照 `GET /spaces/{id}` / `PATCH /spaces/{id}` 回的样子写：六个
+ * 这块板存着的那一份，照 `GET /spaces/{id}` / `PATCH /spaces/{id}` 回的样子写：几个
  * camelCase 键都在（服务端 `teaching_to_api`）。表单读的就是这一份，再整份存回去。
  */
 const SAVED = {
+  mode: 'guide',
   systemPrompt: '这块板的默认',
-  currentWeek: 3,
-  allowedTopics: ['循环', '数组'],
-  avoidInCode: ['递归'],
   materialIds: [161],
-  knowledgeIds: [],
+  documentIds: [],
 }
 
 function mountPage(teaching?: Record<string, unknown>) {
@@ -72,12 +70,6 @@ function mountPage(teaching?: Record<string, unknown>) {
 /** 摊开「参考资料」那一格里的资料库清单。它默认收起，勾选框点开才在。 */
 async function openMaterials(view: ReturnType<typeof mountPage>) {
   await fireEvent.click(view.getByTestId('teaching-materials-toggle'))
-}
-
-/** 摊开「高级选项」——周次和另外三格清单都折在里面，默认不在页面上。 */
-async function expandAdvanced(view: ReturnType<typeof mountPage>) {
-  await fireEvent.click(view.getByText('spaces.teaching.fields.advanced'))
-  await waitFor(() => expect(view.getByLabelText('spaces.teaching.fields.currentWeek')).toBeTruthy())
 }
 
 /** 保存那颗按钮。`v-expansion-panel` 的开关也是一颗 button，所以按文案精确挑。 */
@@ -101,11 +93,7 @@ describe('空间设置：给 AI 队友的指导', () => {
     expect((view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement).value).toBe(
       '这块板的默认'
     )
-
-    await expandAdvanced(view)
-    expect((view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
-    expect((view.getByLabelText('spaces.teaching.fields.allowedTopics') as HTMLInputElement).value).toBe('循环, 数组')
-    expect((view.getByLabelText('spaces.teaching.fields.avoidInCode') as HTMLInputElement).value).toBe('递归')
+    expect(view.getByRole('radio', { name: /spaces.teaching.mode.guide/ }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('不改一个字再点保存，存着的那一份原样发回去，存完表单还是它', async () => {
@@ -117,10 +105,9 @@ describe('空间设置：给 AI 队友的指导', () => {
 
     await waitFor(() => expect(updateSpace).toHaveBeenCalledTimes(1))
     expect(updateSpace.mock.calls[0][1]).toEqual({ teaching: SAVED })
-
-    await expandAdvanced(view)
-    expect((view.getByLabelText('spaces.teaching.fields.currentWeek') as HTMLInputElement).value).toBe('3')
-    expect((view.getByLabelText('spaces.teaching.fields.allowedTopics') as HTMLInputElement).value).toBe('循环, 数组')
+    expect((view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement).value).toBe(
+      '这块板的默认'
+    )
   })
 
   it('保存摆在卡片最后那一条，不在标题下面那条工具行里 —— 和「基本信息」同形', () => {
@@ -139,28 +126,25 @@ describe('空间设置：给 AI 队友的指导', () => {
     const view = mountPage()
     const { getByLabelText } = view
 
-    await fireEvent.update(getByLabelText('spaces.teaching.fields.systemPrompt'), '第 {current_week} 周')
-    await expandAdvanced(view)
-    await fireEvent.update(getByLabelText('spaces.teaching.fields.currentWeek'), '3')
+    await fireEvent.click(view.getByRole('radio', { name: /spaces.teaching.mode.spec/ }))
+    await fireEvent.update(getByLabelText('spaces.teaching.fields.systemPrompt'), '先写测试')
     await fireEvent.click(saveButton())
 
     await waitFor(() =>
       expect(updateSpace).toHaveBeenCalledWith(SPACE_ID, {
         teaching: {
-          systemPrompt: '第 {current_week} 周',
+          mode: 'spec',
+          systemPrompt: '先写测试',
           privatePrompt: null,
-          currentWeek: 3,
-          allowedTopics: [],
-          avoidInCode: [],
           learningGoals: [],
           materialIds: [],
-          knowledgeIds: [],
+          documentIds: [],
         },
       })
     )
   })
 
-  it('六格全空 = 清掉这块板的默认（照样发一份空的上去）', async () => {
+  it('全空 = 清掉这块板的设置（照样发一份空的上去）', async () => {
     updateSpace.mockResolvedValue({ space: { id: SPACE_ID } })
     const { getByLabelText } = mountPage({ systemPrompt: '从前的默认' })
 
@@ -170,14 +154,12 @@ describe('空间设置：给 AI 队友的指导', () => {
     await waitFor(() => expect(updateSpace).toHaveBeenCalledTimes(1))
     expect(updateSpace.mock.calls[0][1]).toEqual({
       teaching: {
+        mode: null,
         systemPrompt: null,
         privatePrompt: null,
-        currentWeek: null,
-        allowedTopics: [],
-        avoidInCode: [],
         learningGoals: [],
         materialIds: [],
-        knowledgeIds: [],
+        documentIds: [],
       },
     })
   })
@@ -208,16 +190,5 @@ describe('空间设置：给 AI 队友的指导', () => {
 
     await waitFor(() => expect(updateSpace).toHaveBeenCalled())
     expect(updateSpace.mock.calls[0][1].teaching.materialIds).toEqual([161])
-  })
-
-  it('「用这段默认要求」把那份默认填进框里，不点就不填', async () => {
-    const view = mountPage()
-    const prompt = view.getByLabelText('spaces.teaching.fields.systemPrompt') as HTMLTextAreaElement
-
-    // 留空就是一条要求都不加：框里是空的，那句话只在灰字里。
-    expect(prompt.value).toBe('')
-
-    await fireEvent.click(view.getByTestId('teaching-use-default-template'))
-    await waitFor(() => expect(prompt.value).toBe('spaces.teaching.defaultTemplate'))
   })
 })

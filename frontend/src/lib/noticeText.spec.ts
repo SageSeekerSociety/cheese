@@ -101,7 +101,7 @@ describe('a platform line in the room', () => {
     ) as Block
     const view = mountLine(block)
     // Room mentions render their handle without the descriptor's angle brackets.
-    const visible = (text: string) => text.replace('<@cheese-test>', '@cheese-test')
+    const visible = (text: string) => text.replace('<@cheese-test>', 'cheese-test')
     expect(view.container.textContent).toContain(visible(old.chinese))
     setLocale('en')
     await nextTick()

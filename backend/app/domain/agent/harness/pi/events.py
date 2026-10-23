@@ -16,8 +16,8 @@ Thinking is dropped rather than shown. It is not a message the agent addressed
 to the room, and the room's timeline is what people read — the same call the
 Claude Code path already makes, where hooks never deliver it either.
 
-A tool's return is written onto the step it belongs to (``AgentStepOutput``;
-the room keeps a capped tail of it), and a failed one also marks that step.
+A tool's return stays in the raw journal; a failed one marks its call as
+failed (``AgentStepFailed``).
 
 A model call that failed is the one thing the entry log cannot finish saying.
 pi writes it as an assistant entry that stopped on ``error`` and only then
@@ -29,7 +29,7 @@ A subagent's entries are in the same log (``subagents.py``), each carrying its
 thread (``journal.THREAD``): what it says and calls comes out as the session's
 work, and nothing it does starts or ends the session's turn or counts towards
 it. What a ``Task`` call hands back is the conclusion, and becomes an
-event of its own rather than a line on the step (``AgentToolResult``).
+event of its own (``AgentToolResult``).
 """
 
 import re
@@ -49,7 +49,6 @@ from app.domain.agent.service import (
     AgentResult,
     AgentRetrying,
     AgentStepFailed,
-    AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
     AgentUsage,
@@ -119,15 +118,18 @@ class Assembler:
 
     def _accumulate(self, message: dict) -> None:
         usage = message.get("usage") or {}
+        read = int(usage.get("cacheRead", 0))
+        written = int(usage.get("cacheWrite", 0))
+        prompt = int(usage.get("input", 0)) + read + written
         self.spent = AgentUsage(
             model=message.get("responseModel") or message.get("model") or "",
-            input_tokens=self.spent.input_tokens
-            + int(usage.get("input", 0))
-            + int(usage.get("cacheRead", 0))
-            + int(usage.get("cacheWrite", 0)),
+            input_tokens=self.spent.input_tokens + prompt,
             output_tokens=self.spent.output_tokens + int(usage.get("output", 0)),
             cost_usd=self.spent.cost_usd
             + float((usage.get("cost") or {}).get("total", 0.0)),
+            cache_read_tokens=self.spent.cache_read_tokens + read,
+            cache_write_tokens=self.spent.cache_write_tokens + written,
+            calls=(*self.spent.calls, (prompt, read)) if prompt else self.spent.calls,
         )
 
     def _pos_of(self, entry_id: str) -> int:
@@ -205,10 +207,9 @@ class Assembler:
             )
             return user_entry
         if role == "toolResult":
-            # What the tool handed back goes onto its step, not onto a line of
-            # its own. A FAILURE also marks that step, because the effect of a
-            # failed step is that nothing happened, which looks exactly like a
-            # step that is still going.
+            # What the tool handed back stays in the raw journal. A FAILURE
+            # marks its call, because the effect of a failed call is that
+            # nothing happened, which looks exactly like a call still going.
             call = message.get("toolCallId")
             if not isinstance(call, str):
                 return []
@@ -233,8 +234,6 @@ class Assembler:
             steps: list[AgentEvent] = []
             if message.get("isError"):
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
-            if returned.strip():
-                steps.append(AgentStepOutput(call_id=call, text=returned))
             return steps
         if role != "assistant":
             return []
@@ -294,8 +293,6 @@ class Assembler:
             steps: list[AgentEvent] = []
             if message.get("isError"):
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
-            if returned.strip():
-                steps.append(AgentStepOutput(call_id=call, text=returned))
             return steps
         if role != "assistant" or message.get("stopReason") == FAILED:
             return []

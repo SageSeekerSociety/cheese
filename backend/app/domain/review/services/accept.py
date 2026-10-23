@@ -20,13 +20,16 @@ from app.domain.review import (
     pr_text,
 )
 from app.domain.review import forge as forge_mod
+from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
+    DeliverableKind,
 )
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.usage import referrals
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -40,6 +43,7 @@ from app.domain.review.services._shared import (
     _ACCEPT_NO_BRANCH_PREFIX,
     _ACCEPT_PR_OPEN_FAILED_PREFIX,
     _ACCEPT_PR_STALLED_PREFIX,
+    EVENT_ACCEPT_CONFLICT,
     EVENT_ACCEPT_DISMISSED,
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_STOPPED,
@@ -53,9 +57,13 @@ from app.domain.review.services._shared import (
     WHO_HUMAN,
     WHO_PLATFORM,
     _GitHubCredentials,
+    _hold_deliverable,
     approvals_required_of,
     logger,
     notice,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 
 
@@ -65,6 +73,7 @@ async def accept(
     card_id: uuid.UUID,
     decided_by: str,
     head_sha: str | None = None,
+    deliverable_revision: str | None = None,
 ) -> AcceptCard:
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
@@ -86,6 +95,20 @@ async def accept(
     seen_head = await self._seen_head_or_refresh(
         card, topic, head_sha, say("verbAccept")
     )
+    # 交出去的文件或地址同理：待处理时它可以被原地换掉，看过的那一份还在才采纳。
+    # 不带这一项不是绕过的办法，同 `_seen_head`。
+    current = _deliverable_revision(topic.project_id, card)
+    if current is not None:
+        # 和换交付物的请求排队，排到这次采纳提交为止，再看一次：那个请求
+        # （`redeliver`）要么已经提交、这里看到的就是新的一版，要么等这边采纳
+        # 完、自己看到卡已结束。骑 PR 的卡也一样 —— 合并要几秒，不排队的话交付
+        # 物会在这几秒里被换掉。交合并的卡没有可换的交付物，不排。
+        await _hold_deliverable(self._session, card)
+        if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
+            raise ValidationError(say("reviewEndedNoAccept"))
+        current = _deliverable_revision(topic.project_id, card)
+    if current is not None and (deliverable_revision or None) != current:
+        raise ValidationError(say("deliverableChanged", action=say("verbAccept")))
 
     # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
     # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
@@ -125,6 +148,16 @@ async def _accept_github(
     seen_head: str | None,
 ) -> AcceptCard:
     """GitHub proposals never fall back to a local merge after a failure."""
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind
+        in (
+            DeliverableKind.file,
+            DeliverableKind.link,
+        )
+    ):
+        return await self._accept_discussion(card, topic, decided_by)
     if card.pr_number is None:
         await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:
@@ -161,6 +194,7 @@ async def _accept_discussion(
     notes.clear(card)
     await self._stamp_delivery(card, topic, by=decided_by, at=now)
     await self._mark_task_merged(card)
+    await referrals.on_accepted(self._session, decided_by)
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -329,7 +363,7 @@ async def _pr_verdict(
             ancestry = await client.compare_status(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — ancestry unreadable ≠ blocked
+        except Exception:  # ancestry unreadable ≠ blocked
             logger.warning("card %s: compare_status failed", card.id, exc_info=True)
     changed_paths: list[str] | None = None
     if any(rc.paths for rc in required):
@@ -337,7 +371,7 @@ async def _pr_verdict(
             files = await client.compare_files(
                 owner=owner, repo=repo, base=base, head=ref, token=creds.read
             )
-        except Exception:  # noqa: BLE001 — scope unknown handled conservatively
+        except Exception:  # scope unknown handled conservatively
             logger.warning("card %s: compare_files failed", card.id, exc_info=True)
             files = None
         changed_paths = None if files is None else [path for _, path in files]
@@ -443,6 +477,9 @@ async def _settle_external_merge(
     fact, and since #206 that fact is the whole of what the platform waits
     for."""
     card.pr_merged_at = status.merged_at or datetime.now(UTC)
+    # 平台没点过采纳（`decided_by` 空）：把 GitHub 报的合并人留下来，项目
+    # 总览那一行才有经手人可显示。`{}` 是「问过了、没报人」的记号。
+    card.merged_by = merge_actor(status)
     await self._mark_task_merged(card, delivered_head=status.head_sha)
     if status.merge_commit_sha:
         # Nice to have, not required: nothing downstream looks a run up by
@@ -527,10 +564,11 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
+    await referrals.on_accepted(self._session, by)
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
-        say("acceptDone", actor=by, pr=card.pr_number, how=how)
+        say("acceptDone", actor=f"<@{by}>", pr=card.pr_number, how=how)
         if by
         else say("acceptDoneNoActor", pr=card.pr_number, how=how)
     )
@@ -608,6 +646,59 @@ async def _stop_accept_pr_unavailable(
     raise ValidationError(say("acceptPrNotMerged", why=why))
 
 
+async def _stop_accept_conflict(
+    self: pkg.AcceptService, card: AcceptCard, topic: Topic
+) -> NoReturn:
+    """PR 和目标分支冲突：采纳停下，说清是冲突，把解冲突交给芝士。
+
+    冲突在 GitHub 上不是一个可以重试的抖动：`mergeable=CONFLICTING` 的 PR 现在
+    合不了，也不会过一分钟自己合上。但平台过去只在「非 GitHub 强制」的项目上被
+    合并判定那道闸拦（`_merge_pr_for_accept` 的 `if not enforces`）—— GitHub
+    自己开了分支保护或合并队列的项目会直接调合并 API，而冲突在那里要么被
+    GitHub 拒收，要么在合并队列的入队那一步抛错，异常落进调用点那个笼统的
+    `except Exception` 就成了「合并结果暂时无法确认」（2026-10-16 采纳 PR #3927
+    时的样子）：把「先解冲突」说成了「重试一次」，而重试一百次也不会变。
+
+    所以冲突在这个函数里停下，`enforces` 两种取值都一样。判据是 verdict 自己的
+    `dirty`，它**不是**平台重算的结论：强制项目那份是 GitHub 的
+    `mergeStateStatus` 原样透传，非强制项目那份也是 GitHub 的 `dirty` /
+    `mergeable=False` 抄下来的（`compute_merge_state`）—— 两个方向都说的是
+    GitHub 的话。
+
+    叫醒的是芝士，和轮询那条路同一个判据：`whose_move(dirty)` 是 `agent`，
+    `_conflict_nudge` 也是这么派的（合入目标分支、解完重新推送）。房间提示的
+    `accept_conflict` 是为此登记的码（`notice_meta`），在此之前后端没有一处发过
+    它 —— 卡的 `note_code` 同样落 `merge_conflict`，卡面因此显示「和主线有冲突，
+    芝士正在处理」（`room_task.presentation`）。
+
+    Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is
+    written on its own connection and must never queue behind a row lock this
+    doomed transaction still holds. The room notice goes out first, while
+    `topic` is still live."""
+    number = card.pr_number
+    card_id = card.id
+    self._notify_merge_result(
+        topic,
+        say("acceptConflict", pr=number),
+        task_id=card.task_id,
+        meta=notice(
+            EVENT_ACCEPT_CONFLICT,
+            severity=SEVERITY_ERROR,
+            who=WHO_CHEESE,
+            detail=say("acceptConflictDetail", url=card.pr_url or ""),
+            detail_label=say("labelReason"),
+        ),
+    )
+    note = (
+        f"采纳未完成：PR #{number} 和目标分支冲突了（合并态：dirty），"
+        "GitHub 现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
+        "所以这次采纳停下：解完冲突、检查绿了之后再重新采纳。"
+    )
+    await self._session.rollback()
+    await self._note_outside_accept_txn(card_id, notes.NoteCode.merge_conflict, note)
+    raise UnprocessableEntityError(say("acceptConflicted", pr=number))
+
+
 async def _stop_accept_title_disagrees(
     self: pkg.AcceptService, card: AcceptCard, topic: Topic, pr_title: str
 ) -> NoReturn:
@@ -657,11 +748,9 @@ async def _stop_accept_title_disagrees(
         ),
     )
     note = (
-        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和卡片标题"
-        f"（{subject}）不是同一行。平台按卡片标题落 squash 提交标题，而仓库自己的"
-        "检查评判的是 PR 上那个标题；合下去会往历史里写一行没人检查过的字，所以"
-        "停下了。用 cheese_describe 把这张卡的标题改成该落的那一行（平台会同时"
-        "改掉 PR 标题，检查会按新标题重跑），绿了之后重新采纳。"
+        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和提交审阅时的标题"
+        f"（{subject}）不一致。现在合并会把一行仓库检查没看过的标题写进历史，所以"
+        "停下了；两个标题改成同一行、检查通过后再采纳。"
     )
     await self._session.rollback()
     await self._note_outside_accept_txn(
@@ -754,7 +843,7 @@ async def _publish_pr_for_accept(
             topic_id=topic.id,
             project_id=topic.project_id,
         )
-    except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
+    except Exception as exc:  # surface on the card; never direct-push
         # Read every attribute we still need BEFORE the rollback below:
         # rollback expires the instance, and an expired attribute reloads
         # itself with synchronous IO that an AsyncSession cannot perform

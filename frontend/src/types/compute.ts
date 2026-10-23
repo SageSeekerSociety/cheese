@@ -5,8 +5,8 @@
 /**
  * A sandbox the platform places on some machine that offers `spec`; the machine
  * is never named to users. Specs are peers, like resource classes — `standard`,
- * `vm` (a virtual machine of its own, for Docker, KVM or kernel work), one per
- * person whose enrolled computers the project may use (`devices_of:<user>`) —
+ * `vm` (a virtual machine of its own, for Docker, KVM or kernel work), and
+ * `team_devices` (the computers enrolled into the project's team) —
  * and the GET's `specs` says which there are and what each is called.
  */
 export interface SandboxEnvironment {
@@ -14,7 +14,7 @@ export interface SandboxEnvironment {
   spec: string
 }
 
-/** 「我一定要用那台机器」：直接在某人登记的那台电脑上跑，不隔离。只有机主能选。 */
+/** Run directly on a team device, without isolation; only its team admins may choose it. */
 export interface SelfHostedEnvironment {
   kind: 'self_hosted'
   device_id: string
@@ -28,12 +28,12 @@ export interface SandboxSpec {
   label: string
 }
 
-/** A machine someone enrolled into the project; the platform's own are never listed. */
+/** A machine enrolled into the project's team; the platform's own are never listed. */
 export interface EnvironmentDevice {
   device_id: string
   name: string
   online: boolean
-  // The reader enrolled it, signed in: only they may run a session on it.
+  // The reader may choose whole-machine execution as an administrator of its team.
   owned: boolean
 }
 
@@ -64,6 +64,10 @@ export interface TopicEnvironment {
 // where the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
   default: Environment
+  // How many of this project's turns may run at once, and whether that is the
+  // project's own number or the deployment's.
+  max_concurrent_turns: number
+  max_concurrent_turns_from: 'project' | 'deployment'
   /** Whether this caller may move agents already on a device elsewhere (a manager's); the default is anyone's. */
   can_manage: boolean
   devices: EnvironmentDevice[]

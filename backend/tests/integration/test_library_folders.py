@@ -7,9 +7,11 @@ chip 指的是这一份资料，它换了个名字，还是它。
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.library import records as library_records
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support import library_uploads
 
 
 def _project(client) -> str:
@@ -23,11 +25,7 @@ def _topic(client, project_id: str) -> str:
 
 
 def _put_in(client, project_id: str, name: str, data: bytes, folder=None) -> str:
-    r = client.post(
-        f"/projects/{project_id}/library",
-        files={"file": (name, data, "application/octet-stream")},
-        data={"folder": folder} if folder is not None else None,
-    )
+    r = library_uploads.put_in(client, project_id, name, data, folder=folder)
     assert r.status_code == 200, r.text
     return r.json()["data"]["path"]
 
@@ -109,11 +107,7 @@ def test_a_file_put_into_a_folder_is_named_by_it(client):
 def test_a_folder_name_that_is_not_a_name_is_refused(client):
     project_id = _project(client)
     for folder in ("../外面", "合同/.隐藏", "a//b"):
-        r = client.post(
-            f"/projects/{project_id}/library",
-            files={"file": ("x.txt", b"x", "text/plain")},
-            data={"folder": folder},
-        )
+        r = library_uploads.put_in(client, project_id, "x.txt", b"x", folder=folder)
         assert r.status_code == 422, folder
     assert _names(client, project_id) == []
 
@@ -134,11 +128,7 @@ def test_moving_a_file_takes_its_bytes_versions_and_references_along(client):
     project_id = _project(client)
     topic_id = _topic(client, project_id)
     _put_in(client, project_id, "说明.md", b"v1")
-    replaced = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "说明.md"},
-        files={"file": ("说明.md", b"v2", "text/plain")},
-    )
+    replaced = library_uploads.replace(client, project_id, "说明.md", b"v2")
     assert replaced.status_code == 200, replaced.text
     attachment = _said(
         client, project_id, topic_id, BlockKind.attachment, "library/说明.md"

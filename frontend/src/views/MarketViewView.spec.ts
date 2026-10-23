@@ -75,6 +75,17 @@ async function openPools() {
 }
 
 describe('MarketViewView', () => {
+  it('identifies the team pool as enrolled devices', async () => {
+    const teamNodes: MarketNodes = {
+      ...nodes,
+      nodes: [{ ...nodes.nodes[0], id: 'team_devices', kind: 'team_devices', label: 'Team devices' }],
+    }
+    render(MarketViewView, { props: { pools, nodes: teamNodes }, global: { plugins: plugins() } })
+    await openPools()
+    expect(screen.getByText(t('work.nodeBoard.device'))).toBeTruthy()
+    expect(screen.queryByText(t('work.nodeBoard.cloud'))).toBeNull()
+  })
+
   it('renders the catalog and the node board from props alone', async () => {
     render(MarketViewView, { props: { pools, nodes }, global: { plugins: plugins() } })
     expect(screen.getByText(t('market.title'))).toBeTruthy()

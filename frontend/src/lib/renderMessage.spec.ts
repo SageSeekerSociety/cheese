@@ -34,6 +34,8 @@ const MAPS = {
     here: '在线成员',
   },
   topicTitles: { 'abc12345-0000-0000-0000-000000000000': '搭建推荐算法原型' },
+  // A message's mentions went through the mention path: each one told its person.
+  notified: true,
 }
 
 describe('芝士 replies', () => {
@@ -108,6 +110,33 @@ describe('芝士 replies', () => {
   it('never turns written markup into a script', () => {
     const html = renderMarkdown('<script>alert(1)</script>hi', MAPS)
     expect(html).not.toContain('<script')
+  })
+
+  it('keeps neighboring Markdown and code distinct from file references', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('**Before** <&src/a.ts> **between** <&src/b.ts> `<&src/code.ts>`', MAPS)
+
+    expect(Array.from(host.querySelectorAll<HTMLElement>('[data-file]'), (chip) => chip.dataset.file)).toEqual([
+      'src/a.ts',
+      'src/b.ts',
+    ])
+    expect(Array.from(host.querySelectorAll('strong'), (strong) => strong.textContent)).toEqual(['Before', 'between'])
+    expect(host.querySelector('code')?.textContent).toBe('<&src/code.ts>')
+  })
+
+  it('keeps code after an unfinished file reference literal', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('<&unfinished `<&src/code.ts>`', MAPS)
+
+    expect(host.querySelector('code')?.textContent).toBe('<&src/code.ts>')
+    expect(host.querySelector('[data-file]')).toBeNull()
+  })
+
+  it('keeps links after an unfinished file reference actionable', () => {
+    const host = document.createElement('div')
+    host.innerHTML = renderMarkdown('<&unfinished [docs](https://example.org)', MAPS)
+
+    expect(host.querySelector('a')?.href).toBe('https://example.org/')
   })
 })
 

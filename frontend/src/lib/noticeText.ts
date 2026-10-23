@@ -66,10 +66,14 @@ function param(value: unknown): unknown {
 // The catalog entry a key names. The backend's two catalogs share one key space
 // (`app/core/sentences.py` refuses a key in both), so at most one of these matches.
 // `zh-CN` is the complete catalog; asking it keeps a key that only lacks
-// English on the fallback path of vue-i18n rather than on `fallback`.
+// English on the fallback path of vue-i18n rather than on `fallback`. It is
+// also the part that arrives after the first page (`loadPlatformSentences`), so
+// the reader's own catalog is asked too: an English reader in that gap reads the
+// English sentence, not the server's Chinese one.
 function entryOf(key: string): string | null {
-  if (i18n.global.te(`roomNotice.${key}`, 'zh-CN')) return `roomNotice.${key}`
-  if (i18n.global.te(`apiError.${key}`, 'zh-CN')) return `apiError.${key}`
+  const { te } = i18n.global
+  if (te(`roomNotice.${key}`, 'zh-CN') || te(`roomNotice.${key}`)) return `roomNotice.${key}`
+  if (te(`apiError.${key}`, 'zh-CN') || te(`apiError.${key}`)) return `apiError.${key}`
   return null
 }
 
@@ -113,4 +117,22 @@ export function responseText(owner: object, field: string): string {
   const fallback = typeof record[field] === 'string' ? (record[field] as string) : ''
   const keys = record.i18n as Record<string, unknown> | undefined
   return renderNoticeMessage(keys?.[field], fallback)
+}
+
+// The notices whose sentence names someone the same event also woke: the AI
+// teammate a person handed the unread messages to (`pendingHandedTo`, a turn
+// starts for it) and the one reopened to fix checks that failed after a merge
+// (`mainChecksFailedReopened`, it is handed the work). Each maps to the
+// parameter that names it. Every other name in a notice told nobody.
+const WOKEN: Record<string, string> = { pendingHandedTo: 'seat', mainChecksFailedReopened: 'agent' }
+
+/** Which `<@handle>` in `block`'s sentence was notified by the event it records. */
+export function noticeNotified(block: Block): (handle: string) => boolean {
+  const meta = (block.meta as Record<string, unknown> | null) ?? null
+  const said = (meta?.i18n as Record<string, unknown> | undefined)?.content
+  if (!isMessage(said)) return () => false
+  const field = WOKEN[said.key]
+  const token = field ? said.params?.[field] : undefined
+  const handle = typeof token === 'string' ? /^<@([\w-]+)>$/.exec(token)?.[1] : undefined
+  return (h) => h === handle
 }

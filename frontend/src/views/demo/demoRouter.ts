@@ -26,6 +26,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
 
 /** 目录中按 name 指路的链接都要有对应路由；路径与正式路由一致，才能画出正确的 href。 */
 const catalogTargets = [
+  { path: '/home', name: 'HomeHub', component: blank },
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
   // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
@@ -42,16 +43,26 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/manage/settings/guidance', name: 'SpacesDetailSettingsGuidance', component: blank },
   { path: '/spaces/:spaceId/manage/settings/materials', name: 'SpacesDetailSettingsMaterials', component: blank },
   { path: '/users/:handle', name: 'UserPage', component: blank },
+  { path: '/users/settings/invites', name: 'UserSettingsInvites', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+  // 反馈中心两页的画面（`catalogFeedback.ts` 的 `FeedbackCenterPageView` / `FeedbackMinePageView`）
+  // 页头那颗「提交」按名字指到提交页。它必须在表里：按名字解析的路由找不到就**抛**，
+  // 缺了这一条，两页的画面在预览站上整段渲染不出来。
+  { path: '/feedback/new', name: 'FeedbackSubmit', component: blank },
   // 首页那份目录（`catalogHome.ts`）：一个团队摊开来是四样，摊开那一行才画得出这四条；
   // 名字不在表里的话，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
   { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+  // 小队那一页的三条页签（`teams/IndexView.vue`）：三个名字都在，缺一个整页就画不出来。
+  { path: '/teams/mine', name: 'HomeTeamsMine', component: blank },
+  { path: '/teams/pending', name: 'HomeTeamsPending', component: blank },
   { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
   { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: blank },
-  { path: '/teams/:handle/knowledge', name: 'TeamsDetailKnowledge', component: blank },
+  { path: '/teams/:handle/docs', name: 'TeamsDetailDocs', component: blank },
+  { path: '/teams/:handle/docs/:docId', name: 'TeamsDocument', component: blank },
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
+  { path: '/teams/:handle/models', name: 'TeamsDetailModels', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/inbox', name: 'inbox', component: blank },
   // 首页那份目录里「市场」多出来的一行（`HomeNav.vue` 的 `:to="{ name: 'market' }"`）：
@@ -59,12 +70,14 @@ const catalogTargets = [
   { path: '/market', name: 'market', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
-  { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
+  { path: '/plans', name: 'CreditPlans', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/submissions', name: 'TasksSubmissions', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
+  { path: '/spaces/:spaceId/library', name: 'SpacesLibrary', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
-  { path: '/spaces', name: 'HomeSpaces', component: blank },
+  { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
   // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上
   // 「查看该回答」、回答卡片上面那颗「查看全部 N 条回答」都按名字指。名字与路径照
   // `router/question.ts` 那棵子树；名字缺了按名字解析的那一条会当场抛，整段渲染不出来。

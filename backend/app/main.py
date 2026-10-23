@@ -16,6 +16,7 @@ import logging
 import pkgutil
 import signal
 import time
+import uuid
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -28,11 +29,24 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
 from app.api.admin_deps import PlatformAdminDep
+from app.api.deps import (
+    get_consumptions,
+    get_llm_gateway,
+    get_ownership,
+    get_session_host,
+)
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
+from app.core.db import async_session_factory
+from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
+from app.core.forge_http import reuse_forge_connections
+from app.core.health import set_periodic_health
+from app.core.job_runs import JobRuns
+from app.core.loop_lag import watch_loop_lag
 from app.core.metrics import active_requests, registry
+from app.core.net_io import watch_api_io, watch_net_io
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -40,13 +54,31 @@ from app.core.obs import (
     configure_logging,
     get_logger,
 )
+from app.core.ownership import keep_holding
+from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.agent import gateway_catalog
+from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.gateway_models import roles as model_role_store
+from app.domain.agent.preview_owner import reuse_preview_owner_connections
+from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.services import IdentityService
+from app.domain.machine.microcloud import reuse_connections
+from app.domain.machine.runner import (
+    CloudPoolSweeper,
+    ComputeMeterSweeper,
+    SandboxSweeper,
+)
+from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
+from app.domain.room_cleanup.retire import sweep_retired_storage
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -75,12 +107,17 @@ async def lifespan(application: FastAPI):
     # the root now (`Settings.sandbox_signing_secret` derives a stable secret
     # from jwt_secret), and there is nothing left to warn about here.
 
+    # The test doubles for the chat service and the work runner are installed on
+    # `app.api.deps`, so these two are read there each time they are used.
+    # deferred-import: tests patch these names on app.api.deps
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.agent.device_hub import DeviceOffline, device_hub
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
-        from app.api.routes.connector import recover_business_state
+        # `_discover_routers` tolerates a route module that fails to import. At
+        # module scope this import would instead stop the whole process starting.
+        # deferred-import: startup - a route module must stay skippable
+        from app.api.routes.connector.devices import recover_business_state
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
@@ -88,15 +125,25 @@ async def lifespan(application: FastAPI):
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
     try:
-        from app.core.db import async_session_factory
-        from app.domain.identity.services import IdentityService
-
         async with async_session_factory() as session:
             await IdentityService(session).ensure_agent_user()
             await session.commit()
-    except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
+    except Exception as exc:  # a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
+    # Which gateway model each platform model role runs on, as an administrator
+    # pointed it (`app.core.model_roles`), read before this process serves: a
+    # role read from its Settings field after an administrator moved it (and
+    # its key) would be refused at the gateway. The periodic job "platform
+    # model roles refresh" keeps it current. Never blocks boot either.
+    try:
+        async with async_session_factory() as session:
+            await model_role_store.refresh(session)
+    except Exception as exc:  # same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "platform model roles read skipped", reason=str(exc)[:120]
         )
 
     # Every project agent is a collaborator with an identity of its own — a user
@@ -106,15 +153,12 @@ async def lifespan(application: FastAPI):
     # the seat's handle without the user row behind it, which this supplies.
     # Idempotent, and never blocks boot for the same reason as the seed above.
     try:
-        from app.domain.agent_instance.repositories import AgentInstanceRepository
-        from app.domain.agent_instance.services import AgentInstanceService
-
         async with async_session_factory() as session:
             service = AgentInstanceService(session)
             for instance in await AgentInstanceRepository(session).list_all():
                 await service.ensure_identity(instance)
             await session.commit()
-    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+    except Exception as exc:  # same rule as the seed above
         get_logger("cheesex.runtime").warning(
             "agent identity backfill skipped", reason=str(exc)[:120]
         )
@@ -150,18 +194,6 @@ async def lifespan(application: FastAPI):
             ),
         )
 
-    from app.api.deps import get_ownership
-    from app.core.db import async_session_factory
-    from app.core.job_runs import JobRuns
-    from app.core.ownership import keep_holding
-    from app.domain.machine.runner import (
-        CloudPoolSweeper,
-        ComputeMeterSweeper,
-        SandboxSweeper,
-    )
-    from app.domain.machine.session_work import checkpoint_room
-    from app.domain.room_cleanup.retire import sweep_retired_storage
-
     # The running work — sessions to listen to, turns to watch, sweeps on a
     # clock — belongs to one backend process at a time (`app.core.ownership`).
     # During a rollout this one starts while the previous one still has it, so
@@ -184,23 +216,44 @@ async def lifespan(application: FastAPI):
     jobs[:] = periodic_jobs(
         chat=get_chat_service(),
         machines=CloudPoolSweeper(async_session_factory).sweep,
-        sandboxes=SandboxSweeper(async_session_factory).sweep,
+        sandboxes=SandboxSweeper(
+            async_session_factory,
+            recovering=lambda conversation: (
+                get_chat_service().replaying(conversation) is not None
+            ),
+        ).sweep,
         compute=ComputeMeterSweeper(async_session_factory).sweep,
         sessions=async_session_factory,
         get_runner=get_work_runner,
+        assistants=lambda: (get_session_host(), get_consumptions()),
     )
     runs = JobRuns(async_session_factory)
 
-    async def start_jobs(*, owner_only: bool) -> None:
+    def job_health() -> dict:
+        return background.periodic_health(jobs, owns_work=ownership.held)
+
+    set_periodic_health(job_health)
+    watching_jobs = asyncio.create_task(
+        background.watch_periodic_jobs(job_health), name="periodic job health"
+    )
+
+    async def start_jobs(
+        *, owner_only: bool, include_orphan_sweep: bool = True
+    ) -> None:
         """Start this process's share of the jobs, each with the time it last ran
         so one that is already overdue runs at once (`PeriodicRunner.start`)."""
-        mine = [job for job in jobs if job.owner_only is owner_only]
+        mine = [
+            job
+            for job in jobs
+            if job.owner_only is owner_only
+            and (include_orphan_sweep or job.name != "orphan sweep")
+        ]
         try:
             last_runs = await runs.load(
                 [job.name for job in mine if job.interval_seconds > 0],
                 datetime.now(UTC),
             )
-        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
+        except Exception:  # never block startup; jobs wait one interval
             get_logger("cheesex.runtime").exception("periodic job runs unreadable")
             last_runs = {}
         for job in mine:
@@ -219,7 +272,7 @@ async def lifespan(application: FastAPI):
         """
         try:
             await backend_log.flush_all()
-        except Exception:  # noqa: BLE001 — never block handing over
+        except Exception:  # never block handing over
             get_logger("cheesex.runtime").exception("backend error flush failed")
 
     async def take_over() -> None:
@@ -250,7 +303,7 @@ async def lifespan(application: FastAPI):
             get_logger("cheesex.runtime").warning(
                 "hook subscriptions not recovered: device offline", device=exc.device_id
             )
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("hook subscription recovery failed")
 
         # A turn asked for while this process was waiting starts now, against
@@ -258,16 +311,22 @@ async def lifespan(application: FastAPI):
         # its backlog goes on meanwhile, and only that room's next turn waits
         # for it (`AgentWorkRunner._wait_for_replay`).
         get_work_runner().start_turns()
-        # The sweeps below read what the replays land: a turn whose result is
-        # still in a backlog looks like one nobody finished.
-        await get_chat_service().replays_settled()
+        # Recovery protects only the conversations still replaying. Maintenance
+        # starts even when one runner cannot be reached; the orphan and idle
+        # sweeps leave that conversation alone until its history is read.
+        await start_jobs(owner_only=True, include_orphan_sweep=False)
 
         try:
             n = await get_work_runner().resume_orphans(get_chat_service())
             if n:
                 get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("orphan sweep failed")
+
+        # Startup coalesces every age for a seat; the periodic pass only sees
+        # older turns. It starts after that first pass so it cannot split the
+        # seat's recovery into two prompts. Other maintenance is already up.
+        await start_jobs(owner_only=True)
 
         try:
             n = await get_work_runner().resume_lost_messages(
@@ -275,16 +334,12 @@ async def lifespan(application: FastAPI):
             )
             if n:
                 get_logger("cheesex.runtime").info("lost_messages_resumed", turns=n)
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("lost message sweep failed")
 
-        # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
-        # so a redeploy kills every check in flight and nobody ever calls
-        # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
-        # from ever filing another card (create_card's mutex). This runs BEFORE the
-        # periodic loop starts, and does the whole point of the startup path: no
-        # gate can be running in this process yet, so everything past the deadline
-        # is provably abandoned by the process that died, not by this one.
+        # Check past-deadline gates at takeover as well as on the periodic
+        # clock: a redeploy loses the in-memory runner, and a pending card
+        # otherwise keeps its topic from filing another card.
         try:
             chat = get_chat_service()
             swept = await sweep_abandoned_gates(
@@ -301,13 +356,22 @@ async def lifespan(application: FastAPI):
                     condemned=len(swept["condemned"]),
                     errors=swept["errors"],
                 )
-        except Exception:  # noqa: BLE001 — never block startup
+        except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
-        # The jobs the lock still guards start here, now that this process holds
-        # it. The ones that have left it started at boot (`start_jobs` above), so
-        # a handover neither stops them nor waits for them.
-        await start_jobs(owner_only=True)
+        # 卡片是在补记「谁在 GitHub 上合的」这项之前合并的：上线时补一次项目
+        # 总览还显示的那 14 天，之后正常轮询看到合并就记。一次，不是定时任务。
+        try:
+            # deferred-import: startup cost
+            from app.domain.review import pr_poll
+
+            background.spawn(
+                pr_poll.backfill_missing_merge_actors(get_chat_service()),
+                name="merge actor backfill",
+            )
+        except Exception:  # never block startup
+            get_logger("cheesex.runtime").exception("merge actor backfill failed")
+
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
@@ -323,14 +387,14 @@ async def lifespan(application: FastAPI):
             from app.domain.agent_instance.adapters import task_teammate
             from app.domain.delivery.agent import (  # deferred-import: startup cost
                 dispatch_pending,
-                record_agent,
                 record_task_instruction,
-                seat_instance_id,
             )
             from app.domain.delivery.ledger import (  # deferred-import: startup cost
                 settle_card,
             )
-            from app.domain.review.events import listen
+            from app.domain.review.events import (  # deferred-import: startup cost
+                listen,
+            )
 
             chat = get_chat_service()
 
@@ -347,8 +411,6 @@ async def lifespan(application: FastAPI):
                         announce,
                         settle_card=settle_card,
                         record_instruction=record_task_instruction,
-                        seat_instance_id=seat_instance_id,
-                        record_agent=record_agent,
                         dispatch_pending=pump_pending,
                         task_teammate=task_teammate,
                     ),
@@ -370,8 +432,6 @@ async def lifespan(application: FastAPI):
     # one's lease, not by the one that owns the running work: this process
     # takes up the ones nobody reads from its start, and on its way out gives
     # its own up first, for the next process to take at once.
-    from app.api.deps import get_consumptions
-
     reading_questions = asyncio.create_task(
         get_consumptions().run(), name="questions nobody reads"
     )
@@ -386,9 +446,6 @@ async def lifespan(application: FastAPI):
     # reported as a stall of the requests it never delayed.
     application.openapi()
 
-    from app.core.loop_lag import watch_loop_lag
-    from app.core.net_io import watch_api_io, watch_net_io
-
     background.spawn(watch_loop_lag(), name="event loop lag")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
@@ -399,18 +456,10 @@ async def lifespan(application: FastAPI):
     # What the platform pool offers is the gateway's answer, kept warm here so
     # that asking for it never becomes a network call on the path that starts a
     # turn. Until the first pass lands the catalogue serves its floor.
-    from app.api.deps import get_llm_gateway
-    from app.domain.agent import gateway_catalog
-
     background.spawn(
         gateway_catalog.keep_fresh(get_llm_gateway()),
         name="gateway model catalogue",
     )
-
-    from app.core.forge_http import reuse_forge_connections
-    from app.core.storage import reuse_s3_connections
-    from app.domain.agent.preview_owner import reuse_preview_owner_connections
-    from app.domain.machine.microcloud import reuse_connections
 
     async def hand_over() -> None:
         # Hand the running work to the next process, in the order that lets
@@ -498,6 +547,9 @@ async def lifespan(application: FastAPI):
         try:
             yield
         finally:
+            watching_jobs.cancel()
+            await asyncio.gather(watching_jobs, return_exceptions=True)
+            set_periodic_health(None)
             reading_questions.cancel()
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()
@@ -617,10 +669,17 @@ app = FastAPI(
 app.add_middleware(LogRefusedWebSockets)
 app.add_middleware(EndBusinessSocketsAtHandover)
 
+# One N+1 watch per request, across every session that request opens; logs only,
+# never raises (app/core/query_watch.py).
+install_query_watch(app)
+
 # Inside CORS, so a refusal still carries the headers a cross-origin page needs
 # to read it; inside `request_context`, so a 429 is in the access log like any
 # other answer. Pure ASGI: see `app/core/request_limits.py`.
 app.add_middleware(RequestLimits)
+
+# Inside CORS for the same reason: a closed account's refusal must be readable.
+app.add_middleware(ClosedAccountGuard)
 
 app.add_middleware(
     CORSMiddleware,
@@ -674,10 +733,7 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     """Correlation + timing for every request: bind request_id (respecting an
     incoming X-Request-ID) to the async context, echo it back, log the duration.
     contextvars are task-local, so concurrent requests never bleed ids."""
-    import time
-    import uuid as _uuid
-
-    rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
     bind_context(req=rid)
     # 也在 scope 上留一份：报错上报那一层在这个中间件**外面**，轮到它时这里的
     # `clear_context("req")` 已经跑过了，contextvar 读不到；scope 上的 state 活得比
@@ -898,6 +954,7 @@ async def debug_turns(_admin: PlatformAdminDep) -> dict:
     Platform admins only: a summary names the room, the person who started the
     turn and why it failed. The evals harness reads it too, signed in as an
     admin of its own throwaway backend."""
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_work_runner
 
     return ok(get_work_runner().recent_work())
@@ -905,6 +962,7 @@ async def debug_turns(_admin: PlatformAdminDep) -> dict:
 
 @app.get("/health")
 async def health() -> dict:
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_work_runner
 
     # active_turns lets a redeploy drain: wait until no agent turn is in flight

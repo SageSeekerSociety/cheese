@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -14,7 +15,6 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
 
 if sys.platform != "win32":
     import fcntl
@@ -79,6 +79,86 @@ class UpgradeDeferred(Exception):
         self.info = info
 
 
+# A write refused for want of space: the disk's, or on a platform host the
+# room's own quota (`sandbox_host.py`), which XFS also answers ENOSPC.
+FULL = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
+
+
+def free_mb(path):
+    """What is left at `path`, in MB: by its own quota where it has one, as
+    a `statvfs` of a directory in an XFS project answers."""
+    if hasattr(os, "statvfs"):
+        found = os.statvfs(path)
+        return found.f_bavail * found.f_frsize // 10**6
+    return shutil.disk_usage(path).free // 10**6
+
+
+def spared(disk, home, write):
+    """Run `write`, which the executor can do without (skills, the preview
+    token, the environment's config). Refused for want of space, it is
+    skipped and what is left noted in `disk`, which the room is told
+    (`session_work`): a room that filled its disk still gets its executor,
+    and its agent the chance to make room."""
+    try:
+        write()
+    except OSError as error:
+        if error.errno not in FULL:
+            raise
+        disk["disk_full_mb"] = free_mb(home)
+        print(f"skipped for want of space: {error}", file=sys.stderr)
+
+
+def kept_on_full_disk(owner, home, payload, anchors, error):
+    """No room to stage this payload's release: keep the running executor, as
+    a busy one is kept (`UpgradeDeferred`), when it speaks this payload's
+    protocol and runs as this payload asks, sandboxed or not and with the
+    same limits. Whether it is sandboxed and its release are read from the
+    record made outside the room (`record_sandbox`), never from the config a
+    sandboxed room writes, and the release must be one of the store's.
+    Raises `error` when there is none to keep."""
+    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
+    try:
+        previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
+        if previous is None:
+            raise error
+        named = marker.read_text() if marker.exists() else previous["release"]
+    except (OSError, ValueError, TypeError, KeyError):
+        raise error from None
+    sandbox = payload.get("sandbox") or False
+    if marker.exists() != bool(sandbox) or previous.get("sandbox", False) != sandbox:
+        raise error
+    release = Path(named.strip())
+    if (
+        release.name in ("", ".", "..")
+        or release.parent != release_store(owner)
+        or not release.is_dir()
+    ):
+        raise error
+    state = executor_state(home, anchors, bool(payload.get("sandbox")))
+    runtime = runpy.run_path(str(release / "remote-execution/runtime.py"))
+    try:
+        info = runtime["request"](state, "ping")
+    except (ConnectionError, FileNotFoundError):
+        raise error from None
+    if info.get("protocol_version", 1) != payload.get("protocol_version", 1):
+        raise error
+    refreshed = {**previous.get("env", {}), **payload["env"]}
+    runtime["request"](
+        state,
+        "configure",
+        {"env": refreshed, "env_reset": previous.get("env_reset", {})},
+    )
+    info.update(
+        state=str(home / PLATFORM_DIR / "executor"),
+        mcp_servers=process_servers({"mcp_servers": previous.get("mcp_servers", {})}),
+        upgrade_pending=True,
+        desired_release=None,
+        # What ran out is where releases are staged, not the room's own.
+        disk_full_mb=free_mb(release_store(owner)),
+    )
+    return info
+
+
 def predecessor(release):
     """The executor that already owns a room's state, as an install sees it."""
     return runpy.run_path(str(Path(release) / "remote-execution/predecessor.py"))
@@ -102,6 +182,16 @@ def lock(file):
 
 def portable(release):
     return runpy.run_path(str(Path(release) / "remote-execution/portable.py"))
+
+
+def shipped(release, name):
+    """A policy module shipped beside this file (`app/domain/agent/<name>.py`),
+    read from the source tree when this runs from a checkout the way
+    `runtime.project_hooks` reads its own."""
+    beside = Path(release) / "remote-execution" / f"{name}.py"
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[6] / f"app/domain/agent/{name}.py"
+    return runpy.run_path(str(beside))
 
 
 def windows_shim(name, data):
@@ -174,8 +264,14 @@ def read_beneath(root, relative):
 def write_beneath(root, relative, text):
     """Write `root / relative` as `beneath` reaches it, through a temporary
     beside it: a half-written `office.py` is a script the agent is told to
-    run. Readable by the owner alone."""
+    run. Readable by the owner alone, and written only where the text is not
+    already there: this runs before every tool call of a room, and on a machine
+    whose disk or inode supply is used up, the rename is what turns `echo ok`
+    into `ENOSPC`."""
     relative = Path(relative)
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        if read_beneath(root, relative) == text:
+            return
     directory = beneath(root, relative.parent, create=True)
     temporary = relative.name + ".next"
     if directory is None:
@@ -284,21 +380,16 @@ def plant_native_skills(home, skills):
     installed them and `$CLAUDE_CONFIG_DIR/skills/documents/scripts/office.py`
     named a file that was not on the machine. The room's own answer to that was
     to scavenge a copy out of another room's cache, which is not a mechanism.
-
-    Only rewritten when the bytes differ: this runs on every prepare,
-    including the ones that change nothing.
     """
     for name, content in sorted(skills.items()):
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("Native skill file must be inside the config directory")
-        relative = Path(CONFIG_DIR) / relative
-        try:
-            if read_beneath(home, relative) == content:
-                continue
-        except (OSError, UnicodeDecodeError):
-            pass
-        write_beneath(home, relative, content)
+        write_beneath(home, Path(CONFIG_DIR) / relative, content)
+
+
+def execution_root(owner):
+    return owner / os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")
 
 
 def release_store(owner):
@@ -307,9 +398,9 @@ def release_store(owner):
     Beside the rooms, never inside one: a sandboxed room can write all of its
     own home, and programs from here also run outside its sandbox — the
     install below, the teardown, the environment reset (`record_sandbox`). A
-    sandbox is shown this directory read-only (`sandbox_argv`), so what is here
+    sandbox is shown this directory read-only (`confinement.sandbox_argv`), so what is here
     is what the platform put here."""
-    return owner / ".cheese/executor-releases"
+    return execution_root(owner) / "executor-releases"
 
 
 def stage_release(store, platform_dir, payload):
@@ -332,18 +423,23 @@ def stage_release(store, platform_dir, payload):
     if not release.exists():
         staged = store / (digest + "." + uuid.uuid4().hex)
         staged.mkdir(mode=0o700)
-        for name, data in contents.items():
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("Executor file must be inside its release")
-            path = staged / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-            path.chmod(0o700)
-            shim = windows_shim(name, data) if sys.platform == "win32" else None
-            if shim:
-                path.with_name(path.name + ".cmd").write_text(shim)
-        (staged / "executor-files.json").write_text(json.dumps(list(contents)))
+        try:
+            for name, data in contents.items():
+                relative = Path(name)
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("Executor file must be inside its release")
+                path = staged / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                path.chmod(0o700)
+                shim = windows_shim(name, data) if sys.platform == "win32" else None
+                if shim:
+                    path.with_name(path.name + ".cmd").write_text(shim)
+            (staged / "executor-files.json").write_text(json.dumps(list(contents)))
+        except BaseException:
+            # Half a release, on a disk with no room for the whole.
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         try:
             staged.rename(release)
         except OSError:
@@ -374,6 +470,11 @@ def activate_release(platform_dir, release, names):
         directory = beneath(platform_dir, relative.parent, create=True)
         temporary = relative.name + ".next"
         try:
+            # Already there: a prepare that changes nothing writes nothing,
+            # and so still goes through in a room whose disk is full.
+            with contextlib.suppress(OSError):
+                if os.readlink(relative.name, dir_fd=directory) == str(release / name):
+                    continue
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temporary, dir_fd=directory)
             os.symlink(release / name, temporary, dir_fd=directory)
@@ -452,7 +553,7 @@ def remember(destination, record):
         temporary.unlink(missing_ok=True)
 
 
-def binary(owner, api):
+def binary(owner, api, release):
     windows = sys.platform == "win32"
     executable = ".exe" if windows else ""
     destination = owner / ".cheese/claude/versions" / (VERSION + executable)
@@ -493,7 +594,6 @@ def binary(owner, api):
                 return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
     import platform  # deferred-import: warm-room prep skips this
-    from urllib.request import urlopen  # deferred-import: warm-room prep skips this
 
     architecture = {
         "x86_64": "x64",
@@ -510,24 +610,36 @@ def binary(owner, api):
     if system == "linux" and platform.libc_ver()[0] == "musl":
         target += "-musl"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = temporary_beside(destination)
-    with urlopen(
-        f"{api}/connector/claude/{VERSION}/{target}/claude{executable}", timeout=300
-    ) as source:
-        with temporary.open("xb") as output:
-            shutil.copyfileobj(source, output)
-    temporary.chmod(0o700)
-    result = subprocess.run(
-        [str(temporary), "--version"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=15,
-    )
-    if result.stdout.split()[0] != VERSION:
-        raise RuntimeError("The executor binary does not match the verified version")
-    temporary.replace(destination)
-    remember(destination, record)
+    # Every room of this owner installs into the one directory, and the download
+    # below writes one partial file there: one install at a time, and one that
+    # waited finds the pin another just proved.
+    with destination.with_name(destination.name + ".lock").open("a") as held:
+        lock(held)
+        try:
+            if json.loads(record.read_text()) == identity(destination):
+                return str(destination)
+        except (OSError, ValueError):
+            pass
+        # Shipped beside the runtime (`runtime_core.RELEASE_FILES`).
+        downloader = Path(release) / "remote-execution/executor_download.py"
+        temporary = runpy.run_path(str(downloader))["download"](
+            f"{api}/connector/claude/{VERSION}/{target}/claude{executable}",
+            destination,
+        )
+        temporary.chmod(0o700)
+        result = subprocess.run(
+            [str(temporary), "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+        if result.stdout.split()[0] != VERSION:
+            raise RuntimeError(
+                "The executor binary does not match the verified version"
+            )
+        temporary.replace(destination)
+        remember(destination, record)
     return str(destination)
 
 
@@ -598,10 +710,11 @@ def platform_file(platform_dir, name):
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
-# The programs a Cloud machine's sandbox network needs, by the package that has
-# them. bwrap is not among them: cheesehost places the platform's own.
-SANDBOX_PACKAGES = {"ip": "iproute2", "iptables-restore": "iptables"}
-SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Root's copies of the programs it runs, from the host tools cheesehost places
+# (`cli/internal/devenv`): it runs nothing the connector user could replace. A
+# copy of `sandbox_host.TOOLS`, held to it by test_footprint_root.py.
+SANDBOX_TOOLS = "/usr/local/libexec/cheese-sandbox-tools"
+HOST_TOOLS = ("ip", "xtables-nft-multi", "xfs_quota")
 
 
 def sudo(command, failure):
@@ -610,7 +723,7 @@ def sudo(command, failure):
         capture_output=True,
         text=True,
         timeout=300,
-        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+        env=os.environ,
     )
     if result.returncode:
         raise RuntimeError(failure + ": " + result.stderr.strip()[-500:])
@@ -621,7 +734,7 @@ def sudo(command, failure):
 # machine says the same when asked as it connects (`device.sandbox`), and the
 # backend refuses such a room before it gets here. A system gains an
 # environment by leaving this table in the same change that teaches
-# `sandbox_tools` and `sandbox_argv` to build it.
+# `sandbox_tools` and `confinement.sandbox_argv` to build it.
 NO_SANDBOX = {"win32": "sandboxNoneOnWindows"}
 
 
@@ -633,8 +746,10 @@ def sandbox_tools(release, platform_machine):
     Other systems have no isolated environment yet (`NO_SANDBOX`). On Linux
     the sandbox is made with the bwrap cheesehost places (`placed_bubblewrap`),
     whatever the system has. A machine the platform provisioned
-    (`platform_machine`) also needs `ip`, iptables and this release's
-    `sandbox_host.py` as `SANDBOX_HOST`, installed here. A machine a person
+    (`platform_machine`) also needs this release's `sandbox_host.py` as
+    `SANDBOX_HOST` and root's copies of the host tools it runs, which
+    cheesehost placed beside bwrap (`SANDBOX_TOOLS`), installed here: nothing
+    comes from the system's packages. A machine a person
     enrolled is theirs: nothing is installed there, its sandbox has no network
     or limits of its own (that takes root), and its bwrap must be able to make a
     user namespace, or the room is refused with what to change. Either way a
@@ -646,35 +761,48 @@ def sandbox_tools(release, platform_machine):
         raise SandboxUnavailable(key, system=sys.platform)
     if not platform_machine:
         return enrolled_bubblewrap()
-    missing = [
-        package
-        for program, package in SANDBOX_PACKAGES.items()
-        if shutil.which(program, path=SYSTEM_PATH) is None
-    ]
-    if missing:
-        install = ["apt-get", "install", "-y", "-q", *missing]
-        try:
-            sudo(install, "installing " + " ".join(missing) + " failed")
-        except RuntimeError:
-            sudo(["apt-get", "update", "-q"], "apt-get update failed")
-            sudo(install, "installing " + " ".join(missing) + " failed")
-    source = release / "remote-execution/sandbox_host.py"
-    try:
-        current = Path(SANDBOX_HOST).read_bytes() == source.read_bytes()
-    except OSError:
-        current = False
-    if not current:
-        # Beside it, then renamed over it: a sandbox starting meanwhile runs
-        # the old one or the new one, never half of either.
-        staged = SANDBOX_HOST + "." + uuid.uuid4().hex
-        failure = "installing the sandbox helper failed"
-        sudo(
-            ["install", "-D", "-o", "root", "-g", "root", "-m", "0755"]
-            + [str(source), staged],
-            failure,
-        )
-        sudo(["mv", "-f", staged, SANDBOX_HOST], failure)
+    placed = execution_root(Path.home()) / "runtime/host-tools/bin"
+    for name in HOST_TOOLS:
+        if not os.access(placed / name, os.X_OK):
+            # i18n-exempt: a platform host's install failure, read by operators in its log
+            raise RuntimeError(f"cheesehost has not placed {name} at {placed}")
+    # The tools before the helper that runs them: a helper installed first
+    # would meanwhile run tools that are not there yet.
+    for source, target in (
+        *((placed / name, f"{SANDBOX_TOOLS}/{name}") for name in HOST_TOOLS),
+        (release / "remote-execution/sandbox_host.py", SANDBOX_HOST),
+    ):
+        install_as_root(source, target)
     return placed_bubblewrap()
+
+
+def install_as_root(source, target):
+    """`source` at `target`, root's, unless it is there already. Beside it,
+    then renamed over it: a sandbox starting meanwhile runs the old one or the
+    new one, never half of either."""
+    try:
+        if Path(target).read_bytes() == Path(source).read_bytes():
+            return
+    except OSError:
+        pass
+    staged = target + "." + uuid.uuid4().hex
+    failure = "installing " + target + " failed"
+    sudo(
+        [
+            "install",
+            "-D",
+            "-o",
+            "root",
+            "-g",
+            "root",
+            "-m",
+            "0755",
+            str(source),
+            staged,
+        ],
+        failure,
+    )
+    sudo(["mv", "-f", staged, target], failure)
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -690,7 +818,7 @@ def seatbelt():
 
 def placed_bubblewrap():
     """The bwrap cheesehost places when it starts (`cli/internal/devenv`)."""
-    found = Path.home() / PLATFORM_DIR / "runtime/bubblewrap/bwrap"
+    found = execution_root(Path.home()) / "runtime/bubblewrap/bwrap"
     if not os.access(found, os.X_OK):
         raise SandboxUnavailable("sandboxNotPlaced")
     return str(found)
@@ -739,7 +867,7 @@ def record_sandbox(owner, home, release):
     `release`. The teardown and the environment reset run outside the sandbox;
     this is how they know to run only what is in the release store, and to
     run git in the room's checkouts sandboxed too."""
-    marker = owner / ".cheese" / SANDBOXES / home.parent.name / home.name
+    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
     marker.parent.mkdir(parents=True, exist_ok=True)
     temporary = marker.with_name(marker.name + "." + uuid.uuid4().hex)
     temporary.write_text(str(release))
@@ -763,7 +891,9 @@ def record_sandbox_process(owner, home, pid):
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     except OSError:
         return
-    record = owner / ".cheese" / SANDBOXES / home.parent.name / (home.name + ".process")
+    record = (
+        execution_root(owner) / SANDBOXES / home.parent.name / (home.name + ".process")
+    )
     temporary = record.with_name(record.name + "." + uuid.uuid4().hex)
     temporary.write_text(
         json.dumps({"pid": pid, "identity": f"linux:{boot_id}:{fields[19]}"})
@@ -773,174 +903,9 @@ def record_sandbox_process(owner, home, pid):
 
 def forget_sandbox(owner, home):
     """Remove `record_sandbox`'s and `record_sandbox_process`'s records."""
-    marker = owner / ".cheese" / SANDBOXES / home.parent.name / home.name
+    marker = execution_root(owner) / SANDBOXES / home.parent.name / home.name
     marker.unlink(missing_ok=True)
     marker.with_name(home.name + ".process").unlink(missing_ok=True)
-
-
-# Where the machine keeps what is not the system's: mounted disks, and on WSL
-# the Windows drives and the socket that runs Windows programs. Hidden in a
-# sandbox like the owner's home: they hold the owner's files, and a Windows
-# program would run outside it.
-HIDDEN_MOUNTS = ("/mnt", "/media", "/run/media", "/run/WSL")
-
-
-def sandbox_argv(argv, *, bwrap, owner, home, claude, sockets, fds, network=True):
-    """`argv` run in a bubblewrap sandbox: the room's processes see the machine
-    read-only, and of the owner's home only what is bound back below.
-
-    Writable: the room's home and its project's package store. Read-only: the
-    machine's toolchain, the release store and the Claude build. Hidden: every
-    other room, every other project's store, the owner's own files (the
-    connector's credential is among them), the owner's runtime directory,
-    whose user bus would start processes outside, and the Docker daemon's
-    socket. `/tmp` and `/var/tmp` are a
-    directory of the room's own on disk, with the one directory of the
-    machine's /tmp that holds this executor's sockets bound back, so the
-    connector can still reach it.
-
-    Its own pid namespace too: no other room's processes to signal, trace, or
-    reach a filesystem through via /proc. That makes the pid an executor
-    reports meaningless outside it, which is why it is stopped by request.
-
-    And, with `network`, its own network namespace, empty until
-    `start_sandbox` has the machine connect it (`sandbox_host.py`). Without
-    it, on a machine a person enrolled, the sandbox shares the machine's
-    network. Bubblewrap reports the sandbox's first process on `fds["info"]`
-    and waits on `fds["block"]` before running `argv`, under the seccomp
-    program on `fds["seccomp"]`.
-
-    On a machine a person enrolled the owner's home holds everything they
-    installed there too (nvm, `~/.cargo/bin`, `~/.local/bin`), which a
-    session does not see; mounted disks are hidden as well (`HIDDEN_MOUNTS`).
-    """
-    store = owner / ".cheese/store" / home.parent.name
-    toolchain = owner / ".cheese/toolchain"
-    tmp = home / PLATFORM_DIR / "tmp"
-    for directory in (store, toolchain, tmp):
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    sockets.mkdir(exist_ok=True, mode=0o700)
-    command = [
-        bwrap,
-        "--unshare-user",
-        "--unshare-pid",
-        "--unshare-ipc",
-        "--unshare-uts",
-        # No cgroup namespace of its own: one is made when the sandbox
-        # starts, before `SANDBOX_HOST` moves it into its limited cgroup, and
-        # would leave a runtime that sizes itself by its limit (Node, the JVM)
-        # reading a path it cannot resolve.
-        *(["--unshare-net"] if network else []),
-        "--info-fd",
-        str(fds["info"]),
-        "--block-fd",
-        str(fds["block"]),
-        "--seccomp",
-        str(fds["seccomp"]),
-        "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        # The boot id as the machine reports it. A container's lxcfs gives it
-        # its own, which a fresh /proc does not show, and the environment
-        # runner's record of a process (`process_identity`) made inside would
-        # then never match the same process read from outside.
-        "--ro-bind",
-        "/proc/sys/kernel/random/boot_id",
-        "/proc/sys/kernel/random/boot_id",
-        # Before anything under the owner's home: a home kept under /tmp would
-        # otherwise be covered by the session's own /tmp.
-        "--bind",
-        str(tmp),
-        "/tmp",
-        "--bind",
-        str(tmp),
-        "/var/tmp",
-    ]
-    # Before the owner's home too, which may be kept on one of them.
-    for mount in HIDDEN_MOUNTS:
-        if Path(mount).is_dir():
-            command += ["--tmpfs", mount]
-    command += ["--tmpfs", str(owner)]
-    names = resolv_conf()
-    if network and names != "/etc/resolv.conf":
-        command += ["--ro-bind", names, "/etc/resolv.conf"]
-    command += bool(fd := fds.get("hosts")) * ["--ro-bind-data", str(fd), "/etc/hosts"]
-    runtime_dir = Path(f"/run/user/{os.getuid()}")
-    if runtime_dir.is_dir():
-        command += ["--tmpfs", str(runtime_dir)]
-    # The docker group's socket is root on the machine, and a user namespace
-    # keeps the owner's groups: a session would reach it through a read-only
-    # mount as well, since connecting to a socket is not a write to the mount.
-    if Path("/run/docker.sock").exists():
-        command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
-    # The Python the executor runs on, when the person keeps it in their home
-    # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
-    # the path it is run by as well as where a link there leads.
-    prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
-    for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
-        if owner in prefix.parents:
-            command += ["--ro-bind", str(prefix), str(prefix)]
-    for option, path in (
-        ("--bind", home),
-        ("--bind", store),
-        ("--ro-bind", toolchain),
-        ("--ro-bind", release_store(owner)),
-        ("--ro-bind", claude.parent),
-    ):
-        command += [option, str(path), str(path)]
-    command += [
-        "--bind",
-        str(sockets),
-        str(sockets),
-        "--chdir",
-        str(home / CHECKOUT_DIR),
-        "--",
-    ]
-    return command + argv
-
-
-# A copy of `sandbox_host.RESOLV_CONFS`, held to it by test_footprint_root.py.
-RESOLV_CONFS = ("/etc/resolv.conf", "/run/systemd/resolve/resolv.conf")
-
-
-def resolv_conf():
-    """The resolv.conf a sandbox reads: the machine's, unless that names only
-    a loopback stub, which inside the sandbox is the sandbox's own loopback
-    and answers nothing; then the stub's upstream list, the one
-    `sandbox_host.py` lets the sandbox reach."""
-    for path in RESOLV_CONFS:
-        try:
-            text = Path(path).read_text()
-        except OSError:
-            continue
-        for line in text.splitlines():
-            fields = line.split()
-            if (
-                len(fields) >= 2
-                and fields[0] == "nameserver"
-                and "." in fields[1]
-                and not fields[1].startswith("127.")
-            ):
-                return path
-    return RESOLV_CONFS[0]
-
-
-def loopback_ports(env):
-    """The machine's loopback ports a sandbox must reach as its own: the
-    backend's, where the machine reaches it through a loopback forward
-    (`machine_address.device_api_base`), and the preview tunnel's beside it."""
-
-    ports = []
-    for name in ("CHEESE_API", "CHEESE_PREVIEW_URL"):
-        address = urlsplit(env.get(name) or "")
-        if address.hostname in ("127.0.0.1", "localhost") and address.port:
-            if address.port not in ports:
-                ports.append(address.port)
-    return ports
 
 
 def start_sandbox(
@@ -957,7 +922,7 @@ def start_sandbox(
     release,
     **options,
 ):
-    """Start `argv` in a sandbox (`sandbox_argv`) and, with `connect`, give
+    """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
     it, before it runs anything, its network and its limits (`SANDBOX_HOST
     up`). A sandbox the machine cannot connect or limit is killed, never left
     to run without. Without `connect` (a machine a person enrolled, where
@@ -975,31 +940,41 @@ def start_sandbox(
             sandbox_exec=bwrap,
             owner=owner,
             home=home,
-            store=owner / ".cheese/store" / home.parent.name,
+            store=execution_root(owner) / "store" / home.parent.name,
             tmp=home / PLATFORM_DIR / "tmp",
-            readable=[owner / ".cheese/toolchain", release_store(owner), claude.parent],
+            readable=[
+                execution_root(owner) / "toolchain",
+                release_store(owner),
+                claude.parent,
+            ],
             sockets=sockets,
             env=env,
             **options,
         )
+    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
     info, report = os.pipe()
     wait, go = os.pipe()
     seccomp, program = os.pipe()
-    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
     os.write(program, confinement["seccomp_filter"]())
     os.close(program)
     fds = {"info": report, "block": wait, "seccomp": seccomp}
     site = connect and confinement["site_hosts"](env, fds)
     try:
         process = subprocess.Popen(
-            sandbox_argv(
+            confinement["sandbox_argv"](
                 argv,
                 bwrap=bwrap,
                 owner=owner,
                 home=home,
+                store=execution_root(owner) / "store" / home.parent.name,
+                toolchain=execution_root(owner) / "toolchain",
+                tmp=home / PLATFORM_DIR / "tmp",
+                releases=release_store(owner),
+                workdir=home / CHECKOUT_DIR,
                 claude=claude,
                 sockets=sockets,
                 fds=fds,
+                programs=[execution_root(owner) / "runtime/git"],
                 network=connect,
             ),
             start_new_session=True,
@@ -1021,14 +996,14 @@ def start_sandbox(
             raise RuntimeError("The sandbox did not start; see executor-bootstrap.log")
         answer = {}
         if connect:
-            command = [SANDBOX_HOST, "up", home.name, str(first)]
-            for name in ("memory_mb", "swap_mb", "cpus", "pids"):
+            command = [SANDBOX_HOST, "up", home.name, str(first), "--home", str(home)]
+            for name in ("memory_mb", "swap_mb", "cpus", "pids", "disk_mib", "inodes"):
                 command += ["--" + name.replace("_", "-"), str(limits[name])]
-            for port in loopback_ports(env):
+            for port in confinement["loopback_ports"](env):
                 command += ["--forward", str(port)]
             command += ["--site", str(site)] * bool(site)
             answer = json.loads(
-                sudo(command, "The sandbox's network could not be set up")
+                sudo(command, "The sandbox's network and limits could not be set up")
             )
         answer["first"] = first
     except BaseException:
@@ -1042,14 +1017,14 @@ def start_sandbox(
 
 
 @contextlib.contextmanager
-def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
+def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
     )
-    home = owner / ".cheese/home" / project / resource
-    store = owner / ".cheese/store" / project
-    toolchain = owner / ".cheese/toolchain"
+    home = execution_root(owner) / "home" / project / resource
+    store = execution_root(owner) / "store" / project
+    toolchain = execution_root(owner) / "toolchain"
     package_env = {
         "UV_CACHE_DIR": str(store / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
@@ -1058,10 +1033,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         "PIP_CACHE_DIR": str(store / "pip-cache"),
     }
     if payload.get("sandbox"):
-        # The store and the room's home are two mounts inside the sandbox, and
-        # a hard link cannot cross mounts (EXDEV): uv's default would try one
-        # per file into every venv before copying it anyway.
-        package_env["UV_LINK_MODE"] = "copy"
+        # No hard link crosses mounts or quotas; a reflink does on XFS, else both copy.
+        package_env["UV_LINK_MODE"] = "clone"
+        package_env["npm_config_package_import_method"] = "clone-or-copy"
     variables = (payload.get("environment") or {}).get("variables", {})
     package_env.update({key: variables[key] for key in package_env if key in variables})
     work = home / CHECKOUT_DIR
@@ -1080,13 +1054,47 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # would otherwise be renaming the same `.next` file.
         platform = payload.get("platform_skills") or []
         project = payload.get("project_skills") or []
-        prune_platform_skills(
-            home, platform, project, payload.get("skills_before_list") or []
-        )
-        prune_project_skills(home, project, platform)
-        plant_native_skills(home, payload.get("skills") or {})
-        release, contents = stage_release(release_store(owner), platform_dir, payload)
+        # Filled with what is left when a write was skipped for want of
+        # space (`spared`); a caller that tells the room passes its own.
+        disk = {} if disk is None else disk
+
+        def skills():
+            before = payload.get("skills_before_list") or []
+            prune_platform_skills(home, platform, project, before)
+            prune_project_skills(home, project, platform)
+            plant_native_skills(home, payload.get("skills") or {})
+
+        spared(disk, home, skills)
+        try:
+            release, contents = stage_release(
+                release_store(owner), platform_dir, payload
+            )
+        except OSError as error:
+            if error.errno not in FULL or not refresh_runtime:
+                raise
+            raise UpgradeDeferred(
+                kept_on_full_disk(owner, home, payload, anchors, error)
+            ) from None
         stop_previous_root(home, release)
+        # Where this room's package downloads come from, as a variable set for
+        # the mirrors that answer this machine right now (`package_mirrors`).
+        # After the room's own configured variables, not before: a project that
+        # names an index of its own keeps it, which is why the value is only
+        # defaulted. This is the environment an agent's tools inherit, so a
+        # mirror listed here is what an agent's `pip install` goes through.
+        # `governed` is the other half: each name with the value the policy puts
+        # there, so only a room holding that value can be told to drop it.
+        mirrors = payload.get("package_mirrors") or {}
+        policy = shipped(release, "package_mirrors") if mirrors else None
+        governed = policy["governed"](mirrors) if policy is not None else {}
+        if policy is not None:
+            for name, value in policy["environment"](mirrors, store).items():
+                package_env.setdefault(name, variables.get(name, value))
+        # How many test workers this room's tools may start, from its CPU quota
+        # (`worker_quota`), defaulted the same way.
+        quota = shipped(release, "worker_quota")
+        for name, value in quota["environment"](payload.get("sandbox")).items():
+            package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
             # Except, on Windows, the one the connector sets for every command:
@@ -1146,8 +1154,11 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
         config = {
             "workspace": str(work),
-            "claude": binary(owner, env["CHEESE_API"]),
+            "claude": binary(owner, env["CHEESE_API"], release),
             "env": scoped_env,
+            # What the environment above may have taken away, and what it would
+            # have put there: a room holding anything else keeps it (`runtime`).
+            "env_reset": governed,
             "mcp_servers": {},
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,
@@ -1157,9 +1168,8 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             config["mcp_servers"] = mcp.get("mcpServers", {})
         recorded = platform_dir / "executor"
         state = executor_state(home, anchors, bool(payload.get("sandbox")))
-        write_beneath(
-            home, Path(PLATFORM_DIR) / "cheese-preview.token", env["CHEESE_TOKEN"]
-        )
+        token = Path(PLATFORM_DIR) / "cheese-preview.token"
+        spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
         previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
         if previous is not None:
             # The running executor is reached with the release staged above,
@@ -1174,7 +1184,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                unchanged = {"env", "claude", "release", "sandbox"}
+                unchanged = {"env", "env_reset", "claude", "release", "sandbox"}
                 if {k: v for k, v in previous.items() if k not in unchanged} != {
                     k: v for k, v in config.items() if k not in unchanged
                 }:
@@ -1223,7 +1233,11 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                                 "Executor protocol upgrade is waiting for running work"
                             )
                         refreshed = {**previous.get("env", {}), **payload["env"]}
-                        runtime["request"](state, "configure", {"env": refreshed})
+                        runtime["request"](
+                            state,
+                            "configure",
+                            {"env": refreshed, "env_reset": config["env_reset"]},
+                        )
                         info.update(
                             state=str(recorded),
                             mcp_servers=process_servers(
@@ -1231,6 +1245,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                             ),
                             upgrade_pending=True,
                             desired_release=str(release),
+                            **disk,
                         )
                         if payload.get("environment"):
                             runner = runpy.run_path(
@@ -1266,11 +1281,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                 **toolchain_options,
             )
         if payload.get("environment"):
-            write_beneath(
-                home,
-                Path(".cheese-environment/config.json"),
-                json.dumps(payload["environment"]),
-            )
+            settings = json.dumps(payload["environment"])
+            where = Path(".cheese-environment/config.json")
+            spared(disk, home, lambda: write_beneath(home, where, settings))
         yield home, config, state, env
 
 
@@ -1292,7 +1305,8 @@ def configure_idle(payload):
     bwrap = None
     if payload.get("sandbox") and not platform_machine:
         bwrap = sandbox_tools(None, platform_machine=False)
-    with prepared(payload, Path.home(), refresh_runtime=True) as (
+    disk = {}
+    with prepared(payload, Path.home(), refresh_runtime=True, disk=disk) as (
         home,
         config,
         state,
@@ -1316,7 +1330,11 @@ def configure_idle(payload):
                 # Held: a predecessor is coming up, and one started over it dies.
                 info = predecessor(release)["await_predecessor"](state, runtime)
             if info:
-                runtime["request"](state, "configure", {"env": scoped_env})
+                runtime["request"](
+                    state,
+                    "configure",
+                    {"env": scoped_env, "env_reset": config["env_reset"]},
+                )
                 if payload.get("environment"):
                     runner = runpy.run_path(str(release / "cheese-environment.py"))
                     info["environment_status"] = runner["read_status"](
@@ -1328,6 +1346,7 @@ def configure_idle(payload):
                             **info,
                             "mcp_servers": process_servers(config),
                             "state": str(recorded),
+                            **disk,
                         }
                     )
                 )
@@ -1355,7 +1374,7 @@ def configure_idle(payload):
                     bwrap = sandbox_tools(release, platform_machine=True)
                 record_sandbox(Path.home(), home, release)
                 # WSL runs a Windows program through this socket, outside every
-                # sandbox; the directory it is in is hidden too (`HIDDEN_MOUNTS`).
+                # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
                 directory = Path(runtime["socket_directory"](state))
                 # The service makes this link in the /tmp it is shown, which is
@@ -1430,6 +1449,7 @@ def configure_idle(payload):
                     "workspace": str(work),
                     "mcp_servers": process_servers(config),
                     "state": str(recorded),
+                    **disk,
                 }
             )
         )

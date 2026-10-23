@@ -2,7 +2,7 @@ import { t } from '@/i18n'
 
 // Provider names are brand names; only the Chinese brands differ by language.
 const NAMES: Record<string, () => string> = {
-  github: () => 'GitHub',
+  github_app: () => 'GitHub',
   google: () => 'Google',
   microsoft: () => 'Microsoft',
   qq: () => 'QQ',
@@ -16,7 +16,7 @@ export function oauthProviderName(id: string): string {
 }
 
 const ICONS: Record<string, string> = {
-  github: 'mdi-github',
+  github_app: 'mdi-github',
   google: 'mdi-google',
   microsoft: 'mdi-microsoft',
   qq: 'mdi-qqchat',

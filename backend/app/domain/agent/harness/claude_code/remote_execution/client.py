@@ -1,4 +1,10 @@
-"""Central session configuration and transport to an assigned executor."""
+"""Central session configuration and transport to an assigned executor.
+
+The three parts it used to hold and imports from beside itself: the shell
+prefix the build's commands run through (`shell_prefix.py`), the namespace a
+session is entered into (`namespace.py`), and the files a turn hands a person
+(`send_user_file.py`).
+"""
 
 from __future__ import annotations
 
@@ -14,46 +20,42 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 
 import argparse
 import base64
-import contextlib
-import ctypes
 import functools
 import hashlib
 import io
 import json
-import logging
 import os
-import re
 import shlex
-import shutil
 import signal
-import stat
 import subprocess
 import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 if __package__:
     from app.domain.agent.executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
         dial_runner,
         failure_text,
-        read_file_on_the_machine,  # noqa: F401 — re-export: tests call it through this module
         session_path,
         session_servers,
-        stat_file_on_the_machine,  # noqa: F401 — re-export: tests call it through this module
-        to_machine,
+        tool_answer,
     )
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
+    )
+    from app.domain.agent.harness.claude_code.remote_execution.namespace import (
+        enter,
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         EXECUTION_CONFIG,
@@ -66,39 +68,44 @@ if __package__:
         platform_tool_names,
         take_view,
         touch_skills,
+        write_claude_state,
     )
-    from app.domain.agent.harness.claude_code.remote_execution.send_user_file import (  # noqa: F401
-        MAX_SEND_USER_FILE_BYTES,
+    from app.domain.agent.harness.claude_code.remote_execution.send_user_file import (
+        chat_send_attachments,
         deliver_send_user_file,
-        send_user_file_body,
-        send_user_file_entry,
-        send_user_file_paths,
+    )
+    from app.domain.agent.harness.claude_code.remote_execution.shell_prefix import (
+        run_in_place,
+        shell,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
-        CAUGHT,
-        KILL,
-        current_target,
         deliver_stop,
-        start_watcher,
+    )
+    from app.domain.agent.harness.driven.mcp_gateway import (
+        PORT_ENV,
+        SECRET_ENV,
+        SECRET_HEADER,
+        STARTUP_S,
+        Gateway,
     )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
+    sys.path.append(str(Path(__file__).resolve().parents[2] / "driven"))
     from executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
         SESSION_SOCKET,
+        WORKING_DIRECTORY,
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
         dial_runner,
         failure_text,
-        read_file_on_the_machine,  # noqa: F401 — re-export: tests call it through this module
         session_path,
         session_servers,
-        stat_file_on_the_machine,  # noqa: F401 — re-export: tests call it through this module
-        to_machine,
+        tool_answer,
     )
 
     # Its siblings sit beside it, which a script run has first on sys.path and
@@ -106,6 +113,14 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
+    from mcp_gateway import (  # pyright: ignore[reportMissingImports] — ships beside
+        PORT_ENV,
+        SECRET_ENV,
+        SECRET_HEADER,
+        STARTUP_S,
+        Gateway,
+    )
+    from namespace import enter
     from release import (
         EXECUTION_CONFIG,
         allow_native_tools,
@@ -117,17 +132,21 @@ else:
         platform_tool_names,
         take_view,
         touch_skills,
+        write_claude_state,
     )
-    from send_user_file import (  # noqa: F401
-        MAX_SEND_USER_FILE_BYTES,
-        deliver_send_user_file,
-        send_user_file_body,
-        send_user_file_entry,
-        send_user_file_paths,
-    )
-    from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
+    from send_user_file import chat_send_attachments, deliver_send_user_file
+    from shell_prefix import run_in_place, shell
+    from shell_stop import deliver_stop
 
 PINNED_VERSION = "2.1.299"
+# How long a request to the runner may take before the session's own helper
+# gives up on it (`compact`). The runner answers at once — the compaction it
+# then writes runs for minutes and is not waited for — so this is only the
+# socket's own patience.
+RUNNER_REQUEST_S = 30.0
+# The preload the device launch hands the build in BUN_OPTIONS
+# (`device_launch.py`); a private chat's WebFetch depends on it.
+PAGE_TRANSPORT = "webfetch_transport.cjs"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -137,41 +156,6 @@ NATIVE_TOOLS = (
     "Write",
     "NotebookEdit",
 )
-# What the build adds to its shell children's environment, forwarded to a
-# command on the executor because a native session there would set the same.
-# Nothing else of this host's environment leaves it — its credentials are in
-# there — and the build's messaging socket and its token name a process on
-# this host, so they stay too.
-FORWARDED_ENV = (
-    "AI_AGENT",
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "COREPACK_ENABLE_AUTO_PIN",
-    "GIT_EDITOR",
-    "NoDefaultCurrentDirectoryInExePath",
-)
-# The build wraps each Bash command as
-# `source <snapshot> 2>/dev/null || true && <options> && eval '<command>'
-# < /dev/null && pwd -P >| <tmp>/claude-<hex>-cwd`. The snapshot is of this
-# host's shell and the cwd file is where the build learns the new directory,
-# so the executor swaps in its own snapshot and file, and the prefix copies
-# the directory back.
-_SNAPSHOT = re.compile(r"source ('(?:[^']|'\\'')*'|\S+) 2>/dev/null \|\| true && ")
-_CWD_FILE = re.compile(r" && pwd -P >\| ('(?:[^']|'\\'')*'|\S+)\Z")
-# The stdin a hook command may carry to the executor, and the output a command
-# may write onto this host (the build persists what it is handed).
-SHELL_INPUT_BYTES = 16 * 1024 * 1024
-SHELL_OUTPUT_BYTES = 256 * 1024 * 1024
-# How long a command that never started keeps being retried across a dropped
-# link before the machine is reported out of reach; how long a reader keeps
-# retrying an executor that answers, but with an error, before giving it up.
-# Retries are hand-written, not tenacity: this ships stdlib-only (`release.sources`).
-SHELL_START_RETRY_S = 60.0
-SHELL_ERROR_RETRY_S = 60.0
-SHELL_READ_RETRY_S = (0.5, 5.0)  # first and longest wait between read retries
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
@@ -228,12 +212,41 @@ def reply_hook(payload: dict) -> dict | None:
     return {"decision": "block", "reason": reason} if reason else None
 
 
+def checkpoint_turn() -> str | None:
+    """The work id of the turn whose checkpoint this is: the runner's answer on
+    the socket it gave this session. None when there is no runner to ask, which
+    ends with the sync reported as a platform line instead of a turn's step."""
+    path = os.environ.get(SESSION_SOCKET)
+    if not path:
+        return None
+    try:
+        with dial_runner(path, 10) as connection:
+            connection.sendall(
+                json.dumps({"method": "checkpoint_turn", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+    except (OSError, ValueError):
+        return None
+    work = (answer.get("result") or {}).get("work_id")
+    return str(work) if work else None
+
+
 def cheese_source() -> Path:
     """The platform tool table: shipped beside this helper, or the checkout's."""
     shipped = Path(__file__).with_name("cheese.py")
     if shipped.is_file():
         return shipped
     return Path(__file__).resolve().parents[6] / "sandbox/cheese"
+
+
+# `WORKING_DIRECTORY` — the fixed name this session's working directory also
+# goes by — is imported from `executor_transport`: the name and the way its value
+# crosses to the executor are one thing to that module, not a second declaration
+# here. The line is told about it in its prompt
+# (`harness.prompt.WORKING_DIRECTORY`), and the shell prefix binds it in the
+# command's own shell (`shell_prefix.bind_working_directory`): it is set on this
+# process so the prefix can read it, and deliberately not exported to the
+# executor, where a native session has no such variable.
 
 
 def prepare(
@@ -257,10 +270,10 @@ def prepare(
     if target.get("kind") == "private":
         if __package__:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from .private import ensure
+            from .private import ensure, webfetch_egress
         else:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from private import ensure
+            from private import ensure, webfetch_egress
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -315,11 +328,34 @@ def prepare(
         seen = placeholder if at_placeholder else info["workspace"]
         if not at_placeholder:
             workspace = Path(info["workspace"])
-    carry_conversation(config, extra_args, seen)
+    # Where the session starts — and what `$T` stands for. A task's session
+    # starts in its own checkout, which is only opened once the machine that
+    # holds the project is at hand: a placeholder session keeps the project
+    # view (there is no checkout to open yet), and takes its checkout when the
+    # platform relaunches it onto the machine (`_take_leased_machine`).
+    start = seen
+    if (
+        not unavailable
+        and not at_placeholder
+        and target.get("kind") != "private"
+        and os.environ.get("CHEESE_TOPIC")
+    ):
+        working = client.working_directory()
+        if working and working != info["workspace"]:
+            start = working if local else session_path(working)
+    # Taking the machine's hands (`acquire`) keeps the credential beside the
+    # target when there is no token file yet; it must not travel inside the
+    # target this writes, nor into the plugin built from it.
+    target.pop("execution_token", None)
+    carry_conversation(config, extra_args, start)
     target = dict(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # Where the session itself starts, when that is not where it sees the
+        # project: a task's session starts in its checkout (`enter` makes the
+        # directory there before it chdirs, so the view stays where it was).
+        start_directory=start,
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
@@ -450,20 +486,7 @@ def prepare(
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
-    gates = {
-        "hasCompletedOnboarding": True,
-        "autoUpdates": False,
-        "bypassPermissionsModeAccepted": True,
-        "projects": {
-            seen: {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
-        },
-    }
-    gate_file = config / ".claude.json"
-    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
-    gate_file.write_text(json.dumps({**previous, **gates}))
+    write_claude_state(config, start)
     servers = {
         "native": {
             "type": "stdio",
@@ -471,20 +494,29 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    # The machine's stdio servers, the type's and the remote ones share one
-    # bridge; `RemoteClient.call` sends each where it is served.
-    bridged = session_servers(target)
-    for name in bridged:
+    # The project's servers — the machine's commands, the type's and the remote
+    # ones — are Claude Code's own HTTP servers, all at this session's gateway
+    # (`with_gateway`), which sends each call where the server is served. The
+    # address and the secret are the gateway's, known only once it listens,
+    # so the file names them by the variables the launch sets.
+    for name in session_servers(target):
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
-            "type": "stdio",
-            "command": helper[0],
-            "args": [*helper[1:], "bridge", str(target_path), name],
+            "type": "http",
+            "url": f"http://127.0.0.1:${{{PORT_ENV}}}/mcp/{quote(name, safe='')}",
+            "headers": {SECRET_HEADER: f"${{{SECRET_ENV}}}"},
         }
     (directory / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     env = {
         "HOME": str(home),
+        # The same short name in every session, and this session's own project
+        # under it: what the line can type instead of the path it would
+        # otherwise spell out in every Bash command. It stays on this host — the
+        # shell prefix reads it here and binds it in each command's shell
+        # (`shell_prefix.bind_working_directory`); the executor's environment is
+        # what a native session there would have, with no such variable.
+        WORKING_DIRECTORY: start,
         "CLAUDE_CONFIG_DIR": str(config),
         "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
         "DISABLE_AUTOUPDATER": "1",
@@ -497,6 +529,7 @@ def prepare(
         "ENABLE_TOOL_SEARCH": "false",
         EXECUTION_CONFIG: str(target_path),
         "CLAUDE_CODE_TMPDIR": str(temporary),
+        "MCP_TIMEOUT": str(STARTUP_S * 1000),
     }
     prefix = directory / "shell-prefix"
     local_commands = {
@@ -509,9 +542,6 @@ def prepare(
     local_commands.update(
         shlex.join([*helper, mode, str(target_path)])
         for mode in ("guard", "context", "checkpoint", "transport", "reply")
-    )
-    local_commands.update(
-        shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
     )
     # Match complete trusted commands; appended shell syntax takes the usual route.
     dispatch = (
@@ -552,19 +582,23 @@ def prepare(
     if target.get("kind") == "private":
         # Subagents and arbitrary plugins must not create another local execution
         # route around the proxy. Skills shipped by the platform remain available.
-        command.extend(
-            [
-                "--disallowedTools",
-                "Agent,Task,WebFetch,WebSearch,EnterWorktree,ExitWorktree",
-            ]
-        )
+        # WebSearch runs at the model's provider, so it opens no route here.
+        # WebFetch reads the page from this host, so it is let in only where the
+        # transport preload will send that read through the chat's egress proxy;
+        # without the preload it would leave by the host's own network.
+        refused = ["Agent", "Task", "EnterWorktree", "ExitWorktree"]
+        if PAGE_TRANSPORT in os.environ.get("BUN_OPTIONS", ""):
+            env["CHEESE_WEBFETCH_EGRESS"] = webfetch_egress()
+        else:
+            refused.append("WebFetch")
+        command.extend(["--disallowedTools", ",".join(refused)])
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
         "command": command if local else [*helper, "enter", str(target_path), *command],
         "env": env,
-        "cwd": seen if local else str(workspace),
-        "workspace": seen,
+        "cwd": start if local else str(workspace),
+        "workspace": start,
         "execution": str(target_path),
     }
     (directory / "launch.json").write_text(json.dumps(launch))
@@ -681,491 +715,6 @@ def sync_context(target_path, supplied_tree=None):
     return snapshot
 
 
-def _same_file(first, second):
-    try:
-        a, b = os.fstat(first), os.fstat(second)
-    except OSError:
-        return False
-    return stat.S_ISREG(a.st_mode) and (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
-
-
-def _write_all(fd, data):
-    view = memoryview(data)
-    while view:
-        view = view[os.write(fd, view) :]
-
-
-def run_in_place(argv, env=None):
-    """Run argv as this process: exec it, where there is exec.
-
-    Windows has none. Its os.exec* starts a new process and ends this one, and
-    whoever waits on this one — the runner on its agent, Claude Code on a
-    command — takes the program for ended while it runs on, outside the tree
-    that is ended with the session. There it runs as a child, on the handles
-    this process holds, and this process ends the way it ended."""
-    if sys.platform != "win32":
-        if env is None:
-            os.execvp(argv[0], argv)
-        os.execvpe(argv[0], argv, env)
-    path = (env if env is not None else os.environ).get("PATH")
-    program = shutil.which(argv[0], path=path) or argv[0]
-    try:
-        code = subprocess.call([program, *argv[1:]], env=env)
-    except KeyboardInterrupt:
-        code = 130
-    raise SystemExit(code)
-
-
-def _under(path, root):
-    return bool(root) and (path == root or path.startswith(root + "/"))
-
-
-def shell(target_path, command):
-    """One command the build hands its shell prefix: run where it belongs.
-
-    A platform command this host trusts, matched whole, runs here. Anything
-    else runs on the executor, and this process stands in for it towards the
-    build: it prints what the command prints as it prints it, ends when it
-    ends and the way it ended, passes on a signal the build sends it, and for
-    a Bash command tells the build which directory the shell ended in. The
-    command itself is the executor's, not this process's: a dropped link only
-    pauses the reading, and the reader picks up at the byte it had reached.
-    """
-    target = json.loads(Path(target_path).read_text())
-    words = shlex.split(command)
-    helper = str(Path(__file__).resolve())
-    # Only the platform's own transport and guard run on the central host.
-    if (
-        len(words) >= 4
-        and words[:2] == [sys.executable, helper]
-        and words[2]
-        in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
-        and words[3] == str(target_path)
-    ):
-        run_in_place(words)
-    commands = {
-        hook["command"]
-        for groups in target.get("central_hooks", {}).values()
-        for group in groups
-        for hook in group.get("hooks", [])
-        if hook.get("type") == "command"
-    }
-    if command in commands:
-        run_in_place(["sh", "-c", command])
-    # The build hands this process's stdout and stderr to the command: they
-    # are the command's output, and nothing of the platform's may be in them.
-    # What the transport logs on its way through a retry (a 409 while the
-    # device reconnects, say) goes to this session's own log instead. Only a
-    # command that could not run at all says so there, in the platform's words.
-    logging.basicConfig(
-        filename=str(Path(target_path).parent / "shell-prefix.log"),
-        format="%(asctime)s %(process)d %(levelname)s %(message)s",
-        level=logging.INFO,
-    )
-    return run_on_the_machine(target, command)
-
-
-def skill_places(target):
-    """Where the executor holds each skill the session names by an entry that
-    is not the project's root skill of that name: a subdirectory's, and one
-    written without its `paths` (`release.SKILL_PLACES`)."""
-    path = Path(target.get("target_file", "")).parent / "skill-places.json"
-    try:
-        places = json.loads(path.read_text())["places"]
-    except (OSError, ValueError, KeyError):
-        return {}
-    return {name: place["place"] for name, place in places.items()}
-
-
-def skill_paths(target, text):
-    """`text` with each skill file named in the session's config dir named
-    where the executor holds it: a project skill in the project's
-    `.claude/skills`, one the platform shipped in the executor's config dir.
-    `proxy.js` `skillPath` is the same mapping, for the file tools."""
-    skills = target["central_config"] + "/skills/"
-    project = session_path(target["workspace"]) + "/.claude/skills/"
-    shipped = set(target.get("shipped_skills") or [])
-    executor = target.get("executor_config")
-    places = skill_places(target)
-
-    def place(match):
-        name = match.group(1)
-        if name in places:
-            return places[name]
-        if name in shipped:
-            return f"{executor}/skills/{name}" if executor else match.group(0)
-        return project + name
-
-    return re.sub(re.escape(skills) + r"([^/\s'\"`]+)", place, text)
-
-
-def run_on_the_machine(target, command):
-    # The session sees the project at the executor's own path, so a command and
-    # its directory need no respelling. Its skills are the one thing the build
-    # reads from this host's config directory (`link_forwarded_user_context`),
-    # where the executor has none: a command naming a skill's file names it in
-    # the project. A session in a directory of its own names the executor's.
-    def outward(text):
-        seen = target.get("virtual_workspace")
-        text = to_machine(text, seen, target["workspace"]) if seen else text
-        return skill_paths(target, text)
-
-    cwd = os.getcwd()
-    head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
-    bash = tail is not None
-    if bash:
-        # A Bash tool command: the executor wraps its body with its own
-        # snapshot and cwd file. Its stdin is `/dev/null` by construction.
-        body = command[head.end() if head else 0 : tail.start()]
-        stdin = None
-    else:
-        # A hook: its input arrives on stdin, spelled for this host.
-        body = command
-        data = b""
-        with os.fdopen(os.dup(0), "rb") as source:
-            data = source.read(SHELL_INPUT_BYTES + 1)
-        if len(data) > SHELL_INPUT_BYTES:
-            raise SystemExit("Hook input is over the executor's limit")
-        stdin = base64.b64encode(
-            outward(data.decode("utf-8", "surrogateescape")).encode(
-                "utf-8", "surrogateescape"
-            )
-        ).decode()
-    env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
-    if "CLAUDE_PROJECT_DIR" in os.environ:
-        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
-    merge = _same_file(1, 2)
-    command_id = "shell-" + uuid.uuid4().hex
-    client = RemoteClient(target)
-
-    def call(operation, **params):
-        return client.call(
-            "control",
-            {
-                "subtype": "shell",
-                "operation": operation,
-                "command_id": command_id,
-                **params,
-            },
-            preparing=sys.stderr if bash else None,  # a hook's stderr is its answer
-        )
-
-    # A stop has to reach the command even when this process does not live to
-    # send it: the build follows its TERM with a KILL about a second later, and
-    # a command whose start was still on its way would otherwise run on with
-    # nobody left to stop it. So a watcher that outlives this process delivers
-    # it (`shell_stop.deliver_stop`), told through a pipe: `stop <n>` when the
-    # build asks, `done` when the command has ended, and nothing — the pipe
-    # closing — when this process was killed first.
-    watcher = start_watcher(target, command_id)
-
-    def on_signal(number, _frame):
-        with contextlib.suppress(OSError):
-            os.write(watcher, f"stop {number}\n".encode())
-
-    for number in CAUGHT:
-        signal.signal(number, on_signal)
-
-    # Started once, whatever it takes: the id makes a retried start the same start.
-    deadline = time.monotonic() + SHELL_START_RETRY_S
-    while True:
-        try:
-            call(
-                "start",
-                kind="bash" if bash else "sh",
-                body=outward(body),
-                cwd=cwd,
-                env=env,
-                merge=merge,
-                stdin=stdin,
-            )
-            break
-        except MachineOutOfReach:
-            if target.get("kind") == "unavailable" or time.monotonic() > deadline:
-                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
-                return 1
-        except (OSError, TimeoutError):
-            if time.monotonic() > deadline:
-                sys.stderr.write(MACHINE_OUT_OF_REACH + "\n")
-                return 1
-        except RuntimeError as exc:
-            if "upgrading" not in str(exc) or time.monotonic() > deadline:
-                sys.stderr.write(f"{exc}\n")
-                return 1
-        time.sleep(1)
-    offsets = {"out": 0, "err": 0}
-    written = 0
-    failing_since, delay = None, SHELL_READ_RETRY_S[0]
-    answer = {}
-    while True:
-        try:
-            answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
-            failing_since, delay = None, SHELL_READ_RETRY_S[0]
-        except Exception as exc:  # noqa: BLE001 — the command outlives the link
-            link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
-            failing_since = failing_since or time.monotonic()
-            if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
-                sys.stderr.write(f"{exc}\n")
-                return 1
-            client = RemoteClient(current_target(target))
-            time.sleep(delay)
-            delay = min(delay * 2, SHELL_READ_RETRY_S[1])
-            continue
-        if answer.get("lost"):
-            sys.stderr.write(
-                "The command's executor restarted; its outcome is unknown\n"
-            )
-            return 1
-        for stream, fd in (("out", 1), ("err", 2)):
-            data = base64.b64decode(answer.get(stream) or "")
-            offsets[stream] += len(data)
-            written += len(data)
-            if written > SHELL_OUTPUT_BYTES:
-                with contextlib.suppress(Exception):
-                    call("signal", signal=KILL)
-                sys.stderr.write(
-                    f"\nOutput passed {SHELL_OUTPUT_BYTES // (1024 * 1024)} MiB; "
-                    "the command was stopped.\n"
-                )
-                return 1
-            _write_all(fd, data)
-        if "exit" in answer:
-            break
-    for number in CAUGHT:
-        signal.signal(number, signal.SIG_IGN)
-    with contextlib.suppress(OSError):
-        os.write(watcher, b"done\n")
-    if bash and "cwd" in answer:
-        _report_directory(target, client, answer["cwd"], tail.group(1))
-    with contextlib.suppress(Exception):
-        call("forget")
-    code = answer["exit"]
-    if code < 0 and sys.platform == "win32":
-        # No signal to end with here: the shell's way of saying it, 128 + n.
-        return 128 - code
-    if code < 0:
-        # Killed by a signal there: end the same way here, as the shell the
-        # build started would have.
-        # SIGKILL's disposition cannot be set, and needs no resetting.
-        with contextlib.suppress(OSError, ValueError):
-            signal.signal(-code, signal.SIG_DFL)
-        os.kill(os.getpid(), -code)
-    return code
-
-
-def _report_directory(target, client, final, spelled):
-    """Tell the build which directory the command's shell ended in.
-
-    The build reads it from the cwd file it named and keeps it only if the
-    directory exists here. A directory in the workspace does, at the same path,
-    in the session's view of the project. One outside the workspace is
-    reported as `/`, which the build answers exactly as a native session does:
-    it resets to the workspace root and says so.
-    """
-    path = Path(shlex.split(spelled)[0])
-    temporary = os.environ.get("CLAUDE_CODE_TMPDIR")
-    # Only the cwd file the build itself chose: a hook shaped like a Bash
-    # command must not steer this write anywhere else on this host.
-    if (
-        not temporary
-        or path.parent != Path(temporary)
-        or not re.fullmatch(r"claude-[0-9a-f]+-cwd", path.name)
-    ):
-        return
-    # A session started before its machine was rented sees the project at a
-    # placeholder until it is relaunched on the machine (`_take_leased_machine`);
-    # the lease (`RemoteClient.call`) points its commands at the machine's
-    # workspace meanwhile.
-    machine = session_path(client.config["workspace"])
-    seen = session_path(client.config.get("virtual_workspace", machine))
-    final = final[:4096]
-    if _under(final, machine):
-        spelled_here = seen + final[len(machine) :]
-        if target.get("kind") == "private" or (target.get("local") and seen != machine):
-            # A plain directory here: the private scratch view, an own session's.
-            Path(spelled_here).mkdir(parents=True, exist_ok=True)
-    else:
-        spelled_here = "/"
-    descriptor = os.open(
-        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
-    )
-    with os.fdopen(descriptor, "w") as output:
-        output.write(spelled_here + "\n")
-
-
-# The namespace the session runs in (`enter`): mount(2), umount2(2) and
-# pivot_root(2) flags and numbers, which the standard library does not name.
-_MS_NOSUID, _MS_NODEV = 2, 4
-_MS_BIND, _MS_REC, _MS_PRIVATE = 4096, 16384, 1 << 18
-_CLONE_NEWNS, _CLONE_NEWUSER = 0x00020000, 0x10000000
-_MNT_DETACH = 2
-_SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
-
-
-def enter(target_path, argv):
-    """Run the session with the project at the executor's own path.
-
-    Claude Code prints its working directory — in what it tells the model
-    about the session, in a refusal to run a command, when it resets the
-    shell's directory — and what it prints has to be what it prints running on
-    the executor. So the session gets a user and mount namespace of its own,
-    in which this host's view of the project is mounted at exactly the path
-    the executor holds it at, and runs there. Nothing else in it moves: every
-    other path is this host's own, bound into place. The directories made to
-    lead down to the project are the session's own: what is already in them
-    is this host's, and what the session creates directly in one (a socket in
-    `/tmp` when the project is under it) stays in the session, as in a private
-    `/tmp`.
-
-    A path that cannot be placed so is refused, loudly: one that is not an
-    absolute path, one under the kernel's own filesystems, and one that would
-    cover something the session itself needs.
-    """
-    target = json.loads(Path(target_path).read_text())
-    seen = target["session_workspace"]
-    view = target["central_workspace"]
-    program = shutil.which(argv[0])
-    if not program:
-        raise SystemExit(f"{argv[0]}: not found")
-    program = os.path.abspath(program)
-    needed = [
-        str(Path(target_path).parent),
-        target["central_config"],
-        target["central_tmp"],
-        os.environ.get("HOME", ""),
-        str(Path(__file__).resolve().parent),
-        sys.executable,
-        program,
-        view,
-    ]
-    problem = _unplaceable(seen, needed)
-    if problem:
-        raise SystemExit(
-            f"This session cannot see its project at {seen!r}, the executor's "
-            f"path: {problem}"
-        )
-    _place(seen, view, Path(target_path).parent / "namespace-root")
-    os.chdir(seen)
-    os.environ["PWD"] = seen
-    os.execv(program, argv)
-
-
-def _unplaceable(seen, needed):
-    """Why `seen` cannot hold the project in the session's namespace, or None."""
-    if sys.platform != "linux":
-        return "the session host must be Linux, for its user and mount namespaces"
-    if not seen.startswith("/") or seen.startswith("//"):
-        return "it is not an absolute path"
-    if os.path.normpath(seen) != seen or seen == "/":
-        return "it is not a normalized path below /"
-    if seen.split("/")[1] in ("proc", "sys", "dev"):
-        return "it is under a kernel filesystem"
-    for path in needed:
-        for spelled in {path, os.path.realpath(path)} if path else ():
-            if spelled == seen or spelled.startswith(seen + "/"):
-                return f"it would cover {spelled}, which the session needs"
-    return None
-
-
-def _place(seen, view, root):
-    """Enter a user and mount namespace whose root is this host's, with `view`
-    mounted at `seen`.
-
-    The new root is a tmpfs holding this host's top-level entries, each bound
-    into place. Every directory on the way down to `seen` is rebuilt the same
-    way, with its other entries bound in and the next one made anew, since an
-    unprivileged namespace can mount over a directory but not create one in a
-    directory it does not own. The user namespace maps this user to itself,
-    so files keep their owner, and the capabilities it grants end at exec.
-    """
-
-    libc = ctypes.CDLL(None, use_errno=True)
-
-    def check(result, what):
-        if result != 0:
-            number = ctypes.get_errno()
-            # OSError(errno, ...) is the subclass the errno names, so a source
-            # that vanished is a FileNotFoundError.
-            raise OSError(number, f"{what}: {os.strerror(number)}")
-
-    def mount(source, place, kind, flags, data=None):
-        check(
-            libc.mount(
-                source.encode() if source else None,
-                place.encode(),
-                kind.encode() if kind else None,
-                flags,
-                data.encode() if data else None,
-            ),
-            f"mount {place}",
-        )
-
-    uid, gid = os.getuid(), os.getgid()
-    root = str(root)
-    os.makedirs(root, exist_ok=True)
-    check(libc.unshare(_CLONE_NEWUSER | _CLONE_NEWNS), "unshare")
-    for name, value in (
-        ("setgroups", "deny"),
-        ("uid_map", f"{uid} {uid} 1"),
-        ("gid_map", f"{gid} {gid} 1"),
-    ):
-        with open(f"/proc/self/{name}", "w") as stream:
-            stream.write(value)
-    mount(None, "/", None, _MS_REC | _MS_PRIVATE)
-    # Bounded: it is memory, on the host every session runs on.
-    mount("tmpfs", root, "tmpfs", _MS_NOSUID | _MS_NODEV, "mode=755,size=64m")
-
-    def rebuild(real, copy, skip):
-        # A bind that is not recursive is refused in a user namespace when the
-        # directory has mounts under it, so every bind here is recursive.
-        for entry in os.scandir(real):
-            if entry.name == skip:
-                continue
-            place = os.path.join(copy, entry.name)
-            try:
-                if entry.is_symlink():
-                    os.symlink(os.readlink(entry.path), place)
-                    continue
-                if entry.is_dir(follow_symlinks=False):
-                    os.mkdir(place)
-                else:
-                    open(place, "w").close()
-                mount(entry.path, place, None, _MS_BIND | _MS_REC)
-            except FileNotFoundError:
-                # Gone since it was listed (a busy /tmp): not there to show.
-                if os.path.isdir(place) and not os.path.islink(place):
-                    os.rmdir(place)
-                elif os.path.lexists(place):
-                    os.unlink(place)
-
-    names = seen.strip("/").split("/")
-    real, copy = "/", root
-    for name in names:
-        if real is not None:
-            rebuild(real, copy, name)
-        copy = os.path.join(copy, name)
-        os.mkdir(copy)
-        below = os.path.join(real, name) if real is not None else None
-        # A directory reached through a symlink (`/lib` on a merged-/usr
-        # system) is rebuilt from where it leads, so nothing in it goes missing.
-        real = (
-            os.path.realpath(below)
-            if below is not None and os.path.isdir(below)
-            else None
-        )
-    mount(view, copy, None, _MS_BIND | _MS_REC)
-    old = os.path.join(root, ".host-root")
-    os.mkdir(old)
-    os.chdir(root)
-    number = _SYS_PIVOT_ROOT.get(os.uname().machine)
-    if number is None:
-        raise OSError(f"pivot_root: no syscall number for {os.uname().machine}")
-    check(libc.syscall(number, b".", b".host-root"), "pivot_root")
-    os.chdir("/")
-    check(libc.umount2(b"/.host-root", _MNT_DETACH), "umount /.host-root")
-    os.rmdir("/.host-root")
-
-
 def reached_skills(target_path, target, args):
     """A file tool reached a file on the executor: the session offers what
     Claude Code offers once one has (`release.touch_skills`). The tool's own
@@ -1182,7 +731,7 @@ def reached_skills(target_path, target, args):
             path,
             view=target.get("central_workspace"),
         )
-    except Exception as error:  # noqa: BLE001 — the call it followed succeeded
+    except Exception as error:  # the call it followed succeeded
         print(f"skills not updated after {path}: {error!r}", file=sys.stderr)
 
 
@@ -1251,13 +800,61 @@ def transport(config, target_path):
     # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
     doc_versions: dict[str, int] = {}
 
+    def compact_session() -> str:
+        """Ask this session's runner to compact its context (`/compact`).
+
+        The runner is this process's parent's runner, reached at the socket it
+        handed the session — the same door `register_project_hooks` and the
+        Stop hook use. The runner writes the command; it does not wait for it,
+        because a compaction of a long conversation runs for minutes."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask for a compaction"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "compact", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return "already" if (answer.get("result") or {}).get("already") else "requested"
+
+    def current_run() -> str | None:
+        """Which run of this session a platform call is made in, as its
+        runner names it (`runner.Runner.dispatch` ``run``), at the same door
+        `compact_session` uses."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask which run it is in"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "run", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return (answer.get("result") or {}).get("run")
+
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions)
+        host = PlatformHost(
+            client, invoke, call_id, doc_versions, current_run, compact_session
+        )
         try:
             text = cheese.run_platform_tool(tool, args, host)
-        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+        except Exception as exc:  # the agent reads the reason
             return {"error": failure_text(exc)}
-        return {"value": {"stdout": text, "stderr": ""}}
+        # Pictures the tool hands back (a mini-app's, as the platform ran it)
+        # travel as image blocks after the text, for `proxy.js` to pass on.
+        return {
+            "value": {"stdout": str(text), "stderr": ""},
+            "images": list(getattr(text, "images", ())),
+        }
 
     def handle(request):
         try:
@@ -1289,27 +886,6 @@ def transport(config, target_path):
                                     "session_id": {"type": "string"},
                                 },
                                 "required": ["id", "tool", "args", "session_id"],
-                            },
-                        },
-                        {
-                            "name": "project_tools",
-                            "description": (
-                                "Discover and call configured project MCP tools "
-                                "on the work machine. Omit server to discover; "
-                                "provide server to list tools; add name and "
-                                "arguments to call one. "
-                                "This acquires work equipment only when invoked."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "session_id": {"type": "string"},
-                                    "server": {"type": "string"},
-                                    "name": {"type": "string"},
-                                    "arguments": {"type": "object"},
-                                },
-                                "required": ["id", "session_id"],
                             },
                         },
                         {
@@ -1351,7 +927,9 @@ def transport(config, target_path):
                             },
                         },
                     ]
-                    + cheese.PLATFORM_TOOLS.schemas()
+                    # What this session's deployment offers: a tool behind a
+                    # switch it has not turned on is not on the list.
+                    + cheese.offered_tools()
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
@@ -1359,14 +937,17 @@ def transport(config, target_path):
                     "invoke",
                     "permission",
                     "send_user_file",
-                    "project_tools",
                 ) and (tool not in cheese.PLATFORM_TOOLS):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 # The arguments each of these takes, from the call's.
                 picked = {
-                    "chat_send": ("content", "reply_to", "request_id"),
-                    "project_tools": ("server", "name", "arguments"),
+                    "chat_send": (
+                        "content",
+                        "reply_to",
+                        "attachments",
+                        "request_id",
+                    ),
                 }
                 if tool in picked:
                     payload = {
@@ -1406,26 +987,21 @@ def transport(config, target_path):
                     with active_lock:
                         return request["id"] in cancelled
 
-                if tool == "project_tools":
-                    receipt = {
-                        "value": client.call(
-                            "project_tools",
-                            {**args, "id": payload["id"]},
-                            abandoned=abandoned,
-                            preparing=notice,
+                if tool == "chat_send":
+                    if args.get("attachments"):
+                        args = chat_send_attachments(
+                            client, config, args, invoke, payload
                         )
-                    }
+                    receipt = client.publish_message(payload, args)
                 elif tool == "send_user_file":
                     receipt = deliver_send_user_file(
                         client, config, payload, args, invoke
                     )
-                elif tool != "chat_send" and tool in cheese.PLATFORM_TOOLS:
+                elif tool in cheese.PLATFORM_TOOLS:
                     receipt = platform_tool(tool, args, payload["id"], invoke)
                 else:
                     receipt = (
-                        client.publish_message(payload, args)
-                        if tool == "chat_send"
-                        else client.permission(payload, args, notice)
+                        client.permission(payload, args, notice)
                         if tool == "permission"
                         else invoke(payload, args, abandoned)
                     )
@@ -1437,35 +1013,11 @@ def transport(config, target_path):
                         reached_skills(target_path, config, args)
                 if notice.getvalue():
                     outcome["context"] = [notice.getvalue().strip()]
-                image = outcome.get("result", {})
-                if isinstance(image, dict) and image.get("type") == "image":
-                    # Base64 in text hits Claude Code's MCP text-output limit.
-                    # Keep native Read metadata in text and pixels in an image block.
-                    image_file = image["file"]
-                    metadata = {k: v for k, v in image_file.items() if k != "base64"}
-                    outcome = {"result": {**image, "file": metadata}}
-                    value = {
-                        "content": [
-                            {"type": "text", "text": json.dumps(outcome)},
-                            {
-                                "type": "image",
-                                "data": image_file["base64"],
-                                "mimeType": image_file["type"],
-                            },
-                        ]
-                    }
-                else:
-                    encoded = json.dumps(outcome)
-                    if len(encoded) > 32_000:
-                        # MCP replaces large text with prose; the plugin needs
-                        # the original receipt, including API JSON and Edit state.
-                        receipts = Path(target_path).parent / "tool-results"
-                        receipts.mkdir(exist_ok=True, mode=0o700)
-                        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
-                        receipt_path.write_text(encoded)
-                        receipt_path.chmod(0o600)
-                        encoded = json.dumps({"receipt_path": str(receipt_path)})
-                    value = {"content": [{"type": "text", "text": encoded}]}
+                value = tool_answer(
+                    outcome,
+                    Path(target_path).parent / "tool-results",
+                    receipt.get("images", ()),
+                )
             elif method == "ping":
                 value = {}
             else:
@@ -1544,6 +1096,59 @@ def own_memory(config, call):
     return os.path.realpath(str(path)).startswith(memory)
 
 
+def gateway(config):
+    """Serve this session's MCP servers to its Claude Code (`mcp_gateway`).
+
+    Says where it listens on its first line, then lives as long as the process
+    that started it: the launch execs Claude Code in its place, so that is the
+    session, and a gateway outliving it would hold a port nobody reads."""
+    client = RemoteClient(config)
+    door = Gateway(
+        client.call,
+        lambda: session_servers(client.config),
+        observe=client.local_outcome,
+        on_close=client.local_closed,
+    )
+    door.start()
+    print(json.dumps({"port": door.port, "secret": door.secret}), flush=True)
+    parent = os.getppid()
+    while os.getppid() == parent:
+        time.sleep(1)
+    door.close()
+
+
+def start_gateway(target_path, env):
+    """Start the gateway the launch's `mcp.json` names: the launch's
+    environment with its address and secret, and its process (None for a
+    session with no project server). The process ends when its parent does."""
+    if not session_servers(json.loads(Path(target_path).read_text())):
+        return env, None
+    started = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "gateway", str(target_path)],
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    assert started.stdout is not None
+    line = started.stdout.readline()
+    started.stdout.close()
+    if not line:
+        started.wait()
+        # i18n-exempt: the launch's own failure, read in the runner's log
+        raise RuntimeError("The MCP gateway did not start")
+    where = json.loads(line)
+    return {
+        **env,
+        PORT_ENV: str(where["port"]),
+        SECRET_ENV: where["secret"],
+    }, started
+
+
+def with_gateway(target_path, env):
+    """The launch's environment, with its gateway started. The launch execs
+    Claude Code in this process's place, which so becomes the gateway's parent."""
+    return start_gateway(target_path, env)[0]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1551,7 +1156,7 @@ def main():
         choices=[
             "prepare",
             "launch",
-            "bridge",
+            "gateway",
             "guard",
             "context",
             "catch-up",
@@ -1580,20 +1185,8 @@ def main():
             # deferred-import: private scratch requires fcntl, absent on Windows
             from private import release
         release(config)
-    elif args.mode == "bridge":
-        # Remote servers and a type's own, whose definition rides each call.
-        remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
-        if config.get("kind") == "device" or args.args[0] in remote:
-            if __package__:
-                # deferred-import: runtime loads POSIX primitives and hashes its source
-                from .runtime import bridge
-            else:
-                # deferred-import: runtime loads POSIX primitives and hashes its source
-                from runtime import bridge
-            bridge(None, args.args[0], call=RemoteClient(config).call)
-        else:
-            command = RemoteClient(config).command("bridge", args.args[0])
-            run_in_place(command)
+    elif args.mode == "gateway":
+        gateway(config)
     elif args.mode == "checkpoint":
         payload = json.load(sys.stdin)
         transcript = Path(payload["transcript_path"])
@@ -1602,7 +1195,9 @@ def main():
                 json.dumps(payload, sort_keys=True) + str(transcript.stat().st_size)
             ).encode()
         ).hexdigest()
-        result = RemoteClient(config).checkpoint("checkpoint-" + identifier)
+        result = RemoteClient(config).checkpoint(
+            "checkpoint-" + identifier, turn=checkpoint_turn()
+        )
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "reply":
@@ -1649,7 +1244,10 @@ def main():
             workspace_override=os.environ["CHEESE_WORK"],
         )
         os.chdir(launch["cwd"])
-        run_in_place(launch["command"], dict(os.environ, **launch["env"]))
+        run_in_place(
+            launch["command"],
+            with_gateway(launch["execution"], dict(os.environ, **launch["env"])),
+        )
     elif args.mode == "context":
         sync_context(args.config)
     elif args.mode == "catch-up":
@@ -1666,7 +1264,7 @@ def main():
     elif args.mode == "prepare":
         print(json.dumps(prepare(args.args[0], config, extra_args=args.args[1:])))
     else:
-        env = dict(os.environ, **config["env"])
+        env = with_gateway(config["execution"], dict(os.environ, **config["env"]))
         os.chdir(config["cwd"])
         run_in_place(config["command"], env)
 

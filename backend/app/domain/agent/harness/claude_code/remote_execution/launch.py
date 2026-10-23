@@ -14,6 +14,7 @@ from app.domain.agent import (
     environment_runner,
     forge_cli,
     machine_tunnel,
+    package_mirrors,
     preview_tunnel,
     toolchain,
 )
@@ -119,7 +120,7 @@ def payload_for(
     project_id, resource_id, env, known_files=None, *, sandbox, platform_machine
 ):
     """What the executor is installed or prepared from. ``sandbox`` says
-    whether it runs in a sandbox of its own (`bootstrap.sandbox_argv`) or over
+    whether it runs in a sandbox of its own (`confinement.sandbox_argv`) or over
     the whole machine, as the room's access to that machine decides.
     ``platform_machine``: the platform provisioned the machine, so the install
     may add what a sandbox needs there and the sandbox gets a network and
@@ -146,6 +147,8 @@ def payload_for(
                 "swap_mb": settings.cloud_sandbox_swap_mb,
                 "cpus": settings.cloud_sandbox_cpus,
                 "pids": settings.cloud_sandbox_pids,
+                "disk_mib": settings.cloud_sandbox_disk_budget_gb * 10**9 >> 20,
+                "inodes": settings.cloud_sandbox_inode_budget,
             }
             if platform_machine
             else {"limits": None}
@@ -157,6 +160,11 @@ def payload_for(
         "resource": str(resource_id),
         "env": values,
         "environment": environment,
+        # Where this room's package downloads come from. The addresses travel
+        # here rather than through `env`, which is the *session's* environment:
+        # this is the platform's own policy for the machine, and the executor
+        # decides from it, on the machine, which mirrors answer (`bootstrap`).
+        "package_mirrors": package_mirrors.configuration(settings),
         # Carried as content, not as a release file: the agent's shell runs on
         # THIS machine, and the skill text it was handed names
         # `$CLAUDE_CONFIG_DIR/skills/...` — a path that only resolves here. The
@@ -215,12 +223,12 @@ def sandbox_check_script() -> str:
 def private_script(target: dict, env: dict) -> str:
     source = Path(private.__file__).read_text()
     return (
-        "import json\n"
+        "import json, os\n"
         f"scope = {{'__name__': 'cheese_private_executor'}}\nexec({source!r}, scope)\n"
         f"target = json.loads({json.dumps(target)!r})\n"
         f"env = json.loads({json.dumps(env)!r})\n"
         "from pathlib import Path\n"
-        "directory = Path(target['home'].replace('$HOME', str(Path.home())))\n"
+        "directory = Path(target['home'].replace('${CHEESE_PROFILE_ROOT:-.cheese}', os.environ.get('CHEESE_PROFILE_ROOT', '.cheese')).replace('$HOME', str(Path.home())))\n"
         "print(json.dumps(scope['ensure'](target, directory, env)))\n"
     )
 

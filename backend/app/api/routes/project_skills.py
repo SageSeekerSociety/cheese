@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
@@ -36,8 +37,8 @@ from app.core.sentences import say, with_keys
 from app.domain import skill_library as native_skills
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.staleness import announce_stale
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
@@ -56,11 +57,12 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.project_permissions import Permission
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.repo_to_skill import draft_chat, repo_to_skill
 from app.domain.project_skill.service import ProjectSkillService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["project-skills"])
@@ -169,23 +171,25 @@ async def _in_project(
 ) -> Actor:
     """A person in the project, or a teammate naming the room it speaks from."""
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
         await resolver.authorize_topic(
             actor, project_id=project_id, topic_id=topic, enforce=True
         )
         return actor
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     return actor
 
 
 async def _speaker(db: AsyncSession, actor: Actor, topic: uuid.UUID | None) -> str:
     if actor.authenticated or topic is None:
         return actor.handle
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     return await TopicMemberService(db).resolve_agent_handle(place.room_id)
 
 
@@ -257,12 +261,13 @@ async def _has_open_line(
     return any((meta or {}).get("state") != "over" for meta in rows)
 
 
-@router.post("/topics/{topic_id}/skills")
+@router.post("/topics/{topic_id}/skills", dependencies=[ROUTE_DECIDES])
 async def create_skill(
     topic_id: uuid.UUID, body: SkillIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _in_project(db, resolver, place.project_id, topic_id)
+    await require_role(db, actor, place.project_id, Permission.configure_agents)
     by_agent = not _is_person(actor)
     by = await _speaker(db, actor, topic_id)
     service = ProjectSkillService(db)
@@ -318,7 +323,7 @@ async def _person_in_project(
     return actor
 
 
-@router.post("/projects/{project_id}/skills")
+@router.post("/projects/{project_id}/skills", dependencies=[ROUTE_DECIDES])
 async def add_skill(
     project_id: uuid.UUID,
     body: PersonSkillIn,
@@ -330,7 +335,7 @@ async def add_skill(
     if body.imported:
         # What comes from outside reaches every later session and runs its
         # scripts on the work computer; the project's managers decide that.
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectSkillService(db)
     row = await service.create(
         project_id=project_id,
@@ -353,7 +358,9 @@ class ImportSource(BaseModel):
     url: str = ""
 
 
-@router.post("/projects/{project_id}/skills/import-preview")
+@router.post(
+    "/projects/{project_id}/skills/import-preview", dependencies=[ROUTE_DECIDES]
+)
 async def preview_import(
     project_id: uuid.UUID,
     body: ImportSource,
@@ -369,7 +376,7 @@ async def preview_import(
     so 「预览 → 保存」 downstream does not know the difference.
     """
     actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     if body.content:
         if len(body.content) > importer.MAX_TOTAL_BYTES * 4 // 3 + 4:
             raise ValidationError(say("skillImportTooLarge"))
@@ -443,7 +450,7 @@ async def get_skill(
     )
 
 
-@router.patch("/skills/{skill_id}")
+@router.patch("/skills/{skill_id}", dependencies=[ROUTE_DECIDES])
 async def update_skill(
     skill_id: uuid.UUID,
     body: SkillPatch,
@@ -452,6 +459,7 @@ async def update_skill(
     topic: uuid.UUID | None = None,
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, topic)
+    await require_role(db, actor, row.project_id, Permission.configure_agents)
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
     pending = row.state == "draft"
@@ -470,7 +478,7 @@ async def update_skill(
     if by_agent and topic is not None:
         # The card goes where the teammate was corrected: the person who just
         # corrected it decides there, as with a new skill.
-        room_id = (await TopicService(db).place_or_404(topic)).room_id
+        room_id = (await place_or_404(db, topic)).room_id
         row.source_topic_id = room_id
         if not await _has_open_line(db, room_id, row.id):
             edit = row.shipped_revision > 0
@@ -501,7 +509,7 @@ async def update_skill(
     return ok(_skill(row))
 
 
-@router.post("/skills/{skill_id}/confirm")
+@router.post("/skills/{skill_id}/confirm", dependencies=[ROUTE_DECIDES])
 async def confirm_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -530,13 +538,13 @@ async def confirm_skill(
     return ok(_skill(row))
 
 
-@router.post("/skills/{skill_id}/decline")
+@router.post("/skills/{skill_id}/decline", dependencies=[ROUTE_DECIDES])
 async def decline_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """A person turns a teammate's pending proposal down."""
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, say("skillDecline"))
+    _person(actor, say("skillDecline", agent=f"<@{row.proposed_by}>"))
     service = ProjectSkillService(db)
     row = await service.decline(row, by=actor.handle)
     await _settled(db, row, saved=False)
@@ -546,7 +554,9 @@ async def decline_skill(
     return ok(_skill(row))
 
 
-@router.post("/skills/{skill_id}/revisions/{revision}/restore")
+@router.post(
+    "/skills/{skill_id}/revisions/{revision}/restore", dependencies=[ROUTE_DECIDES]
+)
 async def restore_skill(
     skill_id: uuid.UUID, revision: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -563,7 +573,7 @@ async def restore_skill(
     return ok(_skill(row))
 
 
-@router.delete("/skills/{skill_id}")
+@router.delete("/skills/{skill_id}", dependencies=[ROUTE_DECIDES])
 async def delete_skill(
     skill_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -648,7 +658,7 @@ def _platform_catalog() -> list[dict]:
 async def list_topic_skills(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _in_project(db, resolver, place.project_id, topic_id)
     enabled = set(place.room.skills or [])
     items = [{**s, "enabled": s["name"] in enabled} for s in _platform_catalog()]
@@ -678,7 +688,7 @@ async def set_topic_skills(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _in_project(db, resolver, place.project_id, topic_id)
     # Only names the platform can actually hand this room: an unknown one would
     # ride the prompt as a promise nothing backs (`native_skill_bodies`).
@@ -743,7 +753,7 @@ async def _probe_wolfram() -> dict:
 async def skill_health(
     topic_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _in_project(db, resolver, place.project_id, topic_id)
     return await _skill_health(name)
 

@@ -9,7 +9,7 @@
     @close="close"
   >
     <router-view />
-    <!-- 只有「分类与话题」一栏往这里放东西：话题管理画在分类下面。 -->
+    <!-- Only the "categories and tags" tab fills this view: tag management renders below the categories. -->
     <router-view name="topics" />
   </IndexView>
 </template>
@@ -47,7 +47,6 @@ const SECTIONS = [
   { name: 'SpacesDetailSettingsInviteCodes', label: 'spaces.settings.tabs.inviteCodes', icon: 'mdi-ticket-outline' },
   { name: 'SpacesDetailSettingsDomainGroups', label: 'spaces.settings.tabs.domainGroups', icon: 'mdi-email-outline' },
   { name: 'SpacesDetailSettingsGuidance', label: 'spaces.settings.tabs.guidance', icon: 'mdi-robot-outline' },
-  { name: 'SpacesDetailSettingsMaterials', label: 'spaces.settings.tabs.materials', icon: 'mdi-folder-outline' },
 ]
 
 const groups = computed(() => [

@@ -2,7 +2,7 @@
 
 2026-10-11 报上来的症状是清单从「全空」到「全打勾」没有中间：写它的人在开工时写一次、
 收尾时再写一次，中间那 40 分钟没人动过它。工具说明当时只说「做完时再调用一次」——照着
-读就是收尾那一下。平台的兜底（`remind_stale_checklists`）会叫一轮补写，但说明本身不该
+读就是收尾那一下。平台的兜底（`QuietSessionReminders.checklist`）会叫在干活的会话补写，但说明本身不该
 把人往那个读法上带：这一条钉住的是那句话在。
 
 说明在 `sandbox/cheese` 里，它单独发版到机器上，import 不进测试进程，所以这里读字面
@@ -49,3 +49,11 @@ def test_the_room_rule_and_the_tool_agree_that_every_step_is_written() -> None:
 
     assert re.search(r"别只在开工和收尾两头写", TODO_WRITE)
     assert "每做完一步" in TODO_WRITE.replace("\n", "")
+
+
+def test_cheese_task_says_not_to_redo_work_that_is_already_a_task() -> None:
+    """已经在任务里时，不要再开一条做同一件事——这条写在工具自己的说明里，
+    因为 2026-10-21 的重复正是从这个工具被调用的那一刻发生的。"""
+    said = _description("cheese_task")
+    assert "已经在任务里" in said
+    assert "不要再开一条做同一件事" in said

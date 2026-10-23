@@ -12,6 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -121,6 +122,8 @@ async function press(el: Element, ms: number) {
 }
 
 const sheetItems = () => screen.queryAllByRole('menuitem')
+
+beforeAll(loadMarkdownReader)
 
 describe('触屏上消息的操作', () => {
   it('长按一条消息，打开它的操作面板；选回复，回复的就是这一条', async () => {

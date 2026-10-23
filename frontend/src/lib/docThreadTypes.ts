@@ -9,6 +9,22 @@ export interface DocComment {
   /** The words an opening comment is about, as they read when it was written. */
   anchor_quote: string | null
   created_at: string
+  /** The people its @s told. A name it @s is drawn as a mention only for them. */
+  notified?: string[]
+}
+
+/** The people a comment just written @s who cannot open the document, said to
+ *  its writer alone and never stored (the same shape a message's is). */
+export interface CommentOutside {
+  room_id: string
+  handles: string[]
+  may_add: boolean
+  members_only: boolean
+}
+
+/** What a comment or a reply comes back as to the person who wrote it. */
+export interface WrittenToWriter {
+  mentioned_outside?: CommentOutside
 }
 
 export interface DocThread {
@@ -32,7 +48,7 @@ export interface DocThreadActivity {
   tool?: string
 }
 export interface DocThreadActions {
-  reply: (id: string, content: string) => Promise<void>
+  reply: (id: string, content: string) => Promise<(DocThread & WrittenToWriter) | void>
   resolve: (id: string) => Promise<void>
   reopen: (id: string) => Promise<void>
   /** Send again the write whose outcome is unknown, or read the threads again. */

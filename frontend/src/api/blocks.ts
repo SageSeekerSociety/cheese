@@ -1,4 +1,5 @@
 import type { Block, ListPayload, ReactionAgg } from '../cx_types'
+import type { GroupAnswer } from '../lib/askGroups'
 
 import { rememberNumbered } from '../lib/addresses'
 
@@ -100,6 +101,26 @@ export function withdrawAnswer(questionId: string): Promise<Block> {
   return changesAwaiting(
     request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
       method: 'DELETE',
+    })
+  )
+}
+
+// 答案的形状住在 `lib/askGroups`：组件也要用它，而组件不引 API 层。
+export type { GroupAnswer } from '../lib/askGroups'
+
+/** 整组提交回了什么：落下的那一条消息，和几道题改完之后的样子。 */
+export interface AnswerGroupResult {
+  block: Block
+  questions: Block[]
+}
+
+// 一次答掉整组题。`questionId` 是组里任意一道；服务端按题上的组编号找出整组。
+// 房间里只多一条消息（正文逐题列出答案），一组里任何一题不合规就整组拒绝。
+export function answerGroup(questionId: string, answers: Record<string, GroupAnswer>): Promise<AnswerGroupResult> {
+  return changesAwaiting(
+    request<AnswerGroupResult>(`/blocks/${encodeURIComponent(questionId)}/answers`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
     })
   )
 }

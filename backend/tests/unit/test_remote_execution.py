@@ -206,6 +206,69 @@ def test_isolated_subagents_run_without_the_isolation_they_asked_for():
     """)
 
 
+def test_monitor_runs_a_command_under_the_bash_rules_and_never_a_websocket():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const asked = [];
+        const $ = {
+          session: {id: async () => 'session'},
+          env: {get: async () => undefined},
+          mcp: {call: async (server, name, params) => {
+            asked.push({server, name, tool: params.tool, args: params.args});
+            const deny = params.args.command.includes('forbidden') ? 'not here' : null;
+            const text = JSON.stringify({deny});
+            return {isError: false, content: [{type: 'text', text}]};
+          }},
+        };
+        const socket = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm0', description: 'events',
+          ws: {url: 'wss://example.com'}, timeout_ms: 1000,
+        }, () => {throw new Error('opened a socket on the session host')});
+        assert.match(socket.deny, /give it a command/);
+        const refused = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm1', description: 'ticks',
+          command: 'forbidden', timeout_ms: 1000,
+        }, () => {throw new Error('ran a command the project refuses')});
+        assert.equal(refused.deny, 'not here');
+        const watched = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm2', description: 'ticks',
+          command: 'echo tick', timeout_ms: 1000,
+        }, (event) => ({watched: event.command}));
+        assert.deepEqual(watched, {watched: 'echo tick'});
+        assert.deepEqual(asked.map(a => [a.name, a.tool, a.args.command]), [
+          ['permission', 'Bash', 'forbidden'], ['permission', 'Bash', 'echo tick'],
+        ]);
+    """)
+
+
+def test_the_session_config_seeds_the_flags_the_build_cannot_fetch(tmp_path):
+    from app.domain.agent.harness.claude_code.remote_execution.client import prepare
+    from app.domain.agent.harness.claude_code.remote_execution.release import (
+        SEEDED_FLAGS,
+    )
+
+    config = tmp_path / "config"
+    config.mkdir()
+    # What the build left from an earlier start: its own cache and state.
+    (config / ".claude.json").write_text(
+        json.dumps({"userID": "kept", "cachedGrowthBookFeatures": {"fetched": 1}})
+    )
+    prepare(
+        tmp_path,
+        {"kind": "unavailable", "workspace": "/unavailable-project"},
+        claude=claude_binary(),
+        config_override=config,
+    )
+    saved = json.loads((config / ".claude.json").read_text())
+    assert saved["userID"] == "kept"
+    assert saved["cachedGrowthBookFeatures"] == {"fetched": 1, **SEEDED_FLAGS}
+    assert saved["hasCompletedOnboarding"] is True
+
+
 def test_offline_work_does_not_prevent_session_bootstrap(tmp_path):
     from app.domain.agent.executor_transport import MachineOutOfReach, RemoteClient
     from app.domain.agent.harness.claude_code.remote_execution.client import (
@@ -297,6 +360,38 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
         receipt.result = {stdout: 'out', stderr: 'err'};
         assert.deepEqual(await handlers['tool.call'](api, call), {
           result: [{type: 'text', text: 'out'}, {type: 'text', text: 'err'}],
+        });
+    """)
+
+
+def test_a_platform_tools_pictures_reach_the_model_in_the_messages_api_shape():
+    """A mini-app's save hands back pictures after its text. The build gives
+    the plugin an MCP image block already in the Messages API's shape (seen on
+    2.1.299), and passes on what the plugin returns as it is."""
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const receipt = {result: {stdout: '已保存小程序 k1 的第 1 版。', stderr: ''}};
+        const api = {
+          session: {id: async () => 'session'},
+          env: {get: async () => undefined},
+          mcp: {call: async () => ({content: [
+            {type: 'text', text: JSON.stringify(receipt)},
+            {type: 'image', source: {type: 'base64', media_type: 'image/png',
+                                     data: 'd2lkZQ=='}},
+          ]})},
+        };
+        const call = {tool: 'mcp__native__cheese_app_save', tool_use_id: 'save',
+                      code: '<p>x</p>'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [
+            {type: 'text', text: '已保存小程序 k1 的第 1 版。'},
+            {type: 'image', source: {type: 'base64', media_type: 'image/png',
+                                     data: 'd2lkZQ=='}},
+          ],
         });
     """)
 
@@ -1494,12 +1589,12 @@ def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
     fallback.parent.mkdir(parents=True)
     fallback.write_text(binary.read_text())
     fallback.chmod(0o700)
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     binary.write_text("#!/bin/sh\necho '0.0.0'\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     assert binary.read_bytes() == fallback.read_bytes()
     fallback.write_text("#!/bin/sh\necho 0.0.0\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
 
 
 def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
@@ -1529,7 +1624,7 @@ def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
                 "import runpy, sys\n"
                 "from pathlib import Path\n"
                 "found = runpy.run_path(sys.argv[1])['binary']"
-                "(Path(sys.argv[2]), 'http://unused')\n"
+                "(Path(sys.argv[2]), 'http://unused', sys.argv[2])\n"
                 "print(found)\n",
                 bootstrap.__file__,
                 str(tmp_path),
@@ -1610,6 +1705,33 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertIn("executor-only-needle", result["stdout"])
         self.assertNotIn("session-host-decoy", result["stdout"])
 
+    def test_a_platform_command_can_name_its_own_variables(self):
+        """`checkpoint` tells the sync which turn it ends this way, and nothing
+        else can: a command from the model's own tools does not set one."""
+        named = runtime.request(
+            self.state,
+            "invoke",
+            {
+                "id": str(uuid.uuid4()),
+                "tool": "Bash",
+                "args": {
+                    "command": 'printf "%s" "$CHEESE_TURN"',
+                    "platform_env": {"CHEESE_TURN": "turn-1"},
+                },
+                "platform": True,
+            },
+        )["value"]
+        self.assertEqual(named["stdout"], "turn-1")
+
+        plain = self.invoke(
+            "Bash",
+            {
+                "command": 'printf "%s" "${CHEESE_TURN:-none}"',
+                "platform_env": {"CHEESE_TURN": "forged"},
+            },
+        )
+        self.assertEqual(plain["stdout"], "none")
+
     def test_native_files_and_rc_agree(self):
         target = self.workspace / "sample.txt"
         target.write_text("before\n")
@@ -1679,6 +1801,101 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(
             self.invoke("Bash", {"command": 'printf "$EXECUTOR_MARKER"'})["stdout"],
             "refreshed",
+        )
+
+    def test_a_configure_takes_back_a_name_it_governs_but_did_not_state(self):
+        # A mirror that stopped answering cannot be expressed by leaving its
+        # variable out: this adds to what the room has, so the room would go on
+        # exporting the dead address, and npm and the browser download have no
+        # second source to fall back to (`bootstrap`, `governed`).
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "dead"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "${UV_INDEX-unset}"'})[
+                "stdout"
+            ],
+            "dead",
+        )
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "${UV_INDEX-unset}"'})[
+                "stdout"
+            ],
+            "unset",
+        )
+        # Stated again is not taken back: an upgrade defers a configure and
+        # passes the room's previous environment through the reset list.
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "again"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "$UV_INDEX"'})["stdout"],
+            "again",
+        )
+
+    def test_a_configure_without_a_reset_list_removes_nothing(self):
+        # Every other sender of this request states an environment and nothing
+        # about names, and what it does not mention it does not touch.
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {
+                    "EXECUTOR_MARKER": "remote-environment",
+                    "PLAYWRIGHT_DOWNLOAD_HOST": "kept",
+                }
+            },
+        )
+        runtime.request(
+            self.state,
+            "configure",
+            {"env": {"EXECUTOR_MARKER": "remote-environment"}},
+        )
+        self.assertEqual(
+            self.invoke(
+                "Bash", {"command": 'printf "%s" "${PLAYWRIGHT_DOWNLOAD_HOST-unset}"'}
+            )["stdout"],
+            "kept",
+        )
+
+    def test_a_configure_leaves_a_value_the_room_filled_in_itself(self):
+        # These names reach a room two ways and only one of them is the
+        # platform's. A project's own index, or a machine's own registry, is in
+        # the environment the room's process starts with (`environment_runner`),
+        # which no prepare ever stated; the reset list names the address the
+        # policy would have put there, and this room's value is not that one.
+        self.stop()
+        with patch.dict(os.environ, {"UV_INDEX": "https://internal.test/simple"}):
+            self.start()
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment"},
+                "env_reset": {"UV_INDEX": "https://mirror.test/simple"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "$UV_INDEX"'})["stdout"],
+            "https://internal.test/simple",
         )
 
     def test_request_replay_does_not_repeat_write(self):

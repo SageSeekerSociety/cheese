@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { toast } from 'vuetify-sonner'
 
 import { useAdminQueue } from '@/composables/useAdminQueue'
 
+import { rewardFeedback } from '@/api/creditOffers'
+import { useFeedbackStore } from '@/stores/feedback'
 import AdminQueuePageView from '@/views/admin/AdminQueuePageView.vue'
 
 // 管理后台的反馈队列（`/admin/queue` 和 `/admin/feedback`，§4.1）。**这一页是这一轮的
@@ -92,6 +95,16 @@ const {
   focusSearch: () => viewRef.value?.focusSearch(),
   focusAssignee: () => viewRef.value?.focusAssignee(),
 })
+
+async function reward(id: string) {
+  try {
+    await rewardFeedback(id)
+    await useFeedbackStore().loadAdminDetail(id)
+    reload()
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
 </script>
 
 <template>
@@ -135,6 +148,7 @@ const {
     @update:detail-open="setDetailOpen"
     @update:triage-open="setTriageOpen"
     @triage="onDetailTriage"
+    @reward="reward"
     @assign="assign"
     @priority="setPriority"
     @security="setSecurity"

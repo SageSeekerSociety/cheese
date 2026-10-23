@@ -19,7 +19,7 @@
  * 单独一份文件：`catalogFixtures.ts` 已经九百多行，再加会顶到一千行的上限。条目在
  * `catalogPanels.ts`。
  */
-import type { Ref } from 'vue'
+import type { MaybeRef, Ref } from 'vue'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
@@ -30,10 +30,11 @@ import type { Block, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
 import type { DiffLine, FileDiff } from '@/lib/diff'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { Routine, RoutineRun } from '@/lib/routine'
+import type { SiteTurn } from '@/lib/siteLog'
 import type { AgentControlState } from '@/types/agentControl'
 import type { ThreadReply, ThreadRow } from '@/types/threads'
 
-import { computed, reactive, ref, shallowRef } from 'vue'
+import { computed, reactive, ref, shallowRef, unref } from 'vue'
 
 import { useDocPeople } from '@/composables/useDocPeople'
 
@@ -53,6 +54,7 @@ import { SCENES } from './scenes'
 import { buildFileRows } from '@/lib/changesTree'
 import { DIFF_WINDOW, parseDiffLines, splitDiffByFile } from '@/lib/diff'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, pageViewOf, suffixOf } from '@/lib/fileKind'
+import { groupByTurn } from '@/lib/siteLog'
 
 const SCENE = SCENES.quickstart
 
@@ -78,6 +80,69 @@ const DIFF_BY_PATH = CHANGES.diffByPath as Map<string, FileDiff>
 const TREE_FILES = CHANGES.treeFiles as WorkspaceFile[]
 /** 这一支活本身（「不在当前版本里」那一格列的就是它）。 */
 export const CHANGES_TASK = CHANGES.currentTask as RoomTask
+
+/** 改动那一格拆出来的三个面，各自吃的那一串 props：从同一支活（`CHANGES`）里挑它要
+ *  的键，值不另写一遍 —— 树、差异、打开着的那一份本来就是同一份数据切出来的。 */
+export const CHANGES_BAR_PROPS = {
+  openPath: CHANGES.openPath,
+  sourceStatus: CHANGES.sourceStatus,
+  fileDirty: CHANGES.fileDirty,
+  openDiff: CHANGES.openDiff,
+  openIsDocument: CHANGES.openIsDocument,
+  effectiveView: CHANGES.effectiveView,
+  fileReadOnly: CHANGES.fileReadOnly,
+  fileSaving: CHANGES.fileSaving,
+  currentTask: CHANGES.currentTask,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+}
+
+/** 打开着的那一份的正文（`ChangesFileContent`）。 */
+export const CHANGES_CONTENT_PROPS = {
+  openPath: CHANGES.openPath,
+  openIsDocument: CHANGES.openIsDocument,
+  docLoading: CHANGES.docLoading,
+  docBytes: CHANGES.docBytes,
+  docError: CHANGES.docError,
+  docRendererMissing: CHANGES.docRendererMissing,
+  openDocumentType: CHANGES.openDocumentType,
+  revs: CHANGES.revs,
+  revisionPath: CHANGES.revisionPath,
+  review: CHANGES.review,
+  canCompare: CHANGES.canCompare,
+  comparing: CHANGES.comparing,
+  comparison: CHANGES.comparison,
+  comparisonLoading: CHANGES.comparisonLoading,
+  comparisonError: CHANGES.comparisonError,
+  effectiveView: CHANGES.effectiveView,
+  openDiffLines: CHANGES.openDiffLines,
+  openIsImage: CHANGES.openIsImage,
+  openRawUrl: CHANGES.openRawUrl,
+  fileBinary: CHANGES.fileBinary,
+  fileTooLarge: CHANGES.fileTooLarge,
+  fileBytes: CHANGES.fileBytes,
+  fileDraft: CHANGES.fileDraft,
+  fileReadOnly: CHANGES.fileReadOnly,
+}
+
+/** 全部改动那一面（`ChangesAllView`）。树常驻那一档在这里是关的：树常驻 / 只在顶部
+ *  那块下面列几行，两种排法在目录里各有一格。 */
+export const CHANGES_ALL_PROPS = {
+  treeFiles: CHANGES.treeFiles,
+  diffByPath: CHANGES.diffByPath,
+  fileDiffs: CHANGES.fileDiffs,
+  treeShown: false,
+  currentTask: CHANGES.currentTask,
+  sourceStatus: CHANGES.sourceStatus,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+  summaryAll: false,
+  review: CHANGES.review,
+  /** 默认一段都不铺：先给「改了哪些文件」这一眼清单。 */
+  expanded: new Set<string>(),
+}
 
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
 export function diffLinesOf(path: string): DiffLine[] {
@@ -181,6 +246,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     loading: ref(v.loading),
     refreshing: ref(v.refreshing),
     errorMsg: ref(v.errorMsg),
+    liveFallback: ref(v.liveFallback),
     noRepo: ref(v.noRepo),
     fileDiffs: computed(() => v.fileDiffs),
     diffByPath: computed(() => v.diffByPath),
@@ -222,6 +288,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     comparisonError: ref(''),
     toggleCompare: noopAsync,
     loadAll: noopAsync,
+    retryLive: noopAsync,
     selectFile: noopAsync,
     closeFile: noop,
     selectVersion: noopAsync,
@@ -325,6 +392,8 @@ export function docBundle(
     ...over,
   }
   return {
+    linkable: ref([]),
+    backlinks: ref([]),
     session: shallowRef(v.session),
     connection: ref(v.connection),
     outdated: ref(false),
@@ -332,12 +401,25 @@ export function docBundle(
     renames: ref(0),
     peers: shallowRef(v.peers),
     readOnly: ref(v.readOnly),
+    suggestOnly: ref(false),
+    suggesting: computed(() => false),
+    setSuggesting: noop,
     editable: computed(() => v.editable),
     loading: computed(() => v.loading),
     errorMsg: computed(() => v.errorMsg),
     documentId: ref(null),
     suggestionReasons: ref({}),
     fetchSuggestionReasons: noopAsync,
+    notifiedMentions: ref([]),
+    fetchNotifiedMentions: noop,
+    mentionOutside: {
+      prompt: ref(null),
+      adding: ref(false),
+      names: (handles: string[]) => handles.join('、'),
+      offer: noop,
+      add: noopAsync,
+      dismiss: noop,
+    },
     commentAuthor: 'wang',
     sendComment: refuseWrite,
     askAgent: noopAsync,
@@ -356,6 +438,7 @@ export function docBundle(
     imageSrc: view.imageSrc,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
+    undoAgentChanges: refuseWrite,
   }
 }
 
@@ -375,11 +458,6 @@ export function docPeopleBundle() {
 }
 
 // ---- 现场 -------------------------------------------------------------------
-
-/** 第 2 步：芝士开了工作区、看了一眼、写了 README、提交推送 —— 一轮还在跑。 */
-export const SITE_WORKING = frame(2)
-/** 第 3 步：递了验收卡，这一轮收尾。 */
-export const SITE_DONE = frame(3)
 
 /** 会话栏那一包（`useSessionInspector` 的返回），停在「收着」。 */
 function inspectorBundle(state: AgentControlState | null): SessionInspectorBundle {
@@ -409,60 +487,40 @@ function inspectorBundle(state: AgentControlState | null): SessionInspectorBundl
 
 /** 现场那一包（`usePanelSite` 的返回）：手上这一窗就是剧本那一帧的 `site`。 */
 export function siteBundle(
-  over: { transcript?: Block[]; loading?: boolean; errorMsg?: string | null; connected?: boolean } = {}
+  over: {
+    transcript?: MaybeRef<Block[]>
+    loading?: boolean
+    errorMsg?: string | null
+    connected?: boolean
+    viewMode?: 'overview' | 'raw'
+  } = {}
 ): PanelSiteBundle {
-  const transcript = over.transcript ?? SITE_WORKING.site
-  const agents = [...new Set(transcript.filter((b) => b.meta?.tool).map((b) => b.author))]
+  const transcript = computed(() => unref(over.transcript) ?? SITE_RAW_RECORDS)
+  const mode = ref<'overview' | 'raw'>(over.viewMode ?? 'overview')
+  const selected = ref<string | null>(null)
+  const agents = computed(() => [...new Set(transcript.value.filter((b) => b.meta?.record).map((b) => b.author))])
   return {
     turnStarts: ref({}),
     scrollRef: ref(null),
-    overflowing: ref(new Set<string>()),
-    measured: ref(false),
-    measureClamp: noop,
-    agents: ref(agents),
-    viewing: computed(() => null),
-    transcript: ref(transcript),
+    agents,
+    viewing: computed(() => selected.value),
+    transcript: computed(() => transcript.value.filter((b) => selected.value === null || b.author === selected.value)),
     hasOlder: ref(false),
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
     onSiteScroll: noop,
     receive: noop,
-    selectAgent: noop,
+    selectAgent: (next) => {
+      selected.value = next
+    },
     inspector: inspectorBundle(over.connected ? { id: 'demo-session', connected: true, tasks: {} } : null),
-    loadStepOutput: async () => '',
+    loadImage: async () => '',
+    viewMode: mode,
+    selectView: (next) => {
+      mode.value = next
+    },
   }
-}
-
-/** 整段输出有多少字节（`SiteStepOutput` 的 `bytes` 说的就是这个）。 */
-function byteLength(text: string): number {
-  return new TextEncoder().encode(text).length
-}
-
-/** 一小段输出：`ls` 打印的就是工作区里那几样。 */
-const LS_OUTPUT = 'README.md\ndocs\n'
-export const LS_OUTPUT_BYTES = byteLength(LS_OUTPUT)
-export async function loadLsOutput(): Promise<string> {
-  return LS_OUTPUT
-}
-
-/** 一大段输出：一次构建把每个产物都报了一行，整段 48 KB 上下。 */
-const BUILD_LOG = (() => {
-  const lines = ['vite v7.1.4 building for production...', 'transforming...']
-  for (let i = 1; byteLength(lines.join('\n')) < 48 * 1024 - 64; i++) {
-    const kb = (((i * 37) % 900) + 12) / 10
-    lines.push(
-      `dist/assets/chunk-${String(i).padStart(4, '0')}.js   ${kb.toFixed(2)} kB │ gzip: ${(kb / 3).toFixed(2)} kB`
-    )
-  }
-  return `${lines.join('\n')}\n✓ built in 41.27s\n`
-})()
-export const BUILD_LOG_BYTES = byteLength(BUILD_LOG)
-/** 后端只留末尾 8 KiB，按 UTF-8 字节数，切断的半个字丢掉（`backend/app/domain/agent/step_output.py`
- *  的 `output_tail`）：取回来的就是那一截。 */
-export async function loadBuildTail(): Promise<string> {
-  const tail = new TextEncoder().encode(BUILD_LOG).slice(-8 * 1024)
-  return new TextDecoder().decode(tail).replace(/^\uFFFD+/, '')
 }
 
 // ---- 步骤清单 -----------------------------------------------------------------
@@ -526,29 +584,28 @@ export function threadTime(iso: string): string {
     : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
-// ---- 定时与触发 -------------------------------------------------------------------
+// ---- 例行事务 -------------------------------------------------------------------
 
 function routine(over: Partial<Routine>): Routine {
   return {
     id: 'routine-weekly',
-    can_manage: true,
+    can_delete: true,
     room_archived: false,
     project_id: DEMO_PROJECT,
     topic_id: DEMO_TOPIC,
     title: '每周一整理课程进展',
     instructions: '把上周这个频道里的作业、提问和改动整理成一页，放进「周报」目录',
-    context_scope: '',
-    output_dir: '周报',
+    note: '结果按周分文件；只用资料库里的文件',
     trigger: 'schedule',
     trigger_text: '每周周一 09:00（Asia/Shanghai）',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
     timezone: 'Asia/Shanghai',
     state: 'active',
+    last_run_status: 'succeeded',
+    credits_this_month: 128.4,
     agent_handle: 'cheese',
     owner_handle: 'wang',
-    proposed_by: 'cheese',
-    confirmed_by: 'wang',
-    confirmed_at: '2026-09-28T01:00:00Z',
+    created_by: 'cheese',
     next_run_at: '2026-10-12T01:00:00Z',
     revision: 1,
     created_at: '2026-09-27T09:00:00Z',
@@ -557,20 +614,19 @@ function routine(over: Partial<Routine>): Routine {
   }
 }
 
-/** 一条在跑的周报，和芝士刚起草、等人确认的一条。 */
+/** 两条在跑的规则：一条按时间，一条等频道里发生某件事。 */
 export const ROUTINE_WEEKLY = routine({})
-export const ROUTINE_DRAFT = routine({
+export const ROUTINE_ACCEPTED = routine({
   id: 'routine-accepted',
   title: '作业被采纳后通知全班',
   instructions: '成果被采纳时，在频道里写一句这次改了什么',
-  output_dir: '',
+  note: '',
   trigger: 'card_accepted',
   trigger_text: '成果被采纳时',
   spec: { scope: 'room' },
-  state: 'draft',
-  confirmed_by: null,
-  confirmed_at: null,
   next_run_at: null,
+  // 事件触发的那条还没轮上过：行上画的是「启用中」，不是「没能执行」。
+  last_run_status: null,
 })
 
 /** 周报那条最近两次执行：一次成了，一次没成。 */
@@ -606,3 +662,132 @@ export const ROUTINE_RUNS: Record<string, RoutineRun[]> = {
     },
   ],
 }
+
+/**
+ * 「看全部」那一页上的一整页：十条，成的那几次交回一份文件，没能执行的那几次带着原因。
+ *
+ * 一天一条往回排（第 index 天前），所以行上「今天 / 昨天 / 10月12日」三种写法都在。
+ */
+export const ROUTINE_RECORDS_RUNS: RoutineRun[] = Array.from({ length: 10 }, (_, index) => {
+  const at = new Date(Date.UTC(2026, 9, 14, 10, 2) - index * 86_400_000)
+  const missed = index % 3 === 1
+  return {
+    id: `page-run-${index}`,
+    routine_id: ROUTINE_WEEKLY.id,
+    trigger_detail: '',
+    routine_revision: 1,
+    scheduled_for: at.toISOString(),
+    status: missed ? 'failed' : 'succeeded',
+    summary: missed ? '' : '今天频道里决定的事和还没回音的线索，整理成一页',
+    outputs: missed ? [] : [`日报/2026-10-${String(14 - index).padStart(2, '0')}.md`],
+    error: missed ? '工作电脑没有连上' : '',
+    created_at: at.toISOString(),
+    started_at: at.toISOString(),
+    finished_at: at.toISOString(),
+  }
+})
+
+// ---- 现场：一行、组头、队友页签 ------------------------------------------------
+//
+// 现场拆出来的那几只（一步一行、说的话一行、一轮的组头、顶上按队友筛的那排）在
+// `quickstart` 那一帧里凑不齐形状：它那一轮现场只有四次工具调用，没有失败的一步，
+// 也没有芝士说的话，更没有第二个队友。`turn` 和 `seats` 两份剧本里都有，所以从
+// 它们取，不另手造。
+
+/** `turn` 剧本（「一条消息怎么变成芝士的一轮」）放到第 step 步末尾的那一帧。 */
+function turnFrame(step: number) {
+  return frameAt(SCENES.turn, step, Number.MAX_SAFE_INTEGER)
+}
+
+/** `seats` 剧本（「两个队友在同一个话题里并行」）放到第 step 步末尾的那一帧。 */
+function seatsFrame(step: number) {
+  return frameAt(SCENES.seats, step, Number.MAX_SAFE_INTEGER)
+}
+
+/** Sample native records for the two views; never production data. */
+export const SITE_RAW_RECORDS: Block[] = [
+  {
+    type: 'assistant',
+    message: { content: [{ type: 'thinking', thinking: '先核对登录校验的输入，再检查测试覆盖的边界。' }] },
+  },
+  {
+    type: 'assistant',
+    message: {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'sample-call',
+          name: 'Bash',
+          input: { command: 'python -m pytest tests/test_login.py -q', description: '运行登录校验测试' },
+        },
+      ],
+    },
+  },
+  {
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: 'sample-call', content: '............\n12 passed in 0.42s' }],
+    },
+  },
+  { type: 'assistant', message: { content: [{ type: 'text', text: '登录校验已修复，相关测试通过。' }] } },
+].map(
+  (record, i) =>
+    ({
+      ...turnFrame(4).site[0],
+      id: `sample-record-${i}`,
+      turn_id: 'sample-turn',
+      created_at: `2026-10-19T10:00:0${i}Z`,
+      content: '',
+      meta: {
+        record,
+        sequence: i + 1,
+        in_room: false,
+        tool: i === 1 ? 'Bash' : undefined,
+        parts:
+          i === 0
+            ? [{ kind: 'thinking', text: '先核对登录校验的输入，再检查测试覆盖的边界。' }]
+            : i === 1
+              ? [
+                  {
+                    kind: 'tool',
+                    name: 'Bash',
+                    call_id: 'sample-call',
+                    input: { command: 'python -m pytest tests/test_login.py -q', description: '运行登录校验测试' },
+                    preview: '运行登录校验测试',
+                  },
+                ]
+              : i === 2
+                ? [{ kind: 'output', call_id: 'sample-call', text: '............\n12 passed in 0.42s', failed: false }]
+                : [{ kind: 'text', text: '登录校验已修复，相关测试通过。' }],
+      },
+    }) as Block
+)
+/** A platform line in 现场 that names a member: an edit the room's agent was told of. Sample data. */
+export const SITE_EDIT_RECORD: Block = {
+  id: 'sample-run-record-edit',
+  conversation_id: 'demo-room',
+  turn_id: null,
+  author: 'system',
+  author_type: 'platform',
+  kind: 'event',
+  content: '<@demo-alice> 改了一条之前的消息',
+  created_at: '2026-10-19T10:01:00Z',
+  refs: [],
+  run_record: true,
+  meta: { event_type: 'message_edited', severity: 'info', who: 'platform' },
+} as Block
+/** 组头看的那一组：`turn` 剧本到「芝士怎么说话」那一步为止，五步全在同一轮（t1）里。 */
+export const SITE_ONE_TURN: SiteTurn<Block> = (() => {
+  const turn = groupByTurn(turnFrame(4).site, turnFrame(4).running)[0]
+  if (!turn) throw new Error('turn 剧本里没有成组的一轮')
+  return turn
+})()
+/** 那一轮开始的时刻（毫秒）：组头用它和最后一条的时间算「多久」。 */
+export const SITE_TURN_START = turnFrame(4).running.t1
+
+/** `seats` 剧本那一帧里做过事的队友，按露面的先后（`usePanelSite` 也是这么攒的）。 */
+export const SITE_AGENTS = [...new Set(seatsFrame(1).site.map((b) => b.author))]
+/** 页签上写的名字：`seats` 剧本那两页名册（芝士、芝士K）。 */
+export const SITE_AGENT_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(SCENES.seats.people).map(([handle, person]) => [handle, person.name])
+)

@@ -121,6 +121,13 @@ services:
       - RUC_DEEPSEEK_API_KEY_9=${RUC_DEEPSEEK_API_KEY_9:-}
       - MIMO_TOKEN_PLAN_API_KEY=${MIMO_TOKEN_PLAN_API_KEY:-}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:?set MOONSHOT_API_KEY}
+      # Alibaba Bailian (Beijing), for qwen-audio-asr. Unset: that model errors,
+      # nothing else does. A workspace with its own dedicated endpoint sets
+      # DASHSCOPE_API_BASE in .env; unset, the shared DashScope domain is used.
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DASHSCOPE_API_BASE=${DASHSCOPE_API_BASE:-https://dashscope.aliyuncs.com}
+      # Google AI Studio key on the Gemini Academic Program credit project.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:?set GEMINI_API_KEY}
       - STORE_MODEL_IN_DB=True
     volumes:
       - ${GATEWAY_CONFIG:?set the release configuration path}:/app/config.yaml:ro

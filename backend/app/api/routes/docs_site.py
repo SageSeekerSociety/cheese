@@ -11,18 +11,21 @@ import re
 import time
 import uuid
 from typing import Annotated, Literal
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import ActorResolverDep
+from app.api.refusal import refuse
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
+from app.core import model_roles
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import async_session_factory
 from app.core.errors import (
@@ -32,14 +35,13 @@ from app.core.errors import (
     NotFoundError,
     SystemBusyError,
     ValidationError,
-    message_key,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import exception_text, say
 from app.domain.admin.services import AdminService
 from app.domain.docs_site import access, assistant, library, retrieval, site, tools
 from app.domain.docs_site.limits import AskLimits
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.sessions import SessionService
@@ -61,7 +63,7 @@ def ask_limits() -> AskLimits:
 # ---------- signing in to the docs: through the platform ----------
 
 
-@router.post("/grant")
+@router.post("/grant", dependencies=[ROUTE_DECIDES])
 async def docs_grant(
     response: Response,
     auth: Annotated[AuthUserInfo, Depends(require_auth_user)],
@@ -103,7 +105,7 @@ def _destination(path: str) -> bool:
     )
 
 
-@router.post("/session", include_in_schema=False)
+@router.post("/session", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def open_docs_session(request: Request, db: DbSession) -> Response:
     """On the docs host: spend a grant, set the docs cookie, go back to the page.
 
@@ -220,17 +222,7 @@ class AskRequest(BaseModel):
         return v if v and _PAGE.match(v) else None
 
 
-def _refuse(status: int, message: str, retry_after: int = 0) -> JSONResponse:
-    headers = {"Retry-After": str(retry_after)} if retry_after else {}
-    body: dict = {"code": status, "message": message}
-    key = message_key(message)
-    if key is not None:
-        # A catalog sentence: the browser renders it in its reader's language.
-        body["error"] = {"message": message, "i18n": key}
-    return JSONResponse(body, status_code=status, headers=headers)
-
-
-@router.post("/ask")
+@router.post("/ask", dependencies=[ROUTE_DECIDES])
 async def ask(
     body: AskRequest,
     db: DbSession,
@@ -247,23 +239,29 @@ async def ask(
     limits = ask_limits()
     verdict = await limits.admit(auth.user_id)
     if not verdict.allowed:
-        return _refuse(429, verdict.message, verdict.retry_after)
+        return refuse(429, verdict.message, verdict.retry_after)
 
     index = await retrieval.source.get()
     if index is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseDocsUnreadable"), 30)
+        return refuse(503, say("askCheeseDocsUnreadable"), 30)
 
     # The question is the asker's, so its cost comes out of their credits.
-    rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
+    rates = Rates.of(
+        model_roles.model("docs_assistant_model"), await pricing.model_rates()
+    )
     if rates is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseNotOpen"), 60)
+        return refuse(503, say("askCheeseNotOpen"), 60)
     refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
     await db.commit()
     if refused is not None:
         await limits.release(auth.user_id)
-        return _refuse(429, refused.message, refused.retry_after_s())
+        response = refuse(429, refused.message, refused.retry_after_s())
+        response.headers["X-Credits-Path"] = (
+            f"/teams/{quote(auth.handle, safe='')}/credits"
+        )
+        return response
 
     if settings.docs_assistant_agentic:
         result = assistant.Outcome()
@@ -271,10 +269,10 @@ async def ask(
         key = await assistant.gateway_key(db)
         if key is None:
             await limits.release(auth.user_id)
-            return _refuse(503, say("askCheeseNotOpen"), 60)
+            return refuse(503, say("askCheeseNotOpen"), 60)
         if not limits.try_slot():
             await limits.release(auth.user_id)
-            return _refuse(503, say("askCheeseBusy"), 10)
+            return refuse(503, say("askCheeseBusy"), 10)
 
         async def agent_events():
             try:
@@ -305,10 +303,10 @@ async def ask(
     key = await assistant.gateway_key(db) if hits else None
     if hits and key is None:
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseNotOpen"), 60)
+        return refuse(503, say("askCheeseNotOpen"), 60)
     if hits and not limits.try_slot():
         await limits.release(auth.user_id)
-        return _refuse(503, say("askCheeseBusy"), 10)
+        return refuse(503, say("askCheeseBusy"), 10)
 
     async def events():
         try:
@@ -383,7 +381,7 @@ async def _settle(
                 await Ledger(session).charge_priced(
                     await payer_for_person(session, user_id),
                     user_id=user_id,
-                    model=settings.docs_assistant_model,
+                    model=model_roles.model("docs_assistant_model"),
                     rates=rates,
                     input_tokens=result.prompt_tokens,
                     output_tokens=result.completion_tokens or 0,
@@ -392,7 +390,7 @@ async def _settle(
                     kind="docs_ask",
                 )
             await session.commit()
-    except Exception:  # noqa: BLE001 — the reader has their answer either way
+    except Exception:  # the reader has their answer either way
         logger.warning("settling a docs question failed", exc_info=True)
 
 
@@ -418,7 +416,7 @@ async def _agent_scope(
         if not who.authenticated:
             raise AuthenticationRequiredError("Login required")
         return False
-    place = await TopicService(db).place_or_404(body.topic)
+    place = await place_or_404(db, body.topic)
     who = await actor.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -428,7 +426,7 @@ async def _agent_scope(
     return await library.reads_dev_docs(db, place.project_id)
 
 
-@router.post("/agent/search", include_in_schema=False)
+@router.post("/agent/search", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_search_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
@@ -457,7 +455,7 @@ async def agent_search_docs(
     )
 
 
-@router.post("/agent/read", include_in_schema=False)
+@router.post("/agent/read", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_read_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:

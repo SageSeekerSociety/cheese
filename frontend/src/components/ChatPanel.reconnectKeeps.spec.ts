@@ -6,13 +6,19 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 // 重连之后，置顶和支线那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
+vi.mock('@/api/chapters', () => ({
+  listChapters: async () => [],
+  addChapter: vi.fn(),
+  removeChapter: vi.fn(),
+  renameChapter: vi.fn(),
+}))
 vi.mock('@/api/threads', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/threads')>()),
   listThreads: async () => [],
@@ -39,6 +45,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const KIMI = 'cheese-aaaa11112222'
 
@@ -145,6 +152,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('a reconnect keeps the room on screen', () => {
   it('keeps the messages while history is re-read, then adds what landed while away', async () => {

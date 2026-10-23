@@ -29,6 +29,8 @@
     @click="!item.to && item.action ? item.action() : undefined"
     @mouseenter="warmDestination()"
     @mouseleave="cancelPrefetch()"
+    @focus="warmDestination()"
+    @blur="cancelPrefetch()"
     @dragstart="onDragStart"
     @dragover="onDragOver"
     @drop="onDrop"
@@ -272,20 +274,20 @@ button.app-rail-item {
         opacity var(--dur-quick) var(--ease-standard);
     }
 
-    // Brand paint. These two literals are deliberate and identical in both
-    // themes: the 知是 mark is the brand, not a surface, so it must not shift
-    // with the theme any more than a printed logo would. What DID have to
-    // change is the ink on top — it used to be `on-primary`, a value Vuetify
-    // derives from `primary`, which differs between the themes (#F57F17 vs the
-    // lightened #FFA733) and could flip the glyph to white on this bright
-    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
-    // brand colour, in BOTH themes.
+    // Brand paint: the tile under the 知是 mark goes flat brand paint on hover
+    // and while current, with the mark on it in brand ink. Both are theme-
+    // invariant on purpose — this tile is the logo, not a UI surface (docs/
+    // brand.md §5: flat #FFA20F with a #23242a mark, the same in both themes) —
+    // so it does NOT take --accent, which follows the theme. The glyph is brand
+    // ink rather than `on-primary` so the mark stays the same dark shape in both
+    // themes: opaque it is 7.7:1 on the fill, and about 6.6:1 once the emphasis
+    // opacity below is composited, which is what actually renders.
     &:hover,
     &[aria-current] {
-      background: #ffa20f;
+      background: var(--brand-fill);
 
       .cheese-icon {
-        fill: #23242a;
+        fill: var(--brand-ink);
         opacity: var(--v-high-emphasis-opacity);
       }
     }
@@ -323,7 +325,7 @@ button.app-rail-item {
 // or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
   background-color: transparent;
-  // v-card 默认 overflow: hidden，会把探出格子的件数角标和左边的竖条裁掉。
+  // v-card 默认 overflow: hidden，会把探出格子的件数角标和右边的竖条裁掉。
   overflow: visible;
 
   &:hover,
@@ -332,18 +334,14 @@ button.app-rail-item {
   }
 }
 
-// 「你在这儿」画在 rail 左边缘的一条圆头竖条上（Discord 式），不碰头像，也不和
-// 右上角的件数角标打架：选中是长的一条，悬停没选中的格子是短的一截。原来的琥珀
-// 描边框在头像外面再套一圈，和头像自己的颜色混在一起，不好看也不好认。
-//
-// 格子 48px 居中在 64px 的 rail 里，左边离 rail 边缘 8px，所以竖条往外挪 8px 贴边。
-// 颜色用 on-surface：深色 rail 上是白的，浅色 rail 上是深墨，同一个 token 两套
-// 主题都够亮眼；不用琥珀，琥珀留给主操作和品牌标记。「＋新建项目」不是目的地，
-// 不画竖条。
+// 竖条放在头像右侧、靠二级侧栏，避免与电脑的黑色屏幕边框混在一起。
+// 格子 48px 居中在 64px 的 rail 里，右侧有 8px：4px 竖条与头像之间仍留 4px。
+// 选中是长的一条，悬停没选中的格子是短的一截；不加外圈或底色。
+// 颜色沿用 on-surface：浅色主题是深墨，深色主题是浅灰。「＋新建项目」不画竖条。
 .app-rail-item:not(.app-rail-item--add)::before {
   content: '';
   position: absolute;
-  left: -8px;
+  right: -8px;
   top: 50%;
   width: 4px;
   height: 0;
@@ -355,6 +353,11 @@ button.app-rail-item {
 }
 
 .app-rail-item:not(.app-rail-item--add):hover::before {
+  height: 20px;
+}
+
+// 按下那一帧就长出那条竖线：触屏没有 hover，点了之后要等一下才换页。
+.app-rail-item:not(.app-rail-item--add):active::before {
   height: 20px;
 }
 

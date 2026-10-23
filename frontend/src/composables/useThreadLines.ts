@@ -155,13 +155,13 @@ export function useThreadLines(opts: {
   return { replyingFor, replyingSeats, statusFor, onActivity, onStatus, refresh }
 }
 
-/** 支线里我上一句叫过 AI 队友：打开时输入框先带上的那几个字；否则空串。 */
-export function summonPrefill(messages: Block[], isMine: (m: Block) => boolean, agentName: string): string {
+/** 支线里我上一句叫过 AI 队友：打开时输入框先带上的那个 @（`mention`，后面跟一个空格）；否则空串。 */
+export function summonPrefill(messages: Block[], isMine: (m: Block) => boolean, mention: string): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (m.kind !== 'message' || !isMine(m)) continue
     const recipient = m.meta?.agent_recipient as { mentioned?: boolean } | undefined
-    return recipient?.mentioned ? `@${agentName} ` : ''
+    return recipient?.mentioned ? `${mention} ` : ''
   }
   return ''
 }

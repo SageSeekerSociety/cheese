@@ -1,4 +1,4 @@
-"""额度后台：方案、团队挂哪个方案、给团队发额度（#2397）。
+"""额度后台：方案、团队挂哪个方案、给团队发额度（#2397），以及哪些团队开通了境外模型。
 
 全部要平台管理员（`PlatformAdminDep`），每一次写都落 `credit_admin_audit`：谁、对
 哪个方案或团队、改前改后。把团队挂到 Reserve、给机构发采购的额度都走这里，不手跑
@@ -13,8 +13,9 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
-from app.domain.agent_instance.configuration import model_choices
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
+from app.domain.agent.model_catalog import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.usage.plans import PlanService
@@ -61,6 +62,15 @@ class TeamPlanUpdate(BaseModel):
     plan_key: str = Field(min_length=1, max_length=32)
 
 
+class OverseasAccessUpdate(BaseModel):
+    approved: bool
+
+
+class OverseasAccessOut(BaseModel):
+    team_id: int
+    overseas_approved: bool
+
+
 class GrantCreate(BaseModel):
     credits: float = Field(gt=0)
     # 带时区；不带时区的时间说不清是哪一刻，直接 422。
@@ -88,7 +98,7 @@ async def plan_models(handle: PlatformAdminDep) -> dict:
     )
 
 
-@router.post("/plans", status_code=201)
+@router.post("/plans", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_plan(
     body: PlanCreate, db: DbSession, handle: PlatformAdminDep
 ) -> dict:
@@ -97,7 +107,7 @@ async def create_plan(
     return ok(plan)
 
 
-@router.put("/plans/{key}")
+@router.put("/plans/{key}", dependencies=[ROUTE_DECIDES])
 async def update_plan(
     key: Annotated[str, Path(max_length=32)],
     body: PlanUpdate,
@@ -111,7 +121,7 @@ async def update_plan(
     return ok(plan)
 
 
-@router.delete("/plans/{key}")
+@router.delete("/plans/{key}", dependencies=[ROUTE_DECIDES])
 async def delete_plan(
     key: Annotated[str, Path(max_length=32)],
     db: DbSession,
@@ -152,14 +162,26 @@ async def team_credits(
     handle: PlatformAdminDep,
 ) -> dict:
     team = await PlanService(db).team(team_id)
-    # 定向额度用题目和项目的名字说清是哪一笔。
-    projects, tasks = ProjectService(db), TaskService.of(db)
+    # 定向额度用题目和项目的名字说清是哪一笔：两边都先收 id 全集，各取一次。
+    tasks = TaskService.of(db)
+    projects_by_id = await ProjectService(db).get_projects_by_ids(
+        list(
+            {
+                uuid.UUID(pack["project_id"])
+                for pack in team["packs"]
+                if pack["project_id"]
+            }
+        )
+    )
+    tasks_by_id = await tasks.get_tasks_by_ids(
+        [pack["task_id"] for pack in team["packs"] if pack["task_id"] is not None]
+    )
     for pack in team["packs"]:
         if pack["project_id"]:
-            project = await projects.get(uuid.UUID(pack["project_id"]))
+            project = projects_by_id.get(uuid.UUID(pack["project_id"]))
             pack["project_name"] = project.name if project else None
         if pack["task_id"] is not None:
-            task = await tasks.get_task(pack["task_id"])
+            task = tasks_by_id.get(pack["task_id"])
             pack["task_name"] = task.name if task else None
     return ok(team)
 
@@ -174,7 +196,7 @@ async def team_history(
     return ok({"items": await PlanService(db).team_history(team_id, limit=limit)})
 
 
-@router.put("/teams/{teamId}/plan")
+@router.put("/teams/{teamId}/plan", dependencies=[ROUTE_DECIDES])
 async def set_team_plan(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     body: TeamPlanUpdate,
@@ -188,7 +210,27 @@ async def set_team_plan(
     return ok(out)
 
 
-@router.post("/teams/{teamId}/grants", status_code=201)
+@router.put(
+    "/teams/{teamId}/overseas-access",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(OverseasAccessOut),
+)
+async def set_team_overseas_access(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    body: OverseasAccessUpdate,
+    db: DbSession,
+    handle: PlatformAdminDep,
+) -> dict:
+    """Let the team use overseas models (Claude, GPT, Gemini), or stop it. A
+    person is let in through their personal team."""
+    out = await PlanService(db).set_overseas_access(
+        handle=handle, team_id=team_id, approved=body.approved
+    )
+    await db.commit()
+    return ok(out)
+
+
+@router.post("/teams/{teamId}/grants", status_code=201, dependencies=[ROUTE_DECIDES])
 async def grant_team_credits(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     body: GrantCreate,

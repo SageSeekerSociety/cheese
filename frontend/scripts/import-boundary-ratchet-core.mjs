@@ -1,7 +1,7 @@
 // The component boundary rule, and the pure logic that counts violations of it.
 // No I/O, no eslint import — so the rule can be declared ONCE and read from two
 // places: `eslint.boundary.config.mjs` (which turns it into a lint rule) and
-// `import-boundary-ratchet.mjs` (which decides whether the counts are allowed).
+// `import-boundary-ratchet.mjs` (which runs it and fails on any violation).
 // A rule id that drifts between the enforcing config and the counting script
 // would silently count nothing, which is the failure mode this shape prevents.
 //
@@ -215,53 +215,39 @@ export function parseEslintJson(text, root = process.cwd()) {
   return parseEslintJsonFor(text, root, BOUNDARY_RULE_ID)
 }
 
-// The ratchet arithmetic is the same question the vue-tsc and stylelint
-// ratchets ask of their own counts — a file may not go up, a file that went
-// down should have its baseline tightened, and a stale baseline entry is not a
-// failure. It lives in one place (tsc-ratchet-core.mjs) rather than in three
-// copies that can drift; a second definition of "regression" is a second answer
-// to what the baseline means.
-export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
-
 /**
- * The human-readable half: what went wrong, where, and what to do about it.
- * Takes what `compare()` returns, and (optionally) the violations from
- * `parseEslintJson` for the files that regressed.
- * @param {ReturnType<typeof compare>} result
- * @param {{file: string, line: number, column: number, rule: string, message: string}[]} [details]
+ * The human-readable half: every violation, and what to do about it.
+ *
+ * The reader is whoever has to land the fix, an agent as often as a person, and
+ * the report is the whole of what they get: it names the shortest fix and the
+ * one-file command that proves it.
+ * @param {{file: string, line: number, column: number, rule: string, message: string}[]} violations
  */
-export function formatBoundaryReport(result, details = []) {
-  const lines = []
-  if (result.regressions.length) {
-    lines.push('New component boundary violations (this is what the ratchet blocks):')
-    for (const { file, base, now } of result.regressions) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    if (details.length) {
-      lines.push('')
-      lines.push('In those files (old and new alike — the count is per file):')
-      for (const { file, line, column, rule, message } of details) {
-        lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
-      }
-    }
-    lines.push('')
-    lines.push('A component under src/components must render from props alone: no')
-    lines.push('API layer, no vue-router. Move the fetch/navigation up to the view,')
-    lines.push('pass the data down, emit the intent up. If the component genuinely')
-    lines.push('has to do this, the honest fix is a view or a composable — not a')
-    lines.push('line in import-boundary-baseline.json, which only ever goes down.')
-    lines.push('Why, and what the boundary buys: .claude/rules/architecture.md (the')
-    lines.push('component boundary). The rule and its messages live in')
-    lines.push('scripts/import-boundary-ratchet-core.mjs.')
+export function formatBoundaryReport(violations) {
+  if (!violations.length) return 'no component boundary violations'
+  const lines = ['Component boundary violations:']
+  for (const { file, line, column, rule, message } of violations) {
+    lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
   }
-  if (result.improvements.length) {
-    lines.push(result.regressions.length ? 'Also improved:' : 'Boundary debt went down — tighten the baseline:')
-    for (const { file, base, now } of result.improvements) {
-      lines.push(`  ${file}: ${base} -> ${now}`)
-    }
-    lines.push('')
-    lines.push('Run: pnpm run lint:boundary:update  (then commit import-boundary-baseline.json)')
+  lines.push('')
+  lines.push('Sink the dependency. What was crossed is the API layer (@/api,')
+  lines.push('@/services/*) or the router, and both sink the same way:')
+  lines.push('  - Fetching belongs to the view (src/views/**) or to a composable the')
+  lines.push('    view calls (src/composables/), or a store (src/stores/) when several')
+  lines.push('    components share one request. The component takes the data as a prop')
+  lines.push('    and emits the intent back up.')
+  lines.push('  - The route moves up the same way: read it above and pass a NavTarget')
+  lines.push('    (src/lib/navTarget.ts) down; use useNavigation() (src/composables/)')
+  lines.push('    only where a component really must navigate, and keep vue-router —')
+  lines.push('    even `import type` — out of src/components.')
+  lines.push('  - Why, and what the boundary buys: .claude/rules/architecture.md')
+  lines.push('    (frontend: a component does not fetch). The rule and its messages')
+  lines.push('    live in scripts/import-boundary-ratchet-core.mjs.')
+  lines.push('')
+  lines.push('Check the one file you are fixing, from frontend/ — not the whole tree:')
+  for (const file of [...new Set(violations.map((v) => v.file))]) {
+    lines.push(`  node scripts/import-boundary-ratchet.mjs --files ${file}`)
   }
-  lines.push(`total: ${result.currentTotal} violation(s), baseline allows ${result.baselineTotal}`)
+  lines.push(`total: ${violations.length} violation(s)`)
   return lines.join('\n')
 }

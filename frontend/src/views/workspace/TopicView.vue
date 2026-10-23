@@ -1,29 +1,26 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ChatAttachment, TopicMemberRow } from '@/cx_types'
-import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
-import type { MemberActivityLine } from '@/lib/memberActivity'
-import type { CardPhase } from '@/lib/topicState'
 import type { TaskSource } from '@/types/taskOrigin'
-import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
+import type { TaskOverviewHandle } from './topicView/actions'
+import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
-import { useChannelThreads } from '@/composables/useChannelThreads'
-import { useEscapeLayer } from '@/composables/useEscapeStack'
-import { usePageTitle } from '@/composables/usePageTitle'
-import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
-import { useTopicPanel } from '@/composables/useTopicPanel'
+import { useChapters } from '@/composables/useChapters'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 
-import { getTask } from '@/api/tasks'
-import { newThread, openThread } from '@/api/threads'
+import { useTopicActions } from './topicView/actions'
+import { useTopicAddress } from './topicView/address'
+import { useCardPhase, useTopicConversation } from './topicView/conversation'
+import { useTopicHeader } from './topicView/header'
+import { useTopicLive } from './topicView/live'
+import { useTopicPanelState } from './topicView/panel'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
-import { useTopBarBack } from '@/components/common/topBarBack'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
@@ -32,22 +29,13 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
-import { agentNames, memberName } from '@/lib/agentNames'
-import { dayStamp } from '@/lib/dateText'
-import { refRoute } from '@/lib/refDirectory'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
-import { userRefRoute } from '@/lib/userRef'
-import { myHandle } from '@/me'
-import { queryClient } from '@/query/client'
-import { roomRowQuery, usePlace } from '@/query/project'
-import { roomMembersQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
-import { useTaskPage } from '@/views/workspace/useTaskPage'
 import { useTopicPanes } from '@/views/workspace/useTopicPanes'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
@@ -58,6 +46,11 @@ import { useTopicPanes } from '@/views/workspace/useTopicPanes'
 // the left column shows. Which topic is open is a route param, and ProjectShell
 // keys this view on it: every topic gets a fresh instance, so nothing below — or in
 // any child — can carry one topic's state into the next.
+//
+// 这一页自己只做三件事：认地址（`topicView/address.ts`）、把两侧的把手接起来
+// （`panel.ts` / `actions.ts`）、把从地址和把手推出来的那几样交给模板。按职责分出去的
+// 那几块各在自己的文件里，这一页只是它们碰头的地方——所以这里能看出来的也只有页面的
+// 结构，没有具体的活。
 defineOptions({ name: 'TopicView' })
 
 // 支线那一半只在打开一条支线时才要，用到时再取。
@@ -71,283 +64,61 @@ const router = useRouter()
 const route = useRoute()
 const store = useWorkspaceStore()
 
-// 「你在看什么」进 URL (提案 A): which tab of the work panel is open, so
-// 「你来看一眼这个 diff」 is a link someone can send. The panel reports its own
-// moves; the address is this page's business, not the panel's.
-const panelTab = computed(() => {
-  const q = route.query.tab
-  return typeof q === 'string' ? q : undefined
-})
-// 页签和浏览器历史怎么对应（桌面 replace；手机上 Back 先回到对话）见 useRoomTabHistory。
-const phone = computed(() => !mdAndUp.value)
-const tabHistory = useRoomTabHistory(phone)
-function onPanelTab(key: string) {
-  tabHistory.goTab(key)
-}
-// 手机上不在对话那一格时，顶栏的 ← 和 Back 一样先回到对话。
-useTopBarBack(() =>
-  phone.value && !tabHistory.onChat.value ? { label: t('work.room.backToChat'), onBack: tabHistory.toChat } : null
-)
-void tabHistory.ensureChatBehind()
+/** 这一页在说的那个地址：下面几块都从它取参数，都跟着它走。 */
+const here = () => props
 
-// 「去验收」：决策在聊天，审查在面板 —— 它不把人带去任何地方，只把右栏切到
-// 「改动」那一格。对话栏末尾那张验收卡和概览里那张卡上的按钮是同一个动作，所以
-// 只有这一处定义（`chatEvents.review` 和 `<WorkPanel @review>` 都指过来）。
-function onReview() {
-  onPanelTab('changes')
-}
+// ---- 地址：打开的是哪一页、哪一段，以及面板开着哪一格 ----
+const address = useTopicAddress({ place: here, desktop: mdAndUp })
+const {
+  place: selectedTopic,
+  resolving,
+  redirecting,
+  conversationId,
+  unreadOnOpen,
+  panelTab,
+  onPanelTab,
+  panelRoutineId,
+  focusBlock,
+  threadFocusBlock,
+  backToRoom,
+  openTopic,
+  jumpTo,
+  onReview,
+  openPlace,
+  markReadOnSwitch,
+} = address
 
-// 地址点名的一条消息（搜索结果、别人发来的链接、任务页顶上那句话）：打开时停在它上
-// 面。支线页上点名的是支线里的一条，交给支线那一栏；频道主线那一栏里没有它。
-const namedBlock = computed(() => {
-  const q = route.query.block
-  return typeof q === 'string' && q ? q : null
-})
-const focusBlock = computed(() => (props.threadId ? null : namedBlock.value))
-const threadFocusBlock = computed(() => (props.threadId ? namedBlock.value : null))
-// 任务有自己的页面：点开一个任务就去那里，浏览器的返回退回房间。
-function onOpenCard(taskId: string) {
-  void router.push({ name: 'workspace-task', params: { projectId: props.projectId, topicId: props.topicId, taskId } })
-}
-// 已经写进提交历史的旧链接（`?card=<任务>`）：那一层下钻已经没有了，任务有自己
-// 的页面，照着链接来的人直接送过去。
-watch(
-  () => route.query.card,
-  (card) => {
-    if (typeof card !== 'string' || !card) return
-    void router.replace({
-      name: 'workspace-task',
-      params: { projectId: props.projectId, topicId: props.topicId, taskId: card },
-    })
-  },
-  { immediate: true }
-)
-function backToRoom() {
-  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
-}
-
-// Bumped on every AI turn / tool use. Watched by the documents in the panel
-// and the project's goals on 综合's overview (reload what 芝士 maintained).
-const activityTick = ref(0)
-
-// URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
-const { place: selectedTopic, resolving: placeResolving } = usePlace(
-  computed(() => store.projectId),
-  computed(() => props.topicId),
-  computed(() => store.topics)
-)
-
-// 频道概览：置顶、任务、综合的项目总览。
-const channelOverview = useChannelOverview({
-  channelId: () => (props.taskId ? null : props.topicId),
-  projectId: () => props.projectId,
-  general: () => selectedTopic.value?.kind === 'root',
-  tick: () => activityTick.value,
-  reportError: (e) => store.reportError(e, t('work.channel.pins.unpinFailed')),
-})
-const canPin = computed(() => {
-  const topic = selectedTopic.value
-  return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
-})
-function jumpTo(blockId: string) {
-  void router.replace({ query: { ...route.query, block: blockId } })
-}
-
-// ---- 支线 ----
-// 主线上一条消息的支线：有就打开，没有就先开一条。概览里「支线」那一格读同一份清单。
-const channelThreads = useChannelThreads(() => (props.taskId ? null : props.topicId))
-function showThread(threadId: string) {
-  channelThreads.markSeen(threadId)
-  void router.push({
-    name: 'workspace-thread',
-    params: { projectId: props.projectId, topicId: props.topicId, threadId },
-  })
-}
-async function onOpenThread(block: Block) {
-  if (block.thread?.id) return showThread(block.thread.id)
-  try {
-    showThread((await openThread(block.id)).id)
-  } catch (e) {
-    store.reportError(e, t('work.room.thread.openFailed'))
-  }
-}
-
-// 在频道下手动开一条支线（清单第 4 条）：填个标题就开，不必先有话。开了之后直接落进
-// 那条支线——建出来就是为了马上在里面说话，停在原地等于让人再点一次。
-const newThreadOpen = ref(false)
-const creatingThread = ref(false)
-const canOpenThread = computed(() => {
-  const topic = selectedTopic.value
-  return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
-})
-async function createThread(title: string) {
-  creatingThread.value = true
-  try {
-    const thread = await newThread(props.topicId, title)
-    newThreadOpen.value = false
-    channelThreads.load()
-    showThread(thread.id)
-  } catch (e) {
-    store.reportError(e, t('work.room.thread.createFailed'))
-  } finally {
-    creatingThread.value = false
-  }
-}
+// 两块要往回够的组件（面板和对话栏）和它们的参数。面板收起再打开要回到原来那一格，
+// 所以它自己手里那一样也得问得到（`showing`）。
+const panesRef = ref<HTMLElement | null>(null)
+const panelRef = ref<WorkPanelHandle | null>(null)
+const chatColumn = ref<ChatColumnHandle | null>(null)
+const taskOverviewRef = ref<TaskOverviewHandle | null>(null)
 
 // ---- 右侧面板的收 / 开（三档见 useTopicPanel）----
-const panesRef = ref<HTMLElement | null>(null)
-const panel = useTopicPanel({
+const panelState = useTopicPanelState({
   panes: panesRef,
   tab: panelTab,
   desktop: mdAndUp,
   thread: computed(() => !!props.threadId),
   setTab: (tab) => void router.replace({ query: { ...route.query, tab } }),
   showing: () => panelRef.value?.activeTab(),
+  backToRoom,
 })
-const panelOpen = panel.open
-const panelFloat = panel.float
-function closePanel() {
-  if (props.threadId) return backToRoom()
-  panel.hide()
-  // Esc 关掉浮层，焦点回到打开它那颗开关（键盘和读屏用户必须回得去）。
-  void nextTick(() => document.querySelector<HTMLElement>('[data-panel-toggle]')?.focus())
-}
-function togglePanel() {
-  if (panelOpen.value) closePanel()
-  else panel.show()
-}
-// 浮层按 Esc 收起，焦点回到页头那颗开关。窄档里二级侧栏浮层也可能同时开着，两层
-// 共用一个 Esc 栈：一下 Esc 只关最上面那层（后打开的那层）。见 useEscapeStack。
-useEscapeLayer(
-  computed(() => panelFloat.value && panelOpen.value),
-  closePanel
-)
-
-const AUTHOR = myHandle()
-
-// ---- 任务页 ----
-// 页头、概览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
-// 任务交给谁、请谁协作，从项目里的人挑：被选中的人随之加入这个频道（后端）。
-const projectPeople = computed<TopicMemberRow[]>(() =>
-  store.members
-    .filter((m) => !m.agent && m.active !== false)
-    .map((m) => ({
-      topic_id: props.topicId,
-      member_handle: m.user_handle,
-      role: 'member' as const,
-      name: m.name,
-      avatar_id: m.avatar_id ?? null,
-    }))
-)
-const taskPage = useTaskPage({ taskId: () => props.taskId, people: () => projectPeople.value })
-// 第一次由 openPlace 记已读；之后在同一个频道里进出任务，页面不重建，换到哪段对话
-// 就是读了哪段。
-let placeOpened = false
-watch(
-  () => props.taskId,
-  (taskId) => {
-    taskPage.reset()
-    void taskPage.load()
-    if (placeOpened) store.markRead(taskId ?? props.topicId)
-  },
-  { immediate: true }
-)
-/** 正在看的这一段对话：任务页是任务的，否则是频道自己的。已读游标记在它上面。 */
-const conversationId = computed(() => props.taskId ?? props.topicId)
 const {
-  task: currentTask,
-  loading: taskLoading,
-  loadError: taskLoadError,
-  isOwner: taskOwner,
-  isOpen: taskOpen,
-  people: taskPeople,
-  machine: taskMachine,
-  machineError: taskMachineError,
-  starting: taskStarting,
-  startError: taskStartError,
-  actionError: taskActionError,
-  comparing: taskComparing,
-  comparison: taskComparison,
-  compareError: taskCompareError,
-} = taskPage
-// 任务里只有负责人能说话，关了就谁都不能说了：输入框的位置换成这一句。
-const composerClosed = computed(() => {
-  const task = taskPage.task.value
-  if (!props.taskId) {
-    // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
-    const topic = selectedTopic.value
-    if (topic?.status === 'archived') return t('work.channel.archivedNotice')
-    return topic?.joined === false ? t('work.channel.notJoined') : null
-  }
-  if (!task) return null
-  if (!taskPage.isOpen.value) return t('work.task.closedNotice')
-  return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
-})
-
-// 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再
-// 列它）。只是「我不能说话」（任务只有负责人能说）不算，题还在等别人。
-const askClosed = computed(() =>
-  props.taskId ? !!taskPage.task.value && !taskPage.isOpen.value : selectedTopic.value?.status === 'archived'
-)
-
-// 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
-// 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
-const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
-watch(
-  () => [selectedTopic.value, taskPage.task.value] as const,
-  ([topic, task]) => {
-    if (props.threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
-    if (props.taskId && task) setDynamicTitle(taskTitle(task), 'workspace-topic')
-    else if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
-    else clearDynamicTitle('workspace-topic')
-  },
-  { immediate: true }
-)
-onUnmounted(() => clearDynamicTitle('workspace-topic'))
-onUnmounted(() => clearDynamicTitle('workspace-thread'))
-/** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
-function threadTime(iso: string): string {
-  return dayStamp(new Date(iso).getTime())
-}
-
-// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
-// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
-let cancelRouteWarm: (() => void) | null = null
-onMounted(() => {
-  const params = { projectId: props.projectId }
-  cancelRouteWarm = warmRoutesWhenIdle(router, [
-    { name: 'workspace-overview', params },
-    { name: 'project-library', params },
-    { name: 'project-docs', params: { ...params, kind: 'charter' } },
-    { name: 'project-search', params },
-  ])
-})
-onUnmounted(() => cancelRouteWarm?.())
-// The list is still on its way, so "not found" is not yet a fact. Neither is it
-// one while this id is being asked about directly — the path a deep link takes.
-const resolving = computed(
-  () => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || placeResolving.value)
-)
-
-function openTopic(topicId: string) {
-  if (topicId === props.topicId) return
-  void router.push(refRoute(props.projectId, topicId))
-}
+  open: panelOpen,
+  float: panelFloat,
+  close: closePanel,
+  toggle: togglePanel,
+  closeLabel,
+  show: panelShow,
+} = panelState
 
 // ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----
 const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
 const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
 const { freezeChatWidth, startPaneDrag } = panes
-const closeLabel = computed(() => t('work.room.panel.close'))
-const panelRef = ref<{
-  showOverview: () => Promise<void>
-  openFile?: (path: string, taskId?: string | null) => void
-  siteBlock?: (block: Block) => void
-  openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
-  previewShown?: () => void
-  // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
-  activeTab: () => string
-} | null>(null)
+
 // 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、专注模式和手机
 // 上面板底部那一条读的都是它（见 provideAcceptCard）。
 const accept = provideAcceptCard({
@@ -364,49 +135,100 @@ const accept = provideAcceptCard({
 function reloadAccept() {
   void accept.reload()
 }
-const chatColumn = ref<{
-  linkDown: boolean
-  reloadFeedback: () => void
-  reloadSkills: () => void
-  say: (content: string, attachments?: ChatAttachment[]) => boolean
-  submitQuestion: SubmitPreviewQuestion
-} | null>(null)
+// 采纳卡处在哪一段：面板要按它挑页签，所以这一个词往上走。
+const cardPhase = useCardPhase(accept)
 
-// The chat column's own composer is the one this topic uses; TopicView only
-// needs a handle on the panel it lives in for the connection dot in the header.
-const linkDown = computed(() => !!chatColumn.value?.linkDown)
+// ---- 这一段对话：支线、任务页、署名（见 topicView/conversation.ts）----
+const conversation = useTopicConversation({
+  place: here,
+  room: () => selectedTopic.value,
+  onPlaceSwitch: markReadOnSwitch,
+})
+const {
+  channelThreads,
+  showThread,
+  onOpenThread,
+  openTaskPage,
+  onOpenCard,
+  upgradeMessage,
+  newThreadOpen,
+  creatingThread,
+  canOpenThread,
+  createThread,
+  threadTime,
+  AUTHOR,
+  taskPage,
+  currentTask,
+  taskLoading,
+  taskLoadError,
+  taskOwner,
+  taskOpen,
+  composerClosed,
+  askClosed,
+  roomAgents,
+  memberNames,
+} = conversation
 
-// 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
-// 长期锚点：它只在下一轮被读一次。
-function onLocate(payload: PreviewLocate) {
-  chatColumn.value?.say(payload.message, payload.attachments)
-}
-const submitQuestion: SubmitPreviewQuestion = (request) => chatColumn.value?.submitQuestion(request) ?? false
+// ---- 这个房间此刻是不是活的（见 topicView/live.ts）----
+const live = useTopicLive({
+  conversationId: () => conversationId.value,
+  taskId: () => props.taskId,
+  reloadTask: () => taskPage.load(true),
+  noteChatNews,
+  reloadAccept,
+  chat: () => chatColumn.value,
+})
+const { working, activity, agentControl, siteTurns, activityTick, roomConnected } = live
+const { handleWorking, handleTurnDone, handleStateChanged } = live
 
-// 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
-const chatEvents = {
-  'turn-done': handleTurnDone,
-  working: handleWorking,
-  activity: (lines: MemberActivityLine[]) => (activity.value = lines),
-  'agent-control': (state: AgentControlState) => (agentControl.value = state),
-  'site-block': (block: Block) => panelRef.value?.siteBlock?.(block),
-  'site-turns': (turns: Record<string, number>) => (siteTurns.value = turns),
-  'state-changed': handleStateChanged,
-  // 芝士摆出来一份东西：面板立刻看一眼当前预览，不等轮询。
-  'preview-shown': () => panelRef.value?.previewShown?.(),
+// ---- 页头和这一页的标题（见 topicView/header.ts）----
+const { taskHeaderBinding, topicHeaderBinding, setDynamicTitle } = useTopicHeader({
+  place: here,
+  room: () => selectedTopic.value,
+  task: taskPage.task,
+  taskHeaderProps: taskPage.headerProps,
+  memberNames,
+  roomAgents,
+  roomConnected,
+  panelOpen,
+  backToRoom,
+  togglePanel,
+  openTopic,
+  me: AUTHOR,
+})
+useScreenHeader(() => {
+  if (mdAndUp.value || props.threadId) return null
+  const [component, binding] = props.taskId
+    ? [TaskHeader, taskHeaderBinding.value]
+    : [TopicHeader, topicHeaderBinding.value]
+  return binding ? { content: { component, props: binding } } : null
+})
 
-  'mention-click': handleMentionClick,
-  'open-file': (path: string) => panelRef.value?.openFile?.(path),
-  'open-resource': handleOpenResource,
-  'upgrade-message': handleUpgradeMessage,
-  'open-thread': onOpenThread,
-  'open-topic': openTopic,
-  'open-card': onOpenCard,
-  review: onReview,
-}
+// ---- 频道概览：置顶、任务、综合的项目总览 ----
+const channelOverview = useChannelOverview({
+  channelId: () => (props.taskId ? null : props.topicId),
+  projectId: () => props.projectId,
+  general: () => selectedTopic.value?.kind === 'root',
+  tick: () => activityTick.value,
+  reportError: (e) => store.reportError(e, t('work.channel.pins.unpinFailed')),
+})
+const canPin = computed(() => {
+  const topic = selectedTopic.value
+  return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
+})
 
-// 有没有队友正在这个话题里跑一轮 —— 工作面板的「现场」那一格和推送提示读它。
-const working = ref(false)
+// ---- 章节：这段对话（频道主线或任务）的目录 ----
+// 跟对话走：频道是频道本身，任务页是任务的 id。任务的对话里项目的人都能说话，所以
+// 都能整理章节；频道主线仍然要加入了这个频道。
+const chapters = useChapters({
+  conversationId: () => conversationId.value,
+  report: (message) => store.reportError(new Error(message), t('work.channel.chapters.unpinFailed')),
+})
+const canChapter = computed(() => {
+  const topic = selectedTopic.value
+  if (!topic || topic.status === 'archived') return false
+  return !!props.taskId || topic.kind === 'root' || !!topic.joined
+})
 
 // 任务概览那一列要的：相关、这一轮的清单、第一轮失败后的重试。
 const taskOverview = useTaskOverview({
@@ -414,183 +236,47 @@ const taskOverview = useTaskOverview({
   working: () => working.value,
   reloadTask: () => taskPage.load(true),
 })
-const taskOverviewRef = ref<InstanceType<typeof TaskOverview> | null>(null)
 // 任务页顶上那句话：回到它所在的那段对话（频道主线、支线或另一个任务），停在它上面。
 function openSource(source: TaskSource) {
   if (source.where === 'thread') channelThreads.markSeen(source.conversation_id)
   void router.push(sourceRoute(props.projectId, source))
 }
 
-// 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
-// `linkDown` 已经不算刚进房间时的握手和一下就重连上的闪断（`useRoomSocket`），
-// 可 socket 断得再久一点时，这一轮可能还在跑（工作条写着「正在工作 · 重试中」，
-// 因为重试就是靠它自己接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法
-// 把这一轮干完。所以两个一起看：只要工作条在说「正在工作」，页头就不能同时说
-// 「未连接」。
-const roomConnected = computed(() => !linkDown.value || working.value)
-// 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
-const activity = ref<MemberActivityLine[]>([])
-// 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
-const agentControl = ref<AgentControlState | null>(null)
-// 正在跑的轮次各自从什么时候开始，对话栏从 socket 上算出来，现场读它分出哪一组还在进行。
-const siteTurns = ref<Record<string, number>>({})
+// 对话栏和面板回上来说的那几件事，在这一页各归哪一处（见 topicView/actions.ts）。
+const { chatEvents, onLocate, submitQuestion, handleMentionClick } = useTopicActions({
+  place: here,
+  panel: { show: panelShow },
+  focusMode,
+  onPanelTab,
+  onReview,
+  reloadAccept,
+  opening: { onOpenThread, onOpenCard, upgradeMessage },
+  openTopic,
+  panelRef,
+  chatColumn,
+  taskOverviewRef,
+  activity,
+  agentControl,
+  siteTurns,
+  handleTurnDone,
+  handleWorking,
+  handleStateChanged,
+})
 
-// ---- 采纳卡处在哪一段 ----
-// The accept card owns its own data, but the panel opens on the tab its stage
-// calls for, so the one word travels up rather than the card list travelling
-// out. undefined until the card box has actually answered — the panel does not
-// get to pick a tab on an answer nobody has yet. The room header does not show
-// it: a card's stage is the card's, shown on the card and on the board.
-const cardPhase = ref<CardPhase | undefined>(undefined)
-watch(
-  [accept.loaded, accept.phase],
-  () => {
-    if (accept.loaded.value) cardPhase.value = accept.phase.value
-  },
-  { immediate: true }
-)
+// 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
+// 项目文档、搜索。点过去时就只剩取数据那一段等待（lib/routePrefetch.ts）。
+let cancelRouteWarm: (() => void) | null = null
+onMounted(() => {
+  const params = { projectId: props.projectId }
+  cancelRouteWarm = warmRoutesWhenIdle(router, [
+    { name: 'workspace-overview', params },
+    { name: 'project-library', params },
+    { name: 'project-docs', params: { ...params, kind: 'charter' } },
+    { name: 'project-search', params },
+  ])
+})
+onUnmounted(() => cancelRouteWarm?.())
 
-// 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
-// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
-// 一次动手。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
-// 么都没有，除非刷新一次页面。
-function handleWorking(now: boolean) {
-  working.value = now
-}
-
-function handleTurnDone() {
-  // 这一轮干完了 —— 现场那条时间线就是它留下的记录。
-  working.value = false
-  noteChatNews()
-  activityTick.value += 1
-  if (props.taskId) void taskPage.load(true)
-  void store.refreshTopics()
-  // 芝士's reply landed after our read cursor — the user is watching this
-  // topic, so re-bump the cursor before refreshing badges (other topics that
-  // got messages in the background DO light up).
-  store.markRead(conversationId.value)
-  void store.refreshUnread()
-}
-
-// A platform resource in this room changed (the API handler that changed it
-// sent the frame) — refresh the affected panel live (§3.1.1). 频道这一行、任务、置顶、
-// 支线在缓存里，对话栏收到帧时已经把它们标过期了（`query/changes`），看着它们的
-// 侧栏、概览、任务页自己重读；这里只接缓存里没有的那几样。
-const CACHED_RESOURCES: ReadonlySet<string> = new Set(['topics', 'tasks', 'pins', 'threads'])
-function handleStateChanged(resource: string) {
-  if (resource === 'accept') reloadAccept()
-  // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
-  else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
-  // 技能的提议落下、被保存或被拒：那张卡跟着变。
-  else if (resource === 'skills') chatColumn.value?.reloadSkills()
-  else if (!CACHED_RESOURCES.has(resource)) activityTick.value += 1 // doc / notify → reload
-}
-
-// An action card's button → open the relevant view (§3.1.1 控件).
-async function handleOpenResource(
-  resource: string,
-  turnId?: string,
-  review?: DocReviewRequest,
-  document?: OpenedDocument
-) {
-  if (resource === 'doc' && document) {
-    // 资料库里的一份文档：在面板的自由区开一格，不是这个对话自己的文档。
-    focusMode.value = false
-    await nextTick()
-    await panelRef.value?.openDocument?.(document, review)
-    return
-  }
-  if (resource === 'site') {
-    // 对话里在动的那个头像：它此刻在干什么，去现场看。
-    focusMode.value = false
-    onPanelTab('site')
-  } else if (resource === 'changes') {
-    // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
-    focusMode.value = false
-    onPanelTab('changes')
-  } else if (resource === 'accept') {
-    reloadAccept()
-  } else if (resource === 'doc') {
-    // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
-    // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
-    // re-renders the editor, which recreates its DOM — wait for that render to
-    // settle before highlightTurn tags + flashes, or the flash is wiped instantly.
-    // 只有任务有自己的文档；频道里说的是资料库里的那份，上面那条已经接住了。
-    if (!props.taskId) return
-    focusMode.value = false
-    panel.show()
-    await panelRef.value?.showOverview()
-    // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。
-    if (review) taskOverviewRef.value?.reviewEdits(review)
-    else if (turnId) taskOverviewRef.value?.highlightTurn(turnId)
-    else taskOverviewRef.value?.pulse()
-  }
-  // topics: the topic panel is already in view next to the chat.
-}
-
-// A clicked <@handle> mention chip → open that teammate's member page.
-function handleMentionClick(handle: string) {
-  void router.push(userRefRoute(handle, props.projectId))
-}
-
-// 转为任务 from a message bubble: the message becomes a task in this channel.
-async function handleUpgradeMessage(messageId: string) {
-  const taskId = await store.upgradeMessage(messageId)
-  if (taskId) onOpenCard(taskId)
-}
-
-// 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
-// 所以在归零之前抓一次，交给对话栏去画那条线。
-const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
-
-// 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
-// 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
-// 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
-// （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
-// 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。名册抽屉里加了人、
-// 移了人，这份当场重读：刚请进来的队友在「现场」那一格也要叫得出名字。
-const rosterRead = useQuery(
-  computed(() => roomMembersQuery(props.topicId)),
-  queryClient
-)
-const roomMembers = computed<TopicMemberRow[]>(() => rosterRead.data.value?.data ?? [])
-// 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
-// 名册上那个座位，所以给的就是名册。
-const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
-const memberNames = computed<Record<string, string>>(() => ({
-  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
-  ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
-}))
-// 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
-// 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
-// 等于对每一条支线都白打一次会 404 的请求。
-// A room that became a task keeps its id, so an old link, a bookmark or the
-// last room remembered for the project still names it: such an id opens the
-// task's page in its channel instead of saying the room is gone.
-const redirecting = ref(false)
-async function openPlace() {
-  if (!selectedTopic.value) await queryClient.fetchQuery(roomRowQuery(props.topicId)).catch(() => null)
-  if (selectedTopic.value) {
-    placeOpened = true
-    store.markRead(conversationId.value)
-    return
-  }
-  if (props.taskId) return
-  redirecting.value = true
-  try {
-    const task = await getTask(props.topicId)
-    if (task.project_id !== props.projectId) return
-    await router.replace({
-      name: 'workspace-task',
-      params: { projectId: props.projectId, topicId: task.room_id, taskId: task.id },
-      query: route.query,
-    })
-  } catch {
-    // Not a task either: the empty state below says so.
-  } finally {
-    redirecting.value = false
-  }
-}
 void openPlace()
 </script>
 
@@ -615,45 +301,13 @@ void openPlace()
       </h1>
       <!-- 一条话题头部，横跨对话和工作面板。任务页上是任务的那一条：同一个高度，
            写着它在哪个房间、谁负责。 -->
-      <TaskHeader
-        v-if="taskId"
-        :room="selectedTopic"
-        :task="currentTask"
-        :member-names="memberNames"
-        :agent-name="store.agentName"
-        :people="taskPeople"
-        :agents="roomAgents"
-        :machine="taskMachine"
-        :machine-error="taskMachineError"
-        :starting="taskStarting"
-        :start-error="taskStartError"
-        :action-error="taskActionError"
-        :connected="roomConnected"
-        :start="taskPage.start"
-        :close="taskPage.close"
-        :reopen="taskPage.reopen"
-        :hand-over="taskPage.handOver"
-        :rename="taskPage.rename"
-        :set-collaborators="taskPage.setCollaborators"
-        :set-agent="taskPage.setAgent"
-        :load-machine="taskPage.loadMachine"
-        :set-machine="taskPage.setMachine"
-        :set-machine-default="taskPage.setMachineDefault"
-        :panel-open="panelOpen"
-        @open-room="backToRoom"
-        @toggle-panel="togglePanel"
-      />
-      <TopicHeader
-        v-else
-        :topic="selectedTopic"
-        :members="store.members"
-        :me="AUTHOR"
-        :connected="roomConnected"
-        :panel-open="panelOpen"
-        @toggle-panel="togglePanel"
-        @open-topic="openTopic"
-        @rename="(title) => store.renameTopic(topicId, title)"
-      />
+      <!-- 手机上这一行是顶栏的内容（script 里的 useScreenHeader；支线页见 ThreadPane）。 -->
+      <template v-if="mdAndUp">
+        <template v-if="taskId">
+          <TaskHeader v-if="taskHeaderBinding" v-bind="taskHeaderBinding" />
+        </template>
+        <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
+      </template>
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
@@ -675,9 +329,11 @@ void openPlace()
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
+        @title="(title: string) => setDynamicTitle(title, 'workspace-thread')"
         @close="backToRoom"
         @open-task="onOpenCard"
-        @to-task="handleUpgradeMessage"
+        @open-page="openTaskPage"
+        @to-task="upgradeMessage"
         @open-file="(path: string) => panelRef?.openFile?.(path)"
         @open-topic="openTopic"
         @mention-click="handleMentionClick"
@@ -705,10 +361,17 @@ void openPlace()
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
             :task-agent-handle="currentTask?.agent_handle ?? null"
+            :member-names="memberNames"
             :composer-closed="composerClosed"
             :ask-closed="askClosed"
             :accept-elsewhere="focusMode"
+            :chapters="chapters.rows.value"
+            :chapterable="canChapter"
+            :chapter-ids="chapters.chapterIds.value"
             v-on="chatEvents"
+            @chapter="chapters.add"
+            @unchapter="chapters.remove"
+            @rename="chapters.rename"
             @open-room="backToRoom"
           />
         </Transition>
@@ -723,6 +386,7 @@ void openPlace()
           />
           <span v-if="chatNews" class="chat-rail__news" aria-hidden="true" />
         </div>
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the split stays where it is -->
         <div
           v-if="mdAndUp && !focusMode && docked"
           class="pane-resizer"
@@ -733,6 +397,7 @@ void openPlace()
 
         <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
         <Transition name="panel-scrim">
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the panel too -->
           <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="closePanel" />
         </Transition>
 
@@ -756,7 +421,8 @@ void openPlace()
             :member-names="memberNames"
             @close="backToRoom"
             @open-task="onOpenCard"
-            @to-task="handleUpgradeMessage"
+            @open-page="openTaskPage"
+            @to-task="upgradeMessage"
             @open-file="(path: string) => panelRef?.openFile?.(path)"
             @open-topic="openTopic"
             @mention-click="handleMentionClick"
@@ -779,6 +445,7 @@ void openPlace()
             :site-turns="siteTurns"
             :topic-list="store.topics"
             :tab="panelTab"
+            :routine-id="panelRoutineId"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
             :compact="panelFloat || !panelOpen"
@@ -813,15 +480,11 @@ void openPlace()
                 :agent-name="store.agentName"
                 :agent-handle="store.agentHandle"
                 :members="store.members"
-                :comparing="taskComparing"
-                :comparison="taskComparison"
-                :compare-error="taskCompareError"
                 :checklist="taskOverview.checklist.value"
                 :related="taskOverview.related.value"
                 :can-retry="taskPage.takesPart.value"
                 :retrying="taskOverview.retrying.value"
                 :retry-error="taskOverview.retryError.value"
-                @toggle-compare="taskPage.toggleCompare"
                 @open-topic="openTopic"
                 @mention-click="handleMentionClick"
                 @retry-opening="taskOverview.retryOpening"
@@ -878,10 +541,17 @@ void openPlace()
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
                 :task-agent-handle="currentTask?.agent_handle ?? null"
+                :member-names="memberNames"
                 :composer-closed="composerClosed"
                 :ask-closed="askClosed"
+                :chapters="chapters.rows.value"
+                :chapterable="canChapter"
+                :chapter-ids="chapters.chapterIds.value"
                 accept-review-button
                 v-on="chatEvents"
+                @chapter="chapters.add"
+                @unchapter="chapters.remove"
+                @rename="chapters.rename"
                 @open-room="backToRoom"
               />
             </template>
@@ -927,70 +597,6 @@ void openPlace()
   align-items: center;
   justify-content: center;
   padding: 24px;
-}
-.col {
-  min-width: 0;
-}
-/* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
-   下面的 --sheet 改成一只浮层。 */
-.panel-host {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* 面板浮层：从对话右边拉进来的一张纸。收起时走进屏幕右侧并藏掉 visibility（不占
-   tab 序、不进读屏的树）；visibility 的过渡延迟等于位移时长，收起时等位移走完才藏。 */
-.panel-host--sheet {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: var(--z-panel-2);
-  width: min(520px, 100%);
-  background: var(--surface);
-  border-left: 1px solid var(--line);
-  box-shadow: var(--shadow-2);
-  transform: translateX(100%);
-  visibility: hidden;
-  transition:
-    transform var(--dur-base) var(--ease-standard),
-    visibility 0s linear var(--dur-base);
-}
-.panel-host--open {
-  transform: none;
-  visibility: visible;
-  transition:
-    transform var(--dur-base) var(--ease-out),
-    visibility 0s;
-}
-
-/* 浮层背后的遮罩：点它就和按 Esc 一样收起面板。 */
-.panel-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-panel);
-  background: var(--overlay);
-}
-.panel-scrim-enter-active,
-.panel-scrim-leave-active {
-  transition: opacity var(--dur-base) var(--ease-standard);
-}
-.panel-scrim-enter-from,
-.panel-scrim-leave-to {
-  opacity: 0;
-}
-
-/* 用户关掉了动画就别拉。 */
-@media (prefers-reduced-motion: reduce) {
-  .panel-host--sheet,
-  .panel-host--open,
-  .panel-scrim-enter-active,
-  .panel-scrim-leave-active {
-    transition: none;
-  }
 }
 </style>
 

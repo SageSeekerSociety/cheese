@@ -2,23 +2,41 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import CTE, Select, and_, delete, exists, func, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
     TaskMembership,
-    TaskSubmission,
-    TaskSubmissionEntry,
-    TaskSubmissionReview,
+    TaskMentor,
+    TaskRubricItem,
     TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
+from app.domain.task.rubric import RubricLine
+from app.domain.task.submission_repositories import (
+    TaskSubmissionEntryRepository,
+    TaskSubmissionRepository,
+    TaskSubmissionReviewRepository,
+)
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import TeamUserRelation
+
+__all__ = [
+    "TaskAccessDomainRepository",
+    "TaskMembershipRepository",
+    "TaskRepository",
+    "TaskSubmissionEntryRepository",
+    "TaskSubmissionRepository",
+    "TaskSubmissionReviewRepository",
+    "TaskSubmissionSchemaRepository",
+    "TopicRepository",
+]
 
 
 class TaskRepository:
@@ -31,6 +49,11 @@ class TaskRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
+        return await get_by_ids(
+            self._session, Task, task_ids, Task.deleted_at.is_(None)
+        )
 
     @staticmethod
     def joined_by(user_id: int):
@@ -61,6 +84,22 @@ class TaskRepository:
             .order_by(Task.updated_at.desc(), Task.id.desc())
             .limit(limit)
         )
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def search_in_space(
+        self, space_id: int, words: Sequence[str], *, viewer_id: int, limit: int
+    ) -> Sequence[Task]:
+        """The space's 题目 whose name or intro holds every word, latest first:
+        the published ones, and the viewer's own however they were reviewed."""
+        stmt = select(Task).where(
+            Task.space_id == space_id,
+            Task.deleted_at.is_(None),
+            or_(Task.approved == APPROVE_APPROVED, Task.creator_id == viewer_id),
+        )
+        for word in words:
+            like = f"%{word}%"
+            stmt = stmt.where(or_(Task.name.ilike(like), Task.intro.ilike(like)))
+        stmt = stmt.order_by(Task.updated_at.desc(), Task.id.desc()).limit(limit)
         return (await self._session.execute(stmt)).scalars().all()
 
     async def list_tasks(
@@ -306,7 +345,10 @@ class TaskRepository:
             return stmt.where(Task.ended_at.is_not(None))
         if lifecycle == "notEnded":
             return stmt.where(Task.ended_at.is_(None))
-        if lifecycle == "recruiting":
+        if lifecycle in ("recruiting", "closed"):
+            # Still to be claimed: not ended, registration not over, a seat left.
+            # A 题目 whose registration has not opened yet is still ahead of the
+            # reader, so it counts as recruiting.
             approved_count = (
                 select(func.count(TaskMembership.id))
                 .where(
@@ -317,13 +359,16 @@ class TaskRepository:
                 .correlate(Task)
                 .scalar_subquery()
             )
-            return stmt.where(
+            open_ = and_(
                 Task.ended_at.is_(None),
+                or_(Task.deadline.is_(None), Task.deadline > func.now()),
                 or_(
                     Task.participant_limit.is_(None),
+                    Task.participant_limit <= 0,
                     approved_count < Task.participant_limit,
                 ),
             )
+            return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 
     def _apply_space_task_visibility(
@@ -567,7 +612,7 @@ class TaskMembershipRepository:
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""  # noqa: E501
+        """Return team-type memberships for this task where the user belongs to the team."""
         membership_stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
             and_(
                 TaskMembership.task_id == task_id,
@@ -654,532 +699,12 @@ class TaskMembershipRepository:
         await self._session.flush()
         return membership
 
-    async def find_active_locked_memberships(
-        self,
-        team_id: int,
-        locking_policies: list[str],
-    ) -> Sequence[TaskMembership]:
-        """Find team task memberships that impose a lock on team changes.
-
-        Mirrors NT TaskMembershipRepository.findActiveMembershipsWithOngoingLock:
-        returns TaskMembership rows where the team is APPROVED, the task has a
-        matching locking policy, and the completion status is still ongoing.
-        """
-        ongoing_statuses = ["NOT_SUBMITTED", "PENDING_REVIEW", "REJECTED_RESUBMITTABLE"]
-        now = datetime.now(UTC)
-        stmt: Select[tuple[TaskMembership]] = (
-            select(TaskMembership)
-            .join(Task, Task.id == TaskMembership.task_id)
-            .where(
-                TaskMembership.member_id == team_id,
-                TaskMembership.is_team.is_(True),
-                TaskMembership.approved == 0,  # APPROVED
-                TaskMembership.deleted_at.is_(None),
-                Task.deleted_at.is_(None),
-                Task.team_locking_policy.in_(locking_policies),
-                TaskMembership.completion_status.in_(ongoing_statuses),
-                or_(
-                    TaskMembership.deadline.is_(None),
-                    TaskMembership.deadline > now,
-                ),
-            )
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-
-class TaskSubmissionRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get_by_id(self, submission_id: int) -> TaskSubmission | None:
-        stmt: Select[tuple[TaskSubmission]] = select(TaskSubmission).where(
-            and_(
-                TaskSubmission.id == submission_id, TaskSubmission.deleted_at.is_(None)
-            )
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def create_submission(
-        self,
-        *,
-        membership_id: int,
-        submitter_id: int,
-        version: int,
-    ) -> TaskSubmission:
-        now = datetime.now(UTC)
-        submission = TaskSubmission(
-            membership_id=membership_id,
-            submitter_id=submitter_id,
-            version=version,
-            created_at=now,
-            updated_at=now,
-            deleted_at=None,
-        )
-        self._session.add(submission)
-        await self._session.flush()
-        return submission
-
-    async def get_latest_version_for_membership(self, membership_id: int) -> int:
-        stmt = select(func.max(TaskSubmission.version)).where(
-            TaskSubmission.membership_id == membership_id,
-            TaskSubmission.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        value = result.scalar_one()
-        return int(value or 0)
-
-    async def get_by_membership_and_version(
-        self,
-        membership_id: int,
-        version: int,
-    ) -> TaskSubmission | None:
-        stmt: Select[tuple[TaskSubmission]] = select(TaskSubmission).where(
-            TaskSubmission.membership_id == membership_id,
-            TaskSubmission.version == version,
-            TaskSubmission.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def save(self, submission: TaskSubmission) -> TaskSubmission:
-        self._session.add(submission)
-        await self._session.flush()
-        return submission
-
-    async def list_review_verdicts_for_memberships(
-        self,
-        *,
-        membership_ids: Sequence[int],
-    ) -> dict[int, list[bool | None]]:
-        """这些领取名下**每条 live 提交**的判决，按领取分组。
-
-        判决三态照 ``app.domain.task.submission_state`` 的口径：``True`` = 判过、
-        ``False`` = 退回、``None`` = 还没判（没有 live 评审行）。两个「live」的条件
-        与那边一致：提交行与评审行各自 ``deleted_at IS NULL``。
-
-        一页题一次性问完：逐题各发一条就是 20 条查询，而这一条按领取去重后只跑一次
-        （`has_work_in_hand` 那边是相关的 EXISTS 谓词，用途不同，不通用）。
-        """
-        if not membership_ids:
-            return {}
-        stmt = (
-            select(TaskSubmission.membership_id, TaskSubmissionReview.accepted)
-            .select_from(TaskSubmission)
-            .outerjoin(
-                TaskSubmissionReview,
-                and_(
-                    TaskSubmissionReview.submission_id == TaskSubmission.id,
-                    TaskSubmissionReview.deleted_at.is_(None),
-                ),
-            )
-            .where(
-                TaskSubmission.membership_id.in_(membership_ids),
-                TaskSubmission.deleted_at.is_(None),
-            )
-            .order_by(TaskSubmission.id.asc())
-        )
-        result = await self._session.execute(stmt)
-        verdicts: dict[int, list[bool | None]] = {}
-        for membership_id, accepted in result.all():
-            verdicts.setdefault(int(membership_id), []).append(
-                None if accepted is None else bool(accepted)
-            )
-        return verdicts
-
-    async def list_submissions(
-        self,
-        *,
-        task_id: int,
-        participant_id: int | None = None,
-        all_versions: bool = False,
-        reviewed: bool | None = None,
-        limit: int,
-        offset: int = 0,
-        sort_by: str = "updatedAt",
-        sort_order: str = "desc",
-    ) -> Sequence[TaskSubmission]:
-        """List submissions for a task with optional participant/review filters.
-
-        NOTE: 简化实现：
-        - 使用 offset 分页；
-        - 当 all_versions=False 时，
-          仅返回每个 membership 的最新版本（按 version 最大）。
-        """
-        # Base query: join membership -> task for filtering
-        stmt: Select[tuple[TaskSubmission]] = (
-            select(TaskSubmission)
-            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
-            .join(Task, TaskMembership.task_id == Task.id)
-        )
-        stmt = stmt.where(
-            Task.deleted_at.is_(None),
-            TaskSubmission.deleted_at.is_(None),
-            TaskMembership.deleted_at.is_(None),
-            Task.id == task_id,
-        )
-
-        if participant_id is not None:
-            stmt = stmt.where(TaskMembership.id == participant_id)
-
-        if not all_versions:
-            latest_subq = (
-                select(
-                    TaskSubmission.membership_id,
-                    func.max(TaskSubmission.version).label("max_version"),
-                )
-                .where(TaskSubmission.deleted_at.is_(None))
-                .group_by(TaskSubmission.membership_id)
-                .subquery()
-            )
-            stmt = stmt.join(
-                latest_subq,
-                and_(
-                    TaskSubmission.membership_id == latest_subq.c.membership_id,
-                    TaskSubmission.version == latest_subq.c.max_version,
-                ),
-            )
-
-        if reviewed is not None:
-            # LEFT JOIN review and filter by existence
-            review_exists = exists().where(
-                TaskSubmissionReview.submission_id == TaskSubmission.id,
-                TaskSubmissionReview.deleted_at.is_(None),
-            )
-            if reviewed:
-                stmt = stmt.where(review_exists)
-            else:
-                stmt = stmt.where(~review_exists)
-
-        if sort_by == "createdAt":
-            sort_col = TaskSubmission.created_at
-        else:
-            sort_col = TaskSubmission.updated_at
-        desc = sort_order.lower() == "desc"
-        if desc:
-            stmt = stmt.order_by(sort_col.desc(), TaskSubmission.id.desc())
-        else:
-            stmt = stmt.order_by(sort_col.asc(), TaskSubmission.id.asc())
-
-        stmt = stmt.limit(limit).offset(offset)
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def count_submissions(
-        self,
-        *,
-        task_id: int,
-        participant_id: int | None = None,
-        all_versions: bool = False,
-        reviewed: bool | None = None,
-    ) -> int:
-        stmt = (
-            select(func.count(TaskSubmission.id))
-            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
-            .join(Task, TaskMembership.task_id == Task.id)
-        )
-        stmt = stmt.where(
-            Task.deleted_at.is_(None),
-            TaskSubmission.deleted_at.is_(None),
-            TaskMembership.deleted_at.is_(None),
-            Task.id == task_id,
-        )
-
-        if participant_id is not None:
-            stmt = stmt.where(TaskMembership.id == participant_id)
-
-        if not all_versions:
-            latest_subq = (
-                select(
-                    TaskSubmission.membership_id,
-                    func.max(TaskSubmission.version).label("max_version"),
-                )
-                .where(TaskSubmission.deleted_at.is_(None))
-                .group_by(TaskSubmission.membership_id)
-                .subquery()
-            )
-            stmt = stmt.join(
-                latest_subq,
-                and_(
-                    TaskSubmission.membership_id == latest_subq.c.membership_id,
-                    TaskSubmission.version == latest_subq.c.max_version,
-                ),
-            )
-
-        if reviewed is not None:
-            review_exists = exists().where(
-                TaskSubmissionReview.submission_id == TaskSubmission.id,
-                TaskSubmissionReview.deleted_at.is_(None),
-            )
-            if reviewed:
-                stmt = stmt.where(review_exists)
-            else:
-                stmt = stmt.where(~review_exists)
-
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def list_for_space(
-        self,
-        *,
-        space_id: int,
-        task_id: int | None = None,
-        reviewed: bool | None = None,
-        limit: int,
-        offset: int = 0,
-        sort_by: str = "createdAt",
-        sort_order: str = "desc",
-    ) -> Sequence[tuple[TaskSubmission, TaskMembership, Task]]:
-        """一个题目板里每个人的最新一版提交，连它属于哪道题。
-
-        课程的「作业与验收」要一屏看整门课。逐道题 × 逐个成员地问一遍是 N×M 次
-        请求，所以这一处按板子取一次；每行都带着 ``Task``，因为管理员看的是「谁的
-        哪份作业」，只有提交是不知道是哪道题的。
-
-        与 ``list_submissions`` 的关系：那条按一道题取，这条按一块板取，其余
-        （只取每人最新版、按是否评审过滤、排序与分页）逐条相同。
-        """
-        stmt: Select[tuple[TaskSubmission, TaskMembership, Task]] = (
-            select(TaskSubmission, TaskMembership, Task)
-            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
-            .join(Task, TaskMembership.task_id == Task.id)
-            .where(
-                Task.deleted_at.is_(None),
-                TaskSubmission.deleted_at.is_(None),
-                TaskMembership.deleted_at.is_(None),
-                Task.space_id == space_id,
-            )
-        )
-        if task_id is not None:
-            stmt = stmt.where(Task.id == task_id)
-
-        latest_subq = (
-            select(
-                TaskSubmission.membership_id,
-                func.max(TaskSubmission.version).label("max_version"),
-            )
-            .where(TaskSubmission.deleted_at.is_(None))
-            .group_by(TaskSubmission.membership_id)
-            .subquery()
-        )
-        stmt = stmt.join(
-            latest_subq,
-            and_(
-                TaskSubmission.membership_id == latest_subq.c.membership_id,
-                TaskSubmission.version == latest_subq.c.max_version,
-            ),
-        )
-
-        if reviewed is not None:
-            review_exists = exists().where(
-                TaskSubmissionReview.submission_id == TaskSubmission.id,
-                TaskSubmissionReview.deleted_at.is_(None),
-            )
-            if reviewed:
-                stmt = stmt.where(review_exists)
-            else:
-                stmt = stmt.where(~review_exists)
-
-        if sort_by == "updatedAt":
-            sort_col = TaskSubmission.updated_at
-        else:
-            sort_col = TaskSubmission.created_at
-        if sort_order.lower() == "desc":
-            stmt = stmt.order_by(sort_col.desc(), TaskSubmission.id.desc())
-        else:
-            stmt = stmt.order_by(sort_col.asc(), TaskSubmission.id.asc())
-
-        stmt = stmt.limit(limit).offset(offset)
-        result = await self._session.execute(stmt)
-        return [(row[0], row[1], row[2]) for row in result.all()]
-
-    async def count_for_space(
-        self,
-        *,
-        space_id: int,
-        task_id: int | None = None,
-        reviewed: bool | None = None,
-    ) -> int:
-        """``list_for_space`` 的总数，同样是「每人最新一版」的口径。
-
-        因为每人只算一版，这个数也正好是**交过东西的人数**——课程那一屏拿它算
-        「还有多少人没交」。
-        """
-        stmt = (
-            select(func.count(TaskSubmission.id))
-            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
-            .join(Task, TaskMembership.task_id == Task.id)
-            .where(
-                Task.deleted_at.is_(None),
-                TaskSubmission.deleted_at.is_(None),
-                TaskMembership.deleted_at.is_(None),
-                Task.space_id == space_id,
-            )
-        )
-        if task_id is not None:
-            stmt = stmt.where(Task.id == task_id)
-
-        latest_subq = (
-            select(
-                TaskSubmission.membership_id,
-                func.max(TaskSubmission.version).label("max_version"),
-            )
-            .where(TaskSubmission.deleted_at.is_(None))
-            .group_by(TaskSubmission.membership_id)
-            .subquery()
-        )
-        stmt = stmt.join(
-            latest_subq,
-            and_(
-                TaskSubmission.membership_id == latest_subq.c.membership_id,
-                TaskSubmission.version == latest_subq.c.max_version,
-            ),
-        )
-
-        if reviewed is not None:
-            review_exists = exists().where(
-                TaskSubmissionReview.submission_id == TaskSubmission.id,
-                TaskSubmissionReview.deleted_at.is_(None),
-            )
-            if reviewed:
-                stmt = stmt.where(review_exists)
-            else:
-                stmt = stmt.where(~review_exists)
-
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-
-class TaskSubmissionEntryRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def list_by_submission_id(
-        self,
-        submission_id: int,
-    ) -> Sequence[TaskSubmissionEntry]:
-        stmt: Select[tuple[TaskSubmissionEntry]] = (
-            select(TaskSubmissionEntry)
-            .where(
-                TaskSubmissionEntry.task_submission_id == submission_id,
-                TaskSubmissionEntry.deleted_at.is_(None),
-            )
-            .order_by(TaskSubmissionEntry.index.asc())
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def create_entries(
-        self,
-        *,
-        submission_id: int,
-        entries: list[tuple[int, str | None, int | None, str | None]],
-    ) -> None:
-        now = datetime.now(UTC)
-        for idx, text, attachment_id, prompt in entries:
-            row = TaskSubmissionEntry(
-                task_submission_id=submission_id,
-                index=idx,
-                content_text=text,
-                content_attachment_id=attachment_id,
-                prompt=prompt,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            )
-            self._session.add(row)
-        await self._session.flush()
-
-    async def soft_delete_by_membership_and_version(
-        self,
-        membership_id: int,
-        version: int,
-    ) -> None:
-        """Soft delete entries for all submissions of given (membership, version)."""
-        now = datetime.now(UTC)
-        subq = select(TaskSubmission.id).where(
-            TaskSubmission.membership_id == membership_id,
-            TaskSubmission.version == version,
-            TaskSubmission.deleted_at.is_(None),
-        )
-        stmt = select(TaskSubmissionEntry).where(
-            TaskSubmissionEntry.task_submission_id.in_(subq),
-            TaskSubmissionEntry.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        rows = list(result.scalars().all())
-        for row in rows:
-            row.deleted_at = now
-        if rows:
-            await self._session.flush()
-
-
-class TaskSubmissionReviewRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get_by_submission_id(
-        self,
-        submission_id: int,
-        reviewer_id: int | None = None,
-    ) -> TaskSubmissionReview | None:
-        """这一版的一条评审：给了 `reviewer_id` 就是那个人的那一条，没给就是最早的
-        一条（旧读者只要一条）。`reviewer_id` 是必须的，因为一版可以有多条。"""
-        stmt: Select[tuple[TaskSubmissionReview]] = (
-            select(TaskSubmissionReview)
-            .where(
-                TaskSubmissionReview.submission_id == submission_id,
-                TaskSubmissionReview.deleted_at.is_(None),
-            )
-            .order_by(TaskSubmissionReview.created_at, TaskSubmissionReview.id)
-        )
-        if reviewer_id is not None:
-            stmt = stmt.where(TaskSubmissionReview.reviewer_id == reviewer_id)
-        result = await self._session.execute(stmt)
-        return result.scalars().first()
-
-    async def exists_by_submission_id(self, submission_id: int) -> bool:
-        stmt = select(TaskSubmissionReview.id).where(
-            TaskSubmissionReview.submission_id == submission_id,
-            TaskSubmissionReview.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().first() is not None
-
-    async def create_review(
-        self,
-        *,
-        submission_id: int,
-        reviewer_id: int,
-        accepted: bool,
-        score: int,
-        comment: str,
-    ) -> TaskSubmissionReview:
-        now = datetime.now(UTC)
-        review = TaskSubmissionReview(
-            submission_id=submission_id,
-            reviewer_id=reviewer_id,
-            accepted=accepted,
-            score=score,
-            comment=comment,
-            created_at=now,
-            updated_at=now,
-            deleted_at=None,
-        )
-        self._session.add(review)
-        await self._session.flush()
-        return review
-
-    async def save(self, review: TaskSubmissionReview) -> TaskSubmissionReview:
-        self._session.add(review)
-        await self._session.flush()
-        return review
-
-    async def soft_delete(self, review: TaskSubmissionReview) -> None:
-        review.deleted_at = datetime.now(UTC)
-        self._session.add(review)
-        await self._session.flush()
+    # `find_active_locked_memberships` 曾经在这儿：`team` 决定一次成员变更能不能做
+    # 的时候问它。这一包在第 4 层、`team` 在第 5 层（团队读任务判权限，任务读团队判
+    # 权限，方向是反的），所以那句话现在由 `team/services.py` 的
+    # `check_team_locking_status` 自己读 `task` / `task_membership` 两张表来答
+    # （同 `topic/repositories/statements.py` 的裸表规矩）。这一份留着只会是同一句
+    # `WHERE` 的第二个副本。行为由 `tests/integration/test_bug5_team_locking.py` 看着。
 
 
 class TopicRepository:
@@ -1292,6 +817,37 @@ class TaskSubmissionSchemaRepository:
         return new_entries
 
 
+class TaskRubricRepository:
+    """A task's 评分要点, kept in order and replaced as a whole."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> list[TaskRubricItem]:
+        stmt = (
+            select(TaskRubricItem)
+            .where(TaskRubricItem.task_id == task_id)
+            .order_by(TaskRubricItem.index.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def replace(self, task_id: int, items: Sequence[RubricLine]) -> None:
+        await self._session.execute(
+            delete(TaskRubricItem).where(TaskRubricItem.task_id == task_id)
+        )
+        for idx, line in enumerate(items):
+            self._session.add(
+                TaskRubricItem(
+                    task_id=task_id,
+                    index=idx,
+                    item=line.item,
+                    points=line.points,
+                    criteria=line.criteria,
+                )
+            )
+        await self._session.flush()
+
+
 class TaskAccessDomainRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -1340,4 +896,35 @@ class TaskAccessDomainRepository:
         for item in existing:
             item.deleted_at = now
             item.updated_at = now
+        await self._session.flush()
+
+
+class TaskMentorRepository:
+    """The mentors a task's publisher chose (#3830)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def for_tasks(self, task_ids: Sequence[int]) -> dict[int, list[str]]:
+        if not task_ids:
+            return {}
+        rows = await self._session.execute(
+            select(TaskMentor.task_id, TaskMentor.user_handle)
+            .where(TaskMentor.task_id.in_(list(task_ids)))
+            .order_by(TaskMentor.task_id, TaskMentor.user_handle)
+        )
+        out: dict[int, list[str]] = {}
+        for task_id, handle in rows.all():
+            out.setdefault(task_id, []).append(handle)
+        return out
+
+    async def of_task(self, task_id: int) -> list[str]:
+        return (await self.for_tasks([task_id])).get(task_id, [])
+
+    async def replace(self, task_id: int, handles: Sequence[str]) -> None:
+        await self._session.execute(
+            delete(TaskMentor).where(TaskMentor.task_id == task_id)
+        )
+        for handle in dict.fromkeys(handles):
+            self._session.add(TaskMentor(task_id=task_id, user_handle=handle))
         await self._session.flush()

@@ -28,20 +28,23 @@ covers:
 | `doc_form.md` | 实况文档写哪几块、怎么改，进系统提示词里实况文档那一节（`prompt.DOC_FORM`） |
 | `doc_writing.md` | 芝士文档的写作指南，作为 `cheese-docs` 技能发出 |
 | `doc_blocks.md` | 每种块的写法，作为 `cheese-docs` 的 `references/blocks.md` 发出 |
+| `doc_live.md` | 实况文档的细则，作为 `cheese-docs` 的 `references/live-doc.md` 发出 |
+| `miniapp.md` | 小程序什么时候用、放进文档还是发到聊天，作为 `miniapp` 技能发出 |
+| `doc_apps.md` | 小程序的代码写法和画面设计，作为 `miniapp` 的 `references/apps.md` 发出 |
 
-`load_skills(names)` 按 frontmatter 里的 `name` 取正文，认不出的名字跳过。文档芝士（`document/question.py`）每次都在写文档，所以它不加载技能，而是把「写作」规则、`doc_writing.md` 和 `doc_blocks.md` 整份内联进提示词。
+`load_skills(names)` 按 frontmatter 里的 `name` 取正文，认不出的名字跳过。文档芝士（`document/question.py`）每次都在写文档，所以它不加载技能，而是把「写作」规则和 `cheese-docs`、`miniapp` 两个技能的全部文件整份内联进提示词。
 
 ## 平台技能和仓库自己的规矩 {#platform}
 
-`backend/sandbox/skills/cheese/` 是平台自己的那份说明，讲在知是里交付工作的流程：开任务、提交推送、递卡修订、合并冲突，以及 `cheese` 命令行每个子命令的用途；产物与预览、邮箱和飞书、定时与触发、读 CI 各放一份 `references/`。平台工具不在里面列：每个工具带着自己的说明进会话。它对**所有托管仓库**都成立，托管仓库不需要为平台做任何改动。每轮都用得上的那几条平台规矩（房间里的人是产品用户、回复里不提内部机制、不用 `git stash`、改仓库前先开任务）在系统提示词的「平台规矩」一节。
+`backend/sandbox/skills/cheese/` 是平台自己的那份说明，讲在知是里交付工作的流程：开任务、提交推送、递卡修订、合并冲突，以及 `cheese` 命令行每个子命令的用途；产物与预览、邮箱和飞书、例行事务、读 CI 各放一份 `references/`。平台工具不在里面列：每个工具带着自己的说明进会话。它对**所有托管仓库**都成立，托管仓库不需要为平台做任何改动。每轮都用得上的那几条平台规矩（房间里的人是产品用户、回复里不提内部机制、不用 `git stash`、改仓库前先开任务）在系统提示词的「平台规矩」一节。
 
 仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md` 和 `doc_blocks.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
 技能的数量少、条件都要能判准，所以「读线上页面」（`cheese_fetch` 工具）与「读 Figma 稿」（`showcase/scripts/figma.py`）不各立一颗，而是合进 `showcase`：它们本来也只在这一件事里用得上（把一个东西摆给人看）。技能池子（`_platform_catalog()`）按目录里有 `SKILL.md` 自动收，加内容不加名字，池子里的颗数不变。反过来，一整件事、别处用不上的才单立一颗：`mcp-builder`（要把某个外部 API 接给 AI、写一台 MCP server 时加载）与那几颗不重叠，就自成一颗，它的 `scripts/smoke.py` 是「接进项目之前必须绿」的那条自检。
 
-`RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese-docs`。平台不再发的技能，每台机器按自己记下的清单（`.cheese-platform-skills`）删掉。
+`RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese-docs` 和 `miniapp`。平台不再发的技能，每台机器按自己记下的清单（`.cheese-platform-skills`）删掉。
 
 ## 项目技能 {#project}
 

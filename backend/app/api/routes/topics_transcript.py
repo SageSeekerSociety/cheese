@@ -1,73 +1,60 @@
-"""What a room did: its 施工现场 (spec §7.1) and the tail of one step's output.
-
-Ninth slice of `app/api/routes/topics.py` (arch review C-backend.md section
-3.3), after `topics_attachments.py` (#2171), `topics_documents.py` +
-`topics_preview.py` (#2175), `topics_side_routes.py` (#2190),
-`topics_compute.py` (#2197), `topics_title.py` (#2201), `topics_shown.py`
-(#2207) and `topics_tasks.py` (#2215). topics.py is 2,403 lines against a
-1,500-line cap that only ratchets down.
-
-What moves, verbatim: `GET /topics/{topic_id}/transcript` (the room's session
-record -- its tool/event actions, read-only, newest window first, pageable and
-filterable by author) and `GET /topics/{topic_id}/transcript/{block_id}/output`
-(the kept tail of what one 现场 step printed). They are one group because the
-second is the reason the first leaves the output behind: a page of 120 steps
-would otherwise carry up to 120 × 8 KiB, so a transcript row only says it has
-some (`output_bytes`) and this endpoint hands it over when somebody opens it.
-
-What stays behind, and why. `_actor_in_place` (identity, then the room's roster
--- the shape every `topics_*` module imports it in), `Block`,
-`BlockKind`, `BlockOut` and `BlockRepository` are imported from
-`app.api.topics_deps.py` rather than from `app.domain.block.*`. That module is
-where the route-shared pieces of topics.py live now: importing a repository or a
-model through it adds no exemption to the guard in
-`tests/unit/test_domain_import_guard.py` (which ratchets (route module,
-repository module) pairs) and no edge to the C2 baseline in `.importlinter`
-(which ratchets `app.domain.block.models`) — one module carries that debt instead
-of every `topics_*` module carrying its own. Before it existed this file took all
-five names from `routes/topics.py`, which made one route another route's
-dependency; that is the shape C4 forbids. `without_output` is the one name
-topics.py read only for the transcript, so it leaves with the code and is
-imported from `app.domain.agent.step_output` directly. topics.py imports nothing
-from this module, so there is no cycle.
-
-Ordering. This module sorts after `topics.py` and after every other `topics_*`
-module (`_` > `.`, and `transcript` > `title`), so its two paths mount later in
-the route table than they did inside topics.py. Both are literal where
-`transcript` sits, and no route registered in between has a parameter there, so
-neither loses its first full match; resolving every path in the table confirms
-each still reaches the handler it did before, now under
-`app.api.routes.topics_transcript`. OpenAPI is byte-identical apart from the
-moved paths' position in the paths object.
-
-The new module mounts itself: `app.main._discover_routers` includes every
-module-level `APIRouter` under `app.api.routes`, so the declaration below, with
-the same prefix and tags, is all it takes.
-"""
+"""The 现场 timeline is a read projection of immutable harness records."""
 
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.topics_deps import (
-    Block,
-    BlockKind,
-    BlockOut,
-    BlockRepository,
-    _actor_in_place,
-)
+from app.api.session_record_rows import no_platform_reminders, text_of
+from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.agent.harness.notices import without_reminders
 from app.domain.agent.run_records import for_site
-from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
-from app.domain.topic.services import TopicService
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.room_task.place import place_or_404
+from app.domain.session_record import service
+from app.domain.session_record.history import earlier_turns
+from app.domain.session_record.views import as_block
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+def hide_platform_reminders(items: list[dict]) -> list[dict]:
+    """现场 keeps every record, but does not repeat the platform's own reminders.
+
+    The 现场 reads the harness journal, and every input in it carries the
+    platform's words — the chat contract on every turn, a nudge when the room or
+    the checklist went quiet. They are instructions to the model, not
+    conversation, so showing them makes a reader scroll past the same paragraph
+    over and over. `without_reminders` takes them out of the display only: the
+    journal keeps every line (`meta.record` still has it) and the model already
+    read them.
+
+    A text part left with nothing is dropped, so a notice-only input leaves no
+    empty row behind. The stripping itself lives in `session_record_rows`, which
+    a pulled transcript goes through too — one set of words, one place.
+    """
+    for item in items:
+        meta = item.get("meta")
+        if not isinstance(meta, dict):
+            continue
+        parts = meta.get("parts")
+        if not isinstance(parts, list) or not parts:
+            if isinstance(item.get("content"), str):
+                item["content"] = without_reminders(item["content"])
+            continue
+        kept, changed = no_platform_reminders(parts)
+        if changed:
+            meta["parts"] = kept
+            item["content"] = text_of(kept)
+    return items
 
 
 @router.get("/{topic_id}/transcript")
@@ -75,117 +62,85 @@ async def topic_transcript(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    limit: int | None = Query(None, ge=1, le=200),
-    before: uuid.UUID | None = None,
+    limit: int = Query(120, ge=1, le=200),
+    before: str | None = Query(None, max_length=512),
     author: str | None = Query(None, min_length=1, max_length=120),
-) -> dict:
-    """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
-    read-only, newest window first.
-
-    Paged for the same reason the conversation is: events are the MOST numerous
-    kind of block (one per tool call), so a topic that has run for a while makes
-    this the largest response the app can ask for, and it only ever grows.
-    `limit=None` keeps the whole-history behaviour for callers that still want
-    it.
-
-    `author` narrows it to one teammate's steps (一个人/一个队友的 handle). A room
-    can seat several of them, and 现场 can be read one of them at a time; that
-    filter belongs INSIDE the paging, exactly like `kinds` — filtering a page
-    after the fact returns fewer rows than asked for and reports `has_more`
-    against the wrong set, so the caller pages through holes.
-
-    One conversation's record — a room's own line, or a task's: each
-    conversation's session has its own, and interleaving every task's actions
-    into the room's would bury what the room did."""
-    place = await TopicService(db).place_or_404(topic_id)
+) -> JSONResponse:
+    place = await place_or_404(db, topic_id)
+    if place.room.deleted_at is not None:
+        raise NotFoundError(say("topicNotFound"))
     await _actor_in_place(resolver, place)
-    repo = BlockRepository(db)
-    # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
-    # to the conversation pane — mirroring them here just duplicates the chat.
-    kinds = {BlockKind.event}
-    cursor: Block | None = None
+    instances = await AgentInstanceService(db).list_for_project(place.project_id)
+    authors = {
+        instance.handle: agent_instance_handle(instance.id) for instance in instances
+    }
+    native_author = (
+        next((name for name, seat in authors.items() if seat == author), "")
+        if author is not None
+        else None
+    )
+    cursor = None
     if before is not None:
-        cursor = await repo.get(before)
-        # Same rule as the conversation's pager: an unknown cursor must not
-        # degrade into "newest N", which the caller cannot tell from a real page.
-        # A cursor from another conversation in this room is as wrong as one
-        # from another room.
-        if cursor is None or cursor.conversation_id != place.conversation_id:
-            raise NotFoundError(say("cursorEventNotFound"))
-    if limit is None:
-        site = await repo.list_for_topic(
-            place.conversation_id, kinds=kinds, author=author
-        )
-        has_more = False
-    else:
-        result = await repo.page_for_topic(
-            place.conversation_id,
-            limit=limit,
-            before=cursor,
-            kinds=kinds,
-            author=author,
-        )
-        site, has_more = result.items, result.has_more
-    # What a step printed stays behind: a page of 120 steps would otherwise
-    # carry up to 120 × 8 KiB. The row says it has some (`output_bytes`), and
-    # `step_output` below hands it over when somebody opens it.
-    items = [
-        without_output(BlockOut.model_validate(b).model_dump(mode="json")) for b in site
-    ]
-    # The platform's own running (a turn queued, a sandbox woken, a model
-    # request retried) is kept apart from the conversation; the 现场 shows it
-    # among the steps of the same span. The span is the page's: from its
-    # oldest step (or the start, on the last page) to its newest (or now, on
-    # the first).
+        try:
+            cursor = service.decode_cursor(before)
+        except ValueError:
+            raise NotFoundError(say("cursorEventNotFound")) from None
+    raw = await service.read(
+        db,
+        place.conversation_id,
+        before=cursor,
+        newest=True,
+        author=native_author,
+        limit=limit,
+    )
+    items = [as_block(item, place.conversation_id) for item in raw.items]
+    for item in items:
+        item["author"] = authors.get(item["author"], item["author"])
+    old, more_old, boundary = await earlier_turns(
+        db, place.conversation_id, before=cursor, author=author, limit=limit
+    )
     records = await for_site(
         db,
         place.conversation_id,
-        since=site[0].created_at if site and has_more else None,
-        until=cursor.created_at if cursor is not None else None,
+        since=boundary,
+        until=cursor[0] if cursor else None,
         author=author,
+        limit=limit + 1,
+        before=cursor,
     )
-    if records:
-        items = sorted(
-            [*items, *records],
-            key=lambda item: datetime.fromisoformat(str(item["created_at"])),
+    for record in records:
+        key = (
+            datetime.fromisoformat(record["created_at"]),
+            "platform",
+            record["author"],
+            uuid.UUID(record["id"]).int,
         )
-    # A turn's first step comes after its preparation and the model's first
-    # answer; the 现场 counts the turn from when it started.
-    starts = await turn_starts(db, place.conversation_id, (b.turn_id for b in site))
-    return ok(
-        {
-            **page(items, len(items)),
-            "has_more": has_more,
-            "oldest_id": str(site[0].id) if site else None,
-            "turn_starts": {
-                str(turn_id): started.isoformat() for turn_id, started in starts.items()
-            },
-        }
+        record["meta"]["cursor"] = service.encode_cursor(key)
+    candidates = [*items, *old, *records]
+
+    def order(item):
+        return service.decode_cursor(item["meta"]["cursor"])
+
+    candidates = sorted(
+        (item for item in candidates if cursor is None or order(item) < cursor),
+        key=order,
     )
-
-
-@router.get("/{topic_id}/transcript/{block_id}/output")
-async def step_output(
-    topic_id: uuid.UUID,
-    block_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """The tail of what one 现场 step printed, as kept (``step_output``)."""
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    block = await BlockRepository(db).get(block_id)
-    # Same door as the transcript: the one conversation it was asked about.
-    if (
-        block is None
-        or block.conversation_id != place.conversation_id
-        or block.kind != BlockKind.event
-    ):
-        raise NotFoundError(say("stepNotFound"))
-    meta = block.meta or {}
-    return ok(
-        {
-            "output": str(meta.get("output") or ""),
-            "bytes": int(meta.get("output_bytes") or 0),
-        }
+    has_more = raw.next is not None or more_old or len(candidates) > limit
+    items = hide_platform_reminders(candidates[-limit:])
+    starts = await turn_starts(
+        db,
+        place.conversation_id,
+        (uuid.UUID(i["turn_id"]) for i in items if i["turn_id"]),
+    )
+    return JSONResponse(
+        ok(
+            {
+                **page(items, len(items)),
+                "has_more": has_more,
+                "oldest_id": items[0]["meta"]["cursor"] if items and has_more else None,
+                "turn_starts": {
+                    str(turn): at.isoformat() for turn, at in starts.items()
+                },
+            }
+        )
     )

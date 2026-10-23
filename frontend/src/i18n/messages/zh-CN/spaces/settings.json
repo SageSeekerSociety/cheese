@@ -1,0 +1,33 @@
+{
+  "back": "返回空间设置",
+  "basic": {
+    "avatar": "头像",
+    "changeAvatar": "更换头像",
+    "intro": "简介",
+    "name": "名称",
+    "save": "保存",
+    "visibleLimit": "每位发布者对成员可见的已通过、未结项题目上限",
+    "visibleLimitInput": "数量上限",
+    "visibleLimitInvalid": "数量上限需为大于等于 0 的整数",
+    "visibleLimitLabel": "题目可见上限",
+    "visibleLimitLimited": "限制数量",
+    "visibleLimitRequired": "填写数量上限",
+    "visibleLimitUnlimited": "不限制"
+  },
+  "close": "关闭空间设置",
+  "closeHint": "关闭空间设置（Esc）",
+  "overlay": "空间设置",
+  "sections": {
+    "categories": "分类",
+    "topics": "标签"
+  },
+  "tabs": {
+    "basic": "基本信息",
+    "categories": "分类与标签",
+    "domainGroups": "邮箱域名组",
+    "guidance": "AI 队友辅导",
+    "inviteCodes": "邀请码",
+    "templates": "题目模板"
+  },
+  "title": "设置"
+}

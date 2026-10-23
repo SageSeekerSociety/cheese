@@ -220,7 +220,7 @@ class Capability(StrEnum):
 class Backlog(Protocol):
     """The unread tail of one session, as the platform needs to consume it.
 
-    Seven calls, and the split between them is the point. ``unread`` and
+    Nine calls, and the split between them is the point. ``unread`` and
     ``assemble`` are the harness's — what did this agent say, and what does one
     log entry mean. Deciding what to DO about it (persist a block, broadcast a
     frame, skip a duplicate) is the platform's, and happens between the two.
@@ -266,6 +266,16 @@ class Backlog(Protocol):
     def forget(self, *, older_than_s: float) -> None:
         """Drop records older than this. Retention removes an event, never
         having been read."""
+        ...
+
+    def unrecorded(self) -> list[dict]:
+        """The next page of journal rows ({"sequence", "at", "record"}, as the
+        runner wrote them) past the cursor of what the raw record has kept.
+        Every row, whether or not the room ever reads it."""
+        ...
+
+    def recorded(self, *, through: int) -> None:
+        """The raw record has kept every row up to and including this one."""
         ...
 
 
@@ -322,6 +332,10 @@ class Harness:
     # still a harness: the room then shows less of it.
     controls: tuple[str, ...] = ()
     executor_controls: frozenset[str] = frozenset()
+    # Does its runner report in the lifecycle protocol (`driven/lifecycle.py`)?
+    # Then it is the one that ends stuck work, on its own clocks, and the room
+    # keeps none for it.
+    reports_lifecycle: bool = False
 
     def __post_init__(self) -> None:
         """声明了一项能力却说不出怎么做到的，根本造不出来。
@@ -370,6 +384,7 @@ HARNESSES: dict[str, Harness] = {
         executor_controls=frozenset(
             {"read_file", "file_suggestions", "get_workspace_diff"}
         ),
+        reports_lifecycle=True,
     ),
     PI: Harness(
         PI,

@@ -1,5 +1,4 @@
 {
-  "backToEdit": "Back to editing",
   "blockHandle": "Drag to move, click to change the style or delete",
   "blockType": "Paragraph style",
   "close": "Close",
@@ -33,7 +32,6 @@
   "historyDiff": "Compare with previous",
   "historyEmpty": "No versions yet",
   "historyFailed": "Couldn't load the version history",
-  "historyFor": "{who}, asked by {requester}",
   "historyFull": "Full text",
   "historyMore": "Earlier versions",
   "historyView": "Show",
@@ -54,11 +52,54 @@
   "restore": "Restore this version",
   "restoreFailed": "Restore failed",
   "selectionToolbar": "Selection actions",
-  "setReadOnly": "Make read-only",
   "suggestionCount": "Suggestions: {n}",
   "titleLabel": "Doc title",
   "titlePlaceholder": "Title",
   "undo": "Undo",
   "untitled": "Untitled doc",
-  "you": "you"
+  "you": "you",
+  "backlinks": {
+    "title": "Linked from",
+    "edited": "Edited by {name} {when}",
+    "count": "{count} messages"
+  },
+  "move": "Move to…",
+  "moveDialog": {
+    "title": "Move \"{name}\"",
+    "place": "Put it in",
+    "mine": "My documents",
+    "move": "Move",
+    "readersPersonal": "After the move only you can read this document",
+    "readersTeam": "After the move every member of \"{name}\" can read this document",
+    "readersProject": "After the move every member of the project \"{name}\" can read this document",
+    "search": "Search teams or projects",
+    "here": "Current",
+    "none": "No matches",
+    "pick": "Choose where to put it",
+    "failed": "Move failed"
+  },
+  "share": "Share…",
+  "shareDialog": {
+    "title": "Share \"{name}\"",
+    "create": "Create link",
+    "copy": "Copy link",
+    "close": "Close",
+    "stop": "Stop sharing",
+    "link": "Share link",
+    "about": "Anyone with the link can read this document's current version without signing in. They don't see comments, suggestions or history.",
+    "shared": "Anyone with the link can read the current version without signing in. Once you stop sharing, the link stops working.",
+    "notAllowed": "A project's document takes the Share documents permission; a team's or a person's own, its creator or a team admin.",
+    "failed": "Sharing failed"
+  },
+  "mode": {
+    "label": "Editing mode",
+    "edit": "Editing",
+    "editHint": "Change the text directly",
+    "suggest": "Suggesting",
+    "suggestHint": "Changes become suggestions others accept or reject",
+    "read": "Read-only",
+    "readHint": "Read without changing the text",
+    "suggestOnly": "You can only suggest changes; someone who can edit this document accepts or rejects them",
+    "blockRefused": "In suggest mode, rows or columns of a table, columns of a column layout and items of a timeline or stat cards can't be added or removed"
+  }
 }

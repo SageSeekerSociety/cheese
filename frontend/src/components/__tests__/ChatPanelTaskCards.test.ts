@@ -42,6 +42,7 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
@@ -167,6 +168,8 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+beforeAll(loadMarkdownReader)
+
 describe('频道主线上的任务卡', () => {
   it('单独新建的任务，卡在说它开始的那一行，夹在前后两条消息之间', async () => {
     const id = freshRoom()
@@ -221,7 +224,7 @@ describe('频道主线上的任务卡', () => {
     const { container } = mountPanel(room(id))
     await flush()
 
-    expect(status(container, 'sub-1').dataset.tone).toBe('done')
+    expect(status(container, 'sub-1').dataset.kind).toBe('closed')
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1'])
   })
 
@@ -239,8 +242,8 @@ describe('频道主线上的任务卡', () => {
     const { container } = mountPanel(room(id))
     await flush()
 
-    expect(status(container, 'sub-1').dataset.tone).toBe('waiting')
-    expect(status(container, 'sub-1').textContent).toContain('linxiao')
+    expect(status(container, 'sub-1').dataset.kind).toBe('review')
+    expect(card(container, 'sub-1').textContent).toContain('等 linxiao')
   })
 
   it('频道里没有任务时，时间线一如既往', async () => {
@@ -325,5 +328,32 @@ describe('频道主线上的任务卡', () => {
     await fireEvent.click(getByText('查看任务'))
 
     expect(emitted()['open-card']).toEqual([['sub-1']])
+  })
+})
+
+describe('支线里的任务卡', () => {
+  // 规划支线里拆出去的几件：读支线的人在拆出它的那句话下面看得见拆出了什么。
+  it('从一条回复拆出去的任务，挂在那条回复下面', async () => {
+    const id = freshRoom()
+    const thread = `${id}-thread`
+    const reply = { ...message(thread, 'r1', '2026-08-11T09:10:00Z', '短信接口单独做一件'), conversation_id: thread }
+    const split = work(id, 'sub-sms', '短信接口', '2026-08-11T09:11:00Z', {
+      upgraded_from_block_id: 'root',
+      source_block_id: 'r1',
+    })
+    listBlocks.mockResolvedValue({
+      data: [reply, { ...message(thread, 'r2', '2026-08-11T09:20:00Z', '好'), conversation_id: thread }].map((b) =>
+        b.id === 'r1' ? { ...b, tasks: [split] } : b
+      ),
+      has_more: false,
+    })
+    const vuetify = createVuetify({ components, directives })
+    const { container } = render(ChatPanel, {
+      props: { topic: room(id), topicList: [room(id)], conversationId: thread },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    expect(timelineOrder(container)).toEqual(['r1', 't:sub-sms', 'r2'])
   })
 })

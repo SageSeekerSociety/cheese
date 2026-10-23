@@ -37,55 +37,21 @@
 # the shape of a function name. A guard that misfires is worse than no
 # guard: people learn to bypass it, and then it protects nothing.
 #
-# Numbering has a hole in it (there is no Rule 2): that one checked for methods
-# named after builtins, and ruff's A003 does the same job across every builtin
-# rather than four hand-listed ones, so it was deleted rather than renumbered.
+# Numbering has holes in it (there is no Rule 2 or 4): Rule 2 checked for
+# methods named after builtins, which ruff's A003 does across every builtin;
+# Rule 4 (one note per topic) policed note naming, which this repository no
+# longer gates. Each was deleted rather than renumbered.
 # Renumbering would break the references in git history and in the sibling rules.
 #
 # Usage: check-repo-rules.sh [root]        check a tree (default: repo root)
 #        check-repo-rules.sh --self-test   prove each rule fires and is scoped
-#        check-repo-rules.sh --update-palette-baseline [root]
-#                                          ratchet frontend/palette-baseline.json down
-#        check-repo-rules.sh --json [root]  one JSON record per check that ran, on
-#                                          stdout, for the ratchet snapshot; the
-#                                          human report and the exit code are
-#                                          unchanged. Only the fixed-palette check
-#                                          has a record — the other rules are repo
-#                                          hygiene, not a debt dimension.
 set -euo pipefail
 
 SELF_TEST=0
-UPDATE_PALETTE=0
-JSON=0
 [ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
-[ "${1:-}" = "--update-palette-baseline" ] && { UPDATE_PALETTE=1; shift; }
-[ "${1:-}" = "--json" ] && { JSON=1; shift; }
 
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FAILED=0
-
-# Under --json the record owns stdout and nothing else may land there, so the
-# human report moves to stderr for the whole run (it is a log, and it is still
-# all there) and the real stdout is kept on fd 3 for the record to write to.
-if [ "$JSON" = 1 ]; then
-  exec 3>&1
-  exec 1>&2
-fi
-
-# --- the fixed-palette check's numbers, for --json ---------------------------
-# Empty means "the check did not run" (no frontend/src in this tree), which is
-# not the same as zero: the snapshot must show it as not collected, not as a
-# clean tree. PALETTE_FROZEN is empty when there is no baseline file to read an
-# allowance from — an absent allowance is null, never 0.
-PALETTE_STATUS=""
-PALETTE_ACTUAL=""
-PALETTE_FROZEN=""
-PALETTE_STALE=""
-PALETTE_DETAILS=""
-
-sum_col() { awk -F'\t' 'NF >= 2 { total += $2 } END { print total + 0 }'; }
-
-json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t'; }
 
 report() {
   local rule="$1" fix="$2" hits="$3"
@@ -120,38 +86,6 @@ check_raw_http_exception() {
   echo "FAIL: raw HTTPException in the domain layer"
   report "raw HTTPException in the domain layer" \
     "raise the matching class from app.core.errors instead" "$hits"
-}
-
-# Rule 4 — one piece of work leaves ONE note in docs/topics/. Nothing in the
-# platform writes these files; 芝士 writes them by hand, and with no convention
-# anywhere the same topic has twice been written down under two names in a
-# SINGLE accept commit (955707a31 added both authz收敛-分身身份.md and
-# 分身独立身份与authz收敛.md; 937a615e7 did the same for the sidebar-collapse
-# pair). Two of 85 files, and it compounds — every accept can leave another.
-#
-# Matching is on the heading plus the first sentence, not on whole-file
-# equality: the duplicates are never byte-identical — one is the plan and one
-# the finished note, and they diverge within a few lines. That first sentence is
-# what actually names the topic. Tuned against the real corpus: 2 non-blank
-# lines finds both known pairs among 85 files and pairs nothing else; 3 already
-# misses one, because by then the plan and the finished note have split.
-check_duplicate_topic_docs() {
-  local dir="$ROOT/docs/topics" hits
-  [ -d "$dir" ] || return 0
-  hits="$(
-    for f in "$dir"/*.md; do
-      [ -e "$f" ] || continue
-      printf '%s\t%s\n' \
-        "$(grep -v '^[[:space:]]*$' "$f" | head -2 | tr -d '[:space:]' | md5sum | cut -d' ' -f1)" \
-        "${f#"$ROOT/"}"
-    done | sort | awk -F'\t' '
-      $1 == prev { print "  " prevf "\n  " $2 "\n" }
-      { prev = $1; prevf = $2 }'
-  )"
-  [ -z "$hits" ] && return 0
-  echo "FAIL: the same topic is written down twice in docs/topics"
-  report "duplicate topic notes" \
-    "keep the fuller/later note, delete the other — one topic, one file" "$hits"
 }
 
 # Rule 5 — #282 决定 2: a device's SUPPLY FORM (platform-provisioned vs
@@ -195,21 +129,15 @@ $(grep -rnE --include='*.py' \
 
 # Rule 6 — .claude/rules/frontend.md: "Never write a colour literal." A Vuetify
 # fixed-palette NAME is a colour literal that does not look like one:
-# `color="grey-lighten-5"` is exactly `#FAFAFA` in both themes, forever.
+# `color="grey-lighten-5"` is exactly `#FAFAFA` in both themes, forever, so it
+# is wrong in one of them — not a style choice but a dark-theme defect.
 #
 # WHY A SECOND GUARD, when stylelint already bans hex: stylelint parses CSS. It
 # never sees `<template>`, and it never sees a `withDefaults` value in
-# `<script>`. So the whole class was invisible to every gate — the wave-1 audit
-# counted 244 hex literals and scored zero of these, and the seven that happened
-# to sit on the global shell (rail, title bar, mobile bars, v-main) shipped a
-# dark theme where the shell stayed near-white while the text on it followed
-# --v-theme-on-surface and went pale grey. White-on-white, on every page.
-#
-# RATCHETED, deliberately: 111 pre-existing hits across 40 view/component files
-# are frozen in frontend/palette-baseline.json and only NEW ones fail. A rule
-# that goes red on 111 sites gets switched off, and then it protects nothing —
-# same reasoning, same shape, as stylelint-baseline.json and tsc-baseline.json.
-# Baselines only ever go down: `--update-palette-baseline` refuses to raise one.
+# `<script>`. The seven that sat on the global shell (rail, title bar, mobile
+# bars, v-main) shipped a dark theme where the shell stayed near-white while the
+# text on it followed --v-theme-on-surface and went pale grey. White-on-white,
+# on every page. The tree holds none now, so any one is a failure.
 #
 # NOT matched, on purpose: `transparent` (theme-neutral), `:color="expr"`
 # bindings (the value is not visible here), and typography classes like
@@ -222,71 +150,11 @@ palette_re() {
   printf '%s' "[A-Za-z-]*[Cc]olor=\"${shade}\"|[A-Za-z-]*[Cc]olor: *'${shade}'|\\b(bg|text)-${shade}\\b"
 }
 
-# "src/x.vue<TAB>N" for every file with at least one hit, paths relative to
-# frontend/ so they match the baseline keys.
-palette_counts() {
-  local fe="$1"
-  [ -d "$fe/src" ] || return 0
-  ( cd "$fe" && grep -rEno --include='*.vue' --include='*.ts' "$(palette_re)" src 2>/dev/null || true ) \
-    | sed -E 's/^([^:]+):[0-9]+:.*/\1/' | sort | uniq -c \
-    | awk '{ printf "%s\t%s\n", $2, $1 }' | sort
-}
-
-# The baseline is the same {"files": {path: count}} shape the other two ratchets
-# use, so it stays readable in a diff and needs no JSON parser here.
-palette_baseline() {
-  local f="$1"
-  [ -f "$f" ] || return 0
-  sed -n 's/^[[:space:]]*"\(src\/[^"]*\)"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1\t\2/p' "$f" | sort
-}
-
 check_fixed_palette() {
-  local fe="$ROOT/frontend" baseline="$ROOT/frontend/palette-baseline.json"
+  local fe="$ROOT/frontend" hits
   [ -d "$fe/src" ] || return 0
-  local cur base over hits
-  cur="$(palette_counts "$fe")"
-  base="$(palette_baseline "$baseline")"
-  # A file absent from the baseline has an allowance of 0, so a brand-new file
-  # with a violation fails even though nothing about it regressed.
-  over="$(awk -F'\t' '
-      NR == FNR { allow[$1] = $2; next }
-      { a = ($1 in allow) ? allow[$1] : 0
-        if ($2 > a) printf "%s\t%d\t%d\n", $1, $2, a }
-    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
-  # The page shows the two apart: `actual` is every fixed-palette use in the
-  # tree, `frozen` is what the baseline allows to stay. A baseline that has
-  # ratcheted down while the tree has not would otherwise read as progress.
-  PALETTE_ACTUAL="$(printf '%s\n' "$cur" | sum_col)"
-  if [ -f "$baseline" ]; then
-    PALETTE_FROZEN="$(printf '%s\n' "$base" | sum_col)"
-  else
-    PALETTE_FROZEN=""
-  fi
-  PALETTE_DETAILS="$cur"
-  # An allowance with nothing left under it, including a file that is gone.
-  PALETTE_STALE="$(awk -F'\t' '
-      NR == FNR { allow[$1] = $2; order[++n] = $1; next }
-      { seen[$1] = $2 }
-      END {
-        for (i = 1; i <= n; i++) {
-          f = order[i]; now = (f in seen) ? seen[f] : 0
-          if (now < allow[f]) {
-            why = (now == 0) ? "no hits left in the tree" : "fewer hits than the baseline allows"
-            printf "%s\t%d\t%d\t%s\n", f, now, allow[f], why
-          }
-        }
-      }
-    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
-  if [ -z "$over" ]; then
-    PALETTE_STATUS=pass
-    return 0
-  fi
-  PALETTE_STATUS=fail
-  hits="$(while IFS=$'\t' read -r f now allow; do
-      [ -n "$f" ] || continue
-      echo "$f: $now fixed-palette use(s), baseline allows $allow"
-      ( cd "$fe" && grep -EnoH "$(palette_re)" "$f" 2>/dev/null || true ) | sed 's/^/    /'
-    done <<< "$over")"
+  hits="$( cd "$fe" && grep -rEn --include='*.vue' --include='*.ts' "$(palette_re)" src 2>/dev/null || true )"
+  [ -z "$hits" ] && return 0
   echo "FAIL: Vuetify fixed-palette colour name (does not follow the theme)"
   report "fixed-palette colour name in a template/script" \
     "use a theme colour: background / surface / surface-bright / surface-light / on-surface / primary — see docs/design-system.md" \
@@ -399,52 +267,95 @@ check_room_derived_agent_handle() {
     "$hits"
 }
 
+# Rule 10 — a spec that asserts what DOMPurify.sanitize() left must run under
+# jsdom. frontend/vite.config.ts defaults vitest to happy-dom, and there
+# DOMPurify 3.4.16 answers any input carrying `<script>` with an empty string, so
+# every "the dangerous part is gone" assertion passes whether or not anything
+# was cleaned — the worst shape a failure can take, a security assertion that is
+# green either way. jsdom behaves like the browser. Measured 2026-10-08 on
+# frontend/src/utils/parser.spec.ts.
+#
+# The environment is chosen per FILE, so this reads the file's own text and not
+# the config: a spec that forgets the pragma still passes, and nothing else in
+# the build can tell the difference. What decides the environment is the FIRST
+# annotation anywhere in the raw text — vitest 5.0.3's detectCodeBlock runs
+# `content.match(/@(?:vitest|jest)-environment\s+([\w-]+)\b/)` over the whole
+# file — so a check that looked only at the top reports specs that run under
+# jsdom perfectly well, and one that asks whether jsdom appears anywhere clears
+# a spec whose first pragma names happy-dom. Both ends of that regex are
+# reproduced here: the name starts at the first annotation, and ends at the
+# first character that cannot be in one.
+check_dompurify_specs_use_jsdom() {
+  local f files=() first
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # Newlines to spaces first: vitest's `\s+` crosses them, grep's does not.
+    first="$(tr '\n' ' ' < "$f" \
+      | grep -oE '@(vitest|jest)-environment[[:space:]]+[A-Za-z0-9_-]+' | head -n 1 || true)"
+    case "$first" in *[[:space:]]jsdom) ;; *) files+=("$f") ;; esac
+  done < <(grep -rlE --include='*.spec.ts' 'DOMPurify|\.sanitize\(' "$ROOT/frontend/src" 2>/dev/null || true)
+  [ ${#files[@]} -eq 0 ] && return 0
+  echo "FAIL: a spec on DOMPurify that does not run under jsdom"
+  report "a spec asserting on DOMPurify.sanitize() without a jsdom environment — happy-dom returns '' and the assertion passes by accident" \
+    "put '// @vitest-environment jsdom' at the top of the spec, before the imports" \
+    "$(printf '%s\n' "${files[@]}")"
+}
+
+# Rule 11 — a command that runs a script INSIDE the backend container must name
+# a module the production image copies. Both deployments run the Dockerfile's
+# `production` stage (build.yml's `target: production`), which carries no source
+# and names the `scripts/*.py` it ships one file at a time — the rest of that
+# directory is dev probes and demo seeders that have no business in the image.
+# The repository has the file, so `python -m scripts.<name>` reads as runnable
+# everywhere and raises ModuleNotFoundError on the box. Measured 2026-10-14
+# (PR #3753): `docker exec … python -m scripts.seat_throughput` ran nowhere,
+# written both in a document and in the script's own docstring.
+#
+# Read in docs/ and deploy/ only, where a line that says `uv run` is a checkout
+# command (the whole source tree is right there) and what is left is what an
+# operator is told to run on a deployed box. The workflows are left out on
+# purpose: there the same spelling runs on the CI runner, in the checkout
+# (test.yml's assert_shards_complete), and means the opposite.
+check_container_script_is_in_the_image() {
+  local dockerfile="$ROOT/backend/Dockerfile"
+  [ -f "$dockerfile" ] || return 0
+  local stage copied
+  stage="$(awk '/^FROM /{p=($0 ~ /AS production([[:space:]]|$)/)} p' "$dockerfile")"
+  [ -n "$stage" ] || return 0
+  # A directory copy would put every script in the image; there is nothing to
+  # compare against, and reading nothing is better than reading a wrong set.
+  printf '%s\n' "$stage" | grep -qE '^COPY[^#]*[[:space:]]scripts/?([[:space:]]|$)' && return 0
+  # `|| true`: a stage that names no scripts/&lt;name&gt;.py leaves grep with nothing
+  # to match, and under `set -eo pipefail` that status would take the whole guard
+  # down here — before the inert return below, and with no FAIL line to say why.
+  copied="$(printf '%s\n' "$stage" | grep -oE 'scripts/[A-Za-z0-9_]+\.py' \
+    | sed -E 's|scripts/||; s|\.py$||' | sort -u || true)"
+  [ -n "$copied" ] || return 0
+  local line mod lines=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    mod="$(printf '%s\n' "$line" | sed -nE 's|.*python3? -m scripts\.([A-Za-z0-9_]+).*|\1|p')"
+    printf '%s\n' "$copied" | grep -qx "$mod" || lines+=("$line")
+  done < <(grep -rnE 'python3? -m scripts\.[A-Za-z0-9_]+' "$ROOT/docs" "$ROOT/deploy" 2>/dev/null \
+             | grep -v 'uv run' || true)
+  [ ${#lines[@]} -eq 0 ] && return 0
+  echo "FAIL: a script run in the backend container that the image does not carry"
+  report "a python -m scripts.<name> meant for the deployed box, naming a module backend/Dockerfile's production stage never COPYs" \
+    "run it where the source is, or add COPY --chown=cheese:python scripts/<name>.py ./scripts/ to the production stage" \
+    "$(printf '%s\n' "${lines[@]}")"
+}
+
 run_all() {
   check_naive_datetime
   check_raw_http_exception
-  check_duplicate_topic_docs
   check_supply_reverse_lookup
   check_fixed_palette
   check_platform_cli_in_claude_md
   check_retired_author_type_as_string
   check_room_derived_agent_handle
+  check_dompurify_specs_use_jsdom
+  check_container_script_is_in_the_image
 }
-
-# --- palette baseline update ------------------------------------------------
-# Only ever downward. Raising a baseline to make a gate green is the one move
-# that turns a ratchet back into decoration, so this refuses to do it and says
-# which file it refused on.
-if [ "$UPDATE_PALETTE" = 1 ]; then
-  fe="$ROOT/frontend"
-  baseline="$fe/palette-baseline.json"
-  cur="$(palette_counts "$fe")"
-  base="$(palette_baseline "$baseline")"
-  raised="$(awk -F'\t' '
-      NR == FNR { allow[$1] = $2; next }
-      { a = ($1 in allow) ? allow[$1] : 0; if ($2 > a) printf "  %s: %d > %d\n", $1, $2, a }
-    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
-  # Bootstrap: with no baseline on disk there is nothing to raise, and the
-  # freeze has to start somewhere. Once the file exists it may only go down —
-  # and "delete it and regenerate" is not a quiet workaround, it rewrites every
-  # line of the file and shows up as such in review.
-  [ -f "$baseline" ] || raised=""
-  if [ -n "$raised" ]; then
-    echo "refusing to raise the baseline — fix these instead:" >&2
-    printf '%s\n' "$raised" >&2
-    exit 1
-  fi
-  {
-    echo '{'
-    echo '  "_comment": "Frozen Vuetify fixed-palette colour names (color=\"grey-lighten-5\", class=\"bg-white\", …) in templates and script defaults. stylelint cannot see these — it parses CSS, not <template>. The ratchet in .claude/scripts/check-repo-rules.sh blocks any NEW one; these are pre-existing and may only go down. Regenerate with `bash .claude/scripts/check-repo-rules.sh --update-palette-baseline`. See docs/design-system.md.",'
-    echo '  "files": {'
-    printf '%s\n' "$cur" | awk -F'\t' 'NF == 2 { rows[n++] = sprintf("    \"%s\": %s", $1, $2) }
-      END { for (i = 0; i < n; i++) printf "%s%s\n", rows[i], (i < n - 1 ? "," : "") }'
-    echo '  }'
-    echo '}'
-  } > "$baseline"
-  echo "wrote $baseline ($(printf '%s\n' "$cur" | grep -c . ) files)"
-  exit 0
-fi
 
 # --- self-test -------------------------------------------------------------
 # A guard nobody has seen fail is a guard nobody knows works. Each case builds a
@@ -455,24 +366,6 @@ if [ "$SELF_TEST" = 1 ]; then
   trap 'rm -rf "$tmp"' EXIT
   mkdir -p "$tmp/backend/app/domain" "$tmp/backend/app/core"
   me="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-
-  # The --json record is what the ratchet snapshot reads, so it gets checked the
-  # same way the rules do: in a real process, against a real exit code.
-  JSON_OUT=""
-  JSON_CODE=0
-  json_run() {
-    JSON_OUT="$(bash "$me" --json "$tmp" 2>/dev/null)" && JSON_CODE=0 || JSON_CODE=$?
-  }
-  record_has() {
-    case "$JSON_OUT" in
-      *"$1"*) ;;
-      *) self_fail "the --json record must contain $1 (exit $JSON_CODE, got: $JSON_OUT)" ;;
-    esac
-  }
-  record_is_one_line() {
-    [ "$(printf '%s\n' "$JSON_OUT" | wc -l)" = 1 ] \
-      || self_fail "the --json record must be exactly one line (got: $JSON_OUT)"
-  }
 
   printf 'x = 1\n' > "$tmp/backend/app/core/clean.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a clean tree must pass"
@@ -487,22 +380,6 @@ if [ "$SELF_TEST" = 1 ]; then
   # guard that fires everywhere would just be turned off.
   mv "$tmp/backend/app/domain/bad_err.py" "$tmp/backend/app/core/ok_err.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "HTTPException outside domain must pass"
-
-  # Rule 4. The pair that actually happened is not byte-identical — same opening,
-  # one is the plan and one the finished note — so the fixture mirrors that.
-  mkdir -p "$tmp/docs/topics"
-  printf '## 目标\n\n让每个话题分身有自己的身份。\n\n- 阶段一（本轮必做）：做。\n' \
-    > "$tmp/docs/topics/a.md"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a single topic note must pass"
-  printf '## 目标\n\n让每个话题分身有自己的身份。\n\n- 阶段一：**已完成**。\n\n## 结果\n\n绿。\n' \
-    > "$tmp/docs/topics/b.md"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the same topic under two names must fail"
-  # A genuinely different note sharing only the boilerplate heading must pass,
-  # or the guard would fire on every note that opens with 「## 目标」.
-  printf '## 目标\n\n把上游冲突交给芝士解决。\n\n- 先定位。\n- 再改。\n' \
-    > "$tmp/docs/topics/b.md"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "different topics sharing a heading must pass"
-  rm -rf "$tmp/docs"
 
   # Rule 5. The fixture is the code that actually existed before #282 决定 2.
   mkdir -p "$tmp/backend/app/domain/device" "$tmp/backend/app/domain/machine"
@@ -535,7 +412,6 @@ if [ "$SELF_TEST" = 1 ]; then
   # itself with (text-h6 / text-medium-emphasis are not palette names).
   printf '<template>\n  <div class="bg-background text-h6 text-medium-emphasis" />\n</template>\n' > "$shell"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "semantic bg-/typography classes must pass"
-
   printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette colour= must fail"
   printf '<template>\n  <div class="bg-grey-lighten-5" />\n</template>\n' > "$shell"
@@ -547,64 +423,7 @@ if [ "$SELF_TEST" = 1 ]; then
   printf '<script setup lang="ts">\nwithDefaults(defineProps<P>(), { color: %s })\n</script>\n' \
     "'grey-lighten-5'" > "$shell"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette prop default must fail"
-
-  # The ratchet: the same violation, frozen in the baseline, must pass — and one
-  # MORE than the baseline allows must fail. Without both halves this is not a
-  # ratchet, it is a rule someone will switch off.
-  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
-  printf '{\n  "files": {\n    "src/components/AppBar.vue": 1\n  }\n}\n' \
-    > "$tmp/frontend/palette-baseline.json"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a baselined violation must pass"
-  json_run
-  [ "$JSON_CODE" = 0 ] || self_fail "the record must agree with a passing palette check"
-  record_is_one_line
-  record_has '"id":"palette"'
-  record_has '"status":"pass"'
-  record_has '"actual":1'
-  record_has '"frozen":1'
-  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n  <v-app-bar color="white" />\n</template>\n' \
-    > "$shell"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "one MORE than the baseline must fail"
-  json_run
-  [ "$JSON_CODE" = 1 ] || self_fail "the record must agree with a failing palette check"
-  record_has '"status":"fail"'
-  record_has '"actual":2'
-  # An allowance with nothing left under it is a stale exemption: reported as
-  # such, and still not a violation — the check keeps passing.
-  printf '<template>\n  <v-system-bar color="background" />\n</template>\n' > "$shell"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a stale allowance must not fail the check"
-  json_run
-  [ "$JSON_CODE" = 0 ] || self_fail "a stale exemption is not a violation"
-  record_has '"stale":[{"file":"src/components/AppBar.vue","frozen":1,"actual":0'
-  # A brand-new file gets an allowance of 0 even while the baseline covers others.
-  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
-  printf '<template>\n  <div class="bg-white" />\n</template>\n' \
-    > "$tmp/frontend/src/components/New.vue"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "an unbaselined file must get an allowance of 0"
-  rm "$tmp/frontend/src/components/New.vue"
-  # --update-palette-baseline must REFUSE to raise an existing baseline. This is
-  # the assertion that keeps the ratchet a ratchet: without it, the documented
-  # escape from a red gate is "just regenerate the baseline".
-  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n  <v-app-bar color="white" />\n</template>\n' \
-    > "$shell"
-  bash "$me" --update-palette-baseline "$tmp" >/dev/null 2>&1 \
-    && self_fail "--update-palette-baseline must refuse to raise a baseline"
-  grep -q '"src/components/AppBar.vue": 1' "$tmp/frontend/palette-baseline.json" \
-    || self_fail "a refused update must leave the baseline untouched"
-  # Downward it must work, and the tree must then be green.
-  printf '<template>\n  <v-system-bar color="background" />\n</template>\n' > "$shell"
-  bash "$me" --update-palette-baseline "$tmp" >/dev/null 2>&1 \
-    || self_fail "--update-palette-baseline must ratchet down"
-  grep -q 'AppBar' "$tmp/frontend/palette-baseline.json" \
-    && self_fail "a fixed file must drop out of the baseline entirely"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tightened baseline must still pass"
   rm -rf "$tmp/frontend"
-  # No frontend, no palette check — and so no record. A snapshot reading a
-  # missing id as "not collected" is the only honest answer; a zero here would
-  # look like a tree with no fixed colours at all.
-  json_run
-  [ "$JSON_CODE" = 0 ] || self_fail "a tree with no frontend must still pass the other rules"
-  [ -z "$JSON_OUT" ] || self_fail "a check that did not run must emit no record (got: $JSON_OUT)"
 
   # Rule 7. The subcommand list is read from the skill, so the fixture supplies
   # both halves — a skill that documents `cheese doc`, and an AGENTS.md that
@@ -677,41 +496,103 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "deriving from the agent must pass"
   rm "$tmp/backend/app/domain/identity/handles.py"
 
-  echo "PASS: check-repo-rules self-test (8 rules, scoping and the palette ratchet verified; the --json record agrees with the exit code, reports a stale allowance, and is absent when the check did not run)"
+  # Rule 10. The environment is picked per file, so the fixture is the file's
+  # header — the one thing no other tool in the build can see, and the reason a
+  # spec that forgets the pragma still passes.
+  mkdir -p "$tmp/frontend/src/utils"
+  printf "import DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a sanitize assertion under the default environment must fail"
+  printf "// @vitest-environment jsdom\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the same assertion under jsdom must pass"
+  # Position is not part of it: vitest matches the pragma against the whole
+  # file, so one written below the imports is honoured and must not be reported.
+  printf "import DOMPurify from 'dompurify'\n\n// c\n// c\n// c\n// @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma below the imports must pass"
+  # It is the FIRST annotation that decides, so a file that names happy-dom and
+  # only mentions jsdom further down runs under happy-dom however this guard
+  # reads it — "jsdom appears somewhere in here" would clear that file.
+  printf "// @vitest-environment happy-dom\nimport DOMPurify from 'dompurify'\n\n// not @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a later jsdom must not clear a file whose first pragma is happy-dom"
+  # What ends the name is vitest's business and not this file's: it stops at the
+  # first character that cannot be in one, so a block comment closing straight
+  # after `jsdom` still selects jsdom and must not be reported.
+  printf "/* @vitest-environment jsdom*/\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma closed by a block comment must pass"
+  # And vitest's `\s+` crosses a newline, so the file has to be on one line
+  # before the name is read — otherwise a spec vitest runs under jsdom is red.
+  printf "/* @vitest-environment\njsdom */\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma split across two lines must pass"
+  # Either spelling triggers, so a spec that reaches the sanitiser through an
+  # alias — and never writes the library's name — is still this guard's business.
+  printf "import dp from 'dompurify'\n\nexpect(dp.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "an aliased .sanitize() under the default environment must fail"
+  # And a spec that neither imports DOMPurify nor sanitizes is not this guard's
+  # business — requiring jsdom everywhere would be switched off within a week.
+  printf "import { parse } from './parse'\n\nexpect(parse('<b>x</b>')).toBe('x')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an unrelated spec must pass without a pragma"
+  rm -rf "$tmp/frontend"
+
+  # Rule 11. The fixture is the split that actually shipped: the image names its
+  # scripts one at a time, and docs/ is where a command meant for the box is
+  # written down.
+  mkdir -p "$tmp/backend/scripts" "$tmp/docs" "$tmp/deploy"
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  printf 'python -m scripts.alpha_one --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a script the image carries must pass"
+  printf 'python3 -m scripts.beta_two --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a script the image does not carry must fail"
+  # The same command under deploy/, where release steps are written — and docs/
+  # is cleared first, or the run below is red on docs/ alone and this assertion
+  # would hold whether or not deploy/ is ever read.
+  rm "$tmp/docs/ops.md"
+  printf 'docker exec backend python -m scripts.beta_two\n' > "$tmp/deploy/release.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the check must read deploy/ too"
+  # An image that takes the whole directory names no file to compare against, so
+  # the rule stands down — and stands down quietly. The grep behind it matches
+  # nothing here, and a status that took the rest of the run with it would be a
+  # red build with nothing on it to read.
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/*.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an image that copies the whole directory must stand down"
+  # The other way to say the same thing, and the one where the directory branch
+  # is the only thing between a correct document and a red build: the stage does
+  # name a file, so there is a set to compare against — and the module the
+  # release step names, beta_two, is not in it.
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\nCOPY --chown=cheese:python scripts/ ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an image that takes the whole directory must stand down even when it also names a file"
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  # `uv run` is a checkout command — the source tree is right there — so a
+  # dev-only script named that way is not a claim about the image.
+  rm "$tmp/deploy/release.md"
+  printf 'uv run python -m scripts.beta_two --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a uv run command must pass"
+  rm "$tmp/docs/ops.md" "$tmp/backend/Dockerfile"
+  # No Dockerfile, nothing to compare against — inert, not red.
+  printf 'python -m scripts.beta_two\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tree without the image must pass"
+  rm -rf "$tmp/docs" "$tmp/deploy" "$tmp/backend/scripts"
+
+  echo "PASS: check-repo-rules self-test (9 rules and their scoping verified)"
   exit 0
 fi
 
 run_all
 
-emit_palette_json() {
-  [ "$JSON" = 1 ] || return 0
-  # No record when the check did not run: the snapshot reads a missing id as
-  # not collected, which is what a tree without frontend/src means.
-  [ -n "$PALETTE_STATUS" ] || return 0
-  local details="" first=1 file count stale="" sfirst=1
-  local sfile snow sallow swhy
-  while IFS=$'\t' read -r file count; do
-    [ -n "$file" ] || continue
-    [ "$first" = 1 ] || details+=","
-    first=0
-    details+="{\"file\":\"$(json_escape "$file")\",\"count\":$count}"
-  done <<< "$PALETTE_DETAILS"
-  while IFS=$'\t' read -r sfile snow sallow swhy; do
-    [ -n "$sfile" ] || continue
-    [ "$sfirst" = 1 ] || stale+=","
-    sfirst=0
-    stale+="{\"file\":\"$(json_escape "$sfile")\",\"frozen\":$sallow,\"actual\":$snow,\"why\":\"$(json_escape "$swhy")\"}"
-  done <<< "$PALETTE_STALE"
-  printf '{"id":"palette","better":"down","status":"%s","actual":%s,"frozen":%s,"stale":[%s],"details":[%s]}\n' \
-    "$PALETTE_STATUS" "${PALETTE_ACTUAL:-null}" "${PALETTE_FROZEN:-null}" \
-    "$stale" "$details" >&3
-}
-
-emit_palette_json
 
 if [ "$FAILED" = 1 ]; then
   echo ""
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in AGENTS.md, retired author_type name as a string, room-derived agent handle)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, supply reverse lookup, fixed-palette colours, platform CLI in AGENTS.md, retired author_type name as a string, room-derived agent handle, DOMPurify specs under jsdom, container scripts present in the image)"

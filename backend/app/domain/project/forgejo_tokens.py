@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
 from app.core.db import SessionFactory, async_session_factory
@@ -66,6 +67,35 @@ def open_forge_token(token: ForgeToken) -> str:
         Purpose.FORGE_TOKEN,
         token.value,
         bound_to=_token_binding(token.project_id, token.api_url, token.username),
+    )
+
+
+async def credential_is_leased(
+    project_id: uuid.UUID,
+    session: AsyncSession,
+    *,
+    api_url: str,
+    username: str,
+    credential: str,
+) -> bool:
+    """Whether ``credential`` is one of one account's live leases.
+
+    The git tunnel holds no lease of its own: it compares the secret the caller
+    presented against every unexpired lease for that account, so a project may
+    have a browser, a machine and a sandbox leased at the same time.
+    """
+    leases = await session.scalars(
+        select(ForgeToken).where(
+            ForgeToken.project_id == project_id,
+            ForgeToken.api_url == api_url,
+            ForgeToken.username == username,
+            ForgeToken.expires_at > datetime.now(UTC),
+            ForgeToken.value.is_not(None),
+        )
+    )
+    return any(
+        hmac.compare_digest(credential.encode(), open_forge_token(lease).encode())
+        for lease in leases
     )
 
 

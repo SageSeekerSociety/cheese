@@ -18,6 +18,7 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
+import TaskFormGrading from '@/components/tasks/form/TaskFormGrading.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
@@ -25,6 +26,7 @@ import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
 import TaskFormTime from '@/components/tasks/form/TaskFormTime.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
 
 /** 只吃 vuetify 的那几件。 */
 const UI: CatalogNeed[] = ['vuetify']
@@ -147,6 +149,19 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '报名通过后锁定',
       },
       {
+        name: '有导师',
+        note: '勾上后从空间管理员里挑导师，默认是出题人自己；领取者领取前会看到并同意。',
+        props: participation({
+          mentorsJoin: true,
+          mentors: ['zhoulq'],
+          mentorOptions: [
+            { title: '周立群（我）', value: 'zhoulq' },
+            { title: '刘洋', value: 'liuyang' },
+          ],
+        }),
+        expect: '把导师加入领取者的项目',
+      },
+      {
         name: '最多比最少还少（标红）',
         note: '跨字段的那条规矩，红字落在每队人数那一格下面。',
         props: participation({
@@ -156,6 +171,64 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           maxTeamSizeControl: red('最多人数不能少于最少人数'),
         }),
         expect: '最多人数不能少于最少人数',
+      },
+    ],
+  },
+  {
+    id: 'task-mentor-notice',
+    title: 'TaskMentorNotice',
+    about: '领取确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    file: 'src/components/tasks/TaskMentorNotice.vue',
+    component: TaskMentorNotice,
+    needs: UI_T,
+    states: [
+      {
+        name: '一位导师',
+        note: '领题前说清，学生同意后才能领。',
+        props: { names: '周立群' },
+        expect: '会作为导师加入你的项目',
+      },
+    ],
+  },
+  {
+    id: 'task-form-grading',
+    title: 'TaskFormGrading',
+    about:
+      '「提交与评分」那一节：学生交哪几样东西（每样是文件还是文字）、评分要点（评什么、多少分、怎样算做到），以及评分要点给不给学生看。',
+    file: 'src/components/tasks/form/TaskFormGrading.vue',
+    component: TaskFormGrading,
+    needs: UI_T,
+    args: { submissionSchema: [{ prompt: '提交文件', type: 'FILE' }], rubric: [], rubricPublic: true },
+    states: [
+      {
+        name: '新发一道题',
+        note: '默认交一个文件，还没有评分要点。',
+        props: {},
+        expect: '暂无评分要点',
+      },
+      {
+        name: '写好了',
+        note: '三样提交物（两个文件、一段文字），三行评分要点，合计按分值加起来。',
+        props: {
+          submissionSchema: [
+            { prompt: 'csim.c 源文件', type: 'FILE' },
+            { prompt: '实验报告（PDF，不超过 4 页）', type: 'FILE' },
+            { prompt: '合作与参考说明', type: 'TEXT' },
+          ],
+          rubric: [
+            { item: '正确性', points: 60, criteria: '用 8 组访存记录自动评测，三项全对得满分' },
+            { item: '实现', points: 20, criteria: '缓存按组和行组织，LRU 替换正确' },
+            { item: '报告', points: 20, criteria: '说明数据结构设计，分析两组记录的命中率差异' },
+          ],
+          rubricPublic: false,
+        },
+        expect: '合计 100 分',
+      },
+      {
+        name: '有一行没写名称（标红）',
+        note: '写了评分标准却没写项目名称：点过发布后那一格标红，下面一句说为什么。',
+        props: { rubric: [{ item: '', points: 10, criteria: '格式规范' }], missingName: true },
+        expect: '写了评分标准的项需要填写项目名称',
       },
     ],
   },
@@ -184,16 +257,16 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-classify',
     title: 'TaskFormClassify',
-    about: '「分类与话题」那一节：侧栏哪个分类下（必选），带哪些话题（可多选）。',
+    about: '「分类与标签」那一节：侧栏哪个分类下（必选），带哪些标签（可多选）。',
     file: 'src/components/tasks/form/TaskFormClassify.vue',
     component: TaskFormClassify,
     needs: UI_T,
     states: [
       {
         name: '选好了',
-        note: '分类只能一个，话题可以几个。',
+        note: '分类只能一个，标签可以几个。',
         props: classify(),
-        expect: '分类与话题',
+        expect: '分类与标签',
       },
       {
         name: '没选分类（标红）',

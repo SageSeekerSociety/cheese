@@ -21,8 +21,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
+
+	"github.com/SageSeekerSociety/cheese/cli/internal/stallwatch"
 )
 
 // platformDir maps a GOOS/GOARCH pair to the `<os>-<arch>` directory the server
@@ -76,30 +77,13 @@ func binaryURL(base, dir string) (string, error) {
 // fixed total: the connector is tens of megabytes, and on a slow link in China
 // it took 268 s against a 300 s limit, so updates failed whenever the link was
 // a little slower, and the failure was only ever written to a stderr nobody
-// reads. downloadLimit only bounds a download that keeps trickling.
+// reads. downloadLimit only bounds a download that keeps trickling. The
+// watchdog itself is `stallwatch`, shared with what the connector places on a
+// machine at enrolment.
 var (
 	stallAfter    = 60 * time.Second
 	downloadLimit = time.Hour
 )
-
-// watchedBody counts what has arrived and tells the stall watchdog about it.
-type watchedBody struct {
-	r        io.Reader
-	n        int64
-	progress chan struct{}
-}
-
-func (w *watchedBody) Read(p []byte) (int, error) {
-	n, err := w.r.Read(p)
-	if n > 0 {
-		w.n += int64(n)
-		select {
-		case w.progress <- struct{}{}:
-		default:
-		}
-	}
-	return n, err
-}
 
 // ErrCurrent is Fetch's answer when the origin publishes exactly the bytes this
 // executable already holds: there is nothing to swap in and no reason to hand
@@ -181,40 +165,13 @@ func Fetch(ctx context.Context, base string) (string, error) {
 		return "", fmt.Errorf("update: download %s: HTTP %d", rawURL, resp.StatusCode)
 	}
 	digest := sha256.New()
-	body := &watchedBody{r: resp.Body, progress: make(chan struct{}, 1)}
-	stall := stallAfter
-	var stalled atomic.Bool
-	copied := make(chan struct{})
-	watching := make(chan struct{})
-	go func() {
-		defer close(watching)
-		timer := time.NewTimer(stall)
-		defer timer.Stop()
-		for {
-			select {
-			case <-copied:
-				return
-			case <-body.progress:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				timer.Reset(stall)
-			case <-timer.C:
-				stalled.Store(true)
-				cancel()
-				return
-			}
-		}
-	}()
-	_, err = io.Copy(io.MultiWriter(tmp, digest), body)
-	close(copied)
-	<-watching
+	n, err := stallwatch.Copy(io.MultiWriter(tmp, digest), resp.Body, stallAfter, cancel)
 	if err != nil {
 		cleanup()
-		if stalled.Load() {
-			return "", fmt.Errorf("update: download stalled: no data for %s after %d bytes", stall, body.n)
+		if errors.Is(err, stallwatch.ErrStalled) {
+			return "", fmt.Errorf("update: download %w", err)
 		}
-		return "", fmt.Errorf("update: write after %d bytes: %w", body.n, err)
+		return "", fmt.Errorf("update: write after %d bytes: %w", n, err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)

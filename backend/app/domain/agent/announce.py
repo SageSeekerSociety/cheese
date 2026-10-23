@@ -46,16 +46,18 @@ from app.domain.addressing import (
     address,
 )
 from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
 from app.domain.block.asked import asked_of, settled, skipped_by
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.delivery_events import DeliveryEvent
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
+from app.domain.identity.handles import agent_instance_handle, names_a_person
 from app.domain.notice_meta import (
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -111,7 +113,7 @@ async def announce(
     `event_id` 是这条事件的身份，投递账本按它去重（结论 58「去重键跟事件」）。默认
     就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
-    id 不能每次新建（`domain/policy/proposals.py`）。
+    id 不能每次新建（`domain/agent/proposals.py` 的 `identity` 就是这么算的）。
 
     `about_card` 是这句话说的那张验收卡：随投递一起记下（`payload.cardId`），卡的
     那次决定据此把这一批提示一起结掉（`delivery/ledger.py` 的 `settle_card`）。
@@ -349,6 +351,29 @@ async def answer_questions(
             },
         ]
         question.meta = meta
+    await finish_answering(
+        session, reply=reply, questions=questions, said=said, recipient=recipient
+    )
+    return questions
+
+
+async def finish_answering(
+    session: AsyncSession,
+    *,
+    reply: Block,
+    questions: list[Block],
+    said: str,
+    recipient: dict,
+) -> None:
+    """答过之后那一半：结掉题的通知，并把 ``reply`` 送到提问的那位手上。
+
+    答案本身已经记在题上（`block.questions` 的题、`block.answer_groups` 的整组提交
+    各写各的）；这里只管两件两边一样的事——一组题都了结了就把那条通知结掉，以及
+    这句话没点任何 agent 的名时指到提问的席位，好开它的下一轮。
+
+    单独拎出来，是因为整组提交（`block.answer_groups`）一次答几道题、走的是另一扇
+    写答案的门，但收尾这一步和单答一模一样，不该有两份。
+    """
     excerpt = said[:ANSWER_EXCERPT_CHARS] + (
         "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
     )
@@ -366,7 +391,6 @@ async def answer_questions(
         # seat IS the agent the room points at: the recipient already names it.
         recipient["mentioned"] = True
         reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
-    return questions
 
 
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
@@ -450,6 +474,27 @@ async def instance_of_seat(session: AsyncSession, project_id, seat: str):
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         if agent_instance_handle(instance.id) == seat:
             return instance
+    return None
+
+
+async def who_started_the_open_turn(
+    session: AsyncSession, project_id, conversation_id: uuid.UUID, seat: str
+) -> str | None:
+    """The person whose message opened ``seat``'s running turn in this
+    conversation, if a person did: None when no turn is open there, or when
+    the platform or another agent opened it.
+
+    A turn row names the agent by its instance's handle (the conversation it
+    runs in), a seat by the instance's id; either may be on the row.
+    """
+    instance = await instance_of_seat(session, project_id, seat)
+    turns = AgentTurnRepository(session)
+    for handle in (seat, *((instance.handle,) if instance is not None else ())):
+        author = await turns.open_turn_author_for_topic(
+            conversation_id, agent_handle=handle
+        )
+        if author is not None:
+            return author if names_a_person(author) else None
     return None
 
 

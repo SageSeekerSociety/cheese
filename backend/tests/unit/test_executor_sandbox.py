@@ -22,15 +22,70 @@ from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap, executor_release
+from tests.support import bubblewrap, executor_release, sandbox_disk
 
 RUNTIME = Path(runtime.__file__)
+BACKEND = Path(__file__).resolve().parents[2]
+
+# The modules `runtime.py` imports from beside itself, by their bare names.
+PARTS = ("runtime_core", "runtime_commands", "runtime_context", "runtime_calls")
+
+
+def _stage_a_release(store: Path) -> Path:
+    """One release under `store`, holding exactly what a machine stages.
+
+    A release is what `runtime.RELEASE_FILES` lists, `executor_release.install`
+    among the things that build one. A fixture that copied the source directory
+    instead would hold files no release has and miss four that one does, so it
+    would go on passing for a release that never got the modules the runtime
+    imports from beside itself at load.
+    """
+    release = store / ("0" * 64)
+    for name, source in runtime.RELEASE_FILES.items():
+        staged = release / name
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(BACKEND / source, staged)
+    return release
+
+
+def _load_the_releases_own_parts(monkeypatch, request):
+    """Let a release directory be read for the modules it holds.
+
+    A test that starts an executor imports the checkout's `runtime.py` by path,
+    and the runtime then imports its parts by their bare names: `sys.modules`
+    keeps those copies for the rest of the process and `sys.path` keeps the
+    checkout's directory they came from. A later `runpy.run_path` of a release
+    directory would bind to them and never read the release's own, so these
+    fixtures would pass for a release staged without the parts at all. Both are
+    put back when the test ends.
+
+    `delitem` records an undo only for a name that is already in `sys.modules`,
+    and the first of these tests to run has none: the release's own copies,
+    which the test's own load puts there, would answer `import` under those
+    names for the rest of the process out of a directory pytest has since
+    deleted. So they are taken out once more at the end, whatever the test left
+    under them, and `monkeypatch` puts back the copies that were there before.
+    """
+    for name in PARTS:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(
+        sys, "path", [entry for entry in sys.path if Path(entry) != RUNTIME.parent]
+    )
+
+    def _forget_whatever_answered_to_them():
+        for name in PARTS:
+            sys.modules.pop(name, None)
+
+    request.addfinalizer(_forget_whatever_answered_to_them)
 
 
 def _bubblewrap_runs() -> bool:
     # A sandbox's network and limits are set up as root (`sandbox_host.py`),
     # which only a machine that opted in lets a test do: CI's runner.
-    if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
+    if (
+        os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1"
+        or not sandbox_disk.available()
+    ):
         return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
@@ -42,9 +97,16 @@ def _bubblewrap_runs() -> bool:
     return probe.returncode == 0
 
 
+@pytest.fixture
+def owner(tmp_path):
+    with sandbox_disk.owner(tmp_path) as found:
+        yield found
+
+
 sandboxed = pytest.mark.skipif(
     not _bubblewrap_runs(),
-    reason="needs bubblewrap, user namespaces and sudo (CHEESE_TEST_SANDBOX_HOST=1)",
+    reason="needs bubblewrap, user namespaces, sudo (CHEESE_TEST_SANDBOX_HOST=1) and "
+    "a directory with project quotas (CHEESE_TEST_SANDBOX_DISK)",
 )
 
 
@@ -222,7 +284,7 @@ def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
         process.kill()
 
 
-def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
+def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch, request):
     """A sandboxed room's reset reaches its executor through the directory it
     opened without following a link: on Linux by `/proc/self/fd`, on a Mac,
     which has no /proc, by the path that directory resolves to. Either way the
@@ -230,8 +292,8 @@ def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
     home = tmp_path / "home"
     (home / ".cheese").mkdir(parents=True)
     _, process = _previous_executor(home / ".cheese")
-    release = tmp_path / "release"
-    shutil.copytree(RUNTIME.parent, release / "remote-execution")
+    _load_the_releases_own_parts(monkeypatch, request)
+    release = _stage_a_release(tmp_path)
     shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
     try:
         reset = subprocess.run(
@@ -249,7 +311,7 @@ def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
 
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
-    tmp_path, monkeypatch, sandbox
+    tmp_path, monkeypatch, sandbox, request
 ):
     """The teardown runs outside every sandbox. A sandboxed room can rewrite
     its own installation, so for one its programs come from the release it was
@@ -270,9 +332,8 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
         "def socket_path(state):\n    return str(state / 'absent')\n"
     )
     if sandbox:
-        release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-        (release / "remote-execution").mkdir(parents=True)
-        shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+        _load_the_releases_own_parts(monkeypatch, request)
+        release = _stage_a_release(tmp_path / ".cheese/executor-releases")
         shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
         marker.parent.mkdir(parents=True)
@@ -284,7 +345,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
 
 
 def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     """A sandbox on a cloud host lives in the helper's cgroup, and stopping it
     is the helper bringing that down. The room may have been started from a
@@ -296,9 +357,10 @@ def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     (home / ".cheese/executor").mkdir(parents=True)
-    release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-    (release / "remote-execution").mkdir(parents=True)
-    shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+    _load_the_releases_own_parts(monkeypatch, request)
+    release = _stage_a_release(tmp_path / ".cheese/executor-releases")
+    # What makes this release the earlier one is the environment runner staged
+    # beside it here rather than the one a current release ships.
     (release / "cheese-environment.py").write_text("# an earlier release\n")
     marker = tmp_path / ".cheese/sandboxes" / project / resource
     marker.parent.mkdir(parents=True)
@@ -400,9 +462,8 @@ def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
 
 @sandboxed
 def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
-    tmp_path, monkeypatch, capsys
+    owner, monkeypatch, capsys
 ):
-    owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -456,7 +517,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
         ].strip() == ("ok")
         assert (home / "mine").exists() and (store / "cached").exists()
         assert (home / ".cheese/tmp/scratch").exists()
-        assert bash("printf %s $UV_LINK_MODE")["stdout"] == "copy"
+        assert bash("printf %s $UV_LINK_MODE")["stdout"] == "clone"
         # Nothing of anyone else's, and none of the owner's.
         for hidden in (neighbour / "notes", credential, other_store):
             assert (
@@ -493,11 +554,10 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
 
 @sandboxed
 def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
-    tmp_path, monkeypatch, capsys
+    owner, monkeypatch, capsys
 ):
     """The next install reaches a running executor from outside the sandbox
     with the programs it ships, never with the ones the room's config names."""
-    owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)

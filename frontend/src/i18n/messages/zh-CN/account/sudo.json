@@ -1,0 +1,32 @@
+{
+  "action": {
+    "addPasskey": "添加通行密钥",
+    "changePassword": "修改密码",
+    "closeAccount": "注销账号",
+    "deletePasskey": "删除通行密钥",
+    "deleteRealName": "删除实名信息",
+    "disableTOTP": "关闭两步验证",
+    "generateBackupCodes": "生成新的备用码",
+    "initTOTP": "开启两步验证",
+    "unbindOAuthConnection": "解除第三方账号关联",
+    "updateRealName": "修改实名信息",
+    "viewRealName": "查看完整实名信息"
+  },
+  "emailCodeUnavailable": "此账号已开启两步验证，使用其他方式",
+  "failed": "验证失败，稍后重试",
+  "ledeFor": "{action}前，需要确认你的身份",
+  "method": {
+    "emailCode": "接收邮箱验证码",
+    "password": "输入密码",
+    "totp": "输入验证器中的验证码"
+  },
+  "noMethod": "暂无可用于确认身份的方式",
+  "otherMethods": "其他方式",
+  "passkey": "使用通行密钥验证",
+  "passkeyCanceled": "已取消通行密钥验证",
+  "passwordRequired": "填写密码",
+  "sendEmailCode": "发送邮箱验证码",
+  "sendFailed": "发送失败，稍后重试",
+  "submit": "验证",
+  "title": "确认是你本人"
+}

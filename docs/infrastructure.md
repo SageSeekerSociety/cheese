@@ -326,8 +326,16 @@ successor serves requests at once but holds the turns asked of it until the lock
 reaches it. The outgoing backend, on SIGTERM,
 lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
-where it stands and starts any turn a message was left waiting for. The whole
-of that fits in the backend's 60-second `stop_grace_period`, which is why the
+where it stands and starts any turn a message was left waiting for. A Claude
+Code runner that does not speak the lifecycle protocol the successor reads
+(`harness/driven/lifecycle.py`, `PROTOCOL`) is replaced rather than picked up:
+an idle one at once, with what it was written and never read offered again,
+and one at work once its ping says the work is done (it gets no new input
+meanwhile and the seat's messages wait). Only past `RUNNER_DRAIN_S` (30
+minutes by default) is its turn interrupted, ending with `runner_replaced` and
+resumed at once. That drain runs in the successor after the handover, not
+inside it. The handover itself fits in the backend's 60-second
+`stop_grace_period`, which is why the
 old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
@@ -411,32 +419,48 @@ The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
 
-`main` requires the GitHub Actions check `CI required` and the
-[Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
-The ruleset has no bypass actors. Add a green PR through GitHub's merge queue UI
-or the GraphQL `enqueuePullRequest` mutation. Repository auto-merge is enabled
-so `gh pr merge` can request queue entry while required checks are pending.
-The queue tests its changes against the latest main and preceding queued
-changes before merging.
+`main` requires the GitHub Actions check `CI required` through
+[ruleset 23778889](https://github.com/SageSeekerSociety/cheese/rules/23778889).
+The ruleset carries only the required status check: it has no merge-queue rule,
+so a green PR merges directly with `gh pr merge --squash`. The repository's
+admin role may always bypass it.
+Without a merge strategy, noninteractive `gh pr merge` fails; `--auto` would
+allow a later merge without another local review check.
 
-`.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
-It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
-Documentation-only changes run repository guards. Failed scope detection, failed
-or cancelled selected suites, and unexpected skips fail `CI required`. A draft PR
-runs the fast tier instead, aggregated by a separate job named
-`CI required (draft quick)`; both aggregating job names are literals in the
-workflow, so a cancelled run still shows its name and not its expression. The
-full-tier job checks this repo's commit titles with
-`.github/scripts/check-commit-title.py`:
-the PR title on a pull request, and every squash commit about to land in the
-merge queue. Remote
-execution acceptance remains advisory pending the stability target in #1279; the
-MCP latest-version canary runs on schedule or manual dispatch.
+Run `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>` in the background
+under the owning session's monitor. `--enqueue` checks `ready` for the current
+head, re-reads that head, and squash-merges with `--match-head-commit`, without
+arming auto-merge. The watcher follows the push-to-main Required CI runs of
+main commits that contain the merge, then a dev deployment whose released
+commit and live version contain the merge. Main CI has passed for the merge
+once any containing run succeeded. A red run is reported and waits for a newer
+containing batch; the watch fails when the newest containing run is red and no
+newer one starts within an hour. A merge reverted before that green run or
+the live version fails the watch, naming the revert. A cancelled deployment
+waits for a later release.
 
-Queue settings: four concurrent merge-group builds, ALLGREEN, squash merge, one
-to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
-That timeout bounds a stalled queue; the feedback-time targets remain those in
-#1279.
+`.github/workflows/required-ci.yml` runs the quick tier on every pull request.
+Ready PRs aggregate as `CI required`; drafts aggregate as
+`CI required (draft quick)`. The full suites selected by
+`.github/scripts/required-ci-paths.json` run after a push to main.
+Failed scope detection, failed or cancelled selected suites, and unexpected
+skips fail the full gate.
+
+A main push is the post-submit gate. Its scope base is `refs/heads/main-green`,
+the last commit the gate passed (`main-green` in the workflow moves it after a
+green run and leaves it after a red one, through a `force: false` ref update —
+the job's depth-1 checkout cannot see the ancestry a `git push` would need to
+judge a fast-forward), so one run covers every commit that
+landed since — including a commit whose own run a newer push superseded while it
+was queued. The push runs join one fixed concurrency group with
+`cancel-in-progress: false`, which is what keeps one run executing and one
+waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run.
+PR titles are checked before merge; main push titles are reported as warnings
+with `--warn-only`, because those commits have already landed. Remote execution
+acceptance is one of the gated suites on a main push; the MCP latest-version
+canary runs on schedule or manual dispatch.
+
+The feedback-time targets remain those in #1279.
 
 PRs opened before the gate was installed need a new pull-request event to report
 `CI required`, for example after updating their branch or reopening the PR.
@@ -467,12 +491,12 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 
 ## CI runner pool (cheese-ci)
 
-Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
-the CLI boot e2e and remote-execution acceptance. The organisation is on the
+Every suite Required CI selects runs on GitHub-hosted runners, including
+the CLI boot e2e and remote-execution acceptance; only the serial aggregation
+jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
 is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
-61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
-merge-queue jobs. This is a historical baseline, not representative of the
+61 hosted jobs running concurrently. This is a historical baseline, not representative of the
 2026-10-14 busy window, when hosted-runner waits were substantially longer.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
@@ -481,6 +505,20 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
+  `CI required (draft quick)` and main pushes' `Mark main green` take
+  `[self-hosted, cheese-ci]` for main pushes and same-repo PRs,
+  and stay on `ubuntu-latest` for fork PRs. Required
+  CI's backend suite runs no `Backend coverage complete` job: `CI required`
+  runs that shard-coverage check itself, one hop fewer. They run seconds of work and used to wait 3-20
+  min (#4101) in the shared hosted queue. The boxes have python3, git and curl but no
+  gh, jq or node on PATH (JS actions use the runner's bundled node), so those
+  jobs' `run:` steps must not call them. deploy-prod's x86 run of `test.yml`
+  keeps its own `Backend coverage complete` job, on hosted machines. #2257 did this on 09-30 and
+  #2439 reverted it because two slots on one box shared the `ci` user's
+  pre-commit cache ("database is locked"); these jobs never run
+  `uvx pre-commit` (`guards` does, and stays hosted). Anything someone adds to them
+  that writes under `~/.cache` must point its cache at `$RUNNER_TEMP`.
 - **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
   (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
   two jobs that together want more than 8G did not slow down — the kernel killed
@@ -759,10 +797,19 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Transcripts** are not backed up. Claude Code sessions run on the central
-  session host, and their transcripts stay there: the platform does not upload
-  them. Archived-room cleanup keeps a room's transcripts compressed on that host
-  for 30 days, then deletes them — see
+- **Session records** (what each session's runner journaled,
+  `session_records`): the last few minutes sit in the table and go out with the
+  DB dump; older runs are gzip objects under `session-records/` in the private
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. Each object is read
+  back byte for byte, and its index marker under `session-record-index/`
+  published, before the rows it replaces are deleted. The objects are kept
+  for good, a deleted conversation's included; a sealed run's row (and so the
+  app's way to read it) goes after 30 days.
+- **Transcripts** (the CLI's own `.jsonl` files: Claude Code's, Codex's, pi's)
+  of an archived room are compressed on the central session host when its
+  cleanup removes the room's resource there, sent to the private
+  `TRANSCRIPT_S3_BUCKET` under `transcripts/rooms/`, and kept there for good;
+  the host's copy goes 30 days later, once the bucket's is confirmed — see
   [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
   Transcript objects uploaded to the private `TRANSCRIPT_S3_BUCKET` before
   uploading stopped are still there, indexed by the `raw_transcripts` table;
@@ -869,13 +916,13 @@ answers with 404 itself, so the check covers the tunnel and the front door
 without depending on an application rollout.
 
 Neither of those saves a request already on its way down a tunnel that stalls:
-it hangs until ssh gives the line up, about 20 s, and then fails with 502. So
-reads (`GET`, `HEAD`) go through their own `reverse_proxy` with a 10 s
-`response_header_timeout`. A read with no response headers by then counts as a
-failure, marks that tunnel down for `fail_duration`, and is retried on the other
-one within `lb_try_duration` (15 s, longer than the timeout or no retry is left
-to make). Writes keep the original block with no header timeout: Caddy does not
-retry them, so a timeout would only cut off a slow write.
+it hangs until ssh gives the line up, about 20 s, and then fails with 502. The
+proxy deliberately sets no `response_header_timeout` to cut that short. One was
+tried on 2026-10-09 (reads given up after 10 s and retried on the other tunnel)
+and removed: it also cut reads that are slow on a healthy tunnel, such as an
+Office-to-PDF preview or a project export, ran them twice, and each timeout
+marked a healthy tunnel down for writes too. 1043 reads ended in an error in six
+days, against the 29 stall 502s of the one day (2026-10-09) it was added to fix.
 
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
@@ -1152,6 +1199,7 @@ Kong tunnels inside TLS on `:443` do not apply inside the mainland.
 | Beijing | `/etc/caddy/Caddyfile` | `scripts/ops/Caddyfile.beijing` |
 | Beijing | `~bjrelay/.ssh/authorized_keys` | `restrict,port-forwarding`, may only listen on `127.0.0.1:18463` and `:18464` |
 | Beijing | `/etc/ssh/sshd_config.d/60-bjrelay.conf` | no passwords; `bjrelay` gets remote forwarding only, 10 s × 2 keepalive |
+| Beijing | `/etc/systemd/system/cheese-bj-relay-watchdog.service`, `/usr/local/libexec/cheese-bj-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session (same design as etrip's `cheese-relay-watchdog`, no Feishu alert) |
 
 Both tunnels currently leave through the default (Unicom) line. From the campus
 exit that Hong Kong's tunnel B uses (table 18443 via 119pve), the Beijing address

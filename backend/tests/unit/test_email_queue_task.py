@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.domain.notification import maintenance, push_delivery
+from app.domain.notification import maintenance
 from app.domain.notification.handlers import NotificationDelivery
 from app.domain.notification.models import ChannelDelivery, NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
@@ -109,11 +109,12 @@ async def test_failed_email_does_not_repeat_successful_push(db_factory, monkeypa
     sender = SimpleNamespace(send=AsyncMock(return_value=False))
     monkeypatch.setattr(maintenance, "get_email_sender", lambda: sender)
     push = AsyncMock(return_value=0)
-    monkeypatch.setattr(push_delivery, "send_push", push)
     await _enqueue(db_factory, push=True)
     assert (await maintenance.drain_email_queue(db_factory))["retried"] == 1
     assert (
-        await drain_channel(db_factory, channel="push", batch_size=10, max_attempts=3)
+        await drain_channel(
+            db_factory, channel="push", sender=push, batch_size=10, max_attempts=3
+        )
     )["processed"] == 1
     async with db_factory() as session:
         email = await session.scalar(
@@ -124,7 +125,9 @@ async def test_failed_email_does_not_repeat_successful_push(db_factory, monkeypa
     sender.send.return_value = True
     assert (await maintenance.drain_email_queue(db_factory))["processed"] == 1
     assert (
-        await drain_channel(db_factory, channel="push", batch_size=10, max_attempts=3)
+        await drain_channel(
+            db_factory, channel="push", sender=push, batch_size=10, max_attempts=3
+        )
     )["processed"] == 0
     push.assert_awaited_once()
     assert all(row.state == "sent" for row in await _rows(db_factory))
@@ -140,14 +143,24 @@ async def test_provider_failure_exhausts_a_visible_bounded_retry_budget(
     )
     await _enqueue(db_factory)
     result = await drain_channel(
-        db_factory, channel="email", batch_size=10, max_attempts=1
+        db_factory,
+        channel="email",
+        sender=maintenance.send_email,
+        batch_size=10,
+        max_attempts=1,
     )
     assert result["dead_lettered"] == 1
     row = (await _rows(db_factory))[0]
     assert row.state == "dead"
     assert "SMTP" in row.last_error
     assert (
-        await drain_channel(db_factory, channel="email", batch_size=10, max_attempts=1)
+        await drain_channel(
+            db_factory,
+            channel="email",
+            sender=maintenance.send_email,
+            batch_size=10,
+            max_attempts=1,
+        )
     )["processed"] == 0
 
 
@@ -213,7 +226,7 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
     """推送给谁，按偏好矩阵与旧的 `PUSHABLE` 一起算。
 
     ROOM_NOTICE（旧 `PUSHABLE`）与 MENTION（矩阵里推送开）都该有一条推送；
-    DEADLINE_REMIND 两边都不在，就不该有。
+    TEAM_REQUEST_APPROVED 两边都不在，就不该有。
     """
     async with db_factory() as session:
         handler = ChannelIntentHandler(session, push_enabled=True, now=lambda: NOON)
@@ -230,9 +243,9 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
                 ),
                 NotificationDelivery(
                     10,
-                    NotificationType.DEADLINE_REMIND,
-                    {"content": "Soon"},
-                    "deadline:10",
+                    NotificationType.TEAM_REQUEST_APPROVED,
+                    {"content": "Approved"},
+                    "approved:10",
                 ),
             ]
         )

@@ -176,8 +176,9 @@ class TaskAttachmentService:
         )
         if not links:
             return None
+        tasks_by_id = await self._tasks.get_by_ids([link.task_id for link in links])
         for link in links:
-            task = await self._tasks.get_by_id(link.task_id)
+            task = tasks_by_id.get(link.task_id)
             if task is None:
                 continue
             if await self._may_download(task=task, user_id=user_id):
@@ -234,39 +235,13 @@ class TaskAttachmentService:
             await self._links.create(task_id=task.id, attachment_id=attachment_id)
         return len(ids)
 
-    async def attach_uploaded_to_tasks(
-        self, *, tasks: list[Task], user_id: int, attachment_ids: list[int]
-    ) -> int:
-        """一次把同一批文件挂到**多道**题上（``publish/from-pdf/confirm``）。
-
-        与 ``attach_uploaded`` 只差一件事：那里钉的是「一份材料属于一道题」，而 PDF
-        这条路要的是相反的东西 —— 那一份原 PDF 与它抽出来的插图跟着**每一道**生成出
-        来的题走，所以同一行附件会有多条关联行。「已经在某道题上」那道校验因此放在
-        这一批**开始之前**判一次，而不是每挂一道判一次：否则第一道题刚建好的关联会
-        把第二道题自己挡在门外。校验收在同一个 ``ensure_attachable`` 里，两条路
-        对「什么文件挂得上」的答案一样。
-        """
-        ids = list(dict.fromkeys(attachment_ids))
-        if not ids or not tasks:
-            return 0
-        for task in tasks:
-            await self._ensure_publisher(task=task, user_id=user_id)
-        await self.ensure_attachable(user_id=user_id, attachment_ids=ids)
-
-        for task in tasks:
-            for attachment_id in ids:
-                await self._links.create(task_id=task.id, attachment_id=attachment_id)
-        return len(tasks) * len(ids)
-
     async def ensure_attachable(
         self, *, user_id: int, attachment_ids: list[int]
     ) -> None:
         """这些 id 挂得上吗：存在、是我的、还没挂在别处。
 
-        公开出来是为了**建题之前**先问一次（``publish/from-pdf/confirm``）：一次校验
-        不过的批量请求，不该先把那几道题造出来、再指望请求级的回滚把它们收走。挂的时
-        候（``attach_uploaded`` / ``attach_uploaded_to_tasks``）还会各自再问一次 ——
-        这是服务自己的保证，不指望每个调用方都记得先问。
+        挂的时候（``attach_uploaded``）要问一次：这是服务自己的保证，不指望每个调用
+        方都记得先问。
         """
         files = {
             attachment.id: attachment

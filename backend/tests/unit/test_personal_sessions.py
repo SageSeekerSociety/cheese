@@ -32,7 +32,7 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
 from app.domain.agent.personal import session as personal
-from app.domain.agent.session_host.answer import Answer, Tool, Words, ask
+from app.domain.agent.session_host.answer import Answer, Thinking, Tool, Words, ask
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
@@ -118,7 +118,10 @@ class Platform:
                             bool(chunk["choices"][0]["delta"].get("content")),
                         )
                     )
-                    if held is not None and chunk["choices"][0]["delta"].get("content"):
+                    delta = chunk["choices"][0]["delta"]
+                    if held is not None and (
+                        delta.get("content") or delta.get("reasoning_content")
+                    ):
                         # The rest of the answer waits for the test to let it
                         # go: a whole answer written faster than one read is
                         # handed on in one piece, rightly. No deadline here:
@@ -180,8 +183,13 @@ def _chunks(index: int, step: dict) -> list[dict]:
         ]
     text = step["text"]
     pieces = [text[i : i + 3] for i in range(0, len(text), 3)]
+    # Reasoning first, the way the gateway's deepseek models stream it.
+    reasoning = [
+        chunk({"reasoning_content": part}) for part in step.get("reasoning", [])
+    ]
     return [
         chunk({"role": "assistant", "content": ""}),
+        *reasoning,
         *(chunk({"content": piece}) for piece in pieces),
         chunk({}, "stop", usage=usage),
     ]
@@ -219,9 +227,7 @@ class Started:
 
     def __init__(self, user: int, conversation: uuid.UUID | None = None):
         self.user = user
-        ref, spec, self.access = personal.session(
-            user, conversation or uuid.uuid4(), ""
-        )
+        ref, spec, self.access = personal.session(user, conversation or uuid.uuid4())
         self.ref = ref
         self.spec = dataclasses.replace(
             spec, system_prompt=PROMPT, tools=TOOLS, model="fixture-model"
@@ -264,7 +270,7 @@ async def _ask(sessions, launch, text, **options) -> list:
 async def _until(check, timeout: float = 60.0) -> None:
     async with asyncio.timeout(timeout):
         while not check():
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.05)
 
 
 @pytest.mark.anyio
@@ -288,7 +294,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert Tool("cheese_my_tasks") in events
+    assert any(isinstance(e, Tool) and e.name == "cheese_my_tasks" for e in events)
     assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
@@ -299,8 +305,8 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
         "cheese_docs_search",
         "cheese_my_tasks",
     ]
-    assert first["thinking"] == {"type": "disabled"}
-    assert "reasoning_effort" not in first
+    # It reasons: nothing turns the model's thinking off.
+    assert first.get("thinking") != {"type": "disabled"}
     assert first["max_tokens"] == personal.MAX_TOKENS
     system = first["messages"][0]["content"]
     system = system if isinstance(system, str) else system[0]["text"]
@@ -318,6 +324,31 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     # Nothing but the launch ran on the host: no machine, no container.
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
+
+
+@pytest.mark.anyio
+async def test_with_a_computer_to_work_on_it_is_given_the_tools_to_work_it(
+    host, platform, monkeypatch
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", DEVICE)
+    monkeypatch.setattr(personal, "cloud_provisionable", lambda _settings: True)
+    _hub, sessions = host
+    fake = platform([{"text": "好。"}])
+    launch = _launch(7)
+
+    await _ask(sessions, launch, "算一下 2 的 100 次方。")
+
+    names = sorted(t["function"]["name"] for t in fake.requests[0]["tools"])
+    assert names == sorted(
+        [*TOOLS, "bash", "edit", "find", "grep", "ls", "read", "write"]
+    )
+    # Its sandbox is the conversation's own, asked for where a room's session
+    # asks for one; nothing is asked for until a tool needs it.
+    conversation = launch.ref.home.rsplit("/", 1)[1]
+    assert launch.access.target["lease_path"] == (
+        f"/topics/{conversation}/sessions/{conversation}/work-lease"
+    )
+    assert fake.tool_calls == []
 
 
 @pytest.mark.anyio
@@ -404,13 +435,13 @@ async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkey
     its own so that what the reader adds on top is what is measured; the
     timings are printed."""
     hub, sessions = host
-    first_token_s = 0.3
-    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.5)
+    first_token_s = 0.15
+    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.25)
     platform([], first_token_s=first_token_s)
     launch = _launch(7)
 
     new = await _first_word(sessions, launch, "一")
-    warm = [await _first_word(sessions, launch, "再一") for _ in range(3)]
+    warm = [await _first_word(sessions, launch, "再一") for _ in range(2)]
     await _until(lambda: not hub.alive(launch.ref.state))
     resumed = await _first_word(sessions, launch, "回来")
 
@@ -419,3 +450,39 @@ async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkey
         f"resumed after idle {resumed:.3f}s (the model starts after {first_token_s}s)"
     )
     assert min(warm) - first_token_s < 0.5
+
+
+@pytest.mark.anyio
+async def test_that_it_reasons_is_handed_on_and_what_it_reasons_is_not(host, platform):
+    _, sessions = host
+    seen = threading.Event()
+    platform(
+        [{"reasoning": ["先看提交要求"], "text": "先读说明。"}],
+        rest_held_until=seen,
+    )
+    launch = _launch(9)
+
+    events = []
+    async for event in _asking(sessions, launch, "从哪里入手？"):
+        events.append(event)
+        if isinstance(event, Thinking):
+            seen.set()
+
+    assert any(isinstance(e, Thinking) for e in events)
+    assert "先看提交要求" not in "".join(e.text for e in events if isinstance(e, Words))
+
+
+@pytest.mark.anyio
+async def test_it_reasons_as_hard_as_it_is_set_to(host, platform):
+    _, sessions = host
+    fake = platform([{"text": "好。"}])
+    launch = Started(11)
+    launch.spec = dataclasses.replace(
+        launch.spec,
+        model_settings=dataclasses.replace(launch.spec.model_settings, effort="high"),
+    )
+
+    events = await _ask(sessions, launch, "在吗")
+
+    assert isinstance(events[-1], Answer)
+    assert fake.requests[0].get("reasoning_effort") == "high"

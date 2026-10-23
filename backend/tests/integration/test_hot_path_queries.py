@@ -13,39 +13,24 @@ They are only visible as a count of round trips, and as whether the database
 can answer without reading the table, so that is what these assert.
 """
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+import re
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import text
 
-from tests.integration.conftest import a_team, join_project_team, post_project
+from app.domain.room_task.services import TaskService
+from tests.integration.conftest import (
+    a_team,
+    join_project_team,
+    open_task,
+    post_message,
+    post_project,
+)
+from tests.support.counting_session import counting_sql
 
 OWNER = "roster-owner"
 PROJECT = "00000000-0000-0000-0000-0000000000aa"
 TOPIC_ONE = "00000000-0000-0000-0000-000000000001"
-
-
-@contextmanager
-def counting_sql(client) -> Iterator[list[str]]:
-    """Every SQL statement the app's requests issued while the block runs, in order.
-
-    Listens on the engine requests are served from, not on every engine: the
-    app starts its own work as it comes up (taking over a previous process's
-    turns, sweeping storage) on an engine of its own, and on a slow machine
-    those queries land inside the block and get charged to the request.
-    """
-    seen: list[str] = []
-
-    def _record(conn, cursor, statement, parameters, context, executemany):
-        seen.append(" ".join(statement.split()))
-
-    engine = client.test_app_engine.sync_engine
-    event.listen(engine, "after_cursor_execute", _record)
-    try:
-        yield seen
-    finally:
-        event.remove(engine, "after_cursor_execute", _record)
 
 
 def _seeded_rooms(client, project_id: str, headers: dict) -> list[dict]:
@@ -165,6 +150,18 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     with counting_sql(client) as small:
         assert client.get(url, headers=headers).status_code == 200
     small_count = len(small)
+    # Pin the absolute cost of this fixture's four-row list (three rooms plus
+    # the root the project creates). Every statement here is one a sidebar poll
+    # pays on every tick, so adding one is a deliberate act, not a rounding
+    # error — the relative check below would let a constant cost slip through.
+    # One of them reads which rooms' sessions their runners declare running
+    # (`session_states`), the board cell's 运行中. Three read which seat each
+    # room's teammate sits in (`addressable_agent_handles`: the rosters, and who
+    # on them is an agent), which a row's phrase names (「{agent}在做」).
+    assert small_count == 34, (
+        f"the topic list cost 34 statements; it now costs {small_count}.\n"
+        + "\n".join(small)
+    )
 
     _make(9)
     with counting_sql(client) as large:
@@ -175,6 +172,43 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     assert len(large) == small_count, (
         f"topic count grew 3 -> 12 and queries went {small_count} -> "
         f"{len(large)}; something is querying per topic.\n" + "\n".join(large)
+    )
+
+
+def test_topic_list_reads_room_tasks_once(client, bearer, monkeypatch):
+    """The list asks which tasks live in its rooms once per request.
+
+    ``_awaiting_an_answer`` folds a room's tasks into its 待答 set, and the
+    route folds the same tasks into the red rail's unresolved failures. Each
+    consumer used to read and reassemble the mapping; now the second one takes
+    the first one's answer.
+    """
+    project_id = _create_project(client, "Reads once")
+    headers = bearer(OWNER)
+    room_ids = []
+    for i in range(2):
+        r = client.post(
+            "/topics",
+            json={"project_id": project_id, "title": f"r{i}"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        room_ids.append(r.json()["data"]["id"])
+    open_task(client, room_ids[0], "一件活", owner=OWNER)
+
+    calls: list[list[str]] = []
+    original = TaskService.tasks_of_rooms
+
+    async def counted(self, room_ids):
+        calls.append(list(room_ids))
+        return await original(self, room_ids)
+
+    monkeypatch.setattr(TaskService, "tasks_of_rooms", counted)
+    response = client.get(f"/topics?project_id={project_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1, (
+        f"the list asked for its rooms' tasks {len(calls)} times; "
+        "the second consumer rebuilt the mapping instead of reusing it."
     )
 
 
@@ -232,6 +266,61 @@ def test_talking_in_a_room_moves_it_to_the_top(client, bearer):
 
     rows = _seeded_rooms(client, project_id, headers)
     assert rows[0]["id"] == oldest
+
+
+# --------------------------------------------------------------------------
+# POST /topics/{id}/messages
+# --------------------------------------------------------------------------
+
+#: The write that used to follow the INSERT: a participant's message patched
+#: its own `turn_id` after the flush, so SQLAlchemy sent an UPDATE and then had
+#: to read the row back.
+_SELF_REFERENCE_UPDATE = re.compile(
+    r"^\s*UPDATE blocks\s+SET\s+turn_id\s*=", re.IGNORECASE
+)
+
+#: Whole-row reads of one block by id: the route re-reads the anchor it just
+#: wrote to answer the POST, and the repository used to read it once more
+#: after the flush. A send may cost the route's read, not two.
+_BLOCK_BY_ID = re.compile(r"\bFROM blocks WHERE blocks\.id = ")
+
+
+def test_a_sent_message_groups_under_itself_without_a_second_write(client, bearer):
+    """A message block is written once, its self-reference included.
+
+    Where a block groups is a rule a reader can state without the code: one
+    send is one group, and a person's message is its own. *How many statements*
+    it takes to store that is what this pins — patching `turn_id` after the
+    insert changed nothing visible, so only the statements show whether the
+    value was written with the row or fixed up afterwards.
+    """
+    project_id = _create_project(client, "Sends")
+    headers = bearer(OWNER)
+    r = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "发送"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    topic_id = r.json()["data"]["id"]
+
+    with counting_sql(client) as statements:
+        sent = post_message(client, topic_id, OWNER, {"content": "一条消息"})
+
+    patched = [s for s in statements if _SELF_REFERENCE_UPDATE.match(s)]
+    assert not patched, (
+        "the message's self-reference was written as a second statement:\n"
+        + "\n".join(patched)
+    )
+    reads = [s for s in statements if _BLOCK_BY_ID.search(s)]
+    assert len(reads) == 1, (
+        "the write re-read its own row; only the route's read of the anchor "
+        "it returns should ask for it by id:\n" + "\n".join(reads)
+    )
+    # The caller still gets the whole row back from that one INSERT.
+    assert sent["seq"] > 0
+    assert sent["turn_id"] == sent["id"]
+    assert sent["created_at"]
 
 
 # --------------------------------------------------------------------------

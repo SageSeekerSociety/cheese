@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,17 +64,6 @@ def project_scope_prefix(project_id: str | uuid.UUID) -> str:
     named without naming that project's id.
     """
     return f"{project_id}:"
-
-
-def project_of_scope(scope: scopes.MemoryScope, scope_id: str) -> uuid.UUID | None:
-    """The project a pool belongs to, read back out of its key; None for a
-    scope that is not keyed by a project, or a key that is not in that shape."""
-    if scope not in (scopes.MemoryScope.agent_project, scopes.MemoryScope.user):
-        return None
-    try:
-        return uuid.UUID(scope_id.split(":", 1)[0])
-    except ValueError:
-        return None
 
 
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
@@ -225,10 +215,20 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
             "path",
             unique=True,
         ),
+        # A personal memory has no project, and NULL never equals NULL: its
+        # (owner, path) needs a uniqueness of its own.
+        Index(
+            "uq_memory_files_personal_path",
+            "owner_handle",
+            "path",
+            unique=True,
+            postgresql_where=text("scope = 'personal'"),
+        ),
     )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    #: None for a ``personal`` memory, which is the person's and in no project.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
     scope: Mapped[MemoryFileScope] = mapped_column(
         Enum(MemoryFileScope, native_enum=False, length=8), index=True

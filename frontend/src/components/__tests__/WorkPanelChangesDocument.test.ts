@@ -250,6 +250,9 @@ describe('改动 tab: 一份文档', () => {
     const { container } = mountPanel()
     await flush()
     await openChanges(container)
+    // 段头默认收着：铺开这一段才看得见它的文本差异。
+    await fireEvent.click(container.querySelector('.diff-file__toggle')!)
+    await flush()
 
     expect(container.querySelector('.diff-view')).toBeTruthy()
     expect(container.querySelector('.stub-pages')).toBeNull()

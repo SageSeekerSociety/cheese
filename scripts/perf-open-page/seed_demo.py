@@ -43,8 +43,11 @@ from sqlalchemy import select
 
 import app.models  # noqa: F401 — register every table so FKs resolve
 from app.core.db import async_session_factory
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.agent_instance.adapters import project_team, seat_project
+from app.domain.block.models import BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.block.repositories import BlockRepository
+from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.device.service import device_service_for_session
 from app.domain.device.supply import Supply
 from app.domain.integration.models import Integration
@@ -53,7 +56,6 @@ from app.domain.library import records as library_records
 from app.domain.living_doc.services import Documents
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project import artifacts as project_artifacts
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectArtifact, ProjectForge
 from app.domain.project.services import ProjectService
@@ -63,6 +65,7 @@ from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.thread.services import open_thread
 from app.domain.thread.models import Thread
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -349,13 +352,17 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
             )
             counts["messages"] += 1
 
-    # Tasks in the busy channel.
+    # Tasks in the busy channel. 2026-10-16：开一条活的那批函数从 `TopicService`
+    # 搬去了 `room_task.dispatch`，两个口子在这里按名字递进去（和路由同一个写法）。
     for i, title in enumerate(TASK_TITLES):
-        await topics.create_task(
+        await task_dispatch.create_task(
+            session,
             room_id=busiest.id,
             created_by=owner,
             title=title,
             owner_handle=DEMO_MEMBERS[i % len(DEMO_MEMBERS)],
+            seat_project=seat_project,
+            team=project_team,
         )
         counts["tasks"] += 1
 
@@ -391,8 +398,6 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
          "有一张验收卡等你验收", "「补齐登录页的错误提示」已经交付，请验收。"),
         (NotificationType.MENTION, NotificationLevel.light,
          "有人 @ 了你", "在「需求讨论」里点名了 alice。"),
-        (NotificationType.DEADLINE_REMIND, NotificationLevel.silent,
-         "任务即将到期", "「梳理一下慢查询」今天到期。"),
     ]:
         await notifications.create(
             project_id=project.id, level=level, kind=kind, title=title, body=body,
@@ -435,21 +440,23 @@ async def _seed_team_projects(session, team_id: int, users: dict[str, int]) -> i
     return made
 
 
-async def _seed_devices(session, users: dict[str, int], team_id: int, project: Project) -> int:
+async def _seed_devices(session, users: dict[str, int], team_id: int) -> int:
     owner_id = users[OWNER]
     service = device_service_for_session(session)
     wanted = ["演示工作站", "演示笔记本"]
-    owned = await service.list_owned(owner_id)
-    if any(device.name in wanted for device in owned):
+    devices = await service.list_devices_for_team(team_id)
+    if any(device.name in wanted for device in devices):
         return 0
     made = 0
     for name in wanted:
         code = await service.start(name)
-        device = await service.approve(
-            code, owner_user_id=owner_id, supply=Supply.self_hosted, name=name
+        await service.approve(
+            code,
+            owner_user_id=owner_id,
+            team_id=team_id,
+            supply=Supply.self_hosted,
+            name=name,
         )
-        await service.assign_to_team(device.device_id, team_id, actor_user_id=owner_id)
-        await service.assign_to_project(device.device_id, project.id, actor_user_id=owner_id)
         made += 1
     return made
 
@@ -534,19 +541,19 @@ async def seed() -> None:
         )
 
         first_project: Project | None = None
-        for name, project_team, owner in DEMO_PROJECTS:
-            project = await _make_project(session, name, project_team, owner)
+        for name, project_team_id, owner in DEMO_PROJECTS:
+            project = await _make_project(session, name, project_team_id, owner)
             first_project = first_project or project
             counts = await _seed_project(session, project, owner, authors)
             totals["projects"] += 1
             for key, value in counts.items():
                 totals[key] += value
-            print(f"seeded project {name!r} (team {project_team}, owner {owner})")
+            print(f"seeded project {name!r} (team {project_team_id}, owner {owner})")
 
         assert first_project is not None
         totals["skills"] = await _seed_skills(session, first_project)
         totals["team_projects"] = await _seed_team_projects(session, team_id, users)
-        totals["devices"] = await _seed_devices(session, users, team_id, first_project)
+        totals["devices"] = await _seed_devices(session, users, team_id)
         totals["integrations"] = await _seed_integrations(session, users)
 
         await session.commit()

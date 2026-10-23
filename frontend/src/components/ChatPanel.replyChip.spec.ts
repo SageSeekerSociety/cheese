@@ -11,6 +11,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -94,14 +96,16 @@ async function replyThenSend(text: string, cancel: boolean) {
   const bar = view.container.querySelector('.hover-bar') as HTMLElement
   await fireEvent.click(within(bar).getByTitle('引用回复'))
   if (cancel) await fireEvent.click(view.getByRole('button', { name: t('work.room.composer.cancelReply') }))
-  const box = view.container.querySelector('textarea') as HTMLTextAreaElement
+  const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
   box.focus()
-  await fireEvent.update(box, text)
+  await fillComposer(box, text)
   await fireEvent.keyDown(box, { key: 'Enter' })
   await settle()
   view.unmount()
   return sent.find((f) => f.content === text)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入框里的回复标签', () => {
   it('发出去的消息挂在回复的那一条下面', async () => {
@@ -112,5 +116,42 @@ describe('输入框里的回复标签', () => {
     const frame = await replyThenSend('不回复了', true)
     expect(frame).toBeTruthy()
     expect(frame?.reply_to ?? null).toBeNull()
+  })
+})
+
+describe('时间线上的引用条', () => {
+  it('队友的回复也画；父消息不在页里时用随页带来的一行预览', async () => {
+    history.push({
+      id: 'a1',
+      project_id: 'p1',
+      conversation_id: 't1',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'cheese-test',
+      content: '这个价格我同意',
+      reply_to: 'old',
+      reply_preview: {
+        id: 'old',
+        kind: 'message',
+        author_type: 'participant',
+        author: 'other',
+        content: '报价按 3 万走',
+      },
+      refs: [],
+      created_at: new Date().toISOString(),
+    } as unknown as Block)
+    try {
+      const view = render(Panel, {
+        props: { topic: { id: 't1', project_id: 'p1', title: 't1', kind: 'topic' } as Topic, showComposer: true },
+        global: { plugins: [vuetify, i18n] },
+      })
+      await settle()
+      const text = view.container.textContent || ''
+      expect(text).toContain('报价按 3 万走')
+      expect(text).toContain('回复')
+      view.unmount()
+    } finally {
+      history.pop()
+    }
   })
 })

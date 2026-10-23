@@ -19,8 +19,12 @@
   "mailDrafted": "Cheese wrote a draft in {account}; it is sent only once {owner} confirms",
   "policyResourceMachine": "the environment",
   "routineProposalConfirmed": "Cheese's draft “{title}” was confirmed and runs as set",
+  "routineProposalConfirmedBy": "{who}'s draft “{title}” was confirmed and runs as set",
   "routineProposalDeleted": "Cheese's draft “{title}” was deleted and will not run",
   "routineProposed": "Cheese drafted “{title}”; it runs only once you confirm",
+  "routineOutputRoot": "root folder",
+  "routineScopeUnset": "(not limited)",
+  "routineSummary": "Name: {title}\nTrigger: {trigger}\nWork: {instructions}\nMaterials: {scope}\nResults saved to: channel {output}\nRun by: {agent}\nResults sent to: {owner}",
   "routineResult": "“{title}” {verdict}",
   "skillEditNotSaved": "Cheese's change to the skill “{title}” was not saved",
   "skillEditProposed": "Cheese proposes a change to the skill “{title}”",
@@ -32,6 +36,6 @@
   "subagentStopEmpty": "A subagent handed back a result (with no message)",
   "taskDispatched": "Sent out a task: {title}",
   "titleAutoRenamed": "Title updated automatically to “{title}” (was “{previous}”)",
-  "computeCloud": "Sandbox · Standard",
-  "computeCloudVm": "Sandbox · Virtual machine"
+  "computeCloud": "Cloud environment · Standard",
+  "computeCloudVm": "Cloud environment · Virtual machine"
 }

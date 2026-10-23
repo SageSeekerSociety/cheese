@@ -28,8 +28,10 @@ const props = withDefaults(
     refreshTick?: number
     // 自由区的一个页签：这一格只看房间里这一份文件，不跟着当前预览走。
     path?: string | null
+    /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined }
+  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -70,6 +72,7 @@ const preview = usePanelPreview(props, {
     :refresh-tick="props.refreshTick"
     :path="props.path"
     :frame-name="frameName"
+    :agent-name="props.agentName"
     :preview="preview"
     @loaded="emit('loaded', $event)"
     @locate="emit('locate', $event)"

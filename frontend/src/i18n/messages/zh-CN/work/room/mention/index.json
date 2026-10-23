@@ -11,5 +11,8 @@
   "inProgress": "进行中",
   "library": "资料库",
   "noFiles": "暂无匹配的文件",
-  "noMatch": "暂无匹配"
+  "noMatch": "暂无匹配",
+  "outsideGroup": "不在频道",
+  "channelGroup": "频道",
+  "docGroup": "文档"
 }

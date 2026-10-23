@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.core.sentences import say
 from app.domain.agent import execution, private_chat
@@ -23,6 +24,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.remote_mcp import local as mcp_local
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
@@ -111,7 +113,14 @@ class CentralChannel(DeviceChannel):
             await execution.call(
                 lease, "ping", {}, hub=self._hub, timeout=MACHINE_PROBE_TIMEOUT_S
             )
-        except Exception:  # noqa: BLE001 — any failure means not now, and is logged
+        except DeviceCallError:
+            # The machine answered, and its executor is not up: one that sat
+            # idle stops itself (`runtime_core.EXECUTOR_IDLE_EXIT_S`). The
+            # session's own take of its hands at launch starts it again, and a
+            # take that cannot be had now starts the session at the placeholder
+            # (`client._take_leased_machine`).
+            return True
+        except Exception:  # any failure means not now, and is logged
             logger.info(
                 "central_session_stays_deferred topic=%s device=%s",
                 topic_id,
@@ -182,6 +191,33 @@ class CentralChannel(DeviceChannel):
                     harness=session.harness,
                     placed_before=placed_before,
                 )
+            await db.commit()
+
+    async def drain_started(self, session: SessionRef, launch: str) -> datetime:
+        """When the drain of this session's runner ``launch`` began, starting
+        it now if none of that runner is under way: kept with the seat, so
+        every backend that reads the seat counts the drain's cap from the same
+        moment."""
+        factory = self._session_factory or async_session_factory
+        async with factory() as db:
+            started = await AgentSessionService(db).drain(
+                conversation_id=session.conversation_id,
+                agent_handle=session.agent_handle,
+                harness=session.harness,
+                launch=launch,
+            )
+            await db.commit()
+        return started
+
+    async def drain_ended(self, session: SessionRef) -> None:
+        """This session's runner was replaced: no drain is under way."""
+        factory = self._session_factory or async_session_factory
+        async with factory() as db:
+            await AgentSessionService(db).drained(
+                conversation_id=session.conversation_id,
+                agent_handle=session.agent_handle,
+                harness=session.harness,
+            )
             await db.commit()
 
     @asynccontextmanager
@@ -268,9 +304,8 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
-        # ``scratch``: a 支线, or a task its owner has not started, whose work
-        # stays on the machine and never reaches the project
-        # (`routes/execution.py`).
+        # ``scratch``: a 支线, whose work stays on the machine and never
+        # reaches the project (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),
@@ -332,16 +367,31 @@ class CentralChannel(DeviceChannel):
                 agent_handle,
                 type_of_seat=type_of_seat,
             )
-            own = await agent_stdio_servers(db, project_id, agent_handle)
+            # A name the project uses in its settings is the project's, as
+            # the settings page lists it (`declared.with_types`).
+            commands = {
+                **await agent_stdio_servers(db, project_id, agent_handle),
+                **await remote_mcp.session_commands(db, project_id),
+            }
+            decided = await mcp_local.decided(db, project_id)
         if remote is not None:
             target["remote_mcp"] = remote
-        # The teammate's type's own stdio servers, as definitions: they run
-        # where the session's commands run — the room's machine, beside the
-        # checkout's `.mcp.json` ones, or a private chat's scratch container —
-        # and `RemoteClient` hands the executor the definition with each call.
-        # Part of the target, so a changed type relaunches an idle session.
-        if own:
-            target["agent_mcp"] = own
+        # Where the session's gateway asks about the project's local servers
+        # before it starts one, and says how it fared (`RemoteClient.local`).
+        target["mcp_path"] = f"/topics/{topic_id}/mcp"
+        # What the owners of members' computers have answered about running the
+        # project's commands there: an answer changes it, so an idle session
+        # starts again with a command it may now run.
+        if decided is not None:
+            target["mcp_decided"] = decided
+        # The commands added in the project's settings and the teammate's
+        # type's own, as definitions: they run where the session's commands
+        # run — the room's machine, beside the checkout's `.mcp.json` ones, or a
+        # private chat's scratch container — and `RemoteClient` hands the
+        # executor the definition with each call. Part of the target, so a
+        # changed command or type relaunches an idle session.
+        if commands:
+            target["mcp_commands"] = commands
         location = {
             "device_id": center,
             "resource_id": str(resource),

@@ -49,6 +49,10 @@ export function roomChanged({ room, project, resource, id }: RoomChange): Promis
       return tasksChanged(room, project)
     case 'pins':
       return invalidate(keys.roomPins(room))
+    // 章节跟对话走，而这一帧可能从任务页来（`room` 是任务所在的频道）。按形状挑
+    // 当前开着的那一份，不拿频道 id 去猜。
+    case 'chapters':
+      return refreshQueries({ predicate: (query) => query.queryKey[0] === 'room' && query.queryKey[2] === 'chapters' })
     // 支线有了新回复：清单，和打开着的那条支线本身——一句 @ 换了它正在和谁说话
     // （`teammate`），输入框就该写新那位。支线的 key 不带频道，所以按形状挑。
     case 'threads':

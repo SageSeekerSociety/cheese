@@ -39,6 +39,7 @@ from app.domain.agent.environment import Environment, dump, parse, stored
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine import holder as holders
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.environments import (
     check_allowed,
@@ -47,7 +48,8 @@ from app.domain.machine.environments import (
 )
 from app.domain.machine.session_reports import conversation_sessions, devices_held_by
 from app.domain.membership.services import MemberService
-from app.domain.room_task.place import session_keeps_work
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404, session_keeps_work
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -62,23 +64,24 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
     if actor.handle == task.owner_handle:
         return True
     try:
-        await MemberService(db).require_manager(topic.project_id, actor)
+        await MemberService(db).require(
+            topic.project_id, actor, Permission.edit_settings
+        )
         return True
     except ForbiddenError:
         pass
 
     devices = sql_device_service(db)
-    for device_id in await devices_held_by(db, task.id):
-        device = await devices.get_device(device_id)
-        if device is not None and device.owner_user_id == actor.user_id:
-            return True
-    return False
+    held = await devices.get_devices(list(await devices_held_by(db, task.id)))
+    return any(
+        [await devices.may_manage(device, actor.user_id) for device in held.values()]
+    )
 
 
 async def _place_for_change(db, resolver, topic_id: uuid.UUID):
     """The conversation, its room, its task, project and the acting caller,
     once the caller may change environments there."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     topic, task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
@@ -142,7 +145,7 @@ async def get_environment(
     """Each agent's environment in this conversation, the default a new agent
     gets here and where it comes from, the sandbox specs this project is
     offered, and the people's computers one may run on unisolated."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     topic, task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
@@ -176,7 +179,8 @@ async def get_environment(
                     "online": device_hub.is_online(device.device_id),
                     # Whether the reader may run an agent on it unisolated.
                     "owned": actor.via == "token"
-                    and actor.user_id == device.owner_user_id,
+                    and actor.user_id is not None
+                    and await sql_device_service(db).may_manage(device, actor.user_id),
                 }
                 for device in devices
             ],
@@ -283,7 +287,9 @@ class WorkLeaseRequest(BaseModel):
     tells_agent: bool = False
 
 
-@router.post("/{topic_id}/sessions/{session_id}/work-lease")
+@router.post(
+    "/{topic_id}/sessions/{session_id}/work-lease", dependencies=[ROUTE_DECIDES]
+)
 async def acquire_session_work_lease(
     topic_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -294,12 +300,19 @@ async def acquire_session_work_lease(
 
     token = request.headers.get("x-cheese-token", "")
     claims = scoped_token_claims(token)
+    if claims is not None:
+        place = await place_or_404(db, topic_id)
+        await require_seated_agent(
+            db, token, project_id=place.project_id, topic_id=topic_id
+        )
+        holder_id = place.room_id
+    else:
+        # A person's own 芝士 asks with its own credential, for a sandbox of
+        # the conversation's own (``machine.holder.Personal``).
+        claims = await holders.personal_claims(db, token, topic_id, session_id)
+        holder_id = topic_id
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
-    place = await TopicService(db).place_or_404(topic_id)
-    await require_seated_agent(
-        db, token, project_id=place.project_id, topic_id=topic_id
-    )
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s), and the whole call is held to it. A session that
@@ -311,7 +324,7 @@ async def acquire_session_work_lease(
             return ok(
                 await work_lease.ensure(
                     db,
-                    topic_id=place.room_id,
+                    topic_id=holder_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,

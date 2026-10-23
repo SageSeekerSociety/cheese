@@ -29,10 +29,13 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     Uuid,
@@ -163,3 +166,158 @@ class GatewayAdminAudit(UuidPk, Timestamps, Base):
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class PlatformModelRole(Timestamps, Base):
+    """Which gateway model a platform model role runs on, as an administrator
+    pointed it (``app.core.model_roles`` lists the roles and reads them).
+
+    One row per role that has been pointed; a role with no row reads its
+    ``Settings`` field, so a deployment that never touches the page behaves as
+    it did before the table existed. Who pointed it and when is in
+    ``gateway_admin_audit`` (action ``role.set``), next to the model edits a
+    role is checked against.
+    """
+
+    __tablename__ = "platform_model_roles"
+
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(200))
+
+
+class TurnResume(UuidPk, Base):
+    """A resume the platform owes one seat after its turn failed on a transient
+    model-service error (`agent.turn_resume`).
+
+    It is not the agent's own alarm (`delivery.models.TimedDelivery`, set by a
+    participant) and not a delivery (`deliveries`, an event that already
+    happened): it is the platform's decision to start this seat again later,
+    the reason it decided so, and how many times in a row it already has.
+    When it falls due it either becomes one instruction on the delivery ledger
+    (``handed_at``) or is dropped with the reason it no longer applies
+    (``dropped_at``/``dropped_reason``): a person spoke, the seat already ran
+    again, the conversation closed, the streak used up its attempts. Rows are
+    kept: they record why an agent started by itself, and the streak count
+    reads them back.
+    """
+
+    __tablename__ = "turn_resumes"
+    __table_args__ = (
+        # One owed resume per seat and conversation, whichever process or
+        # failure asks: a second failure while one waits moves that row.
+        Index(
+            "uq_turn_resumes_conversation_id_recipient_handle",
+            "conversation_id",
+            "recipient_handle",
+            unique=True,
+            postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
+        ),
+        Index(
+            "ix_turn_resumes_due_at",
+            "due_at",
+            postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
+        ),
+        Index(
+            "ix_turn_resumes_conversation_id_recipient_handle",
+            "conversation_id",
+            "recipient_handle",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # The room or task the failed turn ran in; the resume runs there too.
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # The seat, as the delivery ledger names it (`agent_instance_handle`).
+    recipient_handle: Mapped[str] = mapped_column(String(64))
+    agent_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    failed_turn_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    # A `resumable_failures` kind: rate_limited, overloaded, stream_ended, …
+    reason: Mapped[str] = mapped_column(String(32))
+    # The service's own words, credentials masked, so the row says why.
+    said: Mapped[str] = mapped_column(Text, default="")
+    # 1 for the first resume after a failure, n for the n-th in a row.
+    attempt: Mapped[int] = mapped_column(Integer)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    handed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dropped_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dropped_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class SessionState(Base):
+    """One seat's session as its runner declares it (`harness/driven/lifecycle.py`).
+
+    A seat is (conversation, agent, harness): the key ``agent_sessions`` is
+    written under. ``worker_epoch`` is the registration the platform issued its
+    runner last; a runner, or a platform process, holding an older one can no
+    longer change anything here (``session_state.take``). ``worker_status`` is
+    what the runner said the session is doing, ``idle`` or ``running``, and
+    ``changed_at`` when it last said something different. ``run_epoch`` /
+    ``run_seq`` name the run the current process last began: the
+    ``(epoch, seq)`` of its ``running`` event, which the runner names the run
+    by and a task's report carries (`session_state.run_started`). Whether the
+    session is reachable is not here: that is a lease the reading process
+    holds, and unreachable is not a status the session has.
+    """
+
+    __tablename__ = "session_states"
+    __table_args__ = (
+        CheckConstraint(
+            "worker_status IN ('idle', 'running')",
+            name="ck_session_states_worker_status",
+        ),
+        Index(
+            "ix_session_states_running",
+            "conversation_id",
+            postgresql_where=text("worker_status = 'running'"),
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    worker_epoch: Mapped[int] = mapped_column(BigInteger)
+    worker_status: Mapped[str] = mapped_column(String(16))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: When the runner last reported the session's process gone.
+    exited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SessionOffset(Base):
+    """How far the platform has applied what one registration of a seat's
+    runner reported: the consumer offset, committed in the same transaction as
+    the effects of the events it covers (``session_state.take``).
+
+    Events of one runner arrive in sequence order and are applied in it, so an
+    event at or below ``applied_seq`` for its ``(seat, epoch)`` has been
+    applied, and applying it again is a no-op: the unique key of an event is
+    ``(seat, epoch, seq)``, and this row is the high-water mark of it. An event
+    is acknowledged to the runner only once ``projected_seq`` covers it too.
+    """
+
+    __tablename__ = "session_offsets"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    applied_seq: Mapped[int] = mapped_column(BigInteger)
+    #: How far what follows from those events outside this transaction (the
+    #: room's books, what is told) has been done: an event above it and at or
+    #: below ``applied_seq`` was applied, and what follows from it is done again
+    #: when it is delivered again (``session_state.projected``).
+    projected_seq: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    #: How far the room has landed the closing results those events carried:
+    #: done again, the rest of an event's projection does not hand the room
+    #: the same result twice (`session_state.result_landed`).
+    landed_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")

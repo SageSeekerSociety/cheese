@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -10,10 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
-from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
+from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.models import (
+    AccountConnection,
+    AgentInstance,
+    NameSource,
+    OwnAgent,
+    PersonalModelResource,
+)
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
+from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
@@ -24,7 +32,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.memory.models import agent_project_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.services import UsageService
 
@@ -125,10 +133,20 @@ def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScop
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
 
 
+#: The models a project can be pointed at (`agent.model_choices`), as the
+#: caller hands it in. Deliberately a plain callable rather than an import of
+#: the agent package: what models exist needs the gateway, the harnesses and the
+#: supply policy, and reading any of them back from here is the cycle C3 counts.
+ModelChoices = Callable[[dict | None], list[dict]]
+
+
 class AgentInstanceService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, models: ModelChoices | None = None):
         self._session = session
         self._repo = AgentInstanceRepository(session)
+        #: Without one no model can be bound (`_validate_model` refuses every
+        #: id); every read path here works without it.
+        self._models = models
 
     # --- resolution ---------------------------------------------------------
 
@@ -176,7 +194,7 @@ class AgentInstanceService:
         and one whose roster is no longer two seats, return None and are
         answered by the project's default, as they always were.
         """
-        if not topic.is_private:
+        if not is_private_chat(topic):
             return None
         seats = await TopicMemberService(self._session).private_seats(topic.id)
         if seats is None:
@@ -210,6 +228,38 @@ class AgentInstanceService:
         still worked, by the one its room would give it."""
         given = await self.for_seat_handle(project, agent_handle)
         return given or await self.for_topic(room, project)
+
+    async def for_tasks(
+        self,
+        project_id: uuid.UUID,
+        tasks: Mapping[uuid.UUID, tuple[uuid.UUID, str | None]],
+    ) -> dict[uuid.UUID, ResolvedAgent]:
+        """`for_task` for a page of one project's tasks, given as task id →
+        (room id, ``Task.agent_handle``), in a fixed number of reads however many
+        tasks and rooms there are: the project's teammates once, and the rosters
+        of the rooms whose task was given nobody still here once
+        (`TopicMemberService.addressable_agent_handles`)."""
+        by_seat = {
+            agent_instance_handle(instance.id): instance
+            for instance in await self.list_for_project(project_id)
+        }
+        rooms = {room for room, given in tasks.values() if given not in by_seat}
+        seats = await TopicMemberService(self._session).addressable_agent_handles(
+            project_id, sorted(rooms)
+        )
+        default: ResolvedAgent | None = None
+        answer: dict[uuid.UUID, ResolvedAgent] = {}
+        for task_id, (room, given) in tasks.items():
+            instance = by_seat.get(given or "") or by_seat.get(seats.get(room) or "")
+            if instance is not None:
+                answer[task_id] = self.resolved(instance)
+                continue
+            if default is None:
+                project = await self._session.get(Project, project_id)
+                assert project is not None, "a task's project outlives it"
+                default = await self.for_project(project)
+            answer[task_id] = default
+        return answer
 
     async def for_task_by_id(
         self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
@@ -281,6 +331,16 @@ class AgentInstanceService:
             raise NotFoundError(say("projectNotFound"))
         return await self.for_handle(project, handle)
 
+    async def for_seat_handle_in(
+        self, project_id: uuid.UUID, handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_seat_handle`，但按 id 找项目那一行 —— 给只拿得到 id 的调用方（路由层
+        为一句给人看的话叫出队友的名字）。项目不在了就是 None，和不是队友同一个答案。"""
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            return None
+        return await self.for_seat_handle(project, handle)
+
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""
         return agent.configuration.get("body") or None
@@ -291,22 +351,8 @@ class AgentInstanceService:
         return await self._repo.list_for_project(project_id)
 
     async def list_team(self, project_id: uuid.UUID) -> list[AgentInstance]:
-        """The project's own teammates: every agent but its members' own, which
-        belong to a person and are not the project's to configure or default
-        to (#2991)."""
-
-        own = set(
-            await self._session.scalars(
-                select(OwnAgent.instance_id)
-                .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
-                .where(AgentInstance.project_id == project_id)
-            )
-        )
-        return [
-            row
-            for row in await self._repo.list_for_project(project_id)
-            if row.id not in own
-        ]
+        """All project teammates, including those using team connections."""
+        return await self._repo.list_for_project(project_id)
 
     async def get_in_project(
         self, *, project_id: uuid.UUID, instance_id: uuid.UUID
@@ -451,24 +497,72 @@ class AgentInstanceService:
         config.skills = list(dict.fromkeys([*config.skills, *skills]))
         await self.configure(instance, config)
 
-    async def _validate_model(
-        self, project_id: uuid.UUID, config: AgentConfiguration
-    ) -> None:
-        if config.model is None:
-            return
+        await self._validate_model(instance.project_id, config, instance.id)
 
+    async def _validate_model(
+        self,
+        project_id: uuid.UUID,
+        config: AgentConfiguration,
+        instance_id: uuid.UUID | None = None,
+    ) -> None:
         project = await self._session.get(Project, project_id)
         if project is None:
             raise NotFoundError(say("projectNotFound"))
-        choice = next(
-            (c for c in model_choices(project.settings) if c["id"] == config.model),
-            None,
-        )
-        if choice is None:
-            raise ValidationError(say("modelUnavailable"))
-
+        if config.execution_device_id:
+            device = await self._session.get(DeviceRow, config.execution_device_id)
+            if device is None or device.team_id != project.team_id:
+                raise ValidationError(say("deviceNotInProject"))
+        own = await self._session.get(OwnAgent, instance_id) if instance_id else None
+        if own is not None:
+            if own.account_connection_id:
+                table, field, connection_id = (
+                    AccountConnection,
+                    PersonalModelResource.account_connection_id,
+                    own.account_connection_id,
+                )
+            else:
+                table, field, connection_id = (
+                    DeviceClaudeLoginRow,
+                    PersonalModelResource.login_id,
+                    own.login_id,
+                )
+            connection = (
+                await self._session.get(table, connection_id) if connection_id else None
+            )
+            reference = await self._session.scalar(
+                select(PersonalModelResource.id).where(
+                    PersonalModelResource.team_id == project.team_id,
+                    field == connection_id,
+                )
+            )
+            available = (
+                connection is not None
+                and (connection.team_id == project.team_id or reference is not None)
+                and (
+                    connection.owner_user_id is None
+                    or connection.owner_user_id == own.owner_user_id
+                )
+            )
+            if isinstance(connection, DeviceClaudeLoginRow):
+                available = (
+                    available and connection.logged_in and connection.revoked_at is None
+                )
+            models = (
+                connection.allowed_models
+                if available and connection is not None
+                else []
+            )
+            if config.model not in models:
+                raise ValidationError(say("teamConnectionModelRefused"))
+            return
+        if config.model is None:
+            return
+        choices = self._models(project.settings) if self._models else []
+        choice = next((c for c in choices if c["id"] == config.model), None)
         access = await UsageService(self._session).model_access(project.team_id)
-        if not access.allows(choice["tier"]):
+        if choice is None or not access.shows(choice):
+            raise ValidationError(say("modelUnavailable"))
+        if not access.allows(choice):
             raise ValidationError(say("modelNotInPlan", label=choice["label"]))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
@@ -507,8 +601,6 @@ class AgentInstanceService:
     ) -> ResolvedAgent:
         if not instance.is_active:
             raise ValidationError(say("teammateInactiveNoDefault"))
-        if instance not in await self.list_team(project.id):
-            raise ValidationError(say("ownAgentNotDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
         return await self.for_project(project)

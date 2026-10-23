@@ -33,9 +33,9 @@ if sys.platform == "win32":
         ),
     )
 
-from app.domain.agent.executor_transport import dial_runner  # noqa: E402
-from app.domain.agent.harness.driven import runner  # noqa: E402
-from app.domain.agent.harness.driven.journal import Journal  # noqa: E402
+from app.domain.agent.executor_transport import dial_runner
+from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven.journal import Journal
 
 CLIENT = (
     Path(__file__).resolve().parents[3]

@@ -104,6 +104,22 @@ class CloudHostRepository:
             .execution_options(populate_existing=True)
         )
 
+    async def lock_homes(self, home_ids: list[uuid.UUID]) -> list[SandboxHome]:
+        """Those of the homes nobody else holds, locked in one statement.
+
+        One another transaction holds is skipped, not waited on: a tool call
+        that locked its own home and then deletes the rest of its host's
+        (``HostPool.place`` giving up on a host) would otherwise wait on a
+        home this batch holds while the batch waits on its home."""
+        return list(
+            await self._session.scalars(
+                select(SandboxHome)
+                .where(SandboxHome.id.in_(home_ids))
+                .with_for_update(skip_locked=True)
+                .execution_options(populate_existing=True)
+            )
+        )
+
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         """The home of the session's placement, as the database has it now:
         a sweep may have started destroying it since this session last read
@@ -152,6 +168,12 @@ class CloudHostRepository:
     async def delete_home(self, home: SandboxHome) -> None:
         await self._session.delete(home)
         await self._session.flush()
+
+    async def delete_homes_on(self, host_id: uuid.UUID) -> None:
+        """Every home still recorded on this host, gone in one statement."""
+        await self._session.execute(
+            delete(SandboxHome).where(SandboxHome.host_id == host_id)
+        )
 
     async def delete_device_homes(self, device_id: str, resource_id: str) -> None:
         """The homes in the directory a room's cleanup removed from a machine."""
@@ -244,10 +266,16 @@ class CloudHostRepository:
         )
 
     async def mark_enrolled(
-        self, host: CloudHost, *, device_id: str, when: datetime
+        self,
+        host: CloudHost,
+        *,
+        device_id: str,
+        when: datetime,
+        sandbox_disk_gb: int | None,
     ) -> CloudHost:
         host.device_id = device_id
         host.enrolled_at = when
+        host.sandbox_disk_gb = sandbox_disk_gb
         host.enroll_error = None
         # The bootstrap key existed for this one setup; keeping it would leave a
         # standing way into the machine that nobody asked for.

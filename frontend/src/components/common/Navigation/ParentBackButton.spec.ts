@@ -105,7 +105,7 @@ describe('返回上一级', () => {
     ['/spaces/42/tasks/publish', '/spaces/42/tasks'],
     ['/spaces/42/manage/settings/templates/create', '/spaces/42/manage/settings/templates'],
     ['/spaces/42/manage/settings/templates/2/edit', '/spaces/42/manage/settings/templates'],
-    ['/spaces/42/tasks', '/spaces'],
+    ['/spaces/42/tasks', '/home'],
     ['/teams/12/members', '/home'],
     ['/projects/project-a/members/linxia', '/projects/project-a/members'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {
@@ -118,7 +118,7 @@ describe('返回上一级', () => {
     await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
   })
 
-  it.each(['/spaces', '/teams/mine', '/projects/project-a'])(
+  it.each(['/inbox', '/teams/mine', '/projects/project-a'])(
     'does not offer a return to nowhere on %s',
     async (path) => {
       const { queryByRole } = await open(path)
@@ -414,5 +414,27 @@ describe('两颗箭头互指时，退到最外层那一页', () => {
     const { queryByRole } = await mount(router)
     expect(queryByRole('link', { name: /^返回/ })).toBeNull()
     expect(queryByRole('button', { name: /^返回/ })).toBeNull()
+  })
+})
+
+// 手机底栏三格的落点是根：底栏就是在它们之间切换的地方，根上再给一颗 ←，按下去只是
+// 换到人没想去的那一格（刚才在哪就退到哪）。
+describe('手机上底栏三格的落点是根', () => {
+  it.each(['/home', '/projects/project-a', '/inbox'])('%s 上没有 ←，哪怕是从别处点过来的', async (root) => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/projects/project-a/channels/7')
+    await router.push(root)
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).toBeNull()
+  })
+
+  it('页面栈里的一层照常有 ←', async () => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/inbox')
+    await router.push('/projects/project-a/channels/7')
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).not.toBeNull()
   })
 })

@@ -1,0 +1,49 @@
+{
+  "channels": {
+    "email": "邮件",
+    "emailDigest": "摘要",
+    "emailHint": "发送到你的账号邮箱",
+    "emailInstant": "即时",
+    "emailOff": "关闭",
+    "inApp": "站内",
+    "inAppHint": "收件箱与侧栏角标",
+    "push": "浏览器推送",
+    "pushHint": "关掉后不再弹系统通知",
+    "title": "渠道"
+  },
+  "lede": "哪一类事件走哪个渠道、什么时候安静下来、多久收一次摘要。改一项存一项。",
+  "loadFailed": "通知设置加载失败",
+  "loading": "正在读取通知设置",
+  "matrix": {
+    "assistant": "芝士发来的通知",
+    "announcement": "空间公告",
+    "billing": "额度与计费提醒",
+    "desc": "每一类都能单独挑渠道",
+    "deviceInUse": "我的设备有人在用",
+    "email": "邮件",
+    "event": "事件",
+    "inApp": "站内",
+    "invitation": "团队 / 项目邀请",
+    "mention": "有人 {'@'} 我",
+    "push": "推送",
+    "reaction": "有人回应了我的消息",
+    "reply": "我的消息被回复",
+    "title": "按类型",
+    "waitsOnMe": "等你审阅的改动 / 决策请求"
+  },
+  "quiet": {
+    "daily": "每天",
+    "digest": "摘要频率",
+    "digestHint": "把你不在时发生的事合成一封",
+    "off": "关闭",
+    "title": "免打扰",
+    "weekly": "每周",
+    "window": "安静时段",
+    "windowHint": "按你所在时区（{zone}）的钟点，此时段内不发推送与即时邮件，摘要照常",
+    "windowOff": "不设",
+    "windowOn": "{start} – {end}"
+  },
+  "saveFailed": "保存失败",
+  "title": "通知",
+  "toggleEvent": "切换「{event}」的{channel}"
+}

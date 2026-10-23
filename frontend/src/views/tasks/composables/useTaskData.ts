@@ -76,6 +76,10 @@ export function useTaskData() {
       categoryId: taskData.value.category?.id,
       accessControlEnabled: taskData.value.accessControlEnabled,
       accessDomainGroupIds: taskData.value.accessDomainGroupIds ?? [],
+      mentors: (taskData.value.mentors ?? []).map((m) => m.handle),
+      submissionSchema: taskData.value.submissionSchema,
+      rubric: taskData.value.rubric ?? [],
+      rubricPublic: taskData.value.rubricPublic ?? true,
     }
   })
 

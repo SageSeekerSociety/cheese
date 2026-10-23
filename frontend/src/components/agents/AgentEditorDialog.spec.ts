@@ -46,6 +46,7 @@ vi.mock('../../api', async (importOriginal) => {
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
   }
 })
+vi.mock('@/api/ownAgents', () => ({ getOwnAgents: vi.fn().mockResolvedValue({ agents: [] }) }))
 
 import { setLocale } from '../../i18n'
 

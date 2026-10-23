@@ -1,11 +1,11 @@
-"""课程级教学配置 (#8d772257) —— 继承、解析、以及它出现在 prompt 里的样子。
+"""AI 队友辅导 (#8d772257, 10-20 空间这一轮) —— 解析、以及它出现在 prompt 里的样子。
 
 这个文件盯住两条纪律，各占一半：
 
-**教育字段不新开一套继承规则。** 上半段的断言和 `test_task_protocol.py` 里那三
-键是同一组（项目集 → 赛题覆盖 → 项目 settings），只是换成 `teaching`
-——`test_every_key_rides_the_same_three_levels` 把四个键放在同一个参数化表里，
-所以「同语义」是断言出来的，不是注释里说的（`shell` 那一行同理，它随 #1292 进来）。
+**空间和题目两层同时生效。** `teaching` 不再走「最具体的整份替换」那条链：空间
+说怎么帮、题目在上面加（`Teaching.combine`），项目集那一层不再读，项目自己的设置
+整份替换。其余四个键（资源包、条件、默认角色、壳）照旧是项目集 → 赛题 → 项目，
+`test_every_key_rides_the_same_three_levels` 盯着它们。
 
 **非课程项目一个字都不多。** 下半段盯住这条：空配置既不渲染标题，也不因为传了
 一个空的 `TeachingContext` 就让开场快照变样——`build_session_opening` 的输出与这
@@ -22,13 +22,11 @@ from app.domain.memory.files_store import IndexSection, MemoryIndex
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
 
-WEEK_THREE = {
-    "system_prompt": "本周是第 {current_week} 周，重点是 {allowed_topics}。",
-    "current_week": 3,
-    "allowed_topics": ["循环", "数组"],
-    "avoid_in_code": ["递归"],
+GUIDE = {
+    "mode": "guide",
+    "system_prompt": "先弄清学生卡在哪一步，再决定怎么帮。",
     "material_ids": [7],
-    "knowledge_ids": [11],
+    "document_ids": ["0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e"],
 }
 
 
@@ -38,6 +36,10 @@ def _index(*lines: str) -> MemoryIndex:
         sections=[IndexSection(label="项目", prefix="team", text="\n".join(lines))],
         warnings=[],
     )
+
+
+def _space(teaching=None) -> SimpleNamespace:
+    return SimpleNamespace(teaching=teaching or {})
 
 
 def _category(**kw) -> SimpleNamespace:
@@ -59,7 +61,7 @@ def _project(settings=None) -> SimpleNamespace:
 
 
 def _prompt(**kw) -> str:
-    """一条新会话开场听到的项目现状（教学范围是现状，在开场快照里）。"""
+    """一条新会话开场听到的项目现状（辅导学生那一段是现状，在开场快照里）。"""
     return build_session_opening(
         doc="DOC",
         memory=_index("- [记忆](memory.md) — MEMORY"),
@@ -70,10 +72,8 @@ def _prompt(**kw) -> str:
 
 #: One row per overridable key: the category value, the 赛题 override, the 项目
 #: settings override, how to read the key back off a resolved Protocol, and how
-#: to normalize a stored value into the same shape. `teaching` is the one row
-#: whose two differ — it resolves to a dataclass, the others stay the JSON they
-#: were stored as. That is a difference in the data, not in the rule, and this
-#: table is the only place it is allowed to show.
+#: to normalize a stored value into the same shape. `teaching` is not here: it
+#: is the one key with two levels in force at once (see below).
 _KEYS = [
     (
         "resource_pack",
@@ -100,23 +100,14 @@ _KEYS = [
         lambda stored: stored,
     ),
     (
-        # `shell` made the trip for #1292 and `teaching` for this task: the row
-        # is here so "they ride the same chain" is asserted for both rather than
-        # believed, and so the union of the two keys survives the next edit.
+        # `shell` made the trip for #1292: the row is here so "it rides the same
+        # chain" is asserted rather than believed.
         "shell",
         "course-student",
         "workbench",
         "default",
         lambda p: p.shell,
         lambda stored: stored,
-    ),
-    (
-        "teaching",
-        WEEK_THREE,
-        {"current_week": 9},
-        {"current_week": 12},
-        lambda p: p.teaching,
-        Teaching.from_json,
     ),
 ]
 
@@ -129,12 +120,7 @@ _KEYS = [
 def test_every_key_rides_the_same_three_levels(
     key, category_value, task_override, project_override, read, parse
 ) -> None:
-    """项目集 → 赛题 → 项目, for all four keys, most specific last.
-
-    The failure this is written against is a key that gets its own
-    resolution path ("education config is different, it needs the current week")
-    — and then disagrees with the other three the first time someone edits one.
-    """
+    """项目集 → 赛题 → 项目, for the four whole-key keys, most specific last."""
     only_category = resolve(
         category=_category(**{key: category_value}), task=_task(), project=_project()
     )
@@ -155,32 +141,84 @@ def test_every_key_rides_the_same_three_levels(
     assert read(overridden_by_project) == parse(project_override)
 
 
-def test_a_level_replaces_its_key_whole_and_leaves_the_others() -> None:
-    """Whole-key replacement, not a deep merge — the 项目集 placement's reason,
-    applied to `teaching` because it is the same rule and not a second one.
-
-    A half-inherited week (第 3 周 from the 项目集, 范围 from the 赛题) reads as a
-    coherent configuration and is not one.
-    """
+def test_the_space_and_the_task_are_both_in_force() -> None:
+    """A 空间 says how its AI teammates help; a 题目 adds to it. Both
+    requirements reach the agent, the 题目's way of helping wins when it picks
+    one, and the materials of both are read."""
     got = resolve(
-        category=_category(teaching=WEEK_THREE, resource_pack={"compute_credits": 500}),
-        task=_task({"teaching": {"current_week": 9}}),
+        space=_space(GUIDE),
+        task=_task(
+            {
+                "teaching": {
+                    "mode": "spec",
+                    "system_prompt": "本题先写测试。",
+                    "material_ids": [9, 7],
+                }
+            }
+        ),
         project=_project(),
     )
 
-    assert got.teaching.current_week == 9
-    assert got.teaching.allowed_topics == []  # replaced, not merged
-    assert got.teaching.system_prompt is None
-    assert got.compute_credits == 500  # an untouched key is still inherited
+    assert got.teaching.mode == "spec"
+    assert got.teaching.space_prompt == "先弄清学生卡在哪一步，再决定怎么帮。"
+    assert got.teaching.system_prompt == "本题先写测试。"
+    assert got.teaching.material_ids == [7, 9]
+    assert got.teaching_source == "both"
+
+
+def test_a_task_that_picks_no_way_of_helping_keeps_the_spaces() -> None:
+    got = resolve(
+        space=_space(GUIDE),
+        task=_task({"teaching": {"system_prompt": "可以解读评测输出。"}}),
+        project=_project(),
+    )
+
+    assert got.teaching.mode == "guide"
+
+
+def test_one_level_alone_is_that_level() -> None:
+    only_space = resolve(space=_space(GUIDE), task=_task(), project=_project())
+    assert only_space.teaching == Teaching.from_json(GUIDE)
+    assert only_space.teaching.space_prompt is None
+    assert only_space.teaching_source == "space"
+
+    only_task = resolve(
+        space=_space(), task=_task({"teaching": GUIDE}), project=_project()
+    )
+    assert only_task.teaching == Teaching.from_json(GUIDE)
+    assert only_task.teaching_source == "task"
+
+
+def test_a_category_is_no_longer_a_level() -> None:
+    """Its settings moved onto its 题目 (e5f1a9c3d7b2); what is left on it is
+    not read."""
+    got = resolve(
+        space=_space(),
+        category=_category(teaching=GUIDE),
+        task=_task(),
+        project=_project(),
+    )
+
+    assert got.teaching.is_empty
+    assert got.teaching_source is None
+
+
+def test_a_projects_own_settings_replace_both_levels() -> None:
+    got = resolve(
+        space=_space(GUIDE),
+        task=_task({"teaching": {"system_prompt": "本题的。"}}),
+        project=_project({"teaching": {"mode": "free"}}),
+    )
+
+    assert got.teaching == Teaching(mode="free")
+    assert got.teaching_source == "project"
 
 
 def test_the_project_level_reads_its_own_keys_and_ignores_the_rest() -> None:
     """`Project.settings` is free-form and already holds unrelated keys
     (`forge_kind`, the compute profile). Only the protocol's own names are read,
-    spelled FLAT — the same place `app.domain.shell.service.SHELL_KEY` reads a
-    project's 壳 — so a stranger key cannot be mistaken for a protocol field, and
-    a `settings` that is not a dict is absent rather than an error. The reader
-    here runs on every turn of every project, not on the form that wrote it."""
+    so a stranger key cannot be mistaken for a protocol field, and a `settings`
+    that is not a dict is absent rather than an error."""
     assert (
         resolve(
             category=_category(),
@@ -193,11 +231,9 @@ def test_the_project_level_reads_its_own_keys_and_ignores_the_rest() -> None:
     for junk in ("not-a-dict", ["nope"], 7):
         assert (
             resolve(
-                category=_category(teaching=WEEK_THREE),
-                task=_task(),
-                project=_project(junk),
-            ).teaching.current_week
-            == 3
+                space=_space(GUIDE), task=_task(), project=_project(junk)
+            ).teaching.mode
+            == "guide"
         )
 
 
@@ -210,51 +246,22 @@ def test_no_level_configured_is_an_empty_teaching_not_an_error() -> None:
 
 
 def test_from_json_drops_what_it_cannot_read_rather_than_raising() -> None:
-    """`resolve` runs on every turn of every project: a typo in one field of a
-    项目集 must not take down the twenty 赛题 under it."""
-    for junk in (None, [], "week 3", 7):
+    """`resolve` runs on every turn of every project: a typo in one field must
+    not take down every 题目 that reads it."""
+    for junk in (None, [], "guide", 7):
         assert Teaching.from_json(junk) == Teaching()
 
     got = Teaching.from_json(
         {
+            "mode": "lecture",  # not one of the four
             "system_prompt": 42,
-            "current_week": "第三周",
-            "allowed_topics": "循环",  # a bare string, not a list
-            "avoid_in_code": ["递归", "", "  ", 7, "递归"],  # blanks + dupe + non-text
+            "current_week": 3,  # an old key, gone
             "material_ids": [7, "8", 0, -1, True, 7],  # strings/positivity/bool/dupe
-            "knowledge_ids": None,
+            "document_ids": ["not-a-uuid", None],
         }
     )
 
-    assert got.system_prompt is None
-    assert got.current_week is None
-    assert got.allowed_topics == []
-    assert got.avoid_in_code == ["递归"]
-    assert got.material_ids == [7]
-    assert got.knowledge_ids == []
-
-
-def test_true_is_not_week_one() -> None:
-    """`True` is an int in Python, so an unguarded read would answer 第 1 周 to a
-    field a teacher left as a checkbox — same footgun as `compute_credits`."""
-    assert Teaching.from_json({"current_week": True}).current_week is None
-
-
-def test_fill_substitutes_the_week_variables() -> None:
-    template = Teaching.from_json(WEEK_THREE)
-
-    assert template.fill(template.system_prompt or "") == (
-        "本周是第 3 周，重点是 循环、数组。"
-    )
-
-
-def test_fill_leaves_braces_it_does_not_know_alone() -> None:
-    """A 讲义 that quotes a dict literal at the agent must not be read as format
-    fields: `str.format` would raise on `{"key": ...}` and take down every turn
-    of the course, naming a brace rather than the config that caused it."""
-    template = Teaching.from_json({"system_prompt": '示例：{"key": 1} 与 {未知}'})
-
-    assert template.fill(template.system_prompt or "") == '示例：{"key": 1} 与 {未知}'
+    assert got == Teaching(material_ids=[7])
 
 
 def test_a_context_with_no_teaching_renders_nothing() -> None:
@@ -264,41 +271,47 @@ def test_a_context_with_no_teaching_renders_nothing() -> None:
     )
 
 
-def test_the_section_carries_the_course_the_week_scope_and_the_课件() -> None:
+def test_the_section_carries_the_course_the_way_of_helping_and_the_课件() -> None:
     context = TeachingContext(
         course="创研课 2026 秋",
-        teaching=Teaching.from_json(WEEK_THREE),
+        teaching=Teaching.from_json(GUIDE),
         materials=[{"id": 7, "name": "第 3 周讲义.pdf", "url": "/uploads/m7.pdf"}],
-        knowledge=[{"id": 11, "name": "递归与分治", "description": "上节课的补充"}],
+        documents=[
+            {"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "递归与分治"}
+        ],
     )
 
     section = teaching_section(context)
 
     assert section is not None
-    assert "创研课 2026 秋" in section
-    assert "第 3 周" in section
-    assert "本周是第 3 周，重点是 循环、数组。" in section  # the template, filled
-    assert "- 循环" in section and "- 数组" in section
-    assert "递归" in section  # avoid_in_code
+    assert section.splitlines()[0] == "## 辅导学生（课程：创研课 2026 秋）"
+    assert "以提问引导学生思考" in section  # the way of helping, in words
+    assert "先弄清学生卡在哪一步，再决定怎么帮。" in section
+    assert "### 课程的要求" not in section  # one level: no headings for two
     assert "第 3 周讲义.pdf" in section and "/uploads/m7.pdf" in section
-    assert "递归与分治" in section and "id=11" in section
-
-
-def test_a_course_that_never_named_itself_still_reads() -> None:
-    """A 项目集 can carry a 教学安排 without a name. That has to produce a
-    heading, not an empty pair of brackets."""
-    section = teaching_section(
-        TeachingContext(course=None, teaching=Teaching.from_json({"current_week": 4}))
+    assert (
+        "递归与分治" in section and "id=0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e" in section
     )
 
+
+def test_both_levels_are_said_apart() -> None:
+    """The agent reads which requirement is the course's and which the 题目's."""
+    teaching = Teaching.from_json(GUIDE).combine(
+        Teaching.from_json({"system_prompt": "本题先写测试。"})
+    )
+
+    section = teaching_section(TeachingContext(course=None, teaching=teaching))
+
     assert section is not None
-    assert section.splitlines()[0] == "## 本周教学范围（第 4 周）"
+    assert section.splitlines()[0] == "## 辅导学生"
+    assert "### 课程的要求\n先弄清学生卡在哪一步，再决定怎么帮。" in section
+    assert "### 这道题的要求\n本题先写测试。" in section
 
 
 def test_the_prompt_of_a_non_course_project_is_byte_identical() -> None:
     """The whole point of `teaching=None` being the default.
 
-    Asserted as text equality rather than "does not contain 教学范围": what has
+    Asserted as text equality rather than "does not contain 辅导学生": what has
     to hold is that nothing moved — a stray blank line or a reordered section
     would be a change to every project on the platform, and this is the test
     that would notice.
@@ -307,23 +320,23 @@ def test_the_prompt_of_a_non_course_project_is_byte_identical() -> None:
 
     assert _prompt(teaching=None) == baseline
     # An empty context is the same as no context: the section is skipped, not
-    # rendered empty. This is what a course project with a blank 教学安排 gets.
+    # rendered empty. This is what a course project with blank guidance gets.
     assert (
         _prompt(teaching=TeachingContext(course="创研课 2026 秋", teaching=Teaching()))
         == baseline
     )
 
 
-def test_a_new_session_of_a_course_project_is_told_this_weeks_scope() -> None:
-    """It constrains what this week is about, so a session has to hear it before
-    it starts on anything."""
+def test_a_new_session_of_a_course_project_is_told_how_to_help() -> None:
+    """It shapes every answer, so a session has to hear it before it starts on
+    anything."""
     prompt = _prompt(
         teaching=TeachingContext(
-            course="创研课 2026 秋", teaching=Teaching.from_json({"current_week": 3})
+            course="创研课 2026 秋", teaching=Teaching.from_json({"mode": "example"})
         )
     )
 
-    assert "## 本周教学范围" in prompt
+    assert "## 辅导学生" in prompt
 
 
 # ── 教育性 (#944)：学习目标 = 这份指导按教学走 ────────────────────────────────
@@ -365,10 +378,10 @@ def test_the_teacher_own_prompt_wins_and_the_default_never_leaks_in() -> None:
 
 
 def test_scope_without_goals_is_not_educational() -> None:
-    """只有范围没有目标（纯课件/周次）：不是教学任务，别把苏格拉底话术塞进
+    """只有范围没有目标（纯课件）：不是教学任务，别把苏格拉底话术塞进
     人家的项目。"""
     section = teaching_section(
-        TeachingContext(course=None, teaching=Teaching.from_json({"current_week": 3}))
+        TeachingContext(course=None, teaching=Teaching.from_json({"material_ids": [3]}))
     )
 
     assert section is not None
@@ -386,12 +399,15 @@ def test_fill_substitutes_the_goals_variable() -> None:
     assert teaching.fill(teaching.system_prompt or "") == "这一节要：读栈追踪、二分定位"
 
 
-def test_a_teaching_change_is_re_told_to_a_running_session() -> None:
-    """教学安排是被跟踪的现状：老师推周次/改指导，正在跑的会话下一轮就听到，
-    不是按上一周的指导跑到结束。"""
+def test_a_teaching_change_waits_for_the_next_session() -> None:
+    """教学配置**不**是逐轮重说的现状：一个会话保持开场那一份，直到下一次新会话。
+
+    这是 #8d772257 定的语义（`harness/prompt.py` 模块说明第 3 条），#4525 把它写进
+    了 `TRACKED_SECTIONS` 的注释里。往一个上下文里全是旧范围的会话塞新范围，比让它
+    按旧的做完这一轮更糟。"""
     from app.domain.agent.harness.prompt import TRACKED_SECTIONS
 
-    assert "teaching" in TRACKED_SECTIONS
+    assert "teaching" not in TRACKED_SECTIONS
 
 
 # ── 题目级默认队友 (#944)：同一份 `protocol_override` 里的另一格 ────────────────

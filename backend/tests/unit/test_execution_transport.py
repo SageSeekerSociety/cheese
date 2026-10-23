@@ -20,15 +20,24 @@ import pytest
 
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
+from app.domain.agent.executor_transport import (
+    RemoteClient,
+    read_file_on_the_machine,
+    stat_file_on_the_machine,
+)
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import (
     mcp_process,
     release,
     runtime,
+    send_user_file,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
+from app.domain.agent.harness.driven.mcp_gateway import Gateway
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release, wire
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
+from tests.support.session_runner import standing_runner
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -308,12 +317,24 @@ def central_transport(executor, tmp_path):
     drop = []
     publications = []
     platform_calls = []
+    progress_reports = []
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *_):
             pass
+
+        def do_PUT(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            progress_reports.append(
+                (self.path, self.headers.get("X-Cheese-Run"), payload)
+            )
+            data = json.dumps({"data": payload}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             assert self.headers["X-Cheese-Token"] == "fixture"
@@ -332,6 +353,12 @@ def central_transport(executor, tmp_path):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
                 result = {"data": {"content": payload["content"]}}
+            elif self.path.startswith("/documents/fixture-doc/apps"):
+                # The save route as the backend answers it: the pictures only
+                # to a save that asked for them.
+                result = {"data": {"key": "k1", "version": 1, "checked": True}}
+                if "pictures=true" in self.path:
+                    result["data"]["pictures"] = {"720": "d2lkZQ=="}
             elif self.path == "/topics/fixture/shown":
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
@@ -350,6 +377,8 @@ def central_transport(executor, tmp_path):
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    runner = standing_runner("claude-code/4/11")
+    runner_socket = runner.__enter__()
     config = tmp_path / "central.json"
     config.write_text(
         json.dumps(
@@ -372,11 +401,15 @@ def central_transport(executor, tmp_path):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": "fixture",
             "CHEESE_TURN": "fixture-turn",
+            # The session's model reads pictures (`session_host.with_pictures`).
+            "CHEESE_PICTURES": "1",
+            "CHEESE_SESSION_SOCKET": runner_socket,
         },
         log,
     )
     process.publications = publications
     process.platform_calls = platform_calls
+    process.progress_reports = progress_reports
     process.cli_source = Path(target["home"]) / ".cheese/cheese"
     try:
         yield process, clients, drop, work
@@ -384,7 +417,31 @@ def central_transport(executor, tmp_path):
         process.close()
         server.shutdown()
         server.server_close()
+        runner.__exit__(None, None, None)
         log.close()
+
+
+def test_a_task_state_report_names_the_run_its_runner_says_it_is_in(
+    central_transport,
+):
+    """A Claude Code session reporting its task's state says which run it is
+    in, as its runner names it: the platform compares that run, not when the
+    runner's events happened to reach it."""
+    process, _, _, _ = central_transport
+    result = process.call(
+        "tools/call",
+        {
+            "name": "cheese_task_state",
+            "arguments": {"id": "state", "session_id": "fixture", "state": "blocked"},
+        },
+    )
+    assert "deny" not in json.loads(result["content"][0]["text"])
+    [(path, run, body)] = process.progress_reports
+    assert (path, run, body["state"]) == (
+        "/topics/fixture/task/progress",
+        "claude-code/4/11",
+        "blocked",
+    )
 
 
 def test_a_platform_tool_call_that_breaks_is_not_answered_with_a_bare_key(
@@ -436,6 +493,29 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
     assert not (work / "escaped").exists()
+
+
+def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transport):
+    """The writer looks at what the platform ran: the pictures follow the
+    save's text as MCP image blocks, which `proxy.js` hands to the model."""
+    process, _, _, _ = central_transport
+    response = process.call(
+        "tools/call",
+        {
+            "name": "cheese_app_save",
+            "arguments": {
+                "id": "save",
+                "session_id": "fixture",
+                "code": "<p>x</p>",
+                "title": "试算",
+                "document": "fixture-doc",
+            },
+        },
+    )
+    text, *pictures = response["content"]
+    outcome = json.loads(text["text"])
+    assert ":::app k1@1 试算" in outcome["result"]["stdout"]
+    assert pictures == [{"type": "image", "data": "d2lkZQ==", "mimeType": "image/png"}]
 
 
 def test_large_platform_response_keeps_its_json_receipt(central_transport):
@@ -499,6 +579,62 @@ def test_platform_mcp_preserves_backend_permission_failure(central_transport):
     denied = json.loads(result["content"][0]["text"])["deny"]
     assert re.search("Platform HTTP 403.*room_scope_denied", denied), denied
     assert len(clients) == 1
+
+
+def test_chat_send_carries_a_picture_with_the_message(central_transport):
+    """A `chat_send` that names a picture reads it on the executor and posts
+    its bytes with the message. The publication route then has both the words
+    and the picture — the reader sees it in the conversation, not as a page
+    that has to be opened."""
+    process, _, _, work = central_transport
+    raw = b"\x89PNG\r\n\x1a\n" + b"pixels"
+    (work / "shot.png").write_bytes(raw)
+    result = process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "id": "picture",
+                "session_id": "fixture",
+                "content": "看这一张",
+                "attachments": [str(work / "shot.png")],
+            },
+        },
+    )
+    receipt = json.loads(result["content"][0]["text"])
+    assert "deny" not in receipt, receipt
+    sent = process.publications[-1]
+    assert sent["content"] == "看这一张"
+    assert sent["attachments"] == [
+        {
+            "path": str(work / "shot.png"),
+            "name": "shot.png",
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        }
+    ]
+
+
+def test_chat_send_publishes_a_picture_alone(central_transport):
+    """A message that is only a picture has no words to send: the content is
+    empty and the publication still lands."""
+    process, _, _, work = central_transport
+    (work / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\npixels")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "id": "picture-alone",
+                "session_id": "fixture",
+                "attachments": [str(work / "shot.png")],
+            },
+        },
+    )
+    receipt = json.loads(result["content"][0]["text"])
+    assert "deny" not in receipt, receipt
+    sent = process.publications[-1]
+    assert sent["content"] == ""
+    assert len(sent["attachments"]) == 1
 
 
 def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(
@@ -644,33 +780,33 @@ def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside
     the name this room already gives a paste with no name of its own.
     """
     config = {"workspace": "/work"}
-    assert central.send_user_file_paths("docs/report.pdf", config) == (
+    assert send_user_file.send_user_file_paths("docs/report.pdf", config) == (
         "/work/docs/report.pdf",
         "docs/report.pdf",
     )
-    assert central.send_user_file_paths("/work/shot.png", config) == (
+    assert send_user_file.send_user_file_paths("/work/shot.png", config) == (
         "/work/shot.png",
         "shot.png",
     )
     # A Windows executor's workspace, as the session sees it (Git Bash's).
-    assert central.send_user_file_paths(
+    assert send_user_file.send_user_file_paths(
         "/c/Users/owner/work/shot.png", {"workspace": "C:\\Users\\owner\\work"}
     ) == ("/c/Users/owner/work/shot.png", "shot.png")
-    machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
+    machine, rel = send_user_file.send_user_file_paths("/tmp/scratch.bin", config)
     assert machine == "/tmp/scratch.bin"
     assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
-    _, escaped = central.send_user_file_paths("/work/../etc/passwd", config)
+    _, escaped = send_user_file.send_user_file_paths("/work/../etc/passwd", config)
     assert escaped.startswith("uploads/")
-    assert central.send_user_file_body(b"%PDF") == {
+    assert send_user_file.send_user_file_body(b"%PDF") == {
         "content_b64": base64.b64encode(b"%PDF").decode("ascii"),
     }
     # No `as` is declared at all: `POST /topics/{id}/shown` reads the kind off
     # the path, so this and the room's table cannot drift — and a .gif or a
     # .webp is not silently filed as text/html the way a client-side fallback
     # used to file it.
-    assert "as" not in central.send_user_file_body(b"GIF89a")
+    assert "as" not in send_user_file.send_user_file_body(b"GIF89a")
     for name, mime in (("shot.gif", "image/gif"), ("shot.webp", "image/webp")):
-        entry = central.send_user_file_entry(name, name, 4)
+        entry = send_user_file.send_user_file_entry(name, name, 4)
         assert entry["isImage"] is True
         assert entry["media_type"] == mime
 
@@ -690,15 +826,15 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
             return {"value": {"stdout": "2\n"}}
         return {"value": {"stdout": base64.b64encode(b"hi").decode("ascii")}}
 
-    assert central.stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
-    assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
+    assert stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
+    assert read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
     assert set(tools) == {"Bash"}
 
     def refuse_invoke(payload, args):
         return {"error": "machine is out of reach"}
 
     with pytest.raises(RuntimeError, match="machine is out of reach"):
-        central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+        read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
 
 
 def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
@@ -721,11 +857,11 @@ def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
         ).stdout
         return {"value": {"stdout": out[:30000]}}
 
-    assert central.read_file_on_the_machine(invoke, str(path), "id-big") == original
+    assert read_file_on_the_machine(invoke, str(path), "id-big") == original
     assert len(ids) == len(set(ids)), "each command needs its own request id"
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
-    assert central.read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
+    assert read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
 
 
 def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
@@ -751,6 +887,9 @@ def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
 
         def publish_message(self, payload, args):
             raise AssertionError("nothing to caption")
+
+        def working_directory(self):
+            return "/work"
 
     result = central.deliver_send_user_file(
         Client(),
@@ -2015,8 +2154,11 @@ def _wait(check, timeout=30):
 
 @pytest.mark.parametrize("executor", ["project-mcp"], indirect=True)
 def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
-    tmp_path, executor
+    tmp_path, executor, monkeypatch
 ):
+    """A project server's call through the session's gateway runs on the work
+    machine, in its checkout, never where the session runs; and each call
+    carries an identity of its own, which the machine keeps its answer by."""
     _, work, state = executor
     calls = []
 
@@ -2027,7 +2169,6 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append(payload)
-            assert payload["method"] == "mcp"
             assert payload["params"]["server"] == "repo"
             reply = runtime.request(state, payload["method"], payload["params"])
             data = json.dumps(reply).encode()
@@ -2039,63 +2180,33 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    config = tmp_path / "project-tools.json"
-    config.write_text(
-        json.dumps(
-            {
-                "kind": "device",
-                "url": f"http://127.0.0.1:{server.server_port}/execution",
-                "workspace": "/remote-project",
-                "mcp_servers": ["repo"],
-            }
-        )
+    monkeypatch.setenv("CHEESE_TOKEN", "session-credential")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    client = RemoteClient(
+        {
+            "kind": "device",
+            "url": f"http://127.0.0.1:{server.server_port}/execution",
+            "workspace": "/remote-project",
+            "mcp_servers": ["repo"],
+        }
     )
-    with (tmp_path / "transport.log").open("w") as log:
-        process = mcp_process.MCPProcess(
-            [sys.executable, central.__file__, "transport", str(config)],
-            str(tmp_path),
-            {
-                **os.environ,
-                "CHEESE_TOKEN": "session-credential",
-                "NO_PROXY": "127.0.0.1",
-            },
-            log,
-        )
-        try:
-            assert "project_tools" in {
-                tool["name"] for tool in process.call("tools/list")["tools"]
-            }
-
-            def invoke(**args):
-                response = process.call(
-                    "tools/call",
-                    {
-                        "name": "project_tools",
-                        "arguments": {
-                            "id": "mutation-id",
-                            "session_id": "native-session",
-                            **args,
-                        },
-                    },
-                )
-                return json.loads(response["content"][0]["text"])
-
-            assert invoke()["result"]["servers"] == ["repo"]
-            assert calls == []
-            assert invoke(server="repo")["result"]["tools"][0]["name"] == "publish"
-            assert "id" not in calls[-1]["params"]
-            assert invoke(
-                server="repo", name="publish", arguments={"value": "literal"}
-            )["result"]["content"][0]["text"] == str(work)
-            assert (work / "published.txt").read_text() == "literal"
-            assert not (tmp_path / "published.txt").exists()
-            assert calls[-1]["params"]["id"] == "mutation-id"
-            assert calls[-1]["params"]["tool"] == "mcp__repo__publish"
-        finally:
-            process.close()
-            server.shutdown()
-            server.server_close()
-            thread.join()
+    gateway = Gateway(client.call, client.session_servers)
+    gateway.start()
+    try:
+        assert tool_names(gateway, "repo") == ["publish"]
+        first = call_tool(gateway, "repo", "publish", {"value": "literal"})
+        assert text_of(first) == str(work)
+        assert (work / "published.txt").read_text() == "literal"
+        assert not (tmp_path / "published.txt").exists()
+        call_tool(gateway, "repo", "publish", {"value": "again"})
+        identities = [c["params"]["id"] for c in calls if c["method"] == "invoke"]
+        assert len(identities) == len(set(identities)) == 2
+        assert (work / "published.txt").read_text() == "again"
+    finally:
+        gateway.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_a_burst_of_calls_reaches_an_executor_that_is_slow_to_accept(executor):

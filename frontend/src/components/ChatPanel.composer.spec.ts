@@ -10,11 +10,12 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -60,6 +61,8 @@ function composer() {
   return container
 }
 
+beforeAll(loadMarkdownReader)
+
 describe('输入区的两行', () => {
   it('输入框不和任何按钮共用一行', () => {
     const c = composer()
@@ -78,24 +81,11 @@ describe('输入区的两行', () => {
     expect(buttons[buttons.length - 1].className).toContain('composer-send')
   })
 
-  // 这一行只放**这条消息**的动作。话题级的设置（谁在跑、在哪跑）不在这儿——
-  // 它们发第一条消息之后就不再变，摆在这里只是占着 390px 里最贵的一行。
-  //
-  // 「交给芝士」是这一行唯一带字的一颗，而它恰恰是「这条消息」的动作：它决定
-  // 这条消息叫不叫它。带字是故意的——一个光秃秃的 @ 图标猜不出来，而「怎么叫
-  // 它」正是这个产品里最该一眼看见的事。窄屏上那三个字由 CSS 收起来。
   // 名册还没到（或这个房间根本没有芝士的座位）时，浏览器解析不出它的 handle，
-  // 替人写进正文的那个 @ 就只是一行字：消息照发、它照样不动。所以这一瞬间这颗
-  // 按钮是关着的——少一个入口，好过一个点了不算数的入口。
-  it('还不知道芝士是谁的时候，「交给芝士」是关着的', () => {
-    const btn = composer().querySelector<HTMLButtonElement>('.summon-btn')!
+  // 替人写进正文的那个 @ 就只是一行字：消息照发、它照样不动。所以这一瞬间发送键旁边
+  // 那颗队友头像是关着的——少一个入口，好过一个点了不算数的入口。
+  it('还不知道芝士是谁的时候，交给它的那颗头像是关着的', () => {
+    const btn = composer().querySelector<HTMLButtonElement>('.summon__btn')!
     expect(btn.disabled).toBe(true)
-  })
-
-  it('这一行只放这条消息自己的动作', () => {
-    const actions = composer().querySelector('.composer-actions')!
-    const summon = actions.querySelector('.summon-btn')!
-    // 带字的只有「交给芝士」那一颗：这一行的字全是它的。
-    expect(actions.textContent?.replace(/\s/g, '')).toBe(summon.textContent?.replace(/\s/g, ''))
   })
 })

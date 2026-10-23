@@ -35,6 +35,7 @@ import { PAGE_SIZE } from '../lib/blockPaging'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const TOPIC = {
   id: 't-paging',
@@ -218,6 +219,8 @@ function beforeCalls(): string[] {
     .filter((o) => o?.before)
     .map((o) => o.before!)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('往回翻历史', () => {
   it('打开时只读最近一页，上面还有更早的就说出来', async () => {

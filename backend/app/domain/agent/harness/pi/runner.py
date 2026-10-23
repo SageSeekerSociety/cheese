@@ -35,9 +35,18 @@ from app.domain.agent.executor_transport import (
     PlatformHost,
     RemoteClient,
     failure_text,
+    no_run,
 )
-from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness import PI
+from app.domain.agent.harness.driven import monitor, runner
 from app.domain.agent.harness.driven.journal import PAGE
+from app.domain.agent.harness.driven.mcp_gateway import (
+    SECRET_ENV,
+    SECRET_HEADER,
+    STARTUP_S,
+    Gateway,
+)
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart, socket_path
 from app.domain.agent.harness.pi import catalog, hooks
 from app.domain.agent.harness.pi.jobs import Jobs
@@ -49,7 +58,6 @@ from app.domain.agent.harness.pi.journal import (
     Journal,
 )
 from app.domain.agent.harness.pi.machine import Machine
-from app.domain.agent.harness.pi.mcp import ProjectServers
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 from app.domain.agent.harness.pi.subagents import Subagents
 from app.domain.agent.nonce import nonce_in
@@ -61,6 +69,37 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 #: The tools that only read, which a session reading the room's machine has
 #: (`_start_without_hands`): pi's own, and the checkout's history (`git`).
 READING_TOOLS = ("read", "ls", "find", "grep", "git")
+#: pi's own tools a session working on a machine of its own has beside its
+#: platform tools (`_start_without_hands`): a person's 芝士 in its sandbox.
+WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
+
+
+def _said(text: str) -> dict:
+    """A platform tool's answer for the extension: its text, and the pictures
+    it hands back (a mini-app's, as the platform ran it), which go to the
+    model beside the text (`platform.ts`)."""
+    images = list(getattr(text, "images", ()))
+    return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+
+
+#: How a delegated credential begins (``app.core.sandbox_auth``).
+DELEGATED_PREFIX = "cxdg_"
+
+
+def _scope_of(token: str) -> dict[str, str]:
+    """The project a delegated credential names, as the tools read it
+    (``CHEESE_PROJECT``). Read, not verified: the backend verifies the
+    credential on every request it is sent with; this only says where to send
+    them."""
+    if not token.startswith(DELEGATED_PREFIX):
+        return {}
+    body = token.removeprefix(DELEGATED_PREFIX).rpartition(".")[0]
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except (ValueError, TypeError):
+        return {}
+    project = claims.get("p") if isinstance(claims, dict) else None
+    return {"CHEESE_PROJECT": str(project)} if project else {}
 
 
 class Runner(runner.Runner[Journal]):
@@ -93,6 +132,15 @@ class Runner(runner.Runner[Journal]):
         self.asked_again: set[object] = set()
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
+        # Where the session's own request to compact has got to, if it made
+        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # in is still running, "sent" once pi has it and the compaction has not
+        # finished. Set from the thread the tool call runs on (`run_cli`).
+        self.compact_request = ""
+        #: The loop `request_compact` hops onto from the tool call's thread.
+        #: `start` sets it for sure; a runner built outside a loop (a sync
+        #: test, `test_tool_pictures_reach_the_model`) has none yet.
+        self.loop: asyncio.AbstractEventLoop | None = runner.current_loop()
         # The platform asked pi to stop: a retry cut short by it is not a
         # failure of anything.
         self.aborting = False
@@ -103,15 +151,17 @@ class Runner(runner.Runner[Journal]):
         # What every subagent the session starts reads as its system prompt's
         # tail (`subagents.py`); the platform's words, handed over (`start`).
         self.subagent_rules = ""
-        # The project's MCP servers (`mcp.py`), opened with the session.
-        self.servers: ProjectServers | None = None
-        self.mcp_tools: list[dict] = []
+        # The door pi's own MCP client reaches the project's servers by
+        # (`mcp_gateway`), opened with the session.
+        self.gateway: Gateway | None = None
         # The room's machine, where every file and command of the session's is
         # (`machine.py`), and the checkout as the session sees it there. `cwd`
         # is the directory pi runs in on this host, which holds nothing of the
         # project; `env` is pi's environment here.
         self.machine: Machine | None = None
         self.jobs: Jobs | None = None
+        # Commands whose every line is told to the session (`Monitor`).
+        self.monitors: Monitors | None = None
         self.workspace = ""
         self.cwd = ""
         self.env: dict[str, str] = {}
@@ -180,6 +230,11 @@ class Runner(runner.Runner[Journal]):
             if reason is None:
                 self.reply_settled()
                 self.turn_ended()
+                if self.compact_request == "asked":
+                    # The turn the session asked to be compacted in has
+                    # settled: pi's `compact` aborts the operation it finds
+                    # running, so it could not be asked while one was.
+                    self._ask()
             else:
                 self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
@@ -243,12 +298,15 @@ class Runner(runner.Runner[Journal]):
 
     def write(self, update: dict) -> None:
         """Show the assistant message pi is writing, block by block, as its
-        deltas arrive (`message_update`): text, and tool calls with their
-        arguments as raw JSON so far. Reasoning is not shown."""
+        deltas arrive (`message_update`): text, tool calls with their
+        arguments as raw JSON so far, and that the model is reasoning — a
+        `thinking` block, never what it reasons."""
         kind, index = update.get("type"), update.get("contentIndex")
         if not isinstance(index, int):
             return
-        if kind == "text_start":
+        if kind == "thinking_start":
+            self.writing[index] = {"type": "thinking"}
+        elif kind == "text_start":
             self.writing[index] = {"type": "text", "text": ""}
         elif kind == "toolcall_start":
             self.writing[index] = {
@@ -452,7 +510,7 @@ class Runner(runner.Runner[Journal]):
         if tools is None:
             try:
                 tools = catalog.tools()
-            except Exception as error:  # noqa: BLE001 — a room still opens without them
+            except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
         (home / "platform.json").write_text(
             json.dumps(
@@ -460,18 +518,28 @@ class Runner(runner.Runner[Journal]):
                     "socket": socket_path(self.state),
                     "state": str(self.state),
                     "hands": hands,
-                    # A session without hands that reads the room's machine.
-                    "reading": not hands and self.machine is not None,
+                    # A session without hands that reads the room's machine,
+                    # or works on a machine of its own.
+                    "reading": not hands
+                    and self.machine is not None
+                    and self.machine.reading,
+                    "works": not hands
+                    and self.machine is not None
+                    and not self.machine.reading,
                     # The checkout as the session sees it on the room's machine:
                     # where pi's own tools resolve a path and run a command.
                     "workspace": self.workspace,
                     "jobs": "" if child or not hands else str(self.state / "bg"),
                     "subagents": hands and not child,
+                    # `Monitor`, as `driven/monitor.py` defines it: the
+                    # session's alone, as its background jobs are — what a
+                    # monitor prints is told to the session, never a subagent.
+                    "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
                     "unavailable": reason,
-                    # The project's MCP servers' tools, listed when the session
-                    # opened (`open_servers`); each call comes back as `mcp`.
-                    "mcp": self.mcp_tools,
+                    # The project's MCP servers, each at the session's gateway
+                    # (`open_servers`), for pi's own MCP client.
+                    "mcp": self.mcp_servers(),
                     # The marker every platform instruction in this room already
                     # carries, handed over rather than restated: it is the one
                     # string in a prompt that claims institutional authority,
@@ -485,13 +553,42 @@ class Runner(runner.Runner[Journal]):
         return home
 
     async def open_servers(self) -> None:
-        """List every MCP server's tools, before the extension's manifest is
-        written."""
+        """Open the door to the project's MCP servers, before the extension's
+        manifest names it. Calls through it go on marked as already hooked:
+        the extension fires the project's hooks around every call pi makes,
+        an MCP tool's included (`applyProjectHooks`)."""
         assert self.machine is not None
-        self.servers = ProjectServers(
-            self.machine, self.journal.recall("session_id") or ""
-        )
-        self.mcp_tools = await self.servers.discover()
+        if self.gateway is None:
+            client = self.machine.client
+            self.gateway = Gateway(
+                client.call,
+                client.session_servers,
+                observe=client.local_outcome,
+                on_close=client.local_closed,
+            )
+            self.gateway.start()
+
+    def mcp_servers(self) -> dict[str, dict]:
+        """Each of the project's servers as pi's `mcp.json` names one, at the
+        gateway. The secret is the variable pi expands from its environment
+        (`agent_env`), not the value: this file is read by whatever reads the
+        session's state directory."""
+        if self.gateway is None:
+            return {}
+        return {
+            name: {
+                "url": self.gateway.url(name),
+                "headers": {SECRET_HEADER: f"${{{SECRET_ENV}}}"},
+                "timeout": STARTUP_S,
+            }
+            for name in self.gateway.servers()
+        }
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        env = super().agent_env(env)
+        if self.gateway is not None:
+            env[SECRET_ENV] = self.gateway.secret
+        return env
 
     def _invoke(self, payload: dict, args: dict) -> dict:
         """A command on the machine, answered the way an executor's Bash is:
@@ -524,15 +621,20 @@ class Runner(runner.Runner[Journal]):
             )
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
-                self.machine.client, self._invoke, call_id, self.doc_versions
+                self.machine.client,
+                self._invoke,
+                call_id,
+                self.doc_versions,
+                no_run,
+                self.request_compact,
             )
             try:
                 text = await asyncio.to_thread(
                     catalog.run_platform_tool, tool, arguments, host
                 )
-            except Exception as error:  # noqa: BLE001 — the agent reads the reason
+            except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
-            return {"status": 0, "stdout": text, "stderr": ""}
+            return _said(text)
         command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
         code, output = await asyncio.to_thread(
             self.machine.run, f"exec {command} </dev/null", cwd=cwd
@@ -559,15 +661,18 @@ class Runner(runner.Runner[Journal]):
             None,
             call_id,
             self.doc_versions,
+            no_run,
+            self.request_compact,
         )
+        # A person's 芝士 asked from a project's page acts in that project: its
+        # session has no project of its own, the question's credential does.
+        for name, value in _scope_of(self.platform_token).items():
+            host.environ.setdefault(name, value)
         try:
             text = catalog.run_platform_tool(tool, arguments, host)
-        except Exception as error:  # noqa: BLE001 — the agent reads the reason
+        except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
-        # Pictures a tool hands back (a mini-app's, as the platform ran it) go
-        # to the model beside the text (`platform.ts`).
-        images = list(getattr(text, "images", ()))
-        return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+        return _said(text)
 
     async def tool_hooks(self, params: dict) -> dict:
         """The project's hooks for one event of one of pi's own tool calls,
@@ -676,10 +781,12 @@ class Runner(runner.Runner[Journal]):
             [self._stamped(entry, thread) for entry in entries], cursor=cursor
         )
 
-    async def tell_parent(self, text: str) -> None:
+    async def tell_parent(self, text: str, *, behavior: str = "followUp") -> None:
         """Say something to the session on the platform's behalf: after what it
         is doing if it is working, as a turn of its own if it is not — the way
-        Claude Code hears that a subagent it left in the background ended."""
+        Claude Code hears that a subagent it left in the background ended.
+        With `behavior` "steer" it is said at the session's next step instead,
+        as Claude Code tells a session what a monitor printed."""
         if self.client is None or self.client.closed:
             return
         if not self.working:
@@ -690,9 +797,9 @@ class Runner(runner.Runner[Journal]):
             await self.client.request(
                 "prompt",
                 message=f"{self.notice}\n{text}" if self.notice else text,
-                streamingBehavior="followUp",
+                streamingBehavior=behavior,
             )
-        except Exception as error:  # noqa: BLE001 — the record is in the log
+        except Exception as error:  # the record is in the log
             print(f"could not tell the session: {error!r}", file=sys.stderr)
 
     # --- lifecycle -----------------------------------------------------------
@@ -717,9 +824,10 @@ class Runner(runner.Runner[Journal]):
         machine, as `target` names it (`machine.py`).
 
         A `target` of None is a session with no hands at all (`_start_without_
-        hands`): a person's 芝士, which has no project, no machine and no files,
-        and only the tools `tools` lists. A `target` with `tools` is one that
-        only reads the room's machine besides them: a document's 芝士."""
+        hands`): only the tools `tools` lists. A `target` with `tools` is one
+        that only reads the room's machine besides them, a document's 芝士; or,
+        when `tools` says it ``works`` there, one with pi's own tools on a
+        machine of its own, a person's 芝士 in its sandbox."""
         self.claim()
         # pi's own temporary files — the whole output of a long command, which
         # its bash names for the model to read — stay with the session.
@@ -728,11 +836,18 @@ class Runner(runner.Runner[Journal]):
         env = {**env, "TMPDIR": str(scratch)}
         self.cwd, self.env = cwd, env
         self.binary, self.args = binary, list(args)
+        # This runs on the loop the runner will keep working on, which is the
+        # one `request_compact` hops onto from a tool call's own thread.
+        self.loop = asyncio.get_running_loop()
         self.model = opening.model or ""
         self.extension_files = dict(extension or {})
         if target is None or tools is not None:
             if target is not None:
-                self.machine = Machine(target, scratch=scratch, reading=True)
+                self.machine = Machine(
+                    target,
+                    scratch=scratch,
+                    reading=not (tools or {}).get("works"),
+                )
                 self.workspace = self.machine.workspace
             return await self._start_without_hands(
                 opening, binary, cwd, env, extension or {}, tools or {}
@@ -767,7 +882,7 @@ class Runner(runner.Runner[Journal]):
                 self.context = await asyncio.to_thread(self.machine.context)
                 for path in await asyncio.to_thread(self.machine.project_skills):
                     appended += ["--skill", path]
-            except Exception as error:  # noqa: BLE001 — the room still opens
+            except Exception as error:  # the room still opens
                 print(f"[cheese] the project was not read: {error!r}", file=sys.stderr)
         # Explicit `--skill` paths are additive even under `--no-skills`, so the
         # platform's own skills are written here and named — for the same
@@ -793,6 +908,14 @@ class Runner(runner.Runner[Journal]):
         ]
         self.jobs = Jobs(self.machine, self.state / "bg")
         self.jobs.resume()
+        machine = self.machine
+        self.monitors = Monitors(
+            machine.client.control,
+            lambda text: self.tell_parent(text, behavior="steer"),
+            cwd=lambda: machine.placed(self.workspace),
+            place=machine.placed,
+            take=machine.take,
+        )
         if extension is not None:
             await self.open_servers()
             home = self.write_extension(extension, notice)
@@ -816,7 +939,7 @@ class Runner(runner.Runner[Journal]):
         self.journal.remember("session_id", session_id)
         self.journal.remember(
             "owner",
-            json.dumps({"harness": "pi", "agent_handle": opening.agent_handle}),
+            json.dumps({"harness": PI, "agent_handle": opening.agent_handle}),
         )
         return session_id
 
@@ -845,7 +968,13 @@ class Runner(runner.Runner[Journal]):
         session_id = self._session_id(opening)
         prompt = self.state / "system-prompt.md"
         prompt.write_text(opening.system_prompt, encoding="utf-8")
-        own = READING_TOOLS if self.machine is not None else ()
+        own = (
+            ()
+            if self.machine is None
+            else READING_TOOLS
+            if self.machine.reading
+            else WORKING_TOOLS
+        )
         names = ",".join([*own, *(spec["name"] for spec in specs)])
         flags = ["--system-prompt", str(prompt)]
         flags += ["--tools", names] if names else ["--no-tools"]
@@ -964,7 +1093,7 @@ class Runner(runner.Runner[Journal]):
             await self.client.request(
                 "prompt", message=f"{self.notice}\n{reason}" if self.notice else reason
             )
-        except Exception as error:  # noqa: BLE001 — the turn ended; so be it
+        except Exception as error:  # the turn ended; so be it
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.reply_settled()
 
@@ -979,7 +1108,69 @@ class Runner(runner.Runner[Journal]):
             or (self.continuing is not None and not self.continuing.done())
             or any(not agent.ended.done() for agent in self.children.started.values())
             or (self.jobs is not None and self.jobs.running() > 0)
+            or (self.monitors is not None and self.monitors.count() > 0)
+            # A compaction asked for and not finished: pi reports it as its
+            # own events, and none of them says a turn is running.
+            or bool(self.compact_request)
         )
+
+    # --- the session compacting itself ---------------------------------------
+
+    def request_compact(self) -> str:
+        """The session asked to compact its own context (`cheese_compact`):
+        whether this is the request that will be acted on.
+
+        Asked for once — a request still waiting and one already running are
+        the same thing to the agent that asked — and asked for at the end of
+        the turn it was made in: pi's `compact` aborts whatever operation it
+        finds running, so asking mid-turn would cut the turn off.
+        """
+        if self.compact_request:
+            return "already"
+        if self.client is None:
+            # i18n-exempt: programmer invariant, never shown
+            raise RuntimeError("This session has no pi to compact")
+        self.compact_request = "asked"
+        # From the loop: a platform tool call runs in a worker thread
+        # (`run_cli`).
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._compact_when_settled)
+        else:  # no loop of our own: nobody to hop onto, none to ask
+            self.compact_request = ""
+            # i18n-exempt: programmer invariant, never shown
+            raise RuntimeError("This session has no loop to compact on")
+        return "requested"
+
+    def _compact_when_settled(self) -> None:
+        """On the loop: ask now if pi is not working, or let the turn that is
+        ask when it settles (`_event`'s `agent_settled`)."""
+        if self.compact_request != "asked":
+            return
+        if not self.working:
+            self._ask()
+
+    def _ask(self) -> None:
+        """Go from `asked` to `sent` and start the ask, on the loop.
+
+        The transition is here, not inside `_compact_now`: this call's own hop
+        onto the loop and a settling turn can both find pi idle, and only the
+        one that finds `asked` may start it."""
+        if self.compact_request != "asked":
+            return
+        self.compact_request = "sent"
+        asyncio.ensure_future(self._compact_now())
+
+    async def _compact_now(self) -> None:
+        assert self.client is not None
+        try:
+            # Answered when the compaction is over (`compact` is not a
+            # trigger): what the room shows meanwhile comes from pi's own
+            # `compaction_start`/`compaction_end` (`events.py`).
+            await self.client.request("compact")
+        except Exception as error:  # the session goes on without it
+            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+        finally:
+            self.compact_request = ""
 
     # --- the socket ----------------------------------------------------------
 
@@ -1016,14 +1207,6 @@ class Runner(runner.Runner[Journal]):
                 params.get("cwd"),
                 params.get("id") or str(uuid.uuid4()),
             )
-        if method == "mcp":
-            if self.servers is None:
-                raise ValueError("This session has no MCP servers")
-            return await self.servers.call(
-                params["tool"],
-                params.get("arguments") or {},
-                call_id=params.get("id") or str(uuid.uuid4()),
-            )
         if method == "hooks":
             return await self.tool_hooks(params)
         if method == "files":
@@ -1051,6 +1234,16 @@ class Runner(runner.Runner[Journal]):
             assert self.jobs is not None
             await self.jobs.signal(params["id"], int(params["signal"]))
             return {}
+        if method == "monitor_start":
+            assert self.monitors is not None
+            return {
+                "text": await self.monitors.start(
+                    params.get("arguments") or {}, params.get("id") or str(uuid.uuid4())
+                )
+            }
+        if method == "monitor_stop":
+            assert self.monitors is not None
+            return {"text": await self.monitors.stop(str(params.get("task_id") or ""))}
         if method == "subagent_spawn":
             return await self.children.spawn(
                 params["prompt"],
@@ -1085,7 +1278,8 @@ class Runner(runner.Runner[Journal]):
                 "session_id": self.journal.recall("session_id"),
                 "working": self.working,
                 # Background jobs still running: a relaunch would end them.
-                "tasks": self.jobs.running() if self.jobs is not None else 0,
+                "tasks": (self.jobs.running() if self.jobs is not None else 0)
+                + (self.monitors.count() if self.monitors is not None else 0),
                 "work_id": owner.get("work_id"),
                 "alive": self.alive(),
                 "capabilities": list(self.capabilities),
@@ -1109,6 +1303,10 @@ class Runner(runner.Runner[Journal]):
         await self.children.stop_all()
         if self.jobs is not None:
             await self.jobs.close(end=True)
+        if self.monitors is not None:
+            await self.monitors.close()
+        if self.gateway is not None:
+            self.gateway.close()
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)

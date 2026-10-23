@@ -1,5 +1,6 @@
-/** 「改动」这一格的主要行为：一棵标着增删的文件树、默认那一面把全部改动连着排、
- *  单独打开一份文件时的差异 / 全文两面、空态、错误态、保存与冲突。
+/** 「改动」这一格的主要行为：一棵标着增删的文件树、默认那一面按文件一段一段地列
+ *  （差异收着，点段头铺开）、单独打开一份文件时的差异 / 全文两面、空态、错误态、
+ *  保存与冲突。
  *
  * 它 1708 行、直接调 9 个接口函数、会写文件（writeFile 失败会丢用户的编辑），而
  * 在这份 spec 之前只有一个 75 行的 PanelChanges.noRepo.spec.ts，只覆盖「项目没接
@@ -19,7 +20,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '@/api'
+import { ApiError, RequestTimeoutError } from '@/api'
 import { setLocale } from '@/i18n'
 
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
@@ -143,6 +144,58 @@ function fileRow(name: string): HTMLElement {
   return row as HTMLElement
 }
 
+/** 全部改动那一面里某一份文件那一段。 */
+function sectionOf(path: string): HTMLElement {
+  const el = document.querySelector(`.diff-file[data-path="${path}"]`)
+  expect(el, `改动里应该有 ${path} 这一段`).toBeTruthy()
+  return el as HTMLElement
+}
+
+/** 五份文件的差异：清单先列前三个，多出来的那几份让「另 N 个文件」露出来。 */
+function diffOfFive(): string {
+  return ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts']
+    .map((p) =>
+      [
+        `diff --git a/${p} b/${p}`,
+        'index 0000000..1111111 100644',
+        `--- a/${p}`,
+        `+++ b/${p}`,
+        '@@ -1,2 +1,3 @@',
+        ' const a = 1',
+        `+// ${p}`,
+      ].join('\n')
+    )
+    .join('\n')
+}
+
+/** 把这一格量成放不下文件树那么窄：树收起来，文件名改列在顶部那块下面。量宽度的
+ *  观察者换成测试自己报数的那一个（照着 `PanelPreview.imageRegion.spec.ts`）。 */
+function stubNarrowPanel() {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(el: Element) {
+        this.cb(
+          [{ target: el, contentRect: { width: 400, height: 0 } }] as unknown as ResizeObserverEntry[],
+          this as unknown as ResizeObserver
+        )
+      }
+      disconnect() {}
+    }
+  )
+}
+
+/** 全部改动那一面里某一段的段头：点它铺开或收起这一段的差异。 */
+async function toggleSection(path: string) {
+  const section = await waitFor(() => {
+    const el = document.querySelector(`.diff-file[data-path="${path}"]`)
+    expect(el, `改动里应该有 ${path} 这一段`).toBeTruthy()
+    return el as HTMLElement
+  })
+  await fireEvent.click(section.querySelector('.diff-file__toggle')!)
+}
+
 /** 全部改动那一面里某个文件那一段的「打开」：单独看这一份。 */
 async function openSection(path: string) {
   const section = await waitFor(() => {
@@ -155,7 +208,7 @@ async function openSection(path: string) {
 }
 
 describe('树上有什么，点开的是什么', () => {
-  it('每个文件标着它改了多少；默认那一面把全部改动连着排，不先替人打开哪一份', async () => {
+  it('默认那一面只列改到的文件：每段收着，点段头铺开这一段的差异', async () => {
     mount()
     // 树: 这一支改过的文件都在，增删标在行上。
     await waitFor(() => expect(document.querySelector('.file-item')).toBeTruthy())
@@ -164,25 +217,39 @@ describe('树上有什么，点开的是什么', () => {
     // 新加的文件说的是「新增」，不是 +2。
     expect(fileRow('README.md').textContent).toContain('新增')
 
-    // 两个文件的差异都在，一个接一个；git 的头信息不在屏幕上，@@ 换成了行号区间。
+    // 一件活改几十个文件是常态：默认先给这一眼清单，差异一段都不铺。
+    expect(document.querySelectorAll('.diff-file').length).toBeGreaterThan(0)
+    expect(screen.queryByText('-const b = 2')).toBeNull()
+    expect(screen.queryByText('+# hi')).toBeNull()
+    expect(sectionOf('src/app.ts').querySelector('.diff-file__toggle')!.getAttribute('aria-expanded')).toBe('false')
+    expect(readFile).not.toHaveBeenCalled()
+
+    // 点段头铺开这一段：git 的头信息不画，@@ 换成行号区间；别的文件照旧收着。
+    await toggleSection('src/app.ts')
     expect(await screen.findByText('-const b = 2')).toBeTruthy()
     expect(screen.getByText('+const c = 4')).toBeTruthy()
-    expect(screen.getByText('+# hi')).toBeTruthy()
     expect(screen.queryByText('@@ -1,3 +1,4 @@')).toBeNull()
     expect(screen.queryByText('index 0000000..1111111 100644')).toBeNull()
     expect(screen.getByText('1–4')).toBeTruthy()
+    expect(screen.queryByText('+# hi')).toBeNull()
     expect(readFile).not.toHaveBeenCalled()
+
+    // 再点一次收回去。
+    await toggleSection('src/app.ts')
+    expect(screen.queryByText('-const b = 2')).toBeNull()
   })
 
-  it('点树上改过的文件，滚到它那一段，不另开一份', async () => {
+  it('点树上改过的文件，滚到它那一段并把它铺开，不另开一份', async () => {
     const scrolled: Element[] = []
     const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
       scrolled.push(this)
     })
     mount()
-    await screen.findByText('+# hi')
+    await waitFor(() => expect(document.querySelector('.file-item')).toBeTruthy())
     await fireEvent.click(fileRow('README.md'))
     await waitFor(() => expect(scrolled.some((el) => el.getAttribute('data-path') === 'README.md')).toBe(true))
+    // 点它就是要看它：那一段当场铺开，滚过去不是只看见一行段头。
+    expect(await screen.findByText('+# hi')).toBeTruthy()
     expect(readFile).not.toHaveBeenCalled()
     spy.mockRestore()
   })
@@ -196,8 +263,41 @@ describe('树上有什么，点开的是什么', () => {
     expect(screen.queryByText('-const b = 2')).toBeNull()
 
     await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
-    expect(await screen.findByText('-const b = 2')).toBeTruthy()
-    expect(screen.getByText('+# hi')).toBeTruthy()
+    // 回到的是那一面清单：两个文件都在，各自的差异照旧收着。
+    await waitFor(() => expect(sectionOf('src/app.ts')).toBeTruthy())
+    expect(sectionOf('README.md')).toBeTruthy()
+    expect(screen.queryByText('-const b = 2')).toBeNull()
+    expect(screen.queryByText('+# hi')).toBeNull()
+  })
+
+  it('放不下文件树时，展开的「另 N 个文件」在点开一份再返回之后还是展开的', async () => {
+    const diff = diffOfFive()
+    getGitDiff.mockResolvedValue({ diff })
+    listFiles.mockResolvedValue({
+      data: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'].map((path) => ({ path, bytes: 120 })),
+      total: 5,
+      source: 'live',
+    })
+    stubNarrowPanel()
+    try {
+      mount()
+      // 清单先列前三个，其余收在「另 2 个文件」里。
+      await fireEvent.click(await screen.findByText('另 2 个文件'))
+      await waitFor(() => expect(document.querySelectorAll('.changes-summary__file').length).toBe(5))
+      expect(document.querySelector('.changes-summary__more')?.textContent?.trim()).toBe('收起')
+
+      // 点开一份，再回全部改动。
+      await openSection('src/d.ts')
+      await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'src/d.ts', 'room-1', 't-1', 'live'))
+      await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
+      await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/d.ts"]')).toBeTruthy())
+
+      // 展不展开是这一格记着的：返回时清单不该又收回去。
+      expect(document.querySelectorAll('.changes-summary__file').length).toBe(5)
+      expect(document.querySelector('.changes-summary__more')?.textContent?.trim()).toBe('收起')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('没有差异的文件只有一面：不摆「差异 / 全文」这个开关', async () => {
@@ -327,6 +427,30 @@ describe('这一支的活', () => {
     await waitFor(() => expect(screen.queryByText(/这个文件已被修改/)).toBeNull())
   })
 
+  it('现场工作区超时：先给已提交版本，不把整格换成请求超时', async () => {
+    getGitDiff.mockImplementation((_pid: string, _tid: string, _task: string, source: string) =>
+      source === 'live' ? Promise.reject(new RequestTimeoutError()) : Promise.resolve({ diff: DIFF })
+    )
+    listFiles.mockImplementation((_pid: string, _tid: string, _task: string, source: string) =>
+      source === 'live'
+        ? Promise.reject(new RequestTimeoutError())
+        : Promise.resolve({ data: FILES, total: FILES.length, source: 'committed' })
+    )
+    mount()
+    // 说明说的是「已切到已提交版本」，而不是把浏览器那句请求超时原样挂出来。
+    expect(await screen.findByText('现场工作区没有及时响应，已切到已提交版本')).toBeTruthy()
+    expect(screen.queryByText(/请求等待超时/)).toBeNull()
+    // 已提交版本的差异照样能看：那一段铺开就是了。
+    await waitFor(() => expect(sectionOf('src/app.ts')).toBeTruthy())
+    await toggleSection('src/app.ts')
+    expect(await screen.findByText('+const c = 4')).toBeTruthy()
+
+    // 「重试现场」再问一次现场，不是让人只能停在已提交版本上。
+    getGitDiff.mockClear()
+    await fireEvent.click(screen.getByText('重试现场'))
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live'))
+  })
+
   it('列文件失败：那句错挂出来，并给一条换版本的出路', async () => {
     listFiles.mockRejectedValue(new Error('文件服务挂了'))
     mount()
@@ -351,6 +475,38 @@ describe('这一支的活', () => {
     await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
     await waitFor(() => expect(getGitDiff.mock.calls.length).toBeGreaterThan(before))
     expect(getGitDiff).toHaveBeenLastCalledWith('p1', 'room-1', 't-1', 'live')
+  })
+
+  // 手机上一屏只有一格：从对话切回「改动」不等于重新打开这一页。重取一次就是
+  // 整格清空、转圈、再整片重画——那一段里界面动不了。
+  it('从别处切回来不重取，屏幕上那份留着', async () => {
+    const { rerender } = mount()
+    await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy())
+    const before = getGitDiff.mock.calls.length
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false })
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getGitDiff.mock.calls.length).toBe(before)
+    // 也没退回转圈：差异还在屏幕上。
+    expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy()
+  })
+
+  // 离开期间 AI 干完了一轮：回来补一次静默重读（不转圈，只是把新差异换上）。
+  it('离开期间有一轮收工，切回来补读一次', async () => {
+    const { rerender } = mount()
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalled())
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false })
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledTimes(1))
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: false, refreshTick: 1 })
+    await new Promise((r) => setTimeout(r, 20))
+    // 不在这一格的时候不取；回来才取。
+    expect(getGitDiff).toHaveBeenCalledTimes(1)
+
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledTimes(2))
+    expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy()
   })
 })
 

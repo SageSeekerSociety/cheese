@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.shell.catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
+from app.domain.shell_catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.task.protocol import resolve as resolve_protocol
@@ -117,9 +117,3 @@ async def effective_shells(
             project=project, task=task, category=category, space=space
         )
     return out
-
-
-async def effective_shell(session: AsyncSession, project) -> Shell:
-    """The 壳 one project runs under. Same chain as `effective_shells`."""
-    resolved = await effective_shells(session, [project])
-    return resolved[project.id]

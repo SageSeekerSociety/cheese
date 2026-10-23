@@ -11,6 +11,7 @@ import type { RailTask } from '../components/topic-sidebar/moreTasks'
 import type { Topic } from '../cx_types'
 import type { RailMemberMark } from '../lib/memberActivity'
 import type { RowLight } from '../lib/roomLight'
+import type { TaskState } from '../lib/taskState'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import type { TopicUnread } from '../types/channels'
 
@@ -18,8 +19,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
-import { waitStalled, waitText } from '../lib/replyWait'
-import { lightOf as lightFor, MINE_LIGHT } from '../lib/roomLight'
+import { waitStalled } from '../lib/replyWait'
+import { lightOf as lightFor } from '../lib/roomLight'
+import { taskState } from '../lib/taskState'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
@@ -184,15 +186,11 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   // 后端只给频道算。
   //
   // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
-  // 点开时 `stores/workspace` 先把本地那一份灭掉）。
+  // 点开时 `stores/workspace` 先把本地那一份灭掉）。呼吸绿问的 `moving` 也一样，
+  // 后端按会话状态和交付链路算好；这一层只查表。
   //
   // 蓝灯（我负责的活）是这一层唯一自己下的判断：它不看状态，只看这条活归谁——而且要
   // 状态那几盏都没话说的时候才画。
-  /** 这条活归不归我。没有主的算我这边的：没主的活频道里谁都能接，先当自己的。 */
-  function isMine(task: { owner_handle?: string | null }): boolean {
-    const owner = task.owner_handle
-    return !owner || owner === myHandle()
-  }
   function lightOf(id: string): RowLight | null {
     const topic = topicById.value.get(id)
     if (!topic) return null
@@ -200,30 +198,45 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       {
         awaitsMe: topic.awaits_me === true,
         repliedToMe: topic.replied_to_me === true,
+        // 房间里、支线里、名下的活里有会话在跑，或者有活走在交付链路上：呼吸绿。
         moving: topic.moving === true,
-        unseenDelivery: topic.unseen_delivery === true,
-        lastOutputAt: topic.last_output_at,
       },
       clock.value
     )
   }
 
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
-   *  我负责的（以及没主的）活，状态那几盏都不亮时才补一盏蓝灯；别人的活不画蓝灯。
-   *  「有人回复了我」也不在这一份里：后端只给频道行算（见上），活这一行照旧读 false。 */
-  function taskLight(task: RailTask): RowLight | null {
-    const light = lightFor(
+   *  只保留「有事等我（黄灯）」和「正在跑（呼吸绿）」。任务行自己不画呼吸绿（见
+   *  `taskRowLight`），它只在收起来的那一堆里替它们说「有任务正在进行」。 */
+  function taskLight(task: RailTask, { moving = true }: { moving?: boolean } = {}): RowLight | null {
+    return lightFor(
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
-        moving: task.moving === true,
-        unseenDelivery: task.unseen_delivery === true,
-        lastOutputAt: task.last_output_at,
+        // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。
+        moving: moving && task.moving === true,
+        bounced: task.presentation?.phrase === 'bounced',
       },
       clock.value
     )
-    if (light) return light
-    return isMine(task) ? MINE_LIGHT : null
+  }
+
+  /** 任务行行尾那颗灯：不画呼吸绿。任务行上「在做」的图标已经在转，同一行只留一样
+   *  在动的东西（design-system §9.0）。 */
+  function taskRowLight(task: RailTask): RowLight | null {
+    return taskLight(task, { moving: false })
+  }
+
+  /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
+   *  任务页头同一个样子。这份行没有 `session_running`，「在做」转不转看 `moving`。 */
+  function taskStateOf(task: RailTask): TaskState {
+    const agent = task.agent_handle ? agentNameMap.value.get(task.agent_handle) : undefined
+    return taskState(task, {
+      viewer: myHandle(),
+      nameOf: (handle) => memberOf(handle).name || handle,
+      agentName: agent || agentName.value,
+      now: clock.value,
+    })
   }
 
   // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。
@@ -269,11 +282,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     }
   }
 
-  /** 这一行上画的那几位成员：卡住了的在前（红），在干活的在后（绿）。同一位只画一次。 */
+  /** 这一行上画的那几位成员：此刻在这里干活的（绿点）。房间在等一位队友、等太久了
+   *  是这一行的**状态**，由行尾那盏红灯说（`lib/roomLight.ts` 的 `waiting`），不再画
+   *  成头像——和任务行同一个规矩。同一位只画一次；卡住了的那位也不画（红灯已经说了，
+   *  头像上再点一颗绿点会和它打架）。 */
   function memberMarks(topic: Topic): RailMemberMark[] {
     const marks: RailMemberMark[] = []
     const drawn = new Set<string>()
-    const add = (who: RailMemberWho, state: RailMemberMark['state'], title: string) => {
+    const add = (who: RailMemberWho, title: string) => {
       if (drawn.has(who.identity)) return
       drawn.add(who.identity)
       marks.push({
@@ -281,17 +297,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         name: who.name,
         avatar: who.avatar,
         agent: who.agent,
-        state,
         title,
       })
     }
-    for (const wait of stalledWaits(topic)) {
-      const who = memberOf(wait.member)
-      add(who, 'stalled', waitText(wait, who.name, clock.value))
-    }
+    const stalled = new Set(stalledWaits(topic).map((wait) => memberOf(wait.member).identity))
     for (const work of workersOf(topic)) {
       const who = memberOf(work.member)
-      add(who, 'working', t('work.sidebar.workingTip', { name: who.name }))
+      if (stalled.has(who.identity)) continue
+      add(who, t('work.sidebar.workingTip', { name: who.name }))
     }
     return marks
   }
@@ -400,7 +413,11 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     if (!row.collapsed) return t('work.sidebar.collapse')
     if (row.hiddenStalled) return t('work.sidebar.expandStalled')
     const hidden = row.hiddenLight
-    if (hidden?.kind === 'red') return t('work.sidebar.expandQuiet')
+    if (hidden?.kind === 'red') {
+      // 收起来的一堆里最亮的那盏红，可能是「停下报错没人接手」，也可能是「在等一位
+      // 队友等太久了」（`RowLight.why` 记着是哪一件，见 `lib/roomLight.ts`）。
+      return t(hidden.why === 'unfinished' ? 'work.sidebar.expandStopped' : 'work.sidebar.expandStalled')
+    }
     if (hidden?.kind === 'yellow') return t('work.sidebar.expandAwaits')
     if (hidden?.kind === 'green') {
       return t(hidden.breathe ? 'work.sidebar.expandWorking' : 'work.sidebar.expandDelivered')
@@ -425,6 +442,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     stalledOf,
     lightOf,
     taskLight,
+    taskRowLight,
+    taskStateOf,
     memberMarks,
     toggleTitle,
   }

@@ -17,12 +17,12 @@ import type {
   SpaceMaterial,
   SpaceTeaching,
   Task,
+  TaskDraftSummary,
   TaskMembership,
   TaskSubmissionReview,
   User,
 } from '@/types'
 import type { DomainGroup } from '@/types/spaces'
-import type { PublishDraft } from '@/views/spaces/detail/publishDrafts'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
@@ -71,7 +71,7 @@ export const SPACE_TASK_BOARD: Space = {
   defaultCategoryId: 31,
   visibleTaskLimit: 12,
   reviewStatus: 'APPROVED',
-  teaching: { currentWeek: 6, allowedTopics: ['进程调度', '死锁'] },
+  teaching: { mode: 'guide', systemPrompt: '先弄清学生卡在哪一步，再决定怎么帮。' },
 }
 
 /**
@@ -119,26 +119,31 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
-      {
-        key: 'SpacesDetailSettingsMaterials',
-        label: t('spaces.settings.tabs.materials'),
-        to: { name: 'SpacesDetailSettingsMaterials', params: { spaceId: '7' } },
-        icon: 'mdi-folder-outline',
-      },
     ],
   },
 ]
 
 /** 这块板「给 AI 队友的指导」的默认那一份。 */
 export const SPACE_TEACHING: SpaceTeaching = {
-  systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。',
-  currentWeek: 6,
-  allowedTopics: ['进程调度', '死锁'],
-  avoidInCode: ['eval', '不教 pthread 以外的线程库'],
+  mode: 'guide',
+  systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
 
-/** 资料库里的几份：文件、图、仅管理员的一档各来一个。 */
+/** 资料库里的几份：文件、图、文本、仅管理员的一档各来一个。 */
 export const SPACE_MATERIALS: SpaceMaterial[] = [
+  {
+    id: 504,
+    name: '实验三要求.md',
+    type: 'file',
+    visibility: 'members',
+    size: 1_800,
+    mime: 'text/markdown',
+    uploaderId: 2,
+    uploaderName: '王助教',
+    createdAt: NOW - 3 * 60 * 60 * 1000,
+    downloadCount: 4,
+    usedByCount: 1,
+  },
   {
     id: 501,
     name: '实验指导书.pdf',
@@ -147,6 +152,7 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 2_400_000,
     mime: 'application/pdf',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 9 * DAY,
     downloadCount: 18,
     usedByCount: 3,
@@ -159,6 +165,7 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 512_000,
     mime: 'image/png',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 6 * DAY,
     downloadCount: 7,
     usedByCount: 0,
@@ -171,11 +178,22 @@ export const SPACE_MATERIALS: SpaceMaterial[] = [
     size: 1_100_000,
     mime: 'application/pdf',
     uploaderId: 1,
+    uploaderName: '陈老师',
     createdAt: NOW - 2 * DAY,
     downloadCount: 2,
     usedByCount: undefined,
   },
 ]
+
+/** 资料库里点开「实验三要求.md」时预览读到的内容。 */
+export const SPACE_MATERIAL_TEXT = `# 实验三：进程调度
+
+用 C 实现时间片轮转调度，时间片可配置。
+
+1. 读入进程列表（到达时间、运行时间）。
+2. 输出每个进程的完成时间和周转时间。
+3. 比较时间片为 2 和 8 时的平均周转时间，写在报告里。
+`
 
 // ---- 题目与报名（说明 / 数据 / 领取者）-------------------------------------
 
@@ -205,48 +223,43 @@ export const SPACE_TEMPLATES: { index: number; name: string; description: string
   { index: 1, name: '随堂小测', description: '' },
 ]
 
-/** 发题页上「从文件导入」读出的草稿：一道。 */
-export const PUBLISH_DRAFT_ONE: PublishDraft[] = [
+/** 发题页顶栏「草稿」里的几份：两份新题目，一份已发布题目的修改。 */
+export const PUBLISH_DRAFTS: TaskDraftSummary[] = [
   {
-    key: '0-进程调度',
-    picked: true,
-    name: '实现一个优先级的进程调度器',
-    intro: '【PDF · 第 1 页】用给定的框架写出调度器。',
-    description: {
-      type: 'doc',
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: '用给定的框架写出一个优先级调度器，跑通样例。' }] },
-      ],
-    },
-    page: 1,
-  },
-]
-
-/** 发题页上「从文件导入」读出的草稿：好几道，勾着的两道。 */
-export const PUBLISH_DRAFT_MANY: PublishDraft[] = [
-  {
-    key: '0-调度',
-    picked: true,
-    name: '实现优先级调度器',
-    intro: '【PDF · 第 1 页】',
-    description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '写调度器。' }] }] },
-    page: 1,
+    id: 41,
+    spaceId: 7,
+    taskId: null,
+    taskName: null,
+    name: 'Lab 3 缓存模拟器',
+    source: 'Lab3-缓存模拟器.pdf',
+    conversationId: null,
+    version: 6,
+    updatedAt: new Date(NOW - 2 * 60_000).toISOString(),
+    missing: [],
   },
   {
-    key: '1-死锁',
-    picked: true,
-    name: '死锁检测',
-    intro: '【PDF · 第 2 页】',
-    description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '实现死锁检测。' }] }] },
-    page: 2,
+    id: 42,
+    spaceId: 7,
+    taskId: null,
+    taskName: null,
+    name: 'Lab 4 矩阵转置优化',
+    source: '第二单元实验与作业.pdf',
+    conversationId: null,
+    version: 2,
+    updatedAt: new Date(NOW - 40 * 60_000).toISOString(),
+    missing: [],
   },
   {
-    key: '2-内存',
-    picked: false,
-    name: '页面置换',
-    intro: '【PDF · 第 3 页】',
-    description: { type: 'doc', content: [] },
-    page: 3,
+    id: 38,
+    spaceId: 7,
+    taskId: 88,
+    taskName: 'Lab 2 二进制炸弹',
+    name: 'Lab 2 二进制炸弹',
+    source: '',
+    conversationId: null,
+    version: 1,
+    updatedAt: new Date(NOW - 3 * DAY).toISOString(),
+    missing: [],
   },
 ]
 
@@ -376,3 +389,132 @@ export const TASK_REVIEWS: Map<number, TaskSubmissionReview | undefined> = new M
   [102, { reviewed: true, detail: { accepted: false, score: 40, comment: '没有处理优先级相同的情况。' } }],
   [104, undefined],
 ])
+
+/** 芝士面板：正在写一份草稿的那一轮。 */
+export const PANEL_LIVE = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '根据 Lab3-缓存模拟器.pdf 出一道题',
+      at: new Date(NOW).toISOString(),
+      files: ['Lab3-缓存模拟器.pdf'],
+    },
+  ],
+  steps: [
+    { key: 't1', verb: '思考了 3 秒', arg: '', state: 'done' as const, thinking: true },
+    { key: 'c1', verb: '读取文件', arg: '1-12', state: 'done' as const },
+    { key: 'c2', verb: '查看空间题目', arg: 'Lab', state: 'done' as const },
+    { key: 'c3', verb: '填写题目', arg: 'Lab 3 缓存模拟器', state: 'run' as const },
+  ],
+}
+
+/** 芝士面板：答完的一轮，改动卡、待你确认、发布结果都在。 */
+export const PANEL_DONE = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '根据 Lab3-缓存模拟器.pdf 出一道题',
+      at: new Date(NOW).toISOString(),
+      files: ['Lab3-缓存模拟器.pdf'],
+    },
+    {
+      role: 'assistant' as const,
+      text: '已按文件填写名称、描述、提交内容和评分要点。截止时间按附件中的「第 9 周周日前」换算，需要你确认。',
+      at: new Date(NOW).toISOString(),
+      steps: [
+        { key: 'c1', verb: '读取文件', arg: '1-12', state: 'done' as const },
+        { key: 'c2', verb: '查看空间题目', arg: 'Lab', state: 'done' as const },
+        { key: 'c3', verb: '填写题目', arg: 'Lab 3 缓存模拟器', state: 'done' as const },
+      ],
+      changes: [
+        {
+          id: 1,
+          draft: 41,
+          created: false,
+          name: 'Lab 3 缓存模拟器',
+          canUndo: true,
+          rows: [
+            { key: 'name', label: '名称', value: 'Lab 3 缓存模拟器', undone: false },
+            {
+              key: 'description',
+              label: '描述',
+              value: '用 C 写一个缓存模拟器 csim，读入 valgrind 生成的访存记录',
+              undone: false,
+            },
+            { key: 'rubric', label: '评分要点', value: '3 项，合计 100 分', undone: false },
+            { key: 'deadline', label: '截止日期', value: '2026-11-01 23:59', undone: true },
+          ],
+          notes: [{ key: 'deadline', label: '截止日期', text: '按附件「第 9 周周日前」换算为 11 月 1 日' }],
+        },
+      ],
+      results: [{ taskId: 88, title: '已发布「Lab 3 缓存模拟器」', sub: '待管理员审核' }],
+    },
+  ],
+}
+
+/** 只附一份文件不打字：第一道填进眼前这份，另两道各建一份，各收成一行。 */
+export const PANEL_SPLIT = {
+  messages: [
+    {
+      role: 'user' as const,
+      text: '',
+      at: new Date(NOW).toISOString(),
+      files: ['实验室科研课题-2026秋.pdf'],
+    },
+    {
+      role: 'assistant' as const,
+      text: '文件里有三个课题：课题 A 填进了这份草稿，B、C 各建了一份。报名截止按「11 月 15 日」填写，结题日期写进了描述。',
+      at: new Date(NOW).toISOString(),
+      steps: [
+        { key: 'c1', verb: '读取文件', arg: '1-4', state: 'done' as const },
+        { key: 'c2', verb: '填写题目', arg: '基于 eBPF 的容器网络延迟分析工具', state: 'done' as const },
+        { key: 'c3', verb: '填写题目', arg: '大模型推理服务中 KV Cache 换出策略的评测', state: 'done' as const },
+        { key: 'c4', verb: '填写题目', arg: '校园网 DNS 日志中的异常域名检测', state: 'done' as const },
+      ],
+      changes: [
+        {
+          id: 1,
+          draft: 41,
+          created: false,
+          name: '基于 eBPF 的容器网络延迟分析工具',
+          canUndo: true,
+          ordinal: 1,
+          rows: [
+            { key: 'name', label: '名称', value: '基于 eBPF 的容器网络延迟分析工具', undone: false },
+            { key: 'form', label: '参与方式', value: '团队', undone: false },
+            { key: 'team_max', label: '最多人数', value: '2', undone: false },
+            { key: 'days_to_submit', label: '完成期限', value: '60 天', undone: false },
+            { key: 'attachments', label: '附件', value: '实验室科研课题-2026秋.pdf', undone: false },
+          ],
+          notes: [{ key: 'deadline', label: '截止日期', text: '原文是报名截止，结题日期 2027-01-10 写在描述里' }],
+        },
+        {
+          id: 2,
+          draft: 42,
+          created: true,
+          collapsed: true,
+          name: '大模型推理服务中 KV Cache 换出策略的评测',
+          canUndo: false,
+          ordinal: 2,
+          rows: [
+            { key: 'name', label: '名称', value: '大模型推理服务中 KV Cache 换出策略的评测', undone: false },
+            { key: 'difficulty', label: '难度', value: '高级', undone: false },
+          ],
+          notes: [],
+        },
+        {
+          id: 3,
+          draft: 43,
+          created: true,
+          collapsed: true,
+          name: '校园网 DNS 日志中的异常域名检测',
+          canUndo: false,
+          ordinal: 3,
+          rows: [{ key: 'name', label: '名称', value: '校园网 DNS 日志中的异常域名检测', undone: false }],
+          notes: [],
+        },
+      ],
+      results: [],
+    },
+  ],
+}

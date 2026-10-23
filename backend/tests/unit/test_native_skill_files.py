@@ -14,9 +14,11 @@ import pytest
 from app.domain.skill_library import (
     _NATIVE_SKILL_SRC,
     _SHIPPED_NATIVE_SKILLS,
+    RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_bodies,
     native_skill_files,
+    shipped_skill_names,
 )
 
 
@@ -115,3 +117,8 @@ def test_the_body_a_room_switches_on_is_the_one_the_executor_holds():
     assert body in _shipped()["skills/wolfram/SKILL.md"]
     assert native_skill_bodies([]) == ""
     assert native_skill_bodies(["cheese-docs"]) == "", "合成的技能没有原生目录"
+
+
+def test_a_project_skill_cannot_take_the_name_of_one_the_platform_ships():
+    """项目技能和平台技能同名，会话里只剩一份，另一份的说明悄悄没了。"""
+    assert set(shipped_skill_names()) <= RESERVED_SKILL_NAMES

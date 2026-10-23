@@ -54,14 +54,12 @@ from app.domain.review.room_notices import (
     _notify_ready as _notify_ready_from_room,
 )
 from app.domain.review.room_notices import (
-    _record_task_nudge as _record_task_nudge_from_room,
-)
-from app.domain.review.room_notices import (
     _settle_the_card as _settle_the_card_from_room,
 )
 from app.domain.review.room_notices import (
     _tell_the_reviewer as _tell_the_reviewer_from_room,
 )
+from app.domain.room_task import heard
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
@@ -156,8 +154,6 @@ async def _tell_the_reviewer(
         meta=meta,
         also=also,
         announce=_announce_of(self),
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -177,8 +173,6 @@ async def _notify_ready(
         card,
         topic,
         announce=_announce_of(self),
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -194,8 +188,6 @@ async def _note_needs_human(
         self._session,
         card=card,
         topic=topic,
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
         reason=reason,
         explain=explain,
         announce=_announce_of(self),
@@ -203,20 +195,20 @@ async def _note_needs_human(
 
 
 async def _record_task_nudge(
-    self: pkg.AcceptService, *, topic, task, content, headline, meta, dispatch=None
+    self: pkg.AcceptService, *, topic, task, content, headline, meta, replaces=None
 ):
-    return await _record_task_nudge_from_room(
+    """Wake the task's teammate with ``content`` and say ``headline`` where
+    people read it (`room_task.heard.act`)."""
+    return await heard.act(
         self._session,
         topic=topic,
         task=task,
-        content=content,
-        headline=headline,
+        said=content,
+        line=headline,
         meta=meta,
-        dispatch=dispatch,
+        replaces=replaces,
         announce=_announce_of(self),
         record_instruction=self._record_instruction,
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -276,7 +268,7 @@ async def _note_merge_blocked(
             "解决并验证后提交，用 cheese push-fix 更新原 PR。"
             "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
             "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-            "请在话题里说清楚卡在哪、需要谁做什么。"
+            "请在频道里说清楚卡在哪、需要谁做什么。"
         ),
         headline=say("mergeRefused", pr=card.pr_number),
         meta=notice(
@@ -287,10 +279,6 @@ async def _note_merge_blocked(
             detail_label=say("labelGithubReason"),
         ),
     )
-
-
-#: 任务已关闭时替代「照做」指令的那句话 —— 卡上的提示照旧，只是没人被叫起来。
-_CLOSED_TASK_ACTION = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
 
 
 async def _note_merge_stop_and_wake(
@@ -304,7 +292,6 @@ async def _note_merge_stop_and_wake(
     action: str,
     headline,
     meta,
-    dispatch=None,
 ) -> None:
     """Put `note` on the card and, when it is new, wake the task's 芝士.
 
@@ -327,12 +314,9 @@ async def _note_merge_stop_and_wake(
     await self._record_task_nudge(
         topic=topic,
         task=task,
-        content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
+        content=f"{lead}{action if actionable else heard.TASK_CLOSED}",
         headline=headline,
         meta=meta,
-        # 任务已关闭时只留这条给房间看，不叫座位：那条指令它照做不了
-        # （`delivery.agent.dispatch_pending` 只会把它标成失败并留下一行误导的账）。
-        dispatch=dispatch if actionable else None,
     )
 
 
@@ -380,7 +364,6 @@ async def _note_left_merge_queue(
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
         ),
-        dispatch=lead + action,
     )
 
 
@@ -484,8 +467,7 @@ async def _dispatch_nudges(
                 f"任务 {card.task_id}："
                 f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
                 if actionable
-                else f"{nudge.event}。原任务已关闭或不存在；"
-                "如需继续修改，请由新任务承接。"
+                else f"{nudge.event}。{heard.TASK_CLOSED}"
             ),
             headline=nudge.event,
             meta=notice(
@@ -495,6 +477,10 @@ async def _dispatch_nudges(
                 detail=nudge.detail or None,
                 detail_label=nudge.detail_label or None,
             ),
+            # Each kind's newest nudge restates that kind's whole current state
+            # on this PR, so it replaces one of its kind still waiting for the
+            # agent (`delivery.agent.record_task_instruction`).
+            replaces=f"pr:{card.pr_number}:{nudge.kind.value}",
         )
     for nudge in fresh:
         ledger.record(nudge.kind, nudge.signature)

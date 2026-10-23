@@ -15,9 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.ports import ProjectTeam
@@ -28,6 +25,8 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
+from app.domain.notification.names import names_for, with_names
+from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.repositories import NotificationRepository
@@ -49,31 +48,6 @@ def _metadata_map_of(notification: Notification) -> dict[str, Any]:
     return metadata_raw if isinstance(metadata_raw, dict) else {}
 
 
-def notification_type_of(value: str) -> NotificationType:
-    """``/notifications?type=`` 那个名字对应的 ``NotificationType``。
-
-    未知的名字抛 ``ValueError``，调用方把它翻成 400。收在这里，路由就不必为解析这
-    一个值 import ``notification.models``（守卫见
-    ``tests/unit/test_domain_import_guard.py``）。
-    """
-    return NotificationType(value)
-
-
-def notification_types_of(value: str | None) -> list[NotificationType] | None:
-    """``/notifications?type=`` 那个值的全部类型：逗号分开，可以只写一种。
-
-    界面上的「动态」按事由分档（需我处理 / 仅通知 / 系统提醒），每一档是若干种通知，
-    所以那里的筛选问的是「这几种里的任意一种」，一次问一组。未知的名字抛
-    ``ValueError``，调用方把它翻成 400；空串（``?type=``）当没筛。
-    """
-    if value is None:
-        return None
-    names = [name.strip() for name in value.split(",") if name.strip()]
-    if not names:
-        return None
-    return [notification_type_of(name) for name in names]
-
-
 class NotificationQueryService:
     """Python port of notification query operations.
 
@@ -85,8 +59,12 @@ class NotificationQueryService:
         self,
         repo: NotificationRepository,
         resolvers: Sequence[EntityInfoResolver] | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._repo = repo
+        # Where the names of people a row's tokens name are read (`names.py`);
+        # without it a row is shown as stored.
+        self._session = session
         self._resolver_map: dict[str, EntityInfoResolver] = {
             r.supported_entity_type(): r for r in (resolvers or [])
         }
@@ -102,7 +80,9 @@ class NotificationQueryService:
         接这个频道的站内信读者（HTTP 路由、别的领域）不该知道底下的 repository 叫
         什么、怎么造：那一步是跨领域摸 repository，守卫拦的就是它。
         """
-        return cls(NotificationRepository(session), resolvers=resolvers)
+        return cls(
+            NotificationRepository(session), resolvers=resolvers, session=session
+        )
 
     async def get_notification_by_id_for_current_user(
         self, user_id: int, notification_id: int
@@ -118,7 +98,6 @@ class NotificationQueryService:
         limit: int,
         cursor_created_at: datetime | None = None,
         cursor_id: int | None = None,
-        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> Sequence[Notification]:
         return await self._repo.list_for_user(
@@ -126,7 +105,6 @@ class NotificationQueryService:
             limit=limit,
             cursor_created_at=cursor_created_at,
             cursor_id=cursor_id,
-            type_=type_,
             read=read,
         )
 
@@ -147,11 +125,10 @@ class NotificationQueryService:
         self,
         user_id: int,
         *,
-        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> int:
         """Return total count of notifications for pagination metadata."""
-        return await self._repo.count_for_user(user_id=user_id, type_=type_, read=read)
+        return await self._repo.count_for_user(user_id=user_id, read=read)
 
     async def bulk_set_read_status(
         self, user_id: int, updates: Sequence[tuple[int, bool]]
@@ -296,6 +273,7 @@ class NotificationQueryService:
         notification: Notification,
         *,
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
+        names: Mapping[str, str] | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -304,6 +282,12 @@ class NotificationQueryService:
         —— 那个函数是幂等的，但不是免费的。
         """
         metadata_map = _metadata_map_of(notification)
+        # A row names people by name, not by the room's <@handle> token
+        # (`names.py`). ``names`` is the page's, read once for every row.
+        if names is None and self._session is not None:
+            names = await names_for(self._session, metadata_map)
+        if names:
+            metadata_map = with_names(metadata_map, names)
 
         if resolved_entities is None:
             entities = (
@@ -325,9 +309,14 @@ class NotificationQueryService:
     ) -> list[NotificationDTO]:
         """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
+        names = (
+            await names_for(self._session, *map(_metadata_map_of, notifications))
+            if self._session is not None
+            else {}
+        )
         return [
             await self.build_notification_dto(
-                notification, resolved_entities=resolved_entities
+                notification, resolved_entities=resolved_entities, names=names
             )
             for notification, resolved_entities in zip(
                 notifications, resolved_pages, strict=True
@@ -540,6 +529,7 @@ class ProjectNotificationService:
         chosen: str,
         decided_by: str,
         publish: Callable[[str, dict], Awaitable[None]],
+        decision_line: DecisionLine,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。"""
@@ -557,22 +547,20 @@ class ProjectNotificationService:
         row.read = True
         payload["resolved_choice"] = chosen
         row.metadata_payload = payload
-        block = None
+        line = None
         if row.conversation_id is not None and row.project_id is not None:
-            block = await BlockRepository(self._session).add(
+            line = await decision_line(
                 project_id=row.project_id,
                 conversation_id=row.conversation_id,
                 author=decided_by,
-                author_type=AuthorType.participant,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",
-                kind=BlockKind.message,
             )
         saved = await self._repo.save(row)
-        if block is not None:
-            block_payload = BlockOut.model_validate(block).model_dump(mode="json")
+        if line is not None:
+            # 先落库再投：房间里那一行要是投不出去，它也已经在了。
             await self._session.commit()
             await publish(
-                str(block.conversation_id),
-                {"type": "event_block", "block": block_payload},
+                str(row.conversation_id),
+                {"type": "event_block", "block": line},
             )
         return saved

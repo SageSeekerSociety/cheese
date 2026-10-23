@@ -1,10 +1,9 @@
-"""这一轮在房间里落下的那些行：事件块、步骤的判决、变更汇总 —— 落一块提交一次。
+"""这一轮在房间里落下的那些行：系统事件块、变更汇总 —— 落一块提交一次。
 
 ``ChatService`` 上这一族方法回答的是同一个问题：**一轮跑到一半，房间该知道什么，
-现在就要知道**。工具的调用、分身交回的结论、哪位队友开工了、一个步骤红了、这一轮
-改了哪些文件、平台自己要说的那句系统事件 —— 它们都不等整轮结束才攒成一条，而是一
-个一个地落成块、当场提交（中途崩溃或重启时，时间线上已经产生的那一段不会丢），再
-广播出去。
+现在就要知道**。这一轮改了哪些文件、平台自己要说的那句系统事件 —— 它们都不等整轮
+结束才攒成一条，而是一个一个地落成块、当场提交（中途崩溃或重启时，时间线上已经
+产生的那一段不会丢），再广播出去。
 
 搬出来时按原样搬 —— 入参出参就是它们与调用方之间全部的约定，行为一格没动。少数
 形状变化只有两处，都是「没有 `self` 可用了」：
@@ -19,6 +18,7 @@
 还是这条线）。
 """
 
+import asyncio
 import logging
 import uuid
 
@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 #: Rendering the diff is `event_lines.py`'s job; how far back to look is this
 #: side's (the git half is environment, that half is the contract).
 _CHANGE_COMMIT_WALK = 30
+
+#: How many of a channel's open tasks have their history read at once. Each one
+#: is a forge round trip, and the baseline is read in the turn's tail; a channel
+#: a dozen tasks deep used to spend that tail on them one after another.
+_BASELINE_CONCURRENCY = 6
 
 
 async def _turn_seat(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
@@ -128,7 +133,7 @@ async def _keep_run_record(
         try:
             async with sessions() as session:
                 seat = await _turn_seat(session, turn_id)
-        except Exception:  # noqa: BLE001 — the record matters more than its seat
+        except Exception:  # the record matters more than its seat
             logger.exception("could not read whose turn %s is", turn_id)
     await record_now(
         sessions,
@@ -187,7 +192,7 @@ async def _turn_changeset(
 
     try:
         return await _collect()
-    except Exception:  # noqa: BLE001 — never fail a turn over its summary
+    except Exception:  # never fail a turn over its summary
         logger.warning("change summary failed for topic %s", topic_id)
         return None
 
@@ -209,16 +214,37 @@ async def _known_commits(
             # A closed task takes no more commits, and its branch is often
             # deleted; a channel holds every task its project ever ran.
             tasks = await TaskService(session).open_branches_in_room(topic_id)
-            commits = set()
-            for task in tasks:
+            task_ids = [task.id for task in tasks]
+
+        # The ids, not the rows: that session is closed before the walks start,
+        # and one AsyncSession is not driven from two coroutines at once, so
+        # each walk reads its branch in a session of its own.
+        limit = asyncio.Semaphore(_BASELINE_CONCURRENCY)
+
+        async def _walk(task_id: uuid.UUID) -> list[str]:
+            async with limit, sessions() as session:
                 # Each history is a forge request: the connection goes back
                 # to the pool while it is in flight.
                 history = await ProjectFiles(
-                    session, project_id, task.id, release_session=True
+                    session, project_id, task_id, release_session=True
                 ).history()
-                commits.update(row["sha"] for row in history[-_CHANGE_COMMIT_WALK:])
-            return commits
-    except Exception:  # noqa: BLE001 — no baseline just means no summary
+            return [row["sha"] for row in history[-_CHANGE_COMMIT_WALK:]]
+
+        walking = [asyncio.create_task(_walk(task_id)) for task_id in task_ids]
+        try:
+            walked = await asyncio.gather(*walking)
+        except BaseException:
+            # One unreadable branch costs the whole baseline, as it did when the
+            # walks were one after another; stop the rest so nothing outlives
+            # the turn's tail.
+            for task in walking:
+                task.cancel()
+            raise
+        commits = set()
+        for shas in walked:
+            commits.update(shas)
+        return commits
+    except Exception:  # no baseline just means no summary
         logger.warning(
             "commit baseline unreadable for topic %s", topic_id, exc_info=True
         )

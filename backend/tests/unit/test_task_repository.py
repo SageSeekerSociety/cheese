@@ -555,16 +555,6 @@ class TestTaskMembershipRepository:
         assert result is m
         session.add.assert_called_once_with(m)
 
-    @pytest.mark.anyio
-    async def test_find_active_locked_memberships(self):
-        session = _mock_session()
-        m = _membership(is_team=True)
-        session.execute.return_value = _mock_scalars([m])
-        repo = TaskMembershipRepository(session)
-
-        result = await repo.find_active_locked_memberships(100, ["ALWAYS"])
-        assert list(result) == [m]
-
 
 # ---------------------------------------------------------------------------
 # TaskSubmissionRepository
@@ -716,6 +706,25 @@ class TestTaskSubmissionEntryRepository:
         assert list(result) == [entry]
 
     @pytest.mark.anyio
+    async def test_list_by_submission_ids_groups_by_submission(self):
+        session = _mock_session()
+        first = SimpleNamespace(id=1, task_submission_id=1, index=0)
+        second = SimpleNamespace(id=2, task_submission_id=2, index=0)
+        session.execute.return_value = _mock_scalars([first, second])
+        repo = TaskSubmissionEntryRepository(session)
+
+        result = await repo.list_by_submission_ids([1, 2])
+        assert result == {1: [first], 2: [second]}
+
+    @pytest.mark.anyio
+    async def test_list_by_submission_ids_empty_skips_query(self):
+        session = _mock_session()
+        repo = TaskSubmissionEntryRepository(session)
+
+        assert await repo.list_by_submission_ids([]) == {}
+        session.execute.assert_not_awaited()
+
+    @pytest.mark.anyio
     async def test_create_entries(self):
         session = _mock_session()
         repo = TaskSubmissionEntryRepository(session)
@@ -762,6 +771,25 @@ class TestTaskSubmissionReviewRepository:
 
         result = await repo.get_by_submission_id(1)
         assert result is r
+
+    @pytest.mark.anyio
+    async def test_get_by_submission_ids_maps_by_submission(self):
+        session = _mock_session()
+        first = _review(id=1, submission_id=1)
+        second = _review(id=2, submission_id=2)
+        session.execute.return_value = _mock_scalars([first, second])
+        repo = TaskSubmissionReviewRepository(session)
+
+        result = await repo.get_by_submission_ids([1, 2])
+        assert result == {1: first, 2: second}
+
+    @pytest.mark.anyio
+    async def test_get_by_submission_ids_empty_skips_query(self):
+        session = _mock_session()
+        repo = TaskSubmissionReviewRepository(session)
+
+        assert await repo.get_by_submission_ids([]) == {}
+        session.execute.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_exists_by_submission_id_true(self):

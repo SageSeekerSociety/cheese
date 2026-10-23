@@ -6,6 +6,7 @@ import vue from 'eslint-plugin-vue'
 import prettier from 'eslint-plugin-prettier/recommended'
 import vueParser from 'vue-eslint-parser'
 import simpleImportSort from 'eslint-plugin-simple-import-sort'
+import a11y from 'eslint-plugin-vuejs-accessibility'
 
 export default [
   {
@@ -103,6 +104,33 @@ export default [
     },
   },
   {
+    // A view that declares its events as overloads
+    // (`defineEmits<{ (e: 'retry'): void }>()`) loses the event names to Volar
+    // once it carries twenty-odd of them: the view's props type degrades to an
+    // `on*` index signature, and a forwarding shell that spreads
+    // `{ ...$props, ...$attrs }` onto it then reports
+    // `TS2345 … onVnodeBeforeMount is incompatible with index signature` on the
+    // SHELL — a file the author of the view never touched, so the error points
+    // nowhere near its cause.
+    //
+    // The name → parameters form (`retry: []`, `'update:open': [v: boolean]`)
+    // declares the same events without the degradation, and it is what every
+    // other view already uses. Scoped to views because the shell is what makes
+    // it fatal: components/ has short call-signature declarations that are never
+    // forwarded this way and does not need an exemption to stay put.
+    files: ['src/**/*View.vue'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="defineEmits"] TSCallSignatureDeclaration',
+          message:
+            "Declare emits as name → parameters — `retry: []`, `'update:open': [v: boolean]`. The call-signature form drops the event names, and any forwarding shell around this view then fails to type-check.",
+        },
+      ],
+    },
+  },
+  {
     // `src/network/` was the second request stack: axios underneath, its own
     // envelope stripping and its own error type. Every caller moved to `@/api`
     // and the directory was deleted; this rule is what keeps it deleted. A
@@ -169,6 +197,48 @@ export default [
       ],
     },
   },
+  {
+    // A test reads what the code does, not what the code says (AGENTS.md, "Test
+    // behaviour, never the implementation"): a spec that reads source as text
+    // goes red on a refactor and stays green when behaviour breaks. The ignores
+    // list only shrinks — a file leaves it when its read is replaced by a test of
+    // behaviour or by a linter.
+    files: ['src/**/*.spec.ts', 'src/**/*.test.ts'],
+    ignores: [
+      'src/branchProtectionSection.spec.ts',
+      'src/offScreenSkipping.spec.ts',
+      'src/styles/docBlocks.spec.ts',
+      'src/views/home/Landing.spec.ts',
+      'src/vShowDisplayUtilities.spec.ts',
+      'src/i18n/catalog.spec.ts',
+      'src/components/base/BaseButton.spec.ts',
+      'src/components/base/SettingsRow.spec.ts',
+      'src/components/CheeseAvatar.spec.ts',
+      'src/views/feedback/scroll.spec.ts',
+      'src/views/demo/demoTokens.spec.ts',
+      'src/components/ChatPanel.mentionMenu.spec.ts',
+      'src/views/demo/demoTransitions.spec.ts',
+      'src/views/demo/DemoTokensPage.spec.ts',
+      'src/components/admin/AdminGrid.spec.ts',
+      'src/components/common/Navigation/BottomAppBar.spec.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportDeclaration[source.value=/\\?raw$/]',
+          message: "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'.",
+        },
+        {
+          selector: 'ImportDeclaration[source.value=/^(node:)?fs(\\u002Fpromises)?$/]',
+          message: "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'.",
+        },
+      ],
+    },
+  },
+  // Layout (prettier, import order) is judged like any other rule: CI's
+  // `pnpm run lint` fails a tree that does not hold it, and the pre-commit
+  // `frontend-fix` hook applies it to the staged files with `eslint --fix`.
   prettier,
   {
     rules: {
@@ -212,6 +282,19 @@ export default [
         },
       ],
       'simple-import-sort/exports': 'error',
+    },
+  },
+  // The accessibility rules (eslint-plugin-vuejs-accessibility), as plain
+  // errors. A line that departs from one carries an eslint-disable whose
+  // reason names the keyboard path or why the rule does not apply there.
+  ...a11y.configs['flat/recommended'],
+  {
+    rules: {
+      // HTML associates a label with its control either by wrapping it or by
+      // `for`; either one gives the control its name. The plugin's default
+      // demands both, which no label pointing `for` at a Vuetify field can meet,
+      // since the field's <input> is not a child of the label.
+      'vuejs-accessibility/label-has-for': ['error', { required: { some: ['nesting', 'id'] } }],
     },
   },
 ]

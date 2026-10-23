@@ -1,15 +1,15 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t v-if="decliner" scope="global" keypath="notifications.TEAM_INVITATION_DECLINED.title" tag="span">
         <template #decliner><UserRef :handle="decliner.handle" :name="decliner.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
     </div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
-    <div v-if="declineReason" class="text-body-2 text-medium-emphasis mt-2 message-box">
-      <div class="text-caption mb-1">{{ t('notifications.common.reason') }}:</div>
-      <div class="reason-text">{{ declineReason }}</div>
+    <div class="n-sub">{{ body }}</div>
+    <div v-if="declineReason" class="n-quote">
+      <span class="n-label">{{ t('notifications.common.reason') }}</span
+      >{{ declineReason }}
     </div>
   </div>
 </template>
@@ -69,26 +69,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
-.error-box {
-  border-left: 3px solid var(--v-theme-error);
-}
-
-.message-box {
-  background-color: rgba(var(--v-theme-surface-variant), 0.7);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-top: 8px;
-  position: relative;
-}
-
-.reason-text {
-  font-style: italic;
-}
-</style>

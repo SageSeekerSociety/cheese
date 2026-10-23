@@ -50,7 +50,8 @@ class NotificationType(str, Enum):
     REPLY = "REPLY"
     REACTION = "REACTION"
     PROJECT_INVITE = "PROJECT_INVITE"
-    DEADLINE_REMIND = "DEADLINE_REMIND"
+    #: The owner offers you their project (`membership.OwnershipService`).
+    PROJECT_TRANSFER = "PROJECT_TRANSFER"
 
     TEAM_JOIN_REQUEST = "TEAM_JOIN_REQUEST"
     TEAM_INVITATION = "TEAM_INVITATION"
@@ -86,6 +87,21 @@ class NotificationType(str, Enum):
     #: 删公告连它发出去的这些一起撤回。
     SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
 
+    #: 空间里一道题目上发生的、要领取者或出题人知道的事（`task_notices`）：领取
+    #: 通过或没通过、提交批改了、提交要求改了、个人提交期限改了、提交期限还剩三天、
+    #: 有人过了期限没交。说的话是 `payload.content`（带键），哪一种看
+    #: `payload.event`。
+    TASK_NOTICE = "TASK_NOTICE"
+    #: 提交期限只剩一天、还没交：和 `TASK_NOTICE` 分开，因为只有它推送。
+    TASK_DUE_SOON = "TASK_DUE_SOON"
+
+    #: 个人芝士自己做事时告诉这个人的（`routine.personal`）：一条例行事务运行完了、
+    #: 有操作待他确认、例行事务因额度或久未登录暂停了，或者芝士用
+    #: `cheese_notify_me` 发给他的一句话。说的话是 `payload.content`（平台的句子
+    #: 带键），哪一种看 `payload.event`；`payload.assistantConversation` 是点开要打开
+    #: 的那段对话。
+    ASSISTANT_NOTICE = "ASSISTANT_NOTICE"
+
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
     CHANGE_ALERT = "change_alert"  # 变更提醒
@@ -109,6 +125,13 @@ class DeliveryEvent:
     #: **必填**。给它一个「现在」的默认值，等于让每个调用点都可以不声不响地把投递的
     #: 时刻当成事件的时刻，而这个字段整条设计都在说那两个不是一回事。
     occurred_at: datetime
+
+
+#: Payload key of an instruction that only the newest of its kind is worth
+#: reading: what it says is the current state of one thing (a PR's checks, its
+#: conflict), so an earlier one with the same value that has not reached the
+#: session yet is replaced, not stacked (`delivery.agent.record_task_instruction`).
+REPLACES: Final = "replaces"
 
 
 def dedup_key(event_id: uuid.UUID, handle: str) -> str:

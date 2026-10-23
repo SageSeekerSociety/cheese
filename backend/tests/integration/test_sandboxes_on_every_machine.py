@@ -12,6 +12,7 @@ The rules, as a person would state them before any of this was built:
 """
 
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,13 +20,14 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select, update
 
+from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import LOST_KEY
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import SandboxHome
-from tests.integration.test_switch_pushes_first import _machines, _owner_id, _room
+from tests.integration.test_switch_pushes_first import _machines, _room
 
 pytestmark = pytest.mark.anyio
 
@@ -34,7 +36,7 @@ async def _on_alices_computers(client, monkeypatch):
     """A room whose agent works in a sandbox on alice's computers, placed by
     one tool call."""
     room = await _room(client)
-    spec = f"devices_of:{await _owner_id(client)}"
+    spec = "team_devices"
     async with client.test_factory() as db:
         await AgentSessionService(db).set_environment(
             room.conversation_id,
@@ -111,6 +113,28 @@ async def test_a_sandbox_in_use_is_kept(client, monkeypatch):
     assert await _home(client, room) is not None
 
 
+async def test_a_pressed_pool_does_not_shorten_a_persons_computers_idle_time(
+    client, monkeypatch
+):
+    """Pool pressure is the platform's business: a sandbox on a person's own
+    computer keeps its own idle time, so five minutes still counts as just
+    used (#1829)."""
+    room = await _on_alices_computers(client, monkeypatch)
+    # No cloud host at all: the pool has no free slot to speak of.
+
+    await _last_used(client, room, timedelta(minutes=5))
+    destroyed = await _sweep(client, monkeypatch)
+
+    destroyed.assert_not_awaited()
+    assert await _home(client, room) is not None
+
+    await _last_used(client, room, timedelta(minutes=11))
+    destroyed = await _sweep(client, monkeypatch)
+
+    assert destroyed.await_args.args[1:3] == (room.device, "destroy")
+    assert await _home(client, room) is None
+
+
 async def test_a_sandbox_left_behind_is_destroyed_by_the_same_sweep(
     client, monkeypatch
 ):
@@ -142,4 +166,48 @@ async def test_an_offline_computer_keeps_its_sandbox_until_it_is_back(
     destroyed.assert_not_awaited()
     assert await _home(client, room) is not None
     await _sweep(client, monkeypatch)
+    assert await _home(client, room) is None
+
+
+async def _open_turn(client, room, *, seat, ago: timedelta):
+    """A turn left open in the room's conversation since ``ago``."""
+    async with client.test_factory() as db:
+        db.add(
+            AgentTurn(
+                id=uuid.uuid4(),
+                conversation_id=room.conversation_id,
+                continuation_id=uuid.uuid4(),
+                author="alice",
+                agent_handle=seat,
+                started_at=datetime.now(UTC) - ago,
+            )
+        )
+        await db.commit()
+
+
+async def test_another_seats_turn_does_not_keep_this_sessions_sandbox(
+    client, monkeypatch
+):
+    """Another line working in the same room is not this session's work: its
+    sandbox goes once the session itself has been idle."""
+    room = await _on_alices_computers(client, monkeypatch)
+    await _last_used(client, room, timedelta(minutes=11))
+    await _open_turn(client, room, seat="another-line", ago=timedelta(minutes=1))
+
+    destroyed = await _sweep(client, monkeypatch)
+
+    assert destroyed.await_args.args[1:3] == (room.device, "destroy")
+    assert await _home(client, room) is None
+
+
+async def test_a_dead_turn_left_open_does_not_keep_a_sandbox(client, monkeypatch):
+    """A process killed inside a turn leaves its row open and nothing closes
+    it: the sandbox must not be held by it for good."""
+    room = await _on_alices_computers(client, monkeypatch)
+    await _last_used(client, room, timedelta(minutes=11))
+    await _open_turn(client, room, seat=room.agent_handle, ago=timedelta(hours=3))
+
+    destroyed = await _sweep(client, monkeypatch)
+
+    assert destroyed.await_args.args[1:3] == (room.device, "destroy")
     assert await _home(client, room) is None

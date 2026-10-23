@@ -13,12 +13,11 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.membership.services import MemberService
-from app.domain.room_task.services import TaskService
+from app.auth.project_roles import may
+from app.domain.project_permissions import Permission
 from app.domain.topic.models import TopicKind, TopicStatus
-from app.domain.topic.ports import ProjectTeam
+from app.domain.topic.ports import OpenTaskCounts, ProjectTeam, TopicMembership
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.services import TopicMemberService
 
 
 async def channel_directory(
@@ -27,12 +26,13 @@ async def channel_directory(
     viewer: str,
     *,
     team: ProjectTeam,
+    counts: OpenTaskCounts,
+    members: TopicMembership,
 ) -> dict:
-    members = TopicMemberService(session)
     repo = TopicRepository(session)
     topics = await repo.list_for_project(project_id)
     seen = {t.id for t in await members.seen(topics, viewer, team=team)}
-    manages_project = await MemberService(session).manages(project_id, viewer)
+    manages_project = await may(session, project_id, viewer, Permission.manage_channels)
     listed = [t for t in topics if t.id in seen or manages_project]
     ids = [t.id for t in listed]
     joined = await members.joined_topic_ids(listed, viewer, team=team)
@@ -42,16 +42,19 @@ async def channel_directory(
     # 已经在收尾、没有人还要动。曾经这里读的是 `open_counts`（只按 status 数），于是
     # 同一个频道在三处会给出不同的数（清单第 14 条）。字段名沿用 `open_tasks`，值换成
     # 这一个判据。
-    open_tasks = await TaskService(session).underway_counts(ids)
+    open_tasks = await counts.underway_counts(ids)
     last_activity = await repo.last_activity_for_topics(ids)
     managed = await members.managed_topic_ids(
         [t for t in listed if t.id in seen], viewer
     )
+    # 每个频道的主人一次取完：这里逐频道问 `owner_of` 是整页唯一还在随频道数
+    # 增长的读（上面那些全是批量接口），而一个项目几十个频道就是几十次往返。
+    managers = await members.owners_of(ids)
     items = []
     for t in listed:
         general = t.kind == TopicKind.root
         visible = t.id in seen
-        manager = None if general else await members.owner_of(t.id)
+        manager = None if general else managers.get(t.id)
         when = last_activity.get(t.id)
         items.append(
             {

@@ -7,12 +7,14 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.integration.conftest import (
     join_project_team,
     post_project,
+    registered,
     session_auth_headers,
 )
 
@@ -73,15 +75,15 @@ def test_what_happened_to_a_task_is_in_the_project_progress(client):
     channel = _channel(client, project)
     task = _task(client, channel, "报名表单字段精简")
     r = client.post(
-        f"/topics/{task}/start",
-        json={"reviewer_handle": "alice"},
+        f"/topics/{task}/close",
+        json={"conclusion": "字段删掉了"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
     kinds = {(h["kind"], h["taskId"]) for h in _progress(client, project, "alice")}
     assert ("created", task) in kinds
-    assert ("started", task) in kinds
+    assert ("completed", task) in kinds
 
 
 def test_a_private_channels_tasks_stay_out_of_an_outsiders_progress(client):
@@ -96,17 +98,79 @@ def test_a_private_channels_tasks_stay_out_of_an_outsiders_progress(client):
     assert hidden in {h["taskId"] for h in _progress(client, project, "alice")}
 
 
-def test_starting_and_closing_a_task_are_said_in_the_task_not_the_channel(client):
+def _card_merged_on_github(client, channel: str, task: str, merged_by: dict) -> None:
+    """一张在 GitHub 上被直接合掉的卡：没有平台采纳人，只有 GitHub 合并人。"""
+    from app.domain.review.models import AcceptCard, AcceptStatus
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                AcceptCard(
+                    topic_id=uuid.UUID(channel),
+                    task_id=uuid.UUID(task),
+                    reviewer_handle="alice",
+                    status=AcceptStatus.accepted,
+                    decided_by=None,
+                    pr_number=9,
+                    pr_url="https://github.com/acme/widgets/pull/9",
+                    pr_merged_at=datetime.now(UTC),
+                    merged_by=merged_by,
+                )
+            )
+            await session.commit()
+
+    client.portal.call(seed)
+
+
+def _accept_by(client, project: str, task: str) -> list[tuple[str | None, bool]]:
+    return [
+        (h["by"], h["byGithub"])
+        for h in _progress(client, project, "alice")
+        if h["kind"] == "accepted" and h["taskId"] == task
+    ]
+
+
+def test_an_accept_merged_on_github_names_the_linked_platform_member(client):
+    """GitHub 数字 id 查得到平台成员：显示平台 handle，不显示 GitHub 登录名。"""
+    from app.domain.oauth.repositories import OAuthConnectionRepository
+
+    project = _project(client)
+    channel = _channel(client, project)
+    task = _task(client, channel, "直接合的那次")
+    _card_merged_on_github(
+        client, channel, task, {"github_id": "5150", "login": "bob-gh"}
+    )
+
+    async def link() -> None:
+        async with client.test_factory() as session:
+            bob = await registered(session, "bob")
+            await OAuthConnectionRepository(session).create(
+                user_id=bob, provider_id="github_app", provider_user_id="5150"
+            )
+            await session.commit()
+
+    client.portal.call(link)
+
+    assert _accept_by(client, project, task) == [("bob", False)]
+
+
+def test_an_accept_merged_on_github_falls_back_to_the_github_login(client):
+    """查不到平台成员：显示 GitHub 登录名，不拿负责人顶。"""
+    project = _project(client)
+    channel = _channel(client, project)
+    task = _task(client, channel, "没人认得的那次")
+    _card_merged_on_github(
+        client, channel, task, {"github_id": "999", "login": "someone-gh"}
+    )
+
+    assert _accept_by(client, project, task) == [("someone-gh", True)]
+
+
+def test_closing_a_task_is_said_in_the_task_not_the_channel(client):
     project = _project(client)
     channel = _channel(client, project)
     task = _task(client, channel, "首页加载慢")
 
-    r = client.post(
-        f"/topics/{task}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
     r = client.post(
         f"/topics/{task}/close",
         json={"conclusion": "已经改好"},
@@ -114,7 +178,5 @@ def test_starting_and_closing_a_task_are_said_in_the_task_not_the_channel(client
     )
     assert r.status_code == 200, r.text
 
-    assert "task_started" not in _said(client, channel)
     assert "task_closed" not in _said(client, channel)
-    assert "task_started" in _said(client, task)
     assert "task_closed" in _said(client, task)

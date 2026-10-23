@@ -8,6 +8,7 @@ from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, sele
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.models import ProjectForge
 from app.domain.review.models import (
     AcceptApproval,
     AcceptCard,
@@ -220,8 +221,16 @@ class AcceptCardRepository:
         can file again after a rejection, and the current card is the one that
         says where the work stands.
         """
+        return (await self.latest_and_counts_by_task(task_ids))[0]
+
+    async def latest_and_counts_by_task(
+        self, task_ids: Collection[uuid.UUID]
+    ) -> tuple[dict[uuid.UUID, AcceptCard], dict[uuid.UUID, int]]:
+        """`latest_by_task`, plus how many cards each thread has filed in all
+        (「第 N 版」 on a card in review). The same rows answer both, so it is
+        still one query."""
         if not task_ids:
-            return {}
+            return {}, {}
         stmt = (
             select(AcceptCard)
             # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
@@ -234,11 +243,13 @@ class AcceptCardRepository:
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
         latest: dict[uuid.UUID, AcceptCard] = {}
+        counts: dict[uuid.UUID, int] = {}
         for card in (await self._session.scalars(stmt)).all():
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
                 latest[card.task_id] = card
-        return latest
+                counts[card.task_id] = counts.get(card.task_id, 0) + 1
+        return latest, counts
 
     async def listed(
         self,
@@ -279,6 +290,8 @@ class AcceptCardRepository:
                 AcceptCard.pr_url,
                 AcceptCard.change_subject,
                 AcceptCard.note,
+                AcceptCard.deliverable_name,
+                AcceptCard.created_at,
             )
             .where(
                 or_(
@@ -306,11 +319,17 @@ class AcceptCardRepository:
 
         侧栏要问「这个地方最新那张卡停在哪」：只拉没结算的，就分不出「退回了还没重
         递」和「早就合了」；拉全部历史又太多。结算的只看最近一段就够。
+
+        **关掉的活不算。** 卡描述的是「此刻还有东西在走」；一条已经关掉的活名下的
+        卡，哪怕没结算，也不再说明任何事。不在这里挡住，侧栏会拿它算出「名下的活
+        在交付链路上」，让一个 10-12 就关掉的活到今天还让房间亮绿灯。房间自己的卡
+        （`task_id` 空）不受影响 —— 它挂的不是活。
         """
         if not place_ids:
             return []
         stmt = (
             select(AcceptCard)
+            .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
                 or_(
                     AcceptCard.topic_id.in_(place_ids),
@@ -320,9 +339,35 @@ class AcceptCardRepository:
                     AcceptCard.status.in_(open_statuses),
                     AcceptCard.created_at >= settled_since,
                 ),
+                or_(AcceptCard.task_id.is_(None), Task.status == TaskStatus.open),
             )
             .order_by(AcceptCard.created_at)
         )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_open_on_closed_tasks(
+        self,
+        open_statuses: tuple[AcceptStatus, ...],
+        *,
+        project_id: uuid.UUID | None = None,
+    ) -> list[AcceptCard]:
+        """已关的活上还没结算的卡 —— 关任务时漏下、或修复之前就停在那里的那些。
+
+        轮询器拿它做第二道锁（`review.archive.close_cards_for_closed_tasks`）：
+        这些卡不该再被跟进，行的状态也该跟着活一起收敛。
+        """
+        stmt = (
+            select(AcceptCard)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                Task.status == TaskStatus.closed,
+                AcceptCard.status.in_(open_statuses),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        if project_id is not None:
+            stmt = stmt.where(Topic.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
     async def returned_since(
@@ -358,6 +403,36 @@ class AcceptCardRepository:
                 AcceptCard.status == AcceptStatus.accepted,
             )
             .order_by(AcceptCard.decided_at, AcceptCard.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def accepted_missing_merge_actor(
+        self, *, since: datetime, limit: int
+    ) -> list[uuid.UUID]:
+        """Cards merged since `since` whose PR merger is still unknown.
+
+        `merged_by` NULL is "nobody asked yet"; `{}` is "asked, GitHub named
+        nobody" and is excluded here so the sweep stops spending reads on it.
+        Only cards with no platform decider need the GitHub fact — a click on
+        the platform already names the person. Only a GitHub binding can
+        answer: a Forgejo project's merged PR has no GitHub `merged_by` to
+        read, and asking it every tick would never fill the column.
+        """
+        stmt = (
+            select(AcceptCard.id)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .join(ProjectForge, ProjectForge.project_id == Topic.project_id)
+            .where(
+                AcceptCard.status == AcceptStatus.accepted,
+                AcceptCard.decided_by.is_(None),
+                AcceptCard.pr_number.is_not(None),
+                AcceptCard.merged_by.is_(None),
+                AcceptCard.pr_merged_at.is_not(None),
+                AcceptCard.pr_merged_at >= since,
+                ProjectForge.kind == "github_app",
+            )
+            .order_by(AcceptCard.pr_merged_at)
+            .limit(limit)
         )
         return list((await self._session.scalars(stmt)).all())
 
@@ -400,6 +475,10 @@ class AcceptCardRepository:
         the transient "this is on your desk right now". `pending` alone is the
         waiting state — a card in `pending_gate`/`gate_failed`/`conflict` is
         with 芝士, and an `accepted` one has already been decided.
+
+        关掉的活上的卡不算「在等你」：那件事已经结束，一件 10-12 就关掉的活
+        不该让人在 10-17 还收到一盏黄灯。和侧栏其他条判据同一个限制
+        （`list_recent_for_places`）。
         """
         if not topic_ids:
             return {}
@@ -407,9 +486,11 @@ class AcceptCardRepository:
         stmt = (
             select(AcceptCard)
             .join(AcceptCardReviewer, AcceptCardReviewer.card_id == AcceptCard.id)
+            .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
                 AcceptCard.topic_id.in_(topic_ids),
                 AcceptCardReviewer.handle == reviewer_handle,
+                or_(AcceptCard.task_id.is_(None), Task.status == TaskStatus.open),
             )
         )
         named: dict[uuid.UUID, bool] = {}
@@ -502,14 +583,23 @@ class AcceptCardRepository:
         closes those cards at archive time; this join is the second lock,
         covering rows that predate the fix or arrive by some future archive
         path.
+
+        一条关掉的活也一样：它名下的卡不再驱动任何东西。这里挡掉它，归档那条
+        判据就完整了 —— 房间还在、活已经结束，平台没有理由再拿人的 GitHub
+        凭据去跟进它（`review.archive.close_cards_for_closed_tasks` 负责把行
+        也收敛掉）。
         """
+        task_open = or_(AcceptCard.task_id.is_(None), Task.status == TaskStatus.open)
         stmt = (
             select(AcceptCard)
             .join(Topic, Topic.id == AcceptCard.topic_id)
             .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
                 or_(
-                    AcceptCard.status == AcceptStatus.pending,
+                    and_(
+                        AcceptCard.status == AcceptStatus.pending,
+                        task_open,
+                    ),
                     and_(
                         AcceptCard.status == AcceptStatus.rejected,
                         AcceptCard.pr_merged_at.is_(None),

@@ -33,16 +33,20 @@ import {
   envInfo,
   envStatus,
   mcpList,
+  mcpLocal,
   mcpServer,
   modelChoice,
   taskNamingState,
 } from './catalogSettingsDataFixtures'
 
+import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
+import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
+import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
 
 /** 五件都吃 vuetify。`ProjectMcpSettings` 多一样 i18n：它用 `<i18n-t>`，那一个由插件
  *  全局注册，不装就解析不了、挂起来会警告。 */
@@ -51,6 +55,56 @@ const UI_I18N: CatalogNeed[] = ['vuetify', 'i18n']
 const DeviceSessionsPreview = markRaw(defineComponent({ setup: () => () => h('span', '设备会话入口') }))
 
 export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'project-credit-budget',
+    title: 'ProjectCreditBudget',
+    about: 'Project spending and member task caps, with public spending shown separately.',
+    file: 'src/components/settings/ProjectCreditBudget.vue',
+    component: ProjectCreditBudget,
+    needs: UI,
+    states: [
+      {
+        name: 'Project administrator',
+        note: 'Blank limits leave spending bounded by the team balance and project budget.',
+        props: {
+          editable: true,
+          budget: {
+            credits_limit: 1000,
+            credits_used: 130,
+            credits_remaining: 870,
+            public_credits: 30,
+            unattributed_credits: 0,
+            members: { alice: { name: 'Alice', credits_limit: 200, credits_used: 100 } },
+            since: '2026-10-01T00:00:00+00:00',
+          },
+        },
+        expect: 'Alice',
+      },
+      {
+        name: 'Project member',
+        note: 'Members can read spending and limits; only project administrators can change them.',
+        props: {
+          editable: false,
+          budget: {
+            credits_limit: 1000,
+            credits_used: 130,
+            credits_remaining: 870,
+            public_credits: 30,
+            unattributed_credits: 0,
+            members: { alice: { name: 'Alice', credits_limit: 200, credits_used: 100 } },
+            since: '2026-10-01T00:00:00+00:00',
+          },
+        },
+        expect: 'Alice',
+      },
+      {
+        name: 'Read failed',
+        note: 'A failed read keeps its error and a retry action.',
+        props: { editable: false, budget: null, error: 'Budget information could not be loaded.' },
+        expect: 'Budget information could not be loaded.',
+      },
+    ],
+  },
   {
     id: 'settings-task-naming',
     title: 'ProjectTaskNamingSettings',
@@ -330,9 +384,9 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '两台服务器，一台要连接一台缺密钥',
-        note: '清单来自项目 .mcp.json：oauth 那台给「连接」，headers 那台先把 SEARCH_KEY 填上再「保存」；每一行都标它从哪来。',
-        props: { list: mcpList(), error: '', busy: '', values: {} },
-        expect: '来自项目的',
+        note: '远程的和在项目机器上运行的分两组；oauth 那台给「连接」，缺值的那台给「填写」，本地命令那台写着它的命令。',
+        props: { list: mcpList(), error: '', busy: '', values: {}, manages: true, agentName: '芝士' },
+        expect: '在项目机器上运行',
       },
       {
         name: '连上了，写着谁授权',
@@ -346,32 +400,196 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
           error: '',
           busy: '',
           values: {},
+          manages: true,
+          agentName: '芝士',
         },
         expect: '已连接',
       },
       {
-        name: '正填着一条密钥',
-        note: '密钥输入框里那一行画的是这一层给的原文（password 框）；填了字，那颗「保存」才不是灰的。',
-        props: { list: mcpList(), error: '', busy: '', values: { SEARCH_KEY: 'sk-123' } },
-        expectSelector: 'input[type="password"]',
+        name: '缺值的那台收着填写框',
+        note: '填值默认收起：缺值时按钮是「填写」，点开才出现 password 框。',
+        props: {
+          list: mcpList(),
+          error: '',
+          busy: '',
+          values: { SEARCH_KEY: 'sk-123' },
+          manages: true,
+          agentName: '芝士',
+        },
+        expect: '填写',
       },
       {
         name: '一次动作在路上',
         note: '某一台正在连：那一行那颗按钮转圈（busy 是那台的名字）。',
-        props: { list: mcpList(), error: '', busy: 'tracker', values: {} },
+        props: { list: mcpList(), error: '', busy: 'tracker', values: {}, manages: true, agentName: '芝士' },
         expectSelector: '.v-btn--loading',
       },
       {
         name: '清单读不出来',
         note: '仓库里的 .mcp.json 格式不对：不画清单，只留一句说明。',
-        props: { list: mcpList({ servers: [], problem: 'invalid' }), error: '', busy: '', values: {} },
+        props: {
+          list: mcpList({ servers: [], problem: 'invalid' }),
+          error: '',
+          busy: '',
+          values: {},
+          manages: true,
+          agentName: '芝士',
+        },
         expect: '无法读取 .mcp.json：格式不正确',
       },
       {
         name: '读失败',
         note: '还没读到就是 null：只在上面留一句后端原话。',
-        props: { list: null, error: '读取 MCP 服务器失败', busy: '', values: {} },
+        props: { list: null, error: '读取 MCP 服务器失败', busy: '', values: {}, manages: true, agentName: '芝士' },
         expect: '读取 MCP 服务器失败',
+      },
+      {
+        name: '一条本地命令启动失败',
+        note: '状态写「启动失败」，日志收在「查看日志」后面，点开看最后几行。',
+        props: {
+          list: mcpList({
+            servers: [mcpLocal({ run: { state: 'failed', log: ['ModuleNotFoundError: notes'], owner: null } })],
+          }),
+          error: '',
+          busy: '',
+          values: {},
+          manages: true,
+          agentName: '芝士',
+        },
+        expect: '查看日志',
+      },
+      {
+        name: '等团队管理员允许',
+        note: '项目机器是团队设备：命令等团队管理员在「等你处理」里允许。',
+        props: {
+          list: mcpList({ servers: [mcpLocal({ run: { state: 'awaiting', log: [], owner: 'dana' } })] }),
+          error: '',
+          busy: '',
+          values: {},
+          manages: true,
+          agentName: '芝士',
+        },
+        expect: '允许',
+      },
+    ],
+  },
+  {
+    id: 'project-roles-settings',
+    title: 'ProjectRolesSettings',
+    about: '项目设置里的「角色和权限」：一张角色乘权限的表，所有人都看得到，只有管理员能勾选；管人和改角色两行锁定。',
+    file: 'src/components/settings/ProjectRolesSettings.vue',
+    component: ProjectRolesSettings,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '管理员看到的',
+        note: '默认值，能勾选；和默认一样所以没有「恢复默认」。',
+        props: {
+          grants: {
+            admin: [
+              'manage_members',
+              'change_roles',
+              'edit_settings',
+              'export_project',
+              'create_channels',
+              'manage_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'share_documents',
+              'comment',
+              'configure_agents',
+            ],
+            member: [
+              'export_project',
+              'create_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'share_documents',
+              'comment',
+              'configure_agents',
+            ],
+            mentor: ['speak', 'ask_agent', 'comment'],
+          },
+          editable: true,
+          agentName: '芝士',
+          isDefault: true,
+        },
+        expect: '修改项目设置',
+      },
+      {
+        name: '成员看到的',
+        note: '只能看，底下说只有管理员能修改。',
+        props: {
+          grants: {
+            admin: [
+              'manage_members',
+              'change_roles',
+              'edit_settings',
+              'export_project',
+              'create_channels',
+              'manage_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'share_documents',
+              'comment',
+              'configure_agents',
+            ],
+            member: [
+              'export_project',
+              'create_channels',
+              'speak',
+              'ask_agent',
+              'tasks',
+              'edit_content',
+              'share_documents',
+              'comment',
+              'configure_agents',
+            ],
+            mentor: ['speak', 'ask_agent', 'comment'],
+          },
+          editable: false,
+          agentName: '芝士',
+          isDefault: true,
+        },
+        expect: '只有管理员能修改',
+      },
+    ],
+  },
+  {
+    id: 'move-project-dialog',
+    title: 'MoveProjectDialog',
+    about: '成员页右上角「移到团队」打开的对话框：所有者把个人项目移到自己管理的团队。',
+    file: 'src/components/MoveProjectDialog.vue',
+    component: MoveProjectDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    states: [
+      {
+        name: '有可选的团队',
+        note: '挑一个团队，「移到这个团队」才按得下去。',
+        props: {
+          modelValue: true,
+          teams: [
+            { id: 1, name: '视觉课题组' },
+            { id: 2, name: '机器人社' },
+          ],
+          loading: false,
+          moving: false,
+          error: null,
+        },
+        expect: '项目会归到所选团队',
+      },
+      {
+        name: '没有你管理的团队',
+        note: '说清楚，不给选择框。',
+        props: { modelValue: true, teams: [], loading: false, moving: false, error: null },
+        expect: '暂无你管理的团队',
       },
     ],
   },

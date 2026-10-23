@@ -15,16 +15,13 @@ A router may declare for all its routes
 (``APIRouter(dependencies=[ROUTE_DECIDES])``); a route may not declare twice.
 
 Two refusals stand behind a route that declares nothing. ``seal`` runs once the
-routes are mounted and refuses to start the app, unless the route is in the
-frozen list of undeclared routes that predate this module
-(``write_access_baseline``, which only shrinks). ``refuse_unsealed_writes`` is
+routes are mounted and refuses to start the app. ``refuse_unsealed_writes`` is
 an app-wide dependency that answers 403 to a write whose route ``seal`` did not
 admit, so a route object created after ``seal``, or an app nobody sealed, is
 closed rather than open. (A router already sealed and included again under
 another prefix shares its route objects, and so stays admitted.)
 
-A route that is renamed or moved carries its declaration along, and a frozen
-route that is renamed leaves the list and has to be declared. The gate this
+A route that is renamed or moved carries its declaration along. The gate this
 replaced was a table of path regexes kept apart from the routes; #370 flattened
 a prefix, every regex stopped matching, and the 芝士-only surface opened without
 a single failure.
@@ -203,8 +200,8 @@ def write_routes(app: FastAPI) -> Iterator[WriteRoute]:
                 yield WriteRoute(method, route.path, name, declared, original)
 
 
-def violations(app: FastAPI, frozen: frozenset[tuple[str, str]]) -> list[str]:
-    """Write routes that declare nothing (and are not frozen) or declare twice."""
+def violations(app: FastAPI) -> list[str]:
+    """Write routes that declare nothing or declare twice."""
     found: list[str] = []
     for route in write_routes(app):
         if len(route.declared) > 1:
@@ -212,7 +209,7 @@ def violations(app: FastAPI, frozen: frozenset[tuple[str, str]]) -> list[str]:
                 f"{route.method} {route.path} ({route.endpoint}) declares "
                 f"{' and '.join(route.declared)}; keep one"
             )
-        elif not route.declared and (route.method, route.path) not in frozen:
+        elif not route.declared:
             found.append(
                 f"{route.method} {route.path} ({route.endpoint}) declares no write "
                 "access; add CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT or "
@@ -229,9 +226,7 @@ _SEALED: dict[int, APIRoute] = {}
 def seal(app: FastAPI) -> None:
     """Refuse to start with a write route nobody decided the callers of, and
     admit the rest for ``refuse_unsealed_writes``."""
-    from app.api.write_access_baseline import UNDECLARED
-
-    found = violations(app, UNDECLARED)
+    found = violations(app)
     if found:
         raise RuntimeError(
             "write routes without a write-access declaration:\n  " + "\n  ".join(found)

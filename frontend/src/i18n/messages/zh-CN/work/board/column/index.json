@@ -3,6 +3,5 @@
   "building": "进行中",
   "delivering": "检查中",
   "done": "已关闭",
-  "needs_you": "待处理",
-  "not_started": "未开始"
+  "needs_you": "待处理"
 }

@@ -5,7 +5,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.memory.models import user_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import DbMemoryStore
@@ -376,3 +377,77 @@ def test_a_stealth_team_is_named_only_to_its_members(client, bearer):
     assert seen_by("u4") == {public, stealth}
     # Their own page: both, and not the personal team their projects live in.
     assert seen_by("u1") == {public, stealth}
+
+
+def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bearer):
+    p1, _ = _seed_u1_with_two_projects(client)
+    add_external_member(client, p1, "u2", by="u1")
+    topic_id = _topic(client, p1, "协作话题")
+
+    # Initially no remark is set.
+    assert _profile(client, bearer, "u1", viewer="u2")["remark"] is None
+
+    # Unauthenticated callers cannot set a remark.
+    unauth = client.put("/users/u1/remark", json={"remark": "老王 · 后端"})
+    assert unauth.status_code == 401
+
+    # A caller cannot set a remark on themselves.
+    self_resp = client.put(
+        "/users/u2/remark", json={"remark": "我自己"}, headers=bearer("u2")
+    )
+    assert self_resp.status_code == 422
+
+    # Remarks over 32 chars or with control characters are rejected.
+    too_long = client.put(
+        "/users/u1/remark", json={"remark": "a" * 33}, headers=bearer("u2")
+    )
+    assert too_long.status_code == 422
+    bad_chars = client.put(
+        "/users/u1/remark", json={"remark": "老王\n后端"}, headers=bearer("u2")
+    )
+    assert bad_chars.status_code == 422
+
+    # u2 sets a remark for u1.
+    set_resp = client.put(
+        "/users/u1/remark", json={"remark": "  老王 · 后端  "}, headers=bearer("u2")
+    )
+    assert set_resp.status_code == 200, set_resp.text
+    assert set_resp.json()["data"] == {"handle": "u1", "remark": "老王 · 后端"}
+
+    # u2 sees the remark on u1's profile, project members, and topic roster;
+    # u1 and u3 do not see u2's private remark.
+    assert _profile(client, bearer, "u1", viewer="u2")["remark"] == "老王 · 后端"
+    assert _profile(client, bearer, "u1", viewer="u1")["remark"] is None
+
+    members_for_u2 = {
+        m["user_handle"]: m["remark"]
+        for m in client.get(f"/projects/{p1}/members", headers=bearer("u2")).json()[
+            "data"
+        ]["data"]
+    }
+    assert members_for_u2["u1"] == "老王 · 后端"
+    assert members_for_u2["u2"] is None
+
+    members_for_u1 = {
+        m["user_handle"]: m["remark"]
+        for m in client.get(f"/projects/{p1}/members", headers=bearer("u1")).json()[
+            "data"
+        ]["data"]
+    }
+    assert members_for_u1["u1"] is None
+
+    topic_members_for_u2 = {
+        m["member_handle"]: m["remark"]
+        for m in client.get(f"/topics/{topic_id}/members", headers=bearer("u2")).json()[
+            "data"
+        ]["data"]
+    }
+    assert topic_members_for_u2["u1"] == "老王 · 后端"
+
+    # Clearing with an empty string removes the remark.
+    clear_resp = client.put(
+        "/users/u1/remark", json={"remark": "   "}, headers=bearer("u2")
+    )
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["data"] == {"handle": "u1", "remark": None}
+    assert _profile(client, bearer, "u1", viewer="u2")["remark"] is None

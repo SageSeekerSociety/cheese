@@ -236,7 +236,7 @@ class _Legacy:
                     waiter = self.pending.pop(message.get("id"), None)
                     if waiter is not None and not waiter.done():
                         waiter.set_result(message)
-        except Exception as exc:  # noqa: BLE001 — handed to whoever waits
+        except Exception as exc:  # handed to whoever waits
             if not opened.done():
                 opened.set_exception(exc)
             for waiter in self.pending.values():

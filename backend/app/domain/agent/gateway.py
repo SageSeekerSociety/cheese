@@ -66,6 +66,18 @@ class GatewayModel:
     # platform's own words (``EFFORTS``). Empty: it takes none, and a teammate
     # on it runs at the model's own default.
     efforts: tuple[str, ...] = ()
+    # True when the model reads pictures (``supports_vision``), as set on the
+    # gateway's model page. Unmarked: it is shown text only.
+    vision: bool = False
+    # Only teams a platform administrator approved may use it
+    # (``cheese_overseas: true``): Claude, GPT, Gemini.
+    overseas: bool = False
+    # The most input the model's route admits, in tokens (``max_input_tokens``,
+    # LiteLLM's own key). None: the gateway does not say.
+    context_window: int | None = None
+    # Where the provider recommends compacting, when that is before the window
+    # (``cheese_auto_compact_window``). None: no recommendation.
+    compact_window: int | None = None
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -116,6 +128,13 @@ def price_is_set(*sources: object) -> bool:
 def _model_info(row: dict) -> dict:
     info = row.get("model_info")
     return info if isinstance(info, dict) else {}
+
+
+def _tokens(value: object) -> int | None:
+    """A token count the gateway declares, or None for anything that is not one."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 @dataclass
@@ -176,10 +195,14 @@ class LlmGateway:
             someone to pick a model we route to on their behalf.
           - ``cheese_label``: what to call it; the id when absent.
           - ``cheese_efforts``: the thinking efforts it honours (``EFFORTS``).
+          - ``cheese_auto_compact_window``: where its provider recommends that
+            Claude Code compact, when that is earlier than the window.
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
-        messages, and Claude Code is launched without them on it.
+        messages, and Claude Code is launched without them on it; and
+        ``supports_vision`` set to ``true`` says the model reads pictures; and
+        ``max_input_tokens`` is the window Claude Code is told the model has.
 
         A model may have several rows (sources, tried in ``order``). The keys
         above are read from the first; a model is offered while any row is not
@@ -196,7 +219,7 @@ class LlmGateway:
             rows = payload.get("data") if isinstance(payload, dict) else None
             if not isinstance(rows, list):
                 raise ValueError("gateway /model/info carries no data list")
-        except Exception:  # noqa: BLE001 — an unreachable gateway is not an empty one
+        except Exception:  # an unreachable gateway is not an empty one
             logger.warning("gateway models failed", exc_info=True)
             return None
 
@@ -236,6 +259,10 @@ class LlmGateway:
                         info.get("supports_mid_conversation_system") is not False
                     ),
                     efforts=declared_efforts(info.get("cheese_efforts")),
+                    vision=info.get("supports_vision") is True,
+                    overseas=info.get("cheese_overseas") is True,
+                    context_window=_tokens(info.get("max_input_tokens")),
+                    compact_window=_tokens(info.get("cheese_auto_compact_window")),
                 )
             )
         return out
@@ -268,7 +295,7 @@ class LlmGateway:
                 r.raise_for_status()
                 key = r.json().get("key")
                 return key if isinstance(key, str) and key else None
-        except Exception:  # noqa: BLE001 — admin failures never fail a turn
+        except Exception:  # admin failures never fail a turn
             logger.warning("gateway mint_project_key failed", exc_info=True)
             return None
 
@@ -292,7 +319,7 @@ class LlmGateway:
                 r.raise_for_status()
                 key = r.json().get("key")
                 return key if isinstance(key, str) and key else None
-        except Exception:  # noqa: BLE001 — the person is told 芝士 is unavailable
+        except Exception:  # the person is told 芝士 is unavailable
             logger.warning("gateway mint_person_key failed", exc_info=True)
             return None
 
@@ -307,7 +334,7 @@ class LlmGateway:
                 )
                 r.raise_for_status()
                 return True
-        except Exception:  # noqa: BLE001 — the caller says what was left
+        except Exception:  # the caller says what was left
             logger.warning("gateway revoke_key failed", exc_info=True)
             return False
 
@@ -323,7 +350,7 @@ class LlmGateway:
                 )
                 r.raise_for_status()
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("gateway set_key_budget failed", exc_info=True)
             return False
 
@@ -380,7 +407,7 @@ class LlmGateway:
                         continue
                     metrics = mine.get("metrics") or {}
                     _add_row(by, {**metrics, "model": name})
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("gateway daily_spend_by_model failed", exc_info=True)
             return None
         return by

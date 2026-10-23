@@ -5,8 +5,8 @@
 `harness.prompt.teaching_section` 去说。取数和措辞分开，是因为两者失败的方式
 不一样：这里失败是查不到东西，那里失败是话说错了。
 
-**引用，不是拷贝。** `material_ids` / `knowledge_ids` 存的是指向现成
-`Material` / `Knowledge` 的 id，不是内容的副本。一个课件改了名、一个链接换掉
+**引用，不是拷贝。** `material_ids` / `document_ids` 存的是指向现成
+`Material` / 团队文档（#3774）的 id，不是内容的副本。一个课件改了名、一个链接换掉
 了，课程不必重新保存配置就跟着变；存副本的话，课程配置会慢慢长成资料库的第二
 份，而两份不会同时更新。
 
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.knowledge.services import KnowledgeService
+from app.domain.living_doc.models import Document
 from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
 from app.domain.space.material_service import member_readable_material_ids
@@ -62,13 +62,11 @@ class TeachingContext:
     #: `{id, name, url, type}`. A 课件 locked to「仅管理员」on every board that
     #: lists it is dropped before it gets here — see `for_project`.
     materials: list[dict] = field(default_factory=list)
-    #: The 知识 entries that are still readable: `{id, name, description}`.
-    #:
-    #: Name and 描述 only — the `content` blob stays behind the knowledge API.
-    #: A 项目集 is allowed to point at material of any size, and a prompt that
-    #: grows with someone else's uploads is a prompt that eventually does not
-    #: fit; an entry the agent wants in full it can fetch by id.
-    knowledge: list[dict] = field(default_factory=list)
+    #: The documents the course points its AI teammates at that still exist:
+    #: `{id, title}`. Title only — the text stays behind the document routes,
+    #: which let this project's agents read these (`api.doc_access`); a
+    #: document the agent wants in full it reads by id.
+    documents: list[dict] = field(default_factory=list)
 
 
 async def for_project(
@@ -76,12 +74,12 @@ async def for_project(
 ) -> TeachingContext | None:
     """The teaching context this project's agents should start with, or None.
 
-    Read fresh on every turn rather than remembered on the project: the week is
-    a fact about now, and a course that moved from 第 3 周 to 第 4 周 must not
-    need every project re-registered to hear about it. A running session hears
-    the change too — `teaching` is a tracked section (`harness.prompt`
-    TRACKED_SECTIONS), so the next turn of any conversation already in flight is
-    re-told the new scope in `opening_changes`.
+    Read fresh on every turn rather than remembered on the project: the config
+    is a fact about now, and a course that changed its guidance must not need
+    every project re-registered to hear about it. This read is what a *new*
+    session starts from; a session already running keeps the copy it opened
+    with until its next cold start — `teaching` is deliberately not a tracked
+    section (`harness/opening.py` TRACKED_SECTIONS 与模块说明第 3 条).
     """
     if project is None or project.external_task_id is None:
         return None
@@ -118,9 +116,18 @@ async def for_project(
     materials = await MaterialService.for_lookup(session).get_many(
         [mid for mid in teaching.material_ids if mid in readable]
     )
-    knowledge = await KnowledgeService.for_lookup(session).get_many(
-        teaching.knowledge_ids
+    documents = (
+        list(
+            await session.execute(
+                select(Document.id, Document.title).where(
+                    Document.id.in_(teaching.document_ids)
+                )
+            )
+        )
+        if teaching.document_ids
+        else []
     )
+    titles = {str(i): title for i, title in documents}
     return TeachingContext(
         course=category.name if category is not None else None,
         teaching=teaching,
@@ -128,9 +135,10 @@ async def for_project(
             {"id": m.id, "name": m.name, "url": m.url, "type": m.type}
             for m in materials
         ],
-        knowledge=[
-            {"id": k.id, "name": k.name, "description": k.description}
-            for k in knowledge
+        documents=[
+            {"id": i, "title": titles[i] or ""}
+            for i in teaching.document_ids
+            if i in titles
         ],
     )
 
@@ -143,20 +151,10 @@ async def count_material_references(
     「资料库」那一页用它显示「被 N 处引用」/「未被引用」，好让老师删一份课件之前
     知道自己会留下几处指着空处的配置。
 
-    **数的是「列着」，不是「生效」。** ``resolve`` 只看最里面那个非空层（题目覆盖
-    压过项目集、项目集压过空间默认），这里三层各自照数 —— 一份课件可能被空间默认
-    列着而板上每道题都被项目集盖住，那时它一处也不生效，但删了它，空间默认那个配置
-    里就留下一个悬空 id。这正是老师要看见的事，所以两种口径都对，只是这一格答的是
-    前者；数字的含义写在界面的那一句文案上，不要把它读成「会影响 N 道题」。
+    数两层：空间自己的设置、板下每道题（两层同时生效）。**项目那一层不数**：
+    ``Project.settings["teaching"]`` 今天全仓库没有一个写入口，数它只会永远得 0。
 
-    数三层：空间自己的默认、板下每个项目集、板下每道题。**项目那一层不数**：
-    ``Project.settings["teaching"]`` 今天全仓库没有一个写入口（``resolve`` 读得到
-    它，但没人往里写），数它只会永远得 0，还要多扫一遍项目表。判据是「有没有人
-    能写出这个引用」，不是「``resolve`` 会不会读它」—— 哪天有了写入口，这里补
-    一条。集成测试里那条直接写 ``settings`` 的捷径（``test_teaching_chain.py``）
-    是造场景用的，不是写入口。
-
-    **软删掉的行不算**：撤下来的项目集、删掉的赛题，它们那一格 JSON 还留在库里，
+    **软删掉的行不算**：删掉的赛题，那一格 JSON 还留在库里，
     但老师在界面上看不到、也改不了。列着它们的那些 id 不该把这一格撑大 —— 数的是
     「你还能去收拾的配置」。（软删的赛题对已经建好的项目还生效，那是读侧
     ``for_project`` 的事：它不滤 ``deleted_at``。两条口径不同，各有各的用处。）
@@ -164,7 +162,7 @@ async def count_material_references(
     **在内存里数，不写 SQL**：配置存在 JSON 列里，「这个数组里有 42」在
     PostgreSQL 上要 ``@>``（只有 JSONB 有）而 SQLite 退化成字符串 LIKE，同一条
     语句跨库不等价（sqlalchemy#12736）。捞出来的只是每处配置那一格 JSON，量级是
-    「这块板有多少个分类和题目」，不随课件数增长。
+    「这块板有多少道题目」，不随课件数增长。
 
     **已经撤下来的课件照数**：一处配置指着已经被删掉（或改成「仅管理员」）的课件
     时，那个 id 仍然列在那儿等老师收拾。读取时它不算数（见 ``for_project``），两处
@@ -179,15 +177,6 @@ async def count_material_references(
     space = await session.get(Space, space_id)
     if space is not None:
         tally(getattr(space, "teaching", None))
-    for (raw,) in (
-        await session.execute(
-            select(SpaceCategory.teaching).where(
-                SpaceCategory.space_id == space_id,
-                SpaceCategory.deleted_at.is_(None),
-            )
-        )
-    ).all():
-        tally(raw)
     for (raw,) in (
         await session.execute(
             select(Task.protocol_override).where(

@@ -105,8 +105,8 @@ WHAT THIS CHECK DOES NOT ASK: whether a standalone-ready scene is in the
 preview site (`/demo/catalog`). That used to be a warning here, counted
 against `catalog.ts` alone — it missed the entries split into the sibling
 `catalog*.ts` files, and it only looked at scenes when every grade-A component
-is a candidate. It is its own ratchet now, `.claude/scripts/catalog-ratchet.py`
-(`pnpm run lint:catalog`), over every component rather than every scene.
+is a candidate. No check asks it now; `docs/site/gen/catalog_reach.py` reads
+which components the site shows, for the docs' components page.
 
 Exit codes: 0 nothing to report, 1 a scene regressed or a new scene is not
 standalone-ready, 2 could not judge (no `frontend/src/` under `--root`, no
@@ -137,7 +137,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = "frontend/src"
 ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
-PANELS_DIR = "frontend/src/components/panels"
 
 #: Where the frozen set is read from: the merge base with this ref.
 DEFAULT_BASE = "origin/main"
@@ -508,8 +507,8 @@ def key_of(scene: str) -> str:
     """`frontend/src/views/404.vue` -> `src/views/404.vue`.
 
     Baseline keys are relative to `frontend/`, like every other baseline in
-    that directory (`import-boundary-baseline.json`): a path relative to the
-    repository root only reads correctly from here.
+    that directory (`stylelint-baseline.json`): a path relative to the repository
+    root only reads correctly from here.
     """
     if not scene.startswith("frontend/"):
         raise ValueError(f"not under frontend/: {scene}")
@@ -672,7 +671,8 @@ def base_tree(root: Path, rev: str, dest: Path) -> Path:
         raise Unjudgeable(f"cannot unpack the tree at {rev}: {exc}") from exc
     if not (dest / "frontend" / "src").is_dir():
         raise Unjudgeable(f"the tree at {rev} has no {SRC_DIR}/ to grade")
-    return dest
+    # macOS resolves /var to /private/var; use the same path spelling as resolved imports.
+    return dest.resolve()
 
 
 def classify(grades: dict[str, Any], views: dict[str, str]) -> Baseline:
@@ -1047,7 +1047,7 @@ def self_test() -> int:
         check("and gives the fix", "<PageName>View.vue" in result.stdout, True)
         check("and points at the recipe", "scenes.md#make-standalone" in result.stdout, True)
 
-        # --json (what ci:fast calls) stays the one record line on stdout, and
+        # --json stays the one record line on stdout, and
         # carries the same fix on stderr.
         result = run_cli(root, "--json")
         check("--json regressing scene stays one line", len(result.stdout.strip().splitlines()), 1)
@@ -1899,10 +1899,6 @@ def self_test() -> int:
               and files.search("backend/app/main.py") is None, True)
         check("and the ledger is gone",
               (REPO_ROOT / "frontend" / "scene-baseline.json").exists(), False)
-        fast = (REPO_ROOT / ".github" / "scripts" / "ci-fast.py").read_text(encoding="utf-8")
-        merge_base_hooks = re.search(r"MERGE_BASE_HOOKS = \{([^}]*)\}", fast)
-        check("and the quick tier knows not to run it without a merge base",
-              merge_base_hooks is not None and "scene-ratchet" in merge_base_hooks.group(1), True)
 
         # -- 9. a wrong root is a 2, never a pass ---------------------------
         #    The trap this gate exists for: `frontend/` instead of the repo

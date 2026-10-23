@@ -8,11 +8,12 @@ import uuid
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, File, Form, Query, UploadFile
+from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.byte_response import blob_response
 from app.api.place import readable_rooms
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
@@ -25,11 +26,12 @@ from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
 
-#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线，数在
+#: 资料库页上一次放进来的文件多大为止，视频也一样；和对话里上传附件是同一条线，数在
 #: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。
 MAX_LIBRARY_UPLOAD_BYTES = library.MAX_FILE_BYTES
 
@@ -56,6 +58,18 @@ class LibraryFileOut(BaseModel):
     rank: str
 
 
+class LibraryTextOut(BaseModel):
+    """一份资料读成的文本（`library_records.read_text`）：读不成文本时
+    `content` 是 None，`binary` 或 `too_large` 说为什么。"""
+
+    path: str
+    bytes: int
+    binary: bool
+    too_large: bool
+    content: str | None
+    version: str
+
+
 class LibraryFoldersOut(BaseModel):
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
 
@@ -74,6 +88,7 @@ async def library_file_raw(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    request: Request,
     preview_pdf: bool = False,
     version: uuid.UUID | None = None,
 ) -> Response:
@@ -90,23 +105,30 @@ async def library_file_raw(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     name = _library_path(path)
-    data = (
-        await library_records.version_bytes(db, project_id, name, version)
+    stored = (
+        await library_records.stored_version(db, project_id, name, version)
         if version is not None
-        else await library_records.read(db, project_id, name)
+        else await library_records.stored_file(db, project_id, name)
     )
-    if preview_pdf:
-        data = await office.preview_pdf(data, name)
     filename = quote(name.rsplit("/", 1)[-1], safe="")
-    return Response(
-        content=data,
-        media_type="application/pdf" if preview_pdf else "application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, no-cache",
-        },
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cache-Control": "private, no-cache",
+    }
+    if preview_pdf:
+        data = await library_records.read_blob(stored.location, stored.key)
+        pdf = await office.preview_pdf(data, name)
+        return Response(content=pdf, media_type="application/pdf", headers=headers)
+    return blob_response(
+        stored.location,
+        stored.key,
+        stored.size,
+        "application/octet-stream",
+        headers,
+        request.headers.get("range"),
+        request.headers.get("if-range"),
     )
 
 
@@ -133,7 +155,7 @@ async def list_library_versions(
     return ok({"versions": versions})
 
 
-@router.post("/{project_id}/library/restore")
+@router.post("/{project_id}/library/restore", dependencies=[ROUTE_DECIDES])
 async def restore_library_version(
     project_id: uuid.UUID,
     path: str,
@@ -197,6 +219,19 @@ async def library_file(
     return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
 
 
+@router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
+async def library_file_text(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
+    文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
+    （项目总览、资料库里的文档）也读得到项目给它的材料。"""
+    await _reader(project_id, db, resolver)
+    name = _library_path(path.strip().removeprefix("library/"))
+    found = await library_records.read_text(db, project_id, name)
+    return ok(LibraryTextOut.model_validate(found).model_dump())
+
+
 @router.get("/{project_id}/library/folders", **typed_response(LibraryFoldersOut))
 async def library_folders(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -222,66 +257,107 @@ async def _library_keeper(
     `authorize_project`。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_content
+    )
     return actor
 
 
-async def _upload_bytes(file: UploadFile) -> bytes:
-    data = await file.read(MAX_LIBRARY_UPLOAD_BYTES + 1)
-    if not data:
-        raise ValidationError(say("emptyFile"))
-    if len(data) > MAX_LIBRARY_UPLOAD_BYTES:
-        raise ValidationError(say("libraryUploadTooLarge"))
-    return data
+class LibraryUploadSlotIn(BaseModel):
+    """要放进来的那一份叫什么、多大：大小定下了地址收多少字节。"""
+
+    name: str
+    size: int
 
 
-@router.post("/{project_id}/library")
-async def upload_library_file(
+class LibraryUploadSlot(BaseModel):
+    """一份上传的去处：把字节原样 PUT 到 ``url``（以 ``/`` 开头的是本后端的地址），
+    再拿 ``upload`` 来登记。"""
+
+    url: str
+    upload: str
+
+
+class LibraryAddIn(BaseModel):
+    """登记一份已经传上来的文件：``upload`` 是领地址时拿到的凭据。"""
+
+    upload: str
+    filename: str
+    folder: str | None = None
+
+
+class LibraryReplaceIn(BaseModel):
+    upload: str
+
+
+@router.post(
+    "/{project_id}/library/uploads",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryUploadSlot),
+)
+async def library_upload_slot(
     project_id: uuid.UUID,
+    body: LibraryUploadSlotIn,
     db: DbSession,
     resolver: ActorResolverDep,
-    file: UploadFile = File(...),
-    folder: str | None = Form(None),
 ) -> dict:
-    """在资料库页上直接放进一份文件，`folder` 给了就放进那个文件夹（没有就新建）。
+    """领一个上传地址。字节不经过这里：浏览器直接放进存储，再来登记（放进新的一份
+    是 ``POST /library``，换成新版本是 ``PUT /library``）。超过上限的不给地址。"""
+    await _library_keeper(project_id, db, resolver)
+    if body.size <= 0:
+        raise ValidationError(say("emptyFile"))
+    if body.size > MAX_LIBRARY_UPLOAD_BYTES:
+        raise ValidationError(say("libraryUploadTooLarge"))
+    name = library.clean_upload_name(body.name)
+    return ok(await library_records.upload_slot(project_id, name, body.size))
+
+
+@router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
+async def upload_library_file(
+    project_id: uuid.UUID,
+    body: LibraryAddIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把传上来的一份登记进资料库，`folder` 给了就放进那个文件夹（没有就新建）。
     撞名不覆盖：拿下一个 `(n)`。"""
     actor = await _library_keeper(project_id, db, resolver)
-    data = await _upload_bytes(file)
-    filename = library.clean_upload_name(file.filename)
-    if folder and folder.strip("/ "):
-        filename = f"{library.clean_library_path(folder)}/{filename}"
+    upload = await library_records.received(project_id, body.upload)
+    filename = library.clean_upload_name(body.filename)
+    if body.folder and body.folder.strip("/ "):
+        filename = f"{library.clean_library_path(body.folder)}/{filename}"
     name = await library_records.add(
         db,
         project_id=project_id,
         filename=filename,
-        data=data,
+        data=upload,
         added_by=actor.handle,
         room_id=None,
     )
     await db.commit()
-    return ok({"path": name, "bytes": len(data)})
+    return ok({"path": name, "bytes": upload.size})
 
 
-@router.put("/{project_id}/library")
+@router.put("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def replace_library_file(
     project_id: uuid.UUID,
     path: str,
+    body: LibraryReplaceIn,
     db: DbSession,
     resolver: ActorResolverDep,
-    file: UploadFile = File(...),
 ) -> dict:
-    """把一份资料换成新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
+    """把一份资料换成传上来的新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
     actor = await _library_keeper(project_id, db, resolver)
-    data = await _upload_bytes(file)
+    upload = await library_records.received(project_id, body.upload)
     name = _library_path(path)
     await library_records.replace(
-        db, project_id=project_id, name=name, data=data, by=actor.handle
+        db, project_id=project_id, name=name, data=upload, by=actor.handle
     )
     await db.commit()
-    return ok({"path": name, "bytes": len(data)})
+    return ok({"path": name, "bytes": upload.size})
 
 
-@router.delete("/{project_id}/library")
+@router.delete("/{project_id}/library", dependencies=[ROUTE_DECIDES])
 async def delete_library_file(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

@@ -145,11 +145,21 @@ beforeAll(() => {
 describe('左侧话题列表：房间下面那些活的折叠', () => {
   beforeEach(() => localStorage.clear())
 
-  it.each([true, false])('archive controls follow server permission: %s', async (allowed) => {
+  it.each([true, false])('频道菜单不因 can_manage=%s 恢复归档入口', async (allowed) => {
     const active = { ...topic('managed', 'root'), can_manage: allowed, joined: true }
-    const { container, queryByText } = mount({ topics: [topic('root', null, 'root'), active] })
+    const { container, baseElement } = mount({ topics: [topic('root', null, 'root'), active] })
     await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
-    await waitFor(() => expect(Boolean(queryByText(t('work.room.menu.archive')))).toBe(allowed))
+    await waitFor(() => {
+      const actions = Array.from(baseElement.querySelectorAll('[role="menuitem"]')).map((item) =>
+        item.textContent?.trim()
+      )
+      expect(actions).toEqual([
+        t('work.room.menu.newTask'),
+        t('work.room.menu.allTasks'),
+        t('work.room.menu.rename'),
+        t('work.channel.leave'),
+      ])
+    })
   })
 
   it('默认收起 —— 房间派出去的活不摊在主导航上', () => {
@@ -197,56 +207,80 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
       unreadMap: { a1x: { count: 3, new: true, messages: 3 }, a2: { count: 4, new: true, messages: 4 } },
     })
     const row = rowFor(container, 'a')
-    expect(row.querySelector('.unread-badge')?.textContent?.trim()).toBe('7')
+    expect(row.querySelector('.unread-badge')).toBeNull()
+    expect(row.querySelector('.title-unread')?.textContent).toBe('a')
+    expect(visibleTitles(container)).toEqual(['a', 'b'])
   })
 
-  // 收起来的父话题会把子话题里的动静整个藏掉，由折叠开关自己带聚合色补上。
-  it('收着的时候里面有活在跑，冒到折叠开关上', async () => {
-    const running = {
-      ...topic('a1x', 'a1'),
-      activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }],
-      moving: true,
-    } as Topic
-    const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? running : t)) })
-    // 默认收着 —— 底下有东西在跑，只能靠开关上的颜色说
+  // 收起来的父话题替隐藏后代说话，但每行只画一盏灯；开关本身保持中性。
+  it('收着的时候里面有正在跑的，合并到父行唯一灯上；展开后回到后代行', async () => {
+    const moving = { ...topic('a1x', 'a1'), moving: true } as Topic
+    const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? moving : t)) })
     expect(visibleTitles(container)).toEqual(['a', 'b'])
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(true)
-    // 底下什么都没有的那一支不能跟着亮
-    expect(rowFor(container, 'b').querySelector('.subtree-toggle')).toBeNull()
+    const parent = rowFor(container, 'a')
+    expect(parent.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(parent.querySelector('.row-light--breathe')).not.toBeNull()
+    expect(parent.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.moving'))
+    expect(toggleFor(container, 'a').getAttribute('aria-expanded')).toBe('false')
+    expect(rowFor(container, 'b').querySelector('.row-light')).toBeNull()
 
-    // 一路展开到它自己那一行，动静就回到那一行上，开关不再替它说
     await fireEvent.click(toggleFor(container, 'a'))
     await fireEvent.click(toggleFor(container, 'a1'))
-    expect(rowFor(container, 'a1x').querySelector('[data-state="working"]')).not.toBeNull()
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(false)
+    expect(rowFor(container, 'a1x').querySelector('.row-light--breathe')).not.toBeNull()
+    expect(rowFor(container, 'a1x').querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(
+      t('work.sidebar.light.moving')
+    )
+    expect(parent.querySelector('.row-light')).toBeNull()
+    expect(toggleFor(container, 'a').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('收着的时候"等你处理"也冒上来，并且压过"有队友在干活"', () => {
+  it('收着的时候"等你处理"也冒上来，并且压过"正在跑"', () => {
     const patched = topics.map((t) => {
-      if (t.id === 'a1x') {
-        return { ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic
-      }
+      if (t.id === 'a1x') return { ...t, moving: true } as Topic
       if (t.id === 'a2') return { ...t, awaits_me: true } as Topic
       return t
     })
     const { container } = mount({ topics: patched })
-    const toggle = toggleFor(container, 'a')
-    expect(toggle.classList.contains('subtree-toggle--awaits')).toBe(true)
-    // 两种状态同时存在时只显示一种，否则一个槽要上两个颜色
-    expect(toggle.classList.contains('subtree-toggle--working')).toBe(false)
-    expect(toggle.getAttribute('title')).toBe('展开：里面有待处理的事项')
+    const row = rowFor(container, 'a')
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('.row-light--yellow')).not.toBeNull()
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
+    expect(toggleFor(container, 'a').getAttribute('title')).toBe('展开：里面有待处理的事项')
   })
 
-  // 选中 + 收起是最需要看见聚合状态的组合（人正站在这个话题里，子话题在替他跑）。
-  it('选中的房间收着时，聚合状态仍然挂在开关上', () => {
-    const patched = topics.map((t) =>
-      t.id === 'a2'
-        ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic)
-        : t
-    )
+  // 选中 + 收起也不能把后代状态吞掉。
+  it('选中的房间收着时，唯一灯仍显示后代的状态', () => {
+    const patched = topics.map((t) => (t.id === 'a2' ? ({ ...t, moving: true } as Topic) : t))
     const { container } = mount({ topics: patched, selectedTopicId: 'a' })
     const row = rowFor(container, 'a')
     expect(row.classList.contains('is-active')).toBe(true)
-    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--working')).toBe(true)
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('.row-light--breathe')).not.toBeNull()
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.moving'))
+  })
+
+  it('频道黄灯、隐藏后代卡住和任务同时存在，保留黄灯且不画报错红灯', async () => {
+    const patched = topics.map((item) => {
+      if (item.id === 'a') return { ...item, awaits_me: true }
+      if (item.id === 'a2') {
+        return { ...item, waits: [{ member: 'cheese-a1', reason: 'failed', since: new Date().toISOString() }] }
+      }
+      return item
+    }) as Topic[]
+    const { container } = mount({
+      topics: patched,
+      foldedChannels: { a: true },
+      roomTaskTotals: { a: 1 },
+      roomTasks: { a: [{ id: 'task-a', room_id: 'a', title: '任务', status: 'open' }] },
+    })
+    const row = rowFor(container, 'a')
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('.row-light--yellow')).not.toBeNull()
+
+    await fireEvent.click(toggleFor(container, 'a'))
+
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(t('work.sidebar.light.yellow'))
+    expect(rowFor(container, 'a2').querySelector('.row-light')).toBeNull()
   })
 })

@@ -6,11 +6,11 @@ import type { MentionPoolEntry } from './useRoomMentionPicker'
 
 import Collaboration from '@tiptap/extension-collaboration'
 import { Editor } from '@tiptap/vue-3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
-import { createTokenChips, tokenChipsKey } from '../lib/docDecorations'
 import { docExtensions, exportMarkdown, writeMarkdown } from '../lib/docSchema'
+import { createTokenChips, tokenChipsKey } from '../lib/tokenChips'
 
 import { useDocRefMenu } from './useDocRefMenu'
 
@@ -25,6 +25,7 @@ const TOPICS = [{ id: '7f3a9c2e-51b4', title: '接口改版', kind: 'work', stat
 const editors: Editor[] = []
 beforeEach(() => setLocale('zh-CN'))
 afterEach(() => {
+  vi.restoreAllMocks()
   editors.splice(0).forEach((editor) => editor.destroy())
   document.body.replaceChildren()
 })
@@ -77,7 +78,7 @@ describe('打 @ 挑一个人', () => {
 
   it('读的人看到的是名字，不是账号', () => {
     const { editor } = open('负责人 <@lixue>\n')
-    expect(editor.view.dom.textContent).toContain('@李雪')
+    expect(editor.view.dom.textContent).toContain('李雪')
   })
 
   it('名册比正文晚到，到了之后名字换上去', () => {
@@ -85,7 +86,7 @@ describe('打 @ 挑一个人', () => {
     expect(editor.view.dom.textContent).not.toContain('李雪')
     shown.names = { mentionNames: { lixue: '李雪' }, topicTitles: {} }
     editor.view.dispatch(editor.state.tr.setMeta(tokenChipsKey, true))
-    expect(editor.view.dom.textContent).toContain('@李雪')
+    expect(editor.view.dom.textContent).toContain('李雪')
   })
 
   it('紧跟在中文后面也能打开', async () => {
@@ -136,5 +137,50 @@ describe('引用当作一个整体', () => {
     press(editor, 'ArrowLeft')
     editor.view.dispatch(editor.state.tr.insertText('：'))
     expect(exportMarkdown(doc)).toBe('负责人 ：<@lixue>')
+  })
+})
+
+// 页面上的矩形：jsdom 不排版，按类名给几块固定的位置。光标（建议插件包住「@查询」的那一段）
+// 在第 280–300 像素这一行。
+function layout(rects: Record<string, Partial<DOMRect>>) {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const hit = Object.keys(rects).find((sel) => this.matches(sel))
+    const r = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, ...(hit ? rects[hit] : {}) }
+    return { ...r, x: r.left, y: r.top, toJSON: () => r } as DOMRect
+  })
+}
+const CARET = { top: 280, bottom: 300, left: 40, right: 60, width: 20, height: 20 }
+
+describe('菜单贴着光标', () => {
+  it('页面上还开着另一份文档时，菜单仍贴着这一份的光标', async () => {
+    const other = document.createElement('div')
+    other.className = 'doc-editor-wrap decoy'
+    document.body.append(other)
+    const { editor, menu } = open('正文\n')
+    layout({
+      '.decoy': { top: 900, bottom: 1400, left: 0, right: 400, width: 400, height: 500 },
+      '.doc-editor-wrap': { top: 0, bottom: 1000, left: 0, right: 400, width: 400, height: 1000 },
+      '[data-decoration-id]': CARET,
+    })
+    await type(editor, ' @')
+    expect(menu.menu.value?.top).toBe(306)
+  })
+
+  it('光标贴近键盘上方的格式条时，菜单不伸到格式条底下', async () => {
+    const { editor, menu } = open('正文\n')
+    const bar = document.createElement('div')
+    bar.className = 'doc-keyboard-bar'
+    document.body.append(bar)
+    layout({
+      '.doc-editor-wrap': { top: 0, bottom: 1000, left: 0, right: 400, width: 400, height: 1000 },
+      '.doc-keyboard-bar': { top: 340, bottom: 390, left: 0, right: 400, width: 400, height: 50 },
+      '[data-decoration-id]': CARET,
+    })
+    await type(editor, ' @')
+    const m = menu.menu.value!
+    // 下面只剩 40 像素，翻到光标上方：菜单的下沿压在光标那一行的上沿之上。
+    expect(m.bottom).toBeDefined()
+    expect(1000 - m.bottom!).toBeLessThanOrEqual(CARET.top)
+    expect(m.maxHeight).toBeLessThanOrEqual(CARET.top)
   })
 })

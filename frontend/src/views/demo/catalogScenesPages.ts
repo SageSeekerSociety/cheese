@@ -11,12 +11,11 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { INDEX_APPLICATIONS, INDEX_SPACES, noop, noopAsync, TEAM_PROJECTS } from './catalogScenesPagesFixtures'
+import { noop, noopAsync, TEAM_PROJECTS } from './catalogScenesPagesFixtures'
 import { topicCandidates } from './catalogScenesSpacesFixtures'
 import { teamProfile } from './catalogSharedFixtures'
 
 import AskView from '@/views/question/AskView.vue'
-import IndexView from '@/views/spaces/IndexView.vue'
 import TeamInviteViewView from '@/views/TeamInviteViewView.vue'
 import TeamProjectsView from '@/views/teams/detail/TeamProjectsView.vue'
 
@@ -31,88 +30,6 @@ const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 const OK_FIELD = { 'error-messages': [] as string[], error: false }
 
 export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
-  {
-    id: 'spaces-index-view',
-    title: 'IndexView',
-    about:
-      '空间名录那一页的画面：顶上一条「我的空间申请」（等审 / 驳回 / 过审各一条自己的路），下面是所有公开空间的名录，登录的人还能当场新建一个。取数、翻页、建空间调后端都在容器 `spaces/Index.vue` 里；「登录了没有」由容器以 `loggedIn` 传进来，画面自己不认账号服务。',
-    file: 'src/views/spaces/IndexView.vue',
-    component: IndexView,
-    needs: UI_T_R,
-    // 建空间的对话框画在 body 上，不在容器里。
-    teleport: true,
-    args: {
-      mdAndUp: true,
-      loggedIn: false,
-      applicationsError: false,
-      applications: [],
-      applicationOffset: 0,
-      firstRun: false,
-      spacesFailed: false,
-      error: null,
-      refresh: noopAsync,
-      hasMore: false,
-      loadingMore: false,
-      refreshing: false,
-      spaces: [],
-      total: 0,
-      loadMore: noopAsync,
-      resubmittingId: null,
-      creating: false,
-      existingAvatarId: undefined,
-      createError: '',
-      createdInviteCode: null,
-      createDialog: false,
-      spaceName: '',
-      selectedAvatar: undefined,
-      spaceIntro: '',
-      codeDialog: false,
-    },
-    states: [
-      {
-        name: '名录上还没有空间',
-        note: '一块都没有：名录那格里说一句「暂无空间」，不是一片空白。',
-        props: {},
-        expect: '暂无空间',
-      },
-      {
-        name: '名录上有空间',
-        note: '六块板，各写着名字和简介，整块可点进它的题目列表。',
-        props: { spaces: INDEX_SPACES, total: 6 },
-        expect: '操作系统',
-      },
-      {
-        name: '读失败',
-        note: '名录没读出来：错误替换整块名录（`spaces` 是空的，光看「空」分不出读失败和本来就空）。',
-        props: { spacesFailed: true, error: new Error('网络不通') },
-        expect: '加载空间列表失败',
-      },
-      {
-        name: '第一次来',
-        note: '一个项目都没有的人：顶上多一格「从这里开始」，把他往建项目那条路上领。',
-        props: { firstRun: true, loggedIn: true },
-        expect: '从这里开始',
-      },
-      {
-        name: '我的空间申请',
-        note: '三条自己的申请：等审的、被驳回带原因的（只有它能改一版再来）、过审的（能直接进去）。',
-        props: { loggedIn: true, applications: INDEX_APPLICATIONS },
-        expect: '修改并重新提交',
-      },
-      {
-        name: '新建空间',
-        note: '「新建空间」点开：头像、名字、简介三个字段，名字空着时主操作按不动。',
-        props: { loggedIn: true, createDialog: true },
-        expect: '空间名称',
-      },
-      {
-        name: '刚建好，给你邀请码',
-        note: '后端在建空间那一刻就发了邀请码，别处看不到：这里当场交到人手上，关掉就进这个空间。',
-        props: { loggedIn: true, codeDialog: true, createdInviteCode: 'CHZ-2026-9F3A' },
-        expect: '这是你的邀请码',
-      },
-    ],
-  },
   {
     id: 'team-invite-view-view',
     title: 'TeamInviteViewView',
@@ -211,7 +128,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
     id: 'ask-view',
     title: 'AskView',
     about:
-      '提问页的画面：一个标题输入、一块正文编辑器、一只话题选择器，下面是「加悬赏」那一行和发布按钮，右手边钉着「提问的艺术」。校验、发布、搜索与新建话题都在容器 `question/Ask.vue` 里 —— 编辑器实例和三个字段的报错都由容器以 props 传进来。',
+      '提问页的画面：一个标题输入、一块正文编辑器、一只标签选择器，下面是「加悬赏」那一行和发布按钮，右手边钉着「提问的艺术」。校验、发布、搜索与新建标签都在容器 `question/Ask.vue` 里 —— 编辑器实例和三个字段的报错都由容器以 props 传进来。',
     file: 'src/views/question/AskView.vue',
     component: AskView,
     needs: UI_T,
@@ -219,7 +136,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
       titleProps: OK_FIELD,
       editorConfig: {},
       topicsProps: OK_FIELD,
-      // 话题的搜索与新建归容器（那里才认得接口）；这里给一份够用的候选。
+      // 标签的搜索与新建归容器（那里才认得接口）；这里给一份够用的候选。
       searchTopics: async (query: string) => topicCandidates(query),
       createTopic: async () => 99,
       hasBounty: false,
@@ -233,7 +150,7 @@ export const SCENES_PAGES_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '刚进来',
-        note: '空的标题、空的正文、没选话题：发布按钮在这儿，右手边是「提问的艺术」。',
+        note: '空的标题、空的正文、没选标签：发布按钮在这儿，右手边是「提问的艺术」。',
         props: {},
         expect: '发布问题',
       },

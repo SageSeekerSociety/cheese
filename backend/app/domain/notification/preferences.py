@@ -64,7 +64,7 @@ def local_time(now: datetime, timezone: str | None) -> datetime:
 
 
 class PreferenceCategory(str, Enum):
-    """矩阵里的那八行。值是写给前端的稳定键（驼峰），不要改。"""
+    """矩阵里的那九行。值是写给前端的稳定键（驼峰），不要改。"""
 
     MENTION = "mention"  # 有人 @ 我
     REPLY = "reply"  # 我的消息被回复
@@ -74,6 +74,7 @@ class PreferenceCategory(str, Enum):
     INVITATION = "invitation"  # 团队 / 项目邀请
     ANNOUNCEMENT = "announcement"  # 空间公告
     BILLING = "billing"  # 额度与计费提醒
+    ASSISTANT = "assistant"  # 芝士（个人助手）的提醒和例行事务的结果
 
 
 class EmailMode(str, Enum):
@@ -105,10 +106,15 @@ CATEGORY_TYPES: Final[dict[PreferenceCategory, frozenset[NotificationType]]] = {
     ),
     PreferenceCategory.DEVICE_IN_USE: frozenset({NotificationType.DEVICE_IN_USE}),
     PreferenceCategory.INVITATION: frozenset(
-        {NotificationType.PROJECT_INVITE, NotificationType.TEAM_INVITATION}
+        {
+            NotificationType.PROJECT_INVITE,
+            NotificationType.PROJECT_TRANSFER,
+            NotificationType.TEAM_INVITATION,
+        }
     ),
     PreferenceCategory.ANNOUNCEMENT: frozenset({NotificationType.SPACE_ANNOUNCEMENT}),
     PreferenceCategory.BILLING: frozenset(),
+    PreferenceCategory.ASSISTANT: frozenset({NotificationType.ASSISTANT_NOTICE}),
 }
 
 #: 反查：一个通知类别码属于哪一行矩阵。没覆盖到的返回 None（走旧规矩）。
@@ -136,6 +142,7 @@ class ChannelChoice:
 #: - 有人回应了我：只进站内（小事不刷屏）。
 #: - 我的设备有人在用：站内 + 推送，不发邮件。
 #: - 空间公告 / 额度计费：站内 + 邮件，不推送。
+#: - 芝士：三个渠道全开，提醒是用户自己要的。
 DEFAULT_CHANNELS: Final[dict[PreferenceCategory, ChannelChoice]] = {
     PreferenceCategory.MENTION: ChannelChoice(True, True, True),
     PreferenceCategory.REPLY: ChannelChoice(True, False, True),
@@ -145,6 +152,7 @@ DEFAULT_CHANNELS: Final[dict[PreferenceCategory, ChannelChoice]] = {
     PreferenceCategory.INVITATION: ChannelChoice(True, True, True),
     PreferenceCategory.ANNOUNCEMENT: ChannelChoice(True, False, True),
     PreferenceCategory.BILLING: ChannelChoice(True, False, True),
+    PreferenceCategory.ASSISTANT: ChannelChoice(True, True, True),
 }
 
 

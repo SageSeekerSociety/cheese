@@ -123,7 +123,7 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {creator_token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
+            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
         )
         return membership_id
 
@@ -1257,7 +1257,7 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert approve_resp.status_code == 200, (
-            f"Team task approval failed: {approve_resp.status_code}: {approve_resp.text}"  # noqa: E501
+            f"Team task approval failed: {approve_resp.status_code}: {approve_resp.text}"
         )
         return task_id
 
@@ -1283,7 +1283,7 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {space_creator_token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Team member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
+            f"Team member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
         )
         return membership_id
 

@@ -16,15 +16,21 @@ from tests.integration.test_accept_pr import (
     _give_card_a_pr,
     _make_project,
     _make_topic,
+    _sweep,
 )
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import summary_turn_ends, time_passes, watch
+from tests.integration.test_accept_pr import (
+    sweeping as _sweeping_fixture,
+)
+from tests.landing import time_passes, watch, written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
+# 巡检开着的那一套：`sweeping` 依赖 `app_world`，所以它也跟着换成本文件的这一个。
+sweeping = pytest.fixture(_sweeping_fixture.__wrapped__)  # type: ignore[attr-defined]
 
 
 def _file(client, topic_id: str, *, completes_task: bool) -> str:
@@ -133,6 +139,44 @@ def test_the_next_step_counts_only_its_own_changes(client, app_world):
     assert changed() == ["step-two.txt"]
 
 
+def test_the_next_step_gets_a_draft_pr_of_its_own(client, sweeping):
+    """第二步的分支领先 main，就该有它自己的 draft PR。
+
+    「有东西就有 PR」在第二步上曾经是断的：巡检拿「这个任务递过卡没有」当判据，
+    而第一步那张已经在合并时结算的卡一直留在库里，于是第二步的分支领先 main 也
+    开不出 PR —— 整条线停在「独立 review 要先有 PR 号」这一步（#1521）。
+    """
+    task_id, before = _accepted_step(client, sweeping, completes_task=False)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["branch_name"] != before["branch_name"]
+    assert task["pr_number"] is None
+
+    task_uuid = uuid.UUID(str(task_id))
+    project = uuid.UUID(task["project_id"])
+    # 第一步并进 main，机器的检出移到下一步的分支上，再在它上面提交。
+    git_store.merge_task(project, task_uuid, message="feat: step one")
+    git_store.git(git_store.path(project), "branch", task["branch_name"], "main")
+    git_store.bind_task(
+        task_uuid,
+        branch=task["branch_name"],
+        directory=f"task_{task_uuid.hex[:8]}",
+        base="main",
+    )
+    machine_commits(project, task_uuid, {"step-two.txt": "two\n"}, "Step two")
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    [opened] = [o for o in sweeping["opened"] if not o.get("adopted")]
+    assert opened["draft"] is True
+    assert opened["head"] == task["branch_name"]
+    # 写回的是任务：第二步的 PR 号落在任务上，第一步那张卡不动。
+    assert (
+        client.get(f"/topics/{task_id}/task").json()["data"]["pr_number"]
+        == opened["number"]
+    )
+
+
 def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
     client, app_world
 ):
@@ -145,12 +189,18 @@ def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
     told = _told(client, task_id)
     assert "最后一次交付已经采纳并合并" in told
     assert "实况文档" in told and "chat_send" in told
+    # 留痕记录是单独一条，号码是平台给的、标题和正文它自己去 GitHub 读（#4693
+    # 那两次收尾一次贴了一次没贴，就是这一条从记忆挪进指令的原因）。
+    assert "再单独发一条【留痕记录】" in told
+    assert "gh pr view 7" in told
 
 
-def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
+def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
+    client, app_world
+):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
 
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
@@ -170,7 +220,7 @@ def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
 
 def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_world):
     task_id, before = _accepted_step(client, app_world, completes_task=True)
-    summary_turn_ends(client, task_id)
+    written_up(client, task_id)
     owner = client.get(f"/topics/{task_id}/task").json()["data"]["owner_handle"]
 
     refused = client.post(
@@ -240,6 +290,32 @@ def test_how_a_task_ended_is_said_where_it_came_from(client):
     from tests.integration.test_tasks import _room
 
     _project, room = _room(client)
+    said = post_message(client, room, "alice", {"content": "报名页有两处要改"})
+    thread = client.post(
+        f"/blocks/{said['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    reply = post_message(client, thread, "alice", {"content": "报名表单太长了"})
+    task = client.post(
+        f"/blocks/{reply['id']}/upgrade", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    closed = client.post(
+        f"/topics/{task['id']}/close",
+        json={"conclusion": "必填项压到 4 项"},
+        headers=session_auth_headers("alice"),
+    )
+    assert closed.status_code == 200, closed.text
+
+    replies = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    assert any("必填项压到 4 项" in b["content"] for b in replies)
+
+
+def test_a_thread_turned_into_the_task_says_how_it_ended_once(client):
+    """The discussion it came from is its own conversation: the ending is said
+    there once, not repeated as a reply from the discussion's side."""
+    from tests.integration.test_tasks import _room
+
+    _project, room = _room(client)
     said = post_message(client, room, "alice", {"content": "报名表单太长了"})
     task = client.post(
         f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
@@ -252,10 +328,8 @@ def test_how_a_task_ended_is_said_where_it_came_from(client):
     )
     assert closed.status_code == 200, closed.text
 
-    threads = client.get(f"/topics/{room}/threads").json()["data"]
-    [thread] = [t for t in threads if t["root_block_id"] == said["id"]]
-    replies = client.get(f"/topics/{thread['id']}/blocks").json()["data"]["data"]
-    assert any("必填项压到 4 项" in b["content"] for b in replies)
+    lines = client.get(f"/topics/{task['id']}/blocks").json()["data"]["data"]
+    assert sum("必填项压到 4 项" in b["content"] for b in lines) == 1
 
 
 def test_a_task_from_something_that_is_not_a_message_still_closes(client):
@@ -264,7 +338,8 @@ def test_a_task_from_something_that_is_not_a_message_still_closes(client):
     import asyncio
     import uuid
 
-    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.block.models import Block, BlockKind
+    from app.domain.event_author import AuthorType
     from tests.integration.test_tasks import _room
 
     project, room = _room(client)

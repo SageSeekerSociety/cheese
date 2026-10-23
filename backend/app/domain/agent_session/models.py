@@ -56,6 +56,13 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 #: (idle, or given up with its host). Cleared by the first tool call that lands
 #: in a new one; until then the room's lease still names the machine it was on.
 LOST_KEY = "sandbox_lost"
+#: Set in a session's ``execution_request`` when it asked for another cloud
+#: sandbox while it already had one — the spec it is on, asked again
+#: (``session_work.switch_environment``). The host it left is named here so its
+#: next placement does not go straight back to it, which is what the pool's
+#: preference for the fullest host would otherwise do. Cleared by that
+#: placement (``HostPool._placed_off``).
+LEFT_HOST_KEY = "sandbox_left_host"
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +158,18 @@ class AgentSession(UuidPk, Timestamps, Base):
     # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
     # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过：那一轮整份都说。
     told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # When the drain of this session's runner began: a runner another release
+    # started, at work when this release took it over, is left to finish for
+    # at most ``settings.runner_drain_s`` from here (``room.sessions.lifecycle``).
+    # Kept with the seat so a backend that takes over mid-drain counts from the
+    # same moment. NULL while no drain is under way.
+    drain_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The runner that drain is of (its ping's ``launch``): a start left by a
+    # drain that never settled (its runner went away during a takeover) does
+    # not count for another runner.
+    drain_launch: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——它自己那一半地点的唯一入口。
@@ -204,4 +223,40 @@ class AgentEnvironment(Base):
     chosen_by: Mapped[dict | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentRead(Base):
+    """How far one agent has read one conversation.
+
+    One row per ``(conversation, agent seat)``: each teammate follows the room
+    with its own eyes, the way every person in it does. A room where one seat's
+    reading moved a shared watermark instead would hand whatever it read to
+    nobody else — which is exactly the bug this table exists to end.
+
+    The seat is the authorship handle (``cheese-<instance hex>``), not the
+    resolved project handle a session row is keyed by: handing a conversation to
+    another teammate should start that teammate at the beginning of what it can
+    see, not let it inherit what the previous one read.
+
+    Nothing here is per harness. A session row is, and a change of harness opens
+    a new one; who has read what is not the harness's question.
+    """
+
+    __tablename__ = "agent_reads"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_reads_conversation_id_conversations",
+        ),
+        primary_key=True,
+    )
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The newest block this seat has read, as the timeline orders blocks:
+    # ``(created_at, id)``. Stored together so the predicate is one comparison
+    # and ties (two messages in the same microsecond) cannot loop or skip.
+    read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    read_through_block_id: Mapped[uuid.UUID] = mapped_column()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

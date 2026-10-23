@@ -1,12 +1,15 @@
 /**
- * 芝士额度的两页在预览站里的条目：个人设置里的「芝士额度」和团队的「额度」。
+ * 芝士额度的两页在预览站里的条目：个人团队的「额度」和团队的「额度」。
  * 数据照 `/users/me/credits/usage`、`/teams/{id}/credits/usage` 的回答形状写，额度数以点计。
  */
 import type { CreditUsage, UsagePack, UsagePeriod } from '@/lib/creditUsage'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AdminCreditRequests from '@/components/admin/credits/AdminCreditRequests.vue'
+import CreditOffers from '@/components/usage/CreditOffers.vue'
+import CreditTopUp from '@/components/usage/CreditTopUp.vue'
+import CreditPlansView from '@/views/CreditPlansView.vue'
 import TeamCreditsView from '@/views/teams/detail/CreditsView.vue'
-import UsageSettingsView from '@/views/user/settings/UsageView.vue'
 
 const UI: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 
@@ -140,17 +143,217 @@ const TEAM: CreditUsage = {
 
 export const USAGE_ENTRIES: CatalogEntry[] = [
   {
-    id: 'usage-settings-view',
-    title: 'UsageSettingsView',
-    about: '个人设置里的「芝士额度」：本月用了多少点、其他额度、每天用量、我的项目、我所在的团队。',
-    file: 'src/views/user/settings/UsageView.vue',
-    component: UsageSettingsView,
+    id: 'credit-offers',
+    title: 'CreditOffers',
+    about: '个人额度中的一次性内测奖励入口。活动说明在反馈中心。',
+    file: 'src/components/usage/CreditOffers.vue',
+    component: CreditOffers,
+    needs: UI,
+    states: [
+      {
+        name: '个人奖励',
+        note: '每个账号可领取一次；反馈奖励在采纳后入个人额度。',
+        props: {
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
+        expect: '领取 500 点',
+      },
+      {
+        name: '已领取',
+        note: '领取后按钮停用，仍可通过反馈获得奖励。',
+        props: {
+          beta: {
+            credits: 500,
+            claimed: true,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+        },
+        expect: '已领取',
+      },
+      {
+        name: '读取失败',
+        note: '保留失败原因和重试入口，奖励按钮不可领取。',
+        props: { error: '暂时无法读取奖励' },
+        expect: '重试',
+      },
+    ],
+  },
+  {
+    id: 'credit-top-up',
+    title: 'CreditTopUp',
+    about: '团队管理员通过弹窗申请充值，提交不扣款，人工确认后到账。',
+    file: 'src/components/usage/CreditTopUp.vue',
+    component: CreditTopUp,
+    needs: UI,
+    states: [
+      { name: '可充值', note: '点击后填写所需点数，取消不会提交申请。', props: { requests: [] }, expect: '充值' },
+      {
+        name: '待确认',
+        note: '已有待处理充值时不能重复提交。',
+        props: { requests: [{ id: 'topup-demo', kind: 'top_up', status: 'pending' }] },
+        expect: '申请处理中',
+      },
+    ],
+  },
+  {
+    id: 'credit-plans-view',
+    title: 'CreditPlansView',
+    about: '个人和团队共用的套餐页；团队入口保留团队，展示已发布方案和科研团队能力。',
+    file: 'src/views/CreditPlansView.vue',
+    component: CreditPlansView,
+    needs: UI,
+    states: [
+      {
+        name: '个人套餐',
+        note: '展示真实数据结构的月额度与窗口方案；这里的数值为演示数据。',
+        props: {
+          plans: [
+            { ...PERSON.plan, audience: 'personal', period: 'month' },
+            { ...WINDOWED.plan, audience: 'both', period: 'month' },
+          ],
+          teams: [
+            { handle: 'alice', name: '林夏' },
+            { handle: 'citylab', name: '城市数据实验室' },
+          ],
+          teamHandle: 'alice',
+          personal: true,
+          currentPlan: PERSON.plan,
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+          requests: [],
+          canManage: false,
+          loading: false,
+          busy: false,
+          error: null,
+        },
+        expect: '选择适合你的研究方式',
+      },
+      {
+        name: '团队套餐',
+        note: '管理员可申请，普通成员只能查看；申请时确认报价。',
+        props: {
+          plans: [{ ...TEAM.plan, audience: 'team', period: 'month' }],
+          teams: [{ handle: 'citylab', name: '城市数据实验室' }],
+          teamHandle: 'citylab',
+          currentPlan: TEAM.plan,
+          beta: null,
+          requests: [],
+          canManage: true,
+          loading: false,
+          busy: false,
+          error: null,
+        },
+        expect: '申请 Team 方案',
+      },
+      {
+        name: '读取失败',
+        note: '保留重试；数据不完整时不能提交方案申请。',
+        props: {
+          plans: [],
+          teams: [],
+          teamHandle: '',
+          currentPlan: null,
+          beta: null,
+          requests: [],
+          canManage: false,
+          loading: false,
+          busy: false,
+          error: '暂时无法读取套餐',
+        },
+        expect: '重试',
+      },
+    ],
+  },
+  {
+    id: 'admin-credit-requests',
+    title: 'AdminCreditRequests',
+    about: '管理员核对团队申请，确认线下付款或试用安排后开通；拒绝不会发额度。',
+    file: 'src/components/admin/credits/AdminCreditRequests.vue',
+    component: AdminCreditRequests,
+    needs: UI,
+    states: [
+      {
+        name: '充值申请',
+        note: '确认前开通按钮不可用；重复确认由账本去重。',
+        props: {
+          requests: [
+            {
+              id: 'r1',
+              team_id: 3,
+              team_name: '城市数据实验室',
+              kind: 'top_up',
+              credits: 1000,
+              status: 'pending',
+              requester_handle: 'alice',
+              created_at: '2026-10-18T00:00:00Z',
+            },
+          ],
+          plans: [],
+          busy: false,
+          error: null,
+        },
+        expect: '已确认付款或试用安排',
+      },
+      {
+        name: '暂无申请',
+        note: '明确没有待处理申请。',
+        props: { requests: [], plans: [], busy: false, error: null },
+        expect: '暂无待处理申请',
+      },
+    ],
+  },
+  {
+    id: 'personal-credits-view',
+    title: 'PersonalCreditsView',
+    about: '个人团队的「额度」：本月用了多少点、其他额度、每天用量、我的项目、我所在的团队。',
+    file: 'src/views/teams/detail/CreditsView.vue',
+    component: TeamCreditsView,
     needs: UI,
     states: [
       {
         name: '本月用了一半',
         note: '额度数以点计；其他额度写明什么时候用到它。方案名点开看方案包含什么。',
-        props: { usage: PERSON, loading: false, error: null },
+        props: {
+          personal: true,
+          teamHandle: 'alice',
+          canManage: true,
+          beta: {
+            credits: 500,
+            claimed: false,
+            feedback_credits: 100,
+            plan_credits: 1000,
+            invite_credits: 150,
+            invitee_credits: 150,
+          },
+          rewards: {
+            feedback_count: 1,
+            feedback_credits: 100,
+            invite_credits: 150,
+            items: [
+              { kind: 'invite', credits: 150, created_at: '2026-10-19T00:00:00Z' },
+              { kind: 'feedback', credits: 100, created_at: '2026-10-18T00:00:00Z' },
+            ],
+          },
+          usage: PERSON,
+          loading: false,
+          error: null,
+        },
         expect: '空气质量看板',
       },
       {
@@ -176,7 +379,7 @@ export const USAGE_ENTRIES: CatalogEntry[] = [
       {
         name: '按月发放的方案',
         note: '本月的条和每天的柱子按协作和算力分两色；团队没有问答和写作。',
-        props: { usage: TEAM, loading: false, error: null },
+        props: { usage: TEAM, loading: false, error: null, canManage: true, teamHandle: 'citylab', requests: [] },
         expect: '算力',
       },
       {

@@ -21,6 +21,7 @@ from app.api.preview_host import (
     resource_key,
 )
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
@@ -42,7 +43,7 @@ class PreviewSelection(BaseModel):
     instance: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
-@router.post("/{topic_id}/preview-session")
+@router.post("/{topic_id}/preview-session", dependencies=[ROUTE_DECIDES])
 async def preview_session(
     topic_id: uuid.UUID,
     resolver: ActorResolverDep,

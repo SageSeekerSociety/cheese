@@ -100,6 +100,12 @@ elif args[0] == "exec" and "socat" in args:
                 if env.get("SWITCH_BACK") == color and state["admin"].get("litellm-" + color) == 8:
                     state["admin"]["litellm-" + color] = 0
                 out += f"litellm,litellm-{color},0,0,{open_now}\n"
+elif args[0] == "exec" and any("cheese_selectable" in a for a in args):
+    who = service(args[1]).upper().replace("-", "_")
+    out = env.get("SELECTABLE_" + who, "glm-5.2").replace(",", "\n")
+elif args[0] == "exec" and any("model/info" in a for a in args):
+    who = service(args[1]).upper().replace("-", "_")
+    out = env.get("DB_MODELS_" + who, "").replace(",", "\n")
 elif args[0] == "exec" and any("v1/models" in a for a in args):
     who = service(args[1]).upper().replace("-", "_")
     out = env.get("MODELS_" + who, "fake\nglm-5.2").replace(",", "\n")
@@ -324,7 +330,7 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertTrue(listing)
         self.assertFalse(any("/health'" in " ".join(c["args"]) for c in calls))
 
-    def test_a_model_this_release_removes_from_the_configuration_does_not_hold_it(self):
+    def test_a_model_the_operator_names_to_drop_does_not_hold_the_release(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml") as old:
             old.write("model_list:\n  - model_name: glm-4.5\n  - model_name: glm-5.2\n")
             old.flush()
@@ -333,9 +339,49 @@ class GatewayReleaseTest(unittest.TestCase):
                 MODELS_LITELLM_GREEN="fake,glm-5.2",
                 SERVING_CONFIG=old.name,
                 NEW_CONFIG="model_list:\n  - model_name: glm-5.2\n",
+                GATEWAY_ALLOW_DROP="glm-4.5",
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(state["running"], ["gateway-netns", "gateway-proxy-a", "litellm-green"])
+
+    def test_removing_a_model_from_the_configuration_alone_does_not_drop_it(self):
+        # Every model leaves config.yaml for a runtime row; if the rows were
+        # never created, nothing serves them and the new color must not serve.
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as old:
+            old.write("model_list:\n  - model_name: glm-4.5\n  - model_name: glm-5.2\n")
+            old.flush()
+            result, calls, state = self.run_release(
+                MODELS_LITELLM_BLUE="fake,glm-4.5,glm-5.2",
+                MODELS_LITELLM_GREEN="fake",
+                SERVING_CONFIG=old.name,
+                NEW_CONFIG="model_list: []\n",
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("state ready" in c["stdin"] for c in calls))
+        self.assertEqual(state["running"], sorted(SERVING))
+
+    def test_a_new_color_offering_no_selectable_model_never_takes_traffic(self):
+        result, calls, state = self.run_release(SELECTABLE_LITELLM_GREEN="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("state ready" in c["stdin"] for c in calls))
+        self.assertEqual(state["running"], sorted(SERVING))
+
+    def test_a_model_moved_from_the_configuration_to_the_database_still_holds_it(self):
+        # The release drops glm-4.5 from config.yaml because a runtime row now
+        # serves it; a new color that has not loaded that row must not serve.
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as old:
+            old.write("model_list:\n  - model_name: glm-4.5\n  - model_name: glm-5.2\n")
+            old.flush()
+            result, calls, state = self.run_release(
+                MODELS_LITELLM_BLUE="fake,glm-4.5,glm-5.2",
+                DB_MODELS_LITELLM_BLUE="glm-4.5",
+                MODELS_LITELLM_GREEN="fake,glm-5.2",
+                SERVING_CONFIG=old.name,
+                NEW_CONFIG="model_list: []\n",
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("state ready" in c["stdin"] for c in calls))
+        self.assertEqual(state["running"], sorted(SERVING))
 
     def test_the_old_color_is_stopped_only_once_its_requests_are_done(self):
         result, calls, _ = self.run_release(sessions={"blue": [2, 1, 1, 0]})

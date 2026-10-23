@@ -48,7 +48,7 @@ class AcceptCardCreate(BaseModel):
     # 这一项产物是什么东西、给谁的 —— 一句话，清单上跟着名字一起显示，下一次交付
     # 靠它判断「我做出来的是不是它的新一版」。新声明一项时必填，沿用一项时可给可
     # 不给（给了就以新的为准）：写对了的那句话说的是这样东西本身，交一版新的不会
-    # 让它变得不对。长度和「别抄改动标题」由 project/artifacts.py 的 clean_about
+    # 让它变得不对。长度和「别抄改动标题」由 deliverables/artifacts.py 的 clean_about
     # 挡，不在这里 —— 同一个理由，那里答得出为什么。
     about: str | None = None
     # 这一版交出去的是什么 (#1085 结论五)：`deliver` 是工作目录里那一份（建卡时落
@@ -76,6 +76,31 @@ class AcceptCardDescribe(BaseModel):
     change_body: str | None = None
 
 
+class AcceptCardRedeliver(BaseModel):
+    """换掉待处理那张卡交出去的那一份：任务目录里的一份文件，或者一个地址。
+
+    只收这两样。别的字段（标题、正文、验收人）各有各的入口，收下一个不起作用的
+    字段，读起来跟起了作用一模一样。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    deliver: str | None = Field(default=None, max_length=512)
+    deliver_url: str | None = Field(default=None, max_length=1024)
+
+
+class AcceptCardReassign(BaseModel):
+    """改验收人：只收新的验收人；不点名就回到项目默认的那一位。
+
+    这条路过去拿递卡的请求体当自己的，`deliver`、`artifact` 之类照收不误、一个都
+    不用，调用方以为改了交付物，其实什么都没变 (FB-104)。多给的字段现在整个请求被拒。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_handle: str | None = Field(default=None, max_length=64)
+
+
 #: 合的是**人看到的**那个 commit：每个会触发合并的写入口都带上前端渲染这张卡
 #: 时卡面显示的 head sha（`merge_state.head_sha`）。它不是给服务端「用哪个 sha
 #: 合并」的建议，而是给它「我看的是哪一版」的声明——服务端拿它和卡当前的
@@ -89,6 +114,9 @@ _SEEN_HEAD_FIELD = Field(default=None, max_length=64)
 class AcceptDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
     head_sha: str | None = _SEEN_HEAD_FIELD
+    #: 交文件、交地址的卡：卡面上 `deliverable.revision` 那一版，同 `head_sha`
+    #: 一个道理 —— 交付物可以在卡待处理时原地换掉，合的必须是人看过的那一份。
+    deliverable_revision: str | None = Field(default=None, max_length=64)
 
 
 class RejectDecision(BaseModel):

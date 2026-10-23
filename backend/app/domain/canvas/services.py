@@ -30,9 +30,11 @@ from app.domain.canvas.schemas import (
 )
 from app.domain.living_doc.models import Document
 
-#: Turns what a change names as its task (an id, or a number in the project)
-#: into the task's id, refusing one the caller may not point at.
-TaskResolver = Callable[[str], Awaitable[uuid.UUID]]
+#: Turns what the changes name as their tasks (ids, or numbers in the project)
+#: into the tasks' ids, all of them in one read. A ref the caller may not point
+#: at — no such task, or one they may not see — is absent from the answer, and
+#: the change that named it is the one refused.
+TaskResolver = Callable[[Sequence[str]], Awaitable[dict[str, uuid.UUID]]]
 
 _NUMBER = re.compile(r"^\s*\[?#?(\d+)\]?\s*$")
 
@@ -75,12 +77,35 @@ class Applied:
     added: list[int] = field(default_factory=list)
 
 
+def tasks_named(changes: Sequence[Change]) -> list[str]:
+    """Every task the changes name, once each, in the order they name them:
+    what to resolve before the first change is made. An update that leaves
+    ``task`` out names none — the card keeps the task it had."""
+    named: dict[str, None] = {}
+    for change in changes:
+        if isinstance(change, (AddCard, UpdateCard)) and change.task:
+            named[change.task] = None
+    return list(named)
+
+
 class Canvases:
     def __init__(self, session: AsyncSession):
         self._session = session
 
     async def get(self, canvas_id: uuid.UUID) -> Canvas | None:
         return await self._session.get(Canvas, canvas_id)
+
+    async def get_many_with_projects(
+        self, canvas_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[Canvas, uuid.UUID | None]]:
+        if not canvas_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Canvas, Document.project_id)
+            .outerjoin(Document, Document.id == Canvas.document_id)
+            .where(Canvas.id.in_(canvas_ids))
+        )
+        return {canvas.id: (canvas, project_id) for canvas, project_id in rows}
 
     async def get_or_404(self, canvas_id: uuid.UUID) -> Canvas:
         canvas = await self.get(canvas_id)
@@ -179,7 +204,7 @@ class Canvases:
         changes: Sequence[Change],
         *,
         actor: str,
-        resolve_task: TaskResolver,
+        resolve_tasks: TaskResolver,
     ) -> Applied:
         """Make every change, in order, as ``actor``; a change that cannot be
         made refuses them all, naming it (``data.index``)."""
@@ -193,6 +218,18 @@ class Canvases:
         edges = {(e.source_id, e.target_id): e for e in board.edges}
         applied = Applied()
         now = datetime.now(UTC)
+        named = tasks_named(changes)
+        tasks = await resolve_tasks(named) if named else {}
+
+        def task_of(ref: str) -> uuid.UUID:
+            """The id the ref resolved to; a ref left out names no task this
+            caller may point at. Every ref was read at once, before the first
+            change; which change is refused is still the order of the changes
+            — the change asking for a task nobody resolved is the one named."""
+            task_id = tasks.get(ref)
+            if task_id is None:
+                raise UnprocessableEntityError(say("canvasTaskNotFound", task=ref))
+            return task_id
 
         def card_of(key: CardKey, index: int) -> CanvasCard:
             if isinstance(key, str) and key in applied.refs:
@@ -219,7 +256,7 @@ class Canvases:
                         say("canvasTooManyCards", limit=MAX_CARDS),
                         data={"index": index},
                     )
-                task_id = await resolve_task(change.task) if change.task else None
+                task_id = task_of(change.task) if change.task else None
                 card = CanvasCard(
                     id=uuid.uuid4(),
                     canvas_id=canvas.id,
@@ -245,9 +282,7 @@ class Canvases:
                 if change.content is not None:
                     card.content = change.content
                 if "task" in change.model_fields_set:
-                    card.task_id = (
-                        await resolve_task(change.task) if change.task else None
-                    )
+                    card.task_id = task_of(change.task) if change.task else None
                 touched(card)
             elif isinstance(change, MoveCard):
                 card = card_of(change.card, index)
@@ -340,23 +375,31 @@ async def settle(
     pasting a block does. A canvas of another project, or of a document the
     caller may not read, is refused rather than copied."""
     canvases = Canvases(session)
+    parsed = blocks(text)
+    canvas_rows = await canvases.get_many_with_projects(
+        {block.canvas_id for block in parsed if block.canvas_id is not None}
+    )
     left = Counter(keep)
     refs: list[uuid.UUID | None] = []
     made: list[tuple[uuid.UUID, str]] = []
-    for block in blocks(text):
+    for block in parsed:
         if block.canvas_id is None:
             canvas = await canvases.create(document_id=document_id, actor=actor)
             made.append((canvas.id, block.title))
             refs.append(canvas.id)
             continue
-        canvas = await canvases.get(block.canvas_id)
+        canvas_and_project = canvas_rows.get(block.canvas_id)
+        canvas = canvas_and_project[0] if canvas_and_project is not None else None
+        canvas_project = (
+            canvas_and_project[1] if canvas_and_project is not None else None
+        )
         if canvas is not None and canvas.document_id == document_id and left[canvas.id]:
             left[canvas.id] -= 1
             refs.append(canvas.id)
             continue
         if (
             canvas is None
-            or await canvases.project_of(canvas) != project_id
+            or canvas_project != project_id
             or not await readable(canvas.document_id)
         ):
             raise UnprocessableEntityError(

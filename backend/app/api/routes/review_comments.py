@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
@@ -25,10 +26,11 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.project_permissions import Permission
 from app.domain.review import document_compare
 from app.domain.review.comments import ReviewCommentService, describe
 from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["review-comments"], dependencies=[ROUTE_DECIDES])
 
@@ -162,8 +164,9 @@ async def review_comparison(
 async def write_review_comment(
     task_id: uuid.UUID, body: ReviewCommentIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    _place, actor, task = await task_conversation(db, resolver, task_id)
+    place, actor, task = await task_conversation(db, resolver, task_id)
     author = _person(actor)
+    await require_role(db, actor, place.project_id, Permission.comment)
     comment = await ReviewCommentService(db).write(
         task.id,
         author,
@@ -187,7 +190,7 @@ async def _draft_actor(
     task_id = await ReviewCommentService(db).task_of(comment_id)
     if task_id is None:
         raise NotFoundError(say("reviewCommentNotFound"))
-    place = await TopicService(db).place_or_404(task_id)
+    place = await place_or_404(db, task_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

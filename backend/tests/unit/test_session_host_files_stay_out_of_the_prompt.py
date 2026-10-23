@@ -61,6 +61,10 @@ class Executor:
         assert operation == "ping", operation
         return {"workspace": "/executor/the project"}
 
+    def working_directory(self):
+        """The project: this fixture has no task whose checkout to open."""
+        return "/executor/the project"
+
 
 # The session runs in a namespace of its own (`client.py enter`), with the
 # project at the executor's path, which is Linux's to give.

@@ -1,4 +1,6 @@
 // Plugins
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -30,6 +32,28 @@ const maxForks =
     ? envMaxForks
     : Math.max(1, Math.min(16, os.availableParallelism() - 1, Math.floor(os.totalmem() / 3 / 1024 ** 3)))
 
+// `test.fsModuleCache` keys a transformed module by its own source, the config
+// and the plugin names. A component whose `defineProps`/`defineEmits` (or
+// `defineModel`/`defineSlots`) takes a type argument compiles to runtime props
+// that @vitejs/plugin-vue reads out of that type, wherever it is declared:
+// change only the imported interface and the cached component keeps its old
+// props. Those components are transformed afresh on every run. The compile also
+// reads the tsconfig files, so their contents are part of every key.
+const TYPED_SFC_MACRO = /\bdefine(?:Props|Emits|Model|Slots)\s*</
+function fsModuleCacheKeys(): Plugin {
+  return {
+    name: 'cheese-fs-module-cache-keys',
+    configureVitest({ defineCacheKeyGenerator }) {
+      const tsconfig = ['tsconfig.json', 'tsconfig.app.json']
+        .map((name) => readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), 'utf8'))
+        .join('\0')
+      defineCacheKeyGenerator(({ id, sourceCode }) =>
+        id.split('?')[0].endsWith('.vue') && TYPED_SFC_MACRO.test(sourceCode) ? false : tsconfig
+      )
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 // /demo/<名字> 是演示页（demo.html），不是应用。线上由 nginx.conf 那条 location 分开，
 // 开发服务器上由这里分开：不然它落到应用的兜底 index.html 上，打开的是整个平台。
@@ -41,6 +65,46 @@ function demoPages(): Plugin {
         if (req.url && /^\/demo(\/|\?|$)/.test(req.url)) req.url = '/demo.html'
         next()
       })
+    },
+  }
+}
+
+// A dependency that imports Vuetify components from the `vuetify/components`
+// barrel brings every component Vuetify has onto first paint: each component
+// module imports its own stylesheet, so none of them can be shaken out. The
+// toasts (vuetify-sonner, imported by the session layer the entry needs) use
+// eleven, and pulled in the date pickers, sliders and the rest with their CSS.
+// This rewrites such an import in a dependency into one import per component,
+// from the subpath Vuetify's own import map names for it (the map
+// vite-plugin-vuetify uses for the app's own templates). An import naming
+// something the map does not know is left as it was.
+function vuetifyDeepImports(): Plugin {
+  const require = createRequire(import.meta.url)
+  const map: Record<string, { from: string }> = JSON.parse(
+    readFileSync(require.resolve('vuetify/dist/json/importMap.json'), 'utf8')
+  ).components
+  return {
+    name: 'cheese-vuetify-deep-imports',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('/node_modules/') || id.includes('/node_modules/vuetify/')) return
+      if (!code.includes('vuetify/components')) return
+      const out = code.replace(
+        /import\s*\{([^}]*)\}\s*from\s*["']vuetify\/components["'];?/g,
+        (whole, list: string) => {
+          const byPath = new Map<string, string[]>()
+          for (const part of list
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean)) {
+            const from = map[part.split(/\s+as\s+/)[0]]?.from
+            if (!from) return whole
+            byPath.set(from, [...(byPath.get(from) ?? []), part])
+          }
+          return [...byPath].map(([from, parts]) => `import { ${parts.join(', ')} } from 'vuetify/${from}';`).join('')
+        }
+      )
+      return out === code ? undefined : { code: out, map: null }
     },
   }
 }
@@ -243,6 +307,20 @@ const CHUNKS = [
   'monaco',
 ]
 
+// The package a module belongs to, by name: what follows the last
+// `node_modules/` in its id (`@scope/name` or `name`), or null for app code.
+// Never the rest of the path. The directory the checkout sits in once sent
+// every module to the `vuetify` chunk (a clone under `…/vuetify-upgrade/`), and
+// pnpm's store directory (`.pnpm/<name>@<version>_<peers>`) names every peer
+// a package has: matching on it put anything that peers on `vue` in the `vue`
+// chunk, and anything that peers on `zod` in the `zod` one.
+function packageName(id: string): string | null {
+  const at = id.lastIndexOf('node_modules/')
+  if (at === -1) return null
+  const [first, second] = id.slice(at + 'node_modules/'.length).split('/')
+  return first.startsWith('@') ? `${first}/${second}` : first
+}
+
 // Which named chunk a module goes in; null leaves it to Rolldown, which places
 // a module by who imports it.
 function chunkName(id: string): string | null {
@@ -260,59 +338,56 @@ function chunkName(id: string): string | null {
   if (id.includes('oxc-project')) {
     return 'runtime-helpers'
   }
-  const at = id.indexOf('node_modules')
-  if (at !== -1) {
-    // Match package names against the path from `node_modules` on, never the
-    // directory the checkout sits in: a clone under `…/vuetify-upgrade/` once
-    // sent every module to the `vuetify` chunk (10 MB, past the PWA precache
-    // limit), and `vue`, `marked` or `zod` in a parent directory would do the
-    // same. The pnpm store directory (`.pnpm/<name>@<version>_<peers>`) stays
-    // in, so chunks come out as they did.
-    const pkg = id.slice(at)
+  const pkg = packageName(id)
+  if (pkg) {
     // Monaco is the largest package in node_modules and only the code
     // panels use it, yet the catch-all `vendor` at the bottom pulled it
     // into the one chunk every page preloads (1.29 MB gzipped, most of
     // it Monaco). In its own chunk it is reachable only from the lazy
     // TopicView route, so first paint no longer pays for it.
-    if (pkg.includes('monaco-editor')) {
+    if (pkg === 'monaco-editor') {
       return 'monaco'
     }
-    if (pkg.includes('prosemirror')) {
+    if (pkg.startsWith('prosemirror-')) {
       return 'prosemirror'
     }
-    if (pkg.includes('dompurify')) {
+    if (pkg === 'dompurify') {
       return 'dompurify'
     }
-    if (pkg.includes('marked')) {
+    if (pkg === 'marked' || pkg.startsWith('marked-')) {
       return 'marked'
     }
-    if (pkg.includes('zod')) {
+    if (pkg === 'zod') {
       return 'zod'
     }
-    if (pkg.includes('tiptap')) {
+    if (pkg.startsWith('@tiptap/')) {
       return 'tiptap'
     }
-    if (pkg.includes('vuetify')) {
+    // Vuetify's framework (theme, display, defaults, the composables and helpers
+    // its components share), but not the components: a group takes every module
+    // it matches anywhere in the app, and this one, holding all of them, put
+    // every component any page uses (date pickers, sliders, data tables) and
+    // their stylesheets on first paint. The components go with the pages that
+    // use them, like the rest of the app's code.
+    if (pkg === 'vuetify' && !/\/vuetify\/lib\/(components|labs)\//.test(id)) {
       return 'vuetify'
     }
-    // Vue 及其相关
-    if (pkg.match(/(vue|vue-router)/)) {
+    // Vue itself and its router. Only these by name: every package written for
+    // Vue has `vue` in its path, and a group named by substring took them all
+    // onto first paint (the flow-chart editor, form validation, a virtual list).
+    if (pkg === 'vue' || pkg === 'vue-router' || pkg.startsWith('@vue/')) {
       return 'vue'
     }
-    // lodash 单独一个 chunk
-    if (pkg.includes('lodash')) {
+    if (pkg === 'lodash' || pkg === 'lodash-es' || pkg.startsWith('lodash.')) {
       return 'lodash'
     }
-    // Editor.js 相关依赖归为一组
-    if (pkg.includes('@editorjs')) {
+    if (pkg.startsWith('@editorjs/')) {
       return 'editorjs'
     }
-    // dayjs 单独一个 chunk
-    if (pkg.includes('dayjs')) {
+    if (pkg === 'dayjs') {
       return 'dayjs'
     }
-    // axios 如果使用量较大，也可单独拆分
-    if (pkg.includes('axios')) {
+    if (pkg === 'axios') {
       return 'axios'
     }
     // Everything else is left to Rolldown, which places a package by who
@@ -326,7 +401,9 @@ function chunkName(id: string): string | null {
 
 export default defineConfig({
   plugins: [
+    fsModuleCacheKeys(),
     demoPages(),
+    vuetifyDeepImports(),
     mdiFont(),
     vue({
       template: { transformAssetUrls },
@@ -338,7 +415,14 @@ export default defineConfig({
       autoImport: true,
       // Vuetify writes `Roboto` into `html` and every `.text-*` typography
       // class. This file points both at the app's own font stack.
-      styles: { configFile: 'src/styles/vuetify-settings.scss' },
+      //
+      // Under Vitest the stylesheets are dropped instead: tests process no CSS
+      // (`test.css` is off), and the configFile form answers each Vuetify
+      // `.css` import with a virtual module whose content the plugin only
+      // remembers while resolving that import. A transform served from
+      // `fsModuleCache` skips the resolve, so the next run fails with
+      // "Cannot find module '/@id/virtual:plugin-vuetify:…'".
+      styles: process.env.VITEST ? 'none' : { configFile: 'src/styles/vuetify-settings.scss' },
     }),
     // Prism 不用 vite-plugin-prismjs 注入。该插件把 `import Prism from 'prismjs'`
     // 展开成一串「引用全局 Prism」的脚本导入，而 prism-core 是 CJS、在 Rolldown 下被
@@ -665,6 +749,11 @@ export default defineConfig({
   build: {
     target: TARGET,
     sourcemap: false,
+    // Which chunks and stylesheets each module ended up in, for scripts/prerender.mjs:
+    // a prerendered page links its own route's CSS and chunks, and every page
+    // preloads those of the page a cold open lands on. Both deleted once read.
+    ssrManifest: true,
+    manifest: true,
     rolldownOptions: {
       // 两个页面：应用本体，和文档里嵌的动态演示（demo.html，见 src/demo-main.ts）。
       input: {
@@ -718,6 +807,7 @@ export default defineConfig({
     // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
     // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
     maxWorkers: maxForks,
+    fsModuleCache: true,
   },
   optimizeDeps: {
     // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport

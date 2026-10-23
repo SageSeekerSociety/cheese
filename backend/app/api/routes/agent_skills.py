@@ -31,7 +31,7 @@ from app.domain import skill_library as native_skills
 from app.domain.agent.carried_bodies import carried_bodies, room_device
 from app.domain.machine_skill.service import MachineSkillService
 from app.domain.project_skill.service import ProjectSkillService, render_skill
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(
     prefix="/agent/skills", tags=["agent-skills"], dependencies=[ROUTE_DECIDES]
@@ -65,7 +65,7 @@ async def _room(db: AsyncSession, topic: uuid.UUID, resolver) -> object:
     other project's and no other person's skill — the same gate
     ``docs_site._agent_scope`` puts in front of the docs tools.
     """
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

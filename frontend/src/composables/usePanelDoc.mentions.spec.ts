@@ -14,6 +14,10 @@ import DocThreadCard from '../components/panels/doc/DocThreadCard.vue'
 import { usePanelDoc } from './usePanelDoc'
 
 const addComment = vi.fn(async () => ({}))
+
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   addComment: (...a: unknown[]) => addComment(...(a as [])),
@@ -44,6 +48,35 @@ describe('asking the AI teammate in a document comment', () => {
     scope.stop()
   })
 
+  // 备注名不是名册上的名字：后端只认名册上的名字和 handle，所以评论里 @ 的是
+  // 备注名时，写进正文的必须已经是 <@handle>，否则被 @ 的人收不到通知。
+  it('sends a person mentioned by their remark as their handle token', async () => {
+    const scope = effectScope()
+    const topic = { id: 't1', project_id: 'p1' } as Topic
+    const doc = scope.run(() =>
+      usePanelDoc({ topic, activityTick: 0, agentName: '芝士', agentHandle: 'cheese-a1' }, () => [
+        { handle: 'u1', label: '老王' },
+      ])
+    )!
+    expect(doc.withMentions('@老王 看一下这里')).toBe('<@u1> 看一下这里')
+    scope.stop()
+  })
+
+  // 评论没有「所有人」可通知：手打的 @all 要照原样留着，不能变成谁都不通知、
+  // 还把 @ 吃掉的一个令牌（那与候选菜单不给这两个词的约定相反）。
+  it('leaves a hand-typed @all alone in a document comment', async () => {
+    const scope = effectScope()
+    const topic = { id: 't1', project_id: 'p1' } as Topic
+    const doc = scope.run(() =>
+      usePanelDoc({ topic, activityTick: 0, agentName: '芝士', agentHandle: 'cheese-a1' }, () => [
+        { handle: 'u1', label: '老王' },
+      ])
+    )!
+    expect(doc.withMentions('@all 开会')).toBe('@all 开会')
+    expect(doc.withMentions('@老王 @here 看一下')).toBe('<@u1> @here 看一下')
+    scope.stop()
+  })
+
   it('reads the token in a comment as the teammate’s name', () => {
     render(DocThreadCard, {
       props: {
@@ -65,6 +98,7 @@ describe('asking the AI teammate in a document comment', () => {
       } as never,
       global: { plugins: [createVuetify()] },
     })
-    expect(screen.getByText('@芝士 来自课程要求第 3 页')).toBeTruthy()
+    // The teammate's name is a chip inside the line, so the line is read whole.
+    expect(screen.getByText(/来自课程要求第 3 页/).textContent).toBe('@芝士 来自课程要求第 3 页')
   })
 })

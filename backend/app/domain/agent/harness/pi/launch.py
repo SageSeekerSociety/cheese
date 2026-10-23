@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.config import settings
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.pi.bundle import build
 
 # The pinned agent, served by the platform the way the claude pin is: the
@@ -118,11 +118,11 @@ fi
 
 def model_entry(model: str) -> dict:
     """One model of the provider file: its id, and that it can look at
-    pictures when the deployment says so (``settings.vision_models``). pi
+    pictures when the gateway says it can (``gateway_catalog.sees_pictures``). pi
     hands a model that cannot only the text of a tool result that has
     pictures, such as a mini-app's save."""
     entry: dict = {"id": model}
-    if model in settings.vision_models:
+    if gateway_catalog.sees_pictures(model):
         entry["input"] = ["text", "image"]
     return entry
 
@@ -185,6 +185,16 @@ def arguments(model: str) -> list[str]:
         # this; the runner names both.
         "--no-skills",
         "--no-extensions",
+        # Of pi's own extensions, its MCP client (the project's servers, at the
+        # session's gateway), the codemode tool its scripts call them through,
+        # and the search that finds a server's tools. The platform's extension
+        # follows (`runner.py`).
+        "--extension",
+        "builtin:mcp",
+        "--extension",
+        "builtin:codemode",
+        "--extension",
+        "builtin:tool-search",
         "--no-prompt-templates",
         "--no-themes",
         # Nothing a room waits on may depend on reaching pi.dev.
@@ -220,7 +230,7 @@ class HostLaunch:
         return f"""import base64,hashlib,json,os,sys,tempfile
 from pathlib import Path
 payload=json.loads({json.dumps(payload)!r})
-state=Path(payload["state"].replace("$HOME",str(Path.home()))).expanduser().resolve()
+state=Path(payload["state"].replace("${{CHEESE_PROFILE_ROOT:-.cheese}}",os.environ.get("CHEESE_PROFILE_ROOT",".cheese")).replace("$HOME",str(Path.home()))).expanduser().resolve()
 state.mkdir(parents=True,exist_ok=True,mode=0o700)
 digest=payload.pop("digest")
 shipped=payload.pop("archive",None)

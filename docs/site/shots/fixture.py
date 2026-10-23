@@ -29,8 +29,8 @@ import app.models  # noqa: E402,F401 — every table
 from sqlalchemy import delete, select, update  # noqa: E402
 
 from app.core.db import async_session_factory  # noqa: E402
-from app.domain.block.models import AuthorType, Block, BlockKind  # noqa: E402
-from app.domain.library.service import library_root  # noqa: E402
+from app.domain.block.models import Block, BlockKind  # noqa: E402
+from app.domain.event_author import AuthorType  # noqa: E402
 from app.domain.project.models import Project  # noqa: E402
 from app.domain.review.models import AcceptCard, AcceptStatus  # noqa: E402
 
@@ -108,7 +108,7 @@ async def card(room: str, task: str, reviewer: str) -> None:
                 task_id=uuid.UUID(task),
                 delivered_task_ids=[task],
                 reviewer_handle=reviewer,
-                routing_reason="报名表单是林晓提的需求，由她验收。",
+                focus="必填项是否只剩姓名、学号、手机号、场次，手机上一屏填完。",
                 change_subject="feat(form): cut the sign-up form to four required fields",
                 change_body=(
                     "必填项从 9 项减到 4 项：姓名、学号、手机号、场次；"
@@ -138,15 +138,43 @@ async def quiet(conversations: list[str]) -> None:
         await s.commit()
 
 
-def library(project_id: str) -> None:
-    root = library_root(uuid.UUID(project_id))
-    (root / "活动方案.md").write_text(
-        "# 迎新周活动方案\n\n- 时间：9 月 28 日—10 月 3 日\n- 场次：每天两场\n", encoding="utf-8"
-    )
-    (root / "报名数据-9月.csv").write_text(
-        "学号,姓名,场次,报名时间\n2026010101,张同学,9/28 上午,2026-09-20 10:02\n",
-        encoding="utf-8",
-    )
+def library(project_id: str, alice: dict) -> None:
+    """Two files put into the library the way a person does, through its upload."""
+    for name, text in (
+        ("活动方案.md", "# 迎新周活动方案\n\n- 时间：9 月 28 日—10 月 3 日\n- 场次：每天两场\n"),
+        ("报名数据-9月.csv", "学号,姓名,场次,报名时间\n2026010101,张同学,9/28 上午,2026-09-20 10:02\n"),
+    ):
+        api("POST", f"/projects/{project_id}/library", alice, files={"file": (name, text.encode())})
+
+
+async def situation(project_id: str) -> None:
+    """The 现状 at the top of the overview, as the project's model would write
+    it. Stamped with the project's progress as it stands, so opening the page
+    does not ask the (absent) model to rewrite it."""
+    from app.domain import project_material
+    from app.domain.project_situation.models import ProjectSituation
+
+    pid = uuid.UUID(project_id)
+    async with async_session_factory() as s:
+        marks = await project_material.marks(s, pid)
+        now = datetime.now(UTC)
+        await s.merge(
+            ProjectSituation(
+                project_id=pid,
+                content=(
+                    "报名数据导出已可用，当前重点是报名表单和提交校验\n\n"
+                    "- 报名表单 {! 进行中}：必填项减到 4 项，手机上一屏填完\n"
+                    "- 提交校验 {! 进行中}：学号格式校验开发中\n"
+                    "- 迎新海报 {! 进行中}：两版初稿待定稿\n"
+                    "- 报名数据导出 {✓ 可用}：9 月报名数据已在资料库"
+                ),
+                written_at=now,
+                tried_at=now,
+                major=marks.major,
+                minor=marks.minor,
+            )
+        )
+        await s.commit()
 
 
 def feedback(alice: dict) -> None:
@@ -229,8 +257,8 @@ async def main() -> None:
     )
 
     def task(title: str, document: str) -> str:
-        """A task the way a person makes one: created, its document written,
-        started."""
+        """A task the way a person makes one: created, and its document
+        written."""
         made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
         path = f"/topics/{made['id']}"
         doc = api("GET", f"{path}/document", alice)["id"]
@@ -240,7 +268,6 @@ async def main() -> None:
             alice,
             json={"content": document, "expected_version": 0},
         )
-        api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
         return made["id"]
 
     tasks = [
@@ -315,8 +342,9 @@ async def main() -> None:
         ],
     )
     await quiet([*channels.values(), thread, *tasks])
-    library(pid)
+    library(pid, alice)
     feedback(alice)
+    await situation(pid)
     print(f"project {pid}\nchannels {channels}\ntasks {tasks}\nagent {agent}")
 
 

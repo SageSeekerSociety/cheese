@@ -37,6 +37,12 @@ const VIEWS: Record<string, FeatureView> = {
     // 懒加载：功能页是各自一块，谁也不该为另一个功能的图表付首屏的钱。
     view: defineAsyncComponent(() => import('./DocsAssistantPage.vue')),
   },
+  'personal-assistant': {
+    id: 'personal-assistant',
+    titleKey: 'featureStats.features.personalAssistant.title',
+    summaryKey: 'featureStats.features.personalAssistant.summary',
+    view: defineAsyncComponent(() => import('./PersonalAssistantPage.vue')),
+  },
   'task-naming': {
     id: 'task-naming',
     titleKey: 'featureStats.features.taskNaming.title',
@@ -47,8 +53,4 @@ const VIEWS: Record<string, FeatureView> = {
 
 export function findFeatureView(id: string): FeatureView | undefined {
   return VIEWS[id]
-}
-
-export function knownFeatureIds(): string[] {
-  return Object.keys(VIEWS)
 }

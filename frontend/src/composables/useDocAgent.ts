@@ -43,7 +43,8 @@ export interface DocAgentOptions {
   stop: () => ((conversation: string) => Promise<unknown>) | undefined
   /** 这篇文档能不能改。 */
   editable: () => boolean
-  applyEdits: () => ((edits: DocEdit[]) => Promise<unknown>) | undefined
+  /** 撤销（`redo` 为真时恢复）这一次回答写下的改动，以自己的名义。 */
+  undoChanges: () => ((changes: number[], redo: boolean) => Promise<unknown>) | undefined
   /** 把这次的回答放进一条新的评论（评的是选中的那几个字，写着问了什么）；回执是那条评论的 id。 */
   toComment: () => ((conversation: string, quote: string, question: string) => Promise<string>) | undefined
   agentName: () => string
@@ -61,6 +62,8 @@ export function useDocAgent(options: DocAgentOptions) {
   /** 回答被人停下了：`answer` 是停下时写出的部分。 */
   const stopped = ref(false)
   const edits = shallowRef<DocEdit[]>([])
+  /** 服务端记下的这几处改动，撤销、恢复按它们来。 */
+  let changes: number[] = []
   const busy = ref(false)
   /** 输入框里给哪些常用的说法。 */
   const context = ref<PresetContext>({ editable: false, list: false, chinese: true })
@@ -131,6 +134,7 @@ export function useDocAgent(options: DocAgentOptions) {
     answer.value = ''
     stopped.value = false
     edits.value = []
+    changes = []
     busy.value = false
     conversation = null
     selection = null
@@ -203,6 +207,7 @@ export function useDocAgent(options: DocAgentOptions) {
       done: (result) => {
         if (!mine()) return
         edits.value = result.edits
+        changes = result.changes
         if (result.edits.length) {
           phase.value = 'done'
           arrive(id, result.edits)
@@ -245,6 +250,14 @@ export function useDocAgent(options: DocAgentOptions) {
     void send({ preset: preset.id }, preset.kind, label)
   }
 
+  /** 为还空着的项目总览起草第一版：`note` 是提问人的补充（可以是空的）。 */
+  function draft(note: string) {
+    if (options.scope !== 'document') return
+    open()
+    if (phase.value !== 'asking') return
+    void send({ preset: 'draft', text: note.trim() || undefined }, 'edit', t('work.room.docAgent.draftLabel'))
+  }
+
   /** 自己写的一句：改还是答由它判断。 */
   function say(text: string) {
     const body = text.trim()
@@ -264,14 +277,13 @@ export function useDocAgent(options: DocAgentOptions) {
   }
 
   async function swap(next: 'done' | 'undone') {
-    const apply = options.applyEdits()
+    const apply = options.undoChanges()
     const changed = edits.value
-    if (!apply || busy.value || !changed.length) return
+    if (!apply || busy.value || !changed.length || !changes.length) return
     const id = attempt
     busy.value = true
-    const batch = next === 'undone' ? [...changed].reverse().map((e) => ({ old: e.new, new: e.old })) : changed
     try {
-      await apply(batch)
+      await apply(changes, next === 'done')
       if (id !== attempt) return
       phase.value = next
       if (next === 'undone') paint({ review: null })
@@ -319,6 +331,7 @@ export function useDocAgent(options: DocAgentOptions) {
     close,
     run,
     say,
+    draft,
     stop,
     stopped,
     undo,

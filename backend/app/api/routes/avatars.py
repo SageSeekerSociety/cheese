@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime
@@ -10,12 +11,14 @@ from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, Upl
 
 from app.api.conditional import if_none_match_hits
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import raster_images
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
+from app.core.srgb_images import to_srgb
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
 from app.domain.avatars.services import AvatarService
@@ -51,6 +54,39 @@ async def _read_avatar_file(avatar_id: int) -> bytes | None:
             return await f.read()
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         return None
+
+
+async def _convert_stored_avatar(avatar_id: int, content: bytes) -> bytes:
+    """``content`` with any wide gamut converted to sRGB, stored back once.
+
+    An avatar stored before upload started converting them still carries
+    whatever profile the phone wrote. Served as it is, that picture makes the
+    browser render the page in its gamut, and some phones tint the whole screen
+    for as long as it is on it. The first request heals it, and the converted
+    picture is written back so the decode is paid once. A picture already in
+    sRGB comes back as it arrived.
+    """
+    converted = await asyncio.to_thread(to_srgb, content)
+    if converted is content:
+        return content
+    file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar_id}")
+    temporary = f"{file_path}.{os.urandom(8).hex()}.tmp"
+    try:
+        async with aiofiles.open(temporary, "wb") as f:
+            await f.write(converted)
+        # Rename, so a request reading at the same moment sees either the old
+        # file or the new one, never half of either.
+        os.replace(temporary, file_path)
+    except OSError:
+        # Serving the converted bytes already fixes the screen; storing them
+        # only saves the next request the work.
+        pass
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+    return converted
 
 
 def _stored_avatar_response(
@@ -101,11 +137,7 @@ async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
     return AvatarService(repo=repo)
 
 
-@router.post(
-    "",
-    summary="Upload Avatar",
-    status_code=201,
-)
+@router.post("", summary="Upload Avatar", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_avatar(
     avatar: UploadFile = File(...),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -118,6 +150,11 @@ async def create_avatar(
             say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
         )
     file_name = avatar.filename or "avatar"
+    # Stored bytes are served to every screen that shows this avatar. A picture
+    # kept in whatever gamut the phone saved it in makes the browser render the
+    # page in that gamut, and the whole screen shifts colour with it on some
+    # phones. Already-sRGB pictures come back untouched.
+    file_content = await asyncio.to_thread(to_srgb, file_content)
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)
 
@@ -164,6 +201,7 @@ async def get_default_avatar(
             "Default avatar file is missing from storage",
             data={"id": avatar.id},
         )
+    content = await _convert_stored_avatar(avatar.id, content)
 
     return _stored_avatar_response(
         content,
@@ -215,6 +253,7 @@ async def get_avatar_by_id(
         raise NotFoundError(
             "Avatar file is missing from storage", data={"id": avatar_id}
         )
+    content = await _convert_stored_avatar(avatar_id, content)
 
     return _stored_avatar_response(
         content,

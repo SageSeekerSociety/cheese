@@ -24,20 +24,24 @@ from app.api.doc_access import asked_of, frozen, reach
 from app.api.doc_identity import human_operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.background import spawn
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import box, question, thread
+from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.overview import pointed_overview
 from app.domain.living_doc.schemas import AgentAskIn
 
 logger = logging.getLogger(__name__)
@@ -56,6 +60,8 @@ def _sse(event: str, data: dict, position: str | None = None) -> bytes:
 
 async def _asker(db, resolver, document_id: uuid.UUID):
     reached = await reach(db, resolver, document_id, enforce=True)
+    if reached.doc.project_id is None:
+        raise ForbiddenError(say("docTeamNoAgent"))
     await human_operation_actor(db, reached.actor)
     redis = get_redis_client()
     if redis is None:
@@ -63,7 +69,23 @@ async def _asker(db, resolver, document_id: uuid.UUID):
     return reached, reached.actor, redis
 
 
-@router.post("/{document_id}/agent")
+def _asked(reached) -> Asked:
+    """The question asked of this document's AI teammate; a team's own document
+    has none to ask (`_asker` refuses it first)."""
+    asked = asked_of(reached)
+    if asked is None:
+        raise ForbiddenError(say("docTeamNoAgent"))
+    return asked
+
+
+async def _blank_overview(db, doc) -> bool:
+    if doc.project_id is None:
+        return False
+    overview = await pointed_overview(db, doc.project_id)
+    return overview is not None and overview.id == doc.id and not doc.content.strip()
+
+
+@router.post("/{document_id}/agent", dependencies=[ROUTE_DECIDES])
 async def ask_agent(
     document_id: uuid.UUID,
     body: AgentAskIn,
@@ -75,7 +97,7 @@ async def ask_agent(
     """Ask, streamed as server-sent events: ``conversation`` (its id, first),
     ``queued``, ``working``, then once asked ``answering`` (the question's id,
     to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
-    ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
+    ``changes``, ``stopped``) or ``error``. Each event from ``answering`` on
     carries its place in the question's stream (``id``)."""
     reached, actor, redis = await _asker(db, resolver, document_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None
@@ -85,6 +107,9 @@ async def ask_agent(
         body.selection is not None
     ):
         raise ValidationError(say("docAgentPresetNeedsSelection"))
+    if body.preset == "draft" and not await _blank_overview(db, reached.doc):
+        # 起草只写第一版：写过的总览由人和芝士一处一处地改。
+        raise UnprocessableEntityError(say("docAgentDraftNeedsBlankOverview"))
     if body.conversation is not None:
         await box.owned(
             redis, body.conversation, asker=actor.handle, document_id=document_id
@@ -111,7 +136,7 @@ async def ask_agent(
                 questions,
                 redis,
                 emit,
-                asked=asked_of(reached),
+                asked=_asked(reached),
                 asker=actor.handle,
                 conversation=conversation,
                 preset=body.preset,
@@ -122,7 +147,7 @@ async def ask_agent(
             if asked is not None:
                 async for chunk in _answer(questions, asked.work_id):
                     queue.put_nowait(chunk)
-        except Exception:  # noqa: BLE001 — the box is told; the log keeps why
+        except Exception:  # the box is told; the log keeps why
             logger.warning("doc agent box failed", exc_info=True)
             await emit("error", error_frame(say("docAgentCantAnswer")))
         finally:
@@ -174,7 +199,7 @@ async def _answer(questions: Consumptions, work: str, after: str = "0"):
         yield _sse(event, data, position)
 
 
-@router.post("/{document_id}/agent/{conversation}/stop")
+@router.post("/{document_id}/agent/{conversation}/stop", dependencies=[ROUTE_DECIDES])
 async def stop_agent(
     document_id: uuid.UUID,
     conversation: uuid.UUID,
@@ -188,12 +213,18 @@ async def stop_agent(
     await box.owned(redis, conversation, asker=actor.handle, document_id=document_id)
     await db.commit()
     await box.stop(
-        redis, sessions, project_id=reached.doc.project_id, conversation=conversation
+        redis,
+        sessions,
+        project_id=_asked(reached).project_id,
+        conversation=conversation,
     )
     return ok({})
 
 
-@router.post("/{document_id}/agent/{conversation}/reply/{thread_id}")
+@router.post(
+    "/{document_id}/agent/{conversation}/reply/{thread_id}",
+    dependencies=[ROUTE_DECIDES],
+)
 async def reply_in_thread(
     document_id: uuid.UUID,
     conversation: uuid.UUID,
@@ -213,7 +244,7 @@ async def reply_in_thread(
         raise ForbiddenError("Only the thread you started takes this answer")
     if not held.answer:
         raise ValidationError(say("docAgentNoAnswerToComment"))
-    asked = asked_of(reached)
+    asked = _asked(reached)
     bound = await question.bind(db, asked)
     await db.commit()
     await thread.reply(chat.session_factory, asked, thread_id, bound, held.answer)

@@ -78,18 +78,48 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_worktree: 'toolLabels.cheeseWorktree',
   cheese_checkout: 'toolLabels.cheeseCheckout',
   cheese_sync: 'toolLabels.cheeseSync',
+  cheese_transcript: 'toolLabels.cheeseTranscript',
   cheese_recover: 'toolLabels.cheeseRecover',
   cheese_close_task: 'toolLabels.cheeseCloseTask',
+  cheese_task_state: 'toolLabels.cheeseTaskState',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   cheese_fetch: 'toolLabels.cheeseFetch',
   cheese_docs_search: 'toolLabels.cheeseDocsSearch',
   cheese_docs_read: 'toolLabels.cheeseDocsRead',
+  // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。
+  cheese_inbox: 'toolLabels.cheeseInbox',
+  cheese_inbox_respond: 'toolLabels.cheeseInboxRespond',
+  cheese_read: 'toolLabels.cheeseRead',
+  cheese_find: 'toolLabels.cheeseFind',
+  cheese_help: 'toolLabels.cheeseHelp',
+  cheese_message_send: 'toolLabels.cheeseMessageSend',
+  cheese_task_open: 'toolLabels.cheeseTaskOpen',
+  cheese_review_decide: 'toolLabels.cheeseReviewDecide',
+  cheese_member_set: 'toolLabels.cheeseMemberSet',
+  cheese_channel_create: 'toolLabels.cheeseChannelCreate',
+  cheese_settings_set: 'toolLabels.cheeseSettingsSet',
+  cheese_routine: 'toolLabels.cheeseRoutine',
+  cheese_notify_me: 'toolLabels.cheeseNotifyMe',
+  cheese_memory: 'toolLabels.cheeseMemory',
+  cheese_web_fetch: 'toolLabels.cheeseWebFetch',
+  cheese_web_search: 'toolLabels.cheeseWebSearch',
+  cheese_my_tasks: 'toolLabels.cheeseMyTasks',
+  cheese_task_search: 'toolLabels.cheeseTaskSearch',
+  cheese_task_get: 'toolLabels.cheeseTaskGet',
+  cheese_problem_write: 'toolLabels.cheeseProblemWrite',
+  cheese_problem_publish: 'toolLabels.cheeseProblemPublish',
+  cheese_message_draft: 'toolLabels.cheeseMessageDraft',
+  cheese_project_search: 'toolLabels.cheeseProjectSearch',
+  cheese_task_draft: 'toolLabels.cheeseTaskDraft',
+  cheese_file_read: 'toolLabels.cheeseFileRead',
+  cheese_space_materials: 'toolLabels.cheeseSpaceMaterials',
   cheese_decision: 'toolLabels.cheeseDecision',
   cheese_title: 'toolLabels.cheeseTitle',
   cheese_notify: 'toolLabels.cheeseNotify',
   cheese_ask: 'toolLabels.cheeseAsk',
   cheese_accept_request: 'toolLabels.cheeseAcceptRequest',
   cheese_describe: 'toolLabels.cheeseDescribe',
+  cheese_redeliver: 'toolLabels.cheeseRedeliver',
   cheese_ready: 'toolLabels.cheeseReady',
   cheese_milestone: 'toolLabels.cheeseMilestone',
   cheese_members: 'toolLabels.cheeseMembers',
@@ -114,6 +144,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_run_records: 'toolLabels.cheeseRunRecords',
   cheese_environment: 'toolLabels.cheeseEnvironment',
   cheese_wait_environment: 'toolLabels.cheeseWaitMachine',
+  cheese_compact: 'toolLabels.cheeseCompact',
   cheese_note: 'toolLabels.cheeseNote',
   cheese_deliver_at: 'toolLabels.cheeseDeliverAt',
   cheese_routine_draft: 'toolLabels.cheeseRoutineDraft',
@@ -133,6 +164,8 @@ export const TOOL_LABELS: Record<string, string> = {
   bash_write: 'toolLabels.bashWrite',
   bash_kill: 'toolLabels.bashKill',
   bash_list: 'toolLabels.bashList',
+  // pi 的 codemode：模型写一段脚本，脚本里再调别的工具（现场把那几样挂在它下面）。
+  codemode: 'toolLabels.codemode',
 }
 
 /** `mcp__<服务器>__<工具>` → `<工具>`。**认任意服务器名**，不认某一个写死的：写死
@@ -140,7 +173,12 @@ export const TOOL_LABELS: Record<string, string> = {
  *  于是前缀剥不掉、下面那张表查不到，时间线上原样显示
  *  `mcp__native__cheese_feedback_propose` —— 而「前缀没剥掉」和「这个工具本来就没有
  *  中文标签」在屏幕上是同一件事。 */
-const MCP_PREFIX = /^mcp__[a-z0-9_]+__/
+const MCP_PREFIX = /^mcp__[a-z0-9_-]+?__/
+
+/** `mcp__<服务器>__<工具>` 里的服务器名；不是 MCP 工具就是空串。 */
+export function mcpServerOf(name: string): string {
+  return /^mcp__([a-z0-9_-]+?)__/.exec(name)?.[1] ?? ''
+}
 
 export function toolLabel(name: string): string {
   const short = name.replace(MCP_PREFIX, '')

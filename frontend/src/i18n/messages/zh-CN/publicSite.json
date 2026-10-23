@@ -190,8 +190,8 @@
       "item2Body": "学生领取题目后，在「领取者」里批准或拒绝",
       "item3Title": "评审提交",
       "item3Body": "逐份查看，判定是否通过，打分并写评语",
-      "item4Title": "告诉 AI 队友课上到哪了",
-      "item4Body": "在「给 AI 队友的指导」里写上当前周次、已讲的内容和参考资料，学生项目里的 AI 队友按这些来帮忙",
+      "item4Title": "设好 AI 队友怎么帮学生",
+      "item4Body": "在「AI 队友辅导」里选好辅导方式、写下补充要求、勾选参考资料，学生项目里的 AI 队友按这些来帮忙",
       "docs": "发布与评审题目"
     },
     "students": {
@@ -321,5 +321,15 @@
     "desktopHint": "在电脑上打开这一页下载",
     "copyLink": "复制链接",
     "copied": "已复制"
+  },
+  "sharedDoc": {
+    "pageTitle": "分享的文档",
+    "updated": "更新于 {time}",
+    "gone": "这条分享链接已失效",
+    "loadFailed": "文档加载失败",
+    "colophon": {
+      "brand": "知是 · 人与 AI 队友的协作工作台",
+      "seats": "{name} 附赠的受邀席位余 {n} · 凭此链接进入"
+    }
   }
 }

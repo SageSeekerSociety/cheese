@@ -1,0 +1,9 @@
+{
+  "offline": "Offline",
+  "online": "Online",
+  "os": {
+    "unix": "Mac / Linux",
+    "windows": "Windows (PowerShell)"
+  },
+  "renameFailed": "Couldn't rename"
+}

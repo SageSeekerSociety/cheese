@@ -96,7 +96,8 @@
     "filterKind": "类型",
     "all": "全部",
     "members": "{n} 名成员",
-    "windowed": "按时间窗口限额"
+    "windowed": "按时间窗口限额",
+    "overseas": "已开通"
   },
   "panel": {
     "close": "关闭",
@@ -109,6 +110,7 @@
     "planFailed": "更改方案失败",
     "packPlan": "方案额度 · {month}",
     "packGrant": "管理员发放",
+    "packReward": "奖励",
     "packPurchase": "购买",
     "packTask": "题目「{task}」",
     "packTaskUnknown": "题目额度",
@@ -121,7 +123,11 @@
     "historyFailed": "无法读取操作记录",
     "logPlan": "方案由 {from} 改为 {to}",
     "logGrant": "发放 {credits} 点，{expiry}",
-    "by": "{'@'}{name} · {time}"
+    "by": "{'@'}{name} · {time}",
+    "overseas": "可使用需开通的模型（Claude / GPT / Gemini）",
+    "overseasFailed": "更改模型开通失败",
+    "logOverseasOn": "模型开通：已开通",
+    "logOverseasOff": "模型开通：已收回"
   },
   "grantDialog": {
     "title": "给「{team}」发额度",
@@ -135,5 +141,34 @@
     "cancel": "取消",
     "submit": "发放",
     "failed": "发放失败"
+  },
+  "inviteCodes": {
+    "title": "邀请码",
+    "label": "邀请码列表",
+    "showPersonal": "显示个人邀请码（{n}）",
+    "personal": "个人",
+    "column": {
+      "code": "邀请码",
+      "uses": "已用 / 可用",
+      "note": "备注",
+      "created": "创建时间",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "active": "可用",
+    "inactive": "已停用",
+    "maxUses": "可用次数",
+    "note": "备注",
+    "create": "生成邀请码",
+    "copy": "复制",
+    "copied": "邀请码已复制",
+    "deactivate": "停用",
+    "deactivateTitle": "停用邀请码 {code}？",
+    "deactivateBody": "停用后不能再用这个码注册，已注册的账号不受影响。",
+    "empty": "暂无邀请码",
+    "loadFailed": "无法读取邀请码",
+    "createFailed": "生成失败",
+    "deactivateFailed": "停用失败",
+    "retry": "重试"
   }
 }

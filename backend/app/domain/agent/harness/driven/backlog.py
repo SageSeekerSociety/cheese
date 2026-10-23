@@ -13,9 +13,11 @@ import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from app.domain.agent.harness import HarnessEvent
 from app.domain.agent.harness.driven.journal import Journal
+from app.domain.agent.service import AgentEvent
 
 #: The share of a mirror's pages left free after retention above which it is
 #: rewritten (``compact``). Rewriting costs a read and a write of the whole
@@ -25,6 +27,9 @@ VACUUM_FREE_SHARE = 0.25
 
 class JournalBacklog[J: Journal]:
     journal: type[J]
+    # What a harness's records are read with. Each keeps its own, with the
+    # state that harness needs; all the base asks is that one accepts a record.
+    assembler: Any
 
     def __init__(self, path: Path | None):
         self.path = path
@@ -43,6 +48,17 @@ class JournalBacklog[J: Journal]:
 
     def event(self, row: dict, now: datetime) -> HarnessEvent:
         raise NotImplementedError
+
+    def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
+        """What this entry means, once anything it completes is folded in.
+
+        A record that is not a dict did not parse and has nothing to be read
+        as. Every harness answers that the same way, so it is decided once
+        here rather than carried in each one's copy.
+        """
+        if not isinstance(entry.record, dict):
+            return []
+        return self.assembler.accept(entry.record)
 
     def unread(self) -> list[HarnessEvent]:
         if self.path is None or not self.path.exists():
@@ -104,6 +120,34 @@ class JournalBacklog[J: Journal]:
         finally:
             journal.close()
         return given_up
+
+    def unrecorded(self) -> list[dict]:
+        """The next page past what the raw record kept (``recorded``).
+
+        A mirror that has never been recorded starts at its landing cursor:
+        what the room already took before raw records existed is not copied
+        back in.
+        """
+        if self.path is None or not self.path.exists():
+            return []
+        journal = self.journal(self.path)
+        try:
+            kept = journal.recall("recorded")
+            if kept is None:
+                kept = journal.recall("landed") or "0"
+                journal.remember("recorded", kept)
+            return journal.read(int(kept))
+        finally:
+            journal.close()
+
+    def recorded(self, *, through: int) -> None:
+        assert self.path is not None
+        journal = self.journal(self.path)
+        try:
+            with journal.connection:
+                journal.advance("recorded", through)
+        finally:
+            journal.close()
 
     def forget(self, *, older_than_s: float) -> None:
         """Drop what the mirror no longer needs, and give the space back."""

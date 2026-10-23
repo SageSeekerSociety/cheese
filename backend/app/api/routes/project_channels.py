@@ -14,10 +14,13 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.block.adapters import platform_line
+from app.domain.room_task.services import TaskService
 from app.domain.topic.directory import channel_directory
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -41,7 +44,7 @@ async def _channel(db, project_id: uuid.UUID, topic_id: uuid.UUID):
     # A private chat is refused by the membership rules each route calls.
     topic = await TopicService(db).get_or_404(topic_id)
     if topic.project_id != project_id:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     return topic
 
 
@@ -51,10 +54,19 @@ async def list_channels(
 ) -> dict:
     """The project's channels, archived ones too, as the reader may know them."""
     actor = await _person(resolver, project_id)
-    return ok(await channel_directory(db, project_id, actor.handle, team=project_team))
+    return ok(
+        await channel_directory(
+            db,
+            project_id,
+            actor.handle,
+            team=project_team,
+            counts=TaskService(db),
+            members=TopicMemberService(db),
+        )
+    )
 
 
-@router.post("/{project_id}/channels/{topic_id}/step-in")
+@router.post("/{project_id}/channels/{topic_id}/step-in", dependencies=[ROUTE_DECIDES])
 async def step_into_channel(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -70,13 +82,14 @@ async def step_into_channel(
             topic,
             by=actor.handle,
             content=say("channelSteppedIn", actor=f"<@{actor.handle}>"),
+            events=platform_line,
         )
     await db.commit()
     await announce_stale(topic.id, "topics", id=topic.id)
     return ok({"topic_id": str(topic.id), "joined": True})
 
 
-@router.put("/{project_id}/channels/{topic_id}/manager")
+@router.put("/{project_id}/channels/{topic_id}/manager", dependencies=[ROUTE_DECIDES])
 async def hand_over_channel(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -102,6 +115,7 @@ async def hand_over_channel(
                 actor=f"<@{actor.handle}>",
                 manager=f"<@{body.handle}>",
             ),
+            events=platform_line,
         )
     await db.commit()
     await announce_stale(topic.id, "topics", id=topic.id)

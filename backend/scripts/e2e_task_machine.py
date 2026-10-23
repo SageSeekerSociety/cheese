@@ -21,6 +21,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.project.models import Project
 from app.domain.review.pr_publish import _draft_pr_for_one_task
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
@@ -58,6 +59,10 @@ async def main():
     async with async_session_factory() as session:
         room = await session.get(Topic, room_id)
         assert room is not None and str(room.project_id) == project
+        team_id = await session.scalar(
+            select(Project.team_id).where(Project.id == room.project_id)
+        )
+        assert team_id is not None
         resource = str(room.resource_id or room.id)
         actor = await TopicMemberService(session).resolve_agent_handle(room_id)
     env = dict(
@@ -155,7 +160,7 @@ async def main():
         response = await client.post(
             "/connector/connect",
             headers={"Authorization": "Bearer " + request["token"]},
-            json={"device_code": code, "project_id": project},
+            json={"device_code": code, "team_id": team_id},
         )
         response.raise_for_status()
         device = await poll_approved_device(client, code, start["interval"])

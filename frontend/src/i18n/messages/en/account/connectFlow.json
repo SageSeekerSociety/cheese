@@ -1,0 +1,36 @@
+{
+  "askBody": "Choose the team for this device. Its admins will manage the enrollment.",
+  "askMacTools": "The first time, macOS may ask to install the Command Line Developer Tools, which takes a few minutes",
+  "askTitle": "Connect this device",
+  "cancel": "Cancel",
+  "close": "Close",
+  "connect": "Connect",
+  "details": "Details",
+  "doneHint": "The device is enrolled. Manage it on the team’s Devices page.",
+  "doneTitle": "This device is connected",
+  "failed": {
+    "at": "\"{step}\" didn't finish. Try again later",
+    "busy": "This device is already connecting. Try again later",
+    "removeOld": "The old connector wasn't removed, so this device can't connect",
+    "start": "The device couldn't reach the platform. Check the network and try again",
+    "tools": "The Command Line Developer Tools aren't installed yet. Install them, then try again"
+  },
+  "failedTitle": "Couldn't connect this device",
+  "finish": "Done",
+  "hint": {
+    "removeOld": "Enter this device's login password",
+    "runtime": "The first time takes a few minutes to download",
+    "tools": "Click Install in the window macOS opens; this continues once it is done"
+  },
+  "later": "Not now",
+  "progressTitle": "Connecting this device",
+  "retry": "Try again",
+  "step": {
+    "approve": "Approve",
+    "download": "Download the connector",
+    "removeOld": "Remove the old connector",
+    "runtime": "Prepare the runtime",
+    "start": "Start and connect",
+    "tools": "Install the Command Line Developer Tools"
+  }
+}

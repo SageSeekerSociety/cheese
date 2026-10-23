@@ -32,18 +32,21 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
-from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, MachinePlace
+from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
+    CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
-    MODEL_SERVICE_FILE,
+    CLAUDE_LOGINS_DIR,
+    OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
     OWN_MODEL_BASE_URL,
     OWN_MODEL_KEY,
+    ROOT_PLACEHOLDER,
     SEATS_DIR,
-    footprint_root,
     seat_name,
 )
+from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.project_skill.service import (
     project_skill_names,
     publish_session_skill_bundle,
@@ -391,8 +394,11 @@ CHEESE_SKILLS"""
     # base64 through the script: the archive is bytes. Single-quoted into the
     # script: the literal `$HOME` in the state is the CONNECTOR's placeholder,
     # and a double-quoted assignment would have the session's own shell expand
-    # it to the ISOLATED home instead.
-    quoted_state = shlex.quote(state)
+    # it to the ISOLATED home instead. The enrollment's root in it is left
+    # outside the quotes: the connector names that root (CHEESE_PROFILE_ROOT)
+    # in this script's environment.
+    root = "${CHEESE_PROFILE_ROOT:-.cheese}"
+    quoted_state = f'"{root}"'.join(shlex.quote(part) for part in state.split(root))
     archive = base64.b64encode(build()).decode()
 
     def holes(system_prompt: str, helper_sources: dict[str, str]) -> tuple[str, str]:
@@ -665,13 +671,16 @@ cheese_launch_phase credentials_selected
     return dataclasses.replace(launch, contract=contract)
 
 
-# A member's own Claude Code on their own machine reads the login its owner gave
-# the platform: the seat keeps its own CLAUDE_CONFIG_DIR, and this directory is
-# its credential store, shared by every such session on the machine so that
-# Claude Code's own refresh renews it for all of them. An inherited token or key
-# would win over it, so none is let through. A service started by launchd has no
-# USER, and Claude Code has been reported unable to find a Keychain login on
-# macOS without it (anthropics/claude-code#77213).
+# A member's own Claude Code on their own machine reads the one login its owner
+# gave the platform there that it was added with (`OWN_LOGIN_ID`, as the machine
+# calls it): the seat keeps its own CLAUDE_CONFIG_DIR, and that login's
+# directory is its credential store, shared by every session on the machine with
+# that login so that Claude Code's own refresh renews it for all of them. The
+# launch stops when the session was not told which login, rather than guess.
+# An inherited token or key would win over it, so none is let through. A
+# service started by launchd has no USER, and Claude Code has been reported
+# unable to find a Keychain login on macOS without it
+# (anthropics/claude-code#77213).
 #
 # On macOS that login is a Keychain item, and `security`, which Claude Code
 # runs to read and renew it, finds the login keychain through HOME: under the
@@ -680,29 +689,18 @@ cheese_launch_phase credentials_selected
 # own HOME stays the room's. An agent's own `security` reaches the owner's
 # keychain the same way, which its owner's machine already lets it do.
 #
-# When the owner set another model service there (`cheesehost claude login
-# --base-url`), the session calls that instead: its address and key, and its
-# model for the main loop, the three tiers Claude Code addresses by alias, and
-# subagents, since a service like that serves none of Anthropic's names. The
-# file is read through the shell's redirect, so on Windows Python is handed no
-# Git Bash path; a file that cannot be read leaves the session on the login.
-_MODEL_SERVICE_EXPORTS = """\
-import json, shlex, sys
-s = json.load(sys.stdin)
-env = {"ANTHROPIC_BASE_URL": s["base_url"], "ANTHROPIC_AUTH_TOKEN": s["token"]}
-for name in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
-             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-             "CLAUDE_CODE_SUBAGENT_MODEL"):
-    env[name] = s["model"]
-for name, value in env.items():
-    print("export %s=%s" % (name, shlex.quote(str(value))))
-"""
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
+case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
+  {FIRST_LOGIN}) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGIN_DIR}" ;;
+  *) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
+esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
+  if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
+    _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
+  fi
   mkdir -p "$HOME/.cheese/keychain"
   cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
 #!/bin/sh
@@ -711,9 +709,8 @@ KEYCHAIN
   chmod +x "$HOME/.cheese/keychain/security"
   export PATH="$HOME/.cheese/keychain:$PATH"
 fi
-if [ -f "$OWN_LOGIN/{MODEL_SERVICE_FILE}" ]; then
-  eval "$(python3 -c '{_MODEL_SERVICE_EXPORTS}' < "$OWN_LOGIN/{MODEL_SERVICE_FILE}")"
-fi
+if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
+unset {OWN_MODEL}
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """

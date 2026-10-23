@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import ProjectOverviewView from './ProjectOverviewView.vue'
 
-import { setLocale, t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
 
@@ -78,7 +78,7 @@ function mount(extra: Record<string, unknown> = {}) {
       artifactApi,
       ...extra,
     },
-    global: { plugins: [createVuetify({ components, directives })] },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
 
@@ -129,6 +129,29 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
+it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
+  const item: ProgressItem = {
+    kind: 'accepted',
+    at: new Date().toISOString(),
+    taskId: 't9',
+    taskTitle: 'GitHub 上直接合的那次',
+    taskTitleSource: 'human',
+    roomId: 'front',
+    by: 'octocat',
+    byGithub: true,
+    artifactId: null,
+    artifactName: '',
+    version: null,
+  }
+  const view = mount({
+    progress: [item],
+    names: { alice: 'Alice', bob: 'Bob', octocat: '另一个人的名字' },
+  })
+  const progress = view.getByTestId('overview-progress')
+  expect(progress.textContent).toContain('octocat')
+  expect(progress.textContent).not.toContain('另一个人的名字')
+})
+
 it('任务和进展还没读到：不写「0」，也不写「暂无」', () => {
   const view = mount({ overviewText: null, progress: null, tasks: null })
   expect(view.getByTestId('overview-all-tasks').textContent).not.toMatch(/\d/)
@@ -162,4 +185,30 @@ it('领题开的项目：写着这份报名自己截到哪一刻，按看的人�
 it('不是领题开的项目：不写截止', () => {
   const view = mount({ overviewText: '## 现在到哪了' })
   expect(view.queryByTestId('overview-deadline')).toBeNull()
+})
+
+it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {
+  const view = mount({ overviewText: '', agentName: '芝士' })
+  await fireEvent.click(view.getByRole('button', { name: t('work.overview.draft', { agent: '芝士' }) }))
+  await fireEvent.update(view.getByRole('textbox'), '期末要交一个能演示的小程序')
+  await fireEvent.click(view.getByRole('button', { name: t('work.overview.draftStart') }))
+  expect(view.emitted('draft-overview')).toEqual([[{ note: '期末要交一个能演示的小程序', files: [] }]])
+})
+
+it('写过项目目标：没有起草的入口', () => {
+  const view = mount({ overviewText: '做一个预约小程序。', agentName: '芝士' })
+  expect(view.queryByRole('button', { name: t('work.overview.draft', { agent: '芝士' }) })).toBeNull()
+})
+
+it('现状：写成过就在最上面，还没有可写的就不占地方', async () => {
+  const written = mount({
+    agentName: '芝士',
+    situation: { content: '报名流程已可用，当前重点是内测', written_at: new Date().toISOString(), writing: false },
+  })
+  await vi.waitFor(() =>
+    expect(written.getByTestId('overview-situation').textContent).toContain('报名流程已可用，当前重点是内测')
+  )
+  cleanup()
+  const empty = mount({ agentName: '芝士', situation: { content: '', written_at: null, writing: false } })
+  expect(empty.queryByTestId('overview-situation')).toBeNull()
 })

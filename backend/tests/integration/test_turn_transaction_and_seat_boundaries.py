@@ -13,14 +13,14 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.input_identity import WorkCompletion
-from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.session_record import service as session_records
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
+from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
@@ -238,7 +238,7 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
     chat = ChatService(
         work_runner=runner,
         session_factory=factory,
-        compute=stub_compute(screen),
+        compute=stub_compute(screen, sessions=factory),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -260,25 +260,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 ):
                     await asyncio.sleep(0.01)
             async with factory() as observer:
-                inputs = list(
-                    await observer.scalars(
-                        select(NativeInput).where(
-                            NativeInput.conversation_id == conversation,
-                            NativeInput.work_id == first_turn,
-                        )
-                    )
-                )
-                assert inputs
-                own = inputs[0]
-                duplicate = WorkCompletion(
-                    own.project_id,
-                    conversation,
-                    own.recipient_handle,
-                    own.harness,
-                    own.native_session_id,
-                    first_turn,
-                    tuple(row.input_id for row in inputs),
-                )
                 other_before = await observer.get(AgentTurn, second_turn)
                 assert other_before.stopped_at is None
             assert screen.writes == [
@@ -289,8 +270,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
             screen.says(conversation, "first output", agent=first_seat)
             screen.stops(conversation, "first output", agent=first_seat)
             await until_frame(browser, "turn_finished", turn_id=first_turn)
-            await chat.confirm_work_completion(duplicate)
-            await chat.confirm_work_completion(duplicate)
             assert chat.session_took_over(conversation, second_turn)
             assert str(second_turn) in broker.active_turn_ids(str(conversation))
             assert str(first_turn) not in broker.active_turn_ids(str(conversation))
@@ -312,10 +291,25 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 for frame in replayed
             )
             screen.says(conversation, "second still works", agent=second_seat)
-            output = await until_frame(browser, "event_block")
-            while output["block"]["content"] != "second still works":
-                output = await until_frame(browser, "event_block")
-            assert output["block"]["turn_id"] == str(second_turn)
+            async with asyncio.timeout(HANG_S):
+                while True:
+                    async with factory() as observer:
+                        page = await session_records.read(
+                            observer, conversation, turn_id=second_turn
+                        )
+                    output = next(
+                        (
+                            item
+                            for item in page.items
+                            if assistant_texts([item]) == ["second still works"]
+                        ),
+                        None,
+                    )
+                    if output is not None:
+                        break
+                    await asyncio.sleep(0.02)
+            assert output["turn_id"] == str(second_turn)
+            assert output["agent_handle"] == "second"
             screen.stops(conversation, "second finished", agent=second_seat)
             await until_frame(browser, "turn_finished", turn_id=second_turn)
             await runner.drain(timeout_s=60)
@@ -324,6 +318,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                     await observer.get(AgentTurn, second_turn)
                 ).stopped_at is not None
             assert broker.active_turn_ids(str(conversation)) == []
-            assert not chat.has_running_turn(conversation)
+            assert not await chat.has_running_turn(conversation)
         finally:
             await chat.stop_listening(timeout_s=2)

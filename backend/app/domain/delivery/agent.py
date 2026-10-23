@@ -12,19 +12,20 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, true, update
+from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
+from app.domain.addressing import addressed_to_agent
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
-from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -43,6 +44,7 @@ RETRY_CAP_SECONDS = 300
 # it retry every five minutes for ever.
 GIVE_UP_AFTER = timedelta(minutes=30)
 GAVE_UP = "Not started within 30 minutes of being given"
+REPLACED = "Replaced by a newer instruction about the same thing before it was sent"
 
 
 def retry_after(attempts: int) -> float:
@@ -58,45 +60,63 @@ def now():
     return datetime.now(UTC)
 
 
+#: The turn interval, read bare. `agent_turns` belongs to the agent domain and
+#: that domain already imports this one (it reads input holds), so the question
+#: goes out through this table instead of that domain's model — importing the
+#: models on the delivery side would close a domain cycle (C3 in
+#: backend/.importlinter). `room_task/closing.py` and `block/waits.py` read the
+#: same table the same way.
+_TURNS = table(
+    "agent_turns",
+    column("id", Uuid),
+    column("conversation_id", Uuid),
+    column("stopped_at", DateTime(timezone=True)),
+)
+
+
 def work_interval_is_over():
     """Whether this input's own work interval is one the platform ended.
 
     A correlated EXISTS over the turn intervals, anchored on the input row that
-    names its work (``work_id``/``conversation_id``). The fact belongs to the agent
-    domain's turn intervals, and that domain already imports this one (it reads
-    input holds), so the question goes out through this seam — importing
-    the turn models on the delivery side would close a domain cycle (C3 in
-    backend/.importlinter).
+    names its work (``work_id``/``conversation_id``). A work the platform has no
+    row for is NOT over — silence is not a conclusion. As a clause rather than a
+    second question so the caller's query stays one query.
     """
-    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
-    from app.domain.agent.runtime import AgentTurnRepository
-
-    return AgentTurnRepository.interval_is_over(
-        turn_id=NativeInput.work_id, topic_id=NativeInput.conversation_id
+    return (
+        select(_TURNS.c.id)
+        .where(
+            _TURNS.c.id == NativeInput.work_id,
+            _TURNS.c.conversation_id == NativeInput.conversation_id,
+            _TURNS.c.stopped_at.is_not(None),
+        )
+        .exists()
     )
 
 
-async def instance_for_seat(session, project_id, seat):
+async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
+    """``seats`` 里每个在这个项目里找得到的席位对应的实例，按 handle 分；只读一次
+    实例表。找不到的席位不在结果里。"""
+    wanted = set(seats)
+    if not wanted:
+        return {}
     instances = await session.scalars(
         select(AgentInstance).where(AgentInstance.project_id == project_id)
     )
-    return next(
-        (row for row in instances if agent_instance_handle(row.id) == seat), None
-    )
+    found: dict[str, AgentInstance] = {}
+    for row in instances:
+        handle = agent_instance_handle(row.id)
+        if handle in wanted:
+            found.setdefault(handle, row)
+    return found
 
 
-async def seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
-    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它就返回 ``None``。
-
-    要这一行的调用点都在第 4 层以上（`review.room_notices`），认不出
-    ``AgentInstance`` 这个第 5 层的模型，所以要递出去的是 id —— 那一行其余字段没有
-    一处用得上。席位还在不在是另一回事（`active_seat_instance_id`）。"""
-    instance = await instance_for_seat(session, project_id, seat)
-    return None if instance is None else instance.id
+async def instance_for_seat(session, project_id, seat):
+    return (await instances_for_seats(session, project_id, [seat])).get(seat)
 
 
 async def active_seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
-    """同上，但席位不在了也当没有。
+    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它、或者它不在了，
+    就返回 ``None``。
 
     调用它的那一处（`routine.service`）分不出这两件事：都不该开工，说给主人的那句
     话也一样。"""
@@ -134,7 +154,7 @@ async def record_agent(
 
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
-) -> uuid.UUID | None:
+):
     """Keep an instruction for a task's own session until it is delivered.
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
@@ -145,31 +165,51 @@ async def record_task_instruction(
     手里都有行，可它们的 `ports.py` 一旦写下 `Task` 就从自己那一层往
     `room_task` 伸一条边 —— `block` 那条正好把 C3 的环封上。行归本包读，
     它本来就在读这张表。
-
-    Returns the instance it addressed, or ``None`` when the task's project or
-    room is gone and nothing was recorded. A caller that also addresses a
-    configured seat compares against it: one event must not start two turns of
-    the same agent (``review.room_notices._tell_the_dispatch_seat``).
     """
     # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
     task = await session.get(Task, task_id)
     if task is None:
-        return None
+        return
     project = await session.get(Project, task.project_id)
     room = await session.get(Topic, task.room_id)
     if project is None or room is None:
-        return None
+        return
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
+    seat = agent_instance_handle(agent.instance_id)
+    replaces = (event.payload or {}).get(REPLACES)
+    if replaces:
+        # The earlier one says a state this one has moved past (a PR's checks
+        # failed, then failed differently), and the session never got it:
+        # reading both is one more turn for nothing, and on dev the same PR's CI
+        # failure stacked up to 23 times behind a busy seat. Only an input the
+        # session was never reached for, and no attempt holds right now: one
+        # that may have been sent is never touched (module docstring). It
+        # fails rather than taking the new text, so its row still names the
+        # event it was recorded for.
+        stamp = now()
+        await session.execute(
+            update(Delivery)
+            .where(
+                Delivery.conversation_id == task.id,
+                Delivery.recipient_handle == seat,
+                Delivery.agent_instance_id.is_not(None),
+                Delivery.sent_at.is_(None),
+                Delivery.state.in_(_NEVER_SENT),
+                or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
+                Delivery.payload[REPLACES].astext == str(replaces),
+            )
+            .values(state="failed", last_error=REPLACED, lease_until=None)
+        )
     await session.execute(
         insert(Delivery)
         .values(
             id=uuid.uuid4(),
             event_id=event.id,
-            recipient_handle=agent_instance_handle(agent.instance_id),
+            recipient_handle=seat,
             receiver_id=None,
             agent_instance_id=agent.instance_id,
             conversation_id=task.id,
@@ -182,7 +222,6 @@ async def record_task_instruction(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
-    return agent.instance_id
 
 
 async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
@@ -276,9 +315,6 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 )
             )
         await session.commit()
-    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
-    from app.domain.agent.runtime import addressed_to_agent
-
     for delivery_id, attempt, topic_id, instance_id, seat, content in claimed:
         runner.submit(
             chat,
@@ -302,7 +338,12 @@ _NEVER_SENT = ("pending", "claimed")
 
 
 async def redispatch_undelivered(
-    sessions, *, conversation_id: uuid.UUID, chat, runner
+    sessions,
+    *,
+    conversation_id: uuid.UUID,
+    chat,
+    runner,
+    recipient_handle: str | None = None,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -321,6 +362,10 @@ async def redispatch_undelivered(
     (module docstring). How long an instruction given up on waits before its
     own sweep fails it is untouched (`GIVE_UP_AFTER`) — this moves the wait
     that a person asked to skip, not that one.
+
+    The other caller is a seat whose work just ended (``recipient_handle``
+    names it): an attempt refused because that seat was still holding the
+    earlier work was waiting for exactly this, not for its backoff.
     """
     stamp = now()
     async with sessions() as session:
@@ -329,6 +374,9 @@ async def redispatch_undelivered(
                 await session.scalars(
                     select(Delivery.id).where(
                         Delivery.conversation_id == conversation_id,
+                        Delivery.recipient_handle == recipient_handle
+                        if recipient_handle is not None
+                        else true(),
                         Delivery.agent_instance_id.is_not(None),
                         Delivery.state.in_(_NEVER_SENT),
                         Delivery.sent_at.is_(None),
@@ -352,12 +400,8 @@ async def redispatch_undelivered(
     return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines=None):
-    """Renew admission ownership while queued; settle only this claimed attempt.
-
-    ``machines`` closes a finished task's room checkouts with it
-    (`room_task.ports.SweepCheckouts`), handed in by whoever runs the turn.
-    """
+async def run_attempt(sessions, delivery_id, attempt_id, work):
+    """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
         while True:
@@ -405,14 +449,6 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
-                # The instruction to write a finished task up is over, however
-                # it went. A turn it started that the session still runs closes
-                # the task when it ends (`room_task.closing.turns_ended`); with
-                # none running, the task closes now.
-                if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    await close_after_summary(
-                        session, row.conversation_id, chat, machines=machines
-                    )
             await session.commit()
 
 

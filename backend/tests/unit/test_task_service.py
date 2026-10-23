@@ -1,4 +1,4 @@
-"""Unit tests for TaskService, TaskMembershipService, TaskSubmissionService, and TaskSubmissionReviewService."""  # noqa: E501
+"""Unit tests for TaskService, TaskMembershipService, TaskSubmissionService, and TaskSubmissionReviewService."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -230,7 +230,7 @@ class TestTaskMembershipService:
     ):
         from app.core.config import settings as _settings
 
-        # Limit enforcement is opt-in via APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK  # noqa: E501
+        # Limit enforcement is opt-in via APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK
         # (mirrors NT applicationConfig.enforceTaskParticipantLimitCheck).
         monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
@@ -714,7 +714,7 @@ class TestTaskSubmissionService:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
-        entry_repo.list_by_submission_id.return_value = [entry]
+        entry_repo.list_by_submission_ids.return_value = {200: [entry]}
 
         review_repo = AsyncMock()
 
@@ -733,6 +733,58 @@ class TestTaskSubmissionService:
         assert total == 1
         assert len(items) == 1
         assert items[0]["id"] == 200
+
+    @pytest.mark.anyio
+    async def test_list_submissions_reads_a_page_in_two_batches(self):
+        """A page of N submissions asks for entries and reviews once each."""
+        submissions = [
+            _make_submission(id=200 + i, membership_id=50 + i) for i in range(3)
+        ]
+        memberships = [_make_membership(id=50 + i) for i in range(3)]
+
+        membership_repo = AsyncMock()
+        membership_repo.list_memberships_for_task.return_value = memberships
+
+        submission_repo = AsyncMock()
+        submission_repo.list_submissions.return_value = submissions
+        submission_repo.count_submissions.return_value = len(submissions)
+
+        entry_repo = AsyncMock()
+        entry_repo.list_by_submission_ids.return_value = {
+            200: [_make_entry(task_submission_id=200)],
+            201: [],
+            202: [_make_entry(id=302, task_submission_id=202)],
+        }
+
+        review_repo = AsyncMock()
+        review_repo.get_by_submission_ids.return_value = {
+            200: _make_review(id=400, submission_id=200),
+        }
+
+        svc = self._build_service(
+            submission_repo=submission_repo,
+            entry_repo=entry_repo,
+            review_repo=review_repo,
+            membership_repo=membership_repo,
+        )
+
+        items, total = await svc.list_submissions(
+            task_id=1,
+            limit=20,
+            query_review=True,
+        )
+
+        assert total == 3
+        assert [item["id"] for item in items] == [200, 201, 202]
+        assert len(items[0]["content"]) == 1
+        assert items[1]["content"] == []
+        assert items[0]["review"]["reviewed"] is True
+        assert items[1]["review"]["reviewed"] is False
+
+        entry_repo.list_by_submission_ids.assert_awaited_once_with([200, 201, 202])
+        review_repo.get_by_submission_ids.assert_awaited_once_with([200, 201, 202])
+        entry_repo.list_by_submission_id.assert_not_awaited()
+        review_repo.get_by_submission_id.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_submission_dto_file_entry(self):
@@ -1140,7 +1192,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_user_missing_real_name(self):
-        """Eligibility returns MISSING_REAL_NAME when require_real_name is set and user has no identity."""  # noqa: E501
+        """Eligibility returns MISSING_REAL_NAME when require_real_name is set and user has no identity."""
         repo = AsyncMock()
         repo.get_user_membership.return_value = None
 
@@ -1157,7 +1209,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_user_rank_not_high_enough(self, monkeypatch):
-        """Eligibility returns USER_RANK_NOT_HIGH_ENOUGH when rank check is enforced and user rank is too low."""  # noqa: E501
+        """Eligibility returns USER_RANK_NOT_HIGH_ENOUGH when rank check is enforced and user rank is too low."""
         from app.core import config as config_mod
 
         monkeypatch.setattr(config_mod.settings, "rank_check_enforced", True)
@@ -1275,7 +1327,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_team_already_participating(self):
-        """TEAM eligibility includes ALREADY_PARTICIPATING when membership is approved."""  # noqa: E501
+        """TEAM eligibility includes ALREADY_PARTICIPATING when membership is approved."""
         repo = AsyncMock()
         # approved=0 means this team is already approved/participating
         team_membership = _make_membership(
@@ -1361,7 +1413,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_team_registration_not_started(self):
-        """TEAM eligibility includes REGISTRATION_NOT_STARTED when start is in the future."""  # noqa: E501
+        """TEAM eligibility includes REGISTRATION_NOT_STARTED when start is in the future."""
         repo = AsyncMock()
         team_membership = _make_membership(
             id=60, member_id=99, approved=2, is_team=True
@@ -1381,7 +1433,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_team_missing_real_name(self):
-        """TEAM eligibility includes TEAM_MEMBER_MISSING_REAL_NAME when user has no identity."""  # noqa: E501
+        """TEAM eligibility includes TEAM_MEMBER_MISSING_REAL_NAME when user has no identity."""
         repo = AsyncMock()
         team_membership = _make_membership(
             id=60, member_id=99, approved=2, is_team=True
@@ -1403,7 +1455,7 @@ class TestTaskMembershipServiceAdditional:
 
     @pytest.mark.anyio
     async def test_eligibility_team_rank_not_high_enough(self, monkeypatch):
-        """TEAM eligibility includes TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH when rank is too low."""  # noqa: E501
+        """TEAM eligibility includes TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH when rank is too low."""
         from app.core import config as config_mod
 
         monkeypatch.setattr(config_mod.settings, "rank_check_enforced", True)
@@ -1442,8 +1494,79 @@ class TestTaskMembershipServiceAdditional:
         assert rank_reason["details"]["teamId"] == 99
 
     @pytest.mark.anyio
+    async def test_eligibility_team_rank_rule_reads_space_once(self, monkeypatch):
+        """The team path reuses one rank rule and reads the task's space once.
+
+        The space belongs to the task, so three candidate teams must not turn
+        into three ``space_repo.get_by_id`` calls, and every team must fail for
+        the same rank reason. Reverting to an inline copy plus an in-loop read
+        makes both the helper-call record and the read count red.
+        """
+        from app.core import config as config_mod
+
+        monkeypatch.setattr(config_mod.settings, "rank_check_enforced", True)
+        monkeypatch.setattr(config_mod.settings, "rank_jump", 1)
+
+        repo = AsyncMock()
+        repo.list_team_memberships_for_user.return_value = [
+            _make_membership(id=60 + i, member_id=99 - i, approved=2, is_team=True)
+            for i in range(3)
+        ]
+        repo.count_team_members.return_value = 3
+        repo.count_approved_for_task.return_value = 0
+
+        space_repo = AsyncMock()
+        space_repo.get_by_id.return_value = SimpleNamespace(id=100, enable_rank=True)
+        space_rank_repo = AsyncMock()
+        space_rank_repo.get_rank.return_value = 0
+
+        svc, _ = self._build_service(
+            repo=repo,
+            space_repo=space_repo,
+            space_rank_repo=space_rank_repo,
+        )
+        task = _make_task(submitter_type=1, approved=0, rank=5, space_id=100)
+
+        seen_team_ids: list[int | None] = []
+        original = svc._rank_reasons
+
+        async def record_rank_reasons(*args, **kwargs):
+            seen_team_ids.append(kwargs.get("team_id"))
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(svc, "_rank_reasons", record_rank_reasons)
+
+        result = await svc.get_participation_eligibility(task=task, user_id=42)
+
+        assert len(result["teams"]) == 3
+        rank_reasons = [
+            next(
+                r
+                for r in team["eligibility"]["reasons"]
+                if r["code"] == "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH"
+            )
+            for team in result["teams"]
+        ]
+
+        def without_team(reason):
+            return {
+                **reason,
+                "details": {
+                    key: value
+                    for key, value in reason["details"].items()
+                    if key != "teamId"
+                },
+            }
+
+        assert [without_team(reason) for reason in rank_reasons] == [
+            without_team(rank_reasons[0])
+        ] * 3
+        assert seen_team_ids == [99, 98, 97]
+        space_repo.get_by_id.assert_awaited_once_with(100)
+
+    @pytest.mark.anyio
     async def test_eligibility_team_no_memberships(self):
-        """TEAM eligibility returns empty teams list when user has no team memberships."""  # noqa: E501
+        """TEAM eligibility returns empty teams list when user has no team memberships."""
         repo = AsyncMock()
         repo.list_team_memberships_for_user.return_value = []
 
@@ -1548,7 +1671,7 @@ class TestTaskSubmissionServiceAdditional:
 
     @pytest.mark.anyio
     async def test_modify_submission_participant_not_found(self):
-        """modify_submission raises NotFoundError when participant_id is not in memberships."""  # noqa: E501
+        """modify_submission raises NotFoundError when participant_id is not in memberships."""
         membership_repo = AsyncMock()
         membership_repo.list_memberships_for_task.return_value = []
 
@@ -1617,7 +1740,9 @@ class TestTaskSubmissionServiceAdditional:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
+        entry_repo.list_by_submission_ids.return_value = {}
         review_repo = AsyncMock()
+        review_repo.get_by_submission_ids.return_value = {}
 
         svc = self._build_service(
             submission_repo=submission_repo,
@@ -1647,10 +1772,10 @@ class TestTaskSubmissionServiceAdditional:
         submission_repo.count_submissions.return_value = 1
 
         entry_repo = AsyncMock()
-        entry_repo.list_by_submission_id.return_value = [entry]
+        entry_repo.list_by_submission_ids.return_value = {200: [entry]}
 
         review_repo = AsyncMock()
-        review_repo.get_by_submission_id.return_value = review
+        review_repo.get_by_submission_ids.return_value = {200: review}
 
         svc = self._build_service(
             submission_repo=submission_repo,
@@ -1669,4 +1794,4 @@ class TestTaskSubmissionServiceAdditional:
         assert len(items) == 1
         assert items[0]["review"]["reviewed"] is True
         assert items[0]["review"]["detail"]["score"] == 90
-        review_repo.get_by_submission_id.assert_awaited_once_with(200)
+        review_repo.get_by_submission_ids.assert_awaited_once_with([200])

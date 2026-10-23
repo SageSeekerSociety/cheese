@@ -15,16 +15,20 @@
 import type { Ref } from 'vue'
 import type { LibraryFile } from '../api'
 import type { Topic } from '../cx_types'
+import type { LinkableDocument } from '../lib/docMentionMenu'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { t } from '../i18n'
+import { documentItems, hashItems } from '../lib/docMentionMenu'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 
 /** 能被 @ 到的人：这个房间里的，加上项目里还没进这个房间的。 */
 export interface MentionPoolEntry {
   handle: string
   label: string
+  /** 设了个人备注时保留的原名，供副标题与搜索匹配。 */
+  originalName?: string | null
   /**
    * 这个人**自己挑过的**头像地址；没挑过、或名册上没他时是 null（画彩色首字母）。
    * AI 队友没有这一步，一律画 CheeseAvatar，这里是 null。
@@ -40,9 +44,11 @@ export interface MentionPoolEntry {
 
 export interface MentionItem {
   label: string
-  kind: 'member' | 'topic' | 'broadcast' | 'file' | 'category'
+  kind: 'member' | 'topic' | 'document' | 'broadcast' | 'file' | 'category'
   /** 挑中之后写在 `@` 后面的那串字（一个 handle / 名字 / token）。 */
   insert: string
+  /** 挑中之后写进正文的引用（`<@handle>`、`<#id>`），画出来是一枚标签。文件、分类没有。 */
+  token?: string
   /** 第二行：人的 `@handle`、话题的状态、群播的说明。 */
   sub: string
   agent: boolean
@@ -54,6 +60,8 @@ export interface MentionItem {
   group?: string
   /** 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。 */
   handle?: string
+  /** 设了个人备注时保留的原名。 */
+  originalName?: string | null
   /** 人自己挑过的头像地址；没挑过是 null（画彩色首字母）。见 `MentionPoolEntry.avatar`。 */
   avatar?: string | null
 }
@@ -66,6 +74,7 @@ const broadcastItems = (): MentionItem[] => [
     label: t('work.room.mention.all'),
     kind: 'broadcast',
     insert: 'all',
+    token: '<@all>',
     sub: t('work.room.mention.allSub'),
     agent: false,
   },
@@ -73,6 +82,7 @@ const broadcastItems = (): MentionItem[] => [
     label: t('work.room.mention.here'),
     kind: 'broadcast',
     insert: 'here',
+    token: '<@here>',
     sub: t('work.room.mention.hereSub'),
     agent: false,
   },
@@ -84,12 +94,20 @@ const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
 /** 一次从资料库取几份候选；菜单里最多摆 12 份，图片和文件分两组，多取一些。 */
 const LIBRARY_PICKS = 24
 
+/** 正文末尾一个打到一半的 `@`。`<@zhangsan>` 里的那个 `@` 是一枚标签，不算。 */
+const PARTIAL_AT = /(?<!<)@([^\s@<>]*)$/
+/** 正文末尾一个打到一半的 `#`：挑频道或文档。`<#id>` 里的不算，紧跟在字母、数字后面的
+ *  （C#、编号）也不算。 */
+const PARTIAL_HASH = /(?<![<\w])#([^\s#<>]*)$/
+
 export interface MentionPickerDeps {
-  /** 正文。挑中一项之后由这里改它。 */
+  /** 光标前面那一截正文：看它的末尾，挑中一项之后改的也是它。 */
   draft: Ref<string>
   topic: () => Topic | null
   mentionPool: () => MentionPoolEntry[]
   topicList: () => Topic[]
+  /** 打 # 时能引用的文档；不给就只有频道。 */
+  documentList?: () => LinkableDocument[]
   /** 挑完人、点完按钮之后要把光标还给输入框——这是最烦人的一处。 */
   focus: () => void
   /** 挑中的是一份文件：它不是一个能 @ 的人，是附在这条消息上的一样东西。
@@ -103,6 +121,11 @@ export interface MentionPickerDeps {
   listLibrary?: (projectId: string, query: string, limit: number) => Promise<LibraryFile[]>
   /** 用键盘换高亮之后把那一项滚进视野（菜单自己有高度上限、自己滚）。 */
   scrollActiveIntoView: () => void
+  /** 候选里有没有 @所有人 / @在线的人。不填是有；文档评论没有「这个频道的所有人」可叫。 */
+  broadcast?: boolean
+  /** 挑中之后写引用（`<@handle>`）而不是名字：画得出标签的输入框才这样写，纯文本框里
+   *  它只是一串尖括号。 */
+  writeTokens?: boolean
 }
 
 export function useRoomMentionPicker(deps: MentionPickerDeps) {
@@ -110,8 +133,13 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   // draft, and the teammates / topics / broadcast tokens it can complete to.
   // Mirrors TopicView's composer so the root-topic and 私聊 composers get the
   // same picker.
+  // 打的是哪一种：@ 挑人，# 挑频道和文档（和 Slack 一样，一个符号一类东西）。
+  const trigger = computed<'@' | '#' | null>(() =>
+    PARTIAL_AT.test(deps.draft.value) ? '@' : PARTIAL_HASH.test(deps.draft.value) ? '#' : null
+  )
+  const partial = () => (trigger.value === '#' ? PARTIAL_HASH : PARTIAL_AT)
   const query = computed(() => {
-    const m = deps.draft.value.match(/@([^\s@]*)$/)
+    const m = trigger.value ? deps.draft.value.match(partial()) : null
     return m ? m[1] : null
   })
 
@@ -195,45 +223,47 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     const q = query.value
     if (q === null) return []
     const ql = q.toLowerCase()
+    if (trigger.value === '#')
+      return hashItems<MentionItem>(hashTopics(ql), documentItems(deps.documentList?.() ?? [], q))
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
-    const broadcast = broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+    const broadcast =
+      deps.broadcast === false ? [] : broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,
         kind: 'member' as const,
         insert: m.label,
-        sub: m.handle,
+        token: `<@${m.handle}>`,
+        sub: m.originalName && m.originalName !== m.label ? `${m.originalName} · ${m.handle}` : m.handle,
         agent: m.agent,
         external: !!m.external,
         outsideTopic: !!m.outsideTopic,
         handle: m.handle,
+        originalName: m.originalName,
         avatar: m.avatar,
       })),
-      ...deps
-        .topicList()
-        // 私密频道的名字不在别处变成链接（后端也不认），所以不给它候选。
-        .filter((tp) => tp.kind !== 'root' && !tp.members_only)
-        .map((tp) => ({
-          label: tp.title,
-          kind: 'topic' as const,
-          insert: tp.title,
-          sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
-          agent: false,
-        })),
-      // 人和话题都按**名字**搜；人还多认一个 handle（`sub` 里那个 `@xxx`）——有人记
+      // 人按**名字**搜；人还多认一个 handle（`sub` 里那个 `@xxx`）——有人记
       // 得住 `@cheese-topica`，记不住中文名叫什么，只按名字搜等于他默写一遍也找不到。
       // 群播是 fixed-literal token，它的 insert（`all` / `here`）在别处单独匹配。
-    ].filter((i: MentionItem) => i.label.toLowerCase().includes(ql) || !!i.handle?.toLowerCase().includes(ql))
+    ].filter(
+      (i: MentionItem) =>
+        i.label.toLowerCase().includes(ql) ||
+        !!i.originalName?.toLowerCase().includes(ql) ||
+        !!i.handle?.toLowerCase().includes(ql)
+    )
     // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
     // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
     // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
-    // 它还是那两个 token。
-    const agents = named.filter((i) => i.agent)
+    // 它还是那两个 token。不在这个频道里的队友不占这一格：跟着频道外的人一起
+    // 排在后面（见下）。
+    const agents = named.filter((i) => i.agent && !i.outsideTopic)
     // 频道里的人在前，没加入的人跟在后面（和 Slack 一样）：在这里说话的多半是在找
-    // 频道里的人。
+    // 频道里的人。后面那一组挂一个分组标题——候选行长得都一样，只靠先后顺序看不
+    // 出谁不在频道里。
+    const outsideGroup = t('work.room.mention.outsideGroup')
     const rest = [
       ...named.filter((i) => !i.agent && !i.outsideTopic),
-      ...named.filter((i) => !i.agent && i.outsideTopic),
+      ...named.filter((i) => i.outsideTopic).map((i) => ({ ...i, group: outsideGroup })),
     ]
     // 没打字：资料库是一行入口。打了字：文件和人、话题一起被搜出来。
     const files = ql ? libraryItems(ql) : []
@@ -249,8 +279,25 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
             },
           ]
         : []
-    return [...agents, ...library, ...broadcast, ...rest, ...files].slice(0, 7)
+    // 不截断：菜单自己有高度上限、自己滚（MentionMenu 的 .mention-menu）。以前截在
+    // 7 条，第 8 个人就永远挑不到——项目里人一多，「@ 一个人」这件事直接失效。
+    return [...agents, ...library, ...broadcast, ...rest, ...files]
   })
+
+  // # 的频道候选：私密频道的名字不在别处变成链接（后端也不认），所以不给它候选。
+  function hashTopics(ql: string): MentionItem[] {
+    return deps
+      .topicList()
+      .filter((tp) => tp.kind !== 'root' && !tp.members_only && tp.title.toLowerCase().includes(ql))
+      .map((tp) => ({
+        label: tp.title,
+        kind: 'topic' as const,
+        insert: tp.title,
+        token: `<#${tp.id}>`,
+        sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
+        agent: false,
+      }))
+  }
 
   function pick(item: MentionItem) {
     if (item.kind === 'category') {
@@ -261,12 +308,13 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (item.kind === 'file') {
       // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
       // 名字都从正文里拿掉，文件去待发条里待着。
-      deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, '')
+      deps.draft.value = deps.draft.value.replace(PARTIAL_AT, '')
       deps.onAddLibraryFile?.(item.insert)
       void nextTick(deps.focus)
       return
     }
-    deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
+    const written = deps.writeTokens && item.token ? item.token : `${trigger.value ?? '@'}${item.insert}`
+    deps.draft.value = deps.draft.value.replace(partial(), () => `${written} `)
     // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
     // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
     // 完人还要再点一次输入框」是这个面板最烦人的地方。

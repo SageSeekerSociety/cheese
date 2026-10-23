@@ -53,6 +53,7 @@ http_path.write_bytes(
     http_source.replace(
         class_marker,
         b"from .provider_http_timing import trace_post\n"
+        b"from .opencode_free import adapt_opencode_free\n"
         b"from .retry_stream import ClientOwnedStream\n\n\n" + class_marker,
-    ).replace(marker, b"    @trace_post\n" + marker)
+    ).replace(marker, b"    @trace_post\n    @adapt_opencode_free\n" + marker)
 )

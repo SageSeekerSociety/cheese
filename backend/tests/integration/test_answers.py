@@ -191,7 +191,7 @@ class TestAnswersGetIntegration:
             f"/questions/{self.question_id}/answers",
             headers=self.aux_headers,
             json={
-                "content": "你说得对，但是原神是一款由米哈游自主研发的开放世界游戏，后面忘了"  # noqa: E501
+                "content": "你说得对，但是原神是一款由米哈游自主研发的开放世界游戏，后面忘了"
             },
         )
         self.answer_id = answer_resp.json()["data"]["id"]

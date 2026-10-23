@@ -1,15 +1,16 @@
 import re
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import is_placeholder_email
 from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.sentences import say
 from app.domain.identity.handles import is_reserved_username
-from app.domain.user.models import User, UserProfile
+from app.domain.user.models import User, UserProfile, UserTeammateRemark
 from app.domain.user.passwords import (
     check_password,
     hash_password,
@@ -37,6 +38,11 @@ _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
+
+
+async def user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """The live account with this id; None when there is none or it is closed."""
+    return await UserRepository(session).get_by_id(user_id)
 
 
 async def users_by_handle(
@@ -148,6 +154,96 @@ async def timezones_by_handles(
     return {handle: zone for handle, zone in rows.all() if zone}
 
 
+REMARK_MAX_LENGTH = 32
+
+
+async def remarks_by_handles(
+    session: AsyncSession, viewer_handle: str | None, handles: Iterable[str]
+) -> dict[str, str]:
+    """target_handle -> ``viewer_handle`` 给这位队友打的备注；没打备注的不在结果里。
+
+    按页一次查完，不按行 N+1。放在 user 域的 services，调用方（项目成员列表、
+    频道名册、个人主页）不必越界去拿 ``UserTeammateRemark`` 模型。
+    """
+    if not viewer_handle:
+        return {}
+    wanted = {h for h in handles if h and h != viewer_handle}
+    if not wanted:
+        return {}
+    rows = await session.execute(
+        select(
+            UserTeammateRemark.target_handle,
+            UserTeammateRemark.remark,
+        ).where(
+            UserTeammateRemark.viewer_handle == viewer_handle,
+            UserTeammateRemark.target_handle.in_(wanted),
+        )
+    )
+    return {target: remark for target, remark in rows.all() if remark}
+
+
+async def remark_for_handle(
+    session: AsyncSession, viewer_handle: str | None, target_handle: str
+) -> str | None:
+    """``viewer_handle`` 给 ``target_handle`` 打的备注；没打备注或看自己时返回 None。"""
+    if not viewer_handle or not target_handle or viewer_handle == target_handle:
+        return None
+    mapping = await remarks_by_handles(session, viewer_handle, [target_handle])
+    return mapping.get(target_handle)
+
+
+async def set_teammate_remark(
+    session: AsyncSession,
+    *,
+    viewer_handle: str,
+    target_handle: str,
+    remark: str | None,
+) -> str | None:
+    """设置或清除 ``viewer_handle`` 对 ``target_handle`` 的个人备注。
+
+    空白字符串或 None 表示清除备注（删掉那一行并返回 None）。
+    """
+    target = target_handle.strip()
+    if not target or viewer_handle == target:
+        raise UnprocessableEntityError(say("remarkNotYourOwn"))
+    cleaned = (remark or "").strip()
+    if not cleaned:
+        await session.execute(
+            delete(UserTeammateRemark).where(
+                UserTeammateRemark.viewer_handle == viewer_handle,
+                UserTeammateRemark.target_handle == target,
+            )
+        )
+        await session.flush()
+        return None
+    if "\x00" in cleaned or "\n" in cleaned or "\r" in cleaned:
+        raise UnprocessableEntityError(say("remarkControlChars"))
+    if len(cleaned) > REMARK_MAX_LENGTH:
+        raise UnprocessableEntityError(say("remarkTooLong", max=REMARK_MAX_LENGTH))
+
+    existing = await session.scalar(
+        select(UserTeammateRemark).where(
+            UserTeammateRemark.viewer_handle == viewer_handle,
+            UserTeammateRemark.target_handle == target,
+        )
+    )
+    now = datetime.now(UTC)
+    if existing is None:
+        session.add(
+            UserTeammateRemark(
+                viewer_handle=viewer_handle,
+                target_handle=target,
+                remark=cleaned,
+                updated_at=now,
+            )
+        )
+    else:
+        existing.remark = cleaned
+        existing.updated_at = now
+    await session.flush()
+    return cleaned
+
+
 async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bool:
     """记下这个人浏览器所在的时区；账号不在了返回 False。取值由调用方先校验。"""
     user = await UserRepository(session).get_by_id(user_id)
@@ -155,6 +251,21 @@ async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bo
         return False
     user.timezone = timezone
     return True
+
+
+async def set_training_opt_out(
+    session: AsyncSession, user_id: int, opted_out: bool
+) -> User | None:
+    """记下这个人是否拒绝把自己的内容用于模型训练、提供给合作方；账号不在了返回
+    None。已经拒绝过的人再拒绝一次，保留第一次的时间：那是他提出的时间。"""
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None:
+        return None
+    if not opted_out:
+        user.training_opted_out_at = None
+    elif user.training_opted_out_at is None:
+        user.training_opted_out_at = datetime.now(UTC)
+    return user
 
 
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
@@ -166,6 +277,14 @@ async def lookup_account(session: AsyncSession, q: str) -> dict | None:
         return None
     user_id, handle, name, avatar_id = found
     return {"id": user_id, "handle": handle, "name": name, "avatar_id": avatar_id}
+
+
+async def names_by_handles(
+    session: AsyncSession, handles: Sequence[str]
+) -> dict[str, str]:
+    """Handle → the name the person or AI teammate is shown by, in one
+    statement; see ``UserRepository.names_by_handles``."""
+    return await UserRepository(session).names_by_handles(handles)
 
 
 async def search_accounts(
@@ -621,7 +740,6 @@ class UserAuthService:
                 "answer_count": stats["answerCount"],
                 "team_count": stats["teamCount"],
                 "task_participation_count": stats["taskParticipationCount"],
-                "knowledge_count": stats["knowledgeCount"],
                 "submission_count": stats["submissionCount"],
             }
         )

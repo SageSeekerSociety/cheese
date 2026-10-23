@@ -1,6 +1,6 @@
 """一页房间读出来的信号：谁在管它、它名下的活走到哪了、哪张卡停在检查上。
 
-路由这一层从一批验收卡和 broker 里读出这几样，再交给 `topics._topic_out` 叠进响应。
+路由这一层从一批验收卡和会话声明的状态里读出这几样，再交给 `topics._topic_out` 叠进响应。
 它们不是路由——没有路径、没有请求体，只回答「这一页现在是什么样」——所以和
 `topics.py` 分开放：那个文件已经顶在大小上限上，而这几件正是它身上可以整块搬走的。
 
@@ -15,13 +15,17 @@
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.topics_rows import CardRow
-from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.harness.driven.lifecycle import RUNNING
+from app.domain.agent.models import SessionState
+from app.domain.agent.realtime.activity import WORKING
 from app.domain.block.waits import REPLY_LOOKBACK, StuckCard
 from app.domain.conversation.services import threads_of_rooms
 from app.domain.review import archive
@@ -29,23 +33,73 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 
 
-async def working_in_threads(
-    db: AsyncSession, broker: InProcessBroker, room_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, set[str]]:
-    """{房间: 正在它的某条支线里干活的队友} —— 一次查完一个项目。
+@dataclass(frozen=True)
+class AtWork:
+    """Who is at work in a page of rooms, as their sessions' runners declare it
+    (`session_states`): on each room's own line, with since when, in each room's
+    支线, and which of the page's tasks have a session running."""
 
-    一条支线是这间房自己的：芝士在这条频道没有自己那条线，人 @ 它、它回话，都发生
-    在那条消息的支线里（`_answering_in`）。所以「谁在管这间房」不只看主线，这份是
-    主线之外那一半，用来把 `waits` 里已经在处理的成员去掉（`_topic_out`）。哪条支线
-    属于哪个房间以数据库为准，不是 broker 记的那份：broker 只在一条支线里装过轮次时
-    才认得它（`RoomActivity.note_thread`）。
-    """
+    #: {room: [{"member", "kind": "working", "since"}]} — the entry shape of the
+    #: room socket's ``activity`` frames, ``since`` in epoch seconds.
+    rooms: dict[uuid.UUID, list[dict]]
+    #: {room: the seats at work in one of its 支线}.
+    threads: dict[uuid.UUID, set[str]]
+    #: The conversations among the ``tasks`` the caller named whose session is
+    #: running. A task is its own conversation, so it is not in ``rooms`` unless
+    #: the room's own line is running.
+    tasks: set[uuid.UUID]
+
+
+async def at_work(
+    db: AsyncSession,
+    room_ids: list[uuid.UUID],
+    *,
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
+    tasks: Mapping[uuid.UUID, uuid.UUID] | None = None,
+) -> AtWork:
+    """Who is at work in these rooms, read once for a page.
+
+    A member counts as working while its session's runner declares it running
+    — a fact the runner reports, whatever turn the platform holds open. A
+    room's 支线 are its own doings: a channel has no line of 芝士's own, so what
+    it answers to a main-line message it says in that message's 支线 (`waits` is
+    told those seats too, to take out the members already handling the room).
+    Which 支线 belongs to which room is the database's (``threads``, or
+    `threads_of_rooms` when the caller has not asked it already).
+
+    ``tasks`` names the page's tasks ({task: room}) when the caller also asks
+    which of them are running — the sidebar's breathing green. It is read in
+    the same statement, so a page does not pay one more query for it: running
+    sessions are few, and the rows outside this page are filtered in memory."""
     if not room_ids:
-        return {}
-    threads = await threads_of_rooms(db, room_ids)
-    return broker.activity.working_in(
-        {str(thread_id): room_id for thread_id, room_id in threads.items()}
+        return AtWork({}, {}, set())
+    if threads is None:
+        threads = await threads_of_rooms(db, room_ids)
+    mine = set(room_ids)
+    task_rooms = tasks or {}
+    rows = await db.execute(
+        select(
+            SessionState.conversation_id,
+            SessionState.agent_handle,
+            SessionState.changed_at,
+        )
+        .where(SessionState.worker_status == RUNNING)
+        .order_by(SessionState.agent_handle)
     )
+    rooms: dict[uuid.UUID, list[dict]] = {}
+    in_threads: dict[uuid.UUID, set[str]] = {}
+    running_tasks: set[uuid.UUID] = set()
+    for conversation, seat, since in rows:
+        room = threads.get(conversation)
+        if room is not None:
+            in_threads.setdefault(room, set()).add(seat)
+        elif conversation in mine:
+            rooms.setdefault(conversation, []).append(
+                {"member": seat, "kind": WORKING, "since": since.timestamp()}
+            )
+        if conversation in task_rooms:
+            running_tasks.add(conversation)
+    return AtWork(rooms, in_threads, running_tasks)
 
 
 async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
@@ -57,6 +111,9 @@ async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[Ca
     「还没结算」不在这里数——那张表是 `review/archive.py` 维护的，抄第二份就是
     让它们走散。
 
+    已关任务名下的卡也不在这一批里：活结束了，它的卡不再说明「此刻在走」，
+    挡在查询那一头（`review.repositories.list_recent_for_places`）——读的地方
+    不止一处，判据放一处。
     """
     if not room_ids:
         return []

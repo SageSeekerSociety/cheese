@@ -10,7 +10,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
@@ -23,6 +23,7 @@ vi.mock('../api', async () => ({
 import ChatPanel from './ChatPanel.vue'
 
 import i18n from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const sockets: TestSocket[] = []
 class TestSocket {
@@ -78,6 +79,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('芝士摆出来一份东西', () => {
   it('socket 上落下一块 artifact 卡 → 往上报一声，让面板立刻看预览', async () => {

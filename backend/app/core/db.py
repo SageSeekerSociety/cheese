@@ -11,18 +11,21 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import greenlet
+from fastapi import HTTPException
 from sqlalchemy import event, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
+from app.core.sentences import say
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +49,19 @@ elif _db_url.startswith("postgresql+psycopg2://"):
 # Only a test's own child process sets it; the pytest suite runs the
 # production pool shape and closes each event loop's connections itself
 # (tests/conftest.py, tests/integration/conftest.py).
-_engine_kwargs: dict[str, Any] = (
-    {"poolclass": NullPool}
-    if os.environ.get("CHEESEX_TEST_NULLPOOL")
-    else {
-        "pool_size": settings.db_pool_size,
-        "max_overflow": settings.db_max_overflow,
+if os.environ.get("CHEESEX_TEST_NULLPOOL"):
+    _engine_kwargs: dict[str, Any] = {"poolclass": NullPool}
+else:
+    # `db_pool_size` / `db_max_overflow` are the CONTAINER's budget, and this is
+    # one of its workers (`backend/Dockerfile` passes the same BACKEND_WORKERS
+    # to uvicorn's --workers), so it takes its share of them.
+    _pool_size, _pool_overflow = settings.db_connections_per_worker()
+    _engine_kwargs = {
+        "pool_size": _pool_size,
+        "max_overflow": _pool_overflow,
         "pool_timeout": settings.db_pool_timeout_s,
         "pool_pre_ping": settings.db_pool_pre_ping,
     }
-)
 
 
 def _json_dumps_utf8(obj: Any) -> str:
@@ -243,14 +249,39 @@ def apply_migration_timeouts(connection: Connection) -> None:
     )
 
 
+def _set_request_lock_timeout(
+    session: Session, transaction: SessionTransaction, connection: Connection
+) -> None:
+    if transaction.nested:
+        return
+    # Transaction-local, including transactions opened after an explicit commit
+    # or release_read_session(). Background sessions and migrations opt out.
+    # PostgreSQL duration syntax, e.g. DB_REQUEST_LOCK_TIMEOUT=5s. The default
+    # must expire before work-lease's 10-second answer budget.
+    connection.execute(
+        text("SELECT set_config('lock_timeout', :value, true)"),
+        {"value": os.getenv("DB_REQUEST_LOCK_TIMEOUT", "5s")},
+    )
+
+
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """FastAPI dependency yielding a transactional session."""
     async with async_session_factory() as session:
+        event.listen(session.sync_session, "after_begin", _set_request_lock_timeout)
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
+            if (
+                isinstance(exc, DBAPIError)
+                and getattr(exc.orig, "sqlstate", None) == "55P03"
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail=say("systemBusy"),
+                    headers={"Retry-After": "1"},
+                ) from exc
             raise
 
 
