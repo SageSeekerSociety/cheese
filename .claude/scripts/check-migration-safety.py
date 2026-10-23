@@ -491,10 +491,11 @@ class _Migration(ast.NodeVisitor):
                 self.visit(stmt)
         # The rest never run under upgrade()'s lock (a downgrade's helpers):
         # judged for every other rule, but holding no with_lock_retries list.
-        locked, self._locked = self._locked, None
+        locked = self._locked
         for name, helper in self._helpers.items():
             if name not in self._helpers_visited:
                 self._helpers_visited.add(name)
+                self._locked = None  # each starts holding nothing
                 self.visit(helper)
         self._locked = locked
 
@@ -562,9 +563,9 @@ class _Migration(ast.NodeVisitor):
     def _table_names(self, node: ast.AST | None) -> list[str] | None:
         """The table(s) an argument names: a literal, or a loop variable over literals."""
         if _str(node) is not None:
-            return [_str(node)]  # type: ignore[list-item]
+            return [_str(node).rsplit(".", 1)[-1]]  # type: ignore[union-attr]  # schema.table -> table
         if isinstance(node, ast.Name) and node.id in self._loop_values:
-            return self._loop_values[node.id]
+            return [value.rsplit(".", 1)[-1] for value in self._loop_values[node.id]]
         return None
 
     def visit_With(self, node: ast.With) -> None:
@@ -1686,6 +1687,62 @@ def self_test() -> int:
         return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, {**chained, "y.py": rev("r1b", None)}))
 
     check("a merge migration reads its keys through every parent", merged_rules("runs, conversations"), [])
+
+    def second_parent_rules(lock: str) -> list[str]:
+        source = rev("r3", ("r2", "r1b")) + f"def upgrade():\n    with_lock_retries('{lock}')\n" + (
+            "    op.drop_constraint('runs_owner_fkey', 'runs', type_='foreignkey')\n"
+        )
+        y = rev("r1b", None) + (
+            "def upgrade():\n    op.create_foreign_key('runs_owner_fkey', 'runs', 'users', ['u'], ['id'])\n"
+        )
+        return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, {**chained, "y.py": y}))
+
+    check("... including a key only the second parent made", second_parent_rules("runs"), ["fk-table-not-locked"])
+    check(
+        "a key taken before a later with_lock_retries is judged by the list held then",
+        _rules_found(
+            "    with_lock_retries('task')\n" + add_fk + "\n    with_lock_retries('users')"
+        ),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "a schema-qualified referent is the table it names",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    op.create_foreign_key('fk', 'task', 'public.users', ['owner_id'], ['id'], postgresql_not_valid=True)"
+        ),
+        [],
+    )
+    check(
+        "a key whose referent is a local variable or an f-string is not passed silently",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    ref = 'users'\n"
+            "    op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)\n"
+            "    op.create_foreign_key(None, 'task', f'{ref}', ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["unresolved", "unresolved"],
+    )
+    two_helpers = (
+        "def _drop_task_fk():\n    with_lock_retries('task, users')\n"
+        "    op.drop_constraint('ck_task_kind', 'task', type_='check')\n"
+        "def _restore_runs_fk():\n"
+        "    op.create_foreign_key('runs_fk', 'runs', 'users', ['u'], ['id'], postgresql_not_valid=True)\n"
+    )
+    check(
+        "downgrade helpers do not inherit each other's lock list",
+        sorted(
+            f.rule
+            for f in analyze(
+                {
+                    "m.py": _HEAD + two_helpers + "\ndef upgrade() -> None:\n    pass\n"
+                    "\ndef downgrade() -> None:\n    _drop_task_fk()\n    _restore_runs_fk()\n"
+                },
+                _BASE_MODELS,
+            )
+        ),
+        [],
+    )
     check(
         "a key whose name is not a literal is still judged",
         _rules_found(
