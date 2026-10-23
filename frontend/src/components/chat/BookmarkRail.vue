@@ -6,6 +6,7 @@ import type { RefNames } from '@/lib/refChip'
 import type { ChapterRow } from '@/types/chapters'
 
 import { computed, nextTick, ref, watch } from 'vue'
+import { useEventListener } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -32,13 +33,31 @@ const emit = defineEmits<{
 const ordered = computed(() => inReadingOrder(props.chapters))
 const shown = computed(() => ordered.value.length > 0)
 
-// 默认收起成左上角小角标；指针移入或点击展开，移出时若不在重命名或打开行菜单中则自动收起。
+// 默认收起成左上角小角标；指针移入或点击展开，移出、点完跳转或在触屏上点面板外时自动收起。
 const open = ref(false)
 const menuForId = ref<string | null>(null)
+const railRef = ref<HTMLElement | null>(null)
 
 function onLeave() {
   if (!editingId.value && !menuForId.value) open.value = false
 }
+
+function jumpTo(blockId: string) {
+  menuForId.value = null
+  emit('jump', blockId)
+  open.value = false
+}
+
+function unpinChapter(blockId: string) {
+  menuForId.value = null
+  emit('unpin', blockId)
+}
+
+useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointerdown', (e: PointerEvent) => {
+  if (!open.value || editingId.value || menuForId.value) return
+  const el = railRef.value
+  if (el && e.target instanceof Node && !el.contains(e.target)) open.value = false
+})
 
 /** 这一条叫什么：存的标题（人改的或模型起的），没有就退回消息的头一句。 */
 function titleOf(chapter: ChapterRow): string {
@@ -52,6 +71,7 @@ const draft = ref('')
 const inputRef = ref<HTMLInputElement | HTMLInputElement[] | null>(null)
 
 async function startRename(chapter: ChapterRow) {
+  menuForId.value = null
   editingId.value = chapter.block.id
   draft.value = titleOf(chapter)
   await nextTick()
@@ -59,6 +79,7 @@ async function startRename(chapter: ChapterRow) {
   el?.focus()
 }
 function cancelRename() {
+  menuForId.value = null
   editingId.value = null
   draft.value = ''
 }
@@ -73,6 +94,7 @@ function saveRename() {
 watch(
   () => props.chapters,
   () => {
+    menuForId.value = null
     if (editingId.value) cancelRename()
   }
 )
@@ -83,7 +105,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
       key: 'jump',
       label: t('work.channel.chapters.jump'),
       icon: 'mdi-arrow-right',
-      onSelect: () => emit('jump', chapter.block.id),
+      onSelect: () => jumpTo(chapter.block.id),
     },
   ]
   if (props.canChapter) {
@@ -97,7 +119,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
       key: 'unpin',
       label: t('work.channel.chapters.unpin'),
       icon: 'mdi-bookmark-minus-outline',
-      onSelect: () => emit('unpin', chapter.block.id),
+      onSelect: () => unpinChapter(chapter.block.id),
     })
   }
   return out
@@ -105,9 +127,10 @@ function actions(chapter: ChapterRow): MenuAction[] {
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- 左上角开关按钮本身支持键盘和触屏点击展开/收起 -->
+  <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the toggle button inside handles keyboard and touch expand/collapse -->
   <div
     v-if="shown"
+    ref="railRef"
     class="bm-rail"
     :class="{ 'bm-rail--open': open }"
     data-testid="bookmark-rail"
@@ -150,7 +173,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
               :class="{ 'bm-rail__jump--here': chapter.block.id === activeId }"
               :aria-current="chapter.block.id === activeId ? 'true' : undefined"
               :aria-label="titleOf(chapter)"
-              @click="emit('jump', chapter.block.id)"
+              @click="jumpTo(chapter.block.id)"
             >
               <span class="bm-rail__no" aria-hidden="true">{{ i + 1 }}</span>
               <span class="bm-rail__name">{{ titleOf(chapter) }}</span>
@@ -207,8 +230,8 @@ function actions(chapter: ChapterRow): MenuAction[] {
   color: var(--ink);
 }
 .bm-rail__count {
-  font-size: 10px;
-  line-height: var(--lh-10);
+  font-size: 13px;
+  line-height: var(--lh-13);
   font-variant-numeric: tabular-nums;
 }
 .bm-rail__panel {
@@ -223,8 +246,8 @@ function actions(chapter: ChapterRow): MenuAction[] {
 }
 .bm-rail__title {
   margin: 0 4px 6px;
-  font-size: 12px;
-  line-height: var(--lh-12);
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
 .bm-rail__list {
@@ -262,8 +285,8 @@ function actions(chapter: ChapterRow): MenuAction[] {
 }
 .bm-rail__no {
   flex: none;
-  font-size: 11px;
-  line-height: var(--lh-11);
+  font-size: 13px;
+  line-height: var(--lh-13);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
@@ -279,7 +302,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
 .bm-rail__jump--here .bm-rail__name {
   color: var(--accent-ink);
 }
-/* ⋯ 只在指针停在这一行时出现：一列书签里每行都挂一颗是噪音。 */
+/* 桌面上 ⋯ 只在指针停在这一行时出现；触屏上没有悬停，直接画出来才点得到。 */
 .bm-rail__more {
   flex: none;
   opacity: 0;
@@ -287,6 +310,11 @@ function actions(chapter: ChapterRow): MenuAction[] {
 .bm-rail__row:hover .bm-rail__more,
 .bm-rail__more:focus-visible {
   opacity: 1;
+}
+@media (hover: none) {
+  .bm-rail__more {
+    opacity: 1;
+  }
 }
 .bm-rail__input {
   width: 100%;
