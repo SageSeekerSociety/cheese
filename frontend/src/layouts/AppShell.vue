@@ -116,12 +116,9 @@
       :ring="!guideStep.area"
       :title="t(`welcome.guide.${guideStep.key}.title`, { agent: workspace.agentName })"
       :text="
-        t(
-          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
-          {
-            agent: workspace.agentName,
-          }
-        )
+        t(`welcome.guide.${guideStep.key}.${guideStep.text}`, {
+          agent: workspace.agentName,
+        })
       "
       :step="guide.stop.value + 1"
       :total="guide.total"
@@ -180,7 +177,7 @@ import { useInvitePrompt } from '@/composables/useInvitePrompt'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
-import { useProjectTour } from '@/composables/useProjectTour'
+import { resolveGuideStep, useProjectTour } from '@/composables/useProjectTour'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -520,19 +517,7 @@ const guideStep = computed(() => {
   void guideRevision.value
   const step = guide.current.value
   if (!guide.active.value || !step) return null
-  const hit = step.anchors.find((name) => guideAnchor(name))
-  const target = hit ? guideAnchor(hit) : null
-  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
-  const at = target ?? waitingAt
-  if (!at) return null
-  return {
-    key: step.key,
-    target: at,
-    waiting: !target,
-    failed: !!hit && hit === step.failed,
-    area: !!step.area || !target,
-    action: !!step.done,
-  }
+  return resolveGuideStep(step, guideAnchor)
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens the new-project dialog (views/workspace/NewProjectDialog.vue).
