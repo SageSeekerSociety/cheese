@@ -3,7 +3,6 @@ package sysproxy
 import (
 	"net/http"
 	"net/url"
-	"reflect"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -249,12 +248,16 @@ func TestInstallLeavesAnEnvironmentProxyAlone(t *testing.T) {
 	stubSystemProxy(t, parseServers("127.0.0.1:7890"), "", true)
 	swapInstallTargets(t)
 
-	transport := http.DefaultTransport.(*http.Transport)
-	before := reflect.ValueOf(transport.Proxy).Pointer()
 	Install()
-	after := reflect.ValueOf(transport.Proxy).Pointer()
-	if after != before {
-		t.Fatal("Install replaced the proxy of a machine the environment already configures")
+
+	transport := http.DefaultTransport.(*http.Transport)
+	got, err := transport.Proxy(request("https://okcheese.com/"))
+	if err != nil || got == nil || got.String() != "http://10.0.0.1:8080" {
+		t.Fatalf("transport proxy = %v (%v), want the environment's", got, err)
+	}
+	got, err = websocket.DefaultDialer.Proxy(request("https://okcheese.com/connector/agent"))
+	if err != nil || got == nil || got.String() != "http://10.0.0.1:8080" {
+		t.Fatalf("dialer proxy = %v (%v), want the environment's", got, err)
 	}
 }
 
