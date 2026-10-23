@@ -84,7 +84,7 @@ const parked = ref(false)
 let placedFor: DOMRectReadOnly | null = null
 /** 人把它拖到哪了。拖过之后这一站就停在他放的地方，走到下一站再清掉重算。 */
 const dragged = ref<{ left: number; top: number } | null>(null)
-let dragFrom: { x: number; y: number; left: number; top: number } | null = null
+let dragFrom: { x: number; y: number; left: number; top: number; pointerId: number } | null = null
 let bubbleNode: HTMLElement | null = null
 let bubbleH = BUBBLE_H
 function holdBubble(el: unknown) {
@@ -106,7 +106,7 @@ function animating(): boolean {
 function startDrag(e: PointerEvent) {
   if (e.button !== 0 || !bubbleNode) return
   const r = bubbleNode.getBoundingClientRect()
-  dragFrom = { x: e.clientX, y: e.clientY, left: r.left, top: r.top }
+  dragFrom = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, pointerId: e.pointerId }
   try {
     ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
   } catch {
@@ -116,6 +116,8 @@ function startDrag(e: PointerEvent) {
 }
 function moveDrag(e: PointerEvent) {
   if (!dragFrom || !bubbleNode) return
+  // 另一个指头（多指触屏）的移动不算这一拖。
+  if (e.pointerId !== dragFrom.pointerId) return
   const dx = e.clientX - dragFrom.x
   const dy = e.clientY - dragFrom.y
   if (!dragged.value && Math.abs(dx) + Math.abs(dy) < 3) return
@@ -172,10 +174,11 @@ function measure(): boolean {
     radius: el ? getComputedStyle(el).borderRadius || '' : '',
   }
   if (bubbleNode?.offsetHeight) bubbleH = bubbleNode.offsetHeight
-  // 人已经把它拖到自己放的地方了：位置不再由这里挑，只要那圈跟着目标走。
+  // 人已经把它拖到自己放的地方了：位置不再由这里挑，只要那圈跟着目标走。页面上还有
+  // 动画在演时得下一帧再量一次，不然目标在动画里挪完，圈还停在动画开头那个位置。
   if (dragged.value) {
     parked.value = false
-    return false
+    return animating()
   }
   const obstacles = collectObstacles(rect)
   const moving = animating()
@@ -369,6 +372,14 @@ watch(
 )
 
 useEventListener(window, 'resize', measureSoon, { passive: true })
+// 拖到一半指针不见了（切走窗口、捕获丢了、那一下 pointerup 没送到）：在窗口这一层也
+// 收一次尾，不然过期的起点留着，指针之后从标题上划过，小窗会照它跳过去。
+useEventListener(window, 'pointerup', () => {
+  dragFrom = null
+})
+useEventListener(window, 'pointercancel', () => {
+  dragFrom = null
+})
 // 捕获阶段：侧栏、房间各自的滚动在别的容器上，冒泡到 window 之前就被拦下了。
 useEventListener(document, 'scroll', measureSoon, { capture: true, passive: true })
 // 点一下、一段过渡开演：后面跟着的展开和滑入不改 DOM 结构，下面那个观察器看不到。

@@ -290,3 +290,85 @@ test("shrinking the window re-places a bubble that would be clipped", async ({ p
     box.vh - 12,
   );
 });
+
+test("a bubble the person dragged is pulled back in when the window shrinks", async ({
+  page,
+}) => {
+  // Dragging is main's (#4719): a dragged position wins over the computed one, and
+  // a resize has to clamp it back — otherwise the bubble a person parked in the
+  // corner stays outside the window after it shrinks.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route("**/__guide-bubble-drag__", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body:
+        '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">' +
+        "<title>guide bubble drag</title></head>\n<body>\n" +
+        '<div style="position:relative;width:100vw;height:100vh;overflow:hidden">' +
+        '<button id="target" style="position:fixed;left:40px;top:40px;width:96px;height:28px;' +
+        'border:1px solid var(--line-2);border-radius:6px;background:var(--raised);color:var(--text)">' +
+        "打开任务</button>" +
+        '<div id="bubble-host"></div></div>\n' +
+        '<script type="module">\n' +
+        "import { createApp, h } from '/node_modules/.vite/deps/vue.js';\n" +
+        "import { VApp } from '/node_modules/.vite/deps/vuetify_components.js';\n" +
+        "import GuideBubble from '/src/components/common/GuideBubble.vue';\n" +
+        "import vuetify from '/src/plugins/vuetify.ts';\n" +
+        "import i18n, { setLocale } from '/src/i18n/index.ts';\n" +
+        "import '/src/style.css';\n" +
+        "import '/src/styles/fonts.css';\n" +
+        "setLocale('zh-CN');\n" +
+        "createApp({ render: () => h(VApp, {}, { default: () => h(GuideBubble, {\n" +
+        "  target: document.getElementById('target'),\n" +
+        "  title: '任务',\n" +
+        "  text: '芝士把这件事做成了任务。点开任务，看进度和改动。',\n" +
+        "  step: 1, total: 7, ring: true,\n" +
+        "}) }) }).use(vuetify).use(i18n).mount('#bubble-host');\n" +
+        "</script></body></html>",
+    }),
+  );
+  await page.goto("/__guide-bubble-drag__", { waitUntil: "commit" });
+  await expect(page.locator(".gb__bubble")).toBeVisible({ timeout: 30_000 });
+  await page.waitForFunction(() => !document.querySelector(".gb__bubble--parked"), null, {
+    timeout: 15_000,
+  });
+
+  // Drag it hard into the bottom-right corner.
+  const head = await page.locator(".gb__head").boundingBox();
+  expect(head, "the bubble must have a title row to drag").not.toBeNull();
+  await page.mouse.move(head!.x + 40, head!.y + head!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1200, 760);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const dragged = await page.evaluate(() => {
+    const r = document.querySelector(".gb__bubble")!.getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top) };
+  });
+
+  await page.setViewportSize({ width: 700, height: 500 });
+  await page.waitForTimeout(800);
+  const after = await page.evaluate(() => {
+    const r = document.querySelector(".gb__bubble")!.getBoundingClientRect();
+    return {
+      left: Math.round(r.left),
+      top: Math.round(r.top),
+      right: Math.round(r.right),
+      bottom: Math.round(r.bottom),
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
+  await test.info().attach("bubble-dragged-then-shrunk.json", {
+    body: JSON.stringify({ dragged, after }, null, 2),
+    contentType: "application/json",
+  });
+
+  // The drag took effect (it did not stay at the auto-placed spot)...
+  expect(dragged.left, "the drag must move the bubble").toBeGreaterThan(600);
+  // ...and after the shrink the whole bubble is back inside the window.
+  expect(after.left, "the bubble must not be clipped on the left").toBeGreaterThanOrEqual(0);
+  expect(after.top, "the bubble must not be clipped at the top").toBeGreaterThanOrEqual(0);
+  expect(after.right, "the bubble must not be clipped on the right").toBeLessThanOrEqual(after.vw);
+  expect(after.bottom, "the bubble must not be clipped at the bottom").toBeLessThanOrEqual(after.vh);
+});
