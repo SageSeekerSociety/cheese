@@ -155,6 +155,7 @@ async def _announce(db, place: Place, path: str, comment) -> object:
         comment,
         title=path,
         room_path=path,
+        room_title=place.room.title,
     )
 
 

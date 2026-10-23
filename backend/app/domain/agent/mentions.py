@@ -511,6 +511,7 @@ async def announce_comment_mentions(
     title: str,
     document_id: uuid.UUID | None = None,
     room_path: str | None = None,
+    room_title: str | None = None,
     task_id: uuid.UUID | None = None,
 ) -> CommentMentions:
     """Tell each person a comment's @s, once for that comment.
@@ -593,7 +594,9 @@ async def announce_comment_mentions(
                     "commentId": str(comment.id),
                     # The letter's headline and the email subject both name it.
                     "documentTitle": title,
-                    "topicTitle": title,
+                    # The room it hangs in, when the caller named it. A file's
+                    # title is a path, and a path is not a channel's name.
+                    "topicTitle": room_title or title,
                     "author": author,
                     "authorName": who,
                     "content": markdown_preview(comment.content, 200),
