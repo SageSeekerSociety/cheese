@@ -260,8 +260,9 @@ async def test_a_connector_that_does_not_stream_still_installs_and_says_nothing(
 async def test_a_download_heard_only_as_the_install_ends_still_installs_and_says_so(
     client, monkeypatch, room_frames
 ):
-    """All of the download's lines can arrive at once, with the answer right
-    behind them: the line is then first written already settled."""
+    """The line can be first written already settled — when writing it while
+    the download ran failed, say. The install still answers as it went. Here
+    the answer comes before the line's writer has had a turn."""
     room = await _room_on_alices_computer(client)
 
     async def install(device, argv, *, on_stderr=None, **kwargs):
