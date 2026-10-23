@@ -197,18 +197,42 @@ describe('an agent proposing whole blocks', () => {
     expect(decided(result.doc, false)).toBe('- 甲\n- 乙')
   })
 
-  it('cannot propose a row added to a table, only make the change', () => {
-    const table = nodeMarkdown(parseMarkdown('| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |\n'))
-    const row = table.trimEnd().split('\n').at(-1)!
-    const edit = { old: row, new: `${row}\n${row.replace('一', '二')}` }
-    expect(applyEdits(parseMarkdown(table), [edit], 'suggest', 'cheese')).toMatchObject({
+  // What still cannot be suggested is what the error, the tool description,
+  // the editor's notice and the manual name: the rows and columns of a table,
+  // the columns of a row of columns, the items of a timeline or stat cards.
+  it.each([
+    [
+      'a row added to a table',
+      '| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |',
+      '| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |\n| 二 | 12 |',
+    ],
+    [
+      'a column added to a table',
+      '| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |',
+      '| 周 | 次数 | 人 |\n| --- | --- | --- |\n| 一 | 10 | 3 |',
+    ],
+    [
+      'a column added to a row of columns',
+      '::::columns\n:::column\n甲\n:::\n:::column\n乙\n:::\n::::',
+      '::::columns\n:::column\n甲\n:::\n:::column\n乙\n:::\n:::column\n丙\n:::\n::::',
+    ],
+    [
+      'an item added to a timeline',
+      ':::timeline\n- 周一 | 开始\n  说明。\n:::',
+      ':::timeline\n- 周一 | 开始\n  说明。\n- 周二 | 继续\n  再说。\n:::',
+    ],
+    ['a stat card added', ':::stats\n- 甲 | 1 | +2%\n:::', ':::stats\n- 甲 | 1 | +2%\n- 乙 | 2 | +3%\n:::'],
+  ])('cannot propose %s, only make the change', (_name, before, after) => {
+    const text = nodeMarkdown(parseMarkdown(before))
+    const edit = { old: text, new: nodeMarkdown(parseMarkdown(after)) }
+    expect(applyEdits(parseMarkdown(text), [edit], 'suggest', 'cheese')).toMatchObject({
       ok: false,
       status: 422,
       body: { reason: 'structure' },
     })
-    const direct = applyEdits(parseMarkdown(table), [edit], 'direct', 'cheese')
+    const direct = applyEdits(parseMarkdown(text), [edit], 'direct', 'cheese')
     if (!direct.ok) throw new Error(JSON.stringify(direct))
-    expect(nodeMarkdown(direct.doc)).toContain('二')
+    expect(nodeMarkdown(direct.doc)).toBe(edit.new)
   })
 })
 

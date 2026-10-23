@@ -107,8 +107,22 @@ export function pendingSuggestions(node: PMNode): PendingSuggestion[] {
       }
       return false
     }
-    if (child.isInline) return false
     const bare = child.mark(child.marks.filter((mark) => !SUGGESTION.has(mark.type.name)))
+    if (child.isInline) {
+      // An inline node that is not text (a formula, a footnote reference) is
+      // suggested whole, and reads as its Markdown.
+      const inline = (node: PMNode) => blockMarkdown(schema.nodes.paragraph.create(null, node), null)
+      for (const mark of marks) {
+        const item = entry(String(mark.attrs.id))
+        if (mark.type.name === 'insertion') item.new += inline(bare)
+        if (mark.type.name === 'deletion') item.old += inline(bare)
+        if (mark.type.name === 'modification') {
+          item.old += inline(unmodified(child, String(mark.attrs.id)).mark(bare.marks))
+          item.new += inline(bare)
+        }
+      }
+      return false
+    }
     let whole = false
     for (const id of new Set(marks.map((mark) => String(mark.attrs.id)))) {
       const item = entry(id)

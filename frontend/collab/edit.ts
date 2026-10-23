@@ -267,7 +267,8 @@ function revertMarks(doc: PMNode, ids: Iterable<string>): PMNode {
 /** The change as a suggestion, or null when it cannot be one. A suggestion
  *  marks the text it adds and removes, or the whole blocks it adds, removes or
  *  retypes — a block in a run of blocks or list items (suggestableBlocks). A
- *  change to the shape of a table, a timeline or a row of stat cards or columns
+ *  change to the rows or columns of a table, the columns of a row of columns,
+ *  or the items of a timeline or stat cards
  *  marks a part those hold in a fixed shape, so it can only be made directly.
  *  So can one that leaves nothing to accept or reject, one that would change
  *  the text before anyone accepts it, and one whose acceptance would not give

@@ -12,7 +12,7 @@
 // Text, and a paragraph split or joined, the library records as marks on text;
 // a whole block inserted, removed or retyped (paragraphs pasted in, a list item
 // added, a paragraph made a heading) as a mark on the block, which the shared
-// document keeps too. A block a table, a timeline or a row of stat cards holds
+// document keeps too. A block a table, a row of columns, a timeline or stat cards hold
 // in a fixed shape cannot carry one (docSchema's suggestableBlocks): the
 // library throws when it tries, and that edit is dropped with `onRefused` said
 // instead.
