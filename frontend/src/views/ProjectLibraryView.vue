@@ -37,6 +37,7 @@ import { useLibraryNaming } from '../composables/useLibraryNaming'
 import { useLibraryPages } from '../composables/useLibraryPages'
 import { useLibrarySelection } from '../composables/useLibrarySelection'
 import { useLibraryTransfers } from '../composables/useLibraryTransfers'
+import { useLibraryVersions } from '../composables/useLibraryVersions'
 import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
 import { libraryFileBytes } from '../lib/libraryApi'
 import { leafOf } from '../lib/libraryFolders'
@@ -124,7 +125,7 @@ const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openD
   )
 
 const { selectedPath, selected, open, close } = useLibrarySelection({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   entries,
   revision,
   mdAndUp,
@@ -133,7 +134,7 @@ const { selectedPath, selected, open, close } = useLibrarySelection({
 })
 
 const transfers = useLibraryTransfers({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   dir: () => dir.value,
   reset: pages.reset,
   drop: pages.drop,
@@ -161,6 +162,12 @@ const {
   confirmRemove,
 } = transfers
 
+const history = useLibraryVersions(
+  () => props.projectId,
+  () => versionsOf.value,
+  onRestored
+)
+
 useTopBarBack(() =>
   !mdAndUp.value && selectedDocId.value
     ? { label: t(fromThread.value ? 'work.room.thread.backToThread' : 'work.library.backToList'), onBack: closeDoc }
@@ -185,7 +192,7 @@ watch(
 // ---- 文件夹：挪动、改名、新建 ---------------------------------------------------
 
 const naming = useLibraryNaming({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   dir: () => dir.value,
   goTo,
   opened: () => selectedPath.value,
@@ -478,7 +485,7 @@ function read(file: LibraryFile) {
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->
       <LibraryFileDetail
         v-if="selected"
-        :project-id="projectId"
+        :shelf="projectId"
         :file="selected"
         :wide="mdAndUp"
         :revision="revision"
@@ -491,12 +498,18 @@ function read(file: LibraryFile) {
     </div>
 
     <LibraryVersionsDialog
-      :project-id="projectId"
       :path="versionsOf"
+      :versions="history.versions.value"
+      :loading="history.loading.value"
+      :failed="history.failed.value"
+      :action-error="history.actionError.value"
+      :restoring="history.restoring.value"
       :can-restore="true"
       :fmt-bytes="fmtBytes"
       @close="versionsOf = null"
-      @restored="onRestored"
+      @retry="history.load"
+      @download="history.download"
+      @restore="history.restore"
     />
 
     <!-- Replace changes what every message referencing this file reads, so say it before acting. -->

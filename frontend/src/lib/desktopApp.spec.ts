@@ -4,6 +4,7 @@ import {
   desktopListenForNotices,
   desktopStopNotices,
   goAuthorize,
+  markTitleBarOverlay,
   signInInBrowser,
   takeSignInVerifier,
   tellDesktopTheme,
@@ -23,6 +24,24 @@ function desktopApp(about?: object) {
 afterEach(() => {
   delete (window as AppWindow).__TAURI__
   delete (window as AppWindow).__CHEESE_APP__
+  document.documentElement.classList.remove('title-bar-overlay')
+})
+
+describe('markTitleBarOverlay', () => {
+  it('marks the page when the app draws its window buttons over it', () => {
+    desktopApp({ origin: 'https://okcheese.com', titleBar: 'overlay' })
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(true)
+  })
+
+  it('leaves a window whose title bar is native alone, and a browser too', () => {
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(false)
+
+    desktopApp({ origin: 'https://okcheese.com', titleBar: 'native' })
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(false)
+  })
 })
 
 describe('tellDesktopTheme', () => {

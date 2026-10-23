@@ -1551,8 +1551,10 @@ html.doc-app-open body {
   border-radius: 0;
 }
 
+/* 全屏铺满窗口，头部第一颗是返回：桌面版 macOS 里让开三颗窗口按钮（style.css 的
+   --window-buttons-inset，别处恒为 0）。 */
 .doc-app.is-full .doc-app__head {
-  padding: calc(4px + env(safe-area-inset-top, 0px)) 6px 4px;
+  padding: calc(4px + env(safe-area-inset-top, 0px)) 6px 4px max(14px, var(--window-buttons-inset));
 }
 
 .doc-app.is-full .doc-app__back {

@@ -187,6 +187,11 @@ defineExpose({
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line);
 }
+/* 全屏时整块铺满窗口，工具栏第一颗按钮落在左上角：桌面版 macOS 里要让开三颗窗口
+   按钮（style.css 的 --window-buttons-inset，别处恒为 0，等于原来的左内距 8）。 */
+.rt-editor.is-fullscreen .rt-editor__toolbar {
+  padding-left: max(8px, var(--window-buttons-inset));
+}
 .rt-editor__body {
   flex: 1 1 auto;
   padding: 12px 16px;

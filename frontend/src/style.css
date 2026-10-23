@@ -379,6 +379,23 @@
   --z-banner: 3000;
 }
 
+/* ---- 窗口按钮让位 ----
+   macOS 桌面版把标题栏叠在页面上，红黄绿三颗由系统画在网页上层：离窗口左缘 12、
+   上 16，三颗一共到 64（desktop/src-tauri/src/main.rs 的 traffic_light_position）。
+   整屏铺开、左上角直接有控件的层（设置、全屏编辑器、放映、画布、文档里的应用、顶栏、
+   跳转链接）都要把这一段让出来，写法一律是
+   `max(这一层自己的内距, var(--window-buttons-inset))`——不在这个桌面版里它恒为 0，
+   max() 返回的就是各层原本的内距，浏览器、Windows/Linux 桌面版和手机上不会因此
+   移一个像素。72 = 三颗右缘 64 + 8。`lib/desktopApp.ts` 的 markTitleBarOverlay()
+   把类挂上 <html>，和顶栏自己用的 titleBarOverlay() 是同一个判据。 */
+:root {
+  --window-buttons-inset: 0px;
+}
+
+:root.title-bar-overlay {
+  --window-buttons-inset: 72px;
+}
+
 /* 手机外壳（窄于 960，和 Vuetify 的 mdAndUp 同一条线）里一页只有一栏，所以两档页宽
    收成同一个值。920 / 1100 在这里从来卡不住：平板竖屏 768–959 上表单和卡片列表铺满
    整屏，一行六十多个字。720 在 390 的手机上不起作用，只管平板和横过来的大手机。 */

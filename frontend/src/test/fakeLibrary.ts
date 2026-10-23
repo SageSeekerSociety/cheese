@@ -4,7 +4,7 @@
 // 不筛时答 `dir` 那一层，文件夹在前；`flat` / `q` / `kind` 给了就是整个资料库平铺；
 // 每一行带 `rank`，按字符串从小到大就是显示顺序，下一页从游标之后接着给。
 import type { ListedDocument, ProjectDocument } from '../api/projectDocuments'
-import type { LibraryEntry, LibraryFile, LibraryPage, LibraryQuery } from '../lib/libraryApi'
+import type { LibraryEntry, LibraryFile, LibraryPage, LibraryQuery, LibraryShelf } from '../lib/libraryApi'
 
 import { kindOf } from '../lib/libraryKinds'
 
@@ -46,7 +46,7 @@ function page<T extends { rank: string }>(rows: T[], cursor: string | null | und
 
 /** `listProjectLibrary` 的替身，答的是 `files()` 此刻的样子。 */
 export function servesLibrary(files: () => LibraryFile[]) {
-  return async (_projectId: string, query: LibraryQuery = {}): Promise<LibraryPage> => {
+  return async (_shelf: LibraryShelf, query: LibraryQuery = {}): Promise<LibraryPage> => {
     const all = files()
     const q = (query.q ?? '').trim().toLowerCase()
     if (query.flat || q || query.kind) {

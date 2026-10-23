@@ -23,10 +23,12 @@ from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     confinement,
-    launch,
     runtime,
 )
-from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+from app.domain.agent.harness.claude_code.remote_execution.launch import (
+    payload_for,
+    refused,
+)
 from tests.support import bubblewrap
 
 RUNNER = Path(environment_runner.__file__)
@@ -90,19 +92,17 @@ def _refusal(payload, capsys) -> dict:
     return json.loads(capsys.readouterr().err)
 
 
-def test_a_refusal_reaches_the_owner_after_whatever_the_install_said_first():
-    """An install that waited for another install of the executor, or
-    downloaded part of it, said so on stderr before it refused the room; the
-    owner is still told why it was refused."""
+def test_a_refusal_after_a_download_is_still_read_as_the_refusal():
+    """An install that fetched the executor first has said how far the
+    download got before it refuses; the owner is still told the refusal."""
     said = {"key": "sandboxNotPlaced", "params": {}}
-    stderr = (
-        "waiting for another install of the executor on this machine to finish\n"
-        + json.dumps(said)
-        + "\n"
-    )
+    progress = json.dumps({"executor_download": {"have": 1, "total": 1}})
 
-    refusal = launch.refused(
-        {"exit": bootstrap.SANDBOX_UNAVAILABLE_EXIT, "stderr": stderr}
+    refusal = refused(
+        {
+            "exit": bootstrap.SANDBOX_UNAVAILABLE_EXIT,
+            "stderr": f"{progress}\n{progress}\n{json.dumps(said)}\n",
+        }
     )
 
     assert refusal is not None and refusal.said == said

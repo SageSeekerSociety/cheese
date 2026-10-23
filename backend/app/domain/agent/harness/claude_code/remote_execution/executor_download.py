@@ -8,6 +8,7 @@ file in its script and runs `install` the same way (`device_launch`).
 
 import gzip
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -100,6 +101,20 @@ def megabytes(count):
     return "?" if count is None else f"{count / 1e6:.1f} MB"
 
 
+# How often the download says how far it has got, for the room to show while
+# the install runs (`machine.install_progress`).
+PROGRESS_EVERY_S = 2
+
+
+def progress(have, total):
+    """One line saying how far the download has got, for the platform to read
+    off stderr while the install runs. Only a download whose size is known
+    has a "how far"."""
+    if total is not None:
+        line = json.dumps({"executor_download": {"have": have, "total": total}})
+        print(line, file=sys.stderr, flush=True)
+
+
 def download(url, destination):
     """Fetch the executor from `url` into a fresh file beside `destination`,
     checked against the digest the platform names for it.
@@ -177,16 +192,21 @@ def download(url, destination):
             with partial.open(mode) as output:
                 # The byte asked for again is already held.
                 response.read(have - start)
-                said = time.monotonic()
+                said = shown = time.monotonic()
+                progress(have, total)
                 while chunk := response.read(1 << 20):
                     output.write(chunk)
                     have += len(chunk)
+                    if time.monotonic() - shown >= PROGRESS_EVERY_S:
+                        progress(have, total)
+                        shown = time.monotonic()
                     if time.monotonic() - said >= 10:
                         # A slow link is cut off at the install's deadline with
                         # no error of its own: this is then its last line.
                         output.flush()
                         print(account("still going"), file=sys.stderr, flush=True)
                         said = time.monotonic()
+                progress(have, total)
         if total is not None and have < total:
             # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError("the connection closed early")

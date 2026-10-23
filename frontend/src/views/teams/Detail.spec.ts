@@ -17,8 +17,12 @@ vi.mock('@/api/teams', () => ({
     join: (...args: unknown[]) => join(...args),
   },
 }))
-const route = reactive({ params: { handle: 'crew' } as Record<string, string>, name: 'TeamsDetailDefault' })
-vi.mock('vue-router', () => ({ useRoute: () => route }))
+const route = reactive({
+  params: { handle: 'crew' } as Record<string, string>,
+  name: 'TeamsDetailDefault',
+  matched: [] as { meta: Record<string, unknown> }[],
+})
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }))
 
 import Detail from './Detail.vue'
 
@@ -57,6 +61,8 @@ function mount() {
 beforeEach(() => {
   setLocale('zh-CN')
   route.params = { handle: 'crew' }
+  route.name = 'TeamsDetailDefault'
+  route.matched = []
   detailByHandle.mockReset().mockResolvedValue({ team: team() })
   join.mockReset().mockResolvedValue({ team: team({ joinStatus: 'member' }) })
 })
@@ -108,6 +114,16 @@ describe('a team page', () => {
     detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     mount()
     await screen.findByText('成员工作区内容')
+  })
+
+  // 成员、设备、模型、额度和个人、空间、项目的设置一样，是盖在整个窗口上的一层。
+  it('opens a member at a settings address in the team settings layer', async () => {
+    detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
+    route.name = 'TeamsDetailMembers'
+    route.matched = [{ meta: {} }, { meta: { settingsOverlay: true } }]
+    mount()
+    const layer = await screen.findByRole('dialog', { name: '团队设置' })
+    expect(layer.textContent).toContain('成员工作区内容')
   })
 
   it('answers a hidden team the same way as a missing one', async () => {

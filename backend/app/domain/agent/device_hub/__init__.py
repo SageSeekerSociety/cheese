@@ -65,6 +65,7 @@ sharing the hub's state, not the cross-feature coupling C3 is there to catch.
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from app.domain.agent import connector_build, device_link
@@ -387,6 +388,7 @@ class DeviceHub:
         env: dict[str, str] | None = None,
         timeout: float = 60,
         stdin: str | None = None,
+        on_stderr: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         return await calls.exec(
             self,
@@ -396,6 +398,7 @@ class DeviceHub:
             env=env,
             timeout=timeout,
             stdin=stdin,
+            on_stderr=on_stderr,
         )
 
     async def call_executor(

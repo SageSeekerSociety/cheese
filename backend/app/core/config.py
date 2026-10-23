@@ -185,6 +185,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a browser could already send starts being refused. That nginx line is a
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
+    # A team's own library (a person's is their personal team's): how much it
+    # holds in all, the versions a file was replaced from included, and how
+    # large one file in it may be. A file's ceiling is the attachment one, so
+    # what a person attaches to 芝士 can always land in their library.
+    team_library_bytes: int = 1024 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # Per-client request limits (`app/core/request_limits.py`). Measured on the
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
@@ -658,6 +663,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # script, and the deploy overlay mounts the proxy's cert read-only and points
     # this at it.
     subscription_ca_backend_path: str = ""
+    # ponytail: 本地开发的逃生口，默认关；开着时屏幕不经计费代理，直接把 `agent_env()`
+    # 的网关交给它。不拿 `environment == development` 当判据（测试也在 development 上，
+    # 会读成绿灯假象）。上限：无计费与模型改写；升级路径：配好 CA 与 meter 后无需再开。
+    agent_direct_gateway: bool = False
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
     # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
     # is refused before it is forwarded once the window's completed turns plus
@@ -838,6 +847,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+    # 公开 GitHub 读取（技能市场、「从网上取一份技能」导入）的只读凭据；不替代上面的
+    # App——那个是按安装授权的。不设也能读，只是与全站共用每小时 60 次的匿名额度。
+    github_token: str = ""
 
     forgejo_url: str = ""
     forgejo_api_url: str = ""
@@ -1010,6 +1022,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
+    # 为没有自带 SKILL.md 的仓库生成草稿的网关模型；一次一 call，记管理员额度。
+    skill_draft_model: str = "deepseek-flash"
+    skill_draft_max_tokens: int = 4096
+    skill_draft_timeout_s: float = 120.0
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")

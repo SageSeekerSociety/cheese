@@ -319,7 +319,11 @@ defineExpose({
       </template>
       <!-- 它挂着的那条消息交给对话的滚动区：跟着回复一起滚，而不是钉在顶上。钉着的话，
            长消息一展开就把回复挤没、把正文末尾那颗「收起」顶到看不见的地方。 -->
-      <template v-if="beside || root" #timeline-start>
+      <!-- No v-if on this <template>: a conditional slot makes ChatPanel's slots
+           dynamic, and ChatPanel forwards them to ChatTimeline, which then redraws
+           every row on each ChatPanel render — that is, on every keystroke in the
+           composer. The branches inside already render nothing when neither holds. -->
+      <template #timeline-start>
         <template v-if="beside">
           <ThreadRoot
             v-if="root"

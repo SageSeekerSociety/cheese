@@ -122,6 +122,19 @@
 
     <slot />
 
+    <div v-for="file in files" :key="file.path" class="at__result at__file">
+      <span class="at__file-i" aria-hidden="true"
+        ><v-icon size="18">{{ KIND_ICONS[kindOf(file.path)] }}</v-icon></span
+      >
+      <span class="at__result-t">
+        <b data-user-content>{{ leafOf(file.path) }}</b>
+        <span>{{ fmtBytes(file.bytes) }}</span>
+      </span>
+      <BaseButton size="sm" kind="secondary" @click="emit('downloadFile', file)">{{
+        t('work.library.download')
+      }}</BaseButton>
+    </div>
+
     <AgentProposal
       v-for="proposal in proposals"
       :key="proposal.id"
@@ -137,15 +150,19 @@
 <script setup lang="ts">
 // 芝士的一轮回答（`AssistantPanel` 里的一段）：它调的工具一行一步，答完收成一行「N 步」；
 // 写进草稿的改动是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个
-// 「查看题目」。话本身由外面那一层塞进默认插槽；话后面是它替人起草、等人确认的消息和任务
-// （`AgentProposal`）。只拿 props、只发事件。
+// 「查看题目」。话本身由外面那一层塞进默认插槽；话后面是它交给人的文件（一份一张卡，点了
+// 下载），和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
 import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { AssistantHanded } from '@/stores/agentThread'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AgentProposal from '@/components/agent/AgentProposal.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { fmtBytes } from '@/lib/changesTree'
+import { leafOf } from '@/lib/libraryFolders'
+import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
 
 const props = withDefaults(
   defineProps<{
@@ -154,12 +171,14 @@ const props = withDefaults(
     results: PanelResult[]
     /** 替人起草、等人确认的消息和任务。 */
     proposals?: PanelProposal[]
+    /** 这一轮交给人的文件：存在他的资料库里，点了下载。 */
+    files?: AssistantHanded[]
     /** 正在发出的那一件。 */
     sending?: number | null
     /** 这一轮还在答：步骤不收起。 */
     live?: boolean
   }>(),
-  { proposals: () => [], sending: null, live: false }
+  { proposals: () => [], files: () => [], sending: null, live: false }
 )
 
 const emit = defineEmits<{
@@ -172,6 +191,8 @@ const emit = defineEmits<{
   dismissProposal: [id: number]
   /** 打开芝士起草、人发出的那个任务。 */
   openPlace: [task: string]
+  /** 下载这一轮交出来的一份文件。 */
+  downloadFile: [file: AssistantHanded]
 }>()
 
 const { t } = useI18n()
@@ -460,6 +481,12 @@ function undoable(change: PanelChange): number {
   color: var(--ok-ink);
   background: var(--ok-wash);
   border-radius: var(--radius-pill);
+}
+
+.at__file-i {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted);
 }
 
 .at__result-t {

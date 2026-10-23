@@ -26,7 +26,7 @@ from fastapi import FastAPI, Request
 
 from app.api.routes import installer
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-from app.domain.machine import claude_dist
+from app.domain.machine import claude_dist, install_progress
 from tests.support import executor_release
 
 pytestmark = pytest.mark.skipif(
@@ -163,6 +163,28 @@ def test_a_cut_download_says_what_it_was_fetching_and_how_far_it_got(platform):
     line = str(stopped.value).splitlines()[-1]
     assert f"{cut.url}/connector/claude/{bootstrap.VERSION}/" in line
     assert re.search(r"after \d+\.\d MB of \d+\.\d MB", line), line
+
+
+def test_a_download_says_how_far_it_has_got_in_lines_the_platform_reads(
+    platform, capsys
+):
+    """What the room is shown while the executor downloads
+    (`install_progress`) is read off these lines: from where it starts to all
+    of it, never going back."""
+    owner, release, cut, _ = platform
+
+    bootstrap.binary(owner, cut.url, release)
+
+    said = [
+        progress
+        for line in capsys.readouterr().err.splitlines()
+        if (progress := install_progress.downloaded(line)) is not None
+    ]
+    assert said, "the download said nothing the platform reads"
+    total = said[0][1]
+    assert said[0][0] == 0
+    assert said[-1] == (total, total)
+    assert [have for have, _ in said] == sorted(have for have, _ in said)
 
 
 def test_bytes_that_are_not_the_served_executor_are_never_installed(platform):

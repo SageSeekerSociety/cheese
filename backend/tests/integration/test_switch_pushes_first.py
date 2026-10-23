@@ -356,7 +356,7 @@ class _IdleMachine:
             )
         return running() if method == "ping" else self.push
 
-    async def exec(self, device_id, argv, *, stdin, timeout):
+    async def exec(self, device_id, argv, *, stdin, timeout, **_):
         self.installs.append((device_id, stdin))
         if self.install_exit:
             return {"exit": self.install_exit, "stderr": "no python3"}

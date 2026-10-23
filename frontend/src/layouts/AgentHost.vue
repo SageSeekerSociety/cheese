@@ -51,16 +51,21 @@
 //
 // 这一页登记了表单（`AgentSurface.form`）时，芝士那一层也由这里画，送进表单的外框里：
 // 指针、正在写的那一格的描边、「芝士已填写」和撤销。
+import type { AssistantHanded } from '@/stores/agentThread'
+
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 
 import { useAgentPointer } from '@/composables/useAgentPointer'
 
+import { downloadFile, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
 import {
@@ -173,6 +178,7 @@ const panelProps = computed(() => {
     changes: view.changes,
     results: view.results,
     proposals: view.proposals,
+    handed: agentThread.handed.value,
     sendingProposal: sendingProposal.value,
     files: agentFiles.value.map((f) => ({ name: f.name, mime: f.mime, uploading: f.uploading })),
     context: context.intro ?? '',
@@ -180,7 +186,7 @@ const panelProps = computed(() => {
     starters: context.starters ?? [],
     placeholder: context.placeholder ?? t('tasks.assistant.anywhere.placeholder'),
     hint: context.hint ?? t('tasks.assistant.anywhere.hint'),
-    canAttach: context.canAttach ?? false,
+    canAttach: true,
     closable: true,
     dockable: mdAndUp.value,
     docked: docked.value,
@@ -193,6 +199,10 @@ const panelEvents = {
   new: () => agentThread.startNew(),
   older: () => void agentThread.older().catch(() => undefined),
   close: () => (agentOpen.value = false),
+  downloadFile: (file: AssistantHanded) =>
+    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>
+      toast.error(t('work.library.downloadFailed'))
+    ),
   dock: (next: boolean) => (docked.value = next),
   undo: (change: number, key: string) =>
     agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),

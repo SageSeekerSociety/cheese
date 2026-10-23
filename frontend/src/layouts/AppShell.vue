@@ -647,9 +647,10 @@ onBeforeUnmount(
 .skip-link {
   position: fixed;
   /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
-     `env()` 是 0，位置不变。 */
+     `env()` 是 0，位置不变。桌面版 macOS 里还要让开三颗窗口按钮（style.css 的
+     --window-buttons-inset，别处恒为 0）——它们画在网页上层，会让这一颗被盖住。 */
   top: calc(10px + env(safe-area-inset-top, 0px));
-  left: calc(16px + env(safe-area-inset-left, 0px));
+  left: max(calc(16px + env(safe-area-inset-left, 0px)), var(--window-buttons-inset));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;

@@ -30,15 +30,6 @@ logger = logging.getLogger(__name__)
 REPLAY_ATTEMPT_S = 30.0
 REPLAY_RETRY_S = 10.0
 
-#: How long one session may keep failing its replay before the room stops
-#: waiting on it. While the room's replay task exists, `sweep_orphans` skips the
-#: whole room (`chat_service.replaying`), so a session whose runner socket never
-#: comes back kept every turn there open for as long as the process lived —
-#: never reconciled and never reported to anyone. A cold runner answers in about
-#: a minute; past this the machine is not coming back for this room, and the
-#: sweep should decide what the turn left behind.
-REPLAY_GIVE_UP_S = 10 * 60.0
-
 
 class SessionRecovery:
     """The recovery/replay orchestration half of ChatService. The attributes
@@ -134,66 +125,51 @@ class SessionRecovery:
     ) -> None:
         if after is not None:
             await asyncio.gather(after, return_exceptions=True)
-        loop = asyncio.get_running_loop()
-        # Each session carries its own deadline: one that cannot be read must not
-        # keep the room's replay task alive (and with it the room's orphan turns).
-        pending = [(session, loop.time() + REPLAY_GIVE_UP_S) for session in seats]
+        pending = seats
         while pending:
             retry = []
-            for session, deadline in pending:
-                why = ""
+            for session in pending:
                 try:
                     async with self._replay_slots:
                         await asyncio.wait_for(
                             self._compute.replay(session), timeout=REPLAY_ATTEMPT_S
                         )
                 except TimeoutError:
-                    why = f"still pending after {REPLAY_ATTEMPT_S}s"
                     logger.warning(
                         "session replay still pending for topic %s after %ss",
                         session.conversation_id,
                         REPLAY_ATTEMPT_S,
                     )
+                    retry.append(session)
                 except DeviceOffline:
                     # An absent machine cannot establish what was read. Keep
                     # the conversation pending while other rooms recover.
-                    why = "device offline"
                     logger.warning(
                         "session not recovered for topic %s: device offline",
                         session.conversation_id,
                     )
+                    retry.append(session)
                 except DeviceCallError as exc:
                     # The machine is there and said no — its runner's socket is
                     # not up yet (a cold one takes about a minute), or the room's
                     # home is gone. Keep retrying without claiming the tail
                     # was read; the machine's answer explains the delay.
-                    why = str(exc)
                     logger.warning(
                         "session not recovered for topic %s: %s",
                         session.conversation_id,
                         exc,
                     )
+                    retry.append(session)
                 except Exception:  # one topic cannot block startup
-                    why = "unexpected failure"
                     logger.exception(
                         "session recovery failed for topic %s", session.conversation_id
                     )
+                    retry.append(session)
                 else:
                     nudge_messages(self, session.conversation_id)
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.
                     self.prewarm.nudge(session)
-                    continue
-                if loop.time() >= deadline:
-                    logger.warning(
-                        "session replay given up for topic %s after %ss (%s); "
-                        "the orphan sweep can decide its turn now",
-                        session.conversation_id,
-                        REPLAY_GIVE_UP_S,
-                        why,
-                    )
-                    continue
-                retry.append((session, deadline))
             pending = retry
             if pending:
                 await asyncio.sleep(REPLAY_RETRY_S)

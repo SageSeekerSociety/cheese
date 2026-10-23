@@ -83,16 +83,22 @@ async function mount(path = '/inbox') {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+      { path: '/users/settings/compute', name: 'UserSettingsCompute', component: blank },
       {
         path: '/teams/:handle',
         component: { template: '<router-view />' },
         children: [
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
-          { path: 'docs', name: 'TeamsDetailDocs', component: blank },
+          { path: 'settings', name: 'TeamsDetailSettings', component: blank },
+          { path: 'profile', name: 'TeamsDetailProfile', component: blank },
+          { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
@@ -372,88 +378,6 @@ describe('转让团队', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.queryByText('甲队读不到')).toBeNull()
     expect(screen.getByText('小王')).toBeTruthy()
-  })
-})
-
-describe('改团队资料', () => {
-  async function openEditor() {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
-    await mount()
-    await fireEvent.click(await screen.findByLabelText('团队操作'))
-    await fireEvent.click(await screen.findByText('编辑团队资料'))
-    return screen.findByLabelText('团队名称')
-  }
-
-  it('名字是空的就不发，报在名字那一格', async () => {
-    await openEditor()
-    await fireEvent.update(screen.getByLabelText('团队名称'), '   ')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('填写团队名称')
-    expect(update).not.toHaveBeenCalled()
-  })
-
-  it('换头像先传图，再把拿到的 id 和另外两样一起交上去', async () => {
-    URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
-    createAvatar.mockResolvedValue({ avatarId: 77 })
-    update.mockResolvedValue({ team: team('crew', '芝士社') })
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
-    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(createAvatar).toHaveBeenCalledWith(file))
-    expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '', avatarId: 77 })
-    await waitFor(() => expect(screen.queryByRole('button', { name: '保存' })).toBeNull())
-    expect(await screen.findByText('芝士社')).toBeTruthy()
-  })
-
-  // 这条是从原来那个弹窗自己的 spec 里搬过来的：只改名字、没碰头像时，交上去的那一份
-  // 里不能有 avatarId，否则用户现成的头像会被清掉。
-  it('没换图就不带 avatarId，免得把现成的头像覆盖掉', async () => {
-    update.mockResolvedValue({ team: team('crew', '芝士社') })
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '' }))
-    expect(createAvatar).not.toHaveBeenCalled()
-  })
-
-  it('撞名报在名字那一格，不是「保存失败」', async () => {
-    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await screen.findByText('这个名称已被占用，换一个试试')
-    expect(screen.queryByText('保存失败，请稍后重试')).toBeNull()
-  })
-
-  // 弹窗自己那条用例只验「往外发了 clearErrors」，接线断掉照样绿：这里验屏幕上的效果。
-  it('撞名报错之后，人在名字那格一打字，那句报错就消失', async () => {
-    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('这个名称已被占用，换一个试试')
-
-    await fireEvent.update(name, '芝士社二号')
-    await waitFor(() => expect(screen.queryByText('这个名称已被占用，换一个试试')).toBeNull())
-  })
-
-  it('没权限和没网都留在整张表单上', async () => {
-    update.mockRejectedValue(new ApiError(403, 'forbidden', 'Forbidden'))
-    await openEditor()
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('只有团队所有者和管理员能修改资料')
-
-    cleanup()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    update.mockRejectedValue(new Error('offline'))
-    await openEditor()
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('保存失败，请稍后重试')
   })
 })
 

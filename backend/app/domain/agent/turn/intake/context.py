@@ -60,6 +60,27 @@ async def living_doc_text(
     )
 
 
+def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
+    """这一轮谁带哪些技能进提示词：队友自己带的（userskill），没带就回落到这间房
+    点亮的。
+
+    userskill 存在 `agent_instances.configuration.skills`，出厂时从 preset 抄进来
+    （`agent_instance/services.initial_configuration`），改它要 manager
+    （`projects_agents._changes_an_advanced_setting`）。技能跟着人走：学术研究的
+    队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
+    都进提示词，只会让模型在互相冲突的规矩里挑一份。
+
+    两边都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
+    这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
+    """
+    carried = [
+        name
+        for name in (agent.configuration or {}).get("skills") or []
+        if isinstance(name, str)
+    ]
+    return carried or list(topic.skills or [])
+
+
 def _proposal_frames(landed: dict | None) -> list[dict]:
     """撞上档位策略的那一轮怎么收场：房间里刚落下的那条提议，然后 done。
 
@@ -115,6 +136,10 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
+    # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
+    # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
+    skill_bodies: str
 
     # What this turn was given, and what it is being asked about.
     prompt_text: str

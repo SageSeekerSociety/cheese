@@ -202,10 +202,22 @@ class _Week:
     mode = "guide"
     system_prompt = "课上讲到了循环和数组，不要用递归。"
     space_prompt = None
+    learning_goals = ["能自己写出循环", "能讲清数组和循环怎么配合"]
+    private_prompt = "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
 
     @property
     def is_empty(self) -> bool:
-        return not (self.mode or self.system_prompt or self.space_prompt)
+        return not (
+            self.mode
+            or self.system_prompt
+            or self.space_prompt
+            or self.learning_goals
+            or self.private_prompt
+        )
+
+    def fill(self, template: str) -> str:
+        """`Teaching.fill` 的替身：`{learning_goals}` 换成这一节的目标。"""
+        return template.replace("{learning_goals}", "、".join(self.learning_goals))
 
 
 #: A stand-in for ``task.teaching.TeachingContext``: a resolved week, the two
