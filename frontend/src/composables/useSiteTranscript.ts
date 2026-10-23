@@ -120,7 +120,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       capSite()
       return true
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
+      // 也还是好的，把整栏换成一条红条等于一次读慢了就让人看不成现场（同 loadPage
+      // 那条规矩）。预取的失败只是这一次没提前拿到，下次滚到边上再补。
+      if (!quiet) errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
       return false
     } finally {
       olderBusy = false

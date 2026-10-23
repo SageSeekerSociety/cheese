@@ -131,12 +131,43 @@ describe('the pages above the window', () => {
       .mockResolvedValue(page([block('z', 0)]))
     const { box, site, scope } = await openAtBottom()
 
-    // The first page is on screen; the page above it came in without the reader
-    // asking for it, and it did not move them.
-    expect(api.getTranscript).toHaveBeenCalledTimes(2)
-    expect(api.getTranscript.mock.calls[1][1]).toMatchObject({ before: 'c1' })
+    // The page above the first one came in without the reader asking for it, and
+    // it is on screen above what they opened on.
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['z', 'a', 'b'])
     expect(site.loadingOlder.value, '预取是安静的，不摆「加载更早的现场…」').toBe(false)
+    // 他在末尾，往上多出一页不该把他挪走。
     expect(box.scrollTop).toBe(1500)
+    scope.stop()
+  })
+
+  it('keeps the records on screen when a prefetch fails', async () => {
+    api.getTranscript
+      .mockResolvedValueOnce(page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'c1' }))
+      .mockRejectedValue(new Error('请求等待超时，请重试'))
+    const { site, scope } = await openAtBottom()
+
+    // 读者没在等这一页：失败只是这次没提前拿到，不该把屏上的记录换成一条红条。
+    expect(site.errorMsg.value).toBeNull()
+    expect(site.transcript.value).toHaveLength(2)
+    scope.stop()
+  })
+
+  it('tops the window back up when the reader reads a page at the edge', async () => {
+    // 预取那一次失败了，屏上留着头一页。读者翻到顶自己读一页成功之后，后台该接着
+    // 把再上面一页补出来——而不是等他再翻一次才补。
+    api.getTranscript
+      .mockResolvedValueOnce(page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'c1' }))
+      .mockRejectedValueOnce(new Error('请求等待超时，请重试'))
+      .mockResolvedValueOnce(page([block('z', 0)], { has_more: true, oldest_id: 'c0' }))
+      .mockResolvedValue(page([block('y', -1)], { has_more: false }))
+    const { box, site, scope } = await openAtBottom()
+
+    // 读者翻到顶：这是他自己的那一页（'z'），它上面还有一页（'y'）只有后台补得到。
+    box.scrollTop = 0
+    site.onSiteScroll()
+    await settle()
+
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['y', 'z', 'a', 'b'])
     scope.stop()
   })
 })
