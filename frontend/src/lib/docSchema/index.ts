@@ -22,9 +22,9 @@ export { docExtensions, lowlight } from './extensions'
 export type { RoundTripReport } from './fidelity'
 export { compareRoundTrip, normalizeMarkdown } from './fidelity'
 export { buildDocMarked, docMarked, finishMarkdown, serializeDoc } from './markdown'
-export type { PendingSuggestion } from './suggestions'
-export { pendingSuggestions, suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
+export { suggestionAuthor, suggestionId, withoutSuggestions } from './suggestions'
 export { DOC_SCHEMA_MISMATCH, DOC_SCHEMA_PARAM, DOC_SCHEMA_VERSION } from './version'
+export type { PendingSuggestion } from './yjs'
 export {
   exportMarkdown,
   FIELD,
@@ -32,6 +32,7 @@ export {
   liveSuggestions,
   nodeMarkdown,
   parseMarkdown,
+  pendingSuggestions,
   readsAs,
   writeMarkdown,
 } from './yjs'

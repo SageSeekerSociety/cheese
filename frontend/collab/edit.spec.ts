@@ -3,6 +3,7 @@
 // thread through such an edit, and words the edit rewrote do not pass it on.
 import type { Node as PMNode } from '@tiptap/pm/model'
 
+import { EditorState } from '@tiptap/pm/state'
 import { Transform } from '@tiptap/pm/transform'
 import { describe, expect, it } from 'vitest'
 
@@ -14,6 +15,7 @@ import {
   pendingSuggestions,
   withoutSuggestions,
 } from '../src/lib/docSchema'
+import { decideSuggestion } from '../src/lib/docSuggestionList'
 
 import { applyEdits } from './edit'
 
@@ -108,21 +110,105 @@ describe('the agent’s suggestion inside a block', () => {
     expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe(markdown.trimEnd())
   })
 
-  it('cannot propose a different kind of callout, only make the change', () => {
-    const live = parseMarkdown('> [!NOTE]\n> 补充。\n')
-    const suggested = applyEdits(live, [{ old: '[!NOTE]', new: '[!WARNING]' }], 'suggest', 'cheese')
-    expect(suggested.ok).toBe(false)
-    const direct = applyEdits(live, [{ old: '[!NOTE]', new: '[!WARNING]' }], 'direct', 'cheese')
-    if (!direct.ok) throw new Error(JSON.stringify(direct))
-    expect(nodeMarkdown(direct.doc)).toBe('> [!WARNING]\n> 补充。')
+  it.each([
+    ['a callout', '> [!NOTE]\n> 补充。\n', '[!NOTE]', '[!WARNING]', '> [!WARNING]\n> 补充。'],
+    [
+      'a chart',
+      ':::chart bar\n| 周   | 次数  |\n| --- | --- |\n| 一   | 10  |\n:::\n',
+      ':::chart bar',
+      ':::chart line',
+      ':::chart line\n| 周   | 次数  |\n| --- | --- |\n| 一   | 10  |\n:::',
+    ],
+  ])('proposes %s of another kind, which takes effect when accepted', (_name, markdown, old, replacement, becomes) => {
+    const result = applyEdits(parseMarkdown(markdown), [{ old, new: replacement }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe(markdown.trimEnd())
+    expect(decided(result.doc, true)).toBe(becomes)
+  })
+})
+
+/** The text once the one pending suggestion in `doc` is accepted or rejected. */
+function decided(doc: PMNode, accept: boolean): string {
+  const [pending] = pendingSuggestions(doc)
+  let after = doc
+  decideSuggestion(EditorState.create({ doc }), (tr) => (after = tr.doc), pending.id, accept)
+  return nodeMarkdown(withoutSuggestions(after))
+}
+
+describe('an agent proposing whole blocks', () => {
+  const live = parseMarkdown('第一段，讲范围。\n\n第二段，讲目标。\n')
+  const TEXT = '第一段，讲范围。\n\n第二段，讲目标。'
+
+  it.each([
+    [
+      'a new paragraph at the end',
+      '讲目标。',
+      '讲目标。\n\n先定边界再排期。',
+      '先定边界再排期。',
+      `${TEXT}\n\n先定边界再排期。`,
+    ],
+    [
+      'two paragraphs between two',
+      '讲范围。',
+      '讲范围。\n\n第三段。\n\n第四段。',
+      '第三段。\n\n第四段。',
+      '第一段，讲范围。\n\n第三段。\n\n第四段。\n\n第二段，讲目标。',
+    ],
+    ['a heading', '讲目标。', '讲目标。\n\n## 下一步', '## 下一步', `${TEXT}\n\n## 下一步`],
+    ['a list', '讲目标。', '讲目标。\n\n- 甲\n- 乙', '- 甲\n- 乙', `${TEXT}\n\n- 甲\n- 乙`],
+  ])(
+    'proposes %s, leaving the text as it was until someone accepts it',
+    (_name, old, replacement, proposed, accepted) => {
+      const result = applyEdits(live, [{ old, new: replacement }], 'suggest', 'cheese')
+      if (!result.ok) throw new Error(JSON.stringify(result))
+      expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe(TEXT)
+      expect(pendingSuggestions(result.doc)).toEqual([
+        expect.objectContaining({ author: 'cheese', old: '', new: proposed }),
+      ])
+      expect(decided(result.doc, true)).toBe(accepted)
+      expect(decided(result.doc, false)).toBe(TEXT)
+    }
+  )
+
+  it('proposes removing a paragraph whole', () => {
+    const result = applyEdits(live, [{ old: '\n\n第二段，讲目标。', new: '' }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe(TEXT)
+    expect(pendingSuggestions(result.doc)).toEqual([expect.objectContaining({ old: '第二段，讲目标。', new: '' })])
+    expect(decided(result.doc, true)).toBe('第一段，讲范围。')
+    expect(decided(result.doc, false)).toBe(TEXT)
   })
 
-  it('cannot propose a different kind of chart, only make the change', () => {
-    const live = parseMarkdown(':::chart bar\n| 周   | 次数  |\n| --- | --- |\n| 一   | 10  |\n:::\n')
-    expect(applyEdits(live, [{ old: ':::chart bar', new: ':::chart line' }], 'suggest', 'cheese').ok).toBe(false)
-    const direct = applyEdits(live, [{ old: ':::chart bar', new: ':::chart line' }], 'direct', 'cheese')
+  it('proposes turning a paragraph into a list item, and says what it becomes', () => {
+    const result = applyEdits(live, [{ old: '第二段，讲目标。', new: '- 第二段，讲目标。' }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(pendingSuggestions(result.doc)).toEqual([
+      expect.objectContaining({ old: '第二段，讲目标。', new: '- 第二段，讲目标。' }),
+    ])
+    expect(decided(result.doc, true)).toBe('第一段，讲范围。\n\n- 第二段，讲目标。')
+    expect(decided(result.doc, false)).toBe(TEXT)
+  })
+
+  it('proposes an item added to a list', () => {
+    const result = applyEdits(parseMarkdown('- 甲\n- 乙\n'), [{ old: '- 乙', new: '- 乙\n- 丙' }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(pendingSuggestions(result.doc)).toEqual([expect.objectContaining({ old: '', new: '- 丙' })])
+    expect(decided(result.doc, true)).toBe('- 甲\n- 乙\n- 丙')
+    expect(decided(result.doc, false)).toBe('- 甲\n- 乙')
+  })
+
+  it('cannot propose a row added to a table, only make the change', () => {
+    const table = nodeMarkdown(parseMarkdown('| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |\n'))
+    const row = table.trimEnd().split('\n').at(-1)!
+    const edit = { old: row, new: `${row}\n${row.replace('一', '二')}` }
+    expect(applyEdits(parseMarkdown(table), [edit], 'suggest', 'cheese')).toMatchObject({
+      ok: false,
+      status: 422,
+      body: { reason: 'structure' },
+    })
+    const direct = applyEdits(parseMarkdown(table), [edit], 'direct', 'cheese')
     if (!direct.ok) throw new Error(JSON.stringify(direct))
-    expect(nodeMarkdown(direct.doc)).toContain(':::chart line')
+    expect(nodeMarkdown(direct.doc)).toContain('二')
   })
 })
 
