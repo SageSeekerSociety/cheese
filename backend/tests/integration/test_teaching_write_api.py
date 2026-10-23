@@ -30,12 +30,16 @@ from tests.integration.conftest import (
 
 SPACE_GUIDE = {"mode": "guide", "systemPrompt": "空间的要求"}
 
-#: All four fields set, in the request's spelling — what the settings form sends.
+#: All six fields set, in the request's spelling — what the settings form sends.
+#: `privatePrompt` 是出题人可见的那一格（`teaching_to_api(include_private=True)`），
+#: 这几条用的都是出题人/管理员的身份，所以它也在读回来的那一份里。
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
 #: its own tests (`test_teaching_references.py`).
 FULL_TEACHING = {
     "mode": "spec",
     "systemPrompt": "先写需求说明，再动手。",
+    "privatePrompt": None,
+    "learningGoals": ["会读栈追踪"],
     "materialIds": [],
     "documentIds": [],
 }
@@ -44,6 +48,8 @@ FULL_TEACHING = {
 EMPTY_TEACHING = {
     "mode": None,
     "systemPrompt": None,
+    "privatePrompt": None,
+    "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
 }

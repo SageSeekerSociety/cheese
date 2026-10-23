@@ -106,7 +106,16 @@ def screen_model_env(
     else:
         # The Claude login is the host's own, established by the launch script;
         # the scoped cheese token below only proves which project to bill.
-        ca_pem = _read_proxy_ca()
+        #
+        # ponytail: 本地开发没有计费代理（mitmproxy + CA + 隧道），屏幕上就没有任何
+        # 能兑现 OAuth 占位凭据的东西——每一次请求都死在 meter 不存在。所以这一档直
+        # 连配置好的 Anthropic 兼容网关（ANTHROPIC_BASE_URL/AUTH_TOKEN）。判据是
+        # `settings.agent_direct_gateway` 这个显式开关，不是「CA 未配置 + dev/test」：
+        # 后者会让上游那条「CA 未配置必须大声拒绝」的用例变成绿灯假象。上限：本地屏幕
+        # 没有用量计费与模型改写。升级路径：配好 SUBSCRIPTION_CA_BACKEND_PATH 后把
+        # 开关关掉，此分支随即消失。
+        direct_gateway = settings.agent_direct_gateway
+        ca_pem = "" if direct_gateway else _read_proxy_ca()
         # Session-length TTL, not the 1h default. This token is baked into the
         # bare process's HTTPS_PROXY (CONNECT credential), read ONCE at process
         # start and never hot-refreshed; the screen is reused across turns (a
@@ -123,11 +132,17 @@ def screen_model_env(
             # more than one agent, so the launcher, which knows, says it.
             agent_handle=agent_handle,
         )
-        sub = provider_env.subscription_provider(
-            ca_path=_DEVICE_PROXY_CA_PATH,
-            project_id=str(project_id),
-            topic_id=str(topic_id),
-            no_proxy=no_proxy,
+        sub = (
+            # 直连：把配置好的网关地址与凭据交给屏幕。不设 HTTPS_PROXY（没有 meter
+            # 接 CONNECT），也不塞计费属性头——没有东西会读它。
+            provider_env.ProviderChoice(name="direct", env=settings.agent_env())
+            if direct_gateway
+            else provider_env.subscription_provider(
+                ca_path=_DEVICE_PROXY_CA_PATH,
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                no_proxy=no_proxy,
+            )
         )
         # Which model a request runs on is decided at one control point —
         # admission, when the request reaches the metering proxy (结论 46) — and
@@ -150,9 +165,6 @@ def screen_model_env(
         ):
             model_env.pop(key, None)
         model_env.update(sub.env)
-        # The tunnel's CONNECT credential: the helper reads it from a file the
-        # launch script writes, and it carries the session's place claims.
-        model_env["CHEESE_CONNECT_TOKEN"] = session_token
         # Read by Claude Code only when its login comes from the environment (a
         # host with a setup-token): the scopes it then believes it holds. RC is
         # served by Cheese, not Anthropic, so the sessions scope enables it
@@ -160,14 +172,23 @@ def screen_model_env(
         model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
             "user:inference user:profile user:sessions:claude_code"
         )
-        # The meter accepts model hosts, not package registries.
-        model_env["CHEESE_MODEL_PROXY"] = "1"
-        # Read by the launch script: it writes the helper and the token file,
-        # starts the helper before `claude`, and exports the port the helper
-        # bound as HTTPS_PROXY. Carried on the env rather than as arguments
-        # because a remote machine's launch is built entirely from `extra_env` —
-        # there is no other channel into that builder.
-        model_env["CHEESE_TUNNEL_URL"] = machine_tunnel_url(api_base)
+        # ponytail: 直连档不给隧道三件套。屏幕一旦拿到 CHEESE_TUNNEL_URL，启动脚本就
+        # 会起 `cheese-tunnel-up` 并把 HTTPS_PROXY 指向它——直连网关形同虚设，每一次
+        # 模型请求都改道去那个连不上的 meter（ECONNRESET，屏幕看着像死了）。和
+        # `own_login` 那一档一样，这三样只在真的走 meter 时才给。上限：本地屏幕没有
+        # 用量计费与模型改写；升级路径：配好 SUBSCRIPTION_CA_BACKEND_PATH 后自动消失。
+        if not direct_gateway:
+            # The tunnel's CONNECT credential: the helper reads it from a file the
+            # launch script writes, and it carries the session's place claims.
+            model_env["CHEESE_CONNECT_TOKEN"] = session_token
+            # The meter accepts model hosts, not package registries.
+            model_env["CHEESE_MODEL_PROXY"] = "1"
+            # Read by the launch script: it writes the helper and the token file,
+            # starts the helper before `claude`, and exports the port the helper
+            # bound as HTTPS_PROXY. Carried on the env rather than as arguments
+            # because a remote machine's launch is built entirely from `extra_env` —
+            # there is no other channel into that builder.
+            model_env["CHEESE_TUNNEL_URL"] = machine_tunnel_url(api_base)
         # Preserve the birth expiry across device and backend restarts.
         credential_expires = _credential_expiry(session_token)
         model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)

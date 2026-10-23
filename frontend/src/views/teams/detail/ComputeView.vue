@@ -152,6 +152,12 @@ watch(
 
 <style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
+/* `settings-page` 的上下内边距是给个人设置那一层的；这一页在团队外框（AppPage 读的一
+   栏）里，那一栏已经留了，再留一次顶上就比成员、模型几页多空一截。 */
+.settings-page {
+  padding: 0;
+}
+
 .compute-bar {
   display: flex;
   flex-wrap: wrap;

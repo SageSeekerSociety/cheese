@@ -74,11 +74,12 @@ async def for_project(
 ) -> TeachingContext | None:
     """The teaching context this project's agents should start with, or None.
 
-    Read fresh on every turn rather than remembered on the project: the week is
-    a fact about now, and a course that moved from 第 3 周 to 第 4 周 must not
-    need every project re-registered to hear about it. What that does and does
-    not reach is the 生效语义 `harness.prompt` documents — a running session
-    keeps the copy it started with, so this is the answer for the NEXT one.
+    Read fresh on every turn rather than remembered on the project: the config
+    is a fact about now, and a course that changed its guidance must not need
+    every project re-registered to hear about it. This read is what a *new*
+    session starts from; a session already running keeps the copy it opened
+    with until its next cold start — `teaching` is deliberately not a tracked
+    section (`harness/opening.py` TRACKED_SECTIONS 与模块说明第 3 条).
     """
     if project is None or project.external_task_id is None:
         return None

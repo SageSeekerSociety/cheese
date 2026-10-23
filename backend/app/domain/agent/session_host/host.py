@@ -43,7 +43,13 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+)
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -175,6 +181,7 @@ class SessionHost:
         on_alive: Callable[[uuid.UUID], None] | None = None,
         records: Records | None = None,
         register: Callable[[SeatKey], Awaitable[int]] | None = None,
+        drivers: Mapping[str, Driver] | None = None,
     ):
         self._hub = hub
         #: Where every row a session's journal holds is kept as its raw
@@ -195,6 +202,10 @@ class SessionHost:
         self._mirrors = mirrors or Path(settings.workspace_root) / ".harness"
         self._screens = screens
         self._session_factory = session_factory
+        #: Drivers a caller hands in, by harness name: consulted before the ones
+        #: this class knows how to build. A test that drives a harness with a
+        #: stand-in hands one here rather than reaching into ``_drivers``.
+        self._injected = drivers
         self._drivers: dict[str, Driver] | None = None
         self._running: dict[SessionRef, _Running] = {}
         self._locks: dict[SessionRef, asyncio.Lock] = {}
@@ -209,6 +220,10 @@ class SessionHost:
         return self._hub
 
     def _driver(self, ref: SessionRef) -> Driver:
+        if self._injected is not None:
+            injected = self._injected.get(ref.harness)
+            if injected is not None:
+                return injected
         if self._drivers is None:
             screens = self._screens
             if screens is None:

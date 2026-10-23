@@ -1,8 +1,15 @@
 """Edits belong to one project agent and survive moves between rooms."""
 
+import uuid
+from datetime import UTC, datetime
+
+import pytest
+from sqlalchemy import select
+
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from tests.integration.conftest import (
     add_external_member,
     approve_overseas,
@@ -207,3 +214,236 @@ def test_a_member_changes_a_teammates_costly_settings_and_the_project_is_told(cl
         ("bob", default["seat_handle"], "compact_percent", 60),
         ("bob", default["seat_handle"], "skills", ["documents"]),
     ]
+
+
+#: Four room layouts that say the same thing about a person — bob is on the
+#: project. They used to say four different things to the skills gate, which
+#: read them out of the topic tree (``share_a_room_with``).
+_ROOM_SHAPES = ("no_rooms", "no_root", "archived_only", "private_only")
+
+
+@pytest.mark.parametrize("shape", _ROOM_SHAPES)
+def test_arming_a_teammate_does_not_depend_on_rooms(
+    api_client, db_session, _portal, shape
+):
+    """Arming a teammate is any member's, whatever shape the rooms take.
+
+    Bob is a plain member of this project in all four layouts — the same person,
+    the same roster — so arming a teammate must land in every one of them. The
+    four shapes are exactly the layouts that used to read differently to the one
+    gate that asked whether two handles shared a room (``share_a_room_with``):
+    a project with no public room at all, one without 综合, one whose only rooms
+    are archived, and one whose only room is a private chat.
+
+    ``api_client`` and not ``client``: this test reshapes rooms through
+    ``db_session``, and only the integration client shares that session.
+    """
+    # ``api_client`` 上没有人可替它注册（`_register` 只在拿得出会话的客户端上动手），
+    # 所以这两个人要在这条测试共享的会话里自己建出来：邀请问的是「这个 handle 有
+    # 人持有吗」，没有就是 422。
+    _portal.call(registered, db_session, "alice")
+    _portal.call(registered, db_session, "bob")
+    made = post_project(api_client, json={"name": f"rooms-{shape}"}, owner="alice")
+    project = made.json()["data"]
+    pid = uuid.UUID(project["id"])
+    add_external_member(api_client, project["id"], "bob", by="alice")
+    bob = session_auth_headers("bob")
+    agents = api_client.get(f"/projects/{pid}/agents", headers=bob)
+    url = f"/projects/{pid}/agents/{agents.json()['data']['data'][0]['id']}"
+
+    async def reshape() -> None:
+        rows = list(
+            await db_session.scalars(select(Topic).where(Topic.project_id == pid))
+        )
+        assert rows, "a new project starts with a room to reshape"
+        for row in rows:
+            if shape == "no_rooms":
+                await db_session.delete(row)
+            elif shape == "no_root":
+                row.kind = TopicKind.topic
+            elif shape == "archived_only":
+                row.status = TopicStatus.archived
+                row.archived_at = datetime.now(UTC)
+            else:
+                row.is_private = True
+        await db_session.commit()
+
+    _portal.call(reshape)
+
+    armed = api_client.put(
+        url, json={"configuration": {"skills": ["documents"]}}, headers=bob
+    )
+    assert armed.status_code == 200, armed.text
+    assert armed.json()["data"]["configuration"]["skills"] == ["documents"]
+
+
+class _FakeValkey:
+    """Just enough of the client ``editing`` uses: get / set(nx, ex) / delete."""
+
+    def __init__(self):
+        self.store: dict[str, bytes] = {}
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def set(self, key, value, *, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value.encode("utf-8") if isinstance(value, str) else value
+        return True
+
+    async def delete(self, key):
+        self.store.pop(key, None)
+
+
+def _first_agent(client, pid, headers) -> dict:
+    return client.get(f"/projects/{pid}/agents", headers=headers).json()["data"][
+        "data"
+    ][0]
+
+
+def test_a_stale_save_is_refused_and_says_the_version_that_won(client):
+    """Two people editing one teammate: the second save is refused, not silent.
+
+    The whole ``configuration`` is replaced at once, so last-write-wins used to
+    drop the first edit without a word.
+    """
+    project = post_project(client, json={"name": "Version"}, owner="alice").json()[
+        "data"
+    ]
+    pid = project["id"]
+    alice = session_auth_headers("alice")
+    first = _first_agent(client, pid, alice)
+    url = f"/projects/{pid}/agents/{first['id']}"
+    assert first["version"] == 1
+
+    saved = client.put(
+        url,
+        json={"configuration": {"skills": ["documents"]}, "expected_version": 1},
+        headers=alice,
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["data"]["version"] == 2
+
+    # The same read again: somebody wrote in between, so this one is refused and
+    # told which version is current.
+    stale = client.put(
+        url,
+        json={"configuration": {"skills": ["wolfram"]}, "expected_version": 1},
+        headers=alice,
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["error"]["data"]["version"] == 2
+    # Nothing landed.
+    assert _first_agent(client, pid, alice)["configuration"]["skills"] == ["documents"]
+
+    # Without a version the save is unconditional, as it always was.
+    loose = client.put(
+        url, json={"configuration": {"skills": ["wolfram"]}}, headers=alice
+    )
+    assert loose.status_code == 200, loose.text
+    assert loose.json()["data"]["version"] == 3
+
+
+def test_the_version_moves_when_the_type_is_set_too():
+    """Switching a teammate's type replaces its configuration, so it is a write
+    like any other — a save that read the old version must not land on top."""
+    import asyncio
+    import uuid
+
+    from app.domain.agent_instance.models import AgentInstance
+
+    async def run():
+        instance = AgentInstance(
+            project_id=uuid.UUID(int=1),
+            handle="t",
+            display_name="T",
+            configuration={},
+            version=1,
+        )
+        # No session needed: ``set_type`` validates the preset against the
+        # library and writes attributes.
+        await AgentInstanceService(None).set_type(instance, "fullstack-engineer")
+        assert instance.version == 2
+
+    asyncio.run(run())
+
+
+def test_every_teammate_is_in_综合_with_every_member(client):
+    """What 「同一个话题的人」 resolves to for the project's own teammate.
+
+    综合 IS the project: its members are everyone in it, an agent on the project
+    roster included. So a member of the project shares that room with every
+    teammate of it, and arming one is theirs to do without a manager — the same
+    「在室成员可改」 the room's own skill toggles answer to. A member who is not
+    in the project never gets this far: ``authorize_project`` refuses first.
+    """
+    project = post_project(client, json={"name": "Room"}, owner="alice").json()["data"]
+    pid = project["id"]
+    add_external_member(client, pid, "bob", by="alice")
+    bob = session_auth_headers("bob")
+    url = f"/projects/{pid}/agents/{_first_agent(client, pid, bob)['id']}"
+
+    armed = client.put(
+        url, json={"configuration": {"skills": ["documents"]}}, headers=bob
+    )
+    assert armed.status_code == 200, armed.text
+
+
+def test_the_editing_lease_is_held_and_given_up(client, monkeypatch):
+    """One person claims a teammate while they edit it; the second is told who
+    has it and is refused the claim until it is given up."""
+    from app.domain.agent_instance import editing
+
+    fake = _FakeValkey()
+    monkeypatch.setattr(editing, "get_redis_client", lambda: fake)
+    project = post_project(client, json={"name": "Lease"}, owner="alice").json()["data"]
+    pid = project["id"]
+    add_external_member(client, pid, "bob", by="alice")
+    alice, bob = session_auth_headers("alice"), session_auth_headers("bob")
+    url = f"/projects/{pid}/agents/{_first_agent(client, pid, alice)['id']}/editing"
+
+    assert client.put(url, json={"held": True}, headers=alice).status_code == 200
+    # The other person's read says who is in it.
+    assert _first_agent(client, pid, bob)["editing"] == "alice"
+    # And they cannot take it.
+    taken = client.put(url, json={"held": True}, headers=bob)
+    assert taken.status_code == 409, taken.text
+    assert taken.json()["error"]["data"]["handle"] == "alice"
+
+    # Giving it up frees it for the next person.
+    assert client.put(url, json={"held": False}, headers=alice).status_code == 200
+    assert _first_agent(client, pid, bob)["editing"] is None
+    assert client.put(url, json={"held": True}, headers=bob).status_code == 200
+
+
+def test_without_valkey_nobody_is_editing_and_the_save_still_lands(client, monkeypatch):
+    """The lease is a courtesy. With no Valkey it reads as nobody and never
+    refuses: the version check is the answer that has to hold."""
+    from app.domain.agent_instance import editing
+
+    monkeypatch.setattr(editing, "get_redis_client", lambda: None)
+    project = post_project(client, json={"name": "NoValkey"}, owner="alice").json()[
+        "data"
+    ]
+    pid = project["id"]
+    alice = session_auth_headers("alice")
+    agent = _first_agent(client, pid, alice)
+    url = f"/projects/{pid}/agents/{agent['id']}"
+
+    assert (
+        client.put(f"{url}/editing", json={"held": True}, headers=alice).status_code
+        == 200
+    )
+    assert _first_agent(client, pid, alice)["editing"] is None
+    assert (
+        client.put(
+            url,
+            json={
+                "configuration": {"skills": ["documents"]},
+                "expected_version": agent["version"],
+            },
+            headers=alice,
+        ).status_code
+        == 200
+    )

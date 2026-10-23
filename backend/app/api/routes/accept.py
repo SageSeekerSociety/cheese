@@ -149,6 +149,18 @@ async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Ac
     return actor
 
 
+def _requested_reviewers(
+    body: AcceptCardCreate | AcceptCardReassign,
+) -> list[str] | None:
+    """请求体里点名递给谁：集合优先，其次是单个；都没给就是 None（爬默认阶梯）。"""
+    handles = getattr(body, "reviewer_handles", None)
+    if handles:
+        return handles
+    if body.reviewer_handle:
+        return [body.reviewer_handle]
+    return None
+
+
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
     """「这个房间会放卡上那个人进来吗」——递给 `AcceptService` 的那道判据。
 
@@ -182,7 +194,7 @@ async def create_accept_card(
         # 个读点），问的是卡上那个人而不是调用者。见 `_require_reviewer_in_room`。
         admits_reviewer=_reviewer_admission(actor, resolver),
         topic_id=topic_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
         focus=body.focus,
         change_subject=body.change_subject,
         change_body=body.change_body,
@@ -257,6 +269,9 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
+    审阅重点也走这里：它是审阅人的核对清单，推了新提交之后可能已经过期。它
+    不进 PR 正文，所以改它不必碰 GitHub。
+
     署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
@@ -266,6 +281,7 @@ async def describe_card(
         actor=actor.handle,
         change_subject=body.change_subject,
         change_body=body.change_body,
+        focus=body.focus,
     )
     await db.commit()
     return ok(await _accept_service(db).describe(card))
@@ -499,7 +515,7 @@ async def reassign_card(
     card = await svc.reassign(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
         by=actor.handle,
     )
     return ok(await svc.describe(card))

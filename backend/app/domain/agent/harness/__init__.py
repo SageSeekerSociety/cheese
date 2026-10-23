@@ -406,6 +406,32 @@ HARNESSES: dict[str, Harness] = {
 }
 
 
+def register_harness(
+    name: str, entry: Harness, *, swap: Callable[..., None] | None = None
+) -> None:
+    """替身骨架进注册表的门（结论 43 的**唯一例外**）。
+
+    ``HARNESSES`` 是随这套代码上线的名单——这套部署真的会跑哪些骨架，写在上面那
+    张字面量里，运行期不往里加常驻成员。要一个不是默认的第二名字来问「跑着 Codex
+    时列出来的是哪一批」这类问题，只能是一个进程内的替身。
+
+    替身从这道门进。``swap`` 是那条既进又出的口子：传 pytest 的
+    ``monkeypatch.setitem``，用例一结束替身就被拿走，注册表回到出厂的样子——能力
+    矩阵、骨架契约、``build_compute_pool`` 那几条守卫读到的仍是出厂的表，它们不因
+    为替身进过门而松一分。不传 ``swap`` 就是一次普通写入。
+
+    按 ``name`` 归档，所以 ``entry.name`` 也得是它：名字对不上，是一处安静的第二
+    答法。
+    """
+    if entry.name != name:
+        # i18n-exempt: developer registry check, never shown to a user
+        raise ValueError(f"往注册表登记 {name!r}，拿到的条目却叫 {entry.name!r}")
+    if swap is None:
+        HARNESSES[name] = entry
+    else:
+        swap(HARNESSES, name, entry)
+
+
 def harness_name(name: str | None) -> str:
     """调用方给的 harness 名，没给就是这套部署偏好的第一个。"""
     return name or deployment_harnesses()[0]

@@ -110,15 +110,18 @@ class AcceptService:
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
         return await cards._card_or_404(self, card_id=card_id)
 
-    async def _reviewer_or_project_default(
+    async def _reviewers_or_project_default(
         self,
         project: Project | None,
-        reviewer_handle: str | None,
+        reviewer_handles: list[str] | None,
         *,
         from_work: list[Task] | None = None,
-    ) -> str:
-        return await reviewers._reviewer_or_project_default(
-            self, project=project, reviewer_handle=reviewer_handle, from_work=from_work
+    ) -> list[str]:
+        return await reviewers._reviewers_or_project_default(
+            self,
+            project=project,
+            reviewer_handles=reviewer_handles,
+            from_work=from_work,
         )
 
     async def _require_reviewer_in_room(
@@ -133,7 +136,7 @@ class AcceptService:
         *,
         topic_id: uuid.UUID,
         task_id: uuid.UUID,
-        reviewer_handle: str | None = None,
+        reviewer_handles: list[str] | None = None,
         focus: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
@@ -149,7 +152,7 @@ class AcceptService:
             self,
             topic_id=topic_id,
             task_id=task_id,
-            reviewer_handle=reviewer_handle,
+            reviewer_handles=reviewer_handles,
             focus=focus,
             change_subject=change_subject,
             change_body=change_body,
@@ -250,6 +253,17 @@ class AcceptService:
         """
         return await self._repo.latest_by_task(task_ids)
 
+    async def reviewer_handles_for_cards(
+        self, card_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """一批卡的评审人，一次查完 —— 侧栏和房间快照一次画很多张卡时用。
+
+        评审人在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上。
+        `topics.py` 的房间快照和 `awaiting.py` 的待办列表按批读它；路由直接摸
+        repository 会把领域的读者漏进 HTTP 层，所以从这里走 —— 同一个查询，深一层。
+        """
+        return await self._repo.reviewer_handles_for_cards(card_ids)
+
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None
     ) -> list[uuid.UUID]:
@@ -286,14 +300,14 @@ class AcceptService:
         self,
         *,
         card_id: uuid.UUID,
-        reviewer_handle: str | None = None,
+        reviewer_handles: list[str] | None = None,
         admits_reviewer: ReviewerAdmission,
         by: str,
     ) -> AcceptCard:
         return await reviewers.reassign(
             self,
             card_id=card_id,
-            reviewer_handle=reviewer_handle,
+            reviewer_handles=reviewer_handles,
             admits_reviewer=admits_reviewer,
             by=by,
         )
@@ -589,6 +603,7 @@ class AcceptService:
         actor: str,
         change_subject: str | None = None,
         change_body: str | None = None,
+        focus: str | None = None,
     ) -> AcceptCard:
         return await decisions.redescribe(
             self,
@@ -596,6 +611,7 @@ class AcceptService:
             actor=actor,
             change_subject=change_subject,
             change_body=change_body,
+            focus=focus,
         )
 
     async def push_fix(

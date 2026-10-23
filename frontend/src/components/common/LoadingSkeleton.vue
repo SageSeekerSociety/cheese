@@ -28,13 +28,14 @@ withDefaults(
      * - `chat`   聊天消息行（`RoomMessage` 的 `.im-row`，28px 头像 + 名字 + 一两行正文，全部靠左）
      * - `roster` 名册行（`TopicMembers` 的 `.roster__item`，26px 头像 + 两行字 + 小标）
      * - `entry`  支线进度（`TaskProgress`：一条分组小标 + 若干 55px 的 `.task-row`）
-     * - `site`   现场的一条动作（`PanelSite` 的 `.site-act`，8px 圆点 + 动作 + 参数）
+     * - `site`   现场的一页（`PanelSite`：一轮一组的组头 + 用时条 + 几种记录行）
+     * - `siteRaw` 现场的原始记录页（同上，每条记录多一行类型 / 来源 / 时刻）
      * - `doc`    实况文档的正文（`DocEditor` 的 `.doc-prose`：小标题 + 几段 28.8px 的行）
      * - `feedback` 反馈中心的一条（`FeedbackCard` 的 `.fb-card`：左边支持按钮 + 标题 + 两行摘要 + 元信息一行）
      * - `detail` 反馈详情页整页（`FeedbackDetailPage` 的 `.fb-layout`：标题 + 芯片 + 正文几段 + 右边一栏两格）
      * - `text`   一段正文
      */
-    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'site' | 'doc' | 'feedback' | 'detail' | 'text'
+    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'site' | 'siteRaw' | 'doc' | 'feedback' | 'detail' | 'text'
     /** 画几行。默认值按各自最常见的一屏给，调用点通常不用传。 */
     rows?: number
   }>(),
@@ -48,6 +49,7 @@ const DEFAULT_ROWS: Record<string, number> = {
   roster: 3,
   entry: 3,
   site: 5,
+  siteRaw: 5,
   doc: 3,
   feedback: 6,
   detail: 3,
@@ -59,6 +61,21 @@ const WIDTHS = ['92%', '78%', '85%', '64%', '88%', '72%']
 
 function width(i: number): string {
   return WIDTHS[i % WIDTHS.length]
+}
+
+/** 现场的一页按轮分组。骨架把要画的行分给两组，让组头 + 用时条的节奏先出现；
+ *  行本身轮着换三种形状——工具调用、叙述、缩进的子项。 */
+const SITE_SHAPES = ['tool', 'prose', 'child'] as const
+function siteGroups(count: number): string[][] {
+  const perGroup = Math.max(1, Math.ceil(count / 2))
+  const groups: string[][] = []
+  for (let start = 0; start < count; start += perGroup) {
+    const size = Math.min(perGroup, count - start)
+    const shapes: string[] = []
+    for (let i = 0; i < size; i += 1) shapes.push(SITE_SHAPES[(start + i) % SITE_SHAPES.length])
+    groups.push(shapes)
+  }
+  return groups
 }
 </script>
 
@@ -108,14 +125,47 @@ function width(i: number): string {
       </div>
     </template>
 
-    <!-- 现场的一条动作：一行里是圆点 + 动词 + 参数。参数那一截照常画——「读了哪
-         个文件」「跑了什么命令」是常态，不带参数的工具调用才是例外。时间不画：
-         它悬停才出现，画上去就是承诺一个静止时没有的东西。 -->
-    <template v-else-if="variant === 'site'">
-      <div v-for="i in rows || DEFAULT_ROWS.site" :key="i" class="skel__site" :style="{ '--skel-i': i }">
-        <div class="skel__bone skel__bone--sdot" />
-        <div class="skel__bone skel__bone--meta skel__bone--verb" />
-        <div class="skel__bone skel__bone--meta skel__bone--arg" :style="{ width: width(i) }" />
+    <!-- 现场的一页。真实的一页不是一列等高的动作行：它按轮分组，每组先是一行组头
+         （时刻、几步、多久）和一条用时分段条，底下才是记录——一行工具调用、一段
+         叙述、一层缩进的子项，高矮都不一样。旧版画的是五条「圆点 + 动词 + 参数」，
+         和现在的现场没有一处对得上，读者看到的是一块会跳的灰。
+         原始记录（`siteRaw`）每条上面还多一行类型 / 来源 / 时刻，所以是另一种形态。 -->
+    <template v-else-if="variant === 'site' || variant === 'siteRaw'">
+      <div class="skel__site-log">
+        <section v-for="(group, g) in siteGroups(rows || DEFAULT_ROWS.site)" :key="g" class="skel__site-turn">
+          <div class="skel__turnhead">
+            <div class="skel__bone skel__bone--meta skel__bone--when" />
+            <div class="skel__bone skel__bone--meta skel__bone--steps" />
+          </div>
+          <div class="skel__phases">
+            <div class="skel__bone skel__bone--phase" style="flex-grow: 3" />
+            <div class="skel__bone skel__bone--phase" style="flex-grow: 1" />
+          </div>
+          <div
+            v-for="(kind, i) in group"
+            :key="`${g}-${i}`"
+            class="skel__site"
+            :class="`skel__site--${kind}`"
+            :style="{ '--skel-i': i }"
+          >
+            <div v-if="variant === 'siteRaw'" class="skel__rowmeta">
+              <div class="skel__bone skel__bone--meta skel__bone--kind" />
+              <div class="skel__bone skel__bone--meta skel__bone--source" />
+              <div class="skel__bone skel__bone--meta skel__bone--stamp" />
+            </div>
+            <div v-if="kind === 'tool'" class="skel__site-line">
+              <div class="skel__bone skel__bone--meta skel__bone--verb" />
+              <div class="skel__bone skel__bone--meta skel__bone--arg" :style="{ width: width(i) }" />
+            </div>
+            <template v-else-if="kind === 'prose'">
+              <div class="skel__bone skel__bone--line" :style="{ width: width(i) }" />
+              <div v-if="i % 2 === 0" class="skel__bone skel__bone--line" :style="{ width: width(i + 2) }" />
+            </template>
+            <div v-else class="skel__site-child">
+              <div class="skel__bone skel__bone--line" :style="{ width: width(i + 1) }" />
+            </div>
+          </div>
+        </section>
       </div>
     </template>
 
@@ -394,35 +444,96 @@ function width(i: number): string {
   margin-bottom: 5px;
 }
 
-/* PanelSite 的 .site-log：padding 12px、gap 4px（列）。一条 .site-act 是一行：
-   5px 圆点 + 4em 宽的动词 + 占满剩下宽度的参数。 */
-.skel--site {
+/* PanelSite 的一页：日志本身的 padding 12px、gap 4px（列）；轮与轮之间是 20px +
+   一条分隔线（.turn + .turn）。 */
+.skel--site,
+.skel--siteRaw {
+  padding: 12px;
+}
+.skel__site-log {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px;
 }
+.skel__site-turn + .skel__site-turn {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+/* SiteTurnHead 的 .turn__head：12px 字、gap 8、下边距 6；右边那一截是
+   「几步 · 多久」，靠 margin-left: auto 顶到右边。 */
+.skel__turnhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.skel__bone--when {
+  width: 44px;
+}
+.skel__bone--steps {
+  width: 72px;
+  margin-left: auto;
+}
+/* .turn__phases：4px 高、gap 2、上 -2 下 8 的两段用时条。 */
+.skel__phases {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  margin: -2px 0 8px;
+}
+.skel__bone--phase {
+  flex-basis: 0;
+  min-width: 4px;
+  height: 4px;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: var(--line-2);
+}
+/* .record-row：padding 8px 0，13px 字。 */
 .skel__site {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 8px 0;
+}
+/* 一行工具调用：.record-row__tool summary 是「动作 + 预览」的一行。 */
+.skel__site-line {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 1px 6px;
 }
-.skel__bone--sdot {
-  width: 5px;
-  height: 5px;
-  flex: none;
-  border-radius: 50%;
-}
-/* 动词那一列是固定宽度的四个汉字，参数从它右边同一个 x 开始。 */
+/* 动作那一列是四个汉字的宽度，预览从它右边同一个 x 开始。 */
 .skel__bone--verb {
   width: 4em;
   flex: none;
-  margin: 0;
 }
 .skel__bone--arg {
-  margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* 缩进的子项：.record-children 是左缩进 16 + 左内边距 12 + 一条竖线。 */
+.skel__site-child {
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+/* 原始记录每条上面那行类型 / 来源 / 时刻（.record-row__meta，下边距 8）。 */
+.skel__rowmeta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.skel__bone--kind {
+  width: 48px;
+}
+.skel__bone--source {
+  width: 64px;
+}
+.skel__bone--stamp {
+  width: 56px;
+  margin-left: auto;
 }
 
 /* DocEditor 的 .doc-prose：16px / 1.8（行盒 28.8px），段落 margin-bottom 12px；
