@@ -203,8 +203,8 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
         "fable",
         "Claude Fable 5",
         "前沿：新一代最强模型。注意：安全分类器命中（网络安全/生物类话题）或"
-        "配额受限时会被自动降级到 Opus 4.8，且降级可能持续到会话结束"
-        "（重开会话恢复）。",
+        "配额受限时会被自动降级到 Opus 4.8；降级后，AI 队友在同一个频道、支线或任务里"
+        "可能一直用 Opus 4.8（新开的支线或任务会恢复）。",
         "claude-fable-5",
         False,
         TIER_FRONTIER,

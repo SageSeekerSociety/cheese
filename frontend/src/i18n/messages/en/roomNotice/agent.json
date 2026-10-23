@@ -44,7 +44,7 @@
   "contextCompactFailed": "Context compaction did not finish",
   "contextCompactRunning": "The conversation is too long, so the context is being compacted; work resumes afterwards, with no replies in the meantime",
   "contextCompactSessionEnded": "This run ended before the context was compacted",
-  "deliveryChecking": "The message was written to the session and is being checked; it will not be sent twice",
+  "deliveryChecking": "Your input is recorded and its delivery is being checked; it will not be sent twice",
   "deliveryFallback": "The message could not join the work in progress and has been queued",
   "deliveryFallbackDetail": "The message is saved and the platform will handle it from the queue. No need to resend.",
   "deviceReconnected": "The environment is connected again",
