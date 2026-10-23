@@ -89,7 +89,7 @@ describe('对话左上角的书签条', () => {
 
     await fireEvent.click(rows[1]!)
     expect(ui.emitted().jump).toEqual([['b2']])
-    expect(ui.queryByRole('button', { name: '展开书签' })).toBeTruthy()
+    expect(ui.queryByRole('button', { name: '收起书签' })).toBeTruthy()
   })
 
   it('没有名字时退回消息的第一行', async () => {

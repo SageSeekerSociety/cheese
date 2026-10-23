@@ -33,7 +33,7 @@ const emit = defineEmits<{
 const ordered = computed(() => inReadingOrder(props.chapters))
 const shown = computed(() => ordered.value.length > 0)
 
-// 默认收起成左上角小角标；指针移入或点击展开，移出、点完跳转或在触屏上点面板外时自动收起。
+// 默认收起成左上角小角标；指针移入或点击展开，移出或在触屏上点面板外时自动收起。
 const open = ref(false)
 const menuForId = ref<string | null>(null)
 const railRef = ref<HTMLElement | null>(null)
@@ -45,7 +45,6 @@ function onLeave() {
 function jumpTo(blockId: string) {
   menuForId.value = null
   emit('jump', blockId)
-  open.value = false
 }
 
 function unpinChapter(blockId: string) {
