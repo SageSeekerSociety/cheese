@@ -207,9 +207,6 @@ async def call(
             headers=_DRAINING,
         )
     if name == "exec" and accept == STREAMED_EXEC:
-        # Not counted in `_active_rpc_calls`: the response outlives this
-        # handler. The exec it streams is in its device's `exec_pending`,
-        # which a release waits on all the same.
         return _streamed_exec(body)
     held = _held_read(name, body)
     if not held:
@@ -230,8 +227,14 @@ def _streamed_exec(body: dict[str, Any]) -> StreamingResponse:
     status goes out before anything is known, so a device that did not answer
     ends it with ``{"error": ...}``: the status, detail and headers
     `_unanswered` would otherwise have answered with."""
+    global _active_rpc_calls
     lines: asyncio.Queue[str | None] = asyncio.Queue()
+    # Counted until the exec ends, not until the handler returns: the answer
+    # outlives the handler, and a release has to wait for the exec, which is in
+    # `exec_pending` only once it has been sent.
+    _active_rpc_calls += 1
     run = asyncio.create_task(device_hub.exec(**body, on_stderr=lines.put_nowait))
+    run.add_done_callback(_ended)
     run.add_done_callback(lambda _: lines.put_nowait(None))
     # A caller that goes away does not stop the command, as with an exec
     # answered at once; how it ended is then nobody's to read.
@@ -252,6 +255,11 @@ def _streamed_exec(body: dict[str, Any]) -> StreamingResponse:
             yield json.dumps({"result": result}) + "\n"
 
     return StreamingResponse(frames(), media_type=STREAMED_EXEC)
+
+
+def _ended(_: asyncio.Task) -> None:
+    global _active_rpc_calls
+    _active_rpc_calls -= 1
 
 
 def _failure_frame(failure: HTTPException) -> dict[str, Any]:

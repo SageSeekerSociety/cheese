@@ -110,12 +110,18 @@ class InstallProgress:
         if self._latest is None:
             return
         have, total = self._latest
-        if exc is None:
-            await self._write(_INSTALLED, have, total)
-        elif have < total:
-            await self._write(_STOPPED, have, total)
-        else:
-            await self._write(_FAILED, have, total, detail=_last_line(exc))
+        try:
+            if exc is None:
+                await self._write(_INSTALLED, have, total)
+            elif have < total:
+                await self._write(_STOPPED, have, total)
+            else:
+                await self._write(_FAILED, have, total, detail=_last_line(exc))
+        except Exception:
+            # The line says how the install went; it does not decide it. An
+            # install that worked still hands over its executor, and one that
+            # failed still answers with its own failure.
+            logger.exception("install progress line not settled")
 
     async def _show(self) -> None:
         while True:
@@ -151,8 +157,9 @@ class InstallProgress:
                 "event_type": EVENT_EXECUTOR_INSTALL,
                 "severity": "info" if state in (_DOWNLOADING, _INSTALLED) else "warn",
                 # The platform is at it while it downloads; after that nobody
-                # has anything to do about this line.
-                "who": "platform" if state == _DOWNLOADING else "",
+                # has anything to do about this line (no `who`: `announce`
+                # reads a missing one as the platform's, and tells nobody).
+                "who": "platform" if state == _DOWNLOADING else None,
                 "device_id": self._device_id,
                 "state": state,
                 "have": have,

@@ -37,6 +37,10 @@ from tests.support.devices import enrollment_team, place_in_project_team
 pytestmark = pytest.mark.anyio
 
 MB = 1_000_000
+STILL_GOING = (
+    "downloading the executor from https://example.test/claude: still going "
+    "after 120.0 MB of 240.0 MB, which the next attempt continues from"
+)
 INSTALLED = {
     "exit": 0,
     "stdout": json.dumps(
@@ -161,10 +165,12 @@ def _downloading(sent, topic_id, *, until: str):
                     break
                 await asyncio.sleep(0.01)
         if until == "cut":
-            # Killed at the install's deadline, as the connector reports it.
+            # Killed at the install's deadline, as the connector reports it:
+            # the download's sentence for whoever reads the failure, and its
+            # last progress line after it, as a kill between the two leaves it.
             return {
                 "exit": work_lease.NO_EXIT_STATUS,
-                "stderr": _downloaded(120 * MB) + "\ndownloading … still going",
+                "stderr": f"{STILL_GOING}\n{_downloaded(120 * MB)}\n",
             }
         return INSTALLED
 
@@ -214,6 +220,9 @@ async def test_a_cut_off_download_says_how_far_it_got_and_the_next_attempt_conti
     cut = client.post(room.lease_path, headers=room.agent, json={"env": {}})
 
     assert "target" not in (cut.json().get("data") or {}), cut.text
+    # The teammate is told how far it got in words, never the progress line.
+    assert STILL_GOING in cut.text
+    assert "executor_download" not in cut.text
     lines = _install_lines(room_frames, room.topic_id)
     assert lines, "the room was told nothing about the download"
     stopped = lines[-1]
@@ -246,3 +255,24 @@ async def test_a_connector_that_does_not_stream_still_installs_and_says_nothing(
     assert "target" in leased.json()["data"], leased.text
     assert _install_lines(room_frames, room.topic_id) == []
     assert await _lines_in_room(client, room.topic_id) == []
+
+
+async def test_a_download_heard_only_as_the_install_ends_still_installs_and_says_so(
+    client, monkeypatch, room_frames
+):
+    """All of the download's lines can arrive at once, with the answer right
+    behind them: the line is then first written already settled."""
+    room = await _room_on_alices_computer(client)
+
+    async def install(device, argv, *, on_stderr=None, **kwargs):
+        on_stderr(_downloaded(0))
+        on_stderr(_downloaded(240 * MB))
+        return INSTALLED
+
+    _computer(monkeypatch, install)
+
+    leased = client.post(room.lease_path, headers=room.agent, json={"env": {}})
+
+    assert "target" in leased.json()["data"], leased.text
+    lines = await _lines_in_room(client, room.topic_id)
+    assert [line.meta["state"] for line in lines] == ["installed"]
