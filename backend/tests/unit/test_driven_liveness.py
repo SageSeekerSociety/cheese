@@ -17,6 +17,7 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code import runner as claude_runner
+from app.domain.agent.harness.claude_code import stuck as claude_stuck
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     TURN_TIMEOUT_CODE,
@@ -265,7 +266,7 @@ async def test_a_session_that_says_nothing_at_all_is_ended_by_its_runner(
     runner reports the ending itself and stops the process."""
     clocks(silent_s=0.3)
     # How long the session gets to end it itself, after being interrupted.
-    monkeypatch.setattr(claude_runner, "STUCK_GRACE_S", 0.1)
+    monkeypatch.setattr(claude_stuck, "STUCK_GRACE_S", 0.1)
     room = Room(Scripted(_says_nothing_at_all))
     try:
         await room.send("fix the login page")
