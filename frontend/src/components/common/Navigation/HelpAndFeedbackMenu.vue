@@ -173,20 +173,13 @@ watch(
         @click="item.click?.()"
       >
         <v-list-item-title>{{ item.label }}</v-list-item-title>
-        <!-- The entry's badge (same amber) with the count; the row's aria-label already says it.
-             Ink is --inverse-surface, as on .side-nav__count: Vuetify's automatic white on
-             amber is 2.7:1; this is 5.8:1 light / 5.6:1 dark. Both colours are CSS variables
-             on purpose: a theme name (`primary`) becomes the `bg-primary` class, whose
-             `!important` on-primary ink overrides `text-color`. -->
+        <!-- Unread mark in the inbox/timeline style: the inbox row's amber dot, then the count
+             as amber text. Decorative only; the row's aria-label already says it. -->
         <template v-if="item.count" #append>
-          <v-badge
-            color="var(--accent)"
-            text-color="var(--inverse-surface)"
-            inline
-            :content="item.count"
-            :max="99"
-            aria-hidden="true"
-          />
+          <span class="mine-unread" aria-hidden="true">
+            <span class="mine-unread__dot" />
+            <span class="mine-unread__count t-num">{{ item.count > 99 ? '99+' : item.count }}</span>
+          </span>
         </template>
       </v-list-item>
     </v-list>
@@ -218,5 +211,27 @@ watch(
 
 .help-entry__label {
   margin-left: 4px;
+}
+
+/* 「我的反馈」上的未读：和收件箱那一行同一个 6px 琥珀点（`InboxRow` 的 .inbox-row__dot），
+   件数用琥珀的字色 --accent-ink（菜单底上浅色 5.8:1、深色 10.1:1），不画实心胶囊。 */
+.mine-unread {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}
+
+.mine-unread__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.mine-unread__count {
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
 }
 </style>

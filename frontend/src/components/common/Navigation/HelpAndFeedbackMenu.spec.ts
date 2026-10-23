@@ -149,7 +149,8 @@ describe('帮助与反馈入口', () => {
     const plain = await screen.findByRole('link', { name: /我的反馈/ })
     expect(plain.getAttribute('aria-label') ?? '').not.toMatch(/\d/)
     expect(plain.textContent).not.toMatch(/\d/)
-    expect(plain.querySelector('.v-badge')).toBeNull()
+    // Nothing trails the label: no mark of any shape when there is nothing unread.
+    expect(plain.querySelector('.v-list-item__append')).toBeNull()
   })
 
   it('管理后台那一项只对管理员出现，而且由服务端说了算', async () => {
