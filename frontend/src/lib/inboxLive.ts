@@ -55,8 +55,19 @@ function pause(ms: number, stopped: AbortSignal): Promise<void> {
   })
 }
 
-/** 连上一次，直到断开；收到第一帧算连上过。`changed` 在最新一行变了时叫。 */
-function connectOnce(token: string, stopped: AbortSignal, changed: () => void): Promise<boolean> {
+/**
+ * 连上一次，直到断开；收到第一帧算连上过。`changed` 在最新一行变了时叫。
+ *
+ * `seen.latest` 是上一段连接手上那个号，跨重连带着走：第一帧只说「现在到几号
+ * 了」，第一次连上时它不算新的（这一页刚要读），但重连时它比上次说的号大，说明
+ * 断开期间来过了——那一次也得叫，不然列表和角标要等到下一次有人来找。
+ */
+function connectOnce(
+  token: string,
+  stopped: AbortSignal,
+  changed: () => void,
+  seen: { latest: number | null }
+): Promise<boolean> {
   return new Promise((resolve) => {
     let heard = false
     const socket = new WebSocket(inboxUrl())
@@ -71,9 +82,10 @@ function connectOnce(token: string, stopped: AbortSignal, changed: () => void): 
         return
       }
       if (frame.kind !== 'inbox') return
-      // 第一帧只说「现在到几号了」：这一页刚读过，或者断开期间漏掉的由页面回到前台
-      // 那一次补上（`NotificationFeed.vue`）。之后每一帧都是新的一行。
-      if (heard) changed()
+      const latest = typeof frame.latest === 'number' ? frame.latest : null
+      const missed = latest !== null && seen.latest !== null && latest > seen.latest
+      if (heard || missed) changed()
+      if (latest !== null) seen.latest = latest
       heard = true
     }
     socket.onclose = () => {
@@ -86,11 +98,13 @@ function connectOnce(token: string, stopped: AbortSignal, changed: () => void): 
 /** 这一页持着连接：断了重连，直到 `stopped`。 */
 async function holdConnection(issue: () => Promise<string>, stopped: AbortSignal, changed: () => void): Promise<void> {
   let attempt = 0
+  // 同一段登录里跨重连记着：断开期间收件箱往前走了，重连的第一帧要叫一次。
+  const seen: { latest: number | null } = { latest: null }
   while (!stopped.aborted) {
     let heard = false
     try {
       // 每次都要一张新的：上一张可能已经随登录一起作废（服务端用 4401 关掉的那种）。
-      heard = await connectOnce(await issue(), stopped, changed)
+      heard = await connectOnce(await issue(), stopped, changed, seen)
     } catch {
       // 凭证没要到（网络断了、登录过期）：和连不上一样，等一会儿再试。
     }

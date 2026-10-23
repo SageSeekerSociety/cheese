@@ -38,7 +38,7 @@ const props = defineProps<{
   /** 上一次没建成的原因；空串表示没有。 */
   failure: string
 }>()
-const emit = defineEmits<{ finish: [WelcomeFinish] }>()
+const emit = defineEmits<{ finish: [WelcomeFinish]; exit: [] }>()
 const again = props.again
 const me = props.me
 
@@ -244,8 +244,13 @@ function finish(skipAll = false) {
         <p v-if="failure" class="welcome__failure" role="alert">{{ failure }}</p>
 
         <div class="welcome__foot">
+          <!-- 第一次走的时候有「跳过引导」（建一个占位项目）；从帮助菜单再看一遍的那次
+               没有项目要建，给的是「退出引导」：看完就走，什么都不改。 -->
           <BaseButton v-if="step === 1 && !again" kind="ghost" :disabled="busy" @click="finish(true)">
             {{ t('welcome.skipAll') }}
+          </BaseButton>
+          <BaseButton v-else-if="again" kind="ghost" :disabled="busy" @click="emit('exit')">
+            {{ t('welcome.exit') }}
           </BaseButton>
           <span v-else />
           <span class="welcome__go">

@@ -298,6 +298,37 @@ async def test_open_screen_sends_session_create_and_registers_token():
     assert hub.screen(screen.sid) is screen
 
 
+async def test_open_screen_on_an_offline_device_is_not_reported_as_opened():
+    """No link means nothing was written: the caller must not be told it was.
+
+    A turn that trusted the return waited on a runner that was never started,
+    until its own timeout (the caller had checked `is_online` a moment before
+    the drop). The screen stays on the books so cleanup and a later reassert
+    can still find it.
+    """
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.detach_device("dev1", t)
+
+    with pytest.raises(DeviceOffline):
+        await hub.open_screen("dev1", ["claude"], **_screen_args())
+    assert t.sent == [{"t": "welcome", "v": 1}], "nothing was sent into the void"
+    assert len(hub._screens) == 1, "the registry keeps it for cleanup and reassert"
+
+
+async def test_reassert_screen_on_an_offline_device_says_so():
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
+    await hub.detach_device("dev1", t)
+
+    with pytest.raises(DeviceOffline):
+        await hub.reassert_screen(screen, command=["claude", "--new"])
+    assert len(t.sent) == 2, "only the welcome and the first create went out"
+
+
 async def test_exec_on_an_offline_device_fails_at_once_instead_of_timing_out():
     hub = DeviceHub()
     with pytest.raises(DeviceOffline):
@@ -423,17 +454,20 @@ async def test_inbound_frame_updates_last_seen():
 async def test_screens_for_topic_spans_devices_online_or_not():
     """The lifecycle reaper reverse-looks-up a topic's screen to free it. topic_id is
     globally unique, so the lookup returns every device's screen for it — including
-    one on a device that never attached a transport (offline)."""
+    one whose device has gone offline since it was opened."""
     hub = DeviceHub()
     await hub.attach_device("dev1", FakeDeviceTransport())
     topic = uuid.uuid4()
     a = await hub.open_screen(
         "dev1", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
-    # dev2 has no transport (never attached) — its screen is still registered.
+    # dev2 opened its screen and then went offline — it is still registered.
+    dev2 = FakeDeviceTransport()
+    await hub.attach_device("dev2", dev2)
     b = await hub.open_screen(
         "dev2", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
+    await hub.detach_device("dev2", dev2)
     other = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     found = {s.sid for s in hub.screens_for_topic(topic)}

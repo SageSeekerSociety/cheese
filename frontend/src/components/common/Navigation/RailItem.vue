@@ -334,12 +334,15 @@ button.app-rail-item {
   }
 }
 
-// 竖条放在头像左侧、贴着 rail 边缘。格子 48px 居中在 64px 的 rail 里，左边刚好 8px，
-// 所以竖条往外挪 8px 贴边。选中是长的一条，悬停没选中的格子是短的一截；不加外圈或底色。
-// 浅色主题的选中条用琥珀：深墨条贴在窗口最左边，会和电脑的黑色屏幕边框混成一条。
-// 深色主题的栏底本来就深，浅灰条已经分得开，那边照旧用 on-surface。
-// 悬停那条保持中性色，这样「我在这儿」和「鼠标在这儿」不只差一截长度。
-// 「＋新建项目」不画竖条。
+// 「你在这儿」是贴着 rail 左边缘的一条竖条（Discord 式）：靠边一侧平直、朝里一侧
+// 圆头，像从屏幕边上长出来的一截，不碰头像，也不和右上角的件数角标打架。
+// 选中是长的一条，悬停没选中的格子是短的一截。
+//
+// 格子 48px 居中在 64px 的 rail 里，左边离 rail 边缘 8px，所以竖条往外挪 8px 贴边。
+// 日常颜色用 --rail-mark：浅色是中灰而不是正文的深墨——窗口最大化时贴着的是显示器的
+// 黑边，深墨会和黑边连成一片；深色主题是浅灰。
+// 浅色下选中那条再换成琥珀（--accent），让「我在这儿」隔着一个大屏也认得出；悬停那条
+// 留在 --rail-mark 上，两个信号不只差长度，也不混色。「＋新建项目」不是目的地，不画竖条。
 .app-rail-item:not(.app-rail-item--add)::before {
   content: '';
   position: absolute;
@@ -347,8 +350,8 @@ button.app-rail-item {
   top: 50%;
   width: 4px;
   height: 0;
-  border-radius: var(--radius-pill);
-  background-color: rgb(var(--v-theme-on-surface));
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background-color: var(--rail-mark);
   transform: translateY(-50%);
   transition:
     height var(--dur-quick) var(--ease-standard),
