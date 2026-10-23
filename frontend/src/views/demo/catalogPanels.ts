@@ -478,7 +478,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读记录的时候',
-        note: '还在路上时画的是那条流的形状（一条条「圆点 + 动作 + 参数」的单行），不是一个居中的转圈。',
+        note: '还在路上时画的是现场一页的形状：一轮的组头与用时条，底下几种记录行，不是一个居中的转圈。',
         props: { site: siteBundle({ transcript: [], loading: true }) },
         expect: '加载中',
         expectSelector: '.skel--site',
