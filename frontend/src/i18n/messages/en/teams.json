@@ -159,19 +159,22 @@
     "ownSubtitle": "Projects under your name. Work with Cheese in each project's channels, and invite people to a project when you need to."
   },
   "docs": {
-    "new": "New document",
-    "empty": "No documents yet",
-    "mine": "My documents",
-    "ofTeam": "{name}'s documents",
+    "mine": "My library",
+    "ofTeam": "{name}'s library",
     "deleteTitle": "Delete \"{name}\"",
     "deleteBody": "This can't be undone; its history and comments go with it.",
-    "delete": "Delete",
-    "loadFailed": "Failed to load documents",
-    "newFailed": "Failed to create the document"
+    "delete": "Delete"
   },
   "library": {
-    "intro": "Files the team shares. Every member can upload, replace and delete them",
-    "introPersonal": "Your files: what you attach for Cheese and what Cheese hands back to you are kept here, across topics",
+    "intro": "Documents and files the team shares",
+    "introPersonal": "Your documents and files, including the files you attach for Cheese and the files Cheese sends you",
     "room": "{used} of {total} used"
+  },
+  "settings": {
+    "overlay": "Team settings",
+    "mine": "Settings",
+    "close": "Close settings",
+    "closeHint": "Close settings (Esc)",
+    "back": "Back to settings"
   }
 }

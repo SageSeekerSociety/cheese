@@ -1,6 +1,10 @@
 <template>
   <!-- A document opens on its own page: it draws its own header, outside the team page frame. -->
   <router-view v-if="route.name === 'TeamsDocument' && teamData" />
+  <!-- Settings cover the whole window, the same frame as personal, space and project settings. -->
+  <TeamSettings v-else-if="inSettings && teamData && isMember" :team="teamData">
+    <router-view />
+  </TeamSettings>
   <DetailView
     v-else
     :team-data="teamData"
@@ -12,8 +16,6 @@
     :page-title="pageTitle"
     :page-width="pageWidth"
     :team-intro="teamIntro"
-    :tabs="settingsTabs"
-    :active-tab="inSettings ? String(route.name) : null"
     :join="join"
     @retry-load="retryLoad"
   >
@@ -31,6 +33,7 @@ import { computed, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import DetailView from './DetailView.vue'
+import TeamSettings from './TeamSettings.vue'
 
 import { ApiError } from '@/api'
 import { TeamsApi } from '@/api/teams'
@@ -55,37 +58,18 @@ const forbidden = computed(() => isForbidden(loadError.value))
 
 const PAGE_TITLES: Record<string, string> = {
   TeamsDetailDefault: 'home.nav.teamProjects',
-  TeamsDetailDocs: 'home.nav.teamDocs',
-  TeamsDocument: 'home.nav.teamDocs',
+  TeamsDocument: 'home.nav.teamLibrary',
   TeamsDetailLibrary: 'home.nav.teamLibrary',
 }
 
-// 偶尔才去的几样收在一页「设置」里，一栏一样：侧栏上只留常去的项目、文档、资料库。
-// 自己名下谁也加不进来，没有「成员」那一栏。
-const SETTINGS = [
-  { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers' },
-  { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute' },
-  { name: 'TeamsDetailModels', label: 'home.nav.teamModels' },
-  { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits' },
-] as const
-const inSettings = computed(() => SETTINGS.some((tab) => tab.name === route.name))
-const settingsTabs = computed(() => {
-  const team = teamData.value
-  if (!team || !inSettings.value) return []
-  return SETTINGS.filter((tab) => !(team.personal && tab.name === 'TeamsDetailMembers')).map((tab) => ({
-    key: tab.name,
-    label: t(tab.label),
-    to: { name: tab.name, params: { handle: team.handle } },
-  }))
-})
+// 成员、设备、模型和额度是盖在窗口上的「设置」那一层（`TeamSettings.vue`），不在这个外框里。
+const inSettings = computed(() => route.matched.some((record) => record.meta.settingsOverlay))
 const pageTitle = computed(() =>
   inSettings.value ? t('home.nav.teamSettings') : t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects')
 )
-
-// 成员、设备、模型和额度是读的一栏，页头跟着正文封顶居中；其余几页铺满内容区，自己管
-// 内边距。
-const READ_PAGES = new Set(['TeamsDetailMembers', 'TeamsDetailCompute', 'TeamsDetailModels', 'TeamsDetailCredits'])
-const pageWidth = computed(() => (READ_PAGES.has(String(route.name)) ? 'read' : 'full'))
+// 没读到团队、或者还不是成员时，设置的几栏照旧落在这个外框里：由外框说没有这个团队、
+// 不给看，或者给出「加入」。
+const pageWidth = computed(() => (inSettings.value ? 'read' : 'full'))
 
 const teamIntro = computed(() => teamData.value?.intro ?? '')
 

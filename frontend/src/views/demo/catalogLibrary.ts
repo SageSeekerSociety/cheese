@@ -239,19 +239,40 @@ export const LIBRARY_ENTRIES: CatalogEntry[] = [
   {
     id: 'team-library-view',
     title: 'teams/detail/LibraryView',
-    about: '团队的资料库，一个人名下的就是他自己的：只有文件，带用量；取数和写操作都在 `Library.vue`。',
+    about:
+      '团队的资料库，一个人名下的就是自己的：团队自己的文档和文件在一张表里，带用量；取数和写操作都在 `Library.vue`。',
     file: 'src/views/teams/detail/LibraryView.vue',
     component: TeamLibraryView,
     needs: UI,
     states: [
       {
         name: '自己的资料库',
-        note: '开头那句说的是附给芝士的和芝士交回来的文件；下面一条是用量。',
+        note: '开头那句说这里放什么；下面一条是用量。文档和文件按改动时间混排。',
         props: {
           team: 1,
           personal: true,
           room: { used: 186 * 1024 * 1024, total: 1024 * 1024 * 1024 },
-          rows: [{ key: 'file:成绩分布.png', rank: '1', file: { ...FILE, path: '成绩分布.png', room: null } }],
+          rows: [
+            {
+              key: 'doc:d2',
+              rank: '1',
+              doc: listedDocument({
+                id: 'd2',
+                team_id: 1,
+                project_id: null,
+                kind: 'doc',
+                title: '读书笔记',
+                doc_version: 2,
+                author: 'alice',
+                created_by: 'alice',
+                created_at: '2026-10-20T09:00:00Z',
+                updated_at: '2026-10-22T10:00:00Z',
+              }),
+            },
+            { key: 'file:成绩分布.png', rank: '2', file: { ...FILE, path: '成绩分布.png', room: null } },
+          ],
+          members: ROSTER,
+          confirmingDoc: null,
           loading: false,
           loadFailed: false,
           loadReason: '',

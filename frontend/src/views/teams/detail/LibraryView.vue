@@ -1,8 +1,10 @@
 <script setup lang="ts">
-// 团队的资料库，一个人自己的就是他名下那个团队的：只有文件（团队的文档另有一页），
+// 团队的资料库，一个人自己的就是他名下那个团队的：团队自己的文档和文件在一张表里，
 // 没有「在哪个频道给的」。画面和项目资料库是同一套行、同一栏详情、同一个版本框；取数、
-// 上传、替换、挪动、删除都在页面（`Library.vue`），这里只摆、只报动作。
+// 新建文档、上传、替换、挪动、删除都在页面（`Library.vue`），这里只摆、只报动作。
+import type { ListedDocument } from '@/api/projectDocuments'
 import type { LibraryRow } from '@/composables/useLibraryPages'
+import type { ProjectMemberRow } from '@/cx_types'
 import type { LibraryFile, LibraryFolder, LibraryVersion } from '@/lib/libraryApi'
 import type { Kind } from '@/lib/libraryKinds'
 
@@ -28,6 +30,10 @@ const props = defineProps<{
   /** 占了多少、一共多少（字节）；还没取到是 null。 */
   room: { used: number; total: number } | null
   rows: LibraryRow[]
+  /** 文档行上写谁改的，用成员的名字。 */
+  members: ProjectMemberRow[]
+  /** 正在问要不要删的那份文档。 */
+  confirmingDoc: ListedDocument | null
   loading: boolean
   loadFailed: boolean
   loadReason: string
@@ -65,6 +71,10 @@ const emit = defineEmits<{
   go: [dir: string]
   open: [file: LibraryFile]
   close: []
+  openDoc: [id: string]
+  removeDoc: [doc: ListedDocument]
+  confirmRemoveDoc: []
+  cancelRemoveDoc: []
   upload: [files: File[]]
   download: [file: LibraryFile]
   replacement: [target: LibraryFile, file: File]
@@ -208,10 +218,12 @@ defineExpose({
         :selected-path="selectedPath"
         :busy="busy"
         :browsing="browsing"
-        :members="[]"
-        agent-name=""
+        :members="members"
+        :agent-name="t('work.room.defaultAgentName')"
         @open-file="(file: LibraryFile) => emit('open', file)"
         @open-folder="(d: string) => emit('go', d)"
+        @open-doc="(id: string) => emit('openDoc', id)"
+        @delete-doc="(doc: ListedDocument) => emit('removeDoc', doc)"
         @download="(file: LibraryFile) => emit('download', file)"
         @replace="pickReplacement"
         @rename="(path: string) => emit('rename', path)"
@@ -294,6 +306,17 @@ defineExpose({
           ? t('work.library.deleteFolderBody', { n: confirming.count })
           : t('work.library.deleteBody')
       }}
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :model-value="!!confirmingDoc"
+      :title="t('work.library.deleteTitle', { name: confirmingDoc?.title || t('work.room.doc.untitled') })"
+      :confirm-label="t('work.library.delete')"
+      danger
+      @update:model-value="emit('cancelRemoveDoc')"
+      @confirm="emit('confirmRemoveDoc')"
+    >
+      {{ t('work.library.deleteDocBody') }}
     </ConfirmDialog>
 
     <LibraryNameDialog

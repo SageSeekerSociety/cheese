@@ -14,6 +14,7 @@ import { computed, nextTick, type Ref, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { listProjectDocuments } from '../api/projectDocuments'
+import { listTeamDocuments } from '../api/teamDocuments'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { type MergeSource, starving, takeReady } from '../lib/rankMerge'
 
@@ -48,7 +49,8 @@ function toRow(item: Item): LibraryRow {
 }
 
 /** `scroller` 是这张表自己的滚动容器：滚到离底不远、或者一页没把它填满，就取下一页。
- *  团队的资料库（`shelf` 不是项目编号）只有文件：团队的文档另有一页。 */
+ *  团队的资料库（`shelf` 不是项目编号）里是团队自己的文档：它们一次全给，没有按正文
+ *  找的接口，搜的时候按标题筛。 */
 export function useLibraryPages(
   shelf: () => LibraryShelf,
   view: () => LibraryView,
@@ -77,8 +79,25 @@ export function useLibraryPages(
         return { rows: page.data, next: page.next }
       },
     }
+    if (typeof pid !== 'string') {
+      const team = pid.team
+      const withTeamDocs = (kind === 'doc' || kind === 'all') && (flat || !dir)
+      if (!withTeamDocs) return [library]
+      const needle = query.toLocaleLowerCase()
+      const teamDocs: Source = {
+        buffer: [],
+        done: false,
+        next: null,
+        fetch: async () => {
+          const page = await listTeamDocuments(team)
+          const rows = page.data.filter((doc) => !needle || (doc.title ?? '').toLocaleLowerCase().includes(needle))
+          return { rows: rows.map((doc) => ({ ...doc, type: 'doc' as const })), next: null }
+        },
+      }
+      return [library, teamDocs]
+    }
     const withDocs = !query && (kind === 'doc' || (kind === 'all' && !dir))
-    if (!withDocs || typeof pid !== 'string') return [library]
+    if (!withDocs) return [library]
     const documents: Source = {
       buffer: [],
       done: false,

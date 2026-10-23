@@ -1,6 +1,6 @@
 <template>
-  <!-- The team page frame (AppPage) draws the title and this page's header actions
-       (refresh, add my connection: registered as commands in Models.vue), so the
+  <!-- The team settings layer (TeamSettingsView) draws the title and this page's header
+       actions (refresh, add my connection: registered as commands in Models.vue), so the
        page starts with its lede. -->
   <div class="mc-page">
     <div class="mc-lede">

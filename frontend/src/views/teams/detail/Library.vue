@@ -1,8 +1,11 @@
 <script setup lang="ts">
-// 团队的「资料库」：团队成员共用的文件；一个人名下的就是他自己的资料库，附给芝士的
-// 文件和芝士交给他的文件都存在这里。这一页取数、上传、替换、挪动、删除，把看哪一份、
-// 在哪一层记在地址上（`?file=`、`?dir=`），画面在同目录的 `LibraryView.vue`。
+// 团队的「资料库」：团队成员共用的文档和文件；一个人名下的就是他自己的资料库，附给芝士
+// 的文件和芝士交给他的文件都存在这里。和项目的资料库一样，文档和文件在同一张表里。
+// 这一页取数、新建文档、上传、替换、挪动、删除，把看哪一份、在哪一层记在地址上
+// （`?file=`、`?dir=`），文档整页打开（`TeamsDocument`）；画面在同目录的 `LibraryView.vue`。
 import type { LocationQueryRaw } from 'vue-router'
+import type { ListedDocument } from '@/api/projectDocuments'
+import type { ProjectMemberRow } from '@/cx_types'
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 import type { Kind } from '@/lib/libraryKinds'
 
@@ -18,6 +21,9 @@ import { useLibraryVersions } from '@/composables/useLibraryVersions'
 
 import LibraryView from './LibraryView.vue'
 
+import { deleteDocument } from '@/api/projectDocuments'
+import { createTeamDocument } from '@/api/teamDocuments'
+import { TeamsApi } from '@/api/teams'
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
@@ -82,6 +88,59 @@ function reset() {
   void measure()
 }
 
+// 文档行上写谁改的：团队成员的名字。
+const members = ref<ProjectMemberRow[]>([])
+watch(
+  teamId,
+  async (id) => {
+    if (!id) return
+    try {
+      const roster = await TeamsApi.getMembers(id)
+      members.value = roster.members.map((m) => ({
+        user_handle: m.user.username,
+        name: m.user.nickname,
+        name_source: 'human',
+      }))
+    } catch {
+      // 名字读不到，行上照旧写账号名。
+      members.value = []
+    }
+  },
+  { immediate: true }
+)
+
+function openDoc(id: string) {
+  void router.push({ name: 'TeamsDocument', params: { handle: teamData.value?.handle ?? '', docId: id } })
+}
+
+const making = ref(false)
+async function makeDoc() {
+  if (!teamId.value) return
+  making.value = true
+  actionError.value = ''
+  try {
+    openDoc((await createTeamDocument(teamId.value)).id)
+  } catch (cause) {
+    actionError.value = cause instanceof Error ? cause.message : t('work.library.newDocFailed')
+  } finally {
+    making.value = false
+  }
+}
+
+const confirmingDoc = ref<ListedDocument | null>(null)
+async function removeDoc() {
+  const doc = confirmingDoc.value
+  confirmingDoc.value = null
+  if (!doc) return
+  actionError.value = ''
+  try {
+    await deleteDocument(doc.id)
+    pages.drop((row) => row.doc?.id === doc.id)
+  } catch (cause) {
+    actionError.value = cause instanceof Error ? cause.message : t('work.library.deleteFailed')
+  }
+}
+
 const transfers = useLibraryTransfers({
   shelf: () => shelf.value,
   dir: () => dir.value,
@@ -133,8 +192,17 @@ useCommands(() => [
     icon: 'mdi-upload',
     palette: false as const,
     loading: transfers.uploading.value,
-    header: { primary: true, accent: true },
+    header: {},
     run: () => view.value?.pickFiles(),
+  },
+  {
+    id: 'teamLibrary.newDoc',
+    title: t('work.library.newDoc'),
+    icon: 'mdi-plus',
+    palette: false as const,
+    loading: making.value,
+    header: { primary: true, accent: true },
+    run: () => void makeDoc(),
   },
 ])
 </script>
@@ -148,6 +216,8 @@ useCommands(() => [
     :personal="!!teamData?.personal"
     :room="room"
     :rows="pages.rows.value"
+    :members="members"
+    :confirming-doc="confirmingDoc"
     :loading="pages.loading.value"
     :load-failed="pages.loadFailed.value"
     :load-reason="pages.loadReason.value"
@@ -176,6 +246,10 @@ useCommands(() => [
     @go="goTo"
     @open="open"
     @close="close"
+    @open-doc="openDoc"
+    @remove-doc="(doc: ListedDocument) => (confirmingDoc = doc)"
+    @confirm-remove-doc="removeDoc"
+    @cancel-remove-doc="confirmingDoc = null"
     @upload="(files: File[]) => transfers.upload(files)"
     @download="transfers.download"
     @replacement="(target: LibraryFile, file: File) => (transfers.replacing.value = { target, file })"

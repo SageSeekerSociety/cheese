@@ -159,19 +159,22 @@
     "ownSubtitle": "你名下的项目。每个项目里和芝士一起完成任务，可以在项目里另外邀请人。"
   },
   "docs": {
-    "new": "新建文档",
-    "empty": "暂无文档",
-    "mine": "我的文档",
-    "ofTeam": "{name}的文档",
+    "mine": "我的资料库",
+    "ofTeam": "{name}的资料库",
     "deleteTitle": "删除「{name}」",
     "deleteBody": "删除后无法恢复，修改记录和评论一起删除。",
-    "delete": "删除",
-    "loadFailed": "文档加载失败",
-    "newFailed": "新建文档失败"
+    "delete": "删除"
   },
   "library": {
-    "intro": "团队成员共用的文件，成员都能上传、替换和删除",
-    "introPersonal": "你的文件：附给芝士的文件和芝士交给你的文件都存在这里，换个话题也能接着用",
+    "intro": "团队成员共用的文档和文件",
+    "introPersonal": "你的文档和文件。附给芝士的文件和芝士发送给你的文件也保存在这里",
     "room": "已用 {used}，共 {total}"
+  },
+  "settings": {
+    "overlay": "团队设置",
+    "mine": "设置",
+    "close": "关闭设置",
+    "closeHint": "关闭设置（Esc）",
+    "back": "返回设置"
   }
 }

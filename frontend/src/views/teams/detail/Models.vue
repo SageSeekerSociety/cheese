@@ -34,7 +34,7 @@ const {
   refresh,
 } = useTeamModels()
 
-// The page's own actions live in the team page's header, like every AppPage.
+// The page's own actions sit beside its title in the team settings layer.
 const addingPersonal = ref(false)
 useCommands(() => [
   {

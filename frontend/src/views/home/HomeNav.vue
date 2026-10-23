@@ -130,18 +130,13 @@ watch(
 )
 const isOpen = (team: Team) => open.value.some((h) => h.toLowerCase() === team.handle.toLowerCase())
 
-// 侧栏上只留常去的三样；成员、设备、模型、额度这些偶尔才去的收在 ⋯ 里的「设置」
-// 一页，一栏一样（`teams/Detail.vue`）。
+// 侧栏上只留常去的两样：项目，和资料库（文档和文件都在里面，同项目的资料库）。成员、
+// 设备、模型、额度这些偶尔才去的收在 ⋯ 里的「设置」，盖在窗口上的一层（`teams/TeamSettings.vue`）。
 const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
-  { name: 'TeamsDetailDocs', label: 'home.nav.teamDocs', exact: false },
   { name: 'TeamsDetailLibrary', label: 'home.nav.teamLibrary', exact: false },
 ] as const
-/** 「设置」打开的第一栏：自己名下没有成员那一栏，从设备开始。 */
-const settingsOf = (team: Team) => ({
-  name: team.personal ? 'TeamsDetailCompute' : 'TeamsDetailMembers',
-  params: { handle: team.handle },
-})
+const settingsOf = (team: Team) => ({ name: 'TeamsDetailSettings', params: { handle: team.handle } })
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 

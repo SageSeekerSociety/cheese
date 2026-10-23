@@ -80,7 +80,6 @@
     "disbandTeamDone": "已解散「{name}」",
     "disbandTeamFailed": "解散团队失败",
     "disbandTeamTypeName": "输入团队名「{name}」确认",
-    "teamDocs": "文档",
     "teamLibrary": "资料库",
     "teamSettings": "设置",
     "teamModels": "模型",
