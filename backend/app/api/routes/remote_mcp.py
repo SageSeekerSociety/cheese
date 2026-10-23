@@ -383,3 +383,77 @@ async def room_servers(
             )
         }
     )
+
+
+#: The MCP resources methods a person's request may reach. Reads only: this path
+#: exists to fetch a View's HTML, not to drive the server on anybody's behalf.
+_RESOURCE_METHODS = frozenset({"resources/list", "resources/read"})
+
+
+class ResourceIn(BaseModel):
+    method: str = Field(min_length=1, max_length=200)
+    params: dict[str, Any] = {}
+
+
+class McpResourceOut(BaseModel):
+    """The MCP server's own JSON-RPC result, passed through as it answered.
+
+    Its shape belongs to the third party's server, so it is declared as what it
+    is — one opaque object, not a schema this platform invented for it.
+    """
+
+    result: dict[str, Any]
+
+
+@router.post(
+    "/topics/{topic_id}/mcp/{name}/resources",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(McpResourceOut),
+)
+async def read_resource(
+    topic_id: uuid.UUID,
+    name: str,
+    body: ResourceIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A room MEMBER's request to one of the project's remote servers for a View.
+
+    The MCP Apps read path (``ui://`` resources): a previewed third party's HTML
+    is fetched under the person who is watching it. It deliberately does NOT use
+    the room's agent credential the session proxy above (``proxy``) authenticates
+    with — that credential is a session's, and reusing it here would let a
+    previewed document act with an agent's standing. The server is one the
+    project declares; the project's stored connection authorizes it here.
+    """
+    if body.method not in _RESOURCE_METHODS:
+        raise UnprocessableEntityError(say("mcpResourcesMethodUnsupported"))
+    place = await place_or_404(db, topic_id)
+    actor = await resolver.resolve(
+        project_id=place.project_id, topic_id=place.conversation_id
+    )
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("signInFirst"))
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+    )
+    try:
+        # `agent_handle=None` reads the project's own declared servers (no seat's
+        # type), which is exactly what a person watching a View may reach.
+        result = await service.call(
+            db,
+            project_id=place.project_id,
+            topic_id=place.conversation_id,
+            agent_handle=None,
+            name=name,
+            method=body.method,
+            params=body.params,
+            type_of_seat=type_of_seat,
+        )
+    except BaseError as exc:
+        raise UnprocessableEntityError(str(exc)) from None
+    except (upstream.UpstreamError, httpx.HTTPError) as exc:
+        raise UnprocessableEntityError(
+            say("mcpServerUnreachable", error=f"{name}: {exc}")
+        ) from None
+    return ok({"result": result})

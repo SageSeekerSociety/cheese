@@ -62,7 +62,7 @@ def test_migration_closes_every_stranded_card_and_leaves_the_rest_alone(client):
 
             def _card(topic: Topic, key: str, **kw) -> None:
                 kw.setdefault("note", "")
-                card = AcceptCard(topic_id=topic.id, reviewer_handle="alice", **kw)
+                card = AcceptCard(topic_id=topic.id, **kw)
                 s.add(card)
                 seeded[key] = card
 

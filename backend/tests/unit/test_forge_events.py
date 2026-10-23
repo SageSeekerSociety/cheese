@@ -339,7 +339,7 @@ async def test_event_and_poll_cannot_advance_the_same_card_twice(
         room = Topic(project_id=project.id, title="Review room", created_by="requester")
         session.add(room)
         await session.flush()
-        card = AcceptCard(topic_id=room.id, reviewer_handle="reviewer", pr_number=1)
+        card = AcceptCard(topic_id=room.id, pr_number=1)
         session.add(card)
         await session.commit()
     entered = asyncio.Event()

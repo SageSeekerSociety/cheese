@@ -4,6 +4,7 @@
   "addTitle": "Add “{title}”",
   "back": "Back",
   "file": "SKILL.md or a skill folder as .zip",
+  "notes": "This reading may be incomplete: {notes}",
   "read": "Read",
   "readFailed": "Couldn't read the skill",
   "scripts": "Includes {n} script(s) that will run in the environment. Look them over before adding",

@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
 import { frameKeys, runFrameKey } from '../commands/shortcuts'
 import { t } from '../i18n'
+import { createMcpAppBridge, MCP_APP_MIME, type McpAppBridge, type McpAppMessage } from '../lib/mcpAppBridge'
 import { postPreviewSession } from '../lib/previewSession'
 
 export interface PreviewFrame {
@@ -81,6 +82,11 @@ export interface PreviewFrameOptions {
    * 报上来，画不画标注条、发不发引用由画的那一半决定。
    */
   onPick?: (pick: FramePick) => void
+  /**
+   * 第三方 View 里的表单点提交（`ui/message`）时叫一次。这一层只把解出来的文本报上来，
+   * 拼成哪一条消息、发去哪儿是取数那一层和宿主的事。
+   */
+  onAppMessage?: (message: McpAppMessage) => void
 }
 
 /** 帧的桥报上来的一处圈选：位置（选择器 / 标签）和当时量出来的几何。
@@ -146,6 +152,9 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
   let visible = false
   let runtimeWindow: Window | null = null
   let runtimeSession = ''
+  // The bridge for a third-party View, when the displayed frame is one. Null for
+  // the room's own documents, which use the injected `cheese-preview-runtime`.
+  let mcpApp: McpAppBridge | null = null
 
   function sendRuntimeHello(frame: PreviewFrame) {
     try {
@@ -170,7 +179,14 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
 
   function runtimeMessage(event: MessageEvent) {
     const frame = displayed.value
-    if (!frame || !runtimeWindow || event.source !== runtimeWindow || event.origin !== new URL(frame.url).origin) return
+    if (!frame || !runtimeWindow || event.source !== runtimeWindow) return
+    // A third-party View is opaque-origin and speaks its own JSON-RPC: give it to
+    // its bridge before the cheese-runtime origin check, which it can never pass.
+    if (mcpApp) {
+      mcpApp.handle(event)
+      return
+    }
+    if (event.origin !== new URL(frame.url).origin) return
     const data = event.data
     if (!data || data.channel !== 'cheese-preview-runtime' || data.version !== 1) return
     if (data.type === 'hello-request') {
@@ -347,7 +363,13 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
     runtimeSession = crypto.randomUUID()
-    sendRuntimeHello(frame)
+    if (frame.mime === MCP_APP_MIME && runtimeWindow) {
+      // A third party's View: independent JSON-RPC bridge, no injected runtime.
+      mcpApp = createMcpAppBridge(runtimeWindow, { name: 'cheese', version: '1' }, { onMessage: options.onAppMessage })
+    } else {
+      mcpApp = null
+      sendRuntimeHello(frame)
+    }
   }
 
   function failed(id: number, event: Event) {
@@ -367,6 +389,7 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     serial += 1
     runtimeWindow = null
     runtimeSession = ''
+    mcpApp = null
     stopTimer()
     displayed.value = null
     incoming.value = null

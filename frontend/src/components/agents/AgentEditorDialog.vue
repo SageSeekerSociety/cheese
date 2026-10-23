@@ -280,20 +280,6 @@ async function submit() {
           <p class="t-meta c-muted mt-1 mb-0">{{ t('work.projectSettings.agents.editor.compactHint') }}</p>
         </div>
 
-        <v-combobox
-          v-model="draft.skills"
-          multiple
-          chips
-          closable-chips
-          :items="[]"
-          :label="t('work.projectSettings.agents.editor.skills')"
-          :hint="t('work.projectSettings.agents.editor.skillsHint')"
-          persistent-hint
-          variant="outlined"
-          class="mt-4"
-          autocomplete="off"
-        />
-
         <div v-if="!isNew" class="t-meta c-muted mt-4">
           {{ t('work.projectSettings.agents.editor.handleReadonly', { handle: agent?.handle }) }}
         </div>

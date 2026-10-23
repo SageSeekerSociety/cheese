@@ -6,6 +6,7 @@ from enum import Enum, StrEnum
 
 from redis.asyncio import Redis
 
+from app.core.config import settings
 from app.core.email import get_email_sender
 from app.core.errors import BadRequestError, SystemBusyError
 from app.domain.user.mail_quota import (
@@ -175,9 +176,20 @@ class EmailVerificationService:
         if not sending:
             # A deployment without mail (local development) keeps the code in
             # Redis and carries on, so the flows stay usable there.
-            logger.warning(
-                "Email not configured; %s code for %s was not sent", mail.quota, email
-            )
+            if settings.environment in ("development", "test"):
+                # ponytail: 本地无 SMTP，把验证码打进后端日志，免去翻 Redis。
+                logger.warning(
+                    "Email not configured; %s code for %s: %s",
+                    mail.quota,
+                    email,
+                    code,
+                )
+            else:
+                logger.warning(
+                    "Email not configured; %s code for %s was not sent",
+                    mail.quota,
+                    email,
+                )
             return Issued.SENT
 
         sent = await self._sender.send(
