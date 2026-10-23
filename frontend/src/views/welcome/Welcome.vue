@@ -50,6 +50,13 @@ async function finish({ answers, skipAll, draft, files }: WelcomeFinish) {
   }
 }
 
+// 从帮助菜单再看一遍的那次，随时能走：回到来时的页面（多半是项目里）。没有上一页
+// （直接打开这个地址、或者刚从别的站跳过来）就回首页，由它带回上次待的地方。
+function leave() {
+  if (router.options.history.state?.back) router.back()
+  else void router.replace({ name: 'HomeDefault' })
+}
+
 // 账号上记下这次的回答：登录态里那份用户记录也要跟着变，否则同一个标签页回到首页
 // 时还以为没走过引导。
 function rememberOnAccount(answers: WelcomeFinish['answers'], skipAll: boolean) {
@@ -65,5 +72,5 @@ function rememberOnAccount(answers: WelcomeFinish['answers'], skipAll: boolean) 
 </script>
 
 <template>
-  <WelcomeView :again="again" :me="me" :busy="busy" :failure="failure" @finish="finish" />
+  <WelcomeView :again="again" :me="me" :busy="busy" :failure="failure" @finish="finish" @exit="leave" />
 </template>

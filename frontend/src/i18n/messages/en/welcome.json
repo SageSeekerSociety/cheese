@@ -173,6 +173,7 @@
   "next": "Continue",
   "back": "Back",
   "skipAll": "Skip the guide",
+  "exit": "Leave the guide",
   "finish": "Create project",
   "finishing": "Creating…",
   "failed": "The project was not created: {reason}",
@@ -189,7 +190,8 @@
   "guide": {
     "send": {
       "title": "Hand off to {agent}",
-      "text": "Your first request is already in the box, and Hand off to {agent} is on. Fill in the rest and send it from here."
+      "text": "Your first request is already in the box, and Hand off to {agent} is on. Fill in the rest and send it from here.",
+      "textWaiting": "Write your first request in the box below, then press the send button at its bottom right to hand it to {agent}."
     },
     "reply": {
       "title": "{agent}'s reply",
@@ -219,7 +221,8 @@
     },
     "overview": {
       "title": "Overview",
-      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress."
+      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress.",
+      "textWaiting": "Accepted results are on the Overview in the sidebar: What was made gains a new version of the project."
     }
   }
 }
