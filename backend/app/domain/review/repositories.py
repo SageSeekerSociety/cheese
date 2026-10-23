@@ -75,17 +75,25 @@ class AcceptCardRepository:
         return card
 
     async def reviewer_handles(self, card_id: uuid.UUID) -> list[str]:
-        """谁被派来评审这张卡 —— 唯一说法是 `accept_card_reviewer` 这一张表。
+        """谁被派来评审这张卡。
 
-        一卡多人：表里一卡多行，按派单先后回来。曾经的「表里没有行就回落读
-        `accept_cards.reviewer_handle` 那一列」过渡兼容已随列退役删掉。
+        一卡多人的说法在 `accept_card_reviewer` 这一张表：一卡多行，按派单先后
+        回来。表里一行都没有时回落读 `accept_cards.reviewer_handle` 那一列 ——
+        那是这一刀之前建的卡，也从迁移 `a2f7c1e9d4b3` 回填了；直接拿 ORM 建卡
+        的地方（测试的夹具）只写这一列。回落只在这一种情况下发生：表里有行，
+        以表为准，删光就是删光。
         """
         stmt = (
             select(AcceptCardReviewer.handle)
             .where(AcceptCardReviewer.card_id == card_id)
             .order_by(AcceptCardReviewer.created_at)
         )
-        return list((await self._session.scalars(stmt)).all())
+        handles = list((await self._session.scalars(stmt)).all())
+        if handles:
+            return handles
+        card = await self._session.get(AcceptCard, card_id)
+        single = getattr(card, "reviewer_handle", None) if card is not None else None
+        return [single] if single else []
 
     async def reviewer_handles_for_cards(
         self, card_ids: list[uuid.UUID]
@@ -104,6 +112,16 @@ class AcceptCardRepository:
         found: dict[uuid.UUID, list[str]] = {}
         for card_id, handle in (await self._session.execute(stmt)).all():
             found.setdefault(card_id, []).append(handle)
+        # 表里没有行的那些卡（这一刀之前建的、或夹具直接写列建的）读影子列，
+        # 与 `reviewer_handles` 同一条回落。
+        missing = [cid for cid in card_ids if cid not in found]
+        if missing:
+            cards = await self._session.scalars(
+                select(AcceptCard).where(AcceptCard.id.in_(missing))
+            )
+            for card in cards:
+                if card.reviewer_handle:
+                    found[card.id] = [card.reviewer_handle]
         return found
 
     async def set_reviewers(self, card_id: uuid.UUID, handles: Iterable[str]) -> None:

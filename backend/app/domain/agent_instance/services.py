@@ -512,6 +512,10 @@ class AgentInstanceService:
             device = await self._session.get(DeviceRow, config.execution_device_id)
             if device is None or device.team_id != project.team_id:
                 raise ValidationError(say("deviceNotInProject"))
+        if config.model is None:
+            # 这次保存没碰模型（只改了技能之类）：没有要校验的选择，自己的队友
+            # 也一样 —— 「保留原来的模型」不该被当成「选了一个不被允许的模型」。
+            return
         own = await self._session.get(OwnAgent, instance_id) if instance_id else None
         if own is not None:
             if own.account_connection_id:
@@ -554,8 +558,6 @@ class AgentInstanceService:
             )
             if config.model not in models:
                 raise ValidationError(say("teamConnectionModelRefused"))
-            return
-        if config.model is None:
             return
         choices = self._models(project.settings) if self._models else []
         choice = next((c for c in choices if c["id"] == config.model), None)
