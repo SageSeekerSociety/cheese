@@ -6,12 +6,16 @@ its work, and the steps for triaging them. The selection is the platform's, not
 the agent's, so two days' runs do not each decide differently what "untriaged"
 means, and a day with nothing waiting runs no turn at all.
 
-**Untriaged** is 已收录 with no assignee: assigning and claiming both move a
-report to 处理中 (`FeedbackService.advance`), so a report still at `received`
-is one nobody has touched. Only reports the teammate could read are handed out
-— public and not flagged as a security matter, the arm `may_see` opens to a
-non-admin. The private and security queues stay with the people on the triage
-roster.
+**Untriaged** is 已收录 with no assignee **and a timeline that has never held
+another status**: assigning and claiming both move a report to 处理中
+(`FeedbackService.advance`), and a report a claim was let go of goes back to
+已收录 (`FeedbackService.release`) — so the status alone no longer says nobody
+has touched it. Without the history
+check the nightly run would hand out every released report again, and since the
+batch is the oldest N, those would crowd out reports nobody has seen at all.
+Only reports the teammate could read are handed out — public and not flagged as
+a security matter, the arm `may_see` opens to a non-admin. The private and
+security queues stay with the people on the triage roster.
 
 The agent does not change a status here. It claims what it works on, asks the
 routine's owner whether to make a task of what it can fix — a task made on the
@@ -24,11 +28,16 @@ task.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.announce import KIND_LABELS
-from app.domain.feedback.models import Feedback, FeedbackStatus, FeedbackVisibility
+from app.domain.feedback.models import (
+    Feedback,
+    FeedbackStatus,
+    FeedbackTimeline,
+    FeedbackVisibility,
+)
 
 #: The most reports one run may be handed: a run is one turn of one teammate.
 MAX_BATCH = 10
@@ -54,7 +63,16 @@ STEPS = "\n".join(
 
 
 async def untriaged(session: AsyncSession, limit: int) -> list[Feedback]:
-    """The oldest public reports nobody has picked up, at most `limit`."""
+    """The oldest public reports nobody has picked up, at most `limit`.
+
+    A report is untouched only if it has never left 已收录: a released report
+    is at 已收录 with no assignee, and the timeline is where 「was looked at」
+    survives that.
+    """
+    looked_at = exists().where(
+        FeedbackTimeline.feedback_id == Feedback.id,
+        FeedbackTimeline.status != FeedbackStatus.received,
+    )
     return list(
         await session.scalars(
             select(Feedback)
@@ -64,6 +82,7 @@ async def untriaged(session: AsyncSession, limit: int) -> list[Feedback]:
                 Feedback.assignee_handle.is_(None),
                 Feedback.visibility == FeedbackVisibility.public,
                 Feedback.security.is_(False),
+                ~looked_at,
             )
             .order_by(Feedback.created_at, Feedback.display_no)
             .limit(limit)

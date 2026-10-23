@@ -81,6 +81,14 @@ def _report(client, title: str, **body) -> dict:
     return r.json()["data"]
 
 
+def _claim(client, who: str, ref: str):
+    return client.post(f"/feedback/{ref}/claim", headers=session_auth_headers(who))
+
+
+def _release(client, who: str, ref: str):
+    return client.delete(f"/feedback/{ref}/claim", headers=session_auth_headers(who))
+
+
 def _fire(client, routine_id: str) -> Runner:
     async def due():
         async with client.test_request_factory() as session:
@@ -141,6 +149,21 @@ def test_a_report_someone_holds_is_not_handed_out(client, platform_room):
     content = runner.submitted[0][1]["content"]
     assert free["display_id"] in content
     assert held["display_id"] not in content
+
+
+def test_a_report_a_triage_run_let_go_is_not_handed_out_again(client, platform_room):
+    """查过又放下的不再交回来，更不能占掉真正没人看过的那条的名额。"""
+    looked_at = _report(client, "查过又放下了")
+    free = _report(client, "真正没人碰过")
+    assert _claim(client, DEV, looked_at["display_id"]).status_code == 200
+    assert _release(client, DEV, looked_at["display_id"]).status_code == 200
+    rule = _triage_rule(client, platform_room, batch=1).json()["data"]
+
+    runner = _fire(client, rule["id"])
+
+    content = runner.submitted[0][1]["content"]
+    assert looked_at["display_id"] not in content
+    assert free["display_id"] in content
 
 
 def test_nothing_waiting_wakes_nobody_and_tells_nobody(client, platform_room):
