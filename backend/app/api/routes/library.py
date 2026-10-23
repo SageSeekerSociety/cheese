@@ -24,6 +24,7 @@ from app.domain.identity.actor import Actor
 from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
@@ -106,9 +107,9 @@ async def library_file_raw(
     await resolver.authorize_project(actor, project_id=project_id)
     name = _library_path(path)
     stored = (
-        await library_records.stored_version(db, project_id, name, version)
+        await library_records.stored_version(db, _shelf(project_id), name, version)
         if version is not None
-        else await library_records.stored_file(db, project_id, name)
+        else await library_records.stored_file(db, _shelf(project_id), name)
     )
     filename = quote(name.rsplit("/", 1)[-1], safe="")
     headers = {
@@ -132,6 +133,10 @@ async def library_file_raw(
     )
 
 
+def _shelf(project_id: uuid.UUID) -> Shelf:
+    return Shelf.of_project(project_id)
+
+
 def _library_path(raw: str) -> str:
     """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
     name = (raw or "").strip()
@@ -151,7 +156,9 @@ async def list_library_versions(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    versions = await library_records.versions(db, project_id, _library_path(path))
+    versions = await library_records.versions(
+        db, _shelf(project_id), _library_path(path)
+    )
     return ok({"versions": versions})
 
 
@@ -167,7 +174,7 @@ async def restore_library_version(
     actor = await _library_keeper(project_id, db, resolver)
     name = _library_path(path)
     await library_records.restore(
-        db, project_id=project_id, name=name, version_id=version, by=actor.handle
+        db, shelf=_shelf(project_id), name=name, version_id=version, by=actor.handle
     )
     await db.commit()
     return ok({"path": name})
@@ -197,7 +204,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        project_id,
+        _shelf(project_id),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -216,7 +223,9 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
+    return ok(
+        await library_listing.one(db, _shelf(project_id), rooms, _library_path(path))
+    )
 
 
 @router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
@@ -228,7 +237,7 @@ async def library_file_text(
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
     await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(db, project_id, name)
+    found = await library_records.read_text(db, _shelf(project_id), name)
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
@@ -238,7 +247,7 @@ async def library_folders(
 ) -> dict:
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
     await _reader(project_id, db, resolver)
-    return ok({"folders": await library_listing.folders(db, project_id)})
+    return ok({"folders": await library_listing.folders(db, _shelf(project_id))})
 
 
 async def _reader(
@@ -309,7 +318,7 @@ async def library_upload_slot(
     if body.size > MAX_LIBRARY_UPLOAD_BYTES:
         raise ValidationError(say("libraryUploadTooLarge"))
     name = library.clean_upload_name(body.name)
-    return ok(await library_records.upload_slot(project_id, name, body.size))
+    return ok(await library_records.upload_slot(_shelf(project_id), name, body.size))
 
 
 @router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
@@ -322,13 +331,13 @@ async def upload_library_file(
     """把传上来的一份登记进资料库，`folder` 给了就放进那个文件夹（没有就新建）。
     撞名不覆盖：拿下一个 `(n)`。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(project_id, body.upload)
+    upload = await library_records.received(_shelf(project_id), body.upload)
     filename = library.clean_upload_name(body.filename)
     if body.folder and body.folder.strip("/ "):
         filename = f"{library.clean_library_path(body.folder)}/{filename}"
     name = await library_records.add(
         db,
-        project_id=project_id,
+        _shelf(project_id),
         filename=filename,
         data=upload,
         added_by=actor.handle,
@@ -348,10 +357,10 @@ async def replace_library_file(
 ) -> dict:
     """把一份资料换成传上来的新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(project_id, body.upload)
+    upload = await library_records.received(_shelf(project_id), body.upload)
     name = _library_path(path)
     await library_records.replace(
-        db, project_id=project_id, name=name, data=upload, by=actor.handle
+        db, shelf=_shelf(project_id), name=name, data=upload, by=actor.handle
     )
     await db.commit()
     return ok({"path": name, "bytes": upload.size})
@@ -366,7 +375,7 @@ async def delete_library_file(
     读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`
     那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。"""
     await _library_keeper(project_id, db, resolver)
-    await library_records.remove(db, project_id=project_id, name=_library_path(path))
+    await library_records.remove(db, shelf=_shelf(project_id), name=_library_path(path))
     await db.commit()
     return ok({"deleted": True})
 
@@ -390,7 +399,7 @@ async def move_library_file(
     await _library_keeper(project_id, db, resolver)
     moved = await library_records.move(
         db,
-        project_id=project_id,
+        shelf=_shelf(project_id),
         source=_library_path(path),
         target=library.clean_library_path(to),
     )
