@@ -67,7 +67,7 @@ covers:
 和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、频道锁和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)、[房间里的芝士](/dev/harness#contract)共用；这里只决定会话是什么样的（`personal/session.py`）。
 
 - **一段对话一个 pi 会话**，会话 id 就是对话 id，放在会话机的 `~/.cheese/personal/<用户 id>/<对话 id>`。
-- **一台自己的电脑**：部署配了会话机（`agent_session_device_id`）、能开云沙箱时，pi 除了平台列给它的工具（`personal/session.py` 的 `TOOLS`）还开自己的读写文件、跑命令（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`），落在这段对话自己的标准沙箱里：能上网，第一次用时才开，闲置回收，按时长扣这个人的个人额度。规则里多出「你的电脑」一节，说明这些。沙箱怎么归属、怎么要手见[沙箱归谁](/dev/execution#personal-sandbox)。没有会话机或云沙箱的部署不开这些工具，规则里也不说。
+- **一台自己的电脑**：部署配了会话机（`agent_session_device_id`）、能开云沙箱时，pi 除了平台列给它的工具（`personal/session.py` 的 `TOOLS`）还开自己的读写文件、跑命令（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`），落在这段对话自己的标准沙箱里：能上网，第一次用时才开，闲置回收，按时长扣这个人的个人额度。规则里多出「你的电脑」一节，说明这些。文件放在这个人自己的资料库里（他名下那个团队的资料库，见[团队的资料库](#library)），芝士用 `cheese_file_to_computer` 取进电脑、用 `cheese_file_give` 交出来。沙箱怎么归属、怎么要手见[沙箱归谁](/dev/execution#personal-sandbox)。没有会话机或云沙箱的部署不开这些工具，规则里也不说。
 - **电脑上的文件只在电脑上**：芝士还不能把电脑上的文件交给人，也不能把人附上的文件放上电脑；结果写进回答。
 - 系统提示词替换掉 pi 默认的那份编程助手说明，只写规则，对每段对话都一样；用户眼前是哪一页随问题说（见[一次提问](#ask)）。
 - **能做的事处处一样**：不管在哪一页问，工具都是同一套、同一顺序（`personal/session.py` 的 `TOOLS`，`backend/sandbox/cheese` 的 `DELEGATED_TOOLS`）。页面只决定芝士看到什么，不收窄它能做什么：做不了的事由接口按这个人的权限拒绝，不靠少给工具。见[工具](#credential)和[开头保持不变](#cache)。
@@ -91,7 +91,7 @@ covers:
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
 | `cheese_inbox_respond` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
-| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；`me` 是他参加的题目，`settings` 是他的通知设置 |
+| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置 |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `cheese_message_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
@@ -104,6 +104,8 @@ covers:
 | `cheese_web_search` | 搜网页，和房间里的 agent 同一个工具 | 直接 `GET /web-search`，不经授权判断：搜索词只发给 DeepSeek，它是模型的提供方，本来就收着整段对话；在他自己的网关 key 上搜，花费和这次提问的模型调用一起扣他的额度 |
 | `cheese_problem_write` | 写题目草稿 | `POST /task-drafts/agent/write`：见[题目草稿](#drafts) |
 | `cheese_problem_publish` | 发布草稿，和人点「发布」「保存更改」同一条路 | `POST /task-drafts/agent/publish` |
+| `cheese_file_give` | 把电脑上的一份文件交给他：存进他的资料库，回答里出现文件卡片 | `POST /assistant/agent/files/slot` 领地址，电脑自己 `curl -T` 传上去，再 `POST /assistant/agent/files/handed` 登记；流里发 `handed` |
+| `cheese_file_to_computer` | 把他资料库里的一份文件放进电脑 | `POST /assistant/agent/files/link` 领地址，电脑自己 `curl -o` 取下来 |
 
 工具的报错原样交给芝士：每条拒绝都写明该怎么改（比如编号该怎么写、分类只能是空间已有的哪几个），芝士照着改了再调。
 
@@ -115,7 +117,7 @@ covers:
 
 ## 一次提问 {#ask}
 
-`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先经 `POST /attachments` 传上去的 id 和名字）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`error`、`done`（`stopped`：被人停下了）。
+`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先传进他自己的资料库的 `path` 和名字，芝士按 `library/<path>` 读；发布、改题目页上交的是题目材料，仍是经 `POST /attachments` 传上去的 `id`，按 `files/<id>` 读）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`handed`（芝士交给他一份文件：团队 id、资料库里的名字和大小，回答里画成文件卡片）、`error`、`done`（`stopped`：被人停下了）。
 
 **眼前的页面随问题说**：页面写成一段「当前页面」（题目页是题目说明、这个人的领取和题目材料；草稿页是整份草稿，带 version、空间 id 和这个空间可选的分类、标签、邮箱域名组、能当导师的人——芝士的工具按空间 id 办事），放在问题前面。前端只传页面的种类和 id，正文由服务端按提问人的权限写出（`personal/pages.py`）：每种页面是 `PAGES` 里的一行，写明怎么写出这一页、在这里提问记作哪种用量；加一种页面就是加一个渲染器和一行，提问的路由不用改。请求里的种类列在 `PageKind`，测试保证它和 `PAGES` 一致；不认识的种类在问模型之前就以参数错误拒绝。
 
@@ -211,6 +213,15 @@ covers:
 - **设置页**：「芝士」页的「记忆」一节：开关（`assistant_rules.memory`，关掉时保留但不用不写）、逐条改描述和正文、删除、全部清除（`GET/PUT/DELETE /assistant/memory`、`PUT/DELETE /assistant/memory/{name}`）。这些接口芝士的凭据进不来。
 - **上限**沿用记忆文件的：正文 1000 字，索引一行 150 字，索引超过 200 行注入时截断。
 - **整理**：每小时看一遍，记了 8 条以上、上次整理后又改过、离上次整理满一天、开着记忆的人，各整理一次（`domain/assistant/memory_tidy.py`，周期任务 `assistant memory tidy`）。个人芝士的会话里没有记忆文件树，项目那套整理（一整轮会话改文件）接不上，而个人记忆量小，所以只调一次模型：把全部记忆交给它，它答要改什么：`merge`（同一件事合成一条）、`delete`（被另一条取代的旧条，必须写明取代它的那条，那条必须留下）、`rewrite`（改写得清楚）。平台逐条校验，有一条不对就整轮不改；删掉一半以上且超过 3 条也整轮不改（和项目整理共用 `tree.BULK_DELETE_*`）；和芝士同时写撞上了也整轮放弃，下次再来。只读记忆，不读对话（对话里有频道消息和网页）。花费记这个人的额度（`kind = "assistant_memory_tidy"`），额度用完就跳过。整理不能撤销，和项目的一样。开始整理时就把 `assistant_rules.memory_tidied_at` 推到现在，它既是下一次的起点，也是锁。
+
+## 资料库 {#library}
+
+一个人的文件放在他自己的资料库里，也就是他名下那个单人团队的资料库（`library_files.team_id`，见 `domain/library/shelf.py`）。资料库可以属于一个项目，也可以属于一个团队，一行只属于其中一个，读写都以书架（`Shelf`）为单位。
+
+- **谁放进来**：他在面板里附的文件（发布、改题目页上的除外，那是题目材料，仍走附件表），和芝士用 `cheese_file_give` 交出来的文件。他也能在团队的「资料库」页直接上传。
+- **芝士怎么用**：`cheese_read library` 列出全部，`library/<名字>` 读文字；`cheese_file_to_computer` 把一份放进电脑。芝士的凭据只进 `/assistant/agent/library`、`/files/slot`、`/files/handed`、`/files/link` 这四条（`api.auth.DELEGATED_ROUTES`），团队资料库的页面接口（`/teams/{id}/library`）它进不来。
+- **上限**：每个团队的资料库共 `team_library_bytes`（1 GB），被替换下来的旧版本也算；单个文件最大和附件相同（100 MB），比项目资料库的 10 MB 宽。满了在领上传地址时就拒（`libraryFull`）。
+- **卡片**：`handed` 事件和这次回答的其他部分一起存进 `assistant_messages.parts.handed`，面板重新打开时照样画出文件卡片。
 
 ## 打转 {#loops}
 
