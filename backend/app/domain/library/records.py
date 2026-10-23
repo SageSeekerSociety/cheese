@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core import blob_store
+from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
@@ -106,9 +107,43 @@ def _location_for(data: Incoming) -> str:
     return blob_store.for_new().location
 
 
-async def _put(row: LibraryFileRecord, data: Incoming) -> None:
+def ceiling(shelf: Shelf, name: str) -> int:
+    """这个资料库里一份文件最多多大：项目的与房间文件是同一条
+    （`service.max_bytes_for`）；团队的是附件那一条，人交给芝士的文件都放得进来。"""
+    if shelf.team_id is not None:
+        return max(settings.attachment_max_bytes, service.max_bytes_for(name))
+    return service.max_bytes_for(name)
+
+
+async def used(session: AsyncSession, shelf: Shelf) -> int:
+    """这个资料库占了多少字节：被替换下来的旧版本也占着存储，一起算。"""
+    return int(
+        await session.scalar(
+            select(func.coalesce(func.sum(LibraryFileRecord.bytes), 0)).where(
+                shelf.holds()
+            )
+        )
+        or 0
+    )
+
+
+async def refuse_past_room(session: AsyncSession, shelf: Shelf, adding: int) -> None:
+    """团队的资料库放不下这么多就不放（`settings.team_library_bytes`）。项目的资料库
+    没有总量上限。"""
+    if shelf.team_id is None:
+        return
+    total = settings.team_library_bytes
+    if await used(session, shelf) + adding > total:
+        raise UnprocessableEntityError(say("libraryFull", mb=total // (1024 * 1024)))
+
+
+async def _put(
+    session: AsyncSession, shelf: Shelf, row: LibraryFileRecord, data: Incoming
+) -> None:
     # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
-    service.refuse_oversize(row.bytes, row.name)
+    service.refuse_oversize(row.bytes, row.name, ceiling(shelf, row.name))
+    # 这一行已经记进去了，算总量时它也在里面。
+    await refuse_past_room(session, shelf, 0)
     store = blob_store.store(row.location)
     if isinstance(data, Upload):
         await store.take_in(data.key, row.blob_key)
@@ -121,7 +156,7 @@ async def upload_slot(shelf: Shelf, name: str, size: int) -> dict:
 
     ``upload`` 是登记时交回来的凭据，只在这个资料库里认。超过这一类文件上限的，这里
     就不给地址。"""
-    service.refuse_oversize(size, name)
+    service.refuse_oversize(size, name, ceiling(shelf, name))
     store = blob_store.for_new()
     sealed = blob_store.SealedUpload(store.location, blob_store.incoming_key(), size)
     return {
@@ -440,7 +475,7 @@ async def add(
                 session.add(row)
         except IntegrityError:
             continue
-        await _put(row, data)
+        await _put(session, shelf, row, data)
         return name
     raise UnprocessableEntityError(say("tooManySameNameFiles", name=filename))
 
@@ -503,7 +538,7 @@ async def replace(
         # 上「一个名字只有一份是现在这一份」。撞上就是并发冲突，不是故障：这一次没
         # 换成就直说，别把 500 摆给人看。事务到这里就作废了，由 `get_db` 回滚。
         raise ConflictError(say("libraryFileBeingReplaced", name=name)) from None
-    await _put(row, data)
+    await _put(session, shelf, row, data)
 
 
 async def _rows_under(
