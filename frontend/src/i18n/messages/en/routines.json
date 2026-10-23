@@ -60,6 +60,13 @@
   "neverRun": "Not run yet",
   "noReason": "No reason given",
   "listSeparator": ", ",
+  "spend": {
+    "points": "{n} credits",
+    "pending": "settling",
+    "thisMonth": "{points} this month",
+    "recordsTotal": "{points} this month",
+    "hint": "What this rule took from the team's credits this month. Model calls only — cloud compute is not counted."
+  },
   "zone": {
     "beijing": "Beijing time"
   },

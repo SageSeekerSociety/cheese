@@ -92,6 +92,7 @@ it('等你的那一件在后面那一行说「等你」，两件的标签都只�
     title: '我的',
     owner_handle: 'alice',
     awaits_me: true,
+    needs_my_action: true,
     presentation: { column: 'needs_you', phrase: 'awaiting_review' },
   })
   const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
@@ -99,6 +100,24 @@ it('等你的那一件在后面那一行说「等你」，两件的标签都只�
   // 等你的那一件只有一行写「等你」；两件的状态标签都是「待审阅」。
   expect(view.getAllByText(t('work.taskState.waitsOnYou'))).toHaveLength(1)
   expect(view.getAllByText(t('work.taskState.label.review'))).toHaveLength(2)
+})
+
+it('关注结果的人保留提醒，但不写成等待本人回答', () => {
+  const view = mount(
+    [
+      task({
+        title: '需要关注的任务',
+        reporter_handle: 'alice',
+        waiting_on: 'bob',
+        awaits_me: true,
+        needs_my_action: false,
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      }),
+    ],
+    { names: { alice: 'Alice', bob: 'Bob' } }
+  )
+  expect(view.queryByText(t('work.taskState.waitsOnYou'))).toBeNull()
+  expect(view.getByText(t('work.taskState.waitsOn', { name: 'Bob' }))).toBeTruthy()
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {

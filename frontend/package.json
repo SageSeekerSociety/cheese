@@ -53,9 +53,11 @@
     "@tanstack/query-persist-client-core": "5.104.1",
     "@tanstack/vue-query": "5.104.1",
     "@tiptap/core": "3.30.5",
+    "@tiptap/extension-blockquote": "3.30.5",
     "@tiptap/extension-code-block-lowlight": "3.30.5",
     "@tiptap/extension-collaboration": "3.30.5",
     "@tiptap/extension-collaboration-caret": "3.30.5",
+    "@tiptap/extension-document": "3.30.5",
     "@tiptap/extension-drag-handle": "3.30.5",
     "@tiptap/extension-drag-handle-vue-3": "3.30.5",
     "@tiptap/extension-highlight": "3.30.5",
@@ -82,7 +84,7 @@
     "@xterm/xterm": "^6.0.0",
     "axios": "^1.20.0",
     "dayjs": "^1.11.13",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "echarts": "^6.1.0",
     "editorjs-latex": "^1.0.5",
     "editorjs-parser": "^1.5.3",
@@ -169,7 +171,7 @@
       "body-parser": "2.3.0",
       "brace-expansion@1": "1.1.21",
       "brace-expansion@2": "2.1.7",
-      "dompurify": "3.4.16",
+      "dompurify": "3.4.17",
       "fast-uri": "3.1.7",
       "flatted": "3.4.2",
       "follow-redirects": "1.16.1",
@@ -185,6 +187,10 @@
       "prosemirror-view": "1.42.3",
       "qs": "6.16.0",
       "source-map-js": "1.2.2"
+    },
+    "patchedDependencies": {
+      "@tiptap/y-tiptap@3.0.7": "patches/@tiptap__y-tiptap@3.0.7.patch",
+      "@handlewithcare/prosemirror-suggest-changes@0.1.8": "patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch"
     }
   }
 }

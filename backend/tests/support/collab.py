@@ -46,7 +46,7 @@ class FakeCollab:
         self.refuse_writes: tuple[str, int] | None = None
         #: Which change can be a suggestion is also the service's to judge
         #: (frontend/collab/edit.ts, tested there); here a test says it: True
-        #: refuses every suggestion as one that reshapes whole blocks.
+        #: refuses every suggestion as one that cannot be suggested (reason 'structure').
         self.refuse_suggestions = False
         #: Per document: the suggestions pending in it.
         self.pending: dict[str, list[dict]] = {}

@@ -1,0 +1,262 @@
+diff --git a/dist/y-tiptap.cjs b/dist/y-tiptap.cjs
+index 824431ff7f54b8883442bc063c5addaa781ed5c5..c1d389e74a3a9e1f45490ff959392d95d9269d34 100644
+--- a/dist/y-tiptap.cjs
++++ b/dist/y-tiptap.cjs
+@@ -995,7 +995,8 @@ const createNodeFromYElement = (
+           : { type: 'added' };
+       }
+     }
+-    const node = schema.node(el.nodeName, attrs, children);
++    const marks = takeNodeMarks(attrs, schema);
++    const node = schema.node(el.nodeName, attrs, children, marks);
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+@@ -1076,6 +1077,10 @@ const createTypeFromElementNode = (node, meta) => {
+       type.setAttribute(key, val);
+     }
+   }
++  const markAttrs = nodeMarksToAttributes(node.marks);
++  for (const key in markAttrs) {
++    type.setAttribute(key, markAttrs[key]);
++  }
+   type.insert(
+     0,
+     normalizePNodeContent(node).map((n) =>
+@@ -1186,7 +1191,7 @@ const equalYTypePNode = (ytype, pnode) => {
+   ) {
+     const normalizedContent = normalizePNodeContent(pnode);
+     return ytype._length === normalizedContent.length &&
+-      equalAttrs(ytype.getAttributes(), pnode.attrs) &&
++      equalAttrs(ytype.getAttributes(), { ...pnode.attrs, ...nodeMarksToAttributes(pnode.marks) }) &&
+       ytype.toArray().every((ychild, i) =>
+         equalYTypePNode(ychild, normalizedContent[i])
+       )
+@@ -1335,6 +1340,61 @@ const marksToAttributes = (marks, meta) => {
+   return pattrs
+ };
+ 
++/**
++ * A block node's marks, kept on its Y.XmlElement. Upstream writes only a node's
++ * attrs into the element and rebuilds the node from them, so a mark on a block
++ * (a suggested insertion of a whole paragraph, say) was dropped on sync: other
++ * clients never saw it and it was gone on reload. Each mark is an attribute
++ * named as marksToAttributes names a text mark (`name`, or `name--hash` for a
++ * mark that may overlap itself) behind NODE_MARK_PREFIX, which no node
++ * attribute starts with, holding the mark's attrs. An element written before
++ * has no such attribute, and reads as a node with no marks.
++ * (yjs/y-prosemirror#157 took the same route and was not merged.)
++ */
++const NODE_MARK_PREFIX = '_mark_';
++
++/**
++ * @param {string} key
++ */
++const isNodeMarkAttribute = (key) => key.startsWith(NODE_MARK_PREFIX);
++
++/**
++ * @param {readonly import('prosemirror-model').Mark[]} marks
++ * @return {Object<string, any>}
++ */
++const nodeMarksToAttributes = (marks) => {
++  const attrs = {};
++  marks.forEach((mark) => {
++    if (mark.type.name !== 'ychange') {
++      const name = mark.type.excludes(mark.type) ? mark.type.name : `${mark.type.name}--${hashOfJSON(mark.toJSON())}`;
++      // A plain copy: ProseMirror builds attrs on a null prototype, which an
++      // element attribute (unlike a text format) refuses as content.
++      attrs[NODE_MARK_PREFIX + name] = { ...mark.attrs };
++    }
++  });
++  return attrs
++};
++
++/**
++ * Take the node-mark attributes out of `attrs` (an element's attributes) and
++ * return them as marks. A mark the schema does not have is left out, the way
++ * a node attribute it does not have is.
++ *
++ * @param {Object<string, any>} attrs
++ * @param {import('prosemirror-model').Schema} schema
++ * @return {Array<import('prosemirror-model').Mark>}
++ */
++const takeNodeMarks = (attrs, schema) => {
++  const marks = [];
++  for (const key in attrs) {
++    if (!isNodeMarkAttribute(key)) continue
++    const name = yattr2markname(key.slice(NODE_MARK_PREFIX.length));
++    if (schema.marks[name]) marks.push(schema.mark(name, attrs[key]));
++    delete attrs[key];
++  }
++  return marks
++};
++
+ /**
+  * Update a yDom node by syncing the current content of the prosemirror node.
+  *
+@@ -1359,10 +1419,12 @@ const updateYFragment = (y, yDomFragment, pNode, meta) => {
+   // update attributes
+   if (yDomFragment instanceof Y__namespace.XmlElement) {
+     const yDomAttrs = yDomFragment.getAttributes();
+-    const pAttrs = pNode.attrs;
++    const pAttrs = { ...pNode.attrs, ...nodeMarksToAttributes(pNode.marks) };
+     for (const key in pAttrs) {
+       if (pAttrs[key] !== null) {
+-        if (yDomAttrs[key] !== pAttrs[key] && key !== 'ychange') {
++        const same = yDomAttrs[key] === pAttrs[key] ||
++          (isObject(yDomAttrs[key]) && isObject(pAttrs[key]) && equalAttrs(yDomAttrs[key], pAttrs[key]));
++        if (!same && key !== 'ychange') {
+           yDomFragment.setAttribute(key, pAttrs[key]);
+         }
+       } else {
+@@ -2311,9 +2373,19 @@ function yXmlFragmentToProsemirrorJSON (xmlFragment) {
+       };
+ 
+       const attrs = item.getAttributes();
++      const marks = [];
++      for (const key in attrs) {
++        if (isNodeMarkAttribute(key)) {
++          marks.push({ type: yattr2markname(key.slice(NODE_MARK_PREFIX.length)), attrs: attrs[key] });
++          delete attrs[key];
++        }
++      }
+       if (Object.keys(attrs).length) {
+         response.attrs = attrs;
+       }
++      if (marks.length) {
++        response.marks = marks;
++      }
+ 
+       const children = item.toArray();
+       if (children.length) {
+diff --git a/dist/y-tiptap.js b/dist/y-tiptap.js
+index ed2c98f5c36967ae60c94ac51e0a10ebc81442c0..0c141176e6e55ceec24f1aa0c5460ca8b73d4482 100644
+--- a/dist/y-tiptap.js
++++ b/dist/y-tiptap.js
+@@ -961,7 +961,8 @@ const createNodeFromYElement = (
+           : { type: 'added' };
+       }
+     }
+-    const node = schema.node(el.nodeName, attrs, children);
++    const marks = takeNodeMarks(attrs, schema);
++    const node = schema.node(el.nodeName, attrs, children, marks);
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+@@ -1042,6 +1043,10 @@ const createTypeFromElementNode = (node, meta) => {
+       type.setAttribute(key, val);
+     }
+   }
++  const markAttrs = nodeMarksToAttributes(node.marks);
++  for (const key in markAttrs) {
++    type.setAttribute(key, markAttrs[key]);
++  }
+   type.insert(
+     0,
+     normalizePNodeContent(node).map((n) =>
+@@ -1152,7 +1157,7 @@ const equalYTypePNode = (ytype, pnode) => {
+   ) {
+     const normalizedContent = normalizePNodeContent(pnode);
+     return ytype._length === normalizedContent.length &&
+-      equalAttrs(ytype.getAttributes(), pnode.attrs) &&
++      equalAttrs(ytype.getAttributes(), { ...pnode.attrs, ...nodeMarksToAttributes(pnode.marks) }) &&
+       ytype.toArray().every((ychild, i) =>
+         equalYTypePNode(ychild, normalizedContent[i])
+       )
+@@ -1301,6 +1306,61 @@ const marksToAttributes = (marks, meta) => {
+   return pattrs
+ };
+ 
++/**
++ * A block node's marks, kept on its Y.XmlElement. Upstream writes only a node's
++ * attrs into the element and rebuilds the node from them, so a mark on a block
++ * (a suggested insertion of a whole paragraph, say) was dropped on sync: other
++ * clients never saw it and it was gone on reload. Each mark is an attribute
++ * named as marksToAttributes names a text mark (`name`, or `name--hash` for a
++ * mark that may overlap itself) behind NODE_MARK_PREFIX, which no node
++ * attribute starts with, holding the mark's attrs. An element written before
++ * has no such attribute, and reads as a node with no marks.
++ * (yjs/y-prosemirror#157 took the same route and was not merged.)
++ */
++const NODE_MARK_PREFIX = '_mark_';
++
++/**
++ * @param {string} key
++ */
++const isNodeMarkAttribute = (key) => key.startsWith(NODE_MARK_PREFIX);
++
++/**
++ * @param {readonly import('prosemirror-model').Mark[]} marks
++ * @return {Object<string, any>}
++ */
++const nodeMarksToAttributes = (marks) => {
++  const attrs = {};
++  marks.forEach((mark) => {
++    if (mark.type.name !== 'ychange') {
++      const name = mark.type.excludes(mark.type) ? mark.type.name : `${mark.type.name}--${hashOfJSON(mark.toJSON())}`;
++      // A plain copy: ProseMirror builds attrs on a null prototype, which an
++      // element attribute (unlike a text format) refuses as content.
++      attrs[NODE_MARK_PREFIX + name] = { ...mark.attrs };
++    }
++  });
++  return attrs
++};
++
++/**
++ * Take the node-mark attributes out of `attrs` (an element's attributes) and
++ * return them as marks. A mark the schema does not have is left out, the way
++ * a node attribute it does not have is.
++ *
++ * @param {Object<string, any>} attrs
++ * @param {import('prosemirror-model').Schema} schema
++ * @return {Array<import('prosemirror-model').Mark>}
++ */
++const takeNodeMarks = (attrs, schema) => {
++  const marks = [];
++  for (const key in attrs) {
++    if (!isNodeMarkAttribute(key)) continue
++    const name = yattr2markname(key.slice(NODE_MARK_PREFIX.length));
++    if (schema.marks[name]) marks.push(schema.mark(name, attrs[key]));
++    delete attrs[key];
++  }
++  return marks
++};
++
+ /**
+  * Update a yDom node by syncing the current content of the prosemirror node.
+  *
+@@ -1325,10 +1385,12 @@ const updateYFragment = (y, yDomFragment, pNode, meta) => {
+   // update attributes
+   if (yDomFragment instanceof Y.XmlElement) {
+     const yDomAttrs = yDomFragment.getAttributes();
+-    const pAttrs = pNode.attrs;
++    const pAttrs = { ...pNode.attrs, ...nodeMarksToAttributes(pNode.marks) };
+     for (const key in pAttrs) {
+       if (pAttrs[key] !== null) {
+-        if (yDomAttrs[key] !== pAttrs[key] && key !== 'ychange') {
++        const same = yDomAttrs[key] === pAttrs[key] ||
++          (isObject(yDomAttrs[key]) && isObject(pAttrs[key]) && equalAttrs(yDomAttrs[key], pAttrs[key]));
++        if (!same && key !== 'ychange') {
+           yDomFragment.setAttribute(key, pAttrs[key]);
+         }
+       } else {
+@@ -2277,9 +2339,19 @@ function yXmlFragmentToProsemirrorJSON (xmlFragment) {
+       };
+ 
+       const attrs = item.getAttributes();
++      const marks = [];
++      for (const key in attrs) {
++        if (isNodeMarkAttribute(key)) {
++          marks.push({ type: yattr2markname(key.slice(NODE_MARK_PREFIX.length)), attrs: attrs[key] });
++          delete attrs[key];
++        }
++      }
+       if (Object.keys(attrs).length) {
+         response.attrs = attrs;
+       }
++      if (marks.length) {
++        response.marks = marks;
++      }
+ 
+       const children = item.toArray();
+       if (children.length) {

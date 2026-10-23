@@ -66,6 +66,20 @@ class UsageService:
         spent = await self._repo.task_gateway_spend(project_id, task_id, owner_handle)
         return round(spent + max(0.0, remaining) * CREDIT_USD, 4)
 
+    async def credits_by_work(
+        self, work_ids: list[uuid.UUID], *, since: datetime, until: datetime
+    ) -> dict[uuid.UUID, float]:
+        """每件活 ``work_ids`` 在这个窗口里扣掉的额度（点），一次问完。
+
+        这一面的调用方是别的领域（routine 问「这条规则本月花了多少」），所以从这里
+        转出去、不让人直接摸仓储：用量这一域的读只有这一扇门。
+
+        窗口两端是必填的，和这一域别的读一样 —— ``resource_usage`` 是全平台增长最快
+        的表，没有 WHERE 的全表聚合在页面上一次也不允许出现；「本月」的起止由调用方
+        用 ``windows.month_start`` / ``month_end`` 算好传进来，这一域不自己判月份。
+        """
+        return await self._repo.credits_by_work(work_ids, since=since, until=until)
+
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers

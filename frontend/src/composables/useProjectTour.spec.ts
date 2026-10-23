@@ -100,6 +100,30 @@ describe('新手引导的后半程', () => {
     expect(guide.done.value).toBe(true)
   })
 
+  // 「我就想看看界面」：重播从第一站看起，不拿这个人以前发过、采纳过的记录往前跳。
+  it('replaying walks from the first stop and ignores what the person did before', () => {
+    const guide = useProjectTour()
+    const didItAll = { asked: true, answered: true, accepted: true, learned: true }
+    noteFacts(didItAll)
+    replayTour()
+    expect(guide.current.value?.key).toBe('send')
+
+    const has = onPage(
+      'composer-input',
+      'composer-send',
+      'timeline',
+      'reply-thread',
+      'thread-pane',
+      'task-page',
+      'page-workspace-overview'
+    )
+    guide.settle({ facts: didItAll, has })
+    expect(guide.current.value?.key).toBe('send')
+
+    guide.next()
+    expect(guide.current.value?.key).toBe('reply')
+  })
+
   it('stays done after skipping, and opens again from the help menu', () => {
     const guide = useProjectTour()
     noteFacts(none)
@@ -156,5 +180,19 @@ describe('导览这一站指哪里', () => {
 
   it('一个能指的都没有时不出浮窗', () => {
     expect(resolveGuideStep(GUIDE_STEPS[at('taskPage')], () => null)).toBeNull()
+  })
+
+  it('重播时目标没开着就落到时间线上，而且每一站都能往下走', () => {
+    const send = GUIDE_STEPS[at('send')]
+    expect(resolveGuideStep(send, onPageEls('timeline'))).toBeNull()
+    const stop = resolveGuideStep(send, onPageEls('timeline'), { replaying: true })
+    expect(stop?.target).toBe(el('timeline'))
+    expect(stop?.area).toBe(true)
+    expect(stop?.action).toBe(false)
+  })
+
+  it('不是重播时，动作步做到了才算完，没有「下一步」', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('send')], onPageEls('composer-send'))
+    expect(stop?.action).toBe(true)
   })
 })

@@ -566,7 +566,7 @@ useComposerShortcut({
             <template #timeline-end><slot name="timeline-end" /></template>
           </ChatTimeline>
         </ErrorBoundary>
-        <!-- 书签条浮在对话左上角，不占对话宽度；没有书签时它自己不画。 -->
+        <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
         <BookmarkRail
           :chapters="chapters"
           :can-chapter="chapterable"
@@ -586,12 +586,20 @@ useComposerShortcut({
         :no-upgrade="noUpgrade"
         :threadable="threadable"
         :processable="inThread"
+        :pinnable="pinnable"
+        :pinned-ids="pins.pinnedIds.value"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"
         @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
+        @pin="pins.pin"
+        @unpin="pins.unpin"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 

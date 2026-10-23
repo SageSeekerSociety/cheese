@@ -279,6 +279,7 @@ export interface RoomTask {
   owner_handle?: string | null
   contributor_handles?: string[] // 协作者：负责人拉进来的人，说的话和负责人一样是给 AI 队友的指令
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
+  reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
@@ -310,7 +311,8 @@ export interface RoomTask {
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
-  awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  awaits_me?: boolean // 有事需要本人关注，包括提需求人等结果；侧栏提醒读它
+  needs_my_action?: boolean // 当前显示的下一步是否需要本人执行；“待你回答/审阅”等称谓读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`

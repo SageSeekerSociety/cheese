@@ -59,4 +59,37 @@ describe('suggestOnlyProblem', () => {
     const update = updateOf(doc, suggestInsert('再开通服务器账号。', suggestionId('owner')))
     expect(suggestOnlyProblem(doc, update, 'mentor')).toBe('author')
   })
+
+  /** Mark the first formula in the document as a suggested deletion by `id`. */
+  function deleteFormula(id: string) {
+    return (node: PMNode) => {
+      let at = -1
+      node.descendants((child, pos) => {
+        if (at < 0 && child.type.name === 'mathInline') at = pos
+      })
+      expect(at).toBeGreaterThan(-1)
+      const mark = node.type.schema.marks.deletion.create({ id })
+      return new Transform(node).addMark(at, at + 1, mark).doc
+    }
+  }
+
+  it('refuses a suggestion on a formula made in somebody else’s name, or taken away from them', () => {
+    const doc = live('面积是 $x+1$。\n')
+    expect(suggestOnlyProblem(doc, updateOf(doc, deleteFormula(suggestionId('mentor'))), 'mentor')).toBeNull()
+    expect(suggestOnlyProblem(doc, updateOf(doc, deleteFormula(suggestionId('owner'))), 'mentor')).toBe('author')
+
+    Y.applyUpdate(doc, updateOf(doc, deleteFormula(suggestionId('owner'))))
+    const taken = updateOf(doc, (node) => new Transform(node).removeMark(0, node.content.size).doc)
+    expect(suggestOnlyProblem(doc, taken, 'mentor')).toBe('author')
+  })
+
+  it('refuses a mark the document does not allow on a block, which no later suggestion could be placed beside', () => {
+    const doc = live('第一段。\n\n第二段。\n')
+    // Built by hand, as a tampered client would send it: a transform refuses it.
+    const bold = (node: PMNode) => {
+      const first = node.child(0).mark([node.type.schema.marks.bold.create()])
+      return node.copy(node.content.replaceChild(0, first))
+    }
+    expect(suggestOnlyProblem(doc, updateOf(doc, bold), 'mentor')).toBe('shape')
+  })
 })

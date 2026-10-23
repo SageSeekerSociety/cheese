@@ -96,20 +96,32 @@ export interface GuideStop {
  * 是不是整块区域按圈到的那个锚点算：同一站里可以既有一颗要点的按钮（照常画圈），
  * 又有兜底指向的整块页面（不画圈）。
  */
-export function resolveGuideStep(step: GuideStep, find: (name: string) => HTMLElement | null): GuideStop | null {
+export function resolveGuideStep(
+  step: GuideStep,
+  find: (name: string) => HTMLElement | null,
+  { replaying = false }: { replaying?: boolean } = {}
+): GuideStop | null {
   const hit = step.anchors.find((name) => find(name))
   const target = hit ? find(hit) : null
   const waiting = target ? null : (step.waiting ?? []).map(find).find(Boolean)
-  const at = target ?? waiting ?? null
+  // 重播时每一站都要有落脚点：这一步该指的地方没开着（支线、任务页、手机上没侧栏），
+  // 就落到频道的时间线上。不然点到这一站整块浮窗会消失，后面也没处点。
+  const replayAt = !target && !waiting && replaying ? find(REPLAY_FALLBACK_ANCHOR) : null
+  const at = target ?? waiting ?? replayAt ?? null
   if (!at) return null
   return {
     key: step.key,
     target: at,
     text: !target ? 'textWaiting' : hit === step.failed ? 'textFailed' : 'text',
     area: !hit || !!step.areas?.includes(hit),
-    action: !!step.done,
+    // 重播时**每一站**都有「下一步」：它不从人的旧记录里跳步（`settle` 在重播时不动），
+    // 没有这个的话，已经发过消息的人会停在第一站，永远出不去。
+    action: !!step.done && !replaying,
   }
 }
+
+/** 重播时目标没开着，浮窗落到的地方：频道的时间线，哪一站都在。 */
+const REPLAY_FALLBACK_ANCHOR = 'timeline'
 
 /** 介绍步的目标在侧栏上；在频道页上找不到（手机上没有侧栏）就跳过。 */
 export const INTRO_PAGE_ANCHOR = 'composer-input'
@@ -149,7 +161,10 @@ export function noteFacts(value: GuideFacts) {
   facts.value = value
 }
 
-/** 帮助菜单「界面导览」：从第一步重新走一遍。 */
+/** 帮助菜单「界面导览」：从第一步重新走一遍。
+ *
+ *  重播是「看看界面长什么样」，不是把第一件事再做一遍：所以它**不走 `settle`**
+ *  （见那里），一页一页点「下一步」往前，不受这个人以前发过什么、采纳过什么影响。 */
 export function replayTour() {
   done.value = false
   replaying.value = true
@@ -187,8 +202,13 @@ export function useProjectTour() {
     /**
      * 动作步做到了就往下走；一连几步都已经做到（人先走到了前面）就一并跳过。
      * 介绍步在频道页上找不到目标时也跳过。
+     *
+     * **重播不动它**：重播要的是从第一站看起，而这个人的事实里「发过消息」「采纳过」
+     * 早就为真，照这里走会一进来就跳到中间某一步。重播改成每站都有「下一步」，
+     * 由人自己一页一页走（见 `AppShell.vue` 的 `guideStep.action`）。
      */
     settle(c: GuideContext) {
+      if (replaying.value) return
       for (;;) {
         const step = GUIDE_STEPS[stop.value]
         if (!step) return finish()

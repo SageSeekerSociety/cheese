@@ -517,7 +517,7 @@ const guideStep = computed(() => {
   void guideRevision.value
   const step = guide.current.value
   if (!guide.active.value || !step) return null
-  return resolveGuideStep(step, guideAnchor)
+  return resolveGuideStep(step, guideAnchor, { replaying: guide.replaying.value })
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens the new-project dialog (views/workspace/NewProjectDialog.vue).

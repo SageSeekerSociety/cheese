@@ -108,6 +108,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
       | 'moving'
       | 'waiting_on'
       | 'awaits_me'
+      | 'needs_my_action'
       | 'card'
       | 'status'
     >
@@ -182,7 +183,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       line = note || t('work.taskState.blockedFallback', { name: ctx.agentName })
       break
     case 'asking': {
-      const mine = (!!row.waiting_on && row.waiting_on === ctx.viewer) || row.awaits_me === true
+      const mine = row.needs_my_action === true
       line = waitsOn(row.waiting_on, mine) ?? ''
       break
     }
@@ -193,7 +194,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       const card = row.card
       const reviewer = phrase === 'awaiting_review' ? row.waiting_on ?? card?.reviewer ?? null : null
       const since = card?.since ? relTime(card.since) : ''
-      const mine = reviewer === ctx.viewer || (phrase === 'awaiting_review' && row.awaits_me === true)
+      const mine = phrase === 'awaiting_review' && row.needs_my_action === true
       line = joined([
         REVIEW_STEP[phrase] ? phraseLabel(phrase, ctx.agentName) : waitsOn(reviewer, mine),
         card?.subject,

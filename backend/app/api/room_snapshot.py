@@ -89,7 +89,7 @@ async def room_snapshot(
             db, place.room_id, viewer=viewer, limit=THREADS
         )
     else:
-        snapshot["task"] = await task_page_row(db, place, task)
+        snapshot["task"] = await task_page_row(db, place, task, me=viewer or "")
         snapshot["related"] = await related_of(db, task)
         snapshot["review_comments"] = await review_comment_rows(
             db, task, actor.handle or ""

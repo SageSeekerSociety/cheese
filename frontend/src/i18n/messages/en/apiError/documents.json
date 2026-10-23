@@ -30,7 +30,7 @@
   "docCollabOnly": "Only requests from the document collaboration service are accepted",
   "docCommentNotFound": "The original document comment doesn't exist",
   "docEditCannotApply": "Edit {n} can't be applied",
-  "docEditChangesStructure": "Edit {n} adds, removes or restructures whole paragraphs, so it can't be proposed as a suggestion: a suggestion can only mark text inside existing paragraphs",
+  "docEditChangesStructure": "Edit {n} adds or removes rows or columns of a table, columns of a column layout, or items of a timeline or stat cards, so it can't be proposed as a suggestion",
   "docEditContentRefused": "Edit {n}: {reason}",
   "docEditHitsSuggestion": "Edit {n} touches a suggestion that hasn't been handled yet. Wait until it's accepted or rejected, then edit",
   "docEditNeedsWriter": "Editing the document requires an authenticated writer",

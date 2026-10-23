@@ -4,6 +4,7 @@ event, and whoever set it hears how each run went."""
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select, update
 
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
@@ -12,6 +13,7 @@ from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import REPORT_TIMEOUT, sweep
 from app.domain.routine.service._shared import STILL_RUNNING
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.user.models import User
 from tests.integration.conftest import (
     join_project_team,
@@ -620,6 +622,72 @@ def test_a_routine_in_an_archived_project_runs_nothing(client):
     assert result["scheduled"] == 0
     assert runner.submitted == []
     assert _runs(client, routine["id"]) == []
+
+
+def _seed_spend(client, routine, credits_by_run: dict[int, float]) -> None:
+    """给这条规则的每一次执行记一笔花费，键是第几次（0 是最早那次）。
+
+    走的是真实的记账入口（`Ledger.record`）：花费写在 `resource_usage` 上、带着那
+    一次执行的轮次 id（`turn_id`），和线上跑完一轮时一模一样。
+    """
+    runs = _runs(client, routine["id"])
+    project_id = uuid.UUID(routine["project_id"])
+
+    async def go(session):
+        for index, credits in credits_by_run.items():
+            turn_id = uuid.uuid4()
+            # 记录是倒着给的：第 0 次在最后一行。
+            run_row = await session.get(
+                RoutineRun, uuid.UUID(runs[len(runs) - 1 - index]["id"])
+            )
+            run_row.turn_id = turn_id
+            await Ledger(session).record(
+                await payer_for_project(session, project_id),
+                credits=credits,
+                model="example-model",
+                input_tokens=10,
+                output_tokens=10,
+                cost_usd=credits * 0.01,
+                route="gateway",
+                turn_id=turn_id,
+            )
+
+    _db(client, go)
+
+
+def test_a_rule_says_what_it_cost_this_month(client):
+    """一条规则花了多少，列表上就写着 —— 它花的是项目所在团队的额度，不记到谁头上，
+    所以这是「这个月团队为这条规则出了多少」唯一看得见的地方。
+
+    记的是每一次执行各自的花费（账本按轮次记），加起来才是这条规则的数。"""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    assert _listed(client, routine["project_id"])[0]["credits_this_month"] == 0
+
+    _seed_runs(client, routine["id"], ["succeeded", "succeeded", "succeeded"])
+    _seed_spend(client, routine, {0: 3.0, 1: 0.5, 2: 10.0})
+
+    listed = _listed(client, routine["project_id"])[0]
+    assert listed["credits_this_month"] == pytest.approx(13.5)
+
+    # 每一次自己的那点也在，按同一本账回答。
+    page = client.get(f"/routines/{routine['id']}/runs", headers=PERSON).json()["data"]
+    assert page["credits_this_month"] == pytest.approx(13.5)
+    by_status = [row["credits"] for row in page["data"]]
+    assert by_status == [pytest.approx(10.0), pytest.approx(0.5), pytest.approx(3.0)]
+
+
+def test_a_run_that_has_not_settled_has_no_figure_yet(client):
+    """刚跑完的一次还读不到花费（网关那边要几秒到几十秒才落账），这时是「没有数」
+    而不是 0 —— 0 是在说「这一轮没花钱」，两件事。"""
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _seed_runs(client, routine["id"], ["running"])
+
+    page = client.get(f"/routines/{routine['id']}/runs", headers=PERSON).json()["data"]
+    assert page["data"][0]["credits"] is None
+    # 还没跑完的那一次不进合计；这一条规则因此是 0 点。
+    assert page["credits_this_month"] == 0
 
 
 def _seed_runs(client, routine_id: str, statuses: list[str]) -> None:

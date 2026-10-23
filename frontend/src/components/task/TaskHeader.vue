@@ -252,7 +252,7 @@ function actionTestId(id: string): string | undefined {
           data-testid="task-phrase"
           :title="progressTitle"
           :state="state"
-          :emphasis="task?.waiting_on === ME"
+          :emphasis="task?.needs_my_action === true"
           :size="13"
         />
         <span
