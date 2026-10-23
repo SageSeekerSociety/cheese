@@ -6,11 +6,12 @@ import type { Ref } from 'vue'
 import type { Block } from '../cx_types'
 import type { ScrollAnchor } from './useStickToBottom'
 
-import { nextTick, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../api'
 import { capWindow, MAX_WINDOW, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
+import { cachedWindow, rememberWindow } from '../lib/siteWindow'
 
 import { t } from '@/i18n'
 
@@ -58,6 +59,12 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   const hasNewer = ref(false)
   const loadingOlder = ref(false)
   let olderCursor: string | null = null
+  // 这一窗最新那一条的游标：刷新时从这里往后读，而不是重读一整页。
+  let newestCursor: string | null = null
+
+  // 此刻才到的行（不是打开时先画出来的缓存、也不是往上翻出来的历史）：它们淡入
+  // 一下，说明「刚来的是这条」。由 PanelSite 绑成 class，行的 `animationend` 清掉。
+  const arrived: Set<string> = reactive(new Set<string>())
 
   // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
   // 不是一回事了，重读时不能再和它合。
@@ -94,10 +101,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return false
       hooks.noteAgents(page.data)
       hooks.noteStarts(page.turn_starts)
-      // 量在行进去之前：这一窗里的离屏行带着 content-visibility（PanelSite 的
-      // .record-row），报的是估计高度，量出来的差补进去就会跳。测量帧让这一窗按真实高度
-      // 铺开，量完再撤——见 lib/contentVisibility。位置在请求回来之后再取（和对话栏的
-      // 分页器同一条理由：请求在飞的时候读的人可能还在滚，飞出前的位置会把他拉回去）。
+      // 量在行进去之前：一行的真实高度和它此刻报出来的可能不一样（长输出折起来、
+      // 图片还没量到、离屏的块按估计高度占位），量出来的差补进去就会跳。测量帧让这一窗
+      // 按真实高度铺开，量完再撤——见 lib/contentVisibility。位置在请求回来之后再取（和
+      // 对话栏的分页器同一条理由：请求在飞的时候读的人可能还在滚，飞出前的位置会把他拉回去）。
       // 读者在不在末尾，按请求回来的这一刻说：他在等这一页的时候可能已经滚过。停在
       // 末尾的人往上多出一页不该把他挪走——钉回末尾；停在历史里的人按位置补。
       const following = hooks.following.value
@@ -154,9 +161,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    * 那一头不动**——从那一头裁，就等于把他刚拉上来的页当场删掉，翻到哪儿删到哪儿。见
    * components/room/composables/useTimeline 的 `capNewest`。
    *
-   * 裁过之后窗口最尾就不再是最新的一条：下面还有，中间还是断的。`hasNewer` 记下这件
-   * 事——现场没有「取更新的」那一路，不能像对话栏那样按游标把它接回来，只能在读的人
-   * 回到末尾时重读一页最新的。
+   * 裁过之后窗口最尾就不再是最新的一条：下面还有，中间是断的。`hasNewer` 记下这件
+   * 事——这时不能再从手上的游标往后读（接上去中间会留一个从没取过的洞），要整页读
+   * 一页最新的把窗口重新连上；读的人回到末尾时 `onSiteScroll` 会那么做。
    */
   function capSite(): void {
     const capped = capWindow(transcript.value)
@@ -211,9 +218,38 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const switchedTopic = tid !== loadedTopic
     // 第一次读：屏上当时什么都没有，摆骨架。之后一律安静地换。
     const firstRead = !loadedOnce
-    if (firstRead && errorMsg.value === null) loading.value = true
+    // 打开（或换视角）：先把手上的那一窗画出来，这一帧就有人看的。有缓存时连骨架
+    // 都不摆——它不是「还没读到」，只是旧了几秒。
+    const opening = firstRead || switched
+    if (opening && errorMsg.value === null) loading.value = true
+    if (opening) {
+      const held = cachedWindow(tid, author, SITE_PAGE_SIZE)
+      if (held) {
+        transcript.value = held.blocks
+        hasOlder.value = held.hasMore
+        olderCursor = held.oldestCursor
+        newestCursor = held.newestCursor
+        arrived.clear()
+        hooks.noteAgents(held.blocks)
+        loading.value = false
+        hooks.scrollToTail()
+      } else {
+        // 这个视角没有手上的东西（第一次看，或换了对话）：游标一律从头来，别把上
+        // 一段对话的接着用。屏上那几行照旧留着,直到这一页到手（`switched` 会把它
+        // 换掉）——换成骨架屏再换回来，就是整栏闪一下。
+        olderCursor = null
+        newestCursor = null
+      }
+    }
+    // 接着问「从这一窗最新那条往后有什么」，而不是重读一整页：手上这一窗就是上一次
+    // 读回来的，重读只会把同样的 120 条再传一遍。没有游标（第一次读、换了对话）时
+    // 才整页读。窗口被裁过（`hasNewer`）也不走这一路——那时中间是断的，接不上。
+    const forward = !hasNewer.value ? newestCursor : null
     try {
-      const tx = await getTranscript(tid, { limit: SITE_PAGE_SIZE, author })
+      const tx = await getTranscript(
+        tid,
+        forward ? { limit: SITE_PAGE_SIZE, after: forward, author } : { limit: SITE_PAGE_SIZE, author }
+      )
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。
       if (hooks.topicId() !== tid || hooks.viewing() !== author) return
@@ -232,12 +268,19 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         // 不跟的时候先记下他读着的那一行：整窗换过之后浏览器可能已经把 scrollTop
         // 夹到了别处（见 useStickToBottom 的 ScrollAnchor）。
         const anchor = follow ? null : hooks.captureAnchor()
-        transcript.value = mergeSite(tx.data, transcript.value, switched)
+        if (forward !== null) {
+          appendSite(tx.data, follow && !opening)
+          capSite()
+        } else {
+          transcript.value = mergeSite(tx.data, transcript.value, switched)
+        }
         hasNewer.value = false
         if (switched || firstRead) {
           hasOlder.value = tx.has_more === true
           olderCursor = tx.oldest_id ?? null
         }
+        // 没有 `newest_id`（更旧的后端）就置空：下一次没有游标可用，退回整页读。
+        newestCursor = tx.newest_id ?? null
         // Follow the tail on every open of a topic's 现场 — that is what "open on
         // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
         if (follow) hooks.scrollToTail()
@@ -245,6 +288,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
           await nextTick()
           hooks.restoreAnchor(anchor)
         }
+        remember()
       }
       // 首屏已经在屏上了，再在后台把上面两页补出来：读者往上翻时不必等。
       void prefetchOlder()
@@ -255,6 +299,35 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     } finally {
       loading.value = false
     }
+  }
+
+  /** 把这一次读回来的、比手上新的几条接在末尾。按 id 去重：往前读的边界取的是
+   *  「那一刻及以后」，和手上可能有重叠。`animate` 时它们才淡入——读者停在末尾，
+   *  这几条正是他此刻在看的；他在历史里时它们落在视口下方，动了也没人看见。 */
+  function appendSite(rows: Block[], animate: boolean): void {
+    if (!rows.length) return
+    const known = new Set(transcript.value.map((b) => b.id))
+    const fresh = rows.filter((b) => !known.has(b.id))
+    if (!fresh.length) return
+    if (animate) for (const b of fresh) arrived.add(b.id)
+    transcript.value = [...transcript.value, ...fresh]
+  }
+
+  /** 把手上这一窗写给下一次打开。 */
+  function remember(): void {
+    const tid = hooks.topicId()
+    if (!tid) return
+    rememberWindow(
+      tid,
+      hooks.viewing(),
+      {
+        blocks: transcript.value,
+        hasMore: hasOlder.value,
+        oldestCursor: olderCursor,
+        newestCursor,
+      },
+      SITE_PAGE_SIZE
+    )
   }
 
   async function load(): Promise<void> {
@@ -341,9 +414,24 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     while (i > 0 && Date.parse(next[i - 1].created_at) > time) i -= 1
     next.splice(i, 0, block)
     transcript.value = next
-    if (follow) hooks.scrollToTail()
-    else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))
+    // 读者停在末尾时这一行就在他眼前落下来，淡入一下说明刚来的是它；他在历史里
+    // 时它落在视口下方，没人看见，别动。`hasNewer` 那一路上面已经先返回了。
+    if (follow) {
+      arrived.add(block.id)
+      hooks.scrollToTail()
+    } else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))
+    remember()
   }
 
-  return { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive }
+  return {
+    transcript,
+    hasOlder,
+    loading,
+    loadingOlder,
+    errorMsg,
+    arrived,
+    load,
+    onSiteScroll,
+    receive,
+  }
 }

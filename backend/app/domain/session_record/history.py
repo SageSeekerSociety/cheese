@@ -29,7 +29,15 @@ async def earlier_turns(
     before: Key | None,
     author: str | None,
     limit: int,
+    after: Key | None = None,
 ) -> tuple[list[dict], bool, datetime]:
+    """The turns that ran before raw records began, newest first — or, with
+    `after`, the oldest ones still newer than that cursor.
+
+    `before` and `after` are the two directions a reader pages in: `before`
+    walks up into the past, `after` walks forward from a window already held.
+    Only one of them is ever given. The flag it returns says whether another
+    page exists in that same direction."""
     boundary = await db.scalar(
         select(Conversation.raw_records_started_at).where(
             Conversation.id == conversation_id
@@ -43,15 +51,18 @@ async def earlier_turns(
     )
     if before is not None:
         query = query.where(_turns.c.started_at < before[0])
+    if after is not None:
+        query = query.where(_turns.c.started_at > after[0])
     if author is not None:
         query = query.where(_turns.c.agent_handle == author)
+    # 往回翻从最新的一头取，往前翻从最旧的一头取：两次都是「顺着读者去的方向」。
+    order = _turns.c.started_at.asc() if after is not None else _turns.c.started_at.desc()
     turns = list(
-        (
-            await db.execute(
-                query.order_by(_turns.c.started_at.desc()).limit(limit + 1)
-            )
-        ).all()
+        (await db.execute(query.order_by(order).limit(limit + 1))).all()
     )
+    kept = turns[:limit]
+    if after is None:
+        kept = list(reversed(kept))
     return (
         [
             {
@@ -71,7 +82,7 @@ async def earlier_turns(
                     "cursor": encode_cursor((turn.started_at, "", str(turn.id), 0)),
                 },
             }
-            for turn in reversed(turns[:limit])
+            for turn in kept
         ],
         len(turns) > limit,
         boundary,

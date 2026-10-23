@@ -79,6 +79,7 @@ const {
   loading,
   loadingOlder,
   errorMsg,
+  arrived,
   onSiteScroll,
   selectAgent,
   inspector,
@@ -213,6 +214,8 @@ async function switchView(mode: 'overview' | 'raw') {
             :raw="viewMode === 'raw'"
             :load-image="loadImage"
             :member-names="memberNames"
+            :arrived="arrived"
+            @settle="arrived.delete($event)"
           />
         </section>
       </div>

@@ -16,10 +16,14 @@ vi.mock('./useSessionInspector', () => ({ useSessionInspector: () => ({}) }))
 vi.mock('@/i18n', () => ({ t: (key: string) => key }))
 
 import { storageRemove } from '../lib/browserStorage'
+import { forgetWindows, rememberWindow } from '../lib/siteWindow'
 
 import { usePanelSite } from './usePanelSite'
 
 beforeEach(() => {
+  // 现场那一窗存在模块级的表里（`lib/siteWindow`）：前一条用例留下的窗口会变成
+  // 后一条的「上次打开」。清掉，每条用例都从没有缓存开始。
+  forgetWindows()
   vi.useFakeTimers()
   vi.stubGlobal(
     'ResizeObserver',
@@ -70,8 +74,13 @@ function row(id: string, second: number): Block {
   return { ...block(id, second), run_record: false } as Block
 }
 
-function page(rows: Block[], extra: { has_more?: boolean; oldest_id?: string | null } = {}) {
-  return { data: rows, has_more: extra.has_more ?? false, oldest_id: extra.oldest_id ?? null }
+function page(rows: Block[], extra: { has_more?: boolean; oldest_id?: string | null; newest_id?: string | null } = {}) {
+  return {
+    data: rows,
+    has_more: extra.has_more ?? false,
+    oldest_id: extra.oldest_id ?? null,
+    newest_id: extra.newest_id ?? null,
+  }
 }
 
 const OPEN = page([block('a', 1), block('b', 2)])
@@ -120,6 +129,79 @@ describe('where 现场 opens', () => {
     await settle()
 
     expect(box.scrollTop).toBe(1500)
+    scope.stop()
+  })
+})
+
+describe('the window from last time', () => {
+  it('paints it at once, then asks only for what came after it', async () => {
+    forgetWindows()
+    // 上一次打开留下的那一窗（`lib/siteWindow`）。这一条用例前把它放进去。
+    rememberWindow(
+      'room',
+      null,
+      {
+        blocks: [row('a', 1), row('b', 2)],
+        hasMore: true,
+        oldestCursor: 'c1',
+        newestCursor: 'n1',
+      },
+      120
+    )
+    let answer!: (v: ReturnType<typeof page>) => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          answer = r
+        })
+    )
+
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 }
+    const el = pane(box)
+    const scope = effectScope()
+    const site = scope.run(() =>
+      usePanelSite({
+        topicId: () => 'room',
+        active: () => true,
+        refreshTick: () => 0,
+        runningTurns: () => ({}),
+        agentControl: () => null,
+      })
+    )!
+    site.scrollRef.value = el
+    await settle()
+
+    // 请求还在路上，屏上已经是上次那一窗了——不是骨架屏。
+    expect(site.loading.value, '有缓存就不摆骨架屏').toBe(false)
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a', 'b'])
+    // 问的是「从这一窗往后有什么」，不是重读一整页。
+    expect(api.getTranscript.mock.calls[0][1]).toMatchObject({ after: 'n1' })
+
+    answer(page([row('c', 3)], { newest_id: 'n2' }))
+    await settle()
+    // 新的接在末尾，不是把整窗换掉。
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a', 'b', 'c'])
+    scope.stop()
+  })
+
+  it("does not paint another view's window", async () => {
+    forgetWindows()
+    rememberWindow(
+      'room',
+      'cheese-a',
+      {
+        blocks: [row('a', 1)],
+        hasMore: false,
+        oldestCursor: null,
+        newestCursor: 'n1',
+      },
+      120
+    )
+    api.getTranscript.mockResolvedValue(page([row('b', 2)]))
+    const { site, scope } = await openAtBottom()
+
+    // 「全部」这一视角没有缓存，不该把「只看 cheese-a」那一窗端上来。
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['b'])
     scope.stop()
   })
 })
