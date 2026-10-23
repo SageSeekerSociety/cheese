@@ -111,6 +111,28 @@ function wrapOf(ed: CoreEditor) {
 function sameSelection(ed: CoreEditor) {
   return dismissed?.editor === ed && dismissed.doc === ed.state.doc && dismissed.selection.eq(ed.state.selection)
 }
+// 按住鼠标拖选时先不摆浮条：拖选过程中选区一直在变，每变一次都重算位置，浮条就会
+// 追着光标跑。松开（pointerup）后再按最终选区摆一次。只认从正文可编辑区里按下的
+// 那一下——点浮条自己的按钮、点正文外的空白都不算。
+let draggingSelection = false
+function onSelectPointerDown(e: PointerEvent) {
+  const ed = bound
+  if (!ed || e.button !== 0 || !(e.target instanceof Node) || !ed.view.dom.contains(e.target)) return
+  draggingSelection = true
+  commentCta.value = null
+}
+function onSelectPointerUp() {
+  if (!draggingSelection) return
+  draggingSelection = false
+  if (bound && !disposed) updateCommentCta(bound)
+}
+function onSelectPointerCancel() {
+  // 手势被系统接管（滚动、原生拖拽）时同样收尾：选区可能还在，而且不会再有一次
+  // selectionUpdate 来补这一下，只清标志会让浮条一直不回来。
+  if (!draggingSelection) return
+  draggingSelection = false
+  if (bound && !disposed) updateCommentCta(bound)
+}
 function positionCta() {
   const cta = commentCta.value
   if (!cta || disposed) return
@@ -167,6 +189,11 @@ function schedulePosition() {
   })
 }
 function updateCommentCta(ed: CoreEditor) {
+  // 拖选还没松开：这中间的每一次选区变化都不摆浮条，等 pointerup 再摆。
+  if (draggingSelection) {
+    commentCta.value = null
+    return
+  }
   const sel = ed.state.selection
   if (sel.empty && !sameSelection(ed) && props.editable && ed.isEditable && !touch.value) {
     const status = statusAt(ed.state, sel.from)
@@ -287,6 +314,9 @@ watch(
 document.addEventListener('scroll', schedulePosition, true)
 window.addEventListener('resize', schedulePosition)
 document.addEventListener('keydown', escapeSelection, true)
+document.addEventListener('pointerdown', onSelectPointerDown, true)
+document.addEventListener('pointerup', onSelectPointerUp, true)
+document.addEventListener('pointercancel', onSelectPointerCancel, true)
 onBeforeUnmount(() => {
   disposed = true
   bound?.off('selectionUpdate', onSelectionUpdate)
@@ -296,6 +326,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('scroll', schedulePosition, true)
   window.removeEventListener('resize', schedulePosition)
   document.removeEventListener('keydown', escapeSelection, true)
+  document.removeEventListener('pointerdown', onSelectPointerDown, true)
+  document.removeEventListener('pointerup', onSelectPointerUp, true)
+  document.removeEventListener('pointercancel', onSelectPointerCancel, true)
 })
 /** 浮条收起，交出选中的那几个字（记成跟着正文走的位置）；中途换了文档、正文变了就是 null。 */
 function takeSelection(): CommentSpot | null {
