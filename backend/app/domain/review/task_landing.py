@@ -459,7 +459,7 @@ def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
         record = (
             f"先读这次交付的 PR #{pr_number}，用这个项目实际用的那把 CLI："
             f"GitHub 项目用 `gh pr view {pr_number} --json number,title,mergedAt,url,body`；"
-            "Forgejo 项目用 `fj`（先 `fj pr view --help` 看它的参数，别照抄 `gh` 那一串）。"
+            "Forgejo 项目用 `fj`（命令和参数看 `fj --help`，别照抄 `gh` 那一串）。"
             "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
             "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
             "读不到的那一项照实写没读到，不要编。"

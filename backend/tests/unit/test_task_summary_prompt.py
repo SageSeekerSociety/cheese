@@ -48,6 +48,9 @@ def test_both_forges_are_named_because_gh_is_refused_on_forgejo():
 
     assert "Forgejo" in text and "`fj`" in text
     assert "这个项目实际用的" in text
+    # 仓库里没有 `fj pr view` 的用法可核，能指的只有技能说明写的那一条 `fj --help`
+    # （`backend/sandbox/skills/cheese/references/ci.md`），别让 agent 去跑不存在的子命令。
+    assert "`fj --help`" in text
     assert "别照抄 `gh` 那一串" in text
 
 
