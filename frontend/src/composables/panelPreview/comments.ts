@@ -28,7 +28,9 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     const file = state.previewFile.value
     if (!file || !props.topicId) return null
     const path = file.path
-    if (path.startsWith('library/') || path.startsWith('attachments/')) return null
+    // 资料库原件（`library/`）和一条消息的附件（`uploads/`）不是这个房间的文件：
+    // 前者只读，后者属于那条消息，评论都不挂在它们上面。
+    if (path.startsWith('library/') || path.startsWith('uploads/')) return null
     return { topicId: props.topicId, path, version: file.version }
   })
   // 这一栏开着没有：关着就不去问接口——预览每一格打开都多打一次，不值。
