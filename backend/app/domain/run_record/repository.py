@@ -121,9 +121,7 @@ class RunRecordRepository:
             )
         if after is not None and before is None:
             rows = await self._session.scalars(
-                stmt.order_by(RunRecord.created_at, author, RunRecord.id).limit(
-                    limit
-                )
+                stmt.order_by(RunRecord.created_at, author, RunRecord.id).limit(limit)
             )
             return list(rows)
         rows = await self._session.scalars(

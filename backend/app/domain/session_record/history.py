@@ -56,10 +56,10 @@ async def earlier_turns(
     if author is not None:
         query = query.where(_turns.c.agent_handle == author)
     # 往回翻从最新的一头取，往前翻从最旧的一头取：两次都是「顺着读者去的方向」。
-    order = _turns.c.started_at.asc() if after is not None else _turns.c.started_at.desc()
-    turns = list(
-        (await db.execute(query.order_by(order).limit(limit + 1))).all()
+    order = (
+        _turns.c.started_at.asc() if after is not None else _turns.c.started_at.desc()
     )
+    turns = list((await db.execute(query.order_by(order).limit(limit + 1))).all())
     kept = turns[:limit]
     if after is None:
         kept = list(reversed(kept))

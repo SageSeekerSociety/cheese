@@ -122,7 +122,9 @@ def test_a_cursor_that_is_not_one_of_ours_is_refused(client):
     room = _room(client)
 
     response = client.get(
-        f"/topics/{room}/transcript", params={"after": "not-a-cursor"}, headers=HEADERS["headers"]
+        f"/topics/{room}/transcript",
+        params={"after": "not-a-cursor"},
+        headers=HEADERS["headers"],
     )
 
     assert response.status_code == 404
