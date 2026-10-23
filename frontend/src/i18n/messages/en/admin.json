@@ -163,6 +163,7 @@
       "overdue": "past its idle time and not reclaimed yet (the room's AI teammate stopping later, or a background command still running, pushes it back)"
     },
     "placed": "Placed {at}",
+    "personal": "Personal conversation",
     "taskRoom": "task",
     "spec": "{cores} cores · {memory} GB · {disk} GB",
     "dur": {

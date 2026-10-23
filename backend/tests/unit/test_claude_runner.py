@@ -309,6 +309,22 @@ def test_a_send_is_written_read_and_its_work_goes_idle_in_order(screen, contract
     assert echo["record"]["cheese"]["work_id"] == work
 
 
+def test_a_platform_call_is_told_the_run_by_the_event_that_began_it(screen):
+    """The session's helper asks which run its platform call is made in, and is
+    told the run by the same name the platform applies the ``running`` event
+    under: its epoch and seq. Idle afterwards (a background task's call), it is
+    still that run; before the session has run, there is no run to name."""
+    assert screen.call("run") == {}
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+    running = next(e for e in screen.events() if _status("running", work)(e))
+
+    assert screen.call("run") == {
+        "run": f"claude-code/{running['epoch']}/{running['seq']}"
+    }
+
+
 def test_an_acknowledged_event_is_not_handed_over_again(screen):
     """The runner keeps an event until the platform acknowledges it, and only
     that long: a read that acknowledges nothing gets it again, one that

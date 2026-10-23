@@ -118,6 +118,14 @@ const STEP_ARG: Record<string, string> = {
   cheese_routine: 'title',
   cheese_notify_me: 'text',
   cheese_memory: 'description',
+  // 这段对话自己那台电脑上的（pi 自己的工具）。
+  bash: 'command',
+  read: 'path',
+  write: 'path',
+  edit: 'path',
+  ls: 'path',
+  find: 'pattern',
+  grep: 'pattern',
 }
 
 export function stepView(step: AssistantStep): PanelStep {

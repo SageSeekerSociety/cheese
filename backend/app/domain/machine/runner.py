@@ -20,9 +20,11 @@ destroyed sandbox is seen within one sweep only if nothing slow is in the way.
 import logging
 import uuid
 from collections.abc import Callable
+from functools import partial
 
 from app.core.db import SessionFactory
 from app.domain.machine import cloud_vm, metering, retained_archives
+from app.domain.machine import holder as holders
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.usage.compute import ComputeMeter
@@ -89,5 +91,7 @@ class ComputeMeterSweeper:
 
         async with self._sessions() as session:
             seen = await metering.observe(session)
-            charged = await ComputeMeter(session).settle()
+            charged = await ComputeMeter(session).settle(
+                partial(holders.payer_of, session)
+            )
         return {**seen, "charged": charged}

@@ -117,6 +117,10 @@ class SessionSpec:
     #: The tool table's tools it has (`sandbox/cheese`), by name; None is all
     #: of them.
     tools: tuple[str, ...] | None = None
+    #: With ``tools`` and an execution target: whether the session works on
+    #: the target with its harness's own tools, commands included, rather
+    #: than only reading it. A person's 芝士 in its own sandbox.
+    works: bool = False
     #: None is the session host's own limits.
     footprint: Footprint | None = None
     #: How long it may sit idle before it exits; None is the runner's own.

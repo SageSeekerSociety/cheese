@@ -20,6 +20,7 @@ from app.domain.agent.executor_transport import (
     PlatformHost,
     RemoteClient,
     failure_text,
+    no_run,
     session_path,
 )
 from app.domain.agent.harness.driven import monitor
@@ -516,6 +517,7 @@ class RemoteTools:
             invoke,
             call_id,
             self.doc_versions,
+            no_run,
             self.compact if session_call else None,
         )
         try:

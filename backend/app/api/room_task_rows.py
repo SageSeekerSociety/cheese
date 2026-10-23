@@ -33,6 +33,7 @@ from app.domain.addressing import Event, address
 from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
 from app.domain.agent.session_state import running_conversations
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -70,9 +71,15 @@ async def task_out(db, task, card=None) -> dict:
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
+    runs = await teammate_runs(db, [task])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
-        presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+        presentation.facts_for_task(
+            task,
+            card,
+            awaiting_answer=task.id in asked,
+            teammate_runs=runs.get(task.id),
+        ),
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
@@ -123,6 +130,9 @@ async def task_rows(
         thread_ids
     )
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
+    # 哪几条活自己那位队友的会话此刻在跑、在哪一次跑里：那样的活是「在做」，除非它
+    # 在这一次里报过别的（`presentation`）。
+    runs = await teammate_runs(db, [task for task, _ in threads])
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
     for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
@@ -143,7 +153,12 @@ async def task_rows(
     for task, blocks in threads:
         card = cards.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
+            ),
             now=now,
         )
         waiting = presentation.waiting_on(
@@ -301,12 +316,21 @@ async def project_task_rows(
         set() if running_of is not None else await running_conversations(db, task_ids)
     )
     is_running = running_of or running.__contains__
+    # 第六次：哪几条活自己那位队友的会话在跑、在哪一次跑里 —— 那一格的「在做」。和上面
+    # 那一半不是一回事：侧栏的呼吸绿看这段对话里有没有任何会话在跑，那一格只认这条活
+    # 自己的队友（`agent.teammate_runs`）。
+    runs = await teammate_runs(db, tasks)
     items = []
     for task in tasks:
         card = cards.get(task.id)
         said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
+            ),
             now=now,
         )
         last_activity = said_at or task.created_at
@@ -476,13 +500,14 @@ async def room_task_items(
 
 
 async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
-    """Say on each task row whether a session of its AI teammate is running in
-    it right now (`session_running`), as the session protocol declares it.
+    """Say on each task row whether any agent's session is running in it right
+    now (`session_running`), as the session protocol declares it.
 
     For readers that act on whether the teammate is at work — the orchestrator's
     patrol, which must not nudge a session in the middle of a long command. The
-    board does not read it: what a task shows is what its teammate reported
-    (`presentation`).
+    board cell reads a narrower fact (`agent.teammate_runs`: the task's own
+    teammate's run, weighed against its report); this says whether any session
+    in the task runs.
     """
     running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
     return [

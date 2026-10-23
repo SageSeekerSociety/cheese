@@ -195,6 +195,16 @@ describe('机器', () => {
     expect(queryByText(/Launch room/)).not.toBeNull()
   })
 
+  it('个人芝士对话的沙箱只写「个人对话」，不链到任何项目', async () => {
+    const [mine] = host().sandboxes
+    const personal = host({ sandboxes: [{ ...mine, project_id: null, project: null, room: null }] })
+    const { getByText, queryByRole } = mount({ overview: overview({}, [personal]) })
+    await fireEvent.click(getByText('pool-a'))
+    const named = i18n.global.t('admin.machines.personal')
+    expect(getByText(named).tagName).not.toBe('A')
+    expect(queryByRole('link', { name: named })).toBeNull()
+  })
+
   it('宿主机数和上限放在一起比时，整机虚拟机也算进去：上限就是这样数的', () => {
     const { getByText } = mount({ overview: overview({ hosts: 1, vms: 3, max_hosts: 4, at_cap: true }) })
     expect(getByText('4 / 4')).toBeTruthy()
