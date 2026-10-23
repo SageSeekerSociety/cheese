@@ -34,6 +34,14 @@ func ExecutionResult(id string, err error) Msg {
 	return m
 }
 
+// ExecOutput carries one line a running exec wrote to stderr, without its line
+// end, for an exec that asked for Stream. The exec.result after it still
+// carries the whole of stderr: these frames are what the backend shows while
+// the command runs, never what it decides the outcome from.
+func ExecOutput(id, line string) Msg {
+	return Msg{T: "exec.output", ID: id, Stderr: line}
+}
+
 // Heartbeat says this connector is still there. The ping below it keeps the
 // connection alive at the socket, but that is answered inside the server's
 // websocket layer and never reaches the backend; this frame does, and a link

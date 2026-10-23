@@ -53,10 +53,13 @@ class SandboxRefused(RuntimeError):
 
 
 def refused(installed: dict) -> SandboxRefused | None:
-    """The refusal an install's exec result reports, if it is one."""
+    """The refusal an install's exec result reports, if it is one: the last
+    line of its stderr. What the install said before it — how far a download
+    got — is not the refusal."""
     if installed.get("exit") != bootstrap.SANDBOX_UNAVAILABLE_EXIT:
         return None
-    return SandboxRefused(json.loads((installed.get("stderr") or "").strip()))
+    said = (installed.get("stderr") or "").strip().splitlines()
+    return SandboxRefused(json.loads(said[-1] if said else ""))
 
 
 def can_prepare(info, sandbox=None):
