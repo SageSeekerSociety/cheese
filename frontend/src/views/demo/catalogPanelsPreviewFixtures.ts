@@ -16,6 +16,7 @@ import type { DocumentRevision, FileContent } from '@/cx_types'
 
 import { computed, ref, shallowRef } from 'vue'
 
+import { AGENT_NAME } from './catalogFixtures/common'
 import { previewPanelProps } from './catalogFixtures'
 
 import { fileHistoryBundle, revisionsBundle, roomFileEditorBundle } from '@/test/panelBundles'
@@ -180,6 +181,7 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     previewReadError: null,
     pickTarget: null,
     pickOn: false,
+    agentName: AGENT_NAME,
     ...over,
   }
 }

@@ -122,7 +122,7 @@ describe('a team page', () => {
     detailByHandle.mockRejectedValue({ status: 500, message: '服务端打盹了' })
     mount()
 
-    await screen.findByText('团队信息没读出来')
+    await screen.findByText('团队信息加载失败')
     expect(screen.getByText('服务端打盹了')).toBeTruthy()
     expect(screen.queryByText('找不到这个团队，它可能已解散或不对你公开')).toBeNull()
   })
@@ -138,11 +138,11 @@ describe('a team page', () => {
   it('retry asks the same handle again', async () => {
     detailByHandle.mockRejectedValueOnce({ status: 500 })
     mount()
-    await screen.findByText('团队信息没读出来')
+    await screen.findByText('团队信息加载失败')
 
     detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     await fireEvent.click(screen.getByText('重试'))
     await screen.findByText('成员工作区内容')
-    expect(screen.queryByText('团队信息没读出来')).toBeNull()
+    expect(screen.queryByText('团队信息加载失败')).toBeNull()
   })
 })

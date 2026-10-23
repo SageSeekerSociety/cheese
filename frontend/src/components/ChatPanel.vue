@@ -11,7 +11,7 @@ import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch, watchEffect } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -169,9 +169,14 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
+// 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
+const chatRoot = ref<HTMLElement | null>(null)
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
@@ -184,11 +189,14 @@ const panel = useChatPanel({
   emit: panelEmit,
 })
 
+// 一件任务交给的那位 AI 队友叫什么；没单独指定的，是这间房的那位。
+const taskAgentName = (handle: string | null | undefined) =>
+  (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value
 const threadLines = useThreadLines({
   mainLine: () => mainLine.value,
   roomId: () => props.topic?.id ?? null,
   timeline: panel.timeline,
-  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+  agentNameOf: taskAgentName,
 })
 // 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
 const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
@@ -222,7 +230,13 @@ function nameOf(handle: string): string {
 // 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () =>
+    new Map(
+      knownTasks.value.map((task) => [
+        task.id,
+        taskLine(task, panel.viewer.value, nameOf, taskAgentName(task.agent_handle)),
+      ])
+    )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 function taskOf(taskId: string): TaskLine | null {
@@ -257,7 +271,6 @@ const {
   onTimelineScroll,
   scrollRef,
   contentRef,
-  columnRef,
   dayLabels,
   unreadAnchorId,
   runEdges,
@@ -400,12 +413,6 @@ const submitQuestion = createQuestionSubmit({
 defineExpose({ send, linkDown, submitQuestion })
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
-const chatRoot = ref<HTMLElement | null>(null)
-// 时间线外面包了 `.timeline-zone` 给书签浮条定位，滚动框的父元素就不再是这一整栏
-// 了。滚动跟随要知道输入框那一块闪了一下，得看着这一栏（见 useChatScroll 的 columnRef）。
-watchEffect(() => {
-  columnRef.value = chatRoot.value
-})
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,

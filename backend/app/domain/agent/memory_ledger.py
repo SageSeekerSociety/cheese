@@ -468,7 +468,7 @@ class MemoryLedger:
             if refusal:
                 summary = f"拒绝执行：{refusal}"
             elif failed:
-                summary = "这一轮没跑成"
+                summary = "这次整理没做完"
             else:
                 summary = dream.clip(final_text, 1000)
             run = await dream.run_of(session, run_id)

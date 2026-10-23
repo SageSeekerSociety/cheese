@@ -14,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { isAgentBlock } from '../../lib/authorship'
 import { collapseNotices } from '../../lib/platformNotice'
+import { taskState } from '../../lib/taskState'
 
 import ChatTimeline from './ChatTimeline.vue'
 
@@ -34,6 +35,11 @@ function said(id: string, content: string): Block {
 }
 
 const BLOCKS = [said('a', 'first'), said('b', 'second'), said('c', 'third')]
+/** 一件等看的人审阅的任务，卡上那一格的状态。 */
+const REVIEW = taskState(
+  { id: 'task', presentation: { column: 'needs_you', phrase: 'awaiting_review' }, waiting_on: 'lin' },
+  { viewer: 'lin', agentName: '芝士' }
+)
 
 function mount(overrides: Record<string, unknown> = {}) {
   const rows = collapseNotices(BLOCKS)
@@ -153,7 +159,7 @@ describe('each task made on its own in the channel keeps its own card', () => {
     } as Block
   }
   function card(id: string, title: string): TaskLine {
-    return { id, title, owner: 'lin', creator: 'lin', status: '待你审阅', tone: 'mine', accepted: null, at: '' }
+    return { id, title, owner: 'lin', creator: 'lin', state: REVIEW, mine: true, accepted: null, at: '' }
   }
 
   it('two tasks created one after the other by the same person show two cards', () => {
@@ -201,8 +207,8 @@ describe('every row in the timeline has a name, on screen or not', () => {
       title: 'Fix the login redirect',
       owner: 'lin',
       creator: 'lin',
-      status: '待你审阅',
-      tone: 'mine',
+      state: REVIEW,
+      mine: true,
       accepted: null,
       at: '',
     }
@@ -261,5 +267,47 @@ describe('a chapter starts where someone marked it', () => {
   it('says nothing above a message nobody marked', () => {
     const { queryAllByRole } = mount({ chapters: [] })
     expect(queryAllByRole('heading', { level: 3 })).toHaveLength(0)
+  })
+})
+
+describe('a merged line someone opened stays open', () => {
+  // The same person archives channels one after another: one merged line.
+  function archived(id: string, room: string, minute: number): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'wang',
+      content: `<@wang> archived 「${room}」`,
+      created_at: `2026-09-01T10:${String(minute).padStart(2, '0')}:00Z`,
+      meta: { platform: true, i18n: { content: { key: 'roomArchived', params: { actor: '<@wang>', room } } } },
+    } as unknown as Block
+  }
+
+  it('shows the one that just joined without folding back up', async () => {
+    const first = [archived('x1', 'weekly', 1), archived('x2', 'hiring', 2)]
+    const view = mount({ rows: collapseNotices(first), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+    expect(view.container.textContent).toContain('hiring')
+
+    const next = [...first, archived('x3', 'budget', 3)]
+    await view.rerender({ rows: collapseNotices(next), runEdges: ['start'], arrived: new Set(['x3']) })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
+    expect(view.container.textContent).toContain('budget')
+  })
+
+  it('stays open when an older page brings an earlier one into it', async () => {
+    const later = [archived('y2', 'hiring', 2), archived('y3', 'budget', 3)]
+    const view = mount({ rows: collapseNotices(later), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+
+    const all = [archived('y1', 'weekly', 1), ...later]
+    await view.rerender({ rows: collapseNotices(all), runEdges: ['start'] })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
   })
 })

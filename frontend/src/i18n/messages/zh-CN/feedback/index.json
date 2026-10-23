@@ -3,5 +3,5 @@
   "private": "私密",
   "privateHint": "私密反馈：只有你、平台管理员、以及提出它时在那个频道里的人能看到，其他人看不到它",
   "security": "安全",
-  "sessionLine": "会话 {id}"
+  "sessionLine": "运行记录 {id}"
 }

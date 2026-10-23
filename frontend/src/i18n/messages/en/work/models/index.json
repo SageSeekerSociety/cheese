@@ -7,6 +7,6 @@
   "notInPlan": "Not included in your plan",
   "requiresPlan": "Requires the {plan} plan",
   "subagent": "Default subagent model",
-  "subagentHint": "Used by temporary subagents Claude Code spawns within a turn",
+  "subagentHint": "Used by subagents Claude Code sends out",
   "unavailable": "No longer available"
 }

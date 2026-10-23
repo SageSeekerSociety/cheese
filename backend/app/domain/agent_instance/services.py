@@ -2,7 +2,7 @@
 
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -225,6 +225,38 @@ class AgentInstanceService:
         given = await self.for_seat_handle(project, agent_handle)
         return given or await self.for_topic(room, project)
 
+    async def for_tasks(
+        self,
+        project_id: uuid.UUID,
+        tasks: Mapping[uuid.UUID, tuple[uuid.UUID, str | None]],
+    ) -> dict[uuid.UUID, ResolvedAgent]:
+        """`for_task` for a page of one project's tasks, given as task id →
+        (room id, ``Task.agent_handle``), in a fixed number of reads however many
+        tasks and rooms there are: the project's teammates once, and the rosters
+        of the rooms whose task was given nobody still here once
+        (`TopicMemberService.addressable_agent_handles`)."""
+        by_seat = {
+            agent_instance_handle(instance.id): instance
+            for instance in await self.list_for_project(project_id)
+        }
+        rooms = {room for room, given in tasks.values() if given not in by_seat}
+        seats = await TopicMemberService(self._session).addressable_agent_handles(
+            project_id, sorted(rooms)
+        )
+        default: ResolvedAgent | None = None
+        answer: dict[uuid.UUID, ResolvedAgent] = {}
+        for task_id, (room, given) in tasks.items():
+            instance = by_seat.get(given or "") or by_seat.get(seats.get(room) or "")
+            if instance is not None:
+                answer[task_id] = self.resolved(instance)
+                continue
+            if default is None:
+                project = await self._session.get(Project, project_id)
+                assert project is not None, "a task's project outlives it"
+                default = await self.for_project(project)
+            answer[task_id] = default
+        return answer
+
     async def for_task_by_id(
         self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
     ) -> ResolvedAgent | None:
@@ -294,6 +326,16 @@ class AgentInstanceService:
         if project is None:
             raise NotFoundError(say("projectNotFound"))
         return await self.for_handle(project, handle)
+
+    async def for_seat_handle_in(
+        self, project_id: uuid.UUID, handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_seat_handle`，但按 id 找项目那一行 —— 给只拿得到 id 的调用方（路由层
+        为一句给人看的话叫出队友的名字）。项目不在了就是 None，和不是队友同一个答案。"""
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            return None
+        return await self.for_seat_handle(project, handle)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""

@@ -163,21 +163,43 @@ describe('滚动框底下那一块闪了一下', () => {
     expect(scroll.atBottom.value).toBe(true)
     expect(box.el.scrollTop).toBe(1600)
   })
+})
 
-  // 时间线外面又包了一层（左上角书签浮条要靠它定位）：滚动框的父元素不再是这一整栏，
-  // 底下那一块成了它的兄弟。只看父元素就漏掉了这一下改写，停在底部的人被甩上去。
-  it('包了一层之后再闪一下：仍算停在底部，回到最新一条', async () => {
-    const { box, scroll } = await mounted(2000)
+// 时间线自己包了一层（#4662 起的 `.timeline-zone`，书签条浮在它上面），输入区是那一层
+// 的兄弟：滚动框的直接父元素看不到输入区。观察它的话，「谁在忙」那一行来了又走把停在
+// 底部的人夹上去 196px，会被当成他自己往上翻——桌面端（WebKit）真用户每次任务一动都中。
+describe('时间线外面还包了一层，输入区在包装层外面', () => {
+  async function mountedZoned(content: number) {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const box = pane(content)
+    const timelineZone = document.createElement('div')
+    const composerZone = document.createElement('div')
     const column = document.createElement('div')
-    const zone = document.createElement('div')
-    zone.append(box.el)
-    column.append(zone, document.createElement('div')) // 后一个就是底下那一块
-    scroll.columnRef.value = column
+    column.append(timelineZone, composerZone)
+    timelineZone.append(box.el)
+    let scroll!: ReturnType<typeof useChatScroll>
+    render(
+      defineComponent({
+        setup() {
+          scroll = useChatScroll({ column: () => column })
+          return () => h('div')
+        },
+      })
+    )
+    scroll.scrollRef.value = box.el
+    scroll.contentRef.value = document.createElement('div')
     await nextTick()
-    column.lastElementChild!.append(document.createElement('div'))
+    box.el.scrollTop = content
+    scroll.rememberScroll('room')
+    return { box, scroll, composerZone }
+  }
+
+  it('没人动，输入区那一块却往上挪了：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll, composerZone } = await mountedZoned(2000)
+    composerZone.append(document.createElement('div'))
     await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
     box.el.scrollTop = 1600 - 196
-    scroll.rememberScroll('t-wrapped')
+    scroll.rememberScroll('t-zone')
     expect(scroll.atBottom.value).toBe(true)
     expect(box.el.scrollTop).toBe(1600)
   })

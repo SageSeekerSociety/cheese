@@ -14,7 +14,7 @@
   "join": "加入团队",
   "joinHint": "确认后你将成为团队成员，可以使用团队的项目和设备",
   "joinTitle": "加入团队",
-  "loadFailed": "团队信息没读出来",
+  "loadFailed": "团队信息加载失败",
   "loading": "加载中",
   "login": "登录并继续",
   "loginHint": "登录后可查看团队信息，再决定是否加入",

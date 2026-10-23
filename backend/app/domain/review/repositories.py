@@ -163,8 +163,16 @@ class AcceptCardRepository:
         can file again after a rejection, and the current card is the one that
         says where the work stands.
         """
+        return (await self.latest_and_counts_by_task(task_ids))[0]
+
+    async def latest_and_counts_by_task(
+        self, task_ids: Collection[uuid.UUID]
+    ) -> tuple[dict[uuid.UUID, AcceptCard], dict[uuid.UUID, int]]:
+        """`latest_by_task`, plus how many cards each thread has filed in all
+        (「第 N 版」 on a card in review). The same rows answer both, so it is
+        still one query."""
         if not task_ids:
-            return {}
+            return {}, {}
         stmt = (
             select(AcceptCard)
             # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
@@ -177,11 +185,13 @@ class AcceptCardRepository:
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
         latest: dict[uuid.UUID, AcceptCard] = {}
+        counts: dict[uuid.UUID, int] = {}
         for card in (await self._session.scalars(stmt)).all():
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
                 latest[card.task_id] = card
-        return latest
+                counts[card.task_id] = counts.get(card.task_id, 0) + 1
+        return latest, counts
 
     async def listed(
         self,
@@ -223,6 +233,8 @@ class AcceptCardRepository:
                 AcceptCard.pr_url,
                 AcceptCard.change_subject,
                 AcceptCard.note,
+                AcceptCard.deliverable_name,
+                AcceptCard.created_at,
             )
             .where(
                 or_(

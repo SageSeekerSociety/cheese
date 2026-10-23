@@ -5,8 +5,8 @@
   "memoryAdded": "新增 {count} 条",
   "memoryConflicted": "{count} 条被别人抢先改了",
   "memoryMigrationApplied": "旧记忆迁移：搬完了，写了 {files} 个文件",
-  "memoryMigrationReported": "旧记忆迁移：报告好了，等复核 —— {sources} 条旧记忆 → {files} 个文件",
-  "memoryMigrationReportedOverGoal": "旧记忆迁移：报告好了，等复核 —— {sources} 条旧记忆 → {files} 个文件；**team 索引超出目标**",
+  "memoryMigrationReported": "旧记忆迁移：报告好了，等复核。{sources} 条旧记忆 → {files} 个文件",
+  "memoryMigrationReportedOverGoal": "旧记忆迁移：报告好了，等复核。{sources} 条旧记忆 → {files} 个文件；**团队索引超出目标**",
   "memoryRemoved": "删除 {count} 条",
   "memoryUpdated": "修改 {count} 条"
 }

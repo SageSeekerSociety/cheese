@@ -11,7 +11,7 @@
     "seconds": "{n} 秒"
   },
   "state": {
-    "loadFailed": "CI 数据读不出来",
+    "loadFailed": "CI 数据加载失败",
     "retry": "重试",
     "loading": "正在读…"
   },

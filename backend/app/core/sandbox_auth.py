@@ -387,6 +387,69 @@ def personal_claims(token: str) -> PersonalClaims | None:
     return PersonalClaims(user_id=user_id, conversation_id=conversation)
 
 
+# What a person's 芝士 carries into its own sandbox (``routes/execution.py``):
+# whose 芝士, which conversation's sandbox, which session and which of its
+# leases, as ``bind_resource_token`` says them for a room's. It opens that
+# sandbox and nothing else: its prefix and signing domain make it no credential
+# to every route that reads another kind, an execution route of an older
+# release included.
+PERSONAL_EXECUTION_PREFIX = "cxpx_"
+_PERSONAL_EXECUTION_DOMAIN = "cxpx1"
+
+
+def mint_personal_execution_credential(
+    *,
+    user_id: int,
+    conversation_id: str,
+    session_id: str,
+    lease_generation: str,
+    ttl_s: int = PERSONAL_CREDENTIAL_TTL_S,
+) -> str:
+    now = int(time.time())
+    payload = {
+        "u": user_id,
+        "t": conversation_id,
+        "r": conversation_id,
+        "session": session_id,
+        "lease": lease_generation,
+        "iat": now,
+        "exp": now + ttl_s,
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
+    return f"{PERSONAL_EXECUTION_PREFIX}{body}.{signature}"
+
+
+def personal_execution_claims(token: str) -> dict | None:
+    """The claims of a well-formed, correctly-signed, unexpired personal
+    execution credential, else ``None``."""
+    if not token.startswith(PERSONAL_EXECUTION_PREFIX):
+        return None
+    try:
+        body, signature = token[len(PERSONAL_EXECUTION_PREFIX) :].split(".", 1)
+    except ValueError:
+        return None
+    expected = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user_id, expires = payload.get("u"), payload.get("exp")
+    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
+        return None
+    if not isinstance(expires, int) or expires < time.time():
+        return None
+    if not all(isinstance(payload.get(k), str) for k in ("t", "r", "session", "lease")):
+        return None
+    return payload
+
+
 # A 芝士 answering someone's question acts for that person: what it reads is
 # judged by what the asker may read, and what it changes is recorded as done by
 # the agent at the asker's request. The credential is minted for one question

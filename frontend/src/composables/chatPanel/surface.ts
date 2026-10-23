@@ -99,7 +99,6 @@ export function usePanelSurface(parts: {
     togglePicker: parts.reactions.togglePicker,
     scrollRef: parts.scroll.scrollRef,
     contentRef: parts.scroll.contentRef,
-    columnRef: parts.scroll.columnRef,
     atBottom: parts.scroll.atBottom,
     scrollToBottom: parts.scroll.scrollToBottom,
     dayLabels: parts.rows.dayLabels,

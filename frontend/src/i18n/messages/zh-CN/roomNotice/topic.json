@@ -1,6 +1,6 @@
 {
   "mentionFused": "AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
-  "mentionFusedDetail": "同一个频道里，AI 队友点名每小时最多叫起 {limit} 轮，防止互相点名停不下来。这次没叫醒：{names}。人点名不受这个限制。",
+  "mentionFusedDetail": "同一个频道里，AI 队友点名每小时最多叫起 {limit} 次，防止互相点名停不下来。这次没叫醒：{names}。人点名不受这个限制。",
   "pendingHandedOver": "{actor} 交出了之前的消息",
   "pendingHandedTo": "{actor} 把之前的消息交给了 {seat}",
   "roomArchived": "{actor} 归档了频道「{room}」",

@@ -256,9 +256,12 @@ class SessionState(Base):
     runner last; a runner, or a platform process, holding an older one can no
     longer change anything here (``session_state.take``). ``worker_status`` is
     what the runner said the session is doing, ``idle`` or ``running``, and
-    ``changed_at`` when it last said something different. Whether the session
-    is reachable is not here: that is a lease the reading process holds, and
-    unreachable is not a status the session has.
+    ``changed_at`` when it last said something different. ``run_epoch`` /
+    ``run_seq`` name the run the current process last began: the
+    ``(epoch, seq)`` of its ``running`` event, which the runner names the run
+    by and a task's report carries (`session_state.run_started`). Whether the
+    session is reachable is not here: that is a lease the reading process
+    holds, and unreachable is not a status the session has.
     """
 
     __tablename__ = "session_states"
@@ -280,6 +283,8 @@ class SessionState(Base):
     worker_epoch: Mapped[int] = mapped_column(BigInteger)
     worker_status: Mapped[str] = mapped_column(String(16))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: When the runner last reported the session's process gone.
     exited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

@@ -270,7 +270,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamDetailView.s4.note')
         },
         props: { teamData: undefined, failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '团队信息没读出来',
+        expect: '团队信息加载失败',
       },
       {
         get name() {

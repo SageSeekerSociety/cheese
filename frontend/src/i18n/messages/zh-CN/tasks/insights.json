@@ -1,7 +1,7 @@
 {
   "claims": "领取人数",
   "guard": "这一页只对这道题的出题人本人和管理员开放。",
-  "loadFailed": "这道题的数据没读出来",
+  "loadFailed": "这道题的数据加载失败",
   "noLimit": "不限人数",
   "noStalled": "没有长期停住的",
   "notFound": "找不到这道题",

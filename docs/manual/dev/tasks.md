@@ -41,7 +41,7 @@ covers:
 
 ## 状态只有两个 {#status}
 
-`TaskStatus` 是 `open` / `closed`，只有这两档：一条活要么开着，要么关了。开着的任务在做、在等、卡住还是等审，不是这一列的值，是从卡和 AI 队友报的进度算出来的显示状态，见[任务列表与待处理清单](#awaiting)。
+`TaskStatus` 是 `open` / `closed`，只有这两档：一条活要么开着，要么关了。开着的任务在做、在等、卡住还是等审，不是这一列的值，是从卡、做它的 AI 队友的会话在不在跑和它报的进度算出来的显示状态，见[任务列表与待处理清单](#awaiting)。
 
 三个时间戳各说各的事，不互相顶替：
 
@@ -190,7 +190,7 @@ covers:
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
-一件任务只有一个状态：开启、在做、在等、卡住、等审、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是等审，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task_state`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：在做是「芝士在做」，在等构建或 CI 是「在等结果」，卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_accept_request` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。平台不从轮次推断，一轮结束不改它；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
+一件任务只有一个状态：开启、在做、在等、卡住、待回答、待审阅、退回、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task_state`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的标签分别是「在做」「在等」「卡住」，它那句说明写在标签后面那一行（`lib/taskState.ts`）；卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_accept_request` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示在做。报了「在等」之后被构建叫醒、报了「卡住」之后有人回了它，都是在做；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
 
 「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 

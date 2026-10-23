@@ -1,7 +1,7 @@
 {
   "connect": "Connect GitHub repository",
   "connected": "Connected to {repo}",
-  "hint": "Link this project to a GitHub repository. Once linked, the short-lived credentials AI teammates need to read CI/CD are issued automatically",
+  "hint": "Link this project to a GitHub repository. Once linked, the short-lived access AI teammates need to read CI/CD is issued automatically",
   "none": "No repository linked",
   "reconnect": "Reconnect",
   "title": "Connect GitHub repository"

@@ -38,13 +38,6 @@ export interface ChatScroll {
   scrollRef: Ref<HTMLElement | null>
   /** 绑在容器里装内容的那一层上——它变高就是「新消息来了」。 */
   contentRef: Ref<HTMLElement | null>
-  /**
-   * 绑在这一栏**最外面**那一层上：时间线，和它底下的输入框那一块，都在它里面。
-   * 滚动框外面再包一层时（左上角书签浮条要一个定位的盒子）必须绑，不然「底下那一
-   * 块闪了一下」不算进「布局刚动过」，停在底部的人会被一起甩上去。没绑就是滚动框
-   * 的父元素。
-   */
-  columnRef: Ref<HTMLElement | null>
   /** 用户此刻是不是停在底部附近。 */
   atBottom: Ref<boolean>
   scrollToBottom(): void
@@ -73,19 +66,21 @@ export function useChatScroll(
     showingNewest?: () => boolean
     /** 此刻这一栏是哪个话题：落到底部时替它记下「停在底部」。 */
     topicId?: () => string | undefined
+    /**
+     * 和滚动面板同处一栏、输入区也在其中的那一层（面板根）。滚动面板的直接父元素
+     * 可能只是时间线自己的包装层，输入区是那个包装层的兄弟——观察它看不到输入区。
+     * 不传就用直接父元素（面板把输入区和滚动框放在同一层时它就够）。
+     */
+    column?: () => HTMLElement | null
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
   const topicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
-  const columnRef = ref<HTMLElement | null>(null)
 
   /** 用户是不是停在（或接近）底部——决定新消息是自动跟随还是不碰他的位置。 */
   const atBottom = ref(true)
-
-  /** 这一栏最外面那一层：时间线和它底下那一块共用的容器（见 `columnRef`）。 */
-  const column = () => columnRef.value ?? scrollRef.value?.parentElement
 
   function isAtBottom(el: HTMLElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
@@ -141,10 +136,16 @@ export function useChatScroll(
   })
   useEventListener(window, 'keydown', touched)
   // The pane's column too: the composer zone under the pane leaving and coming back in
-  // one task clamps it the same way, with the timeline untouched. 这一栏最外面由
-  // `columnRef` 给（见它的说明），没给就是滚动框的父元素。
+  // one task clamps it the same way, with the timeline untouched. The pane's direct
+  // parent is not that column: the timeline sits in its own wrapper (the floating
+  // bookmark rail is positioned against it), and the composer zone is the wrapper's
+  // sibling. Watching the parent alone, nobody saw the composer come back:
+  // `rewrittenAt` stayed old, the clamp read as the reader scrolling up, and a pane
+  // parked at the bottom was left above it with 「回到最新」 showing — in WebKit (the
+  // desktop app) every time the member-activity line came and went. So the host hands
+  // in the element that holds both; without one, the parent is still the best guess.
   useMutationObserver(
-    () => [contentRef.value, column()],
+    () => [contentRef.value, options.column?.() ?? scrollRef.value?.parentElement],
     () => (rewrittenAt = performance.now()),
     { childList: true, subtree: true, characterData: true }
   )
@@ -321,7 +322,6 @@ export function useChatScroll(
   return {
     scrollRef,
     contentRef,
-    columnRef,
     atBottom,
     scrollToBottom,
     autoScroll,

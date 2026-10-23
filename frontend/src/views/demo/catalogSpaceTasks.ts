@@ -824,7 +824,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.insightsView.s2.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '这道题的数据没读出来',
+        expect: '这道题的数据加载失败',
       },
       {
         get name() {
@@ -906,7 +906,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s4.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '领取者名单没读出来',
+        expect: '领取者名单加载失败',
       },
       {
         get name() {

@@ -2,7 +2,7 @@
 // 项目总览（容器）：读项目目标、最近进展、项目的任务和名册，去任务页、文档
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
-import type { ProjectMemberRow, RoomTask } from '@/cx_types'
+import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
 
@@ -22,7 +22,7 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
-import { memberName } from '@/lib/agentNames'
+import { agentNames, memberName } from '@/lib/agentNames'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
@@ -99,6 +99,16 @@ const members = computed(() => store.members as ProjectMemberRow[])
 const names = computed(() =>
   Object.fromEntries(members.value.map((m) => [m.user_handle, memberName(m) || m.user_handle]))
 )
+// 每个频道坐着的那位队友叫什么：任务没单独指定队友时，做它的就是它所在频道的这位。
+const roomAgentNames = computed(() => {
+  const seats = agentNames([], members.value)
+  return Object.fromEntries(
+    (store.topics as Topic[]).flatMap((topic) => {
+      const name = topic.agent_handle ? seats.get(topic.agent_handle) : undefined
+      return name ? [[topic.id, name]] : []
+    })
+  )
+})
 // 没挑过头像（avatar_id 是 null）时给空串，交给 UserAvatar 画首字母。
 const avatars = computed(() =>
   Object.fromEntries(members.value.map((m) => [m.user_handle, m.avatar_id == null ? '' : getAvatarUrl(m.avatar_id)]))
@@ -170,6 +180,7 @@ function allTasks() {
     :tasks="tasks"
     :underway="underway"
     :names="names"
+    :room-agent-names="roomAgentNames"
     :avatars="avatars"
     :me="myHandle()"
     :artifact-api="artifactApi"

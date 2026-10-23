@@ -19,5 +19,5 @@
   "imageOmitted": "图片超过 10 MB，未保存（{bytes} 字节）",
   "recordJson": "查看 JSON 原文",
   "subagent": "分身记录（{count} 条）",
-  "beforeLaunch": "这一轮在原始记录开始之前，只有对话记录"
+  "beforeLaunch": "这次运行早于原始记录，只有对话记录"
 }

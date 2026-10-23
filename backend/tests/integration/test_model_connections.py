@@ -277,6 +277,7 @@ async def _waits(chat, topic_id, block_id, instance_id) -> bool:
         chat.post_system_event,
         topic_id,
         None,
+        draining=chat,
         user_block_id=block_id,
         recipient_instance_id=instance_id,
     ) as held:
