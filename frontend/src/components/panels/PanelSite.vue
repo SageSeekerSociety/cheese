@@ -89,8 +89,17 @@ const {
 const visible = computed(() =>
   viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
 )
+/** 这个视图里这条记录画得出一行吗。
+ *
+ * 概览只画有内容的记录：平台内部的记账行（`command_lifecycle` 那类「输入排队了」）
+ * 没有可显示的内容，原始记录视图里才把它们摊成 JSON。分组之前先按视图筛一遍，
+ * 否则每条这样的记录都会单独顶出一个组头——有时刻、0 步、底下什么都没有。 */
+function drawsHere(block: Block): boolean {
+  if (viewMode.value === 'raw') return true
+  return (block.meta?.parts?.length ?? 0) > 0 || !block.meta?.record
+}
 const turns = computed(() => {
-  const all = groupByTurn(visible.value, turnStarts.value)
+  const all = groupByTurn(visible.value.filter(drawsHere), turnStarts.value)
   return props.onlyTurn ? all.filter((turn) => turn.key === props.onlyTurn) : all
 })
 function baseLabel(handle: string): string {

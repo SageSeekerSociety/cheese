@@ -102,6 +102,29 @@ describe('the header stays put', () => {
   })
 })
 
+describe('a record with nothing to show', () => {
+  it('gets no group head of its own in the overview', async () => {
+    // 输入排队这类平台记账行没有可显示的内容。它们没有轮次 id，一个个都单独成组，
+    // 组头就会顶出一串「时刻 · 0 步」、底下什么也没有。
+    const queued = record('1', [])
+    queued.turn_id = null
+    queued.created_at = '2026-10-19T10:00:01Z'
+    queued.meta = {
+      record: { type: 'command_lifecycle', state: 'queued' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [queued, tool('2', 'make test')], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.getAllByText('make test').length).toBeGreaterThan(0))
+
+    expect(view.container.querySelectorAll('.turn__head'), '记账行不该有自己的组头').toHaveLength(1)
+    // 原始记录视图照旧把它们摊开。
+    await fireEvent.click(view.getByRole('button', { name: 'Raw records' }))
+    expect(view.getByText('command_lifecycle')).toBeTruthy()
+  })
+})
+
 describe('raw records and overview share one timeline', () => {
   it('starts in overview, reveals thinking in raw view, and remembers the choice', async () => {
     api.getTranscript.mockResolvedValue({
