@@ -659,6 +659,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         expect: '在任务「整理第一周的课件」里看',
       },
       {
+        name: '频道自己的文件',
+        note: '项目没有代码仓库、或仓库里没有它，而它是频道里交付或存下的一份：照样打开，顶上写明读的是频道里的文件。',
+        props: projectFileProps({ path: 'gemm_bench.cu', inRoom: true }),
+        expect: '频道里的文件 · 只读',
+      },
+      {
         name: '文件太大',
         note: '画不出来的不硬画：说清为什么，给一颗下载原文件。',
         props: projectFileProps({ path: 'slides/week-1.mp4', tooLarge: true, bytes: 48 * 1024 * 1024, content: '' }),
