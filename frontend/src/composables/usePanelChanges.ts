@@ -369,7 +369,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     openIsDocument: doc.openIsDocument,
     openDocumentType: doc.openDocumentType,
     revisionPath: doc.revisionPath,
-    openRawUrl: pane.openRawUrl,
+    openImageSrc: pane.openImageSrc,
     collapsedDirs: pane.collapsedDirs,
     revealTick: pane.revealTick,
     draftCount: pane.draftCount,

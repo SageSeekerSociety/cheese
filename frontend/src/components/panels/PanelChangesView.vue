@@ -90,7 +90,7 @@ const props = defineProps<{
   openDocumentType: FileKind | null
   /** 修订只长在 .docx 上，别的时候这里给的是 null。 */
   revisionPath: string | null
-  openRawUrl: string
+  openImageSrc: string
   collapsedDirs: Set<string>
   revealTick: number
   draftCount: number
@@ -353,7 +353,7 @@ const fileRows = computed(() =>
             :effective-view="props.effectiveView"
             :open-diff-lines="props.openDiffLines"
             :open-is-image="props.openIsImage"
-            :open-raw-url="props.openRawUrl"
+            :open-image-src="props.openImageSrc"
             :file-binary="props.fileBinary"
             :file-too-large="props.fileTooLarge"
             :file-bytes="props.fileBytes"

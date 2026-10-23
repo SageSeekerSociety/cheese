@@ -39,7 +39,8 @@ const props = defineProps<{
   isImage: boolean
   isDocument: boolean
   documentType: FileKind | null
-  rawUrl: string
+  /** 图片的 object URL（带 Authorization 取回来的）；还没取到时是空串。 */
+  imageSrc: string
   docBytes: ArrayBuffer | null
   docLoading: boolean
   docError: string
@@ -101,7 +102,7 @@ const { mdAndUp } = useDisplay()
       <PreviewSheet v-else :data="props.docBytes" :kind="props.documentType?.sheet ?? 'workbook'" />
     </div>
     <div v-else-if="props.isImage" class="project-file__image">
-      <img :src="props.rawUrl" :alt="props.path" />
+      <img v-if="props.imageSrc" :src="props.imageSrc" :alt="props.path" />
     </div>
     <div v-else-if="props.binary || props.tooLarge" class="file-blob">
       <v-icon size="30" class="c-faint mb-2">{{ props.tooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}</v-icon>

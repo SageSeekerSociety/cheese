@@ -43,7 +43,7 @@ const props = defineProps<{
   effectiveView: 'diff' | 'edit'
   openDiffLines: DiffLine[]
   openIsImage: boolean
-  openRawUrl: string
+  openImageSrc: string
   fileBinary: boolean
   fileTooLarge: boolean
   fileBytes: number
@@ -112,7 +112,7 @@ const { mdAndUp } = useDisplay()
      all live in ChangesDiff. -->
   <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
   <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
-    <img :src="props.openRawUrl" :alt="props.openPath" />
+    <img v-if="props.openImageSrc" :src="props.openImageSrc" :alt="props.openPath" />
   </div>
   <!-- Binary / oversized: no editor. Opening one in Monaco meant every
      byte utf-8 could not decode came back as U+FFFD, and the save button
