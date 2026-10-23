@@ -12,14 +12,37 @@ import gzip
 import json
 import uuid
 
+from sqlalchemy import delete
+
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.session_record import service
+from app.domain.session_record.models import SessionRecord
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
     _Bucket,
     _room_for,
     _seal,
     _Session,
 )
+
+
+def _drop_rows(client, topic: uuid.UUID) -> None:
+    """Take the conversation's rows away, as the retention sweep does at thirty
+    days: the objects stay in the bucket and the index still names them.
+
+    Without this the database's own copy answers every read and a paging test
+    passes whatever the archive walk does — the object path is never taken. A
+    sealed run's row and its object hold the same records, so a test that means
+    to exercise the walk has to leave the walk with only one of them.
+    """
+
+    async def run() -> None:
+        async with client.test_request_factory() as db:
+            await db.execute(
+                delete(SessionRecord).where(SessionRecord.conversation_id == topic)
+            )
+            await db.commit()
+
+    client.portal.call(run)
 
 
 def _long_turn(work: str, count: int) -> list[dict]:
@@ -147,8 +170,12 @@ def test_paging_up_by_cursor_walks_every_record_once(client, tmp_path, monkeypat
     Pages here are far smaller than a sealed object, so the walk crosses
     several of them — the paging the newest-page tests never exercise, and the
     one the stop-instead-of-overread change could break with an off-by-one.
+    The rows are taken away first: with the database holding a copy of every
+    sealed run, a read is answered from there and the archive walk under test
+    is never taken.
     """
     bucket, topic = _sealed(client, tmp_path, monkeypatch, count=900)
+    _drop_rows(client, topic)
     bucket.bodies.clear()
 
     # 现场打开在最新一段，往上翻：一页比这里读到的更早，所以拼在已读的前面。
@@ -169,13 +196,20 @@ def test_paging_up_by_cursor_walks_every_record_once(client, tmp_path, monkeypat
     assert steps == [f"step {i:04d}" for i in range(900)]
 
 
-def test_a_short_turn_still_needs_only_its_own_object(client, tmp_path, monkeypatch):
+def test_a_page_the_first_object_fills_fetches_no_more(client, tmp_path, monkeypatch):
+    """Ten steps are one object, and one object is what a page fetches.
+
+    The batch widens only when the page is still short; a page one object
+    already fills must stop there, or every open pays for objects it does not
+    show.
+    """
     bucket, topic = _sealed(client, tmp_path, monkeypatch, count=10)
     bucket.bodies.clear()
 
     page = _site(client, topic)
 
     assert len(page["data"]) == 10
+    assert len(bucket.bodies) == 1, "one object held the page; a second was fetched"
     assert json.loads(gzip.decompress(bucket.bodies[0]).decode().splitlines()[0])[
         "record"
     ]["message"]["content"][0]["text"].startswith("step ")
