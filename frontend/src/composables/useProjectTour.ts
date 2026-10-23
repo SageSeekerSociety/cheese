@@ -107,7 +107,10 @@ export function noteFacts(value: GuideFacts) {
   facts.value = value
 }
 
-/** 帮助菜单「界面导览」：从第一步重新走一遍。 */
+/** 帮助菜单「界面导览」：从第一步重新走一遍。
+ *
+ *  重播是「看看界面长什么样」，不是把第一件事再做一遍：所以它**不走 `settle`**
+ *  （见那里），一页一页点「下一步」往前，不受这个人以前发过什么、采纳过什么影响。 */
 export function replayTour() {
   done.value = false
   replaying.value = true
@@ -145,8 +148,13 @@ export function useProjectTour() {
     /**
      * 动作步做到了就往下走；一连几步都已经做到（人先走到了前面）就一并跳过。
      * 介绍步在频道页上找不到目标时也跳过。
+     *
+     * **重播不动它**：重播要的是从第一站看起，而这个人的事实里「发过消息」「采纳过」
+     * 早就为真，照这里走会一进来就跳到中间某一步。重播改成每站都有「下一步」，
+     * 由人自己一页一页走（见 `AppShell.vue` 的 `guideStep.action`）。
      */
     settle(c: GuideContext) {
+      if (replaying.value) return
       for (;;) {
         const step = GUIDE_STEPS[stop.value]
         if (!step) return finish()

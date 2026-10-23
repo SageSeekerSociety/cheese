@@ -58,7 +58,14 @@ def _room(client) -> str:
 
 
 def _set_reporter(client, room: str, handle: str) -> None:
+    """把这条活的递卡人写成 ``handle``。
+
+    递卡人还要是这个项目的人：撤回只认递卡人（`_may_withdraw`），而每个决定
+    验收卡的路由都先问「你是这个频道的人吗」（`_card_actor`）—— 只在库里写个
+    名字，他连自己那张卡都退不了。
+    """
     task = delivery_task(client, room)
+    join_project_team(client, str(task.project_id), handle)
 
     async def go() -> None:
         async with client.test_factory() as session:
@@ -173,11 +180,15 @@ def _unread(client, token: str) -> list[dict]:
     return [row for row in _notices(client, token) if row["read"] is False]
 
 
-def _decide(client, card: str, action: str, **body):
+def _decide(client, card: str, action: str, who: str = "alice", **body):
+    # 谁在决定有两条通道：认证（路由读 `actor.handle`，只有它算数）与请求体里那一格
+    # （`RejectDecision.decided_by` 必填，但值不被采纳）。两处写同一个人，所以要换人
+    # 就换这里 —— 光改请求体不换认证，判据看的还是认证出来的那个人。
+    body.setdefault("decided_by", who)
     return client.post(
         f"/accept-cards/{card}/{action}",
         json=body,
-        headers=session_auth_headers("alice"),
+        headers=session_auth_headers(who),
     )
 
 
@@ -197,7 +208,8 @@ def test_rejecting_the_card_clears_the_wait_from_both_inboxes(client):
     assert len(_unread(client, alice)) == 1
     assert len(_unread(client, reporter)) == 1
 
-    r = _decide(client, card, "reject", decided_by="alice", note="口径和上一版对不上")
+    # 退回只认这张卡的审阅人：alice 是递卡时点名的那一位，所以由她退回。
+    r = _decide(client, card, "reject", who="alice", note="口径和上一版对不上")
     assert r.status_code == 200, r.text
     wait_work_idle()
 

@@ -213,15 +213,22 @@ const keepAudience = useKeepAudience(
   () => props.topic?.id ?? null,
   () => keeping.value !== null
 )
+// 存在哪段对话里按的，就在哪段对话里说「已存进资料库」：支线里按的报给支线，不报到
+// 主线上去（后端按这个 id 找房间，也按它决定那句话落在哪）。
+function keepIn(): string | null {
+  return props.conversationId ?? props.topic?.id ?? null
+}
 function keepFile(block: Block) {
   if (!props.topic) return
+  const at = keepIn()
   if (props.privateChat || props.topic.members_only) keeping.value = block
-  else pins.keep(props.topic.id, block)
+  else if (at) pins.keep(at, block)
 }
 function confirmKeep() {
   const block = keeping.value
   keeping.value = null
-  if (block && props.topic) pins.keep(props.topic.id, block)
+  const at = keepIn()
+  if (block && at) pins.keep(at, block)
 }
 function nameOf(handle: string): string {
   return panel.nameOfHandle(handle)

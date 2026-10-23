@@ -1,5 +1,15 @@
 {
+  "defaultTeammate": {
+    "hint": "Projects created from this challenge (or category) start Cheese with this teammate's preset skills.",
+    "inherit": "Inherit (do not set here)",
+    "inheritHint": "Use whatever the level above sets",
+    "loadFailed": "Couldn't load the presets; only inherit is available",
+    "title": "Default teammate",
+    "willClear": "Saving clears the teammate set on this level"
+  },
   "fields": {
+    "learningGoals": "Learning goals",
+    "learningGoalsHint": "Goals make this guidance educational: with goals set, a blank prompt above still gets the default teaching manners. Comma-separated.",
     "materials": "Materials it may read",
     "materialsCollapse": "Collapse the library list",
     "materialsDangling": "IDs {ids} are no longer in the library (deleted, or moved to “admins only”). Remove them before saving.",
@@ -14,6 +24,8 @@
     "materialsRemove": "Remove {name}",
     "materialsUpload": "Upload to the library",
     "mode": "Approach",
+    "privatePrompt": "Private guidance for the setter",
+    "privatePromptHint": "Only the challenger and the board's managers see this; the AI teammate follows it but will not tell the student verbatim. Put reference answers, grading criteria and anything else that must not enter the student's materials here.",
     "spacePrompt": "Space requirements also in effect",
     "systemPrompt": "Additional requirements",
     "systemPromptPlaceholder": "For example: help read test output, don't hand over complete code",

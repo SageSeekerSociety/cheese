@@ -523,7 +523,10 @@ const guideStep = computed(() => {
   const hit = step.anchors.find((name) => guideAnchor(name))
   const target = hit ? guideAnchor(hit) : null
   const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
-  const at = target ?? waitingAt
+  // 重播时每一站都要有落脚点：这一步该指的地方没开着（支线、任务页、手机上没侧栏），
+  // 就落到频道的时间线上。不然点到这一站整块浮窗会消失，后面也没处点。
+  const replayAt = !target && !waitingAt && guide.replaying.value ? guideAnchor('timeline') : null
+  const at = target ?? waitingAt ?? replayAt
   if (!at) return null
   return {
     key: step.key,
@@ -531,7 +534,9 @@ const guideStep = computed(() => {
     waiting: !target,
     failed: !!hit && hit === step.failed,
     area: !!step.area || !target,
-    action: !!step.done,
+    // 重播时**每一站**都有「下一步」：它不从人的旧记录里跳步（`settle` 在重播时不动），
+    // 没有这一步的话，已经发过消息的人会停在第一站，永远出不去。
+    action: !!step.done && !guide.replaying.value,
   }
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,18 +96,24 @@ async def default_teammate(
     *,
     display_name: str | None = None,
     type_name: str | None = None,
+    prompt: str | None = None,
+    skills: Sequence[str] = (),
 ) -> None:
     """`app.domain.project.ports.DefaultTeammate`：这个项目的默认 AI 队友。
 
     两次调用按次序做：先播（没有才播，播种和席位都在 `materialize_default` 里，它
-    自己收尾时 flush），人设只在还是空的时候落。收的是那一行 `Project` 本身，因为
-    播种要就地写回 ``default_agent_instance_id``、也要读 ``root_topic_id`` 才坐得下
-    席位。"""
+    自己收尾时 flush），人设和题目包自带的 prompt / skill 名字只在队友**还没有**
+    人设的时候落 —— 一个项目自己挑过的人设不该被后来的一次赛题报名覆盖。收的是那一
+    行 `Project` 本身，因为播种要就地写回 ``default_agent_instance_id``、也要读
+    ``root_topic_id`` 才坐得下席位。"""
     agents = AgentInstanceService(session)
     teammate = await agents.materialize_default(project, display_name=display_name)
-    if type_name and teammate.type_name is None:
-        await agents.set_type(teammate, type_name)
-        await session.flush()
+    if teammate.type_name is None:
+        if type_name:
+            await agents.set_type(teammate, type_name)
+            await session.flush()
+        if prompt or skills:
+            await agents.apply_protocol(teammate, prompt=prompt, skills=list(skills))
 
 
 async def project_team(

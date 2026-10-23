@@ -64,7 +64,8 @@
       "waiting": "Waiting on you",
       "waitingEmpty": "Nothing waiting",
       "active": "Active channels",
-      "activeEmpty": "No active channels"
+      "activeEmpty": "No active channels",
+      "skills": "Skills carried"
     }
   }
 }

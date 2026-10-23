@@ -16,6 +16,7 @@ from app.domain.skill_library import (
     _SHIPPED_NATIVE_SKILLS,
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
+    native_skill_bodies,
     native_skill_files,
     shipped_skill_names,
 )
@@ -106,6 +107,16 @@ def test_the_specialist_files_are_named_from_the_index():
             skill = name.split("/references/")[0]
             index = shipped[f"{skill}/SKILL.md"]
             assert Path(name).name in index, f"{name} 在 SKILL.md 里没有入口"
+
+
+def test_the_body_a_room_switches_on_is_the_one_the_executor_holds():
+    """技能面板点亮一颗，正文进的是这一轮的提示词 —— 它必须和装船的那份同源，
+    否则房里的 agent 照着做的东西和执行机手里的说明书是两份。"""
+    body = native_skill_bodies(["wolfram"])
+    assert body, "wolfram 的正文进不了提示词"
+    assert body in _shipped()["skills/wolfram/SKILL.md"]
+    assert native_skill_bodies([]) == ""
+    assert native_skill_bodies(["cheese-docs"]) == "", "合成的技能没有原生目录"
 
 
 def test_a_project_skill_cannot_take_the_name_of_one_the_platform_ships():

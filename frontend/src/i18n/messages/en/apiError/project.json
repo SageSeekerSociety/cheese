@@ -95,6 +95,7 @@
   "permissionUnknown": "Unknown permission: {name}",
   "projectArchived": "This project is archived. Unarchive it to make changes",
   "projectCreateSignIn": "Sign in to create a project",
+  "projectManageForbidden": "Only the project owner or a team admin can change this",
   "projectNeedsTeam": "A project has to belong to a team",
   "projectNumberTaken": "This project number is already in use",
   "projectOwnerOnly": "Only the project's owner can do this",

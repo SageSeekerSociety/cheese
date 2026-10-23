@@ -62,6 +62,14 @@ class AgentInstance(UuidPk, Timestamps, Base):
     type_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Creation provenance only; runtime reads this agent's saved configuration.
     configuration: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # Bumped on every write to ``configuration``, and sent back to the client
+    # with every agent. A save carries the version it read; a save whose version
+    # is no longer current is refused rather than overwriting whoever changed it
+    # first — two people editing one teammate's skills used to lose one of the
+    # two silently, because the whole ``configuration`` is replaced at once.
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     display_name: Mapped[str] = mapped_column(String(64), default="")
     name_source: Mapped[NameSource] = mapped_column(
         Enum(NameSource, native_enum=False, length=16),

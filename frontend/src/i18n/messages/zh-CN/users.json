@@ -64,7 +64,8 @@
       "waiting": "等你处理",
       "waitingEmpty": "暂无待处理的事",
       "active": "在忙的频道",
-      "activeEmpty": "暂无进行中的频道"
+      "activeEmpty": "暂无进行中的频道",
+      "skills": "带的技能"
     }
   }
 }

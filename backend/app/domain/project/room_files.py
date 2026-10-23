@@ -55,7 +55,7 @@ from app.core.sentences import say
 from app.domain.notice_meta import (
     EVENT_LIBRARY_SAVED,
     SEVERITY_INFO,
-    WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.project.models import RoomFileRevision
@@ -114,7 +114,8 @@ async def save_to_library(
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
-            who=WHO_HUMAN,
+            # 一个人已经存好了，没有谁要再动手：不是「等人处理」那一档。
+            who=WHO_PLATFORM,
             detail=say("librarySavedDetail", actor=by, file=leaf),
             detail_label=say("labelSaveToLibrary"),
         ),
@@ -442,6 +443,12 @@ ARTIFACT_MIME = {
     # run it — and on which port — is the agent's judgment; the platform only
     # carries what answers there.
     "app": "application/x-cheesex-app",
+    # MCP Apps: the artifact points at a THIRD party's HTML View, a `ui://`
+    # resource on a remote MCP server the project declares. Its ``content`` is a
+    # JSON pointer ``{server, uri}`` (see ``app.domain.remote_mcp.apps``); the
+    # platform fetches the bytes through that server's connection, never from a
+    # room file, and the preview host serves them under a stricter policy.
+    "mcp-app": "text/html;profile=mcp-app",
 }
 
 #: Which artifact kind a filename implies, when the caller named none.

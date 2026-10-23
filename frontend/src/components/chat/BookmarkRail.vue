@@ -97,16 +97,19 @@ watch(
     if (editingId.value) cancelRename()
   }
 )
+// 菜单只在能改的时候画。它被卸掉时没有人会再报「菜单关了」，留着那个 id 会让
+// 浮条再也收不起来：移开鼠标、点面板外面都被这两条判定挡回去。
+watch(
+  () => props.canChapter,
+  (can) => {
+    if (!can) menuForId.value = null
+  }
+)
 
 function actions(chapter: ChapterRow): MenuAction[] {
-  const out: MenuAction[] = [
-    {
-      key: 'jump',
-      label: t('work.channel.chapters.jump'),
-      icon: 'mdi-arrow-right',
-      onSelect: () => jumpTo(chapter.block.id),
-    },
-  ]
+  // 点这一行本来就跳过去了（`bm-rail__jump`），菜单里再放一条「跳转」是同一件事
+  // 说两遍，还让人以为点行不跳。
+  const out: MenuAction[] = []
   if (props.canChapter) {
     out.push({
       key: 'rename',
@@ -117,7 +120,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
     out.push({
       key: 'unpin',
       label: t('work.channel.chapters.unpin'),
-      icon: 'mdi-bookmark-minus-outline',
+      icon: 'mdi-bookmark',
       onSelect: () => unpinChapter(chapter.block.id),
     })
   }
@@ -178,6 +181,7 @@ function actions(chapter: ChapterRow): MenuAction[] {
               <span class="bm-rail__name">{{ titleOf(chapter) }}</span>
             </button>
             <AdaptiveMenu
+              v-if="canChapter"
               :model-value="menuForId === chapter.block.id"
               :actions="actions(chapter)"
               :title="t('work.channel.chapters.menu')"

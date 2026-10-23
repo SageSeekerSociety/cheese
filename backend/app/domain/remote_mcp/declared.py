@@ -324,6 +324,12 @@ async def read(
             # The last answer stands while the forge is down. A session's
             # servers are part of what it was started with, so answering "none"
             # for the length of an outage would relaunch every idle session twice.
+            if entry is None:
+                # 从没读成过的项目也记这一笔：不记的话每个调用者每次都重打一次
+                # 必败的 forge 调用、重告一次警（一轮两个调用者 = 每轮两条告警）。
+                # 记成与成功读同一条新鲜度规矩（60 秒后后台再试），forge 恢复后
+                # 自己缓过来 —— 失败缓存的上限就是 _FRESH_S 那一分钟。
+                _cache[project_id] = _Entry(now, Declared(problem="unreadable"))
             return entry.declared if entry else Declared(problem="unreadable")
         _cache[project_id] = _Entry(now, declared)
         return declared

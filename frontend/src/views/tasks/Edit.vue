@@ -27,6 +27,7 @@ import { TaskDraftsApi } from '@/api/taskDrafts'
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
@@ -34,7 +35,7 @@ import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
-import { isTeachingBlank } from '@/lib/teaching'
+import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
 import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
@@ -173,6 +174,10 @@ onMounted(() => {
 
 // --- 保存 ---------------------------------------------------------------------------
 
+/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。`raw` 是这道题原始的覆盖值。 */
+const defaultRole = ref('')
+const defaultRoleRaw = ref<string | null>(null)
+
 const formInvalid = ref(0)
 const attempted = ref(false)
 const saving = ref(false)
@@ -206,6 +211,12 @@ async function onSubmit(data: TaskFormSubmitData) {
     )
     await TaskDraftsApi.publish(row.id)
     draft.gone()
+    // 默认队友（#944）：本来没写、又选回「继承」→ 不带这个键（不动项目集那份）；
+    // 本来写过、又选回「继承」→ 带空串，明确清掉这道题的覆盖。
+    const role = defaultRolePayload(defaultRole.value, defaultRoleRaw.value)
+    if (role !== undefined) {
+      await TaskBoardApi.update(taskId, { defaultRole: role })
+    }
     if (resubmit.value) {
       await TaskBoardApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
@@ -246,6 +257,11 @@ onMounted(async () => {
   await loadTaskData()
   const task = taskData.value
   if (!task) return
+  teaching.value = { ...(task.teaching ?? {}) }
+  teachingOwn.value = !isTeachingBlank(teaching.value)
+  // 这道题自己写的默认队友（原始覆盖值）；没写过就是 `null` → 选「继承」。
+  defaultRoleRaw.value = task.defaultRole ?? null
+  defaultRole.value = task.defaultRole ?? ''
   if (task.space?.id) {
     spaceStore.setCurrentSpaceId(task.space.id)
     await Promise.all([spaceData.fetchDomainGroups(), spaceData.fetchCategories()])
@@ -345,6 +361,7 @@ onBeforeUnmount(() => void draft.flush())
         <div data-agent-field="ai_guidance">
           <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
           <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
+          <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" class="te__teaching" />
           <TeachingFields
             :model-value="teaching"
             class="te__teaching"

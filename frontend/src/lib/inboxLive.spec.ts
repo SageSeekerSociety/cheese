@@ -79,6 +79,37 @@ describe('收件箱的实时连接', () => {
     unsubscribe()
   })
 
+  it('重连时首帧的号变大了：断开期间来过，要叫一次', async () => {
+    vi.useFakeTimers()
+    const heard = vi.fn()
+    const unsubscribe = onInboxChange(heard)
+    const stop = startInboxLive(async () => 'credential')
+    await vi.advanceTimersByTimeAsync(0)
+    FakeSocket.opened[0].open()
+    FakeSocket.opened[0].frame(10)
+    expect(heard).not.toHaveBeenCalled()
+
+    // 断开；断开期间收件箱从 10 走到了 14。
+    FakeSocket.opened[0].close()
+    await vi.advanceTimersByTimeAsync(MAX_WAIT_MS)
+    FakeSocket.opened[1].open()
+    FakeSocket.opened[1].frame(14)
+    expect(heard).toHaveBeenCalledTimes(1)
+
+    // 断开期间什么都没来：重连首帧还是那个号，不算新的。
+    FakeSocket.opened[1].close()
+    await vi.advanceTimersByTimeAsync(MAX_WAIT_MS)
+    FakeSocket.opened[2].open()
+    FakeSocket.opened[2].frame(14)
+    expect(heard).toHaveBeenCalledTimes(1)
+
+    FakeSocket.opened[2].frame(15)
+    expect(heard).toHaveBeenCalledTimes(2)
+
+    stop()
+    unsubscribe()
+  })
+
   it('断了就换一张新凭证再连；退出登录后不再连', async () => {
     vi.useFakeTimers()
     let issued = 0

@@ -118,7 +118,14 @@ describe('TeachingFields', () => {
     await waitFor(() => expect(captured?.mode).toBe('spec'))
     await fireEvent.update(view.getByLabelText('spaces.teaching.fields.systemPrompt'), '讲完链表了')
     await waitFor(() =>
-      expect(captured).toEqual({ mode: 'spec', systemPrompt: '讲完链表了', materialIds: [], documentIds: [] })
+      expect(captured).toEqual({
+        mode: 'spec',
+        systemPrompt: '讲完链表了',
+        privatePrompt: null,
+        learningGoals: [],
+        materialIds: [],
+        documentIds: [],
+      })
     )
   })
 

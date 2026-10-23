@@ -29,6 +29,7 @@ from app.api.space_payloads import (
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import is_space_admin
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -230,10 +231,18 @@ async def get_space(
         )
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
 
+    # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
+    # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
+    may_manage = auth_user.user_id > 0 and await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+
     categories = None
     if queryCategories:
         cats = await service.list_categories(space_id=space_id, include_archived=False)
-        categories = [_category_to_api_model(c) for c in cats]
+        categories = [
+            _category_to_api_model(c, include_private=may_manage) for c in cats
+        ]
 
     my_rank = None
     viewer_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -242,7 +251,9 @@ async def get_space(
 
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=may_manage
+    )
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
@@ -362,7 +373,9 @@ async def create_space(
     # 客户端拿到 201 时这一行还没落地 —— 紧接着的 POST /admin/spaces/{id}/review
     # 就会 404「Space not found」（合并队列 run 36296605673 实测）。
     await db.commit()
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=True
+    )
     # Every 题目版 is created holding a code (see SpaceService.create_space),
     # so hand it back here rather than making the creator come and ask.
     codes = await service.list_invite_codes(
@@ -421,7 +434,9 @@ async def patch_space(
             topic_ids=classification_topic_ids,
             actor_user_id=auth_user.user_id,
         )
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=True
+    )
     return ok({"space": space_data})
 
 
