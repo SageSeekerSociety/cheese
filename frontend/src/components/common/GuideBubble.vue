@@ -199,6 +199,11 @@ function covers(obstacles: Obstacle[], left: number, top: number, w: number, h: 
   return sum
 }
 
+/** 和这块范围相交的障碍物。找位置时只算挨得上的，页面上离得远的大批矩形就不算了。 */
+function within(obstacles: Obstacle[], left: number, top: number, right: number, bottom: number): Obstacle[] {
+  return obstacles.filter((o) => o.right > left && o.left < right && o.bottom > top && o.top < bottom)
+}
+
 function placeBubble(anchor: HTMLElement | null, rect: DOMRectReadOnly, obstacles: Obstacle[]): Spot {
   const w = BUBBLE_W
   const h = bubbleH
@@ -236,14 +241,27 @@ function placeBubble(anchor: HTMLElement | null, rect: DOMRectReadOnly, obstacle
   }
   let bestCover = Infinity
   let bestNear = Infinity
-  for (let tp = EDGE; tp <= maxTop; tp += GRID) {
-    for (let l = EDGE; l <= maxLeft; l += GRID) {
-      const cover = covers(obstacles, l, tp, w, h)
-      const d = near(l, tp)
-      if (cover < bestCover || (cover === bestCover && d < bestNear)) {
-        best = { left: l, top: tp }
-        bestCover = cover
-        bestNear = d
+  // 两趟扫：先用粗格扫整个窗口（步长大，几千格就够），再只在本趟胜出点周围用细格扫一遍。
+  // 一趟全用细格时会随页面上的字线性变贵——正文多到上千行就是一百多毫秒；两趟之后开
+  // 销由细格那点面积决定，和页面上有多少字无关。粗格扫不到、细格扫得到的位置仍然找得
+  // 到：只要粗格那一点离得够近，它落在细格那一圈里。
+  for (const step of [GRID * 4, GRID]) {
+    const spread = step === GRID ? GRID * 4 : 0
+    const loLeft = clamp(bestNear === Infinity ? EDGE : best.left - spread, EDGE, maxLeft)
+    const hiLeft = clamp(bestNear === Infinity ? maxLeft : best.left + spread, EDGE, maxLeft)
+    const loTop = clamp(bestNear === Infinity ? EDGE : best.top - spread, EDGE, maxTop)
+    const hiTop = clamp(bestNear === Infinity ? maxTop : best.top + spread, EDGE, maxTop)
+    // 这一趟要扫的范围固定，先只留落在里面的障碍物（外扩一圈，免得边上的漏掉）。
+    const local = within(obstacles, loLeft - w, loTop - h, hiLeft + w, hiTop + h)
+    for (let tp = loTop; tp <= hiTop; tp += step) {
+      for (let l = loLeft; l <= hiLeft; l += step) {
+        const cover = covers(local, l, tp, w, h)
+        const d = near(l, tp)
+        if (cover < bestCover || (cover === bestCover && d < bestNear)) {
+          best = { left: l, top: tp }
+          bestCover = cover
+          bestNear = d
+        }
       }
     }
   }
