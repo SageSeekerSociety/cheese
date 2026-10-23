@@ -64,8 +64,11 @@ class _CountingBucket(_Bucket):
             self.in_flight -= 1
 
 
-def _site(client, topic: uuid.UUID, *, limit: int = 120) -> dict:
-    response = client.get(f"/topics/{topic}/transcript", params={"limit": limit})
+def _site(
+    client, topic: uuid.UUID, *, limit: int = 120, before: str | None = None
+) -> dict:
+    params = {"limit": limit, **({"before": before} if before else {})}
+    response = client.get(f"/topics/{topic}/transcript", params=params)
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
@@ -136,6 +139,34 @@ def test_a_page_spanning_several_turns_fetches_them_together(
 
     assert len(page["data"]) == 120
     assert bucket.max_in_flight > 1, "each turn's body was fetched after the last one"
+
+
+def test_paging_up_by_cursor_walks_every_record_once(client, tmp_path, monkeypatch):
+    """A reader paging up crosses sealed objects: every record once, in order.
+
+    Pages here are far smaller than a sealed object, so the walk crosses
+    several of them — the paging the newest-page tests never exercise, and the
+    one the stop-instead-of-overread change could break with an off-by-one.
+    """
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=900)
+    bucket.bodies.clear()
+
+    # 现场打开在最新一段，往上翻：一页比这里读到的更早，所以拼在已读的前面。
+    steps: list[str] = []
+    before = None
+    while True:
+        page = _site(client, topic, limit=50, before=before)
+        steps = [
+            block["meta"]["parts"][0]["text"]
+            for block in page["data"]
+            if block.get("meta", {}).get("parts")
+        ] + steps
+        if not page["has_more"]:
+            break
+        assert page["oldest_id"], "a page that has more must name where to go on"
+        before = page["oldest_id"]
+
+    assert steps == [f"step {i:04d}" for i in range(900)]
 
 
 def test_a_short_turn_still_needs_only_its_own_object(client, tmp_path, monkeypatch):
