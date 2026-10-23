@@ -35,7 +35,7 @@ describe('useRawImage', () => {
     const scope = effectScope()
     const image = scope.run(() => useRawImage(() => '/api/projects/p1/file/raw?path=logo.png'))!
     await vi.waitFor(() => expect(image.src.value).toBe('blob:img-1'))
-    expect(image.failed.value).toBe(false)
+    expect(image.error.value).toBe('')
     scope.stop()
   })
 
@@ -54,12 +54,36 @@ describe('useRawImage', () => {
     expect(revoked).toEqual(['blob:img-1', 'blob:img-2'])
   })
 
-  it('says it failed when the server will not give the image', async () => {
+  it('says why when the server will not give the image', async () => {
     localStorage.clear()
     const scope = effectScope()
     const image = scope.run(() => useRawImage(() => '/api/projects/p1/file/raw?path=logo.png'))!
-    await vi.waitFor(() => expect(image.failed.value).toBe(true))
+    await vi.waitFor(() => expect(image.error.value).toContain('404'))
     expect(image.src.value).toBe('')
+    scope.stop()
+  })
+
+  it('a slow answer for the previous image never replaces the current one', async () => {
+    let releaseSlow: (r: Response) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        url.includes('slow.png')
+          ? new Promise<Response>((resolve) => (releaseSlow = resolve))
+          : Promise.resolve(new Response(new Blob(['png']), { status: 200 }))
+      )
+    )
+    const url = ref('/api/projects/p1/file/raw?path=slow.png')
+    const scope = effectScope()
+    const image = scope.run(() => useRawImage(() => url.value))!
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+
+    url.value = '/api/projects/p1/file/raw?path=fast.png'
+    await vi.waitFor(() => expect(image.src.value).toBe('blob:img-1'))
+    releaseSlow(new Response(new Blob(['old']), { status: 200 }))
+    await vi.waitFor(() => expect(revoked).toContain('blob:img-2'))
+
+    expect(image.src.value).toBe('blob:img-1')
     scope.stop()
   })
 })

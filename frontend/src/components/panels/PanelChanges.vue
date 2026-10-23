@@ -70,6 +70,7 @@ const {
   openDocumentType,
   revisionPath,
   openImageSrc,
+  openImageError,
   collapsedDirs,
   revealTick,
   draftCount,
@@ -178,6 +179,7 @@ defineExpose({ openFile })
     :comparison-loading="comparisonLoading"
     :comparison-error="comparisonError"
     :open-image-src="openImageSrc"
+    :open-image-error="openImageError"
     :collapsed-dirs="collapsedDirs"
     :reveal-tick="revealTick"
     :draft-count="draftCount"

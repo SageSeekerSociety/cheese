@@ -6,10 +6,10 @@ import { onScopeDispose, ref, watch } from 'vue'
 
 import { rawImageUrl } from '../api'
 
-/** `url` 为空串时不取；`src` 是能挂上 <img> 的地址，取失败时 `failed` 为真。 */
+/** `url` 为空串时不取；`src` 是能挂上 <img> 的地址，取不到时 `error` 说为什么。 */
 export function useRawImage(url: () => string) {
   const src = ref('')
-  const failed = ref(false)
+  const error = ref('')
   let generation = 0
 
   function release() {
@@ -22,7 +22,7 @@ export function useRawImage(url: () => string) {
     async (next) => {
       const mine = ++generation
       release()
-      failed.value = false
+      error.value = ''
       if (!next) return
       try {
         const made = await rawImageUrl(next)
@@ -31,8 +31,8 @@ export function useRawImage(url: () => string) {
           return
         }
         src.value = made
-      } catch {
-        if (mine === generation) failed.value = true
+      } catch (e) {
+        if (mine === generation) error.value = e instanceof Error ? e.message : String(e)
       }
     },
     { immediate: true }
@@ -42,5 +42,5 @@ export function useRawImage(url: () => string) {
     release()
   })
 
-  return { src, failed }
+  return { src, error }
 }

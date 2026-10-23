@@ -91,6 +91,8 @@ const props = defineProps<{
   /** 修订只长在 .docx 上，别的时候这里给的是 null。 */
   revisionPath: string | null
   openImageSrc: string
+  /** 图片取不到时的原因；空串就是没出错。 */
+  openImageError: string
   collapsedDirs: Set<string>
   revealTick: number
   draftCount: number
@@ -354,6 +356,7 @@ const fileRows = computed(() =>
             :open-diff-lines="props.openDiffLines"
             :open-is-image="props.openIsImage"
             :open-image-src="props.openImageSrc"
+            :open-image-error="props.openImageError"
             :file-binary="props.fileBinary"
             :file-too-large="props.fileTooLarge"
             :file-bytes="props.fileBytes"

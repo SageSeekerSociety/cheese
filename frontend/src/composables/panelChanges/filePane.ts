@@ -401,6 +401,7 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     effectiveView,
     openIsImage,
     openImageSrc: openImage.src,
+    openImageError: openImage.error,
     draftCount: computed(() => drafts.size),
     keepDraft,
     loadFiles,

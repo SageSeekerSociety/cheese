@@ -170,6 +170,7 @@ export function useProjectFile(opts: {
     documentType,
     rawUrl,
     imageSrc: image.src,
+    imageError: image.error,
     docBytes: doc.bytes,
     docLoading: doc.loading,
     docError: doc.error,

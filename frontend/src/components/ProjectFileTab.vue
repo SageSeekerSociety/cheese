@@ -37,6 +37,7 @@ const file = useProjectFile({
     :is-document="file.isDocument.value"
     :document-type="file.documentType.value"
     :image-src="file.imageSrc.value"
+    :image-error="file.imageError.value"
     :doc-bytes="file.docBytes.value"
     :doc-loading="file.docLoading.value"
     :doc-error="file.docError.value"

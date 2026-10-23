@@ -370,6 +370,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     openDocumentType: doc.openDocumentType,
     revisionPath: doc.revisionPath,
     openImageSrc: pane.openImageSrc,
+    openImageError: pane.openImageError,
     collapsedDirs: pane.collapsedDirs,
     revealTick: pane.revealTick,
     draftCount: pane.draftCount,

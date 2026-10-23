@@ -104,6 +104,7 @@ const CHANGES_BASE = {
   openDocumentType: null,
   revisionPath: null,
   openImageSrc: '',
+  openImageError: '',
   collapsedDirs: new Set<string>(),
   revealTick: 0,
   draftCount: 0,

@@ -263,6 +263,17 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         expectSelector: '.file-image-view img',
       },
       {
+        name: '一张取不到的图',
+        note: '图片要带登录取字节；取不到时说清楚、给下载原文件，而不是留一块空白。',
+        props: {
+          ...CHANGES_CONTENT_PROPS,
+          effectiveView: 'edit' as const,
+          openIsImage: true,
+          openImageError: '图片加载失败（HTTP 404）',
+        },
+        expect: '无法显示这个文件',
+      },
+      {
         name: '二进制文件',
         note: '解不出文本的文件说清是二进制，只给下载原文件这一条路。',
         props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileBinary: true, fileBytes: 40960 },
