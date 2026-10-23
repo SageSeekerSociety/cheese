@@ -378,10 +378,15 @@ async def reopen_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """重新打开：the owner takes a closed task up again. Its AI teammate goes on
-    from the project's latest code when it has landed something."""
+    """重新打开：the owner takes a closed task up again, or its own session
+    does — the same two that may close it, so a teammate that closed its task
+    too early can take that back. Its AI teammate goes on from the project's
+    latest code when it has landed something."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
-    if not actor.authenticated or actor.handle != task.owner_handle:
+    if actor.via == "cheese":
+        if resolver.credential_conversation() != task.id:
+            raise ForbiddenError(say("taskOwnerOnly"))
+    elif not actor.authenticated or actor.handle != task.owner_handle:
         raise ForbiddenError(say("taskOwnerOnly"))
     # The same test `reopen` moves a task onto a new branch by.
     new_branch = task.branch_name is not None and task.delivered_head is not None

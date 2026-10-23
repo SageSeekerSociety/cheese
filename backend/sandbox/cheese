@@ -695,6 +695,13 @@ PLATFORM_TOOLS = ToolTable(
             [],
         ),
         _tool(
+            "cheese_reopen_task",
+            "重新打开这件已关闭的任务。负责人或协作者要接着做时用它，打开后接着做；"
+            "别人要接着做，请他找负责人。",
+            {},
+            [],
+        ),
+        _tool(
             "cheese_task_state",
             "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
             "也照旧，直到你再说一次；Claude Code 的会话停下后又被叫醒时，看板先显示"
@@ -2160,6 +2167,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": here + "/task/progress",
             "body": {"state": args["state"], **_given(args, "note")},
         }
+    if tool == "cheese_reopen_task":
+        return {"method": "POST", "path": here + "/reopen"}
     if tool == "cheese_close_task":
         return {
             "method": "POST",
@@ -4684,6 +4693,7 @@ _SAY = {
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
+    "cheese_reopen_task": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task_state": lambda a, d, e: (
         "看板上这件任务现在显示你说的状态，直到你再设一次；Claude Code 的会话停下后"
         "又被叫醒时，它先显示在做。"
