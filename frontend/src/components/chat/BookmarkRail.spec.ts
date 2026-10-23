@@ -114,10 +114,13 @@ describe('对话左上角的书签条', () => {
     expect(ui.queryByRole('button', { name: '展开书签' })).toBeTruthy()
   })
 
-  it('没资格改的人只有跳回这一条', async () => {
+  it('没资格改的人没有菜单，点这一行就跳过去', async () => {
     const ui = await mountOpen([bookmark('b1', '登录')], false)
+    expect(ui.queryByRole('button', { name: '书签的操作' })).toBeNull()
     expect(ui.queryByRole('button', { name: '重命名' })).toBeNull()
     expect(ui.queryByRole('button', { name: '取消书签' })).toBeNull()
-    expect(ui.getByRole('button', { name: '跳到这一条' })).toBeTruthy()
+    // The row itself is the way back to the message.
+    await fireEvent.click(ui.getByRole('button', { name: '登录' }))
+    expect(ui.emitted().jump).toEqual([['b1']])
   })
 })
