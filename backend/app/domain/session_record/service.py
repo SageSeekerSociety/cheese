@@ -702,12 +702,15 @@ async def read(
             width = min(width * 2, SEALED_FETCH_PARALLEL)
     await flush()
     # The bucket's index survives the database's thirty-day index: what the
-    # rows no longer hold is still there, under its own key. Skipped when the
-    # rows alone already filled the newest page — nothing older could displace
-    # it, and the listing is a round trip the open panel pays every three
-    # seconds.
+    # rows no longer hold is still there, under its own key. It is skipped only
+    # when the rows yielded **more than** a page — then, and only then, there
+    # is a boundary to hand back and nothing older could displace it. At
+    # exactly `limit` the reader must still be sent into the archive: the
+    # surplus that would have named their way up may be records whose rows were
+    # swept, and the listing is a round trip the open panel pays every three
+    # seconds only when it actually needs the older half.
     archive = storage or bucket()
-    if archive is not None and not (newest and len(found) >= limit):
+    if archive is not None and not (newest and len(found) > limit):
         runs = []
         async for key in archive.list_keys(f"{INDEX_PREFIX}/{conversation_id}/"):
             run = describe(key)

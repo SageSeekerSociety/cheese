@@ -45,6 +45,27 @@ def _drop_rows(client, topic: uuid.UUID) -> None:
     client.portal.call(run)
 
 
+def _drop_rows_for_turn(client, topic: uuid.UUID, turn: str) -> None:
+    """Take **one turn's** rows away, as the retention sweep does at thirty days.
+
+    The rest of the conversation keeps its rows, so the page the reader gets is
+    built from what the database still holds — and the turn dropped here is
+    reachable only through the index. `turn` is the work id the journal stamped
+    on that turn's records; the row carries it as the turn id."""
+
+    async def run() -> None:
+        async with client.test_request_factory() as db:
+            await db.execute(
+                delete(SessionRecord).where(
+                    SessionRecord.conversation_id == topic,
+                    SessionRecord.turn_id == uuid.UUID(turn),
+                )
+            )
+            await db.commit()
+
+    client.portal.call(run)
+
+
 def _long_turn(work: str, count: int) -> list[dict]:
     """One turn's journal: `count` steps, each naming itself."""
     return [
@@ -151,6 +172,36 @@ def test_a_page_the_rows_already_hold_never_lists_the_index(
 
     assert len(page["data"]) == 120
     assert bucket.listings == 0, "读者要的那一页数据库自己就有"
+
+
+def test_a_page_the_rows_exactly_fill_still_reaches_the_archive(
+    client, tmp_path, monkeypatch
+):
+    """行正好填满一页时，更早的记录还在归档里，读者得能翻上去。
+
+    这一条守的是那个等号：只有行给出**多于**一页时才有一道边界可交回去、才
+    谈得上不必列归档。正好一页时，撑起「上面还有」的那几条可能正是行已经被清理
+    掉的记录（三十天保留），省掉列归档就等于告诉读者上面没有了。"""
+    bucket = _CountingBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    # 更早的一轮：稍后把它的行清掉，只留归档里的对象与索引。
+    older = str(uuid.uuid4())
+    session.write(_long_turn(older, 50))
+    session.drain()
+    # 更新的一轮：行数正好一页（默认 120）。
+    session.write(_long_turn(str(uuid.uuid4()), 120))
+    session.drain()
+    _seal(client, bucket)
+    topic = session.ref.topic_id
+    _drop_rows_for_turn(client, topic, older)
+
+    page = _site(client, topic)
+
+    assert len(page["data"]) == 120
+    assert page["has_more"] is True, "上面还有更早的一轮，读者得翻得到"
+    assert page["oldest_id"], "交回去一个能往上翻的游标"
 
 
 def test_reading_the_same_page_again_keeps_the_sealed_body(
