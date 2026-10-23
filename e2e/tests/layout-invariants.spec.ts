@@ -997,12 +997,16 @@ const WARM_STEP_MS = 10_000;
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
+//
 // 每个 tab 量**它自己住的那一层**（`views/teams/DetailView.vue` 挑一个画）：项目页和
 // 资料库走 `AppPage`，会滚的是 `.app-page__body`；成员、算力这些从 #4729 起搬进了盖在
 // 整个窗口上的设置层（路由上带 `meta.settingsOverlay`），画法在
 // `components/common/SettingsOverlay.vue`，会滚的是那一层的主区 —— 桌面 `.so__main`、
 // 窄于 960 换成 `.so__phone`（同一个 v-if/v-else 的两支，不会同时出现）。拿
 // `.app-page__body` 去量成员页，等的是一个这一页根本不画的盒子。
+//
+// 成员页在窄窗口下真的溢出一屏（量到 250px / 553px），设置层自己领着滚动，所以这一条
+// 是四格里唯一真在判「够不够得着」的；把它从这一组里拿掉，浮层哪天漏领滚动就没人看得见。
 //
 // `docs` 是老地址，落地时重定向到 `library`，量的仍是 `AppPage`。
 const TAB_FRAMES = [
@@ -1059,8 +1063,8 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
           timeout: WARM_STEP_MS,
         });
 
-        // 这一层一出现就量还不够 —— 它的内容（成员/资料/算力）是另一次请求填进去的，
-        // 量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
+        // 这一层一出现就量还不够 —— 它的内容（项目/成员/资料库/算力）是另一次请求
+        // 填进去的，量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
         // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
         // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
         await expect
@@ -1333,6 +1337,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
       '/users/settings/security',
       '/users/settings/profile',
       `${projectPath}/settings/agents`,
+      '/teams/team-1/members',
     ];
     const seen: { path: string; left: number; width: number }[] = [];
     for (const path of paths) {
