@@ -54,13 +54,16 @@ checks the ones that can be read off the source:
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
   fk-table-not-locked
-      An ``upgrade()`` that calls ``with_lock_retries`` and, in the same
-      transaction, adds or drops a foreign key must name both of its tables in
-      that call. A table left out is locked later, while the listed ones are
-      already held, and deadlocks with the live backend reading them in the
-      other order (``b8d3f1a6c254``: ``topics``). A dropped key's target is
-      read from the migration that created it; one that cannot be found is an
-      ``unresolved`` warning.
+      An ``upgrade()`` that calls ``with_lock_retries`` and then, in the same
+      transaction, adds or drops a foreign key (``create_foreign_key``,
+      ``drop_constraint``, a key inline in ``add_column`` / ``create_table``,
+      or the raw SQL for either) must name both of its tables in that call. A
+      table left out is locked later, while the listed ones are already held,
+      and deadlocks with the live backend reading them in the other order
+      (``b8d3f1a6c254``: ``topics``). A dropped key's target is read from the
+      ``upgrade()`` that created it; one that cannot be found, or was created
+      pointing at more than one table, is an ``unresolved`` warning. An
+      ``upgrade()`` that never calls ``with_lock_retries`` is not judged.
   empty-downgrade
       A migration whose ``downgrade()`` does nothing — a lone ``pass``, once
       its docstring is set aside — must say why in that docstring: what it
@@ -444,7 +447,7 @@ class _Migration(ast.NodeVisitor):
         base_tables: dict[str, set[str]],
         new_tables: set[str],
         facts: _FileFacts,
-        fk_targets: dict[str, str] | None = None,
+        fk_targets: dict[str, set[str]] | None = None,
     ) -> None:
         self.path = path
         self.lines = source.splitlines()
@@ -641,20 +644,32 @@ class _Migration(ast.NodeVisitor):
             )
 
     def _fk_touches(self, node: ast.AST, *tables: str | None) -> None:
-        if not self._autocommit:
+        # Only a lock taken after with_lock_retries holds the listed tables.
+        if self._locked is not None and not self._autocommit:
             self._fk_tables.extend((node, t) for t in tables if t)
 
     def _op_drop_constraint(self, node: ast.Call) -> None:
         name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), self.constants)
         table = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "table_name"))
         kind = _str(node.args[2]) if len(node.args) > 2 else _str(_kw(node, "type_"))
-        if name in self.fk_targets:
-            self._fk_touches(node, table, self.fk_targets[name])
-        elif kind == "foreignkey" and self._locked is not None and not self._autocommit:
+        self._fk_dropped(node, table, name, kind == "foreignkey")
+
+    def _fk_dropped(self, node: ast.AST, table: str | None, name: str | None, is_fk: bool) -> None:
+        """A key dropped by name locks the table it points at, read from the
+        migrations that created it. One name given different targets over time
+        (a key re-pointed under its old name) is not guessed at."""
+        targets = self.fk_targets.get(name or "", set())
+        if len(targets) == 1:
+            self._fk_touches(node, table, *targets)
+            return
+        looks_like_fk = is_fk or bool(name and (name.endswith("_fkey") or name.startswith("fk_")))
+        if (targets or looks_like_fk) and self._locked is not None and not self._autocommit:
+            seen = f" (created pointing at {', '.join(sorted(targets))})" if targets else ""
             self.report(
                 node,
                 "unresolved",
-                f"could not tell which table foreign key {name} points at; check that with_lock_retries names it",
+                f"could not tell which table foreign key {name} points at{seen}; "
+                "check that with_lock_retries names it",
             )
 
     def _op_create_foreign_key(self, node: ast.Call) -> None:
@@ -696,6 +711,8 @@ class _Migration(ast.NodeVisitor):
 
     def _op_add_column(self, node: ast.Call) -> None:
         table = _str(node.args[0]) if node.args else None
+        if len(node.args) > 1 and isinstance(node.args[1], ast.Call):
+            self._fk_touches(node, *_inline_referents(node.args[1]))
         column = _column(node.args[1]) if len(node.args) > 1 and isinstance(node.args[1], ast.Call) else None
         if column is None:
             return
@@ -729,6 +746,9 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_table(self, node: ast.Call) -> None:
         table = _str(node.args[0]) if node.args else None
+        for arg in node.args[1:]:
+            if isinstance(arg, ast.Call):
+                self._fk_touches(node, *_inline_referents(arg))
         if table is None:
             return
         first_primary = True
@@ -837,8 +857,7 @@ class _Migration(ast.NodeVisitor):
                     self._gone_from_base(node, "rename", table, column.group(1))
                     continue
                 if (dropped := _SQL_DROP_CONSTRAINT.match(clause)) is not None:
-                    if dropped.group(1) in self.fk_targets:
-                        self._fk_touches(node, table, self.fk_targets[dropped.group(1)])
+                    self._fk_dropped(node, table, dropped.group(1), False)
                     continue
                 if (referenced := _SQL_REFERENCES.search(clause)) is not None:
                     self._fk_touches(node, table, referenced.group(1))
@@ -978,18 +997,34 @@ def _fk_referent(call: ast.Call) -> str | None:
     return spelled.rsplit(".", 2)[-2] if spelled and "." in spelled else None
 
 
-def foreign_key_targets(sources: dict[str, str]) -> dict[str, str]:
-    """``{constraint name: referenced table}`` for every foreign key ``sources`` create.
+def _inline_referents(call: ast.Call) -> list[str]:
+    """Tables a ``Column(..., ForeignKey(...))`` or ``ForeignKeyConstraint`` points at."""
+    if _callee(call) == "ForeignKeyConstraint":
+        keys = [call]
+    elif _callee(call) == "Column":
+        keys = [a for a in call.args[1:] if isinstance(a, ast.Call) and _callee(a) == "ForeignKey"]
+    else:
+        return []
+    return [ref for ref in map(_fk_referent, keys) if ref]
+
+
+def foreign_key_targets(sources: dict[str, str]) -> dict[str, set[str]]:
+    """``{constraint name: {referenced table, ...}}`` for every foreign key the
+    ``upgrade()`` of ``sources`` create.
 
     An unnamed key gets Postgres' default name, ``<table>_<column>_fkey``. Read
-    so a migration that drops a key by name can tell which table it pointed at.
+    so a migration that drops a key by name can tell which table it pointed at;
+    a name with more than one table was re-pointed and cannot be told.
     """
-    out: dict[str, str] = {}
+    out: dict[str, set[str]] = {}
     for source in sources.values():
         try:
             tree = ast.parse(source)
         except SyntaxError:
             continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+                node.body = []
         constants = _module_constants(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -999,7 +1034,7 @@ def foreign_key_targets(sources: dict[str, str]) -> dict[str, str]:
                 name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), constants)
                 ref = _sql_text(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"), constants)
                 if name and ref and HOLE not in name:
-                    out[name] = ref
+                    out.setdefault(name, set()).add(ref)
             elif callee in {"create_table", "add_column"} and node.args and _str(node.args[0]):
                 table = _str(node.args[0])
                 for arg in node.args[1:]:
@@ -1016,11 +1051,11 @@ def foreign_key_targets(sources: dict[str, str]) -> dict[str, str]:
                         ref = _fk_referent(fk)
                         name = _sql_text(_kw(fk, "name"), constants) or f"{table}_{column}_fkey"
                         if ref and column:
-                            out[name] = ref
+                            out.setdefault(name, set()).add(ref)
             elif callee == "execute" and node.args:
                 sql = _sql_text(node.args[0], constants)
                 for name, ref in _SQL_NAMED_FK.findall(_strip_sql_comments(sql or "")):
-                    out[name] = ref
+                    out.setdefault(name, set()).add(ref)
     return out
 
 
@@ -1479,6 +1514,42 @@ def self_test() -> int:
     check("a dropped key's target, read from the migration that made it, left out", dropped("runs"), ["fk-table-not-locked"])
     check("a dropped key's target locked", dropped("runs, topics"), [])
     check("a dropped key nothing says the target of", _rules_found("    with_lock_retries('runs')\n" + drop_fk), ["unresolved"])
+
+    def judged(body: str, history: dict[str, str]) -> list[str]:
+        source = _HEAD + "\ndef upgrade() -> None:\n" + body + "\n"
+        return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, history))
+
+    raw_drop = '    op.execute("ALTER TABLE runs DROP CONSTRAINT runs_topic_id_fkey")'
+    check("raw SQL: a dropped key's target left out", judged("    with_lock_retries('runs')\n" + raw_drop, created), ["fk-table-not-locked"])
+    check("raw SQL: a dropped key's target locked", judged("    with_lock_retries('runs, topics')\n" + raw_drop, created), [])
+    repointed = {
+        **created,
+        "b.py": _HEAD + "def upgrade():\n"
+        "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'conversations', ['topic_id'], ['id'])\n",
+    }
+    check(
+        "a key re-pointed under its old name is not guessed at",
+        judged("    with_lock_retries('runs, conversations')\n" + drop_fk, repointed),
+        ["unresolved"],
+    )
+    restored_in_downgrade = {
+        **created,
+        "c.py": _HEAD + "def upgrade():\n    pass\ndef downgrade():\n"
+        "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'elsewhere', ['topic_id'], ['id'])\n",
+    }
+    check(
+        "a downgrade's keys do not count as created",
+        judged("    with_lock_retries('runs, topics')\n" + drop_fk, restored_in_downgrade),
+        [],
+    )
+    check(
+        "a key added inline with its column, target left out",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    op.add_column('task', sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=True))"
+        ),
+        ["fk-on-add-column", "fk-table-not-locked", "fk-without-index"],
+    )
     check(
         "an exception with a reason",
         _rules_found("    op.drop_column('task', 'video_url')  # migration-safety: allow drop-column — not read since #1"),
@@ -1717,6 +1788,30 @@ def self_test() -> int:
         )
         check("a BOM-prefixed migration is read", bom_run.returncode, 0)
         check("... and is not called unparseable", "unparseable" in bom_run.stdout, False)
+
+        # A key dropped by name: the table it points at is known only from a
+        # migration already on the base, which the command reads as history.
+        (versions / "made.py").write_text(
+            _HEAD + "\ndef upgrade() -> None:\n"
+            "    op.create_table('runs', sa.Column('topic_id', sa.Integer(), sa.ForeignKey('topics.id')))\n",
+            encoding="utf-8",
+        )
+        git("add", "backend/alembic/versions/made.py")
+        git("commit", "-qm", "made")
+        (versions / "drops.py").write_text(
+            _HEAD + "\ndef upgrade() -> None:\n    with_lock_retries('runs')\n"
+            "    op.drop_constraint('runs_topic_id_fkey', 'runs', type_='foreignkey')\n",
+            encoding="utf-8",
+        )
+        history_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a dropped key's target read from the base is judged", history_run.returncode, 1)
+        check("... as not locked", "[fk-table-not-locked]" in history_run.stdout, True)
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 

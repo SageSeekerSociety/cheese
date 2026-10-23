@@ -42,7 +42,7 @@ _INDEX = "ix_compute_runs_topic_id"
 
 def upgrade() -> None:
     with_lock_retries(
-        "conversations, assistant_conversations, sandbox_homes, compute_runs, topics"
+        "conversations, assistant_conversations, sandbox_homes, compute_runs"
     )
     op.alter_column("conversations", "project_id", nullable=True)
     op.drop_constraint("ck_conversations_kind", "conversations", type_="check")
@@ -116,9 +116,6 @@ def downgrade() -> None:
             postgresql_concurrently=True,
             if_exists=True,
         )
-    with_lock_retries(
-        "conversations, assistant_conversations, sandbox_homes, compute_runs, topics"
-    )
     op.drop_constraint(_FK, "compute_runs", type_="foreignkey")
     op.execute(
         "UPDATE compute_runs SET topic_id = NULL "
