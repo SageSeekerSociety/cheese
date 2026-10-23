@@ -658,19 +658,22 @@ async def read(
         nonlocal sealed
         if not batch:
             return
-        keys = [r.object_key for r in batch if r.object_key is not None]
+        keys: list[str] = [r.object_key for r in batch if r.object_key]
         if keys and sealed is None:
             sealed = storage or private_storage()
-        bodies = dict(
-            zip(
-                keys,
-                await asyncio.gather(*(sealed_body(sealed, key) for key in keys)),
-                strict=True,
+        bodies: dict[str, bytes | None] = {}
+        if keys:
+            assert sealed is not None
+            bodies = dict(
+                zip(
+                    keys,
+                    await asyncio.gather(*(sealed_body(sealed, key) for key in keys)),
+                    strict=True,
+                )
             )
-        )
         for row in batch:
             body = bodies.get(row.object_key) if row.object_key is not None else None
-            if body is not None:
+            if row.object_key is not None and body is not None:
                 opened.add(row.object_key)
                 collect(
                     await asyncio.to_thread(unpack, body),
