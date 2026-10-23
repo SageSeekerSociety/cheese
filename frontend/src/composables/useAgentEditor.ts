@@ -79,12 +79,15 @@ export function useAgentEditor(projectId: MaybeRefOrGetter<string>) {
     error.value = null
     try {
       if (agent?.id) {
+        // ``expected_version`` rides along either way: this dialog was opened on the
+        // version it read, and a save built from a stale one is refused (409).
+        const expected_version = agent.version
         await updateProjectAgent(
           toValue(projectId),
           agent.id,
           draft.nameUnchanged
-            ? { configuration: draft.configuration }
-            : { display_name: draft.display_name, configuration: draft.configuration }
+            ? { configuration: draft.configuration, expected_version }
+            : { display_name: draft.display_name, configuration: draft.configuration, expected_version }
         )
       } else {
         await createProjectAgent(toValue(projectId), {

@@ -78,7 +78,7 @@ async def resubmit_task(
 
     return ok(
         {
-            "task": _task_to_api_model(task),
+            "task": _task_to_api_model(task, include_private_teaching=True),
         }
     )
 

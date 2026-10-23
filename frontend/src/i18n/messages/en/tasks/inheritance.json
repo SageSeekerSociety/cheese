@@ -1,4 +1,9 @@
 {
+  "agent": "Default teammate",
+  "agentNone": "No default teammate",
+  "agentSkills": "Skills it brings",
+  "agentSkillsNone": "No skills",
+  "agentSkillsOnly": "Skills set by this challenge",
   "credits": "{n} compute credits",
   "from": {
     "both": "The space and this task",
@@ -13,6 +18,10 @@
   "materialsNone": "Nothing on this space yet",
   "pack": "Resource pack",
   "packNone": "No compute credits",
+  "privateGuidance": "Private guidance (students never see it)",
+  "prompt": "Challenge's own prompt",
+  "promptNone": "No prompt from this challenge",
+  "promptSet": "Set (below)",
   "spacePrompt": "The space's requirements",
   "taskPrompt": "This task's requirements",
   "title": "What this project inherits"

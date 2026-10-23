@@ -188,7 +188,7 @@ export function fileTreeRows(collapsed: string[] = []) {
   return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, collapsedDirs: new Set(collapsed) })
 }
 
-/** `ProjectFileView` 的那十八样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
+/** `ProjectFileView` 的那十九样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
 export function projectFileProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     path: 'docs/week-1.md',
@@ -201,6 +201,7 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
     binary: false,
     tooLarge: false,
     tasks: [],
+    inRoom: false,
     isImage: false,
     isDocument: false,
     documentType: null,

@@ -14,6 +14,7 @@ from app.api.preview_host import (
     APP_MIME,
     AUTH_PATH,
     GRANT_TTL,
+    MCP_APP_MIME,
     mint_preview_token,
     preview_origin,
     require_preview_access,
@@ -30,6 +31,7 @@ from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.queries import latest_preview
 from app.domain.library import service as library
 from app.domain.project.room_files import clean_artifact_path
+from app.domain.remote_mcp import apps
 
 router = APIRouter(prefix="/topics", tags=["preview"])
 
@@ -76,6 +78,21 @@ async def preview_session(
                 "instance": instance,
                 "artifact_id": str(artifact.id),
                 "path": artifact.content,
+            }
+        elif artifact and artifact.mime_type == MCP_APP_MIME:
+            # A third-party server's View. The grant names which server and which
+            # `ui://` resource: the content host reads the HTML through that
+            # server's connection, so the origin and the read are both bound to
+            # this one resource.
+            parts = apps.pointer_parts(artifact.content)
+            if parts is None:
+                raise NotFoundError(say("previewSelectionStale"))
+            server, uri = parts
+            resource = {
+                "kind": "mcp-app",
+                "server": server,
+                "uri": uri,
+                "artifact_id": str(artifact.id),
             }
         else:
             path = clean_artifact_path(

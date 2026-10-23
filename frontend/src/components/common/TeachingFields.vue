@@ -116,6 +116,31 @@ const labelId = `teaching-mode-${useId()}`
       :placeholder="t('spaces.teaching.fields.systemPromptPlaceholder')"
     />
 
+    <v-textarea
+      v-model="draft.privatePrompt"
+      rows="3"
+      auto-grow
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-private-prompt"
+      :label="t('spaces.teaching.fields.privatePrompt')"
+      :hint="t('spaces.teaching.fields.privatePromptHint')"
+      persistent-hint
+    />
+
+    <v-text-field
+      v-model="draft.learningGoals"
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-learning-goals"
+      :label="t('spaces.teaching.fields.learningGoals')"
+      :hint="t('spaces.teaching.fields.learningGoalsHint')"
+    />
+
     <TeachingMaterialPicker
       v-model="draft.materialIds"
       :materials="props.materials ?? []"

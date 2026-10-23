@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 频道里点一枚文件 chip 开的那一格：项目当前版本里的这份文件，只读。代码在编辑器里
+// 频道里点一枚文件 chip 开的那一格：项目当前版本里的这份文件，只读（项目里读不到、而
+// 频道自己有这一份时，开的是频道那一份，顶上写明）。代码在编辑器里
 // 打开，带行号就滚到那几行并选中；图片、文档照样画出来；画不出来的给下载。
 //
 // 当前版本里没有这份文件时，说清这一点，再列出这个频道里改过它的任务——它多半是某件
@@ -33,6 +34,8 @@ const props = defineProps<{
   tooLarge: boolean
   /** 当前版本里没有这份文件时，这个频道里改过它的任务。 */
   tasks: RoomTask[]
+  /** 读自频道自己的文件（项目当前版本里读不到它）。 */
+  inRoom: boolean
   isImage: boolean
   isDocument: boolean
   documentType: FileKind | null
@@ -58,7 +61,9 @@ const { mdAndUp } = useDisplay()
         {{ mdAndUp ? props.path : props.path.split('/').pop() }}
       </span>
       <v-spacer />
-      <span class="project-file__source">{{ t('work.room.projectFile.current') }}</span>
+      <span class="project-file__source">{{
+        t(props.inRoom ? 'work.room.projectFile.room' : 'work.room.projectFile.current')
+      }}</span>
     </div>
     <div v-if="props.loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
