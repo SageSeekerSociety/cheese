@@ -232,12 +232,30 @@ export interface NoticeRow {
 }
 
 /**
- * 这一行是哪一行：它折进来的第一块。合成的行画的是最后一条（时间、正文），可后来
- * 又并进来一条时它还是原来那一行——按 `block` 认，人点开的那一串会被换成一行新的、
- * 收起来的。
+ * 每一行是哪一行。合成的行画的是最后一条（时间、正文），可新来一条并进去、或往上翻
+ * 页时更早的一条并进来，它都还是原来那一行——按画的那一块认、或按第一块认，人点开
+ * 的那一串都会被换成一行新的、收起来的。
+ *
+ * 所以一行沿用它上一次的名字：`before` 是上一次每一块落在哪一行的名字，这一行里
+ * 任何一块上次有名字、且这次没被别的行先用掉，就还叫它；全是新块才用自己的第一块。
+ * 返回这次每一行的名字，和下一次要传回来的 `before`。
  */
-export function rowKey(row: NoticeRow): string {
-  return row.run[0].id
+export function rowKeys(
+  rows: NoticeRow[],
+  before: ReadonlyMap<string, string>
+): { keys: string[]; byBlock: Map<string, string> } {
+  const keys: string[] = []
+  const byBlock = new Map<string, string>()
+  const taken = new Set<string>()
+  for (const row of rows) {
+    const named = row.run.map((block) => before.get(block.id))
+    const own = row.run.map((block) => block.id)
+    const key = [...named, ...own].find((k): k is string => !!k && !taken.has(k)) ?? `${row.block.id}#${keys.length}`
+    taken.add(key)
+    keys.push(key)
+    for (const block of row.run) byBlock.set(block.id, key)
+  }
+  return { keys, byBlock }
 }
 
 export { actionResource, confirmTarget, environmentTarget, mailOutcomes, platformNotice } from './platformNoticeCards'

@@ -298,4 +298,16 @@ describe('a merged line someone opened stays open', () => {
     expect(view.container.textContent).toContain('weekly')
     expect(view.container.textContent).toContain('budget')
   })
+
+  it('stays open when an older page brings an earlier one into it', async () => {
+    const later = [archived('y2', 'hiring', 2), archived('y3', 'budget', 3)]
+    const view = mount({ rows: collapseNotices(later), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+
+    const all = [archived('y1', 'weekly', 1), ...later]
+    await view.rerender({ rows: collapseNotices(all), runEdges: ['start'] })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
+  })
 })
