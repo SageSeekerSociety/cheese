@@ -4,11 +4,12 @@ import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import (
@@ -59,6 +60,9 @@ class ResolvedAgent:
     # screens show that in their reader's language (``models.NameSource``).
     name_source: NameSource = NameSource.human
     configuration: dict = field(default_factory=dict)
+    # What a save sends back so a stale one can be refused instead of landing on
+    # top of whoever wrote first (``AgentInstance.version``).
+    version: int = 1
 
 
 def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
@@ -418,13 +422,82 @@ class AgentInstanceService:
         await self._require_known_type(type_name)
         instance.configuration = initial_configuration(type_name).model_dump()
         instance.type_name = type_name or None
+        # The whole configuration was just replaced, so this is a write like any
+        # other: a save that read the old version must not be allowed to land on
+        # top of it.
+        instance.version = instance.version + 1
         return instance
 
     async def configure(
-        self, instance: AgentInstance, config: AgentConfiguration
+        self,
+        instance: AgentInstance,
+        config: AgentConfiguration,
+        *,
+        expected_version: int | None = None,
     ) -> None:
+        """Replace this agent's saved configuration.
+
+        ``expected_version`` is the version the caller read. Given, the write
+        happens only while the row is still at it: an agent's ``configuration``
+        is one JSON replaced whole, so last-write-wins quietly drops the first
+        of two people editing one teammate's skills. A stale version raises
+        ``ConflictError`` carrying the version that is current, so the screen
+        can say what happened and re-read. Omitted, the write is unconditional —
+        what every caller that is not a person's own save already means.
+
+        The check is the ``WHERE`` clause, not an ``if`` above the write: two
+        writers that read the same version would both pass a comparison made
+        here (``living_doc.repositories.set_content`` takes the same stand).
+        """
         await self._validate_model(instance.project_id, config, instance.id)
-        instance.configuration = config.model_dump()
+        if expected_version is None:
+            instance.configuration = config.model_dump()
+            # The attribute, not the SQL expression below: assigning the
+            # expression here would put a BinaryExpression where an int lives.
+            instance.version = instance.version + 1
+            instance.updated_at = datetime.now(UTC)
+            return
+        written = await self._session.scalar(
+            update(AgentInstance)
+            .where(
+                AgentInstance.id == instance.id,
+                AgentInstance.version == expected_version,
+            )
+            .values(
+                configuration=config.model_dump(),
+                version=AgentInstance.version + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(AgentInstance.id)
+        )
+        if written is None:
+            # Somebody wrote between the read and now. Re-read the row so the
+            # caller (and the screen behind it) learns the version that won.
+            await self._session.refresh(instance)
+            raise ConflictError(
+                say("agentSkillsStale"), data={"version": instance.version}
+            )
+        await self._session.refresh(instance)
+
+    async def apply_protocol(
+        self,
+        instance: AgentInstance,
+        *,
+        prompt: str | None,
+        skills: list[str],
+    ) -> None:
+        """落一个题目包带来的 prompt 与 skill 名字（#944）。
+
+        调用方（project，在赛题被接受时）只说「加什么」；一份配置长什么样留在
+        这里，project 不必再 import ``configuration``（那是一条向上的边）。
+        ``skills`` 去重、保序：题目列的名字与 preset 那份重叠时不重复带。
+        """
+        config = AgentConfiguration.model_validate(instance.configuration or {})
+        config.body = "\n\n".join(part for part in (config.body, prompt) if part)
+        config.skills = list(dict.fromkeys([*config.skills, *skills]))
+        await self.configure(instance, config)
+
+        await self._validate_model(instance.project_id, config, instance.id)
 
     async def _validate_model(
         self,
@@ -439,6 +512,10 @@ class AgentInstanceService:
             device = await self._session.get(DeviceRow, config.execution_device_id)
             if device is None or device.team_id != project.team_id:
                 raise ValidationError(say("deviceNotInProject"))
+        if config.model is None:
+            # 这次保存没碰模型（只改了技能之类）：没有要校验的选择，自己的队友
+            # 也一样 —— 「保留原来的模型」不该被当成「选了一个不被允许的模型」。
+            return
         own = await self._session.get(OwnAgent, instance_id) if instance_id else None
         if own is not None:
             if own.account_connection_id:
@@ -481,8 +558,6 @@ class AgentInstanceService:
             )
             if config.model not in models:
                 raise ValidationError(say("teamConnectionModelRefused"))
-            return
-        if config.model is None:
             return
         choices = self._models(project.settings) if self._models else []
         choice = next((c for c in choices if c["id"] == config.model), None)
@@ -604,4 +679,5 @@ class AgentInstanceService:
                 else NameSource.default
             ),
             configuration=instance.configuration,
+            version=instance.version,
         )

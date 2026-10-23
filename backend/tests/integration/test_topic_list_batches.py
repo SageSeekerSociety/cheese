@@ -215,7 +215,7 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
                     await cards_repo.add(
                         topic_id=topic.id,
                         task_id=task.id,
-                        reviewer_handle="carol",
+                        reviewer_handles=["carol"],
                         status=AcceptStatus.pending,
                         change_subject=f"feat(test): deliver {task.id.hex[:8]}",
                     )

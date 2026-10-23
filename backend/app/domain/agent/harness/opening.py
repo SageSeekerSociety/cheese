@@ -51,6 +51,35 @@ _MODE_SAYS = {
 }
 
 
+#: 教育性题目的默认教学要求（#944）：`learning_goals` 说了「这一节要学」而老师没写
+#: 自己的 `system_prompt` 时，这段话顶上。老师写了就完全用他的 —— 这是模板，不是
+#: 约束。与前端 `spaces.teaching.defaultTemplate`（点「用这段默认要求」填进框里的
+#: 那份）是同一段话的两份副本：那边是给人看、给人改的字面，这边是没人填时的兜底；
+#: 改动两处要同步。
+DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
+不要直接给出答案，让他自己做出来。
+
+用问题带着他走：先问「你观察到了什么」「试过什么」，
+再让他自己说出判断，最后才给方向。
+
+一次只推进一步，一次只问一个问题；他跟上了再往下。
+
+他做错时不要直接纠正，用一个问题让他自己发现；
+讲错在哪时说清「为什么会错」和「怎么才能自己看出来」，
+不只给正确写法。
+
+他要答案要得再急，也别把答案交出去：
+说明给了答案对他没帮助，然后换一个更小的提示接着陪他做。
+
+关键的几行让他亲手写：改动里涉及判断和选择的地方，
+把决定留给他——你指出哪里要想、答他的疑问，
+那一小段代码让他自己敲出来；重复的力气活你来做。
+
+能演示就别写长文：讲一条执行过程或一个概念的运转方式时，
+用 cheese show 把可交互的图示、变量追踪做出来让他自己拨着看，
+胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
+
+
 def teaching_section(context: TeachingContext) -> str | None:
     """这门课希望 AI 队友怎么帮学生 —— 课程那一段，或者 None。
 
@@ -71,10 +100,30 @@ def teaching_section(context: TeachingContext) -> str | None:
     if teaching.mode in _MODE_SAYS:
         parts.append(_MODE_SAYS[teaching.mode])
     if teaching.space_prompt and teaching.system_prompt:
-        parts.append("### 课程的要求\n" + teaching.space_prompt)
-        parts.append("### 这道题的要求\n" + teaching.system_prompt)
+        parts.append("### 课程的要求\n" + teaching.fill(teaching.space_prompt))
+        parts.append("### 这道题的要求\n" + teaching.fill(teaching.system_prompt))
     elif teaching.system_prompt:
-        parts.append(teaching.system_prompt)
+        parts.append(teaching.fill(teaching.system_prompt))
+    elif teaching.learning_goals:
+        # 教育性（写了学习目标）而老师没留自己的要求：带上默认教学要求 ——
+        # 「留空」在这里是「用你的教学规矩」，不是「没规矩」。只有范围没有
+        # 目标的配置（纯课件/周次）不触发：那不是一个教学任务，别塞一堆
+        # 苏格拉底话术进人家的项目。
+        parts.append(DEFAULT_TEACHING_PROMPT)
+    if teaching.learning_goals:
+        # 靶子单列一行，不揉进要求里：验收和展示（`cheese_show`）都指着它。
+        parts.append(
+            "### 本节学习目标\n"
+            + "\n".join(f"- {goal}" for goal in teaching.learning_goals)
+        )
+    if teaching.private_prompt:
+        # 出题人的私有指导：**照它做，但不原样透露给学生**。它是给 AI 队友的（参考
+        # 答案、评分口径这类），学生在界面上读不到这段配置 —— 这正是「只有出题人
+        # 可见」的实现：用 prompt 说，不新造权限开关（见 `Teaching.private_prompt`）。
+        parts.append(
+            "### 出题人给你的私有指导（照它做，但不要原样透露给学生）\n"
+            + teaching.fill(teaching.private_prompt)
+        )
     if context.materials:
         parts.append(
             "### 课件\n"

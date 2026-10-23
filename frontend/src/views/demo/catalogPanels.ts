@@ -478,7 +478,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读记录的时候',
-        note: '还在路上时画的是那条流的形状（一条条「圆点 + 动作 + 参数」的单行），不是一个居中的转圈。',
+        note: '还在路上时画的是现场一页的形状：一轮的组头与用时条，底下几种记录行，不是一个居中的转圈。',
         props: { site: siteBundle({ transcript: [], loading: true }) },
         expect: '加载中',
         expectSelector: '.skel--site',
@@ -657,6 +657,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这份文件多半是某件任务里新建、还没合进项目的：说清这一点，再列出改过它的任务。',
         props: projectFileProps({ path: 'README.md', missing: true, tasks: [CHANGES_TASK] }),
         expect: '在任务「整理第一周的课件」里看',
+      },
+      {
+        name: '频道自己的文件',
+        note: '项目没有代码仓库、或仓库里没有它，而它是频道里交付或存下的一份：照样打开，顶上写明读的是频道里的文件。',
+        props: projectFileProps({ path: 'gemm_bench.cu', inRoom: true }),
+        expect: '频道里的文件 · 只读',
       },
       {
         name: '文件太大',
