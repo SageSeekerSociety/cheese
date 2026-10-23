@@ -115,7 +115,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       get hint() {
         return t('tasks.assistant.draft.hint')
       },
-      canAttach: true,
+      attachAsMaterials: true,
     },
     states: [
       {

@@ -14,7 +14,6 @@ import { useQuery } from '@tanstack/vue-query'
 import { awaitingCount } from '@/composables/useAwaitingCount'
 import { useJoinSpace } from '@/composables/useJoinSpace'
 
-import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { SpacesApi } from '@/api/spaces'
@@ -131,58 +130,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
       createError.value = t('spaces.create.failed')
     } finally {
       createBusy.value = false
-    }
-  }
-
-  // ---- 改资料。名字全站唯一，撞名要落在名字那一格，别和「没网」「没权限」混成一句。
-  const editing = ref<Team | null>(null)
-  const editingBusy = ref(false)
-  const editingError = ref('')
-  const editingNameError = ref('')
-
-  function edit(team: Team | null) {
-    editing.value = team
-    clearErrors()
-  }
-
-  /** 上一次那句报错不该跟着人打字走：他在名字那一格里一动就撤掉，重新判一次。 */
-  function clearErrors() {
-    editingError.value = ''
-    editingNameError.value = ''
-  }
-
-  async function saveProfile(payload: { name: string; intro: string; avatarFile?: File }) {
-    const team = editing.value
-    if (!team || editingBusy.value) return
-    editingError.value = ''
-    editingNameError.value = ''
-    const name = payload.name.trim()
-    if (!name) {
-      editingNameError.value = t('work.teamProfile.nameRequired')
-      return
-    }
-    editingBusy.value = true
-    try {
-      // 换头像 = 先把图传上去换一个 id，再把它和另外两项一起 PATCH 上去；
-      // 没换图就不带 avatarId，免得把现成的头像覆盖掉。
-      const avatarId = payload.avatarFile ? (await createAvatar(payload.avatarFile)).avatarId : null
-      const { team: updated } = await TeamsApi.update(team.id, {
-        name,
-        intro: payload.intro.trim(),
-        ...(avatarId ? { avatarId } : {}),
-      })
-      await setTeamsHere((rows) => rows.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)))
-      editing.value = null
-      toast.success(t('work.teamProfile.saved'))
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) editingNameError.value = t('work.teamProfile.nameTaken')
-      else if (e instanceof ApiError && e.status === 403) editingError.value = t('work.teamProfile.forbidden')
-      else {
-        editingError.value = t('work.teamProfile.saveFailed')
-        console.error(e)
-      }
-    } finally {
-      editingBusy.value = false
     }
   }
 
@@ -309,13 +256,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     createBusy,
     createError,
     createSpace,
-    editing,
-    editingBusy,
-    editingError,
-    editingNameError,
-    edit,
-    clearErrors,
-    saveProfile,
     disbanding,
     disbandBusy,
     disbandError,

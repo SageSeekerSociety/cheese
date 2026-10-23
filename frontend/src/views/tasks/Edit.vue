@@ -164,7 +164,7 @@ useAgentContext(() => ({
   ],
   placeholder: t('tasks.assistant.draft.placeholder'),
   hint: t('tasks.assistant.draft.hint'),
-  canAttach: true,
+  attachAsMaterials: true,
 }))
 
 // 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。

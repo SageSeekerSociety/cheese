@@ -18,15 +18,23 @@ from app.api.place import readable_rooms
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ValidationError
+from app.core.config import settings
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
 from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
+from app.domain.team.services import team_service
+from app.domain.user.services import user_by_handle
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
@@ -104,11 +112,23 @@ async def library_file_raw(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    name = _library_path(path)
+    return await _raw(
+        db, _shelf(project_id), _library_path(path), version, preview_pdf, request
+    )
+
+
+async def _raw(
+    db: DbSession,
+    shelf: Shelf,
+    name: str,
+    version: uuid.UUID | None,
+    preview_pdf: bool,
+    request: Request,
+) -> Response:
     stored = (
-        await library_records.stored_version(db, project_id, name, version)
+        await library_records.stored_version(db, shelf, name, version)
         if version is not None
-        else await library_records.stored_file(db, project_id, name)
+        else await library_records.stored_file(db, shelf, name)
     )
     filename = quote(name.rsplit("/", 1)[-1], safe="")
     headers = {
@@ -132,6 +152,10 @@ async def library_file_raw(
     )
 
 
+def _shelf(project_id: uuid.UUID) -> Shelf:
+    return Shelf.of_project(project_id)
+
+
 def _library_path(raw: str) -> str:
     """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
     name = (raw or "").strip()
@@ -151,7 +175,9 @@ async def list_library_versions(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    versions = await library_records.versions(db, project_id, _library_path(path))
+    versions = await library_records.versions(
+        db, _shelf(project_id), _library_path(path)
+    )
     return ok({"versions": versions})
 
 
@@ -167,7 +193,7 @@ async def restore_library_version(
     actor = await _library_keeper(project_id, db, resolver)
     name = _library_path(path)
     await library_records.restore(
-        db, project_id=project_id, name=name, version_id=version, by=actor.handle
+        db, shelf=_shelf(project_id), name=name, version_id=version, by=actor.handle
     )
     await db.commit()
     return ok({"path": name})
@@ -197,7 +223,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        project_id,
+        _shelf(project_id),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -216,7 +242,9 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
+    return ok(
+        await library_listing.one(db, _shelf(project_id), rooms, _library_path(path))
+    )
 
 
 @router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
@@ -228,7 +256,7 @@ async def library_file_text(
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
     await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(db, project_id, name)
+    found = await library_records.read_text(db, _shelf(project_id), name)
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
@@ -238,7 +266,7 @@ async def library_folders(
 ) -> dict:
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
     await _reader(project_id, db, resolver)
-    return ok({"folders": await library_listing.folders(db, project_id)})
+    return ok({"folders": await library_listing.folders(db, _shelf(project_id))})
 
 
 async def _reader(
@@ -309,7 +337,7 @@ async def library_upload_slot(
     if body.size > MAX_LIBRARY_UPLOAD_BYTES:
         raise ValidationError(say("libraryUploadTooLarge"))
     name = library.clean_upload_name(body.name)
-    return ok(await library_records.upload_slot(project_id, name, body.size))
+    return ok(await library_records.upload_slot(_shelf(project_id), name, body.size))
 
 
 @router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
@@ -322,13 +350,13 @@ async def upload_library_file(
     """把传上来的一份登记进资料库，`folder` 给了就放进那个文件夹（没有就新建）。
     撞名不覆盖：拿下一个 `(n)`。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(project_id, body.upload)
+    upload = await library_records.received(_shelf(project_id), body.upload)
     filename = library.clean_upload_name(body.filename)
     if body.folder and body.folder.strip("/ "):
         filename = f"{library.clean_library_path(body.folder)}/{filename}"
     name = await library_records.add(
         db,
-        project_id=project_id,
+        _shelf(project_id),
         filename=filename,
         data=upload,
         added_by=actor.handle,
@@ -348,10 +376,10 @@ async def replace_library_file(
 ) -> dict:
     """把一份资料换成传上来的新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(project_id, body.upload)
+    upload = await library_records.received(_shelf(project_id), body.upload)
     name = _library_path(path)
     await library_records.replace(
-        db, project_id=project_id, name=name, data=upload, by=actor.handle
+        db, shelf=_shelf(project_id), name=name, data=upload, by=actor.handle
     )
     await db.commit()
     return ok({"path": name, "bytes": upload.size})
@@ -366,7 +394,7 @@ async def delete_library_file(
     读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`
     那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。"""
     await _library_keeper(project_id, db, resolver)
-    await library_records.remove(db, project_id=project_id, name=_library_path(path))
+    await library_records.remove(db, shelf=_shelf(project_id), name=_library_path(path))
     await db.commit()
     return ok({"deleted": True})
 
@@ -390,7 +418,318 @@ async def move_library_file(
     await _library_keeper(project_id, db, resolver)
     moved = await library_records.move(
         db,
-        project_id=project_id,
+        shelf=_shelf(project_id),
+        source=_library_path(path),
+        target=library.clean_library_path(to),
+    )
+    await db.commit()
+    return ok({"moved": moved})
+
+
+# --- 团队的资料库 ----------------------------------------------------------------
+#
+# 一个团队自己的资料库，一个人自己的就是他名下那个团队的。和项目的资料库一样读写，
+# 只是没有房间：没有哪条消息引用它，清单上也就没有来源房间和引用数。团队的成员都能
+# 读、能放、能删；平台替人跑的芝士不走这里（`api.auth.DELEGATED_ROUTES` 没有它们）。
+
+teams = APIRouter(prefix="/teams", tags=["library"])
+
+
+class LibraryFolderOut(BaseModel):
+    """清单里的一个文件夹（`library_listing._folders` 写的那一行）。"""
+
+    type: Literal["folder"]
+    path: str
+    name: str
+    count: int
+    modified: float
+    rank: str
+
+
+class LibraryPageOut(BaseModel):
+    """一页清单：文件夹在前，然后是文件；``next`` 是下一页的游标。"""
+
+    data: list[LibraryFolderOut | LibraryFileOut]
+    next: str | None
+
+
+class LibraryVersionOut(BaseModel):
+    id: str
+    version: int
+    bytes: int
+    added_by: str | None
+    created_at: str | None
+    current: bool
+
+
+class LibraryVersionsOut(BaseModel):
+    versions: list[LibraryVersionOut]
+
+
+class LibraryPlacedOut(BaseModel):
+    """放进、换成新版本之后它叫什么、多大。"""
+
+    path: str
+    bytes: int
+
+
+class LibraryRestoredOut(BaseModel):
+    path: str
+
+
+class LibraryDeletedOut(BaseModel):
+    deleted: bool
+
+
+#: 一份资料的字节，原样给出。
+BYTES = {
+    "response_class": Response,
+    "responses": {
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+}
+
+
+class LibraryRoomOut(BaseModel):
+    """团队的资料库占了多少、一共能放多少（字节）。"""
+
+    used: int
+    total: int
+
+
+async def _team_member(
+    team_id: int, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
+    """团队的成员本人，别人一律不行。"""
+    actor = await resolver.resolve()
+    resolver.reject_failed_credential(actor)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("libraryTeamMembersOnly"))
+    user = await user_by_handle(db, actor.handle)
+    if (
+        actor.via == "cheese"
+        or user is None
+        or not await team_service(db).is_team_member(team_id, user.id)
+    ):
+        raise ForbiddenError(say("libraryTeamMembersOnly"))
+    return actor
+
+
+def _team_shelf(team_id: int) -> Shelf:
+    return Shelf.of_team(team_id)
+
+
+@teams.get("/{team_id}/library", **typed_response(LibraryPageOut))
+async def list_team_library(
+    team_id: int,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    dir: str = "",
+    flat: bool = False,
+    q: str = "",
+    kind: str | None = None,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict:
+    """团队的资料库，一页一页地给，和项目的资料库一样翻。"""
+    await _team_member(team_id, db, resolver)
+    entries, after = await library_listing.page(
+        db,
+        _team_shelf(team_id),
+        {},
+        dir=dir.strip("/"),
+        flat=flat,
+        q=q.strip(),
+        kind=kind,
+        after=cursor,
+        limit=limit,
+    )
+    return ok({"data": entries, "next": after})
+
+
+@teams.get("/{team_id}/library/room", **typed_response(LibraryRoomOut))
+async def team_library_room(
+    team_id: int, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """占了多少、一共能放多少：资料库页上的用量。"""
+    await _team_member(team_id, db, resolver)
+    used = await library_records.used(db, _team_shelf(team_id))
+    return ok({"used": used, "total": settings.team_library_bytes})
+
+
+@teams.get("/{team_id}/library/file", **typed_response(LibraryFileOut))
+async def team_library_file(
+    team_id: int, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    return ok(
+        await library_listing.one(db, _team_shelf(team_id), {}, _library_path(path))
+    )
+
+
+@teams.get("/{team_id}/library/folders", **typed_response(LibraryFoldersOut))
+async def team_library_folders(
+    team_id: int, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    return ok({"folders": await library_listing.folders(db, _team_shelf(team_id))})
+
+
+@teams.get("/{team_id}/library/raw", **BYTES)
+async def team_library_file_raw(
+    team_id: int,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    request: Request,
+    preview_pdf: bool = False,
+    version: uuid.UUID | None = None,
+) -> Response:
+    """一份资料的字节，和项目资料库的那一条一样（`library_file_raw`）。"""
+    await _team_member(team_id, db, resolver)
+    return await _raw(
+        db, _team_shelf(team_id), _library_path(path), version, preview_pdf, request
+    )
+
+
+@teams.get("/{team_id}/library/versions", **typed_response(LibraryVersionsOut))
+async def list_team_library_versions(
+    team_id: int, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    versions = await library_records.versions(
+        db, _team_shelf(team_id), _library_path(path)
+    )
+    return ok({"versions": versions})
+
+
+@teams.post(
+    "/{team_id}/library/restore",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryRestoredOut),
+)
+async def restore_team_library_version(
+    team_id: int,
+    path: str,
+    version: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await _team_member(team_id, db, resolver)
+    shelf = _team_shelf(team_id)
+    name = _library_path(path)
+    stored = await library_records.stored_version(db, shelf, name, version)
+    await library_records.refuse_past_room(db, shelf, stored.size)
+    await library_records.restore(
+        db, shelf=shelf, name=name, version_id=version, by=actor.handle
+    )
+    await db.commit()
+    return ok({"path": name})
+
+
+@teams.post(
+    "/{team_id}/library/uploads",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryUploadSlot),
+)
+async def team_library_upload_slot(
+    team_id: int,
+    body: LibraryUploadSlotIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """领一个上传地址，和项目资料库一样；放不下的这里就不给。"""
+    await _team_member(team_id, db, resolver)
+    if body.size <= 0:
+        raise ValidationError(say("emptyFile"))
+    shelf = _team_shelf(team_id)
+    name = library.clean_upload_name(body.name)
+    await library_records.refuse_past_room(db, shelf, body.size)
+    return ok(await library_records.upload_slot(shelf, name, body.size))
+
+
+@teams.post(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryPlacedOut),
+)
+async def upload_team_library_file(
+    team_id: int, body: LibraryAddIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await _team_member(team_id, db, resolver)
+    shelf = _team_shelf(team_id)
+    upload = await library_records.received(shelf, body.upload)
+    filename = library.clean_upload_name(body.filename)
+    if body.folder and body.folder.strip("/ "):
+        filename = f"{library.clean_library_path(body.folder)}/{filename}"
+    name = await library_records.add(
+        db, shelf, filename=filename, data=upload, added_by=actor.handle, room_id=None
+    )
+    await db.commit()
+    return ok({"path": name, "bytes": upload.size})
+
+
+@teams.put(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryPlacedOut),
+)
+async def replace_team_library_file(
+    team_id: int,
+    path: str,
+    body: LibraryReplaceIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await _team_member(team_id, db, resolver)
+    shelf = _team_shelf(team_id)
+    upload = await library_records.received(shelf, body.upload)
+    name = _library_path(path)
+    await library_records.replace(
+        db, shelf=shelf, name=name, data=upload, by=actor.handle
+    )
+    await db.commit()
+    return ok({"path": name, "bytes": upload.size})
+
+
+@teams.delete(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryDeletedOut),
+)
+async def delete_team_library_file(
+    team_id: int, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    await library_records.remove(
+        db, shelf=_team_shelf(team_id), name=_library_path(path)
+    )
+    await db.commit()
+    return ok({"deleted": True})
+
+
+@teams.post(
+    "/{team_id}/library/move",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryMoved),
+)
+async def move_team_library_file(
+    team_id: int,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    path: Annotated[str, Body()],
+    to: Annotated[str, Body()],
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    moved = await library_records.move(
+        db,
+        shelf=_team_shelf(team_id),
         source=_library_path(path),
         target=library.clean_library_path(to),
     )
