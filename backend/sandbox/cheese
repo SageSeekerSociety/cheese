@@ -515,7 +515,9 @@ PLATFORM_TOOLS = ToolTable(
             "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。改动直接生效；想先让人看过再定的，"
-            "设 suggest=true，作为建议留在文档里，等人接受或拒绝。"
+            "设 suggest=true，作为建议留在文档里，等人接受或拒绝。建议只能标在"
+            "已有段落的文字上，加标题、列表或几段新内容、把段落改成列表这类改段落"
+            "结构的修改提不成建议。"
             "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
             "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
@@ -2847,6 +2849,14 @@ def _document(host, args: dict | None = None) -> dict:
     return {"CHEESE_DOCUMENT": (found.get("data") or {})["id"]}
 
 
+#: What to do after a refused edit, where rereading the document is not it: a
+#: change that cannot be a suggestion stays one however the original is quoted.
+_EDIT_NEXT = {
+    "structure": "要么不设 suggest 直接改；要么把要提的话接在已有段落的末尾，"
+    "再作为建议提出；要么在对话里说。",
+}
+
+
 def _doc_edit(args: dict, host) -> str:
     document = _document(host, args)
     plan = request_plan("cheese_doc_edit", args, {**host.environ, **document})
@@ -2857,13 +2867,15 @@ def _doc_edit(args: dict, host) -> str:
         if status not in (409, 422):
             raise
         try:
-            why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+            error = json.loads(exc.body)["error"]  # type: ignore[attr-defined]
+            why = error["message"]
         except (ValueError, KeyError, TypeError):
             raise exc from None
+        reason = (error.get("data") or {}).get("reason")
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
             + _searched(args, host, document["CHEESE_DOCUMENT"])
-            + "先 cheese_doc_get 重读，照读到的原文改好再试。"
+            + _EDIT_NEXT.get(reason, "先 cheese_doc_get 重读，照读到的原文改好再试。")
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []

@@ -3,6 +3,7 @@
 // thread through such an edit, and words the edit rewrote do not pass it on.
 import type { Node as PMNode } from '@tiptap/pm/model'
 
+import { EditorState } from '@tiptap/pm/state'
 import { Transform } from '@tiptap/pm/transform'
 import { describe, expect, it } from 'vitest'
 
@@ -14,6 +15,7 @@ import {
   pendingSuggestions,
   withoutSuggestions,
 } from '../src/lib/docSchema'
+import { decideSuggestion } from '../src/lib/docSuggestionList'
 
 import { applyEdits } from './edit'
 
@@ -173,5 +175,29 @@ describe('an edit in a list whose item opens empty above a nested list', () => {
       // The empty item and its nested list are still there.
       expect(result.doc.child(1).child(0).childCount).toBe(2)
     }
+  })
+})
+
+describe('an agent proposing a new paragraph at the end of the document', () => {
+  const live = parseMarkdown('第一段，讲范围。\n\n第二段，讲目标。\n')
+
+  it('cannot leave it as a suggestion', () => {
+    const result = applyEdits(live, [{ old: '讲目标。', new: '讲目标。\n\n先定边界再排期。' }], 'suggest', 'cheese')
+    expect(result).toMatchObject({ ok: false, status: 422, body: { reason: 'structure' } })
+  })
+
+  it('can propose the same words appended inside the last paragraph', () => {
+    const result = applyEdits(live, [{ old: '讲目标。', new: '讲目标。先定边界再排期。' }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe('第一段，讲范围。\n\n第二段，讲目标。')
+    const [proposed] = pendingSuggestions(result.doc)
+    let accepted = ''
+    decideSuggestion(
+      EditorState.create({ doc: result.doc }),
+      (tr) => (accepted = nodeMarkdown(tr.doc)),
+      proposed.id,
+      true
+    )
+    expect(accepted).toBe('第一段，讲范围。\n\n第二段，讲目标。先定边界再排期。')
   })
 })
