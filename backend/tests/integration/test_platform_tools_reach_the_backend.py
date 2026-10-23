@@ -221,7 +221,7 @@ def test_a_suggestion_that_reshapes_paragraphs_is_not_sent_back_to_reread(client
     said = str(refused.value)
     assert "一处都没改" in said
     assert "重读" not in said
-    assert "直接改" in said and "段落的末尾" in said
+    assert "直接改" in said and "段落末尾" in said
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 

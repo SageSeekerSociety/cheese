@@ -516,8 +516,8 @@ PLATFORM_TOOLS = ToolTable(
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
             "用它，不用 cheese_doc_set 整份覆盖。改动直接生效；想先让人看过再定的，"
             "设 suggest=true，作为建议留在文档里，等人接受或拒绝。建议只能标在"
-            "已有段落的文字上，加标题、列表或几段新内容、把段落改成列表这类改段落"
-            "结构的修改提不成建议。"
+            "已有段落的文字上，加标题、列表或几段新内容、删掉最后一整段、把段落改成"
+            "列表这类改段落结构的修改提不成建议。"
             "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
             "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
@@ -2852,8 +2852,8 @@ def _document(host, args: dict | None = None) -> dict:
 #: What to do after a refused edit, where rereading the document is not it: a
 #: change that cannot be a suggestion stays one however the original is quoted.
 _EDIT_NEXT = {
-    "structure": "要么不设 suggest 直接改；要么把要提的话接在已有段落的末尾，"
-    "再作为建议提出；要么在对话里说。",
+    "structure": "要么不设 suggest 直接改；要么只改已有段落里的文字（要加的话"
+    "接在段落末尾，要删的只删段落里的字），再作为建议提出；要么在对话里说。",
 }
 
 
