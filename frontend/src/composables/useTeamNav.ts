@@ -39,15 +39,17 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   const active = options.active ?? (() => true)
 
   // 团队和空间都是服务器上的数据，读的是 `query/homeNav` 里那一份。从空间或项目回到
-  // 首页时这块侧栏会卸载重挂，名单留在缓存里，第一帧就画得出来，不用从空开始等请求；
-  // 过期了在后台再问一次，画面不闪。`enabled` 负责「手机上看得见才取数」，从窄变宽
-  // 时它自己会补一次。
+  // 首页时这块侧栏会卸载重挂，名单留在缓存里，第一帧就画得出来，不用从空开始等请求。
+  //
+  // 「先用旧名单」只是先画：挂载时一律再到服务器问一次（`refetchOnMount: 'always'`）。
+  // 目录看不见的时候删掉的空间、改过的名字、手机上加的空间，回来这一下就校正了；
+  // 不能只靠缓存过期，那样 30 秒内的变化会被旧名单盖住。
   const teamsRead = useQuery(
-    computed(() => ({ ...myTeamsQuery(), enabled: active() })),
+    computed(() => ({ ...myTeamsQuery(), enabled: active(), refetchOnMount: 'always' })),
     queryClient
   )
   const spacesRead = useQuery(
-    computed(() => ({ ...mySpacesQuery(), enabled: active() })),
+    computed(() => ({ ...mySpacesQuery(), enabled: active(), refetchOnMount: 'always' })),
     queryClient
   )
   const teams = computed<Team[]>(() => teamsRead.data.value ?? [])
@@ -82,6 +84,13 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
       if (active()) void teamsRead.refetch()
     })
   )
+  // 窗口从窄变宽，侧栏这时才露出来：补一次。`enabled` 从 false 翻成 true 时只在缓存
+  // 过期才取数，这里不等新鲜期。
+  watch(active, (now) => {
+    if (!now) return
+    void teamsRead.refetch()
+    void spacesRead.refetch()
+  })
 
   // 正在看某个团队的某一页时，那个团队一定是展开的：否则侧栏上找不到「你在这儿」。
   // 展开状态本身（哪几行摊开、记不记在这台浏览器上）是画面的事，留在 `HomeNav.vue`；

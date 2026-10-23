@@ -58,7 +58,6 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
 import { queryClient } from '@/query/client'
-import { keys } from '@/query/keys'
 import HomeSidebar from '@/views/home/HomeSidebar.vue'
 
 const blank = { template: '<div />' }
@@ -168,24 +167,25 @@ describe('目录的名单', () => {
     expect(getMyTeams).toHaveBeenCalled()
   })
 
-  // 从空间或项目回到首页时这块侧栏会卸载重挂。名单要先用上一次的：否则每次回来都
-  // 先从空开始等请求，看起来就是「侧栏又重新加载了一遍」。
-  it('回到首页时先画上一次的名单，后台再刷新', async () => {
+  // 从空间或项目回到首页时这块侧栏会卸载重挂。旧名单要当场画出来，不让屏幕先空
+  // 一下；同时还要照旧去问服务器，别让目录看不见时删掉、改名的空间被缓存盖住。
+  it('回到首页时先画上一次的名单，同时再到服务器问一次', async () => {
     const first = await mount()
     await screen.findByText('知是开发组')
     first.unmount()
-    // 让两份名单都过期：重挂时会去问，但手上那份照样先画。
-    await queryClient.invalidateQueries({ queryKey: keys.myTeams() })
-    await queryClient.invalidateQueries({ queryKey: keys.mySpaces() })
+
     let answerTeams: (value: unknown) => void = () => {}
     getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerTeams = resolve)))
-
     await mount()
 
+    // 请求还没回来，上一次的名单已经在屏幕上了。
     expect(screen.getByText('知是开发组')).toBeTruthy()
     expect(screen.getByText('数据分析课')).toBeTruthy()
+    expect(getMyTeams).toHaveBeenCalledTimes(2)
 
-    answerTeams({ teams: [] })
+    // 服务器说名单变了：这一次回答会把它换掉。
+    answerTeams({ teams: [team('fresh', '刚加入的团队')] })
+    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
   })
 
   // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
