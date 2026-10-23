@@ -41,10 +41,16 @@ USAGE_KIND = "bookmark_naming"
 #: few tokens on preamble before the name would otherwise come back empty and
 #: leave the rule name in place, which reads to a reader as "it never names".
 _ANSWER_TOKENS = 128
+
+
 #: How long the background call may take before the rule name simply stays.
-#: The same budget task naming allows itself (``topic_naming_timeout_seconds``):
-#: one naming call, one call's worth of patience.
-_TIMEOUT_S = settings.topic_naming_timeout_seconds
+#: The same budget task naming allows itself (``topic_naming_timeout_seconds``),
+#: read per call as that side reads it: one naming call, one call's worth of
+#: patience, and a deployment that changes the setting is obeyed without a
+#: restart.
+def _timeout() -> float:
+    return settings.topic_naming_timeout_seconds
+
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -112,12 +118,13 @@ async def refine(
             max_tokens=_ANSWER_TOKENS,
             transport=transport,
         )
+        timeout = _timeout()
         try:
-            async with asyncio.timeout(_TIMEOUT_S):
+            async with asyncio.timeout(timeout):
                 answer = await chat.complete(
                     system=SYSTEM_PROMPT,
                     prompt=_material(block.content),
-                    timeout=_TIMEOUT_S,
+                    timeout=timeout,
                     max_tokens=_ANSWER_TOKENS,
                     # Naming is a judgement with a two-word answer; a reasoning
                     # model thinks past the cap and comes back empty.

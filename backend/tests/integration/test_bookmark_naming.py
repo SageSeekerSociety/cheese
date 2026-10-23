@@ -2,8 +2,9 @@
 
 The rules, stated before the code:
 
-- marking a message asks the model for a name after the click's response has
-  gone out, and writes it over the rule's name;
+- the naming step writes the model's name over the rule's name (these tests
+  drive `naming.refine` the way the route does after its response, not through
+  the route itself — the scheduling in `PUT .../chapters/{id}` is unchanged);
 - a message the rule cannot name (no words) is still asked about — the row
   shows a cut-off excerpt until the model answers.
 
@@ -85,22 +86,16 @@ def gateway(monkeypatch):
             )
         return httpx.Response(404)
 
-    transport = httpx.MockTransport(handler)
-    real = httpx.AsyncClient
-
-    class Stubbed(real):
-        def __init__(self, *args, **kwargs):
-            if kwargs.get("transport") is None:
-                kwargs["transport"] = transport
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", Stubbed)
+    # Handed to `refine` itself rather than stubbed into httpx: the call has to
+    # carry this transport through to both the mint and the completion, and a
+    # stub on the client would hide it if it stopped doing that.
+    seen["transport"] = httpx.MockTransport(handler)
     monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
     return seen
 
 
-def _refine(client, tid, message):
+def _refine(client, gateway, tid, message):
     """Run the background naming on the app's own loop, as the route does
     after its response. ``test_request_factory`` keeps the session on that
     loop (a plain ``asyncio.run`` would attach to a second one)."""
@@ -109,6 +104,7 @@ def _refine(client, tid, message):
             uuid.UUID(tid),
             uuid.UUID(message),
             session_factory=client.test_request_factory,
+            transport=gateway["transport"],
         )
     )
 
@@ -119,7 +115,7 @@ def test_the_model_replaces_the_rule_name(client, gateway):
     gateway["answers"].append("登录 401 排查")
 
     _mark(client, tid, message)
-    assert _refine(client, tid, message) is True
+    assert _refine(client, gateway, tid, message) is True
 
     assert _title_of(client, tid, message) == "登录 401 排查"
 
@@ -135,7 +131,7 @@ def test_the_whole_message_is_what_the_model_reads(client, gateway):
     gateway["answers"].append("登录 401 排查")
 
     _mark(client, tid, message)
-    assert _refine(client, tid, message) is True
+    assert _refine(client, gateway, tid, message) is True
 
     asked = gateway["asked"][0]
     assert "复现步骤" in asked
@@ -149,6 +145,21 @@ def test_a_message_with_no_words_is_still_asked_about(client, gateway):
     gateway["answers"].append("附件截图")
 
     _mark(client, tid, message)
-    assert _refine(client, tid, message) is True
+    assert _refine(client, gateway, tid, message) is True
 
     assert _title_of(client, tid, message) == "附件截图"
+
+
+def test_the_naming_role_carries_the_bookmark_key():
+    """Pointing `topic_naming_model` at another model has to move the key this
+    naming runs on too; a key the role does not name keeps the old model."""
+    from app.core import model_roles
+
+    assert "bookmark-naming" in model_roles.ROLES["topic_naming_model"].keys
+
+
+def test_the_naming_timeout_follows_the_setting(monkeypatch):
+    """Read per call, like task naming: freezing it at import would make one
+    side of the same budget ignore a changed setting."""
+    monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 3.0)
+    assert naming._timeout() == 3.0
