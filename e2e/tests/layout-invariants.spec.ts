@@ -988,16 +988,17 @@ const ROUTE_READY_MS = 30_000;
 // 热路由：模块已经编译过，一次导航 + 一次渲染 + 一次接口回来的预算。
 const WARM_STEP_MS = 10_000;
 
-// 小队详情这一条要导航 8 次（下面 2 个窗口 × 4 个 tab），而四个 tab 是**四个各自懒加载
-// 的路由块**（`router/teams.ts`：`detail/TeamProjects.vue` / `Members.vue` /
-// `Knowledge.vue` / `Compute.vue`），所以这条用例天生是「冷 4 次 + 热 12 次」。
+// 小队详情这一条要导航 4 次（下面 2 个窗口 × 2 个 tab），而两个 tab 是**两个各自懒加载
+// 的路由块**（`router/teams.ts`：`detail/TeamProjects.vue` / `Library.vue`），所以这条
+// 用例天生是「冷 2 次 + 热 4 次」。成员、设备这些是团队设置，开在设置浮层里，由下面
+// 「设置浮层」那一组量。
 // 两段的等待预算都写在这里：**整条用例的预算必须容得下它们之和**。不然后果和
 // `WorkPanelTabs.test.ts` 那次一模一样 —— 内层还没轮到说话，外层先把用例掐了，报出来
 // 只有一句「Test timeout of 60000ms exceeded」（playwright 那边是
 // `Error: Test timeout of 60000ms exceeded`），看不出在等第几次导航、等的是哪一步。
 // 2026-09-26 它就是因此成了 main 上的常客：当天至少 8 次跑里先失败、靠 `retries: 2`
 // 才绿，CI 每次白等一两分钟。
-const TAB_PATHS = ['', 'members', 'docs', 'compute'];
+const TAB_PATHS = ['', 'library'];
 const VIEWPORT_SIZES = [
   // 视图高度压到 360 是故意的：这一套种子数据只有 5 个小队成员，靠内容自然长到溢出
   // 不可靠；把窗口压矮能让「内容比窗口高」这件事在任何数据下都成立，而宽度保持在
@@ -1010,9 +1011,9 @@ const WARMUP_MS = TAB_PATHS.length * 2 * ROUTE_READY_MS; // 每个 tab 冷一次
 const SWEEP_MS = VIEWPORT_SIZES.length * TAB_PATHS.length * 2 * WARM_STEP_MS; // 每个窗口 × 每个 tab 两道等待
 
 test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
-  test('小队详情：四个 tab 在窄窗口下都够得着底部', async ({ page }) => {
-    // 这条用例真正需要的范围是「冷 4 次 + 热 12 次」两段之和，比 config 里给的 60s 大
-    // 一个数量级。它只在「又慢又没错」时才用得满：真出问题会在第一道等待上炸出来
+  test('小队详情：两个 tab 在窄窗口下都够得着底部', async ({ page }) => {
+    // 这条用例真正需要的范围是「冷 2 次 + 热 4 次」两段之和，比 config 里给的 60s 大
+    // 好几倍。它只在「又慢又没错」时才用得满：真出问题会在第一道等待上炸出来
     // （最多 ROUTE_READY_MS），不会一路拖到底。
     test.setTimeout(WARMUP_MS + SWEEP_MS + 20_000);
 
@@ -1044,10 +1045,10 @@ test.describe('首屏以下的内容不会被裁掉而没人能滚', () => {
           `${size.width}×${size.height} · /teams/team-1/${path}：没落在小队工作区里，这条断言等于没做`,
         ).toBeVisible({ timeout: WARM_STEP_MS });
 
-        // `.app-page__body` 一出现就量还不够 —— 它的内容（成员/资料/算力）是另一次请求
+        // `.app-page__body` 一出现就量还不够 —— 它的内容（项目/资料库）是另一次请求
         // 填进去的，量早了会量到一个半空的工作区，而**空范围永远返回「没有缺陷」**。
         // 等这一层里真的画出了字（页头在它外面，所以量到的就是当前 tab 自己的内容），
-        // 四个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
+        // 两个 tab 在种子数据下都有内容，等不到就是页面根本没起来，该炸。
         await expect
           .poll(async () => page.locator('.app-page__body').evaluate((el) => (el.textContent || '').trim().length), {
             message: `${size.width}×${size.height} · /teams/team-1/${path}：工作区一直是空的，这一条等于没做`,
@@ -1277,6 +1278,36 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     }
   });
 
+  // 桌面版 macOS 把红黄绿三颗窗口按钮画在页面上面（desktop/src-tauri/src/main.rs 的
+  // traffic_light_position 12,16）：它们占窗口左缘 12..64 那一带，系统画在网页上层。
+  // 让位的宽度由 style.css 的 --window-buttons-inset 给（这台桌面版 72 = 三颗右缘 64 + 8，
+  // 别处 0），顶栏、设置、全屏编辑器、放映、画布全屏、文档里的应用、跳转链接都读它。
+  // 这里量网页里的盒子：在浏览器里模拟外壳只要 __CHEESE_APP__.titleBar，不需要真窗口。
+  // 每层的「本来位置」由上面那条不设外壳的测试守着——同一个浏览器里它必须仍在 24。
+  test('macOS 桌面版：返回键落在窗口按钮右边，仍在灰栏里', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __CHEESE_APP__: unknown }).__CHEESE_APP__ = { titleBar: 'overlay' };
+    });
+    await apiLogin(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/users/settings/security');
+    await expect(page.locator('.so__close')).toBeVisible();
+    const g = await overlayGeometry(page);
+    expect(g.side, '没落在桌面外壳里').not.toBeNull();
+    expect(g.close, '没有关闭按钮').not.toBeNull();
+
+    // 这一层认出了自己在哪种窗口里：令牌是 72，不是 0。
+    const inset = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--window-buttons-inset').trim(),
+    );
+    expect(inset, '没认出 macOS 桌面版，让位令牌还是 0').toBe('72px');
+
+    // 三颗的右缘到 64，和顶栏同一条 8px 空隙。
+    expect(g.close!.left, '返回键压到了窗口按钮').toBeGreaterThanOrEqual(g.side!.left + 64 + 8 - 0.5);
+    // 让开之后还在这条灰栏里，没被挤出目录。
+    expect(g.close!.right, '返回键伸出了灰栏').toBeLessThanOrEqual(g.side!.right);
+  });
+
   test('同一宽度下，四类设置页的内容列左右缘一致', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await apiLogin(page);
@@ -1288,6 +1319,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
       '/users/settings/security',
       '/users/settings/profile',
       `${projectPath}/settings/agents`,
+      '/teams/team-1/members',
     ];
     const seen: { path: string; left: number; width: number }[] = [];
     for (const path of paths) {

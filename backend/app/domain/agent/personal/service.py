@@ -324,13 +324,14 @@ class AssistantConversations:
 def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
-    whether it failed, each draft write, each publish. Kept with the answer, so
-    the conversation shows them again."""
+    whether it failed, each draft write, each publish, each file it handed the
+    person. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
+    handed: list[dict] = []
     reasoning: dict | None = None
 
     def ms(position: str) -> int:
@@ -369,15 +370,18 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             published.append(data)
         elif event == "proposal":
             proposed.append(data)
+        elif event == "handed":
+            handed.append(data)
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed):
+    if not (steps or edits or published or proposed or handed):
         return None
     return {
         "steps": steps,
         "edits": edits,
         "published": published,
         **({"proposals": proposed} if proposed else {}),
+        **({"handed": handed} if handed else {}),
     }
 
 
@@ -544,7 +548,7 @@ async def ask(
     slot: Slot,
     context: str = "",
     kind: str = billing.ASKING,
-    files: list[tuple[int, str]] | None = None,
+    files: list[tuple[str, str]] | None = None,
     project: uuid.UUID | None = None,
     run: uuid.UUID | None = None,
     shown: dict | None = None,
@@ -561,7 +565,7 @@ async def ask(
     ``started`` (`personal.session`). ``context`` is the page the person has
     open, when the conversation has not been told it yet (``page_to_say``);
     ``kind`` the line its spend is charged under (``billing``); ``files`` the
-    ones handed over with it, as (id, name); ``project`` the one the page is
+    ones handed over with it, as (the ref 芝士 reads it by, name); ``project`` the one the page is
     in, which its tools are let into as the person (and into no other).
 
     ``run`` is a routine's run asking on its own (``routine.personal``): what
@@ -627,7 +631,7 @@ async def ask(
         said = "\n\n".join(part for part in (page(context), question) if part)
         if files:
             said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
-                f"- {name}（files/{file_id}）" for file_id, name in files
+                f"- {name}（{ref}）" for ref, name in files
             )
         if decided:
             said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(

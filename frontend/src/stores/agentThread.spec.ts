@@ -286,6 +286,32 @@ describe('芝士这一轮做了什么', () => {
     expect(steps[1].args).toBe('{"query":"Lab"}')
   })
 
+  it('a file 芝士 hands over stays with its answer, live and when the conversation is opened again', async () => {
+    const file = { team: 9, path: '成绩分布.png', bytes: 84000 }
+    serve(() => events(['tool', { call: 'g1', name: 'cheese_file_give' }], ['handed', file], ['done', {}]))
+    const live = createAssistant()
+    await live.load()
+    await live.ask('画一张分布图', '答不上来')
+    expect(live.messages.value.at(-1)?.handed).toEqual([file])
+
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [CONVERSATION] })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({
+          ...CONVERSATION,
+          answering: null,
+          messages: [
+            { role: 'user', text: '画一张分布图', at: '2026-10-20T08:00:00Z' },
+            { role: 'assistant', text: '', at: '2026-10-20T08:00:09Z', parts: { steps: [], handed: [file] } },
+          ],
+        })
+      return new Response('not found', { status: 404 })
+    })
+    const again = createAssistant()
+    await again.load()
+    expect(again.messages.value[1].handed).toEqual([file])
+  })
+
   it('a conversation opened again shows what was kept of each answer', async () => {
     vi.stubGlobal('fetch', async (url: string) => {
       if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [CONVERSATION] })

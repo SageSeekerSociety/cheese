@@ -18,7 +18,7 @@
   "heldTitle": "API keys and model services",
   "keptOnAccount": "Encrypted on the platform",
   "lastUsed": "Last used",
-  "lede": "Team connections serve the team's projects. Personal connections serve their owner's assistant. Subscription logins stay on the computer used to sign in and need it online. API keys and model services are encrypted on the platform.",
+  "lede": "Team connections serve the team's projects; personal connections serve their owner's Cheese",
   "loadFailed": "Couldn't load model connections",
   "modelService": "Custom model service ({model})",
   "name": "Name (optional)",

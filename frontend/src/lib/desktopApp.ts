@@ -55,6 +55,17 @@ export function titleBarOverlay(): boolean {
   return app()?.titleBar === 'overlay'
 }
 
+/**
+ * Stamps `title-bar-overlay` on `<html>` when the app draws its window buttons
+ * over the page (macOS), so stylesheets can leave them room without every
+ * component asking again. `--window-buttons-inset` (style.css) reads it; only
+ * that one declaration changes, and it is 0 everywhere else.
+ */
+export function markTitleBarOverlay(): void {
+  if (typeof document === 'undefined' || !titleBarOverlay()) return
+  document.documentElement.classList.add('title-bar-overlay')
+}
+
 /** The app paints its own first page and the title bar in this theme from now on. */
 export function tellDesktopTheme(preference: ThemePreference): void {
   if (!app()) return

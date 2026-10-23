@@ -15,7 +15,8 @@
     "downloadDesktop": "Download desktop app",
     "rename": "Rename",
     "renameTitle": "Rename device",
-    "offlineSince": "Offline · last online {time}"
+    "offlineSince": "Offline · last online {time}",
+    "ownershipPersonal": "Devices of your own; only you manage them"
   },
   "members": {
     "invite": "Invite member",
@@ -29,7 +30,6 @@
     "inviteMessagePlaceholder": "Add a note to the invitation…",
     "cancel": "Cancel",
     "inviteSubmit": "Invite",
-    "tabMembers": "Members",
     "tabRequests": "Join requests",
     "tabInvitations": "Sent invitations",
     "roleOwner": "Owner",
@@ -44,16 +44,11 @@
     "removeTitle": "Remove \"{name}\" from the team?",
     "removeBody": "They stop being a team member and can no longer reach the team's projects.",
     "emptyMembers": "No members",
-    "emptyMembersHint": "Invite members to the team to start working together",
-    "emptyRequests": "No join requests",
-    "emptyRequestsHint": "Nobody has asked to join the team",
     "requestedAt": "Requested: {time}",
     "approve": "Approve",
     "reject": "Reject",
     "processedBy": "Handled by {name}",
     "processed": "Handled",
-    "emptyInvitations": "No invitations sent",
-    "emptyInvitationsHint": "Use \"Invite member\" at the top right to send one",
     "invitedAt": "Invited: {time}",
     "loadRequestsFailed": "Couldn't load join requests",
     "loadInvitationsFailed": "Couldn't load sent invitations",
@@ -79,7 +74,9 @@
       "declined": "Declined",
       "canceled": "Canceled",
       "unknown": "Unknown"
-    }
+    },
+    "actions": "Actions for {name}",
+    "cancelInvitation": "Withdraw"
   },
   "pending": {
     "myRequests": "My requests",
@@ -159,14 +156,45 @@
     "ownSubtitle": "Projects under your name. Work with Cheese in each project's channels, and invite people to a project when you need to."
   },
   "docs": {
-    "new": "New document",
-    "empty": "No documents yet",
-    "mine": "My documents",
-    "ofTeam": "{name}'s documents",
+    "mine": "My library",
+    "ofTeam": "{name}'s library",
     "deleteTitle": "Delete \"{name}\"",
     "deleteBody": "This can't be undone; its history and comments go with it.",
-    "delete": "Delete",
-    "loadFailed": "Failed to load documents",
-    "newFailed": "Failed to create the document"
+    "delete": "Delete"
+  },
+  "library": {
+    "intro": "Documents and files the team shares",
+    "introPersonal": "Your documents and files, including the files you attach for Cheese and the files Cheese sends you",
+    "room": "{used} of {total} used"
+  },
+  "settings": {
+    "overlay": "Team settings",
+    "close": "Close settings",
+    "closeHint": "Close settings (Esc)",
+    "back": "Back to settings",
+    "groups": {
+      "team": "Team",
+      "resources": "Resources"
+    },
+    "profile": "Profile",
+    "profileLede": "How the team appears on its page and in invitations",
+    "transferAndDisband": "Transfer and disband",
+    "leave": "Leave team",
+    "unsaved": "Unsaved changes",
+    "revert": "Revert",
+    "joinTitle": "How people join",
+    "resetLink": "Reset link",
+    "linkHint": "Anyone with the link can find and join this team after signing in. Resetting it disables the old link at once; members who already joined are not affected",
+    "approvalHint": "When on, an owner or admin approves each request",
+    "visibility": "Who can find it",
+    "stealthHint": "Hidden from search; only people with the team link can find it",
+    "transferHint": "Hand ownership to a member; you become an admin",
+    "disbandHint": "Every member leaves the team, and this cannot be undone. Archive all of its projects first",
+    "leaveHint": "You will no longer see the team's projects; you need to join again to come back",
+    "transfer": "Transfer",
+    "disband": "Disband",
+    "leaveAction": "Leave",
+    "creditsLedePersonal": "Your own projects and Cheese use these credits",
+    "avatarHint": "JPG, PNG, WebP or GIF, up to 2 MB"
   }
 }

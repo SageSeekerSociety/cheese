@@ -24,6 +24,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord as Row
+from app.domain.library.shelf import Shelf
 
 FOLDERS = 0
 ITEMS = 1
@@ -45,8 +46,8 @@ def _escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _current(project_id: uuid.UUID) -> ColumnElement[bool]:
-    return and_(Row.project_id == project_id, Row.superseded_at.is_(None))
+def _current(shelf: Shelf) -> ColumnElement[bool]:
+    return and_(shelf.holds(), Row.superseded_at.is_(None))
 
 
 def _of_kind(kind: str) -> ColumnElement[bool]:
@@ -63,7 +64,7 @@ def _matching(q: str) -> ColumnElement[bool]:
 
 async def _describe(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     rooms: dict[uuid.UUID, dict],
     rows: list[Row],
 ) -> list[dict]:
@@ -80,20 +81,20 @@ async def _describe(
             for name, n in await session.execute(
                 select(Row.name, func.count())
                 .where(
-                    Row.project_id == project_id,
+                    shelf.holds(),
                     Row.superseded_at.is_not(None),
                     Row.name.in_(names),
                 )
                 .group_by(Row.name)
             )
         }
-    if rooms and refs:
+    if rooms and refs and shelf.project_id is not None:
         counts = {
             content: n
             for content, n in await session.execute(
                 select(Block.content, func.count())
                 .where(
-                    Block.project_id == project_id,
+                    Block.project_id == shelf.project_id,
                     Block.kind == BlockKind.attachment,
                     Block.content.in_(refs),
                     of_rooms(Block.conversation_id, rooms),
@@ -120,7 +121,7 @@ async def _describe(
 
 async def _folders(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     prefix: str,
     after: rank.Rank | None,
     limit: int,
@@ -134,7 +135,7 @@ async def _folders(
             func.max(Row.created_at).label("latest"),
         )
         .where(
-            _current(project_id),
+            _current(shelf),
             Row.name.like(f"{_escape(prefix)}%", escape="\\"),
             func.strpos(rest, "/") > 0,
         )
@@ -165,7 +166,7 @@ async def _folders(
 
 async def page(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     rooms: dict[uuid.UUID, dict],
     *,
     dir: str = "",
@@ -186,9 +187,9 @@ async def page(
     prefix = f"{dir}/" if dir and not flat else ""
     entries: list[dict] = []
     if not flat and (cursor is None or cursor.group == FOLDERS):
-        entries = await _folders(session, project_id, prefix, cursor, limit + 1)
+        entries = await _folders(session, shelf, prefix, cursor, limit + 1)
     if len(entries) <= limit:
-        where = [_current(project_id)]
+        where = [_current(shelf)]
         if flat:
             where += [_matching(q) if q else true(), _of_kind(kind) if kind else true()]
         else:
@@ -212,7 +213,7 @@ async def page(
                 .limit(limit + 1 - len(entries))
             )
         )
-        entries += await _describe(session, project_id, rooms, rows)
+        entries += await _describe(session, shelf, rooms, rows)
     if len(entries) <= limit:
         return entries, None
     entries = entries[:limit]
@@ -221,27 +222,25 @@ async def page(
 
 async def one(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     rooms: dict[uuid.UUID, dict],
     name: str,
 ) -> dict:
     """一份资料的那一行（地址上点名的那一份，不一定在已经取回来的那几页里）。"""
-    row = await session.scalar(
-        select(Row).where(_current(project_id), Row.name == name)
-    )
+    row = await session.scalar(select(Row).where(_current(shelf), Row.name == name))
     if row is None:
         raise NotFoundError(say("libraryFileNotFound"))
-    [described] = await _describe(session, project_id, rooms, [row])
+    [described] = await _describe(session, shelf, rooms, [row])
     return described
 
 
-async def folders(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
+async def folders(session: AsyncSession, shelf: Shelf) -> list[str]:
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
     deepest = func.regexp_replace(Row.name, "/[^/]*$", "")
     found: set[str] = set()
     for folder in await session.scalars(
         select(deepest)
-        .where(_current(project_id), func.strpos(Row.name, "/") > 0)
+        .where(_current(shelf), func.strpos(Row.name, "/") > 0)
         .distinct()
     ):
         parts = folder.split("/")
@@ -250,12 +249,12 @@ async def folders(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
 
 
 async def matching(
-    session: AsyncSession, project_id: uuid.UUID, q: str, *, limit: int, offset: int = 0
+    session: AsyncSession, shelf: Shelf, q: str, *, limit: int, offset: int = 0
 ) -> list[dict]:
     """名字里有 `q` 的那些（项目里的搜索用），新放进来的在前。"""
     rows = await session.scalars(
         select(Row)
-        .where(_current(project_id), _matching(q))
+        .where(_current(shelf), _matching(q))
         .order_by(Row.created_at.desc(), Row.id)
         .offset(offset)
         .limit(limit)
@@ -266,22 +265,20 @@ async def matching(
     ]
 
 
-async def count_matching(session: AsyncSession, project_id: uuid.UUID, q: str) -> int:
+async def count_matching(session: AsyncSession, shelf: Shelf, q: str) -> int:
     return (
-        await session.scalar(
-            select(func.count()).where(_current(project_id), _matching(q))
-        )
+        await session.scalar(select(func.count()).where(_current(shelf), _matching(q)))
         or 0
     )
 
 
 async def added_since(
-    session: AsyncSession, project_id: uuid.UUID, since: datetime
+    session: AsyncSession, shelf: Shelf, since: datetime
 ) -> list[tuple[str, datetime]]:
     """`since` 之后放进来的每一份：名字和什么时候（例行任务的「资料库新增」）。"""
     rows = await session.execute(
         select(Row.name, Row.created_at)
-        .where(_current(project_id), Row.created_at >= since)
+        .where(_current(shelf), Row.created_at >= since)
         .order_by(Row.created_at)
     )
     return [(name, at) for name, at in rows]

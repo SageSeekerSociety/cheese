@@ -65,6 +65,7 @@ from app.core.sentences import exception_text, say
 from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -205,7 +206,9 @@ async def upload_attachment(
         name = clean_artifact_path(library_path)
         # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
         ref = library.library_ref(name)
-        stored = await library_records.stored_file(db, topic.project_id, name)
+        stored = await library_records.stored_file(
+            db, Shelf.of_project(topic.project_id), name
+        )
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
         return ok({"path": ref, "mime": mime, "bytes": stored.size})

@@ -185,6 +185,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a browser could already send starts being refused. That nginx line is a
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
+    # A team's own library (a person's is their personal team's): how much it
+    # holds in all, the versions a file was replaced from included, and how
+    # large one file in it may be. A file's ceiling is the attachment one, so
+    # what a person attaches to 芝士 can always land in their library.
+    team_library_bytes: int = 1024 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # Per-client request limits (`app/core/request_limits.py`). Measured on the
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
