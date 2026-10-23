@@ -1020,10 +1020,11 @@ def _split_clauses(rest: str) -> list[str]:
 
 
 def created_tables(source: str) -> set[str]:
-    """Tables a migration creates (``op.create_table`` or ``CREATE TABLE``)."""
+    """Tables a migration creates (``op.create_table`` or ``CREATE TABLE``),
+    literal loops written out."""
     out: set[str] = set()
     try:
-        tree = ast.parse(source)
+        tree = _unrolled(ast.parse(source))
     except SyntaxError:
         return out
     for node in ast.walk(tree):
@@ -1096,14 +1097,22 @@ class _Unroll(ast.NodeTransformer):
     constant holding one; unpacked or not): its body once per row, each loop
     variable replaced by that row's value, then its ``else``. Every rule, and
     the reading of earlier migrations' keys, then sees the names the written-out
-    form names. A loop whose targets are not plain names, whose rows do not
-    match them, or whose body rebinds one stays as it is."""
+    form names. A loop stays as it is when its targets are not plain names, its
+    rows do not match them, or its body skips a row (``continue`` / ``break``),
+    branches on a loop variable or rebinds one. An inner loop is written out
+    after the outer row is bound, so it can iterate over an outer variable."""
 
     def __init__(self, constants: dict[str, ast.AST]) -> None:
         self.constants = constants
 
+    def _visit_all(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
+        out: list[ast.stmt] = []
+        for stmt in stmts:
+            result = self.visit(stmt)
+            out += result if isinstance(result, list) else [result]
+        return out
+
     def visit_For(self, node: ast.For) -> ast.AST | list[ast.stmt]:
-        self.generic_visit(node)
         rows = _literal_rows(node.iter, self.constants)
         targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
         names = {t.id for t in targets if isinstance(t, ast.Name)}
@@ -1113,12 +1122,13 @@ class _Unroll(ast.NodeTransformer):
             or any(len(row) != len(targets) for row in rows)
             or any(_rebinds_or_branches(n, names) for stmt in node.body for n in ast.walk(stmt))
         ):
+            self.generic_visit(node)
             return node
         out: list[ast.stmt] = []
         for row in rows:
             bind = _Bind({t.id: value for t, value in zip(targets, row, strict=True)})  # type: ignore[attr-defined]
-            out += [bind.visit(copy.deepcopy(stmt)) for stmt in node.body]
-        return out + node.orelse
+            out += self._visit_all([bind.visit(copy.deepcopy(stmt)) for stmt in node.body])
+        return out + self._visit_all(node.orelse)
 
 
 def _rebinds_or_branches(node: ast.AST, names: set[str]) -> bool:
@@ -2141,6 +2151,24 @@ def self_test() -> int:
             "TASK = 'task'\n",
         ),
         ["add-column-not-null"],
+    )
+    check(
+        "an inner loop over an outer row's value is written out too",
+        _rules_found(
+            "    for table, columns in (('task', ('video_url',)),):\n"
+            "        for column in columns:\n"
+            "            op.drop_column(table, column)"
+        ),
+        ["drop-column"],
+    )
+    check(
+        "a table a literal loop creates counts as new",
+        _rules_found(
+            "    for t in ('alpha',):\n"
+            "        op.create_table(t, sa.Column('id', sa.Integer(), primary_key=True))\n"
+            "    op.create_index('ix_alpha_id', 'alpha', ['id'])"
+        ),
+        [],
     )
     check(
         "a literal loop's else runs once, after it",
