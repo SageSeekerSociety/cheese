@@ -17,8 +17,7 @@ import pytest
 
 from app.core.config import settings
 from app.device_connection_app import app as owner_app
-from app.domain.agent.device_hub import DeviceOffline
-from app.domain.agent.device_hub import calls
+from app.domain.agent.device_hub import DeviceOffline, calls
 from app.domain.agent.device_hub import device_hub as owner_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
 
