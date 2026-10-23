@@ -40,3 +40,49 @@ class CommentIn(BaseModel):
 
     content: str = Field(default="", max_length=16000)
     quote: str | None = None
+
+
+class CommentOut(BaseModel):
+    """One comment as the client reads it. ``anchor`` is where a thread on a
+    room file points; a document's thread carries none, its own text does."""
+
+    id: str
+    author: str
+    content: str
+    anchor_quote: str | None
+    anchor: dict | None = None
+    created_at: str
+    #: The people its @s told, added when a thread is read.
+    notified: list[str] = Field(default_factory=list)
+
+
+class CommentOutsideOut(BaseModel):
+    """The people a comment @s who cannot open the subject, said to its writer
+    alone and never stored (the same shape a message's is)."""
+
+    room_id: str
+    handles: list[str]
+    may_add: bool
+    members_only: bool
+
+
+class ThreadReplyOut(BaseModel):
+    sequence: int
+    comment: CommentOut
+
+
+class CommentThreadOut(BaseModel):
+    """One thread: its opening comment, its replies, and the revision a writer
+    must have read before changing it."""
+
+    comment: CommentOut
+    revision: int
+    state: str
+    replies: list[ThreadReplyOut] = Field(default_factory=list)
+    #: Whom it named who could not open the subject — the writer's answer only.
+    mentioned_outside: CommentOutsideOut | None = None
+
+
+class CommentThreadListOut(BaseModel):
+    data: list[CommentThreadOut]
+    total: int
