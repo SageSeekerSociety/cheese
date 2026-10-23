@@ -3,11 +3,19 @@
 // 频道里没有人改项目的文件——支线里的 AI 队友只能读，改东西的事在任务里做——所以
 // 频道里提到的一份文件，说的就是项目现在的样子。当前版本里没有它时（某件任务新建的、
 // 还没合进项目），再看这个频道里哪些任务改过它，好让人进那件任务去看。
-import type { RoomTask } from '../cx_types'
+import type { FileContent, RoomTask } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, downloadFile, getGitDiff, listRoomTasks, readFile, workspaceFileRawUrl } from '../api'
+import {
+  ApiError,
+  downloadFile,
+  getGitDiff,
+  listRoomTasks,
+  readFile,
+  readPreviewFile,
+  workspaceFileRawUrl,
+} from '../api'
 import { splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
@@ -32,6 +40,8 @@ export function useProjectFile(opts: {
   const tooLarge = ref(false)
   /** 当前版本里没有这份文件时，这个频道里改过它的任务。 */
   const tasks = ref<RoomTask[]>([])
+  /** 这一份读自频道自己的文件，不是项目当前版本。 */
+  const inRoom = ref(false)
 
   const isImage = computed(() => IMAGE_EXT.has(suffixOf(opts.path())))
   const isDocument = computed(() => needsDocumentView(opts.path()))
@@ -46,7 +56,7 @@ export function useProjectFile(opts: {
     version: () => version.value,
     task: () => null,
     source: () => 'committed',
-    enabled: () => isDocument.value && !missing.value && !loading.value,
+    enabled: () => isDocument.value && !missing.value && !loading.value && !inRoom.value,
   })
 
   let request = 0
@@ -58,16 +68,13 @@ export function useProjectFile(opts: {
     loading.value = true
     error.value = null
     missing.value = false
+    inRoom.value = false
     tasks.value = []
     try {
-      const file = await readFile(pid, path, opts.channelId(), null, 'committed')
-      if (mine !== request) return
-      content.value = file.content ?? ''
-      version.value = file.version
-      bytes.value = file.bytes
-      binary.value = file.binary
-      tooLarge.value = file.too_large
+      show(await readFile(pid, path, opts.channelId(), null, 'committed'), mine)
     } catch (e) {
+      if (mine !== request) return
+      if (await fromRoom(path, mine)) return
       if (mine !== request) return
       if (e instanceof ApiError && e.status === 404) {
         missing.value = true
@@ -77,6 +84,30 @@ export function useProjectFile(opts: {
       }
     } finally {
       if (mine === request) loading.value = false
+    }
+  }
+
+  function show(file: FileContent, mine: number) {
+    if (mine !== request) return
+    content.value = file.content ?? ''
+    version.value = file.version
+    bytes.value = file.bytes
+    binary.value = file.binary
+    tooLarge.value = file.too_large
+  }
+
+  /** 频道自己的文件里有这一份就开它，返回开没开成。 */
+  async function fromRoom(path: string, mine: number): Promise<boolean> {
+    const channel = opts.channelId()
+    if (!channel) return false
+    try {
+      const file = await readPreviewFile(channel, path)
+      if (mine !== request) return true
+      show(file, mine)
+      inRoom.value = true
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -120,6 +151,7 @@ export function useProjectFile(opts: {
     binary,
     tooLarge,
     tasks,
+    inRoom,
     isImage,
     isDocument,
     documentType,

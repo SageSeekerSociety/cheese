@@ -33,6 +33,8 @@ const props = defineProps<{
   tooLarge: boolean
   /** 当前版本里没有这份文件时，这个频道里改过它的任务。 */
   tasks: RoomTask[]
+  /** 读自频道自己的文件（项目当前版本里读不到它）。 */
+  inRoom: boolean
   isImage: boolean
   isDocument: boolean
   documentType: FileKind | null
@@ -58,7 +60,9 @@ const { mdAndUp } = useDisplay()
         {{ mdAndUp ? props.path : props.path.split('/').pop() }}
       </span>
       <v-spacer />
-      <span class="project-file__source">{{ t('work.room.projectFile.current') }}</span>
+      <span class="project-file__source">{{
+        t(props.inRoom ? 'work.room.projectFile.room' : 'work.room.projectFile.current')
+      }}</span>
     </div>
     <div v-if="props.loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
