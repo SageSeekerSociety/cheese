@@ -54,6 +54,7 @@ const SKILLS_ARGS = {
   adding: false,
   importError: '',
   // 两个对话框的开关是 `defineModel`（必填）：收着的样子就是 `null` / `false`。
+  editing: null,
   importing: false,
   // 画面只发事件，动作都在容器里；预览站上不给动作。
   open: noop,

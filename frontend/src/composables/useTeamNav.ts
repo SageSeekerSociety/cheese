@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { awaitingCount } from '@/composables/useAwaitingCount'
 import { useJoinSpace } from '@/composables/useJoinSpace'
 
+import { createAvatar } from '@/api/avatars'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { SpacesApi } from '@/api/spaces'
 import { onSpacesChanged } from '@/api/spacesChanged'

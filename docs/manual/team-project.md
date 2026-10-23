@@ -95,7 +95,7 @@ parts:
     at: 4
     until: 5
   - kind: line
-    text: 谁能找到这个团队
+    text: 谁能找到
     at: 4
     until: 5
   - kind: head
