@@ -123,6 +123,22 @@ describe('a record with nothing to show', () => {
     await fireEvent.click(view.getByRole('button', { name: 'Raw records' }))
     expect(view.getByText('command_lifecycle')).toBeTruthy()
   })
+
+  it('keeps a turn that has not drawn a step yet, with its head', async () => {
+    // 一轮开头那条 `command_lifecycle/started` 也没有可显示的内容，但它属于这一轮：
+    // 丢掉它，这一轮连组头一起消失，直到第一个步骤到达。
+    const started = record('1', [])
+    started.turn_id = 'turn-1'
+    started.created_at = '2026-10-19T10:00:01Z'
+    started.meta = {
+      record: { type: 'command_lifecycle', state: 'started' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [started], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.container.querySelectorAll('.turn__head')).toHaveLength(1))
+  })
 })
 
 describe('raw records and overview share one timeline', () => {

@@ -89,21 +89,23 @@ const {
 const visible = computed(() =>
   viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
 )
-/** 这个视图里这条记录画得出一行吗。
+/** 这条记录该不该出现在概览的分组里。
  *
- * 概览只画有内容的记录：平台内部的记账行（`command_lifecycle` 那类「输入排队了」）
- * 没有可显示的内容，原始记录视图里才把它们摊成 JSON。分组之前先按视图筛一遍，
- * 否则每条这样的记录都会单独顶出一个组头——有时刻、0 步、底下什么都没有。
+ * 平台内部的记账行（`command_lifecycle` 那类「输入排队了」）没有可显示的内容，
+ * 原始记录视图里才把它们摊成 JSON。它们没有轮次 id，`groupByTurn` 会给每个这样的
+ * 块单独成一组，于是在概览里顶出一串「时刻 · 0 步」、底下什么都没有的组头。
  *
- * 判据和 `SiteRecordRow` 的 `v-if` 对齐：概览里它不画思考，所以只有思考的一条
- * 也画不出来。 */
-function drawsHere(block: Block): boolean {
+ * 只丢这一类：**不属于任何一轮、又画不出行**的独立块。属于某一轮的记录一律留着——
+ * 它撑着那一组的组头和「进行中」，哪怕这一轮此刻还没有画得出来的步骤（每轮开头那条
+ * `command_lifecycle/started` 就是这种）；画不画那一行由 `SiteRecordRow` 自己决定。 */
+function keepsGroup(block: Block): boolean {
   if (viewMode.value === 'raw') return true
+  if (block.turn_id) return true
   if (!block.meta?.record) return true
   return recordParts(block).some((part) => part.kind !== 'thinking')
 }
 const turns = computed(() => {
-  const all = groupByTurn(visible.value.filter(drawsHere), turnStarts.value)
+  const all = groupByTurn(visible.value.filter(keepsGroup), turnStarts.value)
   return props.onlyTurn ? all.filter((turn) => turn.key === props.onlyTurn) : all
 })
 function baseLabel(handle: string): string {
