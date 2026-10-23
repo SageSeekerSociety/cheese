@@ -350,7 +350,7 @@ const DocOrderedList = OrderedList.extend({
 
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
-  const extensions = [
+  const extensions: AnyExtension[] = [
     StarterKit.configure({
       // Added below as they are, so that a shared document can let a whole
       // block in them be suggested (suggestableBlocks).
