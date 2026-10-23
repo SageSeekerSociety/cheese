@@ -448,7 +448,7 @@ class _Migration(ast.NodeVisitor):
         base_tables: dict[str, set[str]],
         new_tables: set[str],
         facts: _FileFacts,
-        fk_targets: dict[str, set[str]] | None = None,
+        fk_targets: dict[str, str] | None = None,
     ) -> None:
         self.path = path
         self.lines = source.splitlines()
@@ -466,6 +466,11 @@ class _Migration(ast.NodeVisitor):
         # added or dropped in the migration's own transaction touches.
         self._locked: set[str] | None = None
         self._fk_tables: list[tuple[ast.AST, str]] = []
+        # Keys this migration has created so far, by name: a later drop of the
+        # same name drops this one, not the one history knows.
+        self._created_here: dict[str, str] = {}
+        self._helpers: dict[str, ast.FunctionDef] = {}
+        self._helpers_visited: set[str] = set()
 
     def visit_Module(self, node: ast.Module) -> None:
         self.constants = _module_constants(node)
@@ -474,7 +479,23 @@ class _Migration(ast.NodeVisitor):
                 body = scope.body
                 if body and isinstance(body[0], ast.Expr) and _str(body[0].value) is not None:
                     self._docstrings.add(id(body[0].value))
-        self.generic_visit(node)
+        # Statements are judged in the order they run, not the order they are
+        # written: a helper defined above upgrade() runs where upgrade() calls
+        # it, after a with_lock_retries that comes earlier in upgrade().
+        self._helpers = {
+            stmt.name: stmt for stmt in node.body if isinstance(stmt, ast.FunctionDef) and stmt.name != "upgrade"
+        }
+        for stmt in node.body:
+            if not (isinstance(stmt, ast.FunctionDef) and stmt.name in self._helpers):
+                self.visit(stmt)
+        # The rest never run under upgrade()'s lock (a downgrade's helpers):
+        # judged for every other rule, but holding no with_lock_retries list.
+        locked, self._locked = self._locked, None
+        for name, helper in self._helpers.items():
+            if name not in self._helpers_visited:
+                self._helpers_visited.add(name)
+                self.visit(helper)
+        self._locked = locked
 
     # -- plumbing --------------------------------------------------------
 
@@ -558,6 +579,9 @@ class _Migration(ast.NodeVisitor):
             if handler is not None:
                 handler(node)
         self.generic_visit(node)
+        if isinstance(func, ast.Name) and func.id in self._helpers and func.id not in self._helpers_visited:
+            self._helpers_visited.add(func.id)
+            self.visit(self._helpers[func.id])
 
     def _gone_from_base(self, node: ast.AST, rule: str, table: str | None, column: str | None) -> None:
         if table is None or (column is None and rule != "drop-table"):
@@ -656,26 +680,29 @@ class _Migration(ast.NodeVisitor):
         self._fk_dropped(node, table, name, kind == "foreignkey")
 
     def _fk_dropped(self, node: ast.AST, table: str | None, name: str | None, is_fk: bool) -> None:
-        """A key dropped by name locks the table it points at, read from the
-        migrations that created it. One name given different targets over time
-        (a key re-pointed under its old name) is not guessed at."""
-        targets = self.fk_targets.get(name or "", set())
-        if len(targets) == 1:
-            self._fk_touches(node, table, *targets)
+        """A key dropped by name locks the table it pointed at just before the
+        drop: as this migration last created it, else as its ancestors last did."""
+        target = self._created_here.get(name or "") or self.fk_targets.get(name or "")
+        if target:
+            self._fk_touches(node, table, target)
             return
         looks_like_fk = is_fk or bool(name and (name.endswith("_fkey") or name.startswith("fk_")))
-        if (targets or looks_like_fk) and self._locked is not None and not self._autocommit:
-            seen = f" (created pointing at {', '.join(sorted(targets))})" if targets else ""
+        if looks_like_fk and self._locked is not None and not self._autocommit:
             self.report(
                 node,
                 "unresolved",
-                f"could not tell which table foreign key {name} points at{seen}; "
-                "check that with_lock_retries names it",
+                f"could not tell which table foreign key {name} points at; check that with_lock_retries names it",
             )
+
+    def _fk_created(self, node: ast.AST, table: str | None, keys: list[tuple[str, str]]) -> None:
+        for name, ref in keys:
+            self._created_here[name] = ref
+        if keys:
+            self._fk_touches(node, table, *(ref for _, ref in keys))
 
     def _op_create_foreign_key(self, node: ast.Call) -> None:
         source = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "source_table"))
-        self._fk_touches(node, source, _str(node.args[2]) if len(node.args) > 2 else _str(_kw(node, "referent_table")))
+        self._fk_created(node, source, _created_key(node, self.constants))
         not_valid = _truthy(_kw(node, "postgresql_not_valid"))
         if not_valid:
             self._not_valid_added = True
@@ -713,7 +740,7 @@ class _Migration(ast.NodeVisitor):
     def _op_add_column(self, node: ast.Call) -> None:
         table = _str(node.args[0]) if node.args else None
         if len(node.args) > 1 and isinstance(node.args[1], ast.Call):
-            self._fk_touches(node, *_inline_referents(node.args[1]))
+            self._fk_created(node, table, _inline_keys(table, node.args[1], self.constants))
         column = _column(node.args[1]) if len(node.args) > 1 and isinstance(node.args[1], ast.Call) else None
         if column is None:
             return
@@ -749,7 +776,8 @@ class _Migration(ast.NodeVisitor):
         table = _str(node.args[0]) if node.args else None
         for arg in node.args[1:]:
             if isinstance(arg, ast.Call):
-                self._fk_touches(node, *_inline_referents(arg))
+                # The new table itself is exempt (new_tables); its targets are not.
+                self._fk_created(node, None, _inline_keys(table, arg, self.constants))
         if table is None:
             return
         first_primary = True
@@ -861,7 +889,10 @@ class _Migration(ast.NodeVisitor):
                     self._fk_dropped(node, table, dropped.group(1), False)
                     continue
                 if (referenced := _SQL_REFERENCES.search(clause)) is not None:
+                    named = _SQL_NAMED_FK.search(clause)
                     self._fk_touches(node, table, referenced.group(1))
+                    if named:
+                        self._created_here[named.group(1)] = named.group(2)
                 if _SQL_VALIDATE_CONSTRAINT.search(clause):
                     if not self._autocommit and node not in self._unblocked_validates:
                         self._unblocked_validates.append(node)
@@ -999,27 +1030,44 @@ def _fk_referent(call: ast.Call) -> str | None:
     return spelled.rsplit(".", 2)[-2] if spelled and "." in spelled else None
 
 
-def _inline_referents(call: ast.Call) -> list[str]:
-    """Tables a ``Column(..., ForeignKey(...))`` or ``ForeignKeyConstraint`` points at."""
-    if _callee(call) == "ForeignKeyConstraint":
-        keys = [call]
-    elif _callee(call) == "Column":
+def _inline_keys(table: str | None, call: ast.Call, constants: dict[str, ast.AST]) -> list[tuple[str, str]]:
+    """``(name, referenced table)`` for each key a ``Column(..., ForeignKey(...))``
+    or ``ForeignKeyConstraint`` declares. An unnamed key gets Postgres' default
+    name, ``<table>_<column>_fkey``."""
+    if _callee(call) == "Column" and call.args:
+        column = _str(call.args[0])
         keys = [a for a in call.args[1:] if isinstance(a, ast.Call) and _callee(a) == "ForeignKey"]
+    elif _callee(call) == "ForeignKeyConstraint" and call.args:
+        column, keys = _leading_column(call.args[0]), [call]
     else:
         return []
-    return [ref for ref in map(_fk_referent, keys) if ref]
+    out = []
+    for fk in keys:
+        ref = _fk_referent(fk)
+        if ref:
+            out.append((_sql_text(_kw(fk, "name"), constants) or f"{table}_{column}_fkey", ref))
+    return out
 
 
-def foreign_key_targets(sources: dict[str, str]) -> dict[str, set[str]]:
-    """``{constraint name: {referenced table, ...}}`` for every foreign key the
-    ``upgrade()`` of ``sources`` create.
+def _created_key(call: ast.Call, constants: dict[str, ast.AST]) -> list[tuple[str, str]]:
+    """``op.create_foreign_key(name, source, referent, ...)`` as ``[(name, referent)]``."""
+    name = _sql_text(call.args[0] if call.args else _kw(call, "constraint_name"), constants)
+    ref = _sql_text(call.args[2] if len(call.args) > 2 else _kw(call, "referent_table"), constants)
+    return [(name, ref)] if name and ref and HOLE not in name and HOLE not in ref else []
 
-    An unnamed key gets Postgres' default name, ``<table>_<column>_fkey``. Read
-    so a migration that drops a key by name can tell which table it pointed at;
-    a name with more than one table was re-pointed and cannot be told.
-    """
-    out: dict[str, set[str]] = {}
-    for source in sources.values():
+
+@dataclass
+class _Creations:
+    revision: str | None
+    down: list[str]
+    keys: list[tuple[str, str]]
+
+
+def fk_creations(sources: dict[str, str]) -> dict[str, _Creations]:
+    """For each migration: its revision, its parents, and the foreign keys its
+    ``upgrade()`` creates, in the order it creates them."""
+    out: dict[str, _Creations] = {}
+    for path, source in sources.items():
         try:
             tree = ast.parse(source)
         except SyntaxError:
@@ -1028,36 +1076,60 @@ def foreign_key_targets(sources: dict[str, str]) -> dict[str, set[str]]:
             if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
                 node.body = []
         constants = _module_constants(tree)
+        down = constants.get("down_revision")
+        parents = [_str(e) for e in down.elts] if isinstance(down, ast.Tuple | ast.List) else [_str(down)]
+        keys: list[tuple[int, tuple[str, str]]] = []
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             callee = _callee(node)
+            found: list[tuple[str, str]] = []
             if callee == "create_foreign_key":
-                name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), constants)
-                ref = _sql_text(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"), constants)
-                if name and ref and HOLE not in name:
-                    out.setdefault(name, set()).add(ref)
+                found = _created_key(node, constants)
             elif callee in {"create_table", "add_column"} and node.args and _str(node.args[0]):
-                table = _str(node.args[0])
                 for arg in node.args[1:]:
-                    if not isinstance(arg, ast.Call) or not arg.args:
-                        continue
-                    if _callee(arg) == "Column":
-                        column = _str(arg.args[0])
-                        keys = [fk for fk in arg.args[1:] if isinstance(fk, ast.Call) and _callee(fk) == "ForeignKey"]
-                    elif _callee(arg) == "ForeignKeyConstraint":
-                        column, keys = _leading_column(arg.args[0]), [arg]
-                    else:
-                        continue
-                    for fk in keys:
-                        ref = _fk_referent(fk)
-                        name = _sql_text(_kw(fk, "name"), constants) or f"{table}_{column}_fkey"
-                        if ref and column:
-                            out.setdefault(name, set()).add(ref)
+                    if isinstance(arg, ast.Call):
+                        found += _inline_keys(_str(node.args[0]), arg, constants)
             elif callee == "execute" and node.args:
-                sql = _sql_text(node.args[0], constants)
-                for name, ref in _SQL_NAMED_FK.findall(_strip_sql_comments(sql or "")):
-                    out.setdefault(name, set()).add(ref)
+                sql = _strip_sql_comments(_sql_text(node.args[0], constants) or "")
+                found = _SQL_NAMED_FK.findall(sql)
+            keys += [(node.lineno, key) for key in found]
+        out[path] = _Creations(
+            _str(constants.get("revision")), [p for p in parents if p], [key for _, key in sorted(keys)]
+        )
+    return out
+
+
+def foreign_key_targets(creations: dict[str, _Creations], path: str) -> dict[str, str]:
+    """``{constraint name: referenced table}`` as the migrations before ``path``
+    left them: its ancestors, walked parents first, the latest creation of a
+    name winning. A migration whose parents are not among ``creations`` (a
+    fragment, not a chain) is preceded by every other one, in path order."""
+    by_revision: dict[str, list[str]] = {}
+    for other, info in creations.items():
+        if info.revision:
+            by_revision.setdefault(info.revision, []).append(other)
+    current = creations.get(path)
+    chained = current is not None and any(p in by_revision for p in current.down)
+    order: list[str] = []
+    placed: set[str] = set()
+    pending = [(other, False) for other in reversed(sorted(creations))] if not chained else []
+    if chained:
+        pending = [(other, False) for p in reversed(current.down) for other in by_revision.get(p, [])]
+    while pending:
+        other, expanded = pending.pop()
+        if other in placed or other == path:
+            continue
+        if expanded:
+            placed.add(other)
+            order.append(other)
+            continue
+        pending.append((other, True))
+        for parent in creations[other].down:
+            pending.extend((p, False) for p in by_revision.get(parent, []) if p not in placed)
+    out: dict[str, str] = {}
+    for other in order:
+        out.update(creations[other].keys)
     return out
 
 
@@ -1088,7 +1160,7 @@ def analyze(
     ``history``: the migrations already on the base, read only to learn which
     table a foreign key dropped by name points at."""
     base_tables = read_models(base_models)
-    fk_targets = foreign_key_targets({**(history or {}), **migrations})
+    creations = fk_creations({**(history or {}), **migrations})
     new_tables: set[str] = set()
     for source in migrations.values():
         new_tables |= created_tables(source)
@@ -1105,7 +1177,7 @@ def analyze(
             findings.append(Finding(path, error.lineno or 1, "unparseable", f"does not parse: {error}"))
             continue
         facts = _FileFacts()
-        visitor = _Migration(path, source, base_tables, new_tables, facts, fk_targets)
+        visitor = _Migration(path, source, base_tables, new_tables, facts, foreign_key_targets(creations, path))
         visitor.visit(tree)
         visitor.finish()
         indexed_anywhere |= facts.indexed
@@ -1530,9 +1602,65 @@ def self_test() -> int:
         "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'conversations', ['topic_id'], ['id'])\n",
     }
     check(
-        "a key re-pointed under its old name is not guessed at",
+        "a key re-pointed earlier is dropped from where it last pointed",
         judged("    with_lock_retries('runs, conversations')\n" + drop_fk, repointed),
-        ["unresolved"],
+        [],
+    )
+
+    # The chain, not the file name, says which creation came last.
+    def rev(revision: str, down: str | None) -> str:
+        return f"import sqlalchemy as sa\nfrom alembic import op\nrevision = {revision!r}\ndown_revision = {down!r}\n"
+
+    chained = {
+        "z.py": rev("r1", None) + "def upgrade():\n"
+        "    op.create_table('runs', sa.Column('topic_id', sa.Integer(), sa.ForeignKey('topics.id')))\n",
+        "a.py": rev("r2", "r1") + "def upgrade():\n"
+        "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'conversations', ['topic_id'], ['id'])\n",
+    }
+
+    def chained_rules(lock: str) -> list[str]:
+        source = rev("r3", "r2") + f"def upgrade():\n    with_lock_retries('{lock}')\n{drop_fk}\n"
+        return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, chained))
+
+    check("a re-pointed key follows the chain, not file names", chained_rules("runs, conversations"), [])
+    check("... and its old target is not enough", chained_rules("runs, topics"), ["fk-table-not-locked"])
+    check(
+        "a key this migration drops and re-adds under its name was locked at its old target",
+        judged(
+            "    with_lock_retries('runs, conversations')\n" + drop_fk + "\n"
+            "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'conversations', ['topic_id'], ['id'],"
+            " postgresql_not_valid=True)",
+            created,
+        ),
+        ["fk-table-not-locked"],
+    )
+    helper = "def _move():\n    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)\n"
+    check(
+        "a helper defined above upgrade() runs where upgrade() calls it",
+        _rules_found("    with_lock_retries('task')\n    _move()", helper),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "a helper only downgrade() calls holds no lock",
+        sorted(
+            f.rule
+            for f in analyze(
+                {
+                    "m.py": _HEAD + helper + "\ndef upgrade() -> None:\n    with_lock_retries('task')\n"
+                    "\ndef downgrade() -> None:\n    _move()\n"
+                },
+                _BASE_MODELS,
+            )
+        ),
+        [],
+    )
+    check(
+        "a key added with its column, the column's table left out",
+        _rules_found(
+            "    with_lock_retries('users')\n"
+            "    op.add_column('task', sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), index=True))"
+        ),
+        ["fk-on-add-column", "fk-table-not-locked"],
     )
     restored_in_downgrade = {
         **created,
@@ -1597,9 +1725,9 @@ def self_test() -> int:
         "b.py": _HEAD + "def upgrade():\n    op.create_foreign_key('owner_link', 'runs', 'teams', ['u'], ['id'])\n",
     }
     check(
-        "a re-pointed key with an unremarkable name is not guessed at",
+        "raw SQL: a key with an unremarkable name is read from history",
         judged("    with_lock_retries('runs, users')\n    op.execute(\"ALTER TABLE runs DROP CONSTRAINT owner_link\")", two_targets),
-        ["unresolved"],
+        ["fk-table-not-locked"],
     )
     check("a dropped unknown key with no lock list", _rules_found(drop_fk), [])
     check(
