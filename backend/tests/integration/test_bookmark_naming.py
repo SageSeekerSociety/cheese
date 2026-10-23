@@ -163,3 +163,59 @@ def test_the_naming_timeout_follows_the_setting(monkeypatch):
     side of the same budget ignore a changed setting."""
     monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 3.0)
     assert naming._timeout() == 3.0
+
+
+def test_the_production_path_names_without_a_transport(client, monkeypatch):
+    """What the route actually runs: ``refine`` with no transport at all. The
+    other tests hand it a mock transport, which would hide a broken default
+    client, so this one stubs the client itself."""
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/key/generate":
+            return httpx.Response(200, json={"key": "sk-bookmark-default"})
+        if request.url.path == "/v1/chat/completions":
+            asked.append("asked")
+            return httpx.Response(
+                200,
+                headers={"x-litellm-response-cost": "0.0001"},
+                json={
+                    "choices": [
+                        {
+                            "message": {"content": "登录 401 排查"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 8},
+                },
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    real = httpx.AsyncClient
+
+    class Stubbed(real):
+        def __init__(self, *args, **kwargs):
+            if kwargs.get("transport") is None:
+                kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Stubbed)
+    monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
+    monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
+
+    tid = _setup(client)
+    message = _say(client, tid, "alice", "登录报错：token 刷新之后仍然 401")
+    _mark(client, tid, message)
+
+    claimed = client.portal.call(
+        lambda: naming.refine(
+            uuid.UUID(tid),
+            uuid.UUID(message),
+            session_factory=client.test_request_factory,
+        )
+    )
+
+    assert claimed is True
+    assert asked, "the model was never called"
+    assert _title_of(client, tid, message) == "登录 401 排查"
