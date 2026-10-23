@@ -222,7 +222,7 @@ function failedAt(f: ConnectFailure) {
 .flow__prefetch {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .flow__error {
