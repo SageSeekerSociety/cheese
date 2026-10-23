@@ -54,6 +54,20 @@ _RULES = (
     "其他网址只写用户给的或网页里读到的。"
 )
 
+#: Told only where the conversation has a sandbox of its own
+#: (``personal.session.target``).
+_COMPUTER = (
+    "\n\n## 你的电脑\n"
+    "13. 你有一台这段对话自己的 Linux 电脑，能上网，用 bash、read、write、edit、ls、find、"
+    "grep 操作它。要计算、处理数据、写代码并运行、下载网上的数据时用它，不要心算或凭记忆"
+    "给结果。第一次用时才开机，要等一会儿；用电脑按时长从用户的额度扣费，只聊天、只用平台"
+    "工具时不开机。\n"
+    "14. 电脑闲置一段时间后回收，上面的文件全部清空，下次用是一台新电脑。工具结果说沙箱"
+    "环境已换成新的时，之前的文件和装过的软件都没有了，要用就重新生成；用户问起，如实说明。\n"
+    "15. 电脑上没有用户的文件，也连不到用户的项目；用户也看不到电脑上的文件。要给用户的结"
+    "果写进回复：数字、表格、结论，必要时附上关键的代码或命令。"
+)
+
 #: How much of a conversation's earlier text is carried into a session that
 #: never heard it, counted from the latest question back.
 EARLIER_CHARS = 24_000
@@ -137,11 +151,12 @@ TASK_SCENE = (
 )
 
 
-def system_prompt() -> str:
+def system_prompt(*, computer: bool = False) -> str:
     """The rules. They are the same for every conversation and every page, and
     for the session's whole life, so every question shares the cached prefix;
-    where the person is goes with the question (``page``)."""
-    return _RULES
+    where the person is goes with the question (``page``). ``computer``: the
+    conversation has a sandbox of its own to work in."""
+    return _RULES + (_COMPUTER if computer else "")
 
 
 _WEEKDAYS = "一二三四五六日"

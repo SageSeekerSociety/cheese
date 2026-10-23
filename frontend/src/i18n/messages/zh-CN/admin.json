@@ -163,6 +163,7 @@
       "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）"
     },
     "placed": "{at} 放上来",
+    "personal": "个人对话",
     "taskRoom": "任务",
     "spec": "{cores} 核 · {memory} GB · {disk} GB",
     "dur": {

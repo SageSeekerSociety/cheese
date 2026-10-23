@@ -34,7 +34,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, Uuid, column, select, table, union_all
+from sqlalchemy import Boolean, Integer, Uuid, column, select, table, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -118,6 +118,21 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
         select(_inside.c.room_id).where(_inside.c.id == conversation_id)
     )
     return room or conversation_id
+
+
+_personal = table(
+    "assistant_conversations", column("id", Uuid), column("user_id", Integer)
+)
+
+
+async def personal_owner(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> int | None:
+    """Whose own 芝士 conversation this is; None when it is no such
+    conversation."""
+    return await session.scalar(
+        select(_personal.c.user_id).where(_personal.c.id == conversation_id)
+    )
 
 
 _rooms = table("topics", column("id", Uuid), column("members_only", Boolean))
