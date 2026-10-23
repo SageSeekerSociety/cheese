@@ -30,6 +30,7 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
       source: 'both',
     },
     agent: null,
+    prompt: null,
     materials: [],
     ...overrides,
   }
