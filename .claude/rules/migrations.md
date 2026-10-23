@@ -60,7 +60,10 @@ every migration a PR **adds** (CI: backend `static` job; locally: the
    `tasks`, `agent_sessions`, `deliveries`, …) starts with
    `with_lock_retries("t1, t2")` from `migration_helpers` (on `sys.path` via
    `alembic.ini`), naming every table altered and every table a new or dropped
-   foreign key points at. ✓ No pasted `DO $$ … lock_not_available` loops.
+   foreign key points at (✓ for a foreign key's tables). A table left out is
+   locked after the listed ones are held and deadlocks with the live backend
+   (`b8d3f1a6c254` left out `topics`). ✓ No pasted `DO $$ … lock_not_available`
+   loops.
 3. **Adding a column**: nullable, or NOT NULL with a `server_default`. ✓
    A value computed per row: add it nullable → backfill → `CHECK (c IS NOT
    NULL) NOT VALID` → `VALIDATE` → `SET NOT NULL` (no full scan once a

@@ -53,6 +53,14 @@ checks the ones that can be read off the source:
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
+  fk-table-not-locked
+      An ``upgrade()`` that calls ``with_lock_retries`` and, in the same
+      transaction, adds or drops a foreign key must name both of its tables in
+      that call. A table left out is locked later, while the listed ones are
+      already held, and deadlocks with the live backend reading them in the
+      other order (``b8d3f1a6c254``: ``topics``). A dropped key's target is
+      read from the migration that created it; one that cannot be found is an
+      ``unresolved`` warning.
   empty-downgrade
       A migration whose ``downgrade()`` does nothing — a lone ``pass``, once
       its docstring is set aside — must say why in that docstring: what it
@@ -121,6 +129,7 @@ ERROR_RULES = frozenset(
         "json-not-jsonb",
         "app-import",
         "lock-retry-copy",
+        "fk-table-not-locked",
         "unresolved-table",
         "unresolved-drop",
         "unparseable",
@@ -435,6 +444,7 @@ class _Migration(ast.NodeVisitor):
         base_tables: dict[str, set[str]],
         new_tables: set[str],
         facts: _FileFacts,
+        fk_targets: dict[str, str] | None = None,
     ) -> None:
         self.path = path
         self.lines = source.splitlines()
@@ -447,6 +457,11 @@ class _Migration(ast.NodeVisitor):
         self._unblocked_validates: list[ast.AST] = []
         self.constants: dict[str, ast.AST] = {}
         self._docstrings: set[int] = set()
+        self.fk_targets = fk_targets or {}
+        # The tables `with_lock_retries` names, and each table a foreign key
+        # added or dropped in the migration's own transaction touches.
+        self._locked: set[str] | None = None
+        self._fk_tables: list[tuple[ast.AST, str]] = []
 
     def visit_Module(self, node: ast.Module) -> None:
         self.constants = _module_constants(node)
@@ -527,6 +542,13 @@ class _Migration(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
+        if isinstance(func, ast.Name) and func.id == "with_lock_retries":
+            tables = _sql_text(node.args[0] if node.args else None, self.constants)
+            if tables is None or HOLE in tables:
+                self.report(node, "unresolved", "could not read the tables with_lock_retries locks; check them by hand")
+            else:
+                locked = {t.strip().strip('"').rsplit(".", 1)[-1] for t in tables.split(",")}
+                self._locked = (self._locked or set()) | locked
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "op":
             handler = getattr(self, f"_op_{func.attr}", None)
             if handler is not None:
@@ -564,7 +586,13 @@ class _Migration(ast.NodeVisitor):
     def _op_drop_table(self, node: ast.Call) -> None:
         self._gone_from_base(node, "drop-table", _str(node.args[0]) if node.args else None, None)
 
+    def _renamed(self, old: str | None, new: str | None) -> None:
+        """A locked table keeps its lock under its new name."""
+        if self._locked is not None and old in self._locked and new:
+            self._locked.add(new)
+
     def _op_rename_table(self, node: ast.Call) -> None:
+        self._renamed(_str(node.args[0]) if node.args else None, _str(node.args[1]) if len(node.args) > 1 else None)
         self._gone_from_base(node, "drop-table", _str(node.args[0]) if node.args else None, None)
         if self.findings and self.findings[-1].rule == "drop-table" and self.findings[-1].line == node.lineno:
             self.findings[-1].rule = "rename"
@@ -612,8 +640,26 @@ class _Migration(ast.NodeVisitor):
                 "put it in `with op.get_context().autocommit_block():`",
             )
 
+    def _fk_touches(self, node: ast.AST, *tables: str | None) -> None:
+        if not self._autocommit:
+            self._fk_tables.extend((node, t) for t in tables if t)
+
+    def _op_drop_constraint(self, node: ast.Call) -> None:
+        name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), self.constants)
+        table = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "table_name"))
+        kind = _str(node.args[2]) if len(node.args) > 2 else _str(_kw(node, "type_"))
+        if name in self.fk_targets:
+            self._fk_touches(node, table, self.fk_targets[name])
+        elif kind == "foreignkey" and self._locked is not None and not self._autocommit:
+            self.report(
+                node,
+                "unresolved",
+                f"could not tell which table foreign key {name} points at; check that with_lock_retries names it",
+            )
+
     def _op_create_foreign_key(self, node: ast.Call) -> None:
         source = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "source_table"))
+        self._fk_touches(node, source, _str(node.args[2]) if len(node.args) > 2 else _str(_kw(node, "referent_table")))
         not_valid = _truthy(_kw(node, "postgresql_not_valid"))
         if not_valid:
             self._not_valid_added = True
@@ -781,6 +827,8 @@ class _Migration(ast.NodeVisitor):
             table, rest = match.group(1), match.group(2)
             for clause in _split_clauses(rest):
                 if _SQL_RENAME_TABLE.search(clause):
+                    new_name = re.search(r"\bTO\s+\"?(\w+)", clause, re.I)
+                    self._renamed(table, new_name.group(1) if new_name else None)
                     self._gone_from_base(node, "drop-table", table, None)
                     if self.findings and self.findings[-1].line == node.lineno and self.findings[-1].rule == "drop-table":
                         self.findings[-1].rule = "rename"
@@ -788,6 +836,12 @@ class _Migration(ast.NodeVisitor):
                 if (column := _SQL_RENAME_COLUMN.search(clause)) is not None:
                     self._gone_from_base(node, "rename", table, column.group(1))
                     continue
+                if (dropped := _SQL_DROP_CONSTRAINT.match(clause)) is not None:
+                    if dropped.group(1) in self.fk_targets:
+                        self._fk_touches(node, table, self.fk_targets[dropped.group(1)])
+                    continue
+                if (referenced := _SQL_REFERENCES.search(clause)) is not None:
+                    self._fk_touches(node, table, referenced.group(1))
                 if _SQL_VALIDATE_CONSTRAINT.search(clause):
                     if not self._autocommit and node not in self._unblocked_validates:
                         self._unblocked_validates.append(node)
@@ -826,7 +880,18 @@ class _Migration(ast.NodeVisitor):
         """Rules that need the whole file, not one statement: a ``NOT VALID``
         constraint and its ``VALIDATE`` are safe only when the VALIDATE runs in
         its own transaction. In the migration's own, it holds the lock to the
-        end of the migration and cancels what ``NOT VALID`` bought."""
+        end of the migration and cancels what ``NOT VALID`` bought. And a
+        foreign key's tables are judged against the whole ``with_lock_retries``
+        list."""
+        if self._locked is not None:
+            for node, table in self._fk_tables:
+                if table not in self._locked and table not in self.new_tables:
+                    self.report(
+                        node,
+                        "fk-table-not-locked",
+                        f"this foreign key locks {table}, which with_lock_retries does not name; "
+                        "taken after the listed tables, it deadlocks with the live backend - add it to the list",
+                    )
         if not self._not_valid_added:
             return
         for node in self._unblocked_validates:
@@ -896,6 +961,69 @@ def created_tables(source: str) -> set[str]:
     return out
 
 
+_SQL_NAMED_FK = re.compile(
+    r"\bCONSTRAINT\s+\"?(\w+)\"?\s+FOREIGN\s+KEY\s*\([^)]*\)\s*REFERENCES\s+(?:\"?\w+\"?\.)?\"?(\w+)", re.I
+)
+_SQL_REFERENCES = re.compile(r"\bREFERENCES\s+(?:\"?\w+\"?\.)?\"?(\w+)", re.I)
+_SQL_DROP_CONSTRAINT = re.compile(r"^\s*DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?\"?(\w+)", re.I)
+
+
+def _fk_referent(call: ast.Call) -> str | None:
+    """``"topics"`` for ``sa.ForeignKey("topics.id")``; ``ForeignKeyConstraint``'s first target."""
+    target = call.args[0] if _callee(call) == "ForeignKey" and call.args else None
+    if _callee(call) == "ForeignKeyConstraint" and len(call.args) > 1:
+        refs = call.args[1]
+        target = refs.elts[0] if isinstance(refs, ast.List | ast.Tuple) and refs.elts else None
+    spelled = _str(target)
+    return spelled.rsplit(".", 2)[-2] if spelled and "." in spelled else None
+
+
+def foreign_key_targets(sources: dict[str, str]) -> dict[str, str]:
+    """``{constraint name: referenced table}`` for every foreign key ``sources`` create.
+
+    An unnamed key gets Postgres' default name, ``<table>_<column>_fkey``. Read
+    so a migration that drops a key by name can tell which table it pointed at.
+    """
+    out: dict[str, str] = {}
+    for source in sources.values():
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        constants = _module_constants(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _callee(node)
+            if callee == "create_foreign_key":
+                name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), constants)
+                ref = _sql_text(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"), constants)
+                if name and ref and HOLE not in name:
+                    out[name] = ref
+            elif callee in {"create_table", "add_column"} and node.args and _str(node.args[0]):
+                table = _str(node.args[0])
+                for arg in node.args[1:]:
+                    if not isinstance(arg, ast.Call) or not arg.args:
+                        continue
+                    if _callee(arg) == "Column":
+                        column = _str(arg.args[0])
+                        keys = [fk for fk in arg.args[1:] if isinstance(fk, ast.Call) and _callee(fk) == "ForeignKey"]
+                    elif _callee(arg) == "ForeignKeyConstraint":
+                        column, keys = _leading_column(arg.args[0]), [arg]
+                    else:
+                        continue
+                    for fk in keys:
+                        ref = _fk_referent(fk)
+                        name = _sql_text(_kw(fk, "name"), constants) or f"{table}_{column}_fkey"
+                        if ref and column:
+                            out[name] = ref
+            elif callee == "execute" and node.args:
+                sql = _sql_text(node.args[0], constants)
+                for name, ref in _SQL_NAMED_FK.findall(_strip_sql_comments(sql or "")):
+                    out[name] = ref
+    return out
+
+
 def _allowed(lines: list[str], finding: Finding, node_span: tuple[int, int]) -> bool:
     for line in lines:
         match = _PRAGMA.search(line)
@@ -915,9 +1043,15 @@ def _rules(spec: str) -> set[str]:
     return {r.strip() for r in re.split(r"[,\s]+", spec) if r.strip()}
 
 
-def analyze(migrations: dict[str, str], base_models: dict[str, str]) -> list[Finding]:
-    """Findings for the given migration sources, judged against ``base_models``."""
+def analyze(
+    migrations: dict[str, str], base_models: dict[str, str], history: dict[str, str] | None = None
+) -> list[Finding]:
+    """Findings for the given migration sources, judged against ``base_models``.
+
+    ``history``: the migrations already on the base, read only to learn which
+    table a foreign key dropped by name points at."""
     base_tables = read_models(base_models)
+    fk_targets = foreign_key_targets({**(history or {}), **migrations})
     new_tables: set[str] = set()
     for source in migrations.values():
         new_tables |= created_tables(source)
@@ -934,7 +1068,7 @@ def analyze(migrations: dict[str, str], base_models: dict[str, str]) -> list[Fin
             findings.append(Finding(path, error.lineno or 1, "unparseable", f"does not parse: {error}"))
             continue
         facts = _FileFacts()
-        visitor = _Migration(path, source, base_tables, new_tables, facts)
+        visitor = _Migration(path, source, base_tables, new_tables, facts, fk_targets)
         visitor.visit(tree)
         visitor.finish()
         indexed_anywhere |= facts.indexed
@@ -1041,6 +1175,7 @@ def main() -> int:
     os.chdir(_git("rev-parse", "--show-toplevel").strip())
     try:
         base_models = read_tree(args.base, args.models_dir)
+        history = read_tree(args.base, args.versions_dir)
         paths = files or added_migrations(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
         return cannot_judge(args.base)
@@ -1052,7 +1187,7 @@ def main() -> int:
     # `utf-8-sig` drops a BOM: Python's file reader tolerates one, but `ast.parse`
     # on the decoded text rejects U+FEFF, which would now block a valid migration.
     migrations = {p: Path(p).read_text(encoding="utf-8-sig") for p in paths if Path(p).is_file()}
-    findings = analyze(migrations, base_models)
+    findings = analyze(migrations, base_models, history)
     errors = [f for f in findings if f.is_error]
     for finding in findings:
         level = "error" if finding.is_error else "warning"
@@ -1300,6 +1435,50 @@ def self_test() -> int:
         _rules_found('    op.execute("DO $$ BEGIN EXCEPTION WHEN lock_not_available THEN END $$")'),
         ["lock-retry-copy"],
     )
+
+    # --- a foreign key's tables are in the with_lock_retries list ------------
+    # b8d3f1a6c254 locked conversations first, then dropped a key pointing at
+    # topics: the late topics lock deadlocked with the live backend.
+    add_fk = "    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)"
+    check(
+        "a new foreign key's target left out of the lock list",
+        _rules_found("    with_lock_retries('task')\n" + add_fk),
+        ["fk-table-not-locked"],
+    )
+    check("a new foreign key with both tables locked", _rules_found("    with_lock_retries('task, users')\n" + add_fk), [])
+    check("a new foreign key with no lock list at all", _rules_found(add_fk), [])
+    check(
+        "a foreign key added in its own autocommit transaction",
+        _rules_found("    with_lock_retries('task')\n    with op.get_context().autocommit_block():\n    " + add_fk),
+        [],
+    )
+    check(
+        "raw SQL: a REFERENCES target left out of the lock list",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            '    op.execute("ALTER TABLE task ADD CONSTRAINT fk FOREIGN KEY (owner_id) REFERENCES users (id) NOT VALID")'
+        ),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "a table renamed under its lock keeps it",
+        _rules_found(
+            "    with_lock_retries('legacy, users')\n"
+            "    op.rename_table('legacy', 'fresh_name')  # migration-safety: allow rename — self-test\n"
+            "    op.create_foreign_key('fk', 'fresh_name', 'users', ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        [],
+    )
+    created = {"a.py": _HEAD + "def upgrade():\n    op.create_table('runs', sa.Column('topic_id', sa.Integer(), sa.ForeignKey('topics.id')))\n"}
+    drop_fk = "    op.drop_constraint('runs_topic_id_fkey', 'runs', type_='foreignkey')"
+
+    def dropped(lock: str) -> list[str]:
+        source = _HEAD + f"\ndef upgrade() -> None:\n    with_lock_retries('{lock}')\n{drop_fk}\n"
+        return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, created))
+
+    check("a dropped key's target, read from the migration that made it, left out", dropped("runs"), ["fk-table-not-locked"])
+    check("a dropped key's target locked", dropped("runs, topics"), [])
+    check("a dropped key nothing says the target of", _rules_found("    with_lock_retries('runs')\n" + drop_fk), ["unresolved"])
     check(
         "an exception with a reason",
         _rules_found("    op.drop_column('task', 'video_url')  # migration-safety: allow drop-column — not read since #1"),
