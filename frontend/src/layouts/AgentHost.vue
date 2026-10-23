@@ -223,6 +223,7 @@ const panelEvents = {
     if (projectId) void router.push({ name: 'workspace-task', params: { projectId, taskId: task } })
   },
   removeFile: (index: number) => removeAgentFile(index),
+  openLink: (path: string) => void router.push(path),
 }
 </script>
 

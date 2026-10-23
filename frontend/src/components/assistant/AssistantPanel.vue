@@ -40,7 +40,8 @@
       />
     </header>
 
-    <div ref="scroller" class="ap__chat">
+    <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- only catches clicks on the links in the answers; Enter on a focused link fires the same click -->
+    <div ref="scroller" class="ap__chat" @click="followLink">
       <button v-if="hasOlder" type="button" class="ap__older" @click="emit('older')">
         {{ t('tasks.assistant.olderTopics') }}
       </button>
@@ -342,7 +343,20 @@ const emit = defineEmits<{
   attach: [files: File[]]
   removeFile: [index: number]
   downloadFile: [file: AssistantHanded]
+  /** 芝士回答里的站内链接（`/projects/ml-course/channels/3`）：在这个页面里打开。 */
+  openLink: [path: string]
 }>()
+
+/** 回答里指向站内页面的链接不整页刷新，交给外面换页；外链和带修饰键的点击照浏览器的来。 */
+function followLink(event: MouseEvent) {
+  if (event.defaultPrevented || event.button !== 0) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const link = (event.target as Element | null)?.closest?.('.ap__md a[href]')
+  const href = link?.getAttribute('href') ?? ''
+  if (!href.startsWith('/') || href.startsWith('//')) return
+  event.preventDefault()
+  emit('openLink', href)
+}
 
 const { t } = useI18n()
 

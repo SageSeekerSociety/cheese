@@ -518,7 +518,7 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
     return _Plan(
         gate.Action(
             "review",
-            f"{verb.split('，')[0]}任务「{place.task.title}」的审阅卡（项目"
+            f"{verb.split('，')[0]}任务「{place.task.title}」（项目"
             f"「{project.name}」，改动：{card.change_subject or '未写'}"
             f"{reading.checks_of(card)}）"
             + (f"，{verb.split('，', 1)[1]}" if "，" in verb else ""),
@@ -526,7 +526,7 @@ async def _review(db, access, body: ActIn, me: Person) -> _Plan:
         [call],
         [(door, None)],
         card=("act", {}),
-        done=f"已{verb.split('，')[0]}任务「{place.task.title}」的审阅卡。",
+        done=f"已{verb.split('，')[0]}任务「{place.task.title}」。",
     )
 
 

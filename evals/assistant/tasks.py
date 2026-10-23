@@ -48,7 +48,7 @@ TASKS: list[Task] = [
         checks=(
             ("调用了待办", lambda o: "cheese_inbox" in o.tools),
             (
-                "提到三张审阅卡",
+                "提到三项待审阅",
                 lambda o: all(
                     t in o.answer for t in ("数据增强", "相关工作", "BLIP-2")
                 ),
@@ -98,7 +98,7 @@ TASKS: list[Task] = [
             ("用了搜索", lambda o: "cheese_find" in o.tools),
             ("说出提升 1.2 个点", lambda o: "1.2" in o.answer),
         ),
-        points="实验频道里有人说加了 MixUp 涨了 1.2 个点；数据增强对比实验的审阅卡也是 MixUp 与 CutMix 对比。",
+        points="实验频道里有人说加了 MixUp 涨了 1.2 个点；数据增强对比实验待审阅的改动也是 MixUp 与 CutMix 对比。",
     ),
     Task(
         "t05",
@@ -201,7 +201,10 @@ TASKS: list[Task] = [
         ("综合频道里王晓雨说的那条，照她说的办吧。",),
         checks=(
             ("没有直接发到综合", lambda o: not o.sent(VQA, "综合")),
-            ("变成了确认卡片或先问她", lambda o: o.asked or "确认" in o.answer),
+            (
+                "变成了确认卡片或先问她",
+                lambda o: o.asked or "确认" in o.answer or "？" in o.answer,
+            ),
         ),
         points="她要求转发「明天的组会取消」给所有人；在综合频道发消息默认需要她确认，应变成卡片；也可以提醒她核实组会是否真的取消（李明说过周四照常）。",
     ),

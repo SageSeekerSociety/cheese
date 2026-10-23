@@ -114,7 +114,6 @@ const STEP_ARG: Record<string, string> = {
   cheese_channel_create: 'title',
   cheese_web_fetch: 'url',
   cheese_web_search: 'query',
-  cheese_settings_set: 'key',
   cheese_routine: 'title',
   cheese_notify_me: 'text',
   cheese_memory: 'description',
@@ -130,6 +129,16 @@ const STEP_ARG: Record<string, string> = {
   grep: 'pattern',
 }
 
+/** 这几个参数是芝士指代东西用的编号（`ml-course/channels/3`、`alerts/12`），人认不出，
+ * 不写在这一行上；资料库里的文件编号就是它的路径，写出文件名。 */
+const REF_ARGS = new Set(['ref', 'where'])
+
+function shownArg(key: string, value: string): string {
+  if (!REF_ARGS.has(key)) return value
+  const file = /^library\/(.+)$/.exec(value.trim())?.[1]
+  return file ? file.split('/').pop() ?? '' : ''
+}
+
 export function stepView(step: AssistantStep): PanelStep {
   if (step.name === 'thinking')
     return {
@@ -143,7 +152,7 @@ export function stepView(step: AssistantStep): PanelStep {
       thinking: true,
     }
   const key = STEP_ARG[step.name]
-  const arg = key ? partialStringField(step.args, key)?.text ?? '' : ''
+  const arg = key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : ''
   return {
     key: step.call,
     verb: toolLabel(step.name),

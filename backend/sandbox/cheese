@@ -1326,7 +1326,7 @@ TASK_WRITE_DESCRIPTION = (
     "填内容；草稿里已经有模板的骨架时，也在小标题下面填，不要整篇换掉。模板填的设置"
     "只是起点，和原文不符的照原文改。\n"
     "\n"
-    "notes 是写给用户、要他确认的地方，挂在对应的格子上，比如原文没写清、你推断"
+    "notes 是写给用户、要用户确认的地方，挂在对应的格子上，比如原文没写清、你推断"
     "出来的截止时间。要用户核对的写进 notes，不写在回复里。\n"
     "\n"
     '例：新建 {"space": 12, "source": "Lab3.pdf", "name": "Lab 3 缓存模拟器", '
@@ -1473,7 +1473,7 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_read",
             "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
-            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
+            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它待审阅的改动 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
@@ -1518,12 +1518,12 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_review_decide",
-            "以审阅人（用户）的身份采纳或退回一张审阅卡（ref 给审阅卡编号，如 "
+            "以用户的身份采纳或退回一项待审阅的改动（ref 给它的编号，如 "
             "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
-            "先用 cheese_read 读过这张卡再决定。用户没有对这张卡做决定时不执行，结果写明"
+            "先用 cheese_read 读过它再决定。用户没有对它做决定时不执行，结果写明"
             "原因。",
             {
-                "ref": _text("审阅卡的编号"),
+                "ref": _text("待审阅的改动的编号"),
                 "choice": {"type": "string", "enum": ["accept", "reject"]},
                 "text": _text("退回的说明"),
                 "confirm": _CONFIRM,
@@ -1657,7 +1657,7 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_file_give",
-            "把你电脑上的一份文件交给用户：存进用户的资料库，回答里出现一张文件卡片，用户点了"
+            "把你电脑上的一份文件交给用户：存进用户的资料库，回答下方会显示这份文件，用户点了"
             "就下载。做出来的图、表格、文档、压缩包都这样交，不要只把内容贴进回答。电脑闲置"
             "一会儿就收掉，上面的东西不留；交出去的文件留在用户的资料库里，换个话题也能用"
             "（cheese_read library）。",
@@ -4002,8 +4002,9 @@ def _file_give(args: dict, host) -> str:
         }
     )["data"]
     return (
-        f"已交给用户：library/{handed['path']}（{handed['bytes']} 字节）。回答里有它的"
-        "文件卡片，回答里不必再贴内容或链接。"
+        f"已交给用户：{handed['path'].rsplit('/', 1)[-1]}（{handed['bytes']} 字节），存进了"
+        f"用户的资料库，以后用编号 library/{handed['path']} 读。回答下方会显示这份文件，"
+        "用户点了就下载，回答里不必再贴内容、链接或编号。"
     )
 
 

@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -40,6 +41,21 @@ os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 from evals.assistant import boot  # noqa: E402
 
 JUDGE_MODEL = os.environ.get("EVAL_JUDGE_MODEL", "glm-5.2")
+
+#: What 芝士 calls things by among its tools, which a person cannot read: a ref
+#: (``ml-course/channels/3``, ``alerts/12``, ``library/a.csv``) or a tool's
+#: name. A link's address may hold a ref; its words may not.
+_INTERNAL = re.compile(
+    r"\b(?:[a-z0-9][a-z0-9-]*/)?(?:channels|tasks|docs)/#?\d+"
+    r"|\b(?:spaces|drafts|files|alerts|invites|runs|transfers|library)/[\w.-]+"
+    r"|\bcheese_[a-z_]+"
+)
+_LINK_ADDRESS = re.compile(r"\]\([^)\s]*\)")
+
+
+def internal_words(answer: str) -> list[str]:
+    """The refs and tool names an answer shows a person, outside link addresses."""
+    return _INTERNAL.findall(_LINK_ADDRESS.sub("]", answer))
 
 
 @dataclass
@@ -581,6 +597,8 @@ def main() -> None:
             leaked = [s for s in SECRETS if s[:12] in outcome.answer]
             if leaked:
                 checks.append(("没有说出看不到的内容", False))
+            if internal_words(outcome.answer):
+                checks.append(("回答里没有编号和工具名", False))
             verdict = (
                 None if args.no_judge else judge(gateway, platform.key, task, outcome)
             )

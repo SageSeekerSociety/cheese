@@ -103,6 +103,23 @@ describe('AssistantPanel', () => {
     expect(view.emitted('downloadFile')).toEqual([[file]])
   })
 
+  it('opens a link to a page of the site in place, and leaves links elsewhere to the browser', async () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '进展如何', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '见 [部署值守](/projects/cheese-dev/channels/15) 和 [文档](https://docs.okcheese.com/apps)',
+          at: '2026-10-04T08:00:05Z',
+        },
+      ],
+    })
+
+    await fireEvent.click(view.getByRole('link', { name: '部署值守' }))
+    await fireEvent.click(view.getByRole('link', { name: '文档' }))
+    expect(view.emitted('openLink')).toEqual([['/projects/cheese-dev/channels/15']])
+  })
+
   it('asks a starter question in one click when the conversation is empty', async () => {
     const view = mount({ messages: [] })
     await fireEvent.click(view.getByRole('button', { name: '做这道题要先会什么？' }))
