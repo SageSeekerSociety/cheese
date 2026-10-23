@@ -469,6 +469,7 @@ class _Migration(ast.NodeVisitor):
         # Keys this migration has created so far, by name: a later drop of the
         # same name drops this one, not the one history knows.
         self._created_here: dict[str, str] = {}
+        self._loop_values: dict[str, list[str]] = {}
         self._helpers: dict[str, ast.FunctionDef] = {}
         self._helpers_visited: set[str] = set()
 
@@ -536,6 +537,35 @@ class _Migration(ast.NodeVisitor):
                 )
             return
         self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        """``for t in ("a", "b")`` (or over a module constant, or unpacking
+        tuples of them): ``t`` stands for each of those names in the body."""
+        rows = _literal_rows(node.iter, self.constants)
+        targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
+        bound: dict[str, list[str]] = {}
+        for i, target in enumerate(targets):
+            if not isinstance(target, ast.Name) or rows is None:
+                continue
+            values = [_str(row[i]) if i < len(row) else None for row in rows]
+            if values and all(v is not None for v in values):
+                bound[target.id] = values  # type: ignore[assignment]
+        saved = {name: self._loop_values.get(name) for name in bound}
+        self._loop_values.update(bound)
+        self.generic_visit(node)
+        for name, value in saved.items():
+            if value is None:
+                self._loop_values.pop(name, None)
+            else:
+                self._loop_values[name] = value
+
+    def _table_names(self, node: ast.AST | None) -> list[str] | None:
+        """The table(s) an argument names: a literal, or a loop variable over literals."""
+        if _str(node) is not None:
+            return [_str(node)]  # type: ignore[list-item]
+        if isinstance(node, ast.Name) and node.id in self._loop_values:
+            return self._loop_values[node.id]
+        return None
 
     def visit_With(self, node: ast.With) -> None:
         autocommit = any(
@@ -702,10 +732,17 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_foreign_key(self, node: ast.Call) -> None:
         source = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "source_table"))
-        referent = _sql_text(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"), self.constants)
         # Locked whatever the key is called (None, an f-string in a loop); only
         # a readable name can be remembered for a later drop.
-        self._fk_touches(node, source, referent if referent and HOLE not in referent else None)
+        sources = self._table_names(node.args[1] if len(node.args) > 1 else _kw(node, "source_table"))
+        referents = self._table_names(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"))
+        self._fk_touches(node, *(sources or []), *(referents or []))
+        if (sources is None or referents is None) and self._locked is not None and not self._autocommit:
+            self.report(
+                node,
+                "unresolved",
+                "could not read this foreign key's tables; check that with_lock_retries names them",
+            )
         for name, ref in _created_key(node, self.constants):
             self._created_here[name] = ref
         not_valid = _truthy(_kw(node, "postgresql_not_valid"))
@@ -1032,6 +1069,16 @@ def _fk_referent(call: ast.Call) -> str | None:
         target = refs.elts[0] if isinstance(refs, ast.List | ast.Tuple) and refs.elts else None
     spelled = _str(target)
     return spelled.rsplit(".", 2)[-2] if spelled and "." in spelled else None
+
+
+def _literal_rows(node: ast.AST | None, constants: dict[str, ast.AST]) -> list[list[ast.AST]] | None:
+    """The items of a literal tuple/list (a module constant included), each as
+    a row: a tuple item is its elements, anything else a row of one."""
+    if isinstance(node, ast.Name) and node.id in constants:
+        node = constants[node.id]
+    if not isinstance(node, ast.Tuple | ast.List):
+        return None
+    return [list(item.elts) if isinstance(item, ast.Tuple | ast.List) else [item] for item in node.elts]
 
 
 def _inline_keys(table: str | None, call: ast.Call, constants: dict[str, ast.AST]) -> list[tuple[str, str]]:
@@ -1649,6 +1696,34 @@ def self_test() -> int:
             "    op.create_foreign_key(None, 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)"
         ),
         ["fk-table-not-locked", "fk-table-not-locked"],
+    )
+    check(
+        "a key whose source table is a loop variable over literals",
+        _rules_found(
+            "    with_lock_retries('conversations')\n"
+            "    for table in ('tasks', 'documents'):\n"
+            "        op.create_foreign_key(f'fk_{table}_c', table, 'conversations', ['c'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["fk-table-not-locked", "fk-table-not-locked"],
+    )
+    check(
+        "a key whose referent is a loop variable, unpacked from a module constant",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    for column, ref in _REFS:\n"
+            "        op.create_foreign_key(None, 'task', ref, [column], ['id'], postgresql_not_valid=True)",
+            "_REFS = (('owner_id', 'users'), ('team_id', 'team'))\n",
+        ),
+        ["fk-table-not-locked", "fk-table-not-locked"],
+    )
+    check(
+        "a key whose tables cannot be read is not passed silently",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    for table in _tables():\n"
+            "        op.create_foreign_key(None, table, 'users', ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["fk-table-not-locked", "unresolved"],
     )
     check(
         "a key this migration drops and re-adds under its name was locked at its old target",
