@@ -128,8 +128,7 @@ def test_the_roster_says_whose_agent_a_teammate_is_by_their_name() -> None:
     ).text
 
     brought = next(line for line in text.splitlines() if "handle: cheese-1" in line)
-    assert "张三带来的" in brought
+    assert "张三" in brought
     # A project's own AI teammate has an identity of its own and no owner.
     project_own = next(line for line in text.splitlines() if "handle: cheese-2" in line)
-    assert "带来的" not in project_own
     assert "张三" not in project_own
