@@ -1022,7 +1022,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_feedback_release",
             "放掉你领取的一条反馈，让别人能领。决定不修、或者修不了的时候调它；"
-            "状态不退回。",
+            "状态退回「已收录」。",
             {"feedback": _FEEDBACK_REF},
             ["feedback"],
         ),
