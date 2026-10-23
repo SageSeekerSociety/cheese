@@ -6,7 +6,7 @@ import type { MemberActivityLine } from '../../lib/memberActivity'
 import { computed, nextTick, useId } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
-import { overviewRecords, recordTree } from '../../lib/sessionRecords'
+import { overviewRecords, recordParts, recordTree } from '../../lib/sessionRecords'
 import { groupByTurn } from '../../lib/siteLog'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import MemberActivity from '../room/MemberActivity.vue'
@@ -93,10 +93,14 @@ const visible = computed(() =>
  *
  * 概览只画有内容的记录：平台内部的记账行（`command_lifecycle` 那类「输入排队了」）
  * 没有可显示的内容，原始记录视图里才把它们摊成 JSON。分组之前先按视图筛一遍，
- * 否则每条这样的记录都会单独顶出一个组头——有时刻、0 步、底下什么都没有。 */
+ * 否则每条这样的记录都会单独顶出一个组头——有时刻、0 步、底下什么都没有。
+ *
+ * 判据和 `SiteRecordRow` 的 `v-if` 对齐：概览里它不画思考，所以只有思考的一条
+ * 也画不出来。 */
 function drawsHere(block: Block): boolean {
   if (viewMode.value === 'raw') return true
-  return (block.meta?.parts?.length ?? 0) > 0 || !block.meta?.record
+  if (!block.meta?.record) return true
+  return recordParts(block).some((part) => part.kind !== 'thinking')
 }
 const turns = computed(() => {
   const all = groupByTurn(visible.value.filter(drawsHere), turnStarts.value)
