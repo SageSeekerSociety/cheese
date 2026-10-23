@@ -22,6 +22,8 @@ vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 import type { AssistantProposal } from './agentThread'
 
+import { toast } from 'vuetify-sonner'
+
 import {
   agentFiles,
   agentThread,
@@ -31,6 +33,8 @@ import {
   sendProposal,
   useAgentContext,
 } from './agent'
+
+import { ApiError } from '@/api'
 
 describe('交给芝士的文件', () => {
   afterEach(() => {
@@ -70,6 +74,14 @@ describe('交给芝士的文件', () => {
     await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
 
     expect(agentFiles.value).toEqual([])
+  })
+
+  it('放不进资料库时说服务端给的原因', async () => {
+    keep.mockRejectedValue(new ApiError(422, '资料库已满（上限 1024 MB），删掉一些文件后再试'))
+
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+
+    expect(toast.error).toHaveBeenCalledWith('资料库已满（上限 1024 MB），删掉一些文件后再试')
   })
 
   it('点掉一个文件', async () => {

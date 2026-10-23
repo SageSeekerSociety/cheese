@@ -211,9 +211,10 @@ export async function attachToAgent(picked: File[]) {
     try {
       const done = await keep(file)
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
-    } catch {
+    } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
-      toast.error(t('tasks.assistant.files.failed'))
+      // 服务端说了为什么（资料库满了、文件太大）就照它说。
+      toast.error(error instanceof ApiError && error.message ? error.message : t('tasks.assistant.files.failed'))
     }
   }
 }
