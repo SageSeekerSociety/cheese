@@ -627,14 +627,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
-    # How long a session at work may produce nothing at all — no output, no
-    # tool call, nothing running on it — before the runner calls it stuck and
-    # reports its ending itself. The other two clocks both need something to
-    # go on (something said recently, an input still unread); a process that
-    # is alive but whose build stopped answering has neither, and without this
-    # clock nothing ever reports that it stopped. A tool in flight does not
-    # count as silence: that is a long command working, not a build dying.
-    agent_stuck_silence_s: float = 1800.0
     # How long a Claude Code runner another release started may go on with the
     # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
     # counted from when the drain began (`agent_sessions.drain_started_at`). It
