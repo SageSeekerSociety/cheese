@@ -30,7 +30,7 @@
   "docCollabOnly": "只接受文档协同服务的请求",
   "docCommentNotFound": "文档原评论不存在",
   "docEditCannotApply": "第 {n} 处修改无法应用",
-  "docEditChangesStructure": "第 {n} 处修改增删或改变了整段的结构，不能作为建议提出",
+  "docEditChangesStructure": "第 {n} 处修改增删或改变了整段的结构，不能作为建议提出：建议只能标在已有段落的文字上",
   "docEditContentRefused": "第 {n} 处修改：{reason}",
   "docEditHitsSuggestion": "第 {n} 处修改碰到了还没处理的修改建议，等它被接受或拒绝后再改",
   "docEditNeedsWriter": "修改文档需要已认证的写入者",

@@ -108,3 +108,28 @@ def test_a_roster_without_any_zone_adds_no_clock_advice() -> None:
     ).text
 
     assert "UTC" not in text
+
+
+def test_the_roster_says_whose_agent_a_teammate_is_by_their_name() -> None:
+    """A member can bring their own agent into a project. What that agent says
+    is its own, not its owner's, so the roster tells the reader whose agent each
+    one is, by the name people know the owner by rather than their login."""
+    text = build_session_opening(
+        roster=[
+            {"name": "张三", "handle": "zhangsan", "agent": False},
+            {
+                "name": "助手",
+                "handle": "cheese-1",
+                "agent": True,
+                "owner_handle": "zhangsan",
+            },
+            {"name": "芝士", "handle": "cheese-2", "agent": True},
+        ]
+    ).text
+
+    brought = next(line for line in text.splitlines() if "handle: cheese-1" in line)
+    assert "张三" in brought
+    # A project's own AI teammate has an identity of its own and no owner.
+    project_own = next(line for line in text.splitlines() if "handle: cheese-2" in line)
+    assert "张三" not in project_own
+    assert "带" not in project_own

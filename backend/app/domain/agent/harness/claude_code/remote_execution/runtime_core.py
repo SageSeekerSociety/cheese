@@ -64,6 +64,7 @@ _OWN = (
     "machine_files",
     "machine_git",
     "repo_search",
+    "executor_download",
 )
 RELEASE_FILES = {
     **{
