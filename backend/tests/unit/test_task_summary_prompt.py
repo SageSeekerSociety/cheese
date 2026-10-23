@@ -34,8 +34,11 @@ def test_the_record_says_which_fields_to_write():
 
 def test_the_agent_reads_the_pr_itself_from_the_number_it_was_given():
     # 平台上这一段话是纯字符串，取不到远端：号码由平台给，标题和正文由它自己读。
-    assert "gh pr view 4693" in _text(pr_number=4693)
+    text = _text(pr_number=4693)
+    assert "gh pr view 4693" in text
     assert "gh pr view" not in _text(pr_number=None)
+    # 平台也托管 Forgejo，`gh` 是 GitHub 那一条的具体写法，不能写成唯一的路。
+    assert "托管平台" in text
 
 
 def test_a_delivery_without_a_pr_writes_the_deliverable_instead():

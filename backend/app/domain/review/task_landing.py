@@ -447,12 +447,13 @@ def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
     """What a task's agent is told when its last delivery lands: write the task
     up, post the record of it on its own, then close it.
 
-    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己用 `gh` 去读标题、合并时间和
+    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去托管平台读标题、合并时间和
     正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；没有 PR 的交付（文件
     或网址）换成交付物名字和交付说明原文。"""
     if pr_number is not None:
         record = (
-            f"先执行 `gh pr view {pr_number} --json number,title,mergedAt,url,body` 把它读出来，"
+            f"先在托管平台上读这次交付的 PR #{pr_number}（GitHub 用 "
+            f"`gh pr view {pr_number} --json number,title,mergedAt,url,body`），"
             "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
             "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
             "读不到的那一项照实写没读到，不要编。"
