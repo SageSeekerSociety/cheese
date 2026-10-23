@@ -156,9 +156,9 @@ watch(
       >
         <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
         <span v-if="!props.compact" class="help-entry__label">{{ t('navigation.feedback.label') }}</span>
-        <!-- 和通知铃铛同一个呈现（`v-badge` 的点）。`v-if` + `:model-value` 一起写是照
-             铃铛那一处来的：Vuetify 的点在 `model-value` 为真时才画。
-             Amber (`primary` = --accent): design-system §1.6 gives unread markers amber; red means an error. -->
+        <!-- Unread dot: a `v-badge` dot, drawn only while `model-value` is true, hence `v-if`
+             and `:model-value` together. Amber (`primary` = --accent): design-system §1.6 gives
+             unread markers amber; red means an error. -->
         <v-badge v-if="hasUnread" color="primary" floating dot :model-value="true" />
       </v-btn>
     </template>
