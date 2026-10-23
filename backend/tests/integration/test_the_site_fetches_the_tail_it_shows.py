@@ -196,20 +196,28 @@ def test_paging_up_by_cursor_walks_every_record_once(client, tmp_path, monkeypat
     assert steps == [f"step {i:04d}" for i in range(900)]
 
 
-def test_a_page_the_first_object_fills_fetches_no_more(client, tmp_path, monkeypatch):
-    """Ten steps are one object, and one object is what a page fetches.
+def test_a_page_the_newest_object_fills_fetches_no_more(client, tmp_path, monkeypatch):
+    """The newest object fills the page, so the walk stops at it.
 
-    The batch widens only when the page is still short; a page one object
-    already fills must stop there, or every open pays for objects it does not
-    show.
+    A read must not fetch what it will not show: a turn long enough to seal
+    into two objects, read at a page smaller than one, must fetch one. A batch
+    that reaches past the page reddens this.
     """
-    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=10)
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=700)
     bucket.bodies.clear()
 
-    page = _site(client, topic)
+    page = _site(client, topic, limit=50)
 
-    assert len(page["data"]) == 10
-    assert len(bucket.bodies) == 1, "one object held the page; a second was fetched"
-    assert json.loads(gzip.decompress(bucket.bodies[0]).decode().splitlines()[0])[
-        "record"
-    ]["message"]["content"][0]["text"].startswith("step ")
+    steps = [
+        block["meta"]["parts"][0]["text"]
+        for block in page["data"]
+        if block.get("meta", {}).get("parts")
+    ]
+    assert steps == [f"step {i:04d}" for i in range(650, 700)]
+    assert len(bucket.bodies) == 1, "the page came from one object; more were fetched"
+    assert (
+        json.loads(gzip.decompress(bucket.bodies[0]).decode().splitlines()[0])[
+            "record"
+        ]["message"]["content"][0]["text"]
+        == "step 0512"
+    )
