@@ -93,6 +93,30 @@ describe('新手引导的后半程', () => {
     expect(guide.done.value).toBe(true)
   })
 
+  // 「我就想看看界面」：重播从第一站看起，不拿这个人以前发过、采纳过的记录往前跳。
+  it('replaying walks from the first stop and ignores what the person did before', () => {
+    const guide = useProjectTour()
+    const didItAll = { asked: true, answered: true, accepted: true, learned: true }
+    noteFacts(didItAll)
+    replayTour()
+    expect(guide.current.value?.key).toBe('send')
+
+    const has = onPage(
+      'composer-input',
+      'composer-send',
+      'timeline',
+      'reply-thread',
+      'thread-pane',
+      'task-page',
+      'page-workspace-overview'
+    )
+    guide.settle({ facts: didItAll, has })
+    expect(guide.current.value?.key).toBe('send')
+
+    guide.next()
+    expect(guide.current.value?.key).toBe('reply')
+  })
+
   it('stays done after skipping, and opens again from the help menu', () => {
     const guide = useProjectTour()
     noteFacts(none)

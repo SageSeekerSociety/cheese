@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useDesktopApp } from '@/composables/useDesktopApp'
-import { replayTour } from '@/composables/useProjectTour'
+import { useInterfaceTour } from '@/composables/useInterfaceTour'
 
 import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
@@ -38,6 +38,7 @@ const props = withDefaults(
 
 const store = useFeedbackStore()
 const { t } = useI18n()
+const interfaceTour = useInterfaceTour()
 
 const hasUnread = computed(() => store.counts.unread > 0)
 
@@ -66,8 +67,9 @@ const items = computed(() => {
     { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
     // 新手引导随时能再走一遍：回答预填上次的，走完建一个新项目。
     { key: 'guide', to: '/welcome?again=1', label: t('navigation.feedback.guide') },
-    // 界面导览：在项目频道里重新圈一遍频道、输入框、「交给芝士」、总览、资料库。
-    { key: 'tour', click: replayTour, label: t('navigation.feedback.tour') },
+    // 界面导览：从项目的「综合」重新走一遍。导览只在那一页画得出来，所以点它时先带人
+    // 过去（`useInterfaceTour.ts`）；开始不了时说一句该去哪儿点。
+    { key: 'tour', click: () => void interfaceTour.start(), label: t('navigation.feedback.tour') },
   ]
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })
