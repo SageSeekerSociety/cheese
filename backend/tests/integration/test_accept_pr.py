@@ -4173,6 +4173,39 @@ def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
     assert sweeping["patched"] == []
 
 
+def test_the_review_focus_can_be_corrected_while_the_card_is_pending(client, sweeping):
+    """推新提交换的是代码，卡还是同一张：递卡时写下的重点可能已经过期，而它
+    和改动页一起构成「要确认什么」。它和正文一样是说明，所以能改；PR 正文里
+    没有它，改它不必碰 GitHub。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(
+        client,
+        tid,
+        focus="原来的第一条已经不在这次改动里\n现在只需要看回执的落点",
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["focus"] == (
+        "原来的第一条已经不在这次改动里\n现在只需要看回执的落点"
+    )
+    assert sweeping["patched"] == []
+    room = _task_settled(client, tid, "现在只需要看回执的落点")
+    assert "原来的第一条已经不在这次改动里" in room
+
+
+def test_a_focus_correction_keeps_the_filing_limit(client, sweeping):
+    """审阅重点的上限不因为换了入口就放宽：它仍是一眼要读完的三条。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(client, tid, focus="一\n二\n三\n四")
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "acceptFocusTooLong"
+
+
 def test_a_correction_leaves_a_trace_in_the_task(client, sweeping):
     """谁在什么时候把它从什么改成了什么。这条入口能改「这次改动会在历史里说
     什么」，所以它自己必须可追溯。"""
@@ -4286,7 +4319,6 @@ def _treeless_card(client, topic_id: str, status: str) -> None:
             s.add(
                 AcceptCard(
                     topic_id=_uuid.UUID(topic_id),
-                    reviewer_handle="alice",
                     focus="",
                     status=AcceptStatus(status),
                     change_subject="chore(old): a card from before trees",

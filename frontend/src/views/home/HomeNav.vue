@@ -242,6 +242,13 @@ const transferModel = computed({
       </template>
     </v-list-item>
 
+    <v-list-item
+      rounded="lg"
+      prepend-icon="mdi-storefront-outline"
+      :to="{ name: 'market' }"
+      :title="t('navigation.market')"
+    />
+
     <!-- 自己名下的项目在「团队」之上单独一行：底下是只有自己的那个团队，界面上不当团队说。 -->
     <template v-for="group in groups" :key="group.key">
       <v-list-subheader v-if="group.heading">{{ t('navigation.teams') }}</v-list-subheader>
@@ -319,9 +326,17 @@ const transferModel = computed({
     <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
     <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceTo(space)">
       <template #prepend>
-        <!-- 空间头像也走 UserAvatar（org = 圆角方块）：它只拿到 id 和名字，没有头像图，
-             所以画的是按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。 -->
-        <UserAvatar size="22" class="home-nav__mark" :name="space.name" :seed="String(space.id)" kind="org" />
+        <!-- 空间头像也走 UserAvatar（org = 圆角方块）：挑过就画上传的那张，没挑过 /
+             取不到就画按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。
+             getAvatarUrl(null) 回空串，所以没图的空间不会去打一个注定 404 的请求。 -->
+        <UserAvatar
+          size="22"
+          class="home-nav__mark"
+          :avatar="getAvatarUrl(space.avatarId)"
+          :name="space.name"
+          :seed="String(space.id)"
+          kind="org"
+        />
       </template>
       <v-list-item-title class="home-nav__name" data-user-content>{{ space.name }}</v-list-item-title>
       <template #append>

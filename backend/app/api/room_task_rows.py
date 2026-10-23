@@ -83,11 +83,18 @@ async def task_out(db, task, card=None, *, me: str) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
-    out.update(_task_markers(task, card, shown, asked.get(task.id), me))
+    # 递给谁在 `accept_card_reviewer` 表里（一卡多人）；页头那一格写集合里的第一个，
+    # 和侧栏（`task_rows`）读的是同一个。
+    reviewers = (
+        (await AcceptService(db).reviewer_handles_for_cards([card.id])).get(card.id, [])
+        if card is not None
+        else []
+    )
+    out.update(_task_markers(task, card, shown, asked.get(task.id), me, reviewers))
     # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
-        reviewer=card.reviewer_handle if card is not None else None,
+        reviewer=reviewers[0] if reviewers else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
     out["from_thread"] = task.id in await from_threads(db, [task.id])
@@ -109,20 +116,30 @@ def card_row(card, version: int | None) -> dict | None:
         "pr_url": card.pr_url,
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
-        "reviewer": card.reviewer_handle,
+        "reviewer": "、".join(_card_reviewers(card)) or None,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }
 
 
-def _task_markers(task, card, shown, asking, me: str) -> dict[str, bool]:
+def _card_reviewers(card) -> tuple[str, ...]:
+    """一张卡的审阅人集合：ORM 行还留着 `reviewer_handle` 那一列，`RailCard` 只有集合。"""
+    handles = getattr(card, "reviewer_handles", None)
+    if handles:
+        return tuple(handles)
+    single = getattr(card, "reviewer_handle", None)
+    return (single,) if single else ()
+
+
+def _task_markers(task, card, shown, asking, me: str, reviewers=()) -> dict[str, bool]:
     """Attention includes the reporter; personal wording names the next actor."""
     asked = () if asking is None else asking.waiting(task.people)
-    reviewer = None if card is None else card.reviewer_handle
+    handles = tuple(reviewers) or (_card_reviewers(card) if card is not None else ())
+    reviewer = handles[0] if handles else None
     owner = task.owner_handle if presentation.owner_acts_on(shown) else None
     attention = address(
         Event(
-            reviewers=() if not reviewer else (reviewer,),
+            reviewers=handles,
             reporter=task.reporter_handle,
             asked_also=asked,
             owner=owner,
@@ -153,6 +170,11 @@ async def task_rows(
     cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
         thread_ids
     )
+    # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：整屏卡
+    # 的评审人一次查完 —— 按**卡的 id** 查，`cards` 的键是活的 id。
+    card_reviewers = await AcceptCardRepository(db).reviewer_handles_for_cards(
+        [card.id for card in cards.values()]
+    )
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
     # 哪几条活自己那位队友的会话此刻在跑、在哪一次跑里：那样的活是「在做」，除非它
     # 在这一次里报过别的（`presentation`）。
@@ -176,6 +198,7 @@ async def task_rows(
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
+        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         shown = presentation.task_presentation(
             presentation.facts_for_task(
                 task,
@@ -185,9 +208,10 @@ async def task_rows(
             ),
             now=now,
         )
+        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         waiting = presentation.waiting_on(
             shown,
-            reviewer=card.reviewer_handle if card is not None else None,
+            reviewer=reviewers[0] if reviewers else None,
             asked=asked[task.id].only() if task.id in asked else None,
         )
         accepted = landed.get(task.id, [])
@@ -202,7 +226,9 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                **_task_markers(task, card, shown, asked.get(task.id), actor.handle),
+                **_task_markers(
+                    task, card, shown, asked.get(task.id), actor.handle, reviewers
+                ),
                 "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,

@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
 import { isWebPage } from '@/lib/fileKind'
+import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
 
 /** 网页预览里的「圈选」开关。
  *
@@ -32,6 +33,9 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote }: Pi
     const current = frame()
     if (!current) return null
     if (current.live) return 'region'
+    // A third party's View has no cheese runtime injected, so there is no pick
+    // bridge to switch on — the toggle would do nothing.
+    if (current.mime === MCP_APP_MIME) return null
     return isWebPage(current.label) ? 'runtime' : null
   })
 

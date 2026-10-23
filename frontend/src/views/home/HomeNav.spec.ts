@@ -4,7 +4,7 @@
 // 名单是怎么读来的、点下去之后真发生了什么（退出、解散、转让、加入）在
 // `composables/useTeamNav.spec.ts` 里，那里挂的是真接线。
 import type { Component } from 'vue'
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -43,7 +43,7 @@ function props(overrides: Record<string, unknown> = {}) {
   return {
     inbox: true,
     teams: [] as Team[],
-    spaces: [] as { id: number; name: string }[],
+    spaces: [] as SpaceLink[],
     editing: null,
     disbanding: null,
     transferring: null,
@@ -58,6 +58,9 @@ async function mount(overrides: Record<string, unknown> = {}) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
@@ -132,6 +135,14 @@ describe('首页目录的画面', () => {
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
   })
 
+  // 手机端不占底栏格（底栏固定三格），市场从这份目录进——两端都要到得着。
+  it('目录里有通往「市场」的一行', async () => {
+    await mount({ teams: [team('crew', '知是开发组')] })
+    await screen.findByText('知是开发组')
+    expect(screen.getByText('市场')).toBeTruthy()
+    expect(hrefs()).toContain('/market')
+  })
+
   it('点一个团队在原地展开，再点收起', async () => {
     await mount({ teams: [team('lab', '数据课第三组')] })
     await fireEvent.click(await screen.findByLabelText('展开 数据课第三组'))
@@ -196,6 +207,19 @@ describe('首页目录的画面', () => {
     await mount({ spaces: [{ id: 3, name: '数据分析课' }] })
     await screen.findByText('数据分析课')
     expect(hrefs()).toContain('/spaces/3/tasks')
+  })
+
+  it('空间挑过头像就画那一张，没挑过画彩色首字母', async () => {
+    await mount({
+      spaces: [
+        { id: 3, name: '数据分析课', avatarId: 7 },
+        { id: 4, name: '城市数据实验室', avatarId: null },
+      ],
+    })
+    const picked = (await screen.findByText('数据分析课')).closest('.v-list-item')
+    expect(picked?.querySelector('.home-nav__mark img')?.getAttribute('src')).toContain('/avatars/7')
+    const plain = screen.getByText('城市数据实验室').closest('.v-list-item')
+    expect(plain?.querySelector('.home-nav__mark img')).toBeNull()
   })
 
   it('待我处理的件数画在「待办」那一行上，一百以上收成 99+', async () => {

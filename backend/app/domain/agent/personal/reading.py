@@ -192,7 +192,8 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     if card is not None:
         lines.append(
             f"审阅卡：{_STATUS.get(card.status, card.status)}，审阅人 "
-            f"{card.reviewer_handle or '未定'}；读：{refs.review(project.slug, found.number)}"
+            f"{'、'.join(card.reviewer_handles) or '未定'}；"
+            f"读：{refs.review(project.slug, found.number)}"
         )
     lines.append(await _messages(reader, place.conversation_id, page))
     return "\n".join(lines)

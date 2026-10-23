@@ -57,6 +57,7 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
 import HomeSidebar from '@/views/home/HomeSidebar.vue'
 
 const blank = { template: '<div />' }
@@ -82,6 +83,9 @@ async function mount(path = '/inbox') {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
@@ -133,6 +137,8 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
+  // 名单现在住在全站共用的查询缓存里：上一个用例读到的不能带到这一个。
+  queryClient.clear()
   for (const fn of [
     getMyTeams,
     removeMember,
@@ -150,7 +156,7 @@ beforeEach(() => {
   ])
     fn.mockReset()
   getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
-  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课' }] })
+  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课', avatarId: 9 }] })
   spaceApplications.mockResolvedValue({ items: [] })
 })
 afterEach(cleanup)
@@ -159,8 +165,30 @@ describe('目录的名单', () => {
   it('我所在的团队和我加入的空间都读来就画出来', async () => {
     await mount()
     expect(await screen.findByText('知是开发组')).toBeTruthy()
-    expect(await screen.findByText('数据分析课')).toBeTruthy()
+    const spaceRow = (await screen.findByText('数据分析课')).closest('.v-list-item')
+    expect(spaceRow?.querySelector('.home-nav__mark img')?.getAttribute('src')).toContain('/avatars/9')
     expect(getMyTeams).toHaveBeenCalled()
+  })
+
+  // 从空间或项目回到首页时这块侧栏会卸载重挂。旧名单要当场画出来，不让屏幕先空
+  // 一下；同时还要照旧去问服务器，别让目录看不见时删掉、改名的空间被缓存盖住。
+  it('回到首页时先画上一次的名单，同时再到服务器问一次', async () => {
+    const first = await mount()
+    await screen.findByText('知是开发组')
+    first.unmount()
+
+    let answerTeams: (value: unknown) => void = () => {}
+    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerTeams = resolve)))
+    await mount()
+
+    // 请求还没回来，上一次的名单已经在屏幕上了。
+    expect(screen.getByText('知是开发组')).toBeTruthy()
+    expect(screen.getByText('数据分析课')).toBeTruthy()
+    expect(getMyTeams).toHaveBeenCalledTimes(2)
+
+    // 服务器说名单变了：这一次回答会把它换掉。
+    answerTeams({ teams: [team('fresh', '刚加入的团队')] })
+    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
   })
 
   // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队

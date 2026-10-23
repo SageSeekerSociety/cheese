@@ -46,6 +46,7 @@ from app.domain.agent.harness.notices import (
     strip_platform_notice,  # noqa: F401
 )
 from app.domain.agent.harness.opening import (
+    DEFAULT_TEACHING_PROMPT,  # noqa: F401
     OVERVIEW_DOC_CHAR_BUDGET,  # noqa: F401
     TOPIC_DOC_CHAR_BUDGET,  # noqa: F401
     TRACKED_SECTIONS,  # noqa: F401

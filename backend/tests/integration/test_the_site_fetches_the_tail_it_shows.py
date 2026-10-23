@@ -1,0 +1,223 @@
+"""现场 reads a page without fetching the whole turn, and fetches it in parallel.
+
+The rules, without the code: a page shows the newest records, so opening 现场
+must not pull the beginning of a long turn; a sealed object never changes, so
+reading the same page again must not fetch it again; and a page that spans
+several turns must fetch them at the same time rather than one after another.
+All three are what a reader waits for.
+"""
+
+import asyncio
+import gzip
+import json
+import uuid
+
+from sqlalchemy import delete
+
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.session_record import service
+from app.domain.session_record.models import SessionRecord
+from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
+    _Bucket,
+    _room_for,
+    _seal,
+    _Session,
+)
+
+
+def _drop_rows(client, topic: uuid.UUID) -> None:
+    """Take the conversation's rows away, as the retention sweep does at thirty
+    days: the objects stay in the bucket and the index still names them.
+
+    Without this the database's own copy answers every read and a paging test
+    passes whatever the archive walk does — the object path is never taken. A
+    sealed run's row and its object hold the same records, so a test that means
+    to exercise the walk has to leave the walk with only one of them.
+    """
+
+    async def run() -> None:
+        async with client.test_request_factory() as db:
+            await db.execute(
+                delete(SessionRecord).where(SessionRecord.conversation_id == topic)
+            )
+            await db.commit()
+
+    client.portal.call(run)
+
+
+def _long_turn(work: str, count: int) -> list[dict]:
+    """One turn's journal: `count` steps, each naming itself."""
+    return [
+        {
+            "type": "assistant",
+            "uuid": str(uuid.uuid4()),
+            "message": {
+                "id": f"msg_{i}",
+                "role": "assistant",
+                "content": [{"type": "text", "text": f"step {i:04d}"}],
+            },
+            "parent_tool_use_id": None,
+            "cheese": {"work_id": work},
+        }
+        for i in range(count)
+    ]
+
+
+class _CountingBucket(_Bucket):
+    """The private bucket, in memory, keeping the bodies it was asked for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bodies: list[bytes] = []
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    async def download(self, key: str) -> bytes | None:
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            # Let the other fetches of the same page start before this one ends:
+            # a caller that fetches them one by one never reaches two.
+            await asyncio.sleep(0.02)
+            body = self.objects.get(key)
+            if body is not None:
+                self.bodies.append(body)
+            return body
+        finally:
+            self.in_flight -= 1
+
+
+def _site(
+    client, topic: uuid.UUID, *, limit: int = 120, before: str | None = None
+) -> dict:
+    params = {"limit": limit, **({"before": before} if before else {})}
+    response = client.get(f"/topics/{topic}/transcript", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def _sealed(
+    client, tmp_path, monkeypatch, count: int
+) -> tuple[_CountingBucket, uuid.UUID]:
+    bucket = _CountingBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_long_turn(str(uuid.uuid4()), count))
+    # One drain takes one journal page (256 records); a turn longer than that
+    # needs as many passes as it has pages.
+    session.drain(pages=(count + 255) // 256)
+    _seal(client, bucket)
+    return bucket, session.ref.topic_id
+
+
+def test_the_newest_page_does_not_fetch_the_beginning_of_a_long_turn(
+    client, tmp_path, monkeypatch
+):
+    # A long turn: one turn, several sealed runs. The number is the test's own
+    # (it does not read the seal cap), so changing the cap does not change what
+    # the reader asked for — only how much of it a page has to fetch.
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=1200)
+    bucket.bodies.clear()
+
+    page = _site(client, topic)
+
+    assert len(page["data"]) == 120
+    bodies = [gzip.decompress(body).decode() for body in bucket.bodies]
+    fetched = "".join(bodies)
+    assert "step 1199" in fetched, "the page's own steps"
+    # The page is the tail of the turn; its first steps are not on screen and
+    # must not be fetched (gzip cannot be read from the middle).
+    assert '"step 0000"' not in fetched
+
+
+def test_reading_the_same_page_again_keeps_the_sealed_body(
+    client, tmp_path, monkeypatch
+):
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=900)
+    bucket.bodies.clear()
+
+    _site(client, topic)
+    first = len(bucket.bodies)
+    assert first > 0
+
+    _site(client, topic)
+    assert len(bucket.bodies) == first, "a sealed object is immutable; it was refetched"
+
+
+def test_a_page_spanning_several_turns_fetches_them_together(
+    client, tmp_path, monkeypatch
+):
+    bucket = _CountingBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    for _ in range(3):
+        session.write(_long_turn(str(uuid.uuid4()), 60))
+    session.drain()
+    _seal(client, bucket)
+    bucket.max_in_flight = 0
+
+    page = _site(client, session.ref.topic_id)
+
+    assert len(page["data"]) == 120
+    assert bucket.max_in_flight > 1, "each turn's body was fetched after the last one"
+
+
+def test_paging_up_by_cursor_walks_every_record_once(client, tmp_path, monkeypatch):
+    """A reader paging up crosses sealed objects: every record once, in order.
+
+    Pages here are far smaller than a sealed object, so the walk crosses
+    several of them — the paging the newest-page tests never exercise, and the
+    one the stop-instead-of-overread change could break with an off-by-one.
+    The rows are taken away first: with the database holding a copy of every
+    sealed run, a read is answered from there and the archive walk under test
+    is never taken.
+    """
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=900)
+    _drop_rows(client, topic)
+    bucket.bodies.clear()
+
+    # 现场打开在最新一段，往上翻：一页比这里读到的更早，所以拼在已读的前面。
+    steps: list[str] = []
+    before = None
+    while True:
+        page = _site(client, topic, limit=50, before=before)
+        steps = [
+            block["meta"]["parts"][0]["text"]
+            for block in page["data"]
+            if block.get("meta", {}).get("parts")
+        ] + steps
+        if not page["has_more"]:
+            break
+        assert page["oldest_id"], "a page that has more must name where to go on"
+        before = page["oldest_id"]
+
+    assert steps == [f"step {i:04d}" for i in range(900)]
+
+
+def test_a_page_the_newest_object_fills_fetches_no_more(client, tmp_path, monkeypatch):
+    """The newest object fills the page, so the walk stops at it.
+
+    A read must not fetch what it will not show: a turn long enough to seal
+    into two objects, read at a page smaller than one, must fetch one. A batch
+    that reaches past the page reddens this.
+    """
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=700)
+    bucket.bodies.clear()
+
+    page = _site(client, topic, limit=50)
+
+    steps = [
+        block["meta"]["parts"][0]["text"]
+        for block in page["data"]
+        if block.get("meta", {}).get("parts")
+    ]
+    assert steps == [f"step {i:04d}" for i in range(650, 700)]
+    assert len(bucket.bodies) == 1, "the page came from one object; more were fetched"
+    assert (
+        json.loads(gzip.decompress(bucket.bodies[0]).decode().splitlines()[0])[
+            "record"
+        ]["message"]["content"][0]["text"]
+        == "step 0512"
+    )

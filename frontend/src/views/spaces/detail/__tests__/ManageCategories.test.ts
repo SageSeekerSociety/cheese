@@ -21,6 +21,14 @@ vi.mock('@/api/spaces', () => ({
   },
 }))
 
+// 「默认队友」那一格自己按需拉的预设清单（走 `useAgentTypes` → `@/api`）。这一页量的是
+// 取数那一枪，预设清单真去问就是一条没人接的请求（`setup-network` 会当场逮住）。
+const listAgentTypes = vi.fn()
+vi.mock('@/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api')>()
+  return { ...actual, listAgentTypes: (...a: unknown[]) => listAgentTypes(...a) }
+})
+
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('vue-i18n', async () => {
@@ -65,6 +73,7 @@ async function mountPage() {
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
+  listAgentTypes.mockReset().mockResolvedValue({ data: [], total: 0 })
   listCategories.mockReset().mockImplementation(async () => ({ categories: CATEGORIES }))
   spaceUpdate.mockReset().mockImplementation(async () => ({ space: {} }))
 })

@@ -62,8 +62,9 @@ class RailCard:
     merge_state: dict | None
     decided_by: str | None
     auto_merge_armed_by: str | None
-    #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`addressing`）。
-    reviewer_handle: str | None = None
+    #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`delivery.addressing`）。
+    #: 一卡多人，所以是**整个集合**：任一人都是被点名的人。
+    reviewer_handles: tuple[str, ...] = ()
     #: 卡读在哪个房间、为哪条活递的（房间自己的卡 `task_id` 为空）——
     #: 「待我处理」按它们把卡认回各自那一行。
     topic_id: uuid.UUID | None = None
@@ -79,7 +80,7 @@ class RailCard:
     version: int | None = None
 
 
-def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
+def _rail_card(card: AcceptCard | Row[Any], reviewer_handles: list[str]) -> RailCard:
     """The entity, or the row of its columns `AcceptCardRepository.listed`
     brings back under the same names — one fold for both."""
     return RailCard(
@@ -94,7 +95,9 @@ def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
         merge_state=card.merge_state if isinstance(card.merge_state, dict) else None,
         decided_by=card.decided_by,
         auto_merge_armed_by=card.auto_merge_armed_by,
-        reviewer_handle=card.reviewer_handle,
+        # 评审人是表里查出来的（`accept_card_reviewer`），不是卡这一行的列；
+        # 一卡多人时整份集合都带上，缺了就是「卡上没有卡」。
+        reviewer_handles=tuple(reviewer_handles),
         topic_id=card.topic_id,
         task_id=card.task_id,
         change_subject=card.change_subject,
@@ -125,13 +128,18 @@ async def listed_cards(
     rows = await AcceptCardRepository(db).listed(
         room_ids=room_ids, task_ids=task_ids, open_statuses=archive.OPEN_CARD_STATUSES
     )
+    # 评审人在 `accept_card_reviewer` 表里（一卡多人），按卡的 id 一次把这一屏
+    # 的卡的评审人查完；缺了就是「卡上没有卡」。
+    handles = await AcceptCardRepository(db).reviewer_handles_for_cards(
+        [row.id for row in rows]
+    )
     by_room: dict[uuid.UUID, RailCard] = {}
     by_task: dict[uuid.UUID, RailCard] = {}
     filed: dict[uuid.UUID, int] = {}
     # Oldest first, so the last write per key is the newest card there, and
     # counting as they come gives the newest card its 「第 N 版」.
     for row in rows:
-        card = _rail_card(row)
+        card = _rail_card(row, handles.get(row.id, []))
         if row.task_id is None:
             by_room[row.topic_id] = card
         else:
@@ -161,7 +169,18 @@ async def latest_cards_and_counts_by_task(
     """`latest_cards_by_task`, plus how many cards each task has filed in all:
     「等审」那一行写「第 N 版」，N 就是它。同一趟查询。"""
     cards, counts = await AcceptCardRepository(db).latest_and_counts_by_task(task_ids)
-    return {task_id: _rail_card(card) for task_id, card in cards.items()}, counts
+    # 评审人在 `accept_card_reviewer` 表里，按**卡的 id** 查 —— `cards` 的键是活的
+    # id（`latest_and_counts_by_task` 按 task_id 归），拿它当卡号去问表一条都查不到。
+    handles = await AcceptCardRepository(db).reviewer_handles_for_cards(
+        [card.id for card in cards.values()]
+    )
+    return (
+        {
+            task_id: _rail_card(card, handles.get(card.id, []))
+            for task_id, card in cards.items()
+        },
+        counts,
+    )
 
 
 #: 轮询隔多久看一次每张卡的 PR（``accept_pr_poll_interval_s``）。镜像的新鲜度
