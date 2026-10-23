@@ -86,6 +86,11 @@ async def on_device_message(
                 }
             )
         return
+    if msg.t == "exec.output":
+        listener = device.exec_listeners.get(msg.id)
+        if listener is not None:
+            listener(msg.stderr)
+        return
     if msg.t in {"execution.data", "execution.result"}:
         pending = device.executor_pending.get(msg.id)
         if pending is None or pending[0].done():
