@@ -334,7 +334,6 @@ async def _silent_through_notices(client, room):
         await _put_down(channel, session)
 
 
-
 def test_a_conversation_whose_card_is_open_is_not_reminded(client, room, monkeypatch):
     """A card has been filed and waits for the reviewer. Where the work stands
     is the card's to say, and the platform must not knock on the session that
@@ -388,7 +387,9 @@ async def _card_speaks(client, room):
             db.add(
                 TopicProgress(
                     conversation_id=topic,
-                    items=[{"id": "1", "subject": "改慢的几处", "status": "in_progress"}],
+                    items=[
+                        {"id": "1", "subject": "改慢的几处", "status": "in_progress"}
+                    ],
                     turn_id=work,
                     updated_at=now,
                 )
