@@ -289,8 +289,15 @@ async def test_an_install_whose_line_cannot_be_written_still_installs(
     async def unwritable(*args, **kwargs):
         raise RuntimeError("the database is away")
 
+    async def install(device, argv, *, on_stderr=None, **kwargs):
+        # Nothing reaches the room here, so there is nothing to wait for.
+        for have in (0, 120 * MB, 240 * MB):
+            on_stderr(_downloaded(have))
+            await asyncio.sleep(0)
+        return INSTALLED
+
     monkeypatch.setattr(install_progress.InstallProgress, "_write", unwritable)
-    _computer(monkeypatch, _downloading(room_frames, room.topic_id, until="done"))
+    _computer(monkeypatch, install)
 
     leased = client.post(room.lease_path, headers=room.agent, json={"env": {}})
 
