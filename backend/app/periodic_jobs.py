@@ -30,6 +30,7 @@ from app.domain.delivery.agent import (
 )
 from app.domain.delivery.ledger import settle_card
 from app.domain.docs_site import periodic as docs_periodic
+from app.domain.integration import periodic as integration_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
@@ -83,6 +84,7 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "assistant routines",
     "assistant memory tidy",
+    "feishu authorization renewal",
     "task deadline sweep",
     "memory dream",
     "platform model roles refresh",
@@ -207,6 +209,7 @@ def periodic_jobs(
         get_runner=get_runner,
         assistants=assistants,
     )
+    integration_periodic.register_periodic_jobs(jobs, sessions=sessions)
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
