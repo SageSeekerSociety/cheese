@@ -61,6 +61,8 @@
               :changes="m.changes ?? []"
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
+              :files="m.handed ?? []"
+              @download-file="(file) => emit('downloadFile', file)"
             >
               <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
               <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
@@ -102,6 +104,7 @@
             :changes="m.changes ?? []"
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
+            :files="m.handed ?? []"
             :sending="sendingProposal"
             @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
             @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -111,6 +114,7 @@
             @jump="(key) => emit('jump', key)"
             @open-draft="(id) => emit('openDraft', id)"
             @open-task="(id) => emit('openTask', id)"
+            @download-file="(file) => emit('downloadFile', file)"
           >
             <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
             <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
@@ -130,6 +134,7 @@
           :changes="changes"
           :results="results"
           :proposals="proposals"
+          :files="handed"
           :sending="sendingProposal"
           @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
           @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -139,6 +144,7 @@
           @jump="(key) => emit('jump', key)"
           @open-draft="(id) => emit('openDraft', id)"
           @open-task="(id) => emit('openTask', id)"
+          @download-file="(file) => emit('downloadFile', file)"
         >
           <p v-if="!streaming && queued" class="ap__looking">{{ t('tasks.assistant.queued') }}</p>
           <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
@@ -201,6 +207,7 @@
 import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
+import type { AssistantHanded } from '@/stores/agentThread'
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -239,6 +246,8 @@ export interface PanelMessage {
   changes?: PanelChange[]
   results?: PanelResult[]
   proposals?: PanelProposal[]
+  /** 芝士交给人的文件。 */
+  handed?: AssistantHanded[]
 }
 
 /** 要随下一个问题交给芝士的文件。 */
@@ -272,6 +281,8 @@ const props = withDefaults(
     results?: PanelResult[]
     /** 这一轮替人起草、等人确认的消息和任务。 */
     proposals?: PanelProposal[]
+    /** 这一轮交给人的文件。 */
+    handed?: AssistantHanded[]
     /** 正在发出的那一件。 */
     sendingProposal?: number | null
     /** 空对话上面那一行（芝士读了什么）；空串就不显示。 */
@@ -300,6 +311,7 @@ const props = withDefaults(
     changes: () => [],
     results: () => [],
     proposals: () => [],
+    handed: () => [],
     sendingProposal: null,
     context: undefined,
     greeting: undefined,
@@ -329,6 +341,7 @@ const emit = defineEmits<{
   openTask: [taskId: number]
   attach: [files: File[]]
   removeFile: [index: number]
+  downloadFile: [file: AssistantHanded]
 }>()
 
 const { t } = useI18n()

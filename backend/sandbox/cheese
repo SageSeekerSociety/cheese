@@ -1476,7 +1476,8 @@ DELEGATED_TOOLS = ToolTable(
             "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
-            "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间，"
+            "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
+            "library/成绩.xlsx；me 是用户参加的题目和各自的截止时间，"
             "settings 是用户的通知设置。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
@@ -1653,6 +1654,30 @@ DELEGATED_TOOLS = ToolTable(
                 "text": _text("正文"),
             },
             ["action", "name"],
+        ),
+        _tool(
+            "cheese_file_give",
+            "把你电脑上的一份文件交给用户：存进用户的资料库，回答里出现一张文件卡片，用户点了"
+            "就下载。做出来的图、表格、文档、压缩包都这样交，不要只把内容贴进回答。电脑闲置"
+            "一会儿就收掉，上面的东西不留；交出去的文件留在用户的资料库里，换个话题也能用"
+            "（cheese_read library）。",
+            {
+                "path": _text("电脑上的路径，如 out/成绩分布.png"),
+                "name": _text(
+                    "在用户资料库里叫什么，可以带文件夹，如 数据结构/成绩分布.png；默认用原名"
+                ),
+            },
+            ["path"],
+        ),
+        _tool(
+            "cheese_file_to_computer",
+            "把用户资料库里的一份文件放到你的电脑上，用代码处理它（用户附给你的文件也在资料库"
+            "里）。返回它在电脑上的路径。",
+            {
+                "ref": _text("资料库里的编号，如 library/成绩.xlsx"),
+                "path": _text("放到电脑上的哪里；默认工作目录下的 files/，用原名"),
+            },
+            ["ref"],
         ),
         _tool(
             "cheese_web_fetch",
@@ -2005,6 +2030,9 @@ def _read_plan(args: dict) -> dict:
             "path": "/notifications/preferences/agent/read",
             "body": {},
         }
+    if args["ref"].strip().strip("/").split("/", 1)[0] == "library":
+        body = {"ref": args["ref"], "page": page}
+        return {"method": "POST", "path": "/assistant/agent/library", "body": body}
     found = _read_kind(args["ref"])
     if found is None:
         body = {"ref": args["ref"], "page": page}
@@ -3882,13 +3910,13 @@ _CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
 _CHAT_ATTACHMENT_CHUNK_BYTES = 21000
 
 
-def _machine_stdout(host, command, request_id) -> str:
+def _machine_stdout(host, command, request_id, timeout_s: int = 60) -> str:
     invoke = getattr(host, "invoke", None)
     if invoke is None:
-        raise PlatformToolError("这个会话没有可以读文件的机器，发不了附件")
+        raise PlatformToolError("这个会话没有可以读写文件的电脑")
     receipt = invoke(
         {"id": request_id, "tool": "Bash"},
-        {"command": command, "timeout": 60000},
+        {"command": command, "timeout": timeout_s * 1000},
     )
     if "error" in receipt:
         raise PlatformToolError(str(receipt["error"]))
@@ -3931,6 +3959,76 @@ def _read_chat_attachment(host, path, request_id) -> bytes:
     if len(raw) != size:
         raise PlatformToolError(f"{path} 在读取时变了，再试一次")
     return raw
+
+
+#: 一份文件在电脑和存储之间最多传多久。地址本身十几分钟内有效。
+_FILE_TRANSFER_S = 600
+
+
+def _file_give(args: dict, host) -> str:
+    """`cheese_file_give`：先问平台要一个只收这一份的地址，电脑自己把文件传上去，
+    再登记进用户的资料库。字节不经过这一侧，电脑里也不放凭据。"""
+    path = args["path"].strip()
+    quoted = shlex.quote(path)
+    said = _machine_stdout(
+        host, f"if [ -f {quoted} ]; then wc -c < {quoted}; fi", "give-size"
+    )
+    try:
+        size = int("".join(said.split()))
+    except ValueError as exc:
+        raise PlatformToolError(f"电脑上没有这份文件：{path}") from exc
+    if not size:
+        raise PlatformToolError(f"文件是空的：{path}")
+    name = (args.get("name") or "").strip() or path.rstrip("/").rsplit("/", 1)[-1]
+    slot = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/slot",
+            "body": {"name": name.rsplit("/", 1)[-1], "size": size},
+        }
+    )["data"]
+    _machine_stdout(
+        host,
+        f"curl -sSf --max-time {_FILE_TRANSFER_S} -T {quoted} "
+        f"{shlex.quote(slot['url'])} -o /dev/null",
+        "give-put",
+        _FILE_TRANSFER_S + 30,
+    )
+    handed = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/handed",
+            "body": {"upload": slot["upload"], "name": name},
+        }
+    )["data"]
+    return (
+        f"已交给用户：library/{handed['path']}（{handed['bytes']} 字节）。回答里有它的"
+        "文件卡片，回答里不必再贴内容或链接。"
+    )
+
+
+def _file_to_computer(args: dict, host) -> str:
+    """`cheese_file_to_computer`：问平台要这一份的地址，电脑自己取下来。"""
+    link = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/link",
+            "body": {"path": args["ref"]},
+        }
+    )["data"]
+    # 相对路径落在工作目录里，和 read、write、bash 看到的是同一个地方。
+    target = (args.get("path") or "").strip() or (
+        "files/" + link["path"].rsplit("/", 1)[-1]
+    )
+    quoted = shlex.quote(target)
+    _machine_stdout(
+        host,
+        f'mkdir -p "$(dirname {quoted})" && curl -sSf --max-time {_FILE_TRANSFER_S} '
+        f"-o {quoted} {shlex.quote(link['url'])}",
+        "fetch-get",
+        _FILE_TRANSFER_S + 30,
+    )
+    return f"已放到电脑上：{target}（{link['bytes']} 字节）。"
 
 
 def _chat_send(args: dict, host) -> str:
@@ -4047,6 +4145,8 @@ _STEPS = {
         "channel", "where", "title", "text", "members_only"
     ),
     "cheese_web_fetch": _web_fetch,
+    "cheese_file_give": _file_give,
+    "cheese_file_to_computer": _file_to_computer,
     "chat_send": _chat_send,
     "cheese_task": _task,
     "cheese_chat_get": _chat_get,

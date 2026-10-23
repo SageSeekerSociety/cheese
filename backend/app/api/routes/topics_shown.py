@@ -393,7 +393,7 @@ async def save_shown_to_library(
         said_in=place.inner_id,
         announce=announce,
         file_store=library,
-        library_files=library_records,
+        library_files=library_records.ProjectLibraries(),
     )
     await db.commit()
     return ok({"name": name})

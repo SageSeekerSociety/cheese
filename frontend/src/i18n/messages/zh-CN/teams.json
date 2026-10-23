@@ -15,7 +15,8 @@
     "downloadDesktop": "下载桌面端",
     "rename": "重命名",
     "renameTitle": "重命名设备",
-    "offlineSince": "离线 · 上次在线 {time}"
+    "offlineSince": "离线 · 上次在线 {time}",
+    "ownershipPersonal": "你名下的设备，只有你自己可以管理"
   },
   "members": {
     "invite": "邀请成员",
@@ -29,7 +30,6 @@
     "inviteMessagePlaceholder": "请输入邀请说明...",
     "cancel": "取消",
     "inviteSubmit": "邀请",
-    "tabMembers": "成员列表",
     "tabRequests": "加入申请",
     "tabInvitations": "已发送邀请",
     "roleOwner": "所有者",
@@ -44,16 +44,11 @@
     "removeTitle": "把「{name}」移出团队？",
     "removeBody": "移出后他不再是团队成员，也不再能访问团队的项目。",
     "emptyMembers": "暂无成员",
-    "emptyMembersHint": "邀请成员加入团队，开始协作",
-    "emptyRequests": "暂无加入申请",
-    "emptyRequestsHint": "没有用户申请加入团队",
     "requestedAt": "申请时间: {time}",
     "approve": "批准",
     "reject": "拒绝",
     "processedBy": "由 {name} 处理",
     "processed": "已处理",
-    "emptyInvitations": "暂无发出的邀请",
-    "emptyInvitationsHint": "点击右上角的\"邀请成员\"发送邀请",
     "invitedAt": "邀请时间: {time}",
     "loadRequestsFailed": "获取加入申请失败",
     "loadInvitationsFailed": "获取已发送邀请失败",
@@ -79,7 +74,9 @@
       "declined": "已拒绝",
       "canceled": "已取消",
       "unknown": "未知"
-    }
+    },
+    "actions": "{name} 的操作",
+    "cancelInvitation": "撤回"
   },
   "pending": {
     "myRequests": "我发起的申请",
@@ -159,14 +156,45 @@
     "ownSubtitle": "你名下的项目。每个项目里和芝士一起完成任务，可以在项目里另外邀请人。"
   },
   "docs": {
-    "new": "新建文档",
-    "empty": "暂无文档",
-    "mine": "我的文档",
-    "ofTeam": "{name}的文档",
+    "mine": "我的资料库",
+    "ofTeam": "{name}的资料库",
     "deleteTitle": "删除「{name}」",
     "deleteBody": "删除后无法恢复，修改记录和评论一起删除。",
-    "delete": "删除",
-    "loadFailed": "文档加载失败",
-    "newFailed": "新建文档失败"
+    "delete": "删除"
+  },
+  "library": {
+    "intro": "团队成员共用的文档和文件",
+    "introPersonal": "你的文档和文件。附给芝士的文件和芝士发送给你的文件也保存在这里",
+    "room": "已用 {used}，共 {total}"
+  },
+  "settings": {
+    "overlay": "团队设置",
+    "close": "关闭设置",
+    "closeHint": "关闭设置（Esc）",
+    "back": "返回设置",
+    "groups": {
+      "team": "团队",
+      "resources": "资源"
+    },
+    "profile": "基本信息",
+    "profileLede": "别人在团队主页和邀请里看到的样子",
+    "transferAndDisband": "转让与解散",
+    "leave": "退出团队",
+    "unsaved": "有未保存的修改",
+    "revert": "撤销",
+    "joinTitle": "加入方式",
+    "resetLink": "重置链接",
+    "linkHint": "拿到链接的人登录后可以找到并加入这个团队。重置后旧链接立即失效，已加入的成员不受影响",
+    "approvalHint": "开启后，申请由所有者或管理员批准",
+    "visibility": "谁能找到",
+    "stealthHint": "搜不到，只有拿到团队链接的人能找到",
+    "transferHint": "把所有者交给一位成员，转让后你成为管理员",
+    "disbandHint": "所有成员离开这个团队，无法撤销。团队里的项目要先全部归档",
+    "leaveHint": "退出后看不到这个团队的项目，要回来需要重新加入",
+    "transfer": "转让",
+    "disband": "解散",
+    "leaveAction": "退出",
+    "creditsLedePersonal": "你名下的项目和芝士使用这份额度",
+    "avatarHint": "JPG、PNG、WebP 或 GIF，不超过 2 MB"
   }
 }

@@ -1,7 +1,7 @@
 import type { Component } from 'vue'
 import type { Team } from '@/types'
 
-import { nextTick, reactive } from 'vue'
+import { reactive } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -34,7 +34,6 @@ function mount(
     link: { token: string; approval: boolean } | null
     busy: boolean
     error: string
-    handleError: string
     copied: boolean
   }> = {}
 ) {
@@ -44,7 +43,6 @@ function mount(
       link: { token: 'first', approval: true },
       busy: false,
       error: '',
-      handleError: '',
       copied: false,
       ...overrides,
       team,
@@ -69,7 +67,6 @@ describe('what it draws', () => {
     expect(linkFieldValue()).toBe(`${location.origin}/team-invites/first`)
     expect((screen.getByLabelText('加入需要审批') as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText(/^公开/) as HTMLInputElement).checked).toBe(true)
-    expect((screen.getByLabelText('团队地址') as HTMLInputElement).value).toBe('cheese-core')
   })
 
   it('leaves the link out until one has been read back', () => {
@@ -97,12 +94,6 @@ describe('what it draws', () => {
     expect((screen.getByRole('button', { name: '复制链接' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: '重置链接' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByLabelText('加入需要审批') as HTMLInputElement).disabled).toBe(true)
-  })
-
-  it('says what the address cannot be when the page says the last one was rejected', () => {
-    mount({ handleError: '这个地址已被占用' })
-
-    expect(screen.getByText('这个地址已被占用')).toBeTruthy()
   })
 })
 
@@ -137,34 +128,5 @@ describe('what it asks the page to do', () => {
     ;(screen.getByLabelText(/^隐身/) as HTMLInputElement).click()
 
     expect(emitted('setVisibility')).toEqual([['stealth']])
-  })
-
-  it('asks for the address to be saved without the spaces around it', async () => {
-    const { emitted } = mount()
-
-    await fireEvent.update(screen.getByLabelText('团队地址'), ' zhishi ')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    expect(emitted('saveHandle')).toEqual([['zhishi']])
-  })
-
-  it('keeps an untouched address unsavable', () => {
-    mount()
-
-    expect((screen.getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(true)
-  })
-})
-
-describe('the address draft', () => {
-  it('follows the team onto a new address of its own accord', async () => {
-    const team = makeTeam()
-    mount({ team })
-
-    await fireEvent.update(screen.getByLabelText('团队地址'), 'half-typed')
-    team.handle = 'zhishi'
-    await nextTick()
-
-    expect((screen.getByLabelText('团队地址') as HTMLInputElement).value).toBe('zhishi')
-    expect((screen.getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
