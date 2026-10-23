@@ -116,3 +116,4 @@ covers:
 - **暂停不补、恢复不补。** `resume` 从下一个未来时刻接着算（`_activate` 里 `next_after(…, now)`），中间空过的时段不会被回填。
 - **改了就按新的跑。** `update` 改一条 `active` 的规则会重新算 `next_run_at`，没有人再确认一次；`revision` 加一，已经派出去的执行行留的还是当时那个版本。
 - **契约测试看着 `cheese_*` 工具面。** `backend/sandbox/cheese` 里的工具表和后端是两份，双方不一致由 `backend/tests/contract/` 拦下（同一形状的约束见 `MACHINE_PROFILES`）。
+- **花费不写规则表，每次问账本。** 一条规则的花费是它的轮次们扣掉的额度之和（`service/spend.py`）：账本按轮次记（`resource_usage.turn_id` 就是 `RoutineRun.turn_id`），对它们求和即可。规则表上加一列累计就有第二个数要在每次结算时记得更新。求 credits 时**不能**套 `MODEL_CALLS` —— 那个过滤说的是「算不算一次模型调用」，而网页搜索那几行没有 token 也照样扣点数，团队额度页算的也是这个口径。窗口（`month_start` / `month_end`）由调用方传进来，这一域不自己算一个「月」。
