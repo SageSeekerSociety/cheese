@@ -157,8 +157,9 @@ watch(
         <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
         <span v-if="!props.compact" class="help-entry__label">{{ t('navigation.feedback.label') }}</span>
         <!-- 和通知铃铛同一个呈现（`v-badge` 的点）。`v-if` + `:model-value` 一起写是照
-             铃铛那一处来的：Vuetify 的点在 `model-value` 为真时才画。 -->
-        <v-badge v-if="hasUnread" color="error" floating dot :model-value="true" />
+             铃铛那一处来的：Vuetify 的点在 `model-value` 为真时才画。
+             Amber (`primary` = --accent): design-system §1.6 gives unread markers amber; red means an error. -->
+        <v-badge v-if="hasUnread" color="primary" floating dot :model-value="true" />
       </v-btn>
     </template>
 
@@ -172,11 +173,20 @@ watch(
         @click="item.click?.()"
       >
         <v-list-item-title>{{ item.label }}</v-list-item-title>
-        <!-- The entry's badge (same colour) with the count; the row's aria-label already says it.
-             Ink is `background`, not Vuetify's automatic white: white on the dark theme's
-             lighter red is 3.2:1, `background` is 4.5:1 light / 5.7:1 dark. -->
+        <!-- The entry's badge (same amber) with the count; the row's aria-label already says it.
+             Ink is --inverse-surface, as on .side-nav__count: Vuetify's automatic white on
+             amber is 2.7:1; this is 5.8:1 light / 5.6:1 dark. Both colours are CSS variables
+             on purpose: a theme name (`primary`) becomes the `bg-primary` class, whose
+             `!important` on-primary ink overrides `text-color`. -->
         <template v-if="item.count" #append>
-          <v-badge color="error" text-color="background" inline :content="item.count" :max="99" aria-hidden="true" />
+          <v-badge
+            color="var(--accent)"
+            text-color="var(--inverse-surface)"
+            inline
+            :content="item.count"
+            :max="99"
+            aria-hidden="true"
+          />
         </template>
       </v-list-item>
     </v-list>

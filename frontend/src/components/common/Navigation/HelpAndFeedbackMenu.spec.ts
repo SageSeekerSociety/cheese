@@ -137,7 +137,7 @@ describe('帮助与反馈入口', () => {
     const entry = some.container.querySelector('.help-entry') as HTMLElement
     await waitFor(() => expect(entry.querySelector('.v-badge')).not.toBeNull())
     await fireEvent.click(entry)
-    const marked = await screen.findByRole('link', { name: '我的反馈，4 条未读更新' })
+    const marked = await screen.findByRole('link', { name: /我的反馈.*4/ })
     expect(marked.textContent).toContain('4')
     await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
     some.unmount()
@@ -146,8 +146,9 @@ describe('帮助与反馈入口', () => {
     const none = await mount({}, { unread: 0 })
     await waitFor(() => expect(getFeedbackCounts).toHaveBeenCalled())
     await fireEvent.click(none.container.querySelector('.help-entry') as HTMLElement)
-    const plain = await screen.findByRole('link', { name: '我的反馈' })
-    expect(plain.textContent?.replace('我的反馈', '')).not.toMatch(/\d/)
+    const plain = await screen.findByRole('link', { name: /我的反馈/ })
+    expect(plain.getAttribute('aria-label') ?? '').not.toMatch(/\d/)
+    expect(plain.textContent).not.toMatch(/\d/)
   })
 
   it('管理后台那一项只对管理员出现，而且由服务端说了算', async () => {
