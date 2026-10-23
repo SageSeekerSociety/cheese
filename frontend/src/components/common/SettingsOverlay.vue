@@ -5,6 +5,10 @@
 // 和全站的返回同款（无底无框、同一个箭头），只是这颗点了关掉整层，不下去别的页。
 // 手机上是整屏：先是目录，点进一项是那一页，左上角返回目录；在目录上返回就是关掉。
 //
+// 桌面版 macOS 的红黄绿三颗是系统画在页面**上面**的：这一层整屏盖住了为它们让位的
+// app 壳顶栏，所以自己也要让（`--window-buttons-inset`，style.css），不然 ← 正好在
+// 三颗底下。
+//
 // 这一层不是弹窗：它有自己的地址，每一项是一条路由，刷新、分享链接都照旧。关掉去
 // 哪由用这个外框的那一级决定（lib/settingsReturn），这里只发 `close`。
 //
@@ -21,7 +25,6 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
-import { titleBarOverlay } from '@/lib/desktopApp'
 
 export interface SettingsItem {
   key: string
@@ -61,7 +64,6 @@ defineSlots<{
 }>()
 
 const { mdAndUp } = useDisplay()
-const titleBarInset = titleBarOverlay()
 
 const activeItem = computed(() => {
   for (const group of props.groups) {
@@ -168,7 +170,6 @@ useFocusReturn(ref(true))
         </div>
         <BaseButton
           class="so__close"
-          :class="{ 'so__close--window-buttons': titleBarInset }"
           icon="mdi-arrow-left"
           kind="ghost"
           size="sm"
@@ -375,14 +376,10 @@ useFocusReturn(ref(true))
 .so__close {
   position: absolute;
   top: calc((48px - 40px) / 2);
-  left: 24px;
+  /* 桌面版 macOS 把三颗窗口按钮画在页面左上角（见 style.css 的 --window-buttons-inset）：
+     这一层整屏盖住了为它们让位的壳顶栏，所以自己让。别处那个值恒为 0，max() 取的就是 24。 */
+  left: max(24px, var(--window-buttons-inset));
   z-index: var(--z-raised);
-}
-
-/* macOS draws its traffic lights over the page at the left edge. Keep this
-   arrow in the same 72px content start as the app's regular top bar. */
-.so__close--window-buttons {
-  left: 72px;
 }
 
 /* 手机：整屏，一条顶栏加下面会滚的一块。 */
@@ -398,6 +395,8 @@ useFocusReturn(ref(true))
      栏自己长高那一截（`.so__phone` 跟着往下让同一截）。桌面上 `env()` 是 0。 */
   height: calc(52px + env(safe-area-inset-top, 0px));
   padding: env(safe-area-inset-top, 0px) 8px 0;
+  /* 桌面版 macOS 里那条 ← 也要让开三颗窗口按钮；别处是 8px，等于原来的左内距。 */
+  padding-inline-start: max(8px, var(--window-buttons-inset));
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }

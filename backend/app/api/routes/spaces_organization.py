@@ -57,6 +57,7 @@ from app.api.space_payloads import (
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.space.services import SpaceService
@@ -119,7 +120,11 @@ async def list_space_categories(
     cats = await service.list_categories(
         space_id=space_id, include_archived=includeArchived
     )
-    items = [_category_to_api_model(c) for c in cats]
+    # 私有指导只对这块板的管理员可见（#944 第二种可见性）：成员读到的是公开那一份。
+    may_manage = auth_user.user_id > 0 and await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    items = [_category_to_api_model(c, include_private=may_manage) for c in cats]
     return ok({"categories": items})
 
 
@@ -141,8 +146,10 @@ async def create_space_category(
         description=payload.description,
         display_order=payload.display_order,
         actor_user_id=auth_user.user_id,
+        # 项目集级默认队友 (#944)：与 PATCH 同一条入口语义。
+        default_role=payload.default_role,
     )
-    return ok({"category": _category_to_api_model(category)})
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.patch(
@@ -170,8 +177,10 @@ async def patch_space_category(
         description=payload.description,
         display_order=payload.display_order,
         archived=archived,
+        # 项目集级默认队友 (#944)：整键语义 —— 省掉 = 不动，空串 = 清掉这一格。
+        default_role=payload.default_role,
     )
-    return ok({"category": _category_to_api_model(category)})
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.get(
@@ -186,11 +195,15 @@ async def get_space_category(
     db=Depends(get_db),
 ) -> dict:
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    _ = auth_user
     category = await service.get_category_detail(
         space_id=space_id, category_id=category_id
     )
-    return ok({"category": _category_to_api_model(category)})
+    may_manage = auth_user.user_id > 0 and await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    return ok(
+        {"category": _category_to_api_model(category, include_private=may_manage)}
+    )
 
 
 @router.delete(
@@ -228,7 +241,7 @@ async def archive_space_category(
         archived=True,
         actor_user_id=auth_user.user_id,
     )
-    return ok({"category": _category_to_api_model(category)})
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.delete(
@@ -248,7 +261,7 @@ async def unarchive_space_category(
         archived=False,
         actor_user_id=auth_user.user_id,
     )
-    return ok({"category": _category_to_api_model(category)})
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.get(

@@ -185,6 +185,14 @@ class RoutineRun(UuidPk, Base):
     turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     outputs: Mapped[list] = mapped_column(JSONB, default=list)
+    #: The feedback this run handed to its teammate (a list of uuid strings),
+    #: for a rule whose spec carries `feedback_batch`; empty otherwise. The
+    #: triage selection skips what an earlier run of the same rule handed out,
+    #: so a report is batched once — and a run that failed, or never started,
+    #: does not count (see `routine/service/firing.py`).
+    feedback_offered: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default="[]"
+    )
     error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(

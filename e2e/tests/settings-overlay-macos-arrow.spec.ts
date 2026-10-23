@@ -31,8 +31,10 @@ import SettingsOverlay from '/src/components/common/SettingsOverlay.vue';
 import vuetify from '/src/plugins/vuetify.ts';
 import i18n,{setLocale} from '/src/i18n/index.ts';
 import '/src/style.css';
+import {markTitleBarOverlay} from '/src/lib/desktopApp.ts';
 setLocale('zh-CN');
 ${overlay ? "window.__CHEESE_APP__={titleBar:'overlay'};" : ''}
+markTitleBarOverlay();
 window.fixture={closed:0};
 // 一屏装不下的内容：主滚动区真的滚得动，「滚了按钮还钉着」这条才有意义。
 const body='<p style=\"height:2400px\">这一页的内容</p>';

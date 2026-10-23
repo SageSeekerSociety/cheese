@@ -11,9 +11,14 @@ module imports the two back — the rows it returns have to be that shape, not a
 second copy of it.
 """
 
+import asyncio
 import base64
 import binascii
+import json
+import os
 import re
+import shutil
+import time
 import uuid
 
 from fastapi import APIRouter
@@ -25,10 +30,11 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import require_role
 from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import Page, ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
+from app.domain import skill_library as native_skills
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.models import Block, BlockKind
@@ -54,6 +60,7 @@ from app.domain.notice_meta import (
 from app.domain.project_permissions import Permission
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
+from app.domain.project_skill.repo_to_skill import draft_chat, repo_to_skill
 from app.domain.project_skill.service import ProjectSkillService
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
@@ -360,8 +367,14 @@ async def preview_import(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
-    lay it out for a manager to look over. Nothing is saved."""
+    """Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay
+    it out for a manager to look over. Nothing is saved.
+
+    A GitHub folder that already holds a ``SKILL.md`` is read as it is; any other
+    repository is turned into a draft from its README and entry files
+    (``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,
+    so 「预览 → 保存」 downstream does not know the difference.
+    """
     actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
     await MemberService(db).require(project_id, actor, Permission.edit_settings)
     if body.content:
@@ -373,7 +386,7 @@ async def preview_import(
             raise ValidationError(say("skillImportUnreadable")) from exc
         read = importer.read_upload(body.filename, data)
     elif body.url.strip():
-        read = await importer.read_github(body.url)
+        read = await repo_to_skill(body.url, lambda: draft_chat(db))
     else:
         raise ValidationError(say("skillImportNothing"))
     return ok(read.to_json())
@@ -450,6 +463,11 @@ async def update_skill(
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
     pending = row.state == "draft"
+    if not by_agent:
+        # Rewriting a method changes what every later session follows, and the
+        # method may be another member's -- a manager decides that. A teammate's
+        # edit stays a proposal for a person to confirm instead (`by_agent`).
+        await MemberService(db).require_manager(row.project_id, actor)
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
@@ -561,6 +579,9 @@ async def delete_skill(
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillDelete"))
+    # Deleting takes the method away from every later session, and it may be
+    # another member's; a manager decides that.
+    await MemberService(db).require_manager(row.project_id, actor)
     project_id = row.project_id
     service = ProjectSkillService(db)
     if row.state == "draft":
@@ -570,3 +591,193 @@ async def delete_skill(
     await service.publish(project_id)
     await _changed(row)
     return ok({"deleted": str(skill_id)})
+
+
+# --- The skill panel: what a teammate carries, and what a room can switch on ---
+#
+# Two shapes of the same catalog. The shipped skills (`sandbox/skills`) already
+# reach every executor, so a name here is only a promise that the turn's prompt
+# will carry that skill's body (`agent/turn/intake/preparation.py`). A project's
+# settings edit ONE teammate's `agent_instances.configuration.skills`
+# (`/projects/{id}/skill-catalog`, below); the room-level switch (`topics.skills`)
+# is the older fallback a prompt falls back to when the teammate carries nothing.
+
+
+class TopicSkillsIn(BaseModel):
+    enabled: list[str] = Field(default_factory=list)
+
+
+class SkillCatalogItem(BaseModel):
+    """A shipped skill the platform can put in a prompt: its name and what it
+    does. `enabled` only exists on a room's list — a project's catalog is the
+    same items without the per-room switch."""
+
+    name: str
+    description: str
+
+
+class TopicSkillItem(SkillCatalogItem):
+    enabled: bool
+
+
+class SkillCatalogOut(Page[SkillCatalogItem]):
+    """A project's catalog of shipped skills."""
+
+
+class TopicSkillsCatalogOut(Page[TopicSkillItem]):
+    """A room's catalog: the same items, each with its own switch."""
+
+
+class TopicSkillsOut(BaseModel):
+    """What a room switched on, after unknown names were dropped."""
+
+    enabled: list[str]
+
+
+class SkillHealthOut(BaseModel):
+    """Whether a skill can run right now, and why not when it cannot."""
+
+    status: str
+    detail: str
+
+
+def _platform_catalog() -> list[dict]:
+    """The shipped skills whose guidance can actually be put in a prompt — a name
+    with no `SKILL.md` on disk (`cheese-docs`, built by composition) is left out:
+    a socket that lights up and does nothing is worse than no socket."""
+    out: list[dict] = []
+    for name in native_skills.shipped_skill_names():
+        doc = native_skills.native_skill_doc(name)
+        if doc is None:
+            continue
+        out.append({"name": name, "description": doc[0]})
+    return out
+
+
+@router.get("/topics/{topic_id}/skills", **typed_response(TopicSkillsCatalogOut))
+async def list_topic_skills(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    enabled = set(place.room.skills or [])
+    items = [{**s, "enabled": s["name"] in enabled} for s in _platform_catalog()]
+    return ok(page(items, len(items)))
+
+
+@router.get("/projects/{project_id}/skill-catalog", **typed_response(SkillCatalogOut))
+async def project_skill_catalog(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The shipped skills a teammate in this project can be armed with. Project,
+    not room: which teammate carries what is a project setting (and only a
+    manager may change it — `projects_agents.py`)."""
+    await _in_project(db, resolver, project_id, None)
+    items = _platform_catalog()
+    return ok(page(items, len(items)))
+
+
+@router.put(
+    "/topics/{topic_id}/skills",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TopicSkillsOut),
+)
+async def set_topic_skills(
+    topic_id: uuid.UUID,
+    body: TopicSkillsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    # Only names the platform can actually hand this room: an unknown one would
+    # ride the prompt as a promise nothing backs (`native_skill_bodies`).
+    known = {s["name"] for s in _platform_catalog()}
+    enabled = list(dict.fromkeys(n for n in body.enabled if n in known))
+    place.room.skills = enabled or None
+    await db.commit()
+    return ok({"enabled": enabled})
+
+
+# --- Is this skill runnable right now? ----------------------------------------
+#
+# A switch that says "on" while the tool it names cannot run is worse than no
+# switch. Only Wolfram has a real probe (`scripts/wolfram_mcp.py health`, which
+# reaches the official MCP); the rest answer by their files being present, which
+# is all "loadable" means for a prompt-only skill.
+
+_HEALTH_TTL_S = 300
+_health_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _probe_wolfram() -> dict:
+    # ponytail: 探针在 backend 主机上起一个子进程跑技能自带脚本（上限：宿主要有
+    # uv 且能连到 MCP；探不到就如实说 unavailable/degraded，绝不假装可用）。
+    root = native_skills.native_skill_dir("wolfram")
+    script = root / "scripts" / "wolfram_mcp.py" if root is not None else None
+    if script is None or not script.is_file():
+        return {"status": "unavailable", "detail": "技能文件缺失"}
+    if shutil.which("uv") is None:
+        return {"status": "unavailable", "detail": "未安装 uv"}
+    proc = await asyncio.create_subprocess_exec(
+        "uv",
+        "run",
+        "--quiet",
+        "--script",
+        str(script),
+        "health",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        # 探针跑的是装船目录里的脚本：别让它在平台的技能树里甩下 __pycache__。
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+    except TimeoutError:
+        proc.kill()
+        return {"status": "degraded", "detail": "探针超时"}
+    if proc.returncode != 0:
+        return {"status": "degraded", "detail": "探针执行失败"}
+    try:
+        payload = json.loads(out.decode() or "{}")
+    except ValueError:
+        return {"status": "degraded", "detail": "探针输出无法解析"}
+    reachable = bool((payload.get("wolfram") or {}).get("available"))
+    return {
+        "status": "ok" if reachable else "degraded",
+        "detail": "Wolfram 通道可用" if reachable else "Wolfram 通道不可达",
+    }
+
+
+@router.get("/topics/{topic_id}/skills/{name}/health", **typed_response(SkillHealthOut))
+async def skill_health(
+    topic_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    return await _skill_health(name)
+
+
+@router.get(
+    "/projects/{project_id}/skills/{name}/health", **typed_response(SkillHealthOut)
+)
+async def project_skill_health(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The same probe, asked from a project's settings instead of a room."""
+    await _in_project(db, resolver, project_id, None)
+    return await _skill_health(name)
+
+
+async def _skill_health(name: str) -> dict:
+    if name not in {s["name"] for s in _platform_catalog()}:
+        raise NotFoundError(say("skillUnknown"))
+    now = time.monotonic()
+    cached = _health_cache.get(name)
+    if cached is not None and now - cached[0] < _HEALTH_TTL_S:
+        return ok(cached[1])
+    result = (
+        await _probe_wolfram() if name == "wolfram" else {"status": "ok", "detail": ""}
+    )
+    _health_cache[name] = (now, result)
+    return ok(result)

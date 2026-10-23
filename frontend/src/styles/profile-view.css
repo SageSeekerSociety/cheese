@@ -1,0 +1,410 @@
+/* 个人主页 / 成员页这一页的样式，从 `src/views/ProfileView.vue` 里整块搬来的一节：
+   那个 .vue 顶在自己的行数上限上，只能变短。那边用 `<style scoped src>` 引回来，
+   选择器与作用域一字未改。 */
+
+.profile {
+  --id-w: 232px;
+  --col-gap: 48px;
+
+  max-width: var(--page-w);
+  margin-inline: auto;
+  padding: 48px 16px;
+}
+/* 项目框里：AppPage 已经给了一栏 --page-w 和四周的边距，左栏窄一档。 */
+.profile--in-project {
+  --id-w: 200px;
+  --col-gap: 40px;
+
+  padding: 16px 0;
+}
+.profile--compact {
+  padding: 24px 16px;
+}
+.profile--compact.profile--in-project {
+  padding: 0;
+}
+.profile__grid {
+  display: grid;
+  grid-template-columns: var(--id-w) minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--col-gap);
+}
+.profile--compact .profile__grid {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 32px;
+}
+
+/* ---- 左栏 ---- */
+.profile__id {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.profile__who {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.profile--compact .profile__who {
+  flex-direction: row;
+  align-items: center;
+}
+.profile__names {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.profile__name {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.profile__role {
+  margin-top: 8px;
+}
+.profile__bio {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.profile__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.profile--compact .profile__facts {
+  flex-flow: row wrap;
+  gap: 4px 16px;
+  padding-top: 0;
+  border-top: 0;
+}
+.profile__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.profile__fact .v-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.profile__teams {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.profile__teams a {
+  color: inherit;
+  text-decoration: none;
+}
+.profile__teams a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+/* ---- 右栏 ---- */
+.profile__main {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  min-width: 0;
+}
+.profile__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.profile__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.profile__head h2 {
+  margin: 0;
+}
+.profile__card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.profile__card--pad {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.profile__card--pending {
+  opacity: 0.6;
+}
+.profile__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.profile__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+/* 带的技能：一排插座。窄屏上在自己这一排里横着滑，不把整页顶宽。 */
+.profile__sockets {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 2px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.profile__sockets::-webkit-scrollbar {
+  display: none;
+}
+.profile__socket {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--code-bg);
+}
+.profile__socket-hole {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+}
+.profile__socket-name {
+  font-size: 13px;
+  /* 整颗插座是深底（`--code-bg`），名字必须用配它的那种字色，不能跟着 `--ink`
+     在浅色主题里翻成深字——那样就是深底深字，名字看不见。 */
+  color: var(--code-ink);
+}
+.profile__ink {
+  color: var(--ink);
+}
+.profile__waiting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.profile__active {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.profile__active:hover .profile__ink {
+  text-decoration: underline;
+}
+.profile__empty {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 列表行：项目、笔记、话题共用一种行 */
+.profile__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.profile__row:first-child {
+  border-top: 0;
+}
+a.profile__row:hover {
+  background: var(--fill);
+}
+.profile__row--project {
+  padding-block: 14px;
+}
+.profile--compact .profile__row {
+  min-height: 44px;
+}
+.profile__row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.profile__row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.profile__project-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 项目格子自己就是 UserAvatar（见模板）：尺寸、圆角、底色都由它画，这里只留
+   「在行里不参与伸缩」这一条布局。 */
+.profile__tile {
+  flex: none;
+}
+.profile__spark {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+}
+.profile__spark span {
+  width: 4px;
+  background: var(--muted);
+}
+.profile__topic-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile--compact .profile__topic-title {
+  white-space: normal;
+}
+.profile--compact .profile__row--topic {
+  align-items: flex-start;
+}
+.profile--compact .profile__row--topic .status-dot {
+  margin-top: 7px;
+}
+.profile__row--topic .status-dot {
+  flex: none;
+}
+.profile__topic-project {
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile__topic-count {
+  flex: none;
+  min-width: 64px;
+  text-align: end;
+  white-space: nowrap;
+}
+.profile__topic-when {
+  flex: none;
+  min-width: 72px;
+  text-align: end;
+  white-space: nowrap;
+}
+.profile__private {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.profile__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.profile__link span {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.profile__link:hover span {
+  color: var(--ink);
+}
+
+/* 笔记：删掉的一条先淡出，下面的几条滑上来补位（§9.2）。 */
+.profile__notes {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.profile__row--note {
+  align-items: flex-start;
+  background: var(--surface);
+}
+.note-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.note-leave-active {
+  position: absolute;
+  inset-inline: 0;
+  transition: opacity var(--dur-quick) var(--ease-in);
+}
+.note-leave-to {
+  opacity: 0;
+}
+.note-enter-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.note-enter-from {
+  opacity: 0;
+}
+
+/* ---- 加载中、出错、查无此人 ---- */
+.profile__state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 64px 16px;
+  color: var(--muted);
+}
+.profile__state p {
+  margin: 0;
+}
+.skel {
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
+.skel--avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-pill);
+}
+.profile--compact .skel--avatar {
+  width: 64px;
+  height: 64px;
+}
+.skel--line {
+  width: 60%;
+  height: 18px;
+}
+.skel--name {
+  width: 80%;
+  height: 33px;
+}
+.skel--block {
+  height: 160px;
+  border-radius: var(--radius-lg);
+}
+.skel--heatmap {
+  height: 200px;
+}

@@ -190,7 +190,8 @@
     },
     "patchedDependencies": {
       "@tiptap/y-tiptap@3.0.7": "patches/@tiptap__y-tiptap@3.0.7.patch",
-      "@handlewithcare/prosemirror-suggest-changes@0.1.8": "patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch"
+      "@handlewithcare/prosemirror-suggest-changes@0.1.8": "patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch",
+      "exceljs@4.4.0": "patches/exceljs@4.4.0.patch"
     }
   }
 }

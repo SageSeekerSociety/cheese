@@ -172,7 +172,7 @@ async def _editable_task(db, task_id: int, user_id: int):
 async def _task_as_form(db, task) -> dict:
     """The published 题目 as its edit form starts out."""
     service = TaskService.of(db)
-    model = _task_to_api_model(task)
+    model = _task_to_api_model(task, include_private_teaching=True)
     model["rubric"] = rubric_to_api(await service.list_rubric(task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     return drafts.task_form(model)

@@ -111,8 +111,8 @@ export interface Topic {
   // 有人回复了我、我还没处理：这间房（含名下的支线）里有别人答我或 @ 我的消息，而我没再
   // 打开过它；名下的活不在里面。和 `awaits_me` 同画一盏黄灯（`lib/roomLight.ts`），打开就算处理。
   replied_to_me?: boolean
-  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）；多久算太久由侧栏按当下的钟
-  // 判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
+  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
+  // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
   waits?: MemberWait[]
   // 这间房里**还没恢复**的轮次失败从什么时候开始（后端 `block/waits.py` 的
   // `unresolved_failures`）：这间房自己那条线、它的支线，或者它名下一件还没关的活里
@@ -128,6 +128,7 @@ export interface Topic {
   // 是两档绿。只有 list/get 话题时才带。
   moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
+  //
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
@@ -586,6 +587,7 @@ export interface SpaceDashboard {
 }
 
 // ---- 成员页 / portfolio、个人主页 (spec §1, §7.2, §8.4) ----
+//
 // 这几件搬去了 `./types/profile`：这个文件顶在行数上限上，只能变短。这里只把它们
 // 转出去，`@/cx_types` 对外的名字一个都没变。
 export type {
@@ -780,5 +782,11 @@ export interface ProjectAgent {
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
+  // Bumped on every configuration write; a save sends it back so a stale one is
+  // refused (409) instead of overwriting whoever wrote first.
+  version: number
+  // The handle editing this teammate right now, or null/undefined. A courtesy
+  // read — the refusal that matters comes from `version`.
+  editing?: string | null
   created_at?: string | null
 }

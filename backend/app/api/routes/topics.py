@@ -980,11 +980,11 @@ async def topic_usage(
 _GATE_OUTPUT_TAIL = 2000
 
 
-def _card_snapshot(card: CardRow) -> dict:
+def _card_snapshot(card: CardRow, reviewers: list[str]) -> dict:
     return {
         "id": str(card.id),
         "status": str(card.status),
-        "reviewer": card.reviewer_handle,
+        "reviewer": "、".join(reviewers),
         "decided_by": card.decided_by,
         "decided_at": card.decided_at.isoformat() if card.decided_at else None,
         "note": card.note,
@@ -1040,6 +1040,9 @@ async def topic_status(
     cards = [
         card for card in filed if place.task is None or card.task_id == place.task.id
     ]
+    card_reviewers = await AcceptService(db).reviewer_handles_for_cards(
+        [card.id for card in cards]
+    )
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
@@ -1054,7 +1057,7 @@ async def topic_status(
             },
             "turn": turn,
             "stall": stall,
-            "cards": [_card_snapshot(c) for c in cards],
+            "cards": [_card_snapshot(c, card_reviewers.get(c.id, [])) for c in cards],
             "platform": {
                 "active_turns": runner.active_work_count(),
                 "queued_turns": await runner.project_queue_depth(place.project_id),
