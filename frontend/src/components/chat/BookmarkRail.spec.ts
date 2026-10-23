@@ -15,7 +15,7 @@ vi.mock('@/components/common/AdaptiveMenu.vue', () => ({
     props: ['actions', 'modelValue'],
     emits: ['update:modelValue'],
     template:
-      '<div><button v-for="a in actions" :key="a.key" type="button" @click="$emit(\'update:modelValue\', true); a.onSelect()">{{ a.label }}</button></div>',
+      '<div data-testid="adaptive-menu"><button data-testid="menu-open" @click="$emit(\'update:modelValue\', true)">open</button><button v-for="a in actions" :key="a.key" type="button" @click="$emit(\'update:modelValue\', true); a.onSelect()">{{ a.label }}</button></div>',
   },
 }))
 
@@ -114,9 +114,31 @@ describe('对话左上角的书签条', () => {
     expect(ui.queryByRole('button', { name: '展开书签' })).toBeTruthy()
   })
 
+  it('能改的身份没了时，菜单不会把浮条卡在展开状态', async () => {
+    // The same array both times: a new one would clear the menu through the
+    // chapters watch and hide what this case is about.
+    const rows = [bookmark('b1', '登录')]
+    const ui = await mountOpen(rows, true)
+    await fireEvent.click(ui.getByTestId('menu-open'))
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.getByRole('button', { name: '收起书签' }), '菜单开着时移开不该收起').toBeTruthy()
+
+    // The menu is gone (nothing to rename), so nobody reports it closed; the
+    // rail must still collapse when the pointer leaves.
+    await ui.rerender({
+      chapters: rows,
+      canChapter: false,
+      refs: { mentionNames: {}, topicTitles: {} },
+    })
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.queryByRole('button', { name: '收起书签' })).toBeNull()
+  })
+
   it('没资格改的人没有菜单，点这一行就跳过去', async () => {
     const ui = await mountOpen([bookmark('b1', '登录')], false)
-    expect(ui.queryByRole('button', { name: '书签的操作' })).toBeNull()
+    // The menu hangs off the ⋯ activator; with nothing in it, it must not be
+    // mounted at all, and its one old item (jump) must not come back either.
+    expect(ui.queryByTestId('adaptive-menu')).toBeNull()
     expect(ui.queryByRole('button', { name: '重命名' })).toBeNull()
     expect(ui.queryByRole('button', { name: '取消书签' })).toBeNull()
     // The row itself is the way back to the message.

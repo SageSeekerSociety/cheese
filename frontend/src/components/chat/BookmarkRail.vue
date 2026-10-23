@@ -97,6 +97,14 @@ watch(
     if (editingId.value) cancelRename()
   }
 )
+// 菜单只在能改的时候画。它被卸掉时没有人会再报「菜单关了」，留着那个 id 会让
+// 浮条再也收不起来：移开鼠标、点面板外面都被这两条判定挡回去。
+watch(
+  () => props.canChapter,
+  (can) => {
+    if (!can) menuForId.value = null
+  }
+)
 
 function actions(chapter: ChapterRow): MenuAction[] {
   // 点这一行本来就跳过去了（`bm-rail__jump`），菜单里再放一条「跳转」是同一件事

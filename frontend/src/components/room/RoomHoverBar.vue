@@ -223,13 +223,13 @@ const menuActions = computed<MenuAction[]>(() => {
         ? {
             key: 'unchapter',
             label: t('work.room.chapter.unpin'),
-            icon: 'mdi-bookmark-minus-outline',
+            icon: 'mdi-bookmark',
             onSelect: () => emit('unchapter', block),
           }
         : {
             key: 'chapter',
             label: t('work.room.chapter.pin'),
-            icon: 'mdi-bookmark-plus-outline',
+            icon: 'mdi-bookmark-outline',
             onSelect: () => emit('chapter', block),
           }
     )
