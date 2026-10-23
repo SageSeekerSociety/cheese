@@ -74,7 +74,9 @@ class FileCommentIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str = Field(min_length=1)
+    # 说不长过库里那一列（`document_comments.room_path`，512）；再长的路径本来也
+    # 指不到一份文件，写下去只会撞在数据库上。
+    path: str = Field(min_length=1, max_length=512)
     content: str = Field(default="", max_length=16000)
     quote: str | None = None
     anchor: QuotedContextIn | None = None
