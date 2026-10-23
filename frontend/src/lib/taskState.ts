@@ -101,6 +101,7 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
   Partial<
     Pick<
       RoomTask,
+      | 'progress_state'
       | 'progress_note'
       | 'progress_set_at'
       | 'session_running'
@@ -165,6 +166,9 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   switch (kind) {
     case 'running': {
       if (!live) icon = RUNNING_IDLE_ICON
+      // 那句话和那个时刻只在它报的就是「在做」时属于这一格：它报了在等、卡住，会话又跑
+      // 起来了（后端照会话判成在做），那句说的是在等什么、卡在哪，写在「在做」后面就是假话。
+      if (row.progress_state !== 'working') break
       const time = waitedFor(row.progress_set_at, now)
       line = joined([note, time && t('work.taskState.workedFor', { time })])
       break

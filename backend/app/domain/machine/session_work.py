@@ -59,6 +59,7 @@ from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
+    SANDBOX_REPLACED,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -358,7 +359,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
         },
         "CHEESE_API": api,
         "CHEESE_TOKEN": token,
-        "CHEESE_PROJECT": str(project_id),
+        # Empty for a sandbox in no project (``holder``).
+        "CHEESE_PROJECT": str(project_id or ""),
         "CHEESE_TOPIC": str(topic_id),
         "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
@@ -773,11 +775,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     await db.commit()
     return {
         "target": lease,
-        "token": bind_resource_token(
-            token,
-            resource,
-            session_id=str(session_id),
-            lease_generation=lease["generation"],
+        "token": holder.credential(
+            token, session_id=str(session_id), lease_generation=lease["generation"]
         ),
     }
 
@@ -1149,12 +1148,10 @@ async def _attempt(
             env=env,
             api=api,
             host_api=host_api,
-            namespace=holder.namespace,
-            project_id=holder.project_id,
+            holder=holder,
             # The executor and its progress lines belong to the conversation;
             # its machine and lock to the holder.
             topic_id=row.conversation_id,
-            holder_id=topic_id,
             actor_handle=actor_handle,
             work_resource=work_resource,
             hub=hub,
@@ -1211,10 +1208,8 @@ async def _install(
     env,
     api,
     host_api,
-    namespace,
-    project_id,
+    holder,
     topic_id,
-    holder_id,
     actor_handle,
     work_resource,
     hub,
@@ -1238,14 +1233,15 @@ async def _install(
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
         sessions = AgentSessionService(db)
-        execution_token = bind_resource_token(
-            token, resource, session_id=str(session_id), lease_generation=generation
+        execution_token = holder.credential(
+            token, session_id=str(session_id), lease_generation=generation
         )
+        namespace = holder.namespace
         setup = _executor_env(
             env,
             api=api,
-            token=execution_token,
-            project_id=project_id,
+            token=holder.sandbox_token(execution_token),
+            project_id=holder.project_id,
             topic_id=topic_id,
             author=actor_handle,
             work_resource=work_resource,
@@ -1360,7 +1356,7 @@ async def _install(
                 # before setup starts (above).
                 return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
-        current = await holders.lock_for_work(db, holder_id)
+        current = await holders.lock_for_work(db, holder.id)
         row = await sessions.by_id(session_id, lock=True)
         if (
             row is None
@@ -1392,7 +1388,7 @@ async def _install(
             # Only a room's sessions work on people's own machines.
             await tell_device_owner(
                 db,
-                topic=await TopicService(db).get_or_404(holder_id),
+                topic=await TopicService(db).get_or_404(holder.id),
                 row=row,
                 device=device,
                 lease=target,
@@ -1425,7 +1421,8 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
-        notices = [SANDBOX_LOST] * bool(lost)
+        lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
+        notices = [lost_notice] * bool(lost)
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {

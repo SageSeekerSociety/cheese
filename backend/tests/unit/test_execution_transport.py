@@ -37,6 +37,7 @@ from app.domain.agent.harness.driven.mcp_gateway import Gateway
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release, wire
 from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
+from tests.support.session_runner import standing_runner
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -316,12 +317,24 @@ def central_transport(executor, tmp_path):
     drop = []
     publications = []
     platform_calls = []
+    progress_reports = []
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *_):
             pass
+
+        def do_PUT(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            progress_reports.append(
+                (self.path, self.headers.get("X-Cheese-Run"), payload)
+            )
+            data = json.dumps({"data": payload}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             assert self.headers["X-Cheese-Token"] == "fixture"
@@ -364,6 +377,8 @@ def central_transport(executor, tmp_path):
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    runner = standing_runner("claude-code/4/11")
+    runner_socket = runner.__enter__()
     config = tmp_path / "central.json"
     config.write_text(
         json.dumps(
@@ -388,11 +403,13 @@ def central_transport(executor, tmp_path):
             "CHEESE_TURN": "fixture-turn",
             # The session's model reads pictures (`session_host.with_pictures`).
             "CHEESE_PICTURES": "1",
+            "CHEESE_SESSION_SOCKET": runner_socket,
         },
         log,
     )
     process.publications = publications
     process.platform_calls = platform_calls
+    process.progress_reports = progress_reports
     process.cli_source = Path(target["home"]) / ".cheese/cheese"
     try:
         yield process, clients, drop, work
@@ -400,7 +417,31 @@ def central_transport(executor, tmp_path):
         process.close()
         server.shutdown()
         server.server_close()
+        runner.__exit__(None, None, None)
         log.close()
+
+
+def test_a_task_state_report_names_the_run_its_runner_says_it_is_in(
+    central_transport,
+):
+    """A Claude Code session reporting its task's state says which run it is
+    in, as its runner names it: the platform compares that run, not when the
+    runner's events happened to reach it."""
+    process, _, _, _ = central_transport
+    result = process.call(
+        "tools/call",
+        {
+            "name": "cheese_task_state",
+            "arguments": {"id": "state", "session_id": "fixture", "state": "blocked"},
+        },
+    )
+    assert "deny" not in json.loads(result["content"][0]["text"])
+    [(path, run, body)] = process.progress_reports
+    assert (path, run, body["state"]) == (
+        "/topics/fixture/task/progress",
+        "claude-code/4/11",
+        "blocked",
+    )
 
 
 def test_a_platform_tool_call_that_breaks_is_not_answered_with_a_bare_key(
