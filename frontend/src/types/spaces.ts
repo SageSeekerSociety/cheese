@@ -286,11 +286,13 @@ export type SpaceApplication = {
 }
 
 /**
- * 首页目录里一个空间那一行：id、名字，以及还没过审时是哪一种。过审的空间点进去是
- * 它自己的目录；还在审核或被驳回的，点进去是这份申请。
+ * 首页目录里一个空间那一行：id、名字、头像，以及还没过审时是哪一种。过审的空间点进去
+ * 是它自己的目录；还在审核或被驳回的，点进去是这份申请。
  */
 export type SpaceLink = {
   id: number
   name: string
+  /** 素材 id；没挑过头像就是 null，那一行画按 id 派生的彩色首字母。 */
+  avatarId?: number | null
   review?: 'PENDING' | 'REJECTED'
 }

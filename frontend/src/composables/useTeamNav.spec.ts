@@ -57,6 +57,8 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import HomeSidebar from '@/views/home/HomeSidebar.vue'
 
 const blank = { template: '<div />' }
@@ -133,6 +135,8 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
+  // 名单现在住在全站共用的查询缓存里：上一个用例读到的不能带到这一个。
+  queryClient.clear()
   for (const fn of [
     getMyTeams,
     removeMember,
@@ -150,7 +154,7 @@ beforeEach(() => {
   ])
     fn.mockReset()
   getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
-  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课' }] })
+  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课', avatarId: 9 }] })
   spaceApplications.mockResolvedValue({ items: [] })
 })
 afterEach(cleanup)
@@ -159,8 +163,29 @@ describe('目录的名单', () => {
   it('我所在的团队和我加入的空间都读来就画出来', async () => {
     await mount()
     expect(await screen.findByText('知是开发组')).toBeTruthy()
-    expect(await screen.findByText('数据分析课')).toBeTruthy()
+    const spaceRow = (await screen.findByText('数据分析课')).closest('.v-list-item')
+    expect(spaceRow?.querySelector('.home-nav__mark img')?.getAttribute('src')).toContain('/avatars/9')
     expect(getMyTeams).toHaveBeenCalled()
+  })
+
+  // 从空间或项目回到首页时这块侧栏会卸载重挂。名单要先用上一次的：否则每次回来都
+  // 先从空开始等请求，看起来就是「侧栏又重新加载了一遍」。
+  it('回到首页时先画上一次的名单，后台再刷新', async () => {
+    const first = await mount()
+    await screen.findByText('知是开发组')
+    first.unmount()
+    // 让两份名单都过期：重挂时会去问，但手上那份照样先画。
+    await queryClient.invalidateQueries({ queryKey: keys.myTeams() })
+    await queryClient.invalidateQueries({ queryKey: keys.mySpaces() })
+    let answerTeams: (value: unknown) => void = () => {}
+    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerTeams = resolve)))
+
+    await mount()
+
+    expect(screen.getByText('知是开发组')).toBeTruthy()
+    expect(screen.getByText('数据分析课')).toBeTruthy()
+
+    answerTeams({ teams: [] })
   })
 
   // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
