@@ -218,9 +218,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const switchedTopic = tid !== loadedTopic
     // 第一次读：屏上当时什么都没有，摆骨架。之后一律安静地换。
     const firstRead = !loadedOnce
-    // 打开（或换视角）：先把手上的那一窗画出来，这一帧就有人看的。有缓存时连骨架
-    // 都不摆——它不是「还没读到」，只是旧了几秒。
-    const opening = firstRead || switched
+    // 打开、换视角、换对话：都算「重新开这一格」。前两种先把手上的那一窗画出来，
+    // 这一帧就有人看的——有缓存时连骨架都不摆，它不是「还没读到」，只是旧了几秒。
+    // 换对话必须进来：游标上一个对话的，不能接到新的上面。
+    const opening = firstRead || switched || switchedTopic
     if (opening && errorMsg.value === null) loading.value = true
     if (opening) {
       const held = cachedWindow(tid, author, SITE_PAGE_SIZE)
@@ -269,18 +270,26 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         // 夹到了别处（见 useStickToBottom 的 ScrollAnchor）。
         const anchor = follow ? null : hooks.captureAnchor()
         if (forward !== null) {
+          // 往前读的那一路：只往末尾接，**不碰** reader 的往上翻游标——它整份说的
+          // 都是「上面还有没有」，而这一路从来不动它（`_newer_page` 里 has_more 恒
+          // 为 false、oldest_id 恒为 null）。照抄过来的话，刚从缓存画出来的那一窗
+          // 会当场失去往上翻的能力。
           appendSite(tx.data, follow && !opening)
           capSite()
+          // 空的一页也带着原样的游标（后端把它还回来），追平时手上这个不会丢。
+          if (tx.newest_id !== undefined && tx.newest_id !== null) newestCursor = tx.newest_id
         } else {
+          const reset = switched || firstRead || switchedTopic || hasNewer.value
           transcript.value = mergeSite(tx.data, transcript.value, switched)
+          if (reset) {
+            // 整页：上面有没有、读到哪儿，全以这一页为准。没有 `newest_id`（更旧的
+            // 后端）就置空游标，下一次退回整页读。
+            hasOlder.value = tx.has_more === true
+            olderCursor = tx.oldest_id ?? null
+          }
+          newestCursor = tx.newest_id ?? null
         }
         hasNewer.value = false
-        if (switched || firstRead) {
-          hasOlder.value = tx.has_more === true
-          olderCursor = tx.oldest_id ?? null
-        }
-        // 没有 `newest_id`（更旧的后端）就置空：下一次没有游标可用，退回整页读。
-        newestCursor = tx.newest_id ?? null
         // Follow the tail on every open of a topic's 现场 — that is what "open on
         // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
         if (follow) hooks.scrollToTail()

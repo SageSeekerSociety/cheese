@@ -11,6 +11,10 @@ alone, since this direction says nothing about what is above the window.
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import update
+
+from app.domain.agent.models import AgentTurn
+from app.domain.conversation.models import Conversation
 from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import (
     post_project,
@@ -116,6 +120,52 @@ def test_asking_after_the_newest_record_reads_nothing(client):
 
     assert newer["data"] == []
     assert newer["has_newer"] is False
+    # 空的一页也把原游标还回去：读者追平以后手上不能没有游标，否则下一次只能整页
+    # 重读——正是这一路要消掉的那件事。
+    assert newer["newest_id"] == newest
+
+
+def test_forward_reaches_the_second_of_two_turns_that_started_together(client):
+    """两个启动前的轮次同一时刻开始的，往前读也不能漏掉后一个。
+
+    这一路按游标排，而游标里带着轮次 id：只比时刻的话，从第一个往后读就永远读不到
+    第二个（反过来往上翻会把它读两遍）。"""
+    room = _room(client)
+    seat = room_agent_seat(client, room)
+    start = datetime.now(UTC) - timedelta(hours=2)
+
+    async def add_turns() -> None:
+        async with client.test_request_factory() as db:
+            # 启动前的轮次：没有会话记录，且都在 raw_records_started_at 之前。
+            await db.execute(
+                update(Conversation)
+                .where(Conversation.id == uuid.UUID(room))
+                .values(raw_records_started_at=datetime.now(UTC) - timedelta(hours=1))
+            )
+            for _ in range(2):
+                turn = uuid.uuid4()
+                db.add(
+                    AgentTurn(
+                        id=turn,
+                        conversation_id=uuid.UUID(room),
+                        continuation_id=turn,
+                        author="teammate",
+                        agent_handle=seat,
+                        started_at=start,
+                        stopped_at=start + timedelta(minutes=1),
+                    )
+                )
+            await db.commit()
+
+    client.portal.call(add_turns)
+
+    both = _site(client, room, limit=100)["data"]
+    assert len(both) == 2, both
+    first = both[0]["meta"]["cursor"]
+
+    forward = _site(client, room, limit=100, after=first)["data"]
+
+    assert [b["id"] for b in forward] == [both[1]["id"]], "第二个轮次还在这一路上"
 
 
 def test_a_cursor_that_is_not_one_of_ours_is_refused(client):

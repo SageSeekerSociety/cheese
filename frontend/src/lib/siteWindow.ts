@@ -22,27 +22,43 @@ export interface SiteWindow {
 
 const WINDOWS = new Map<string, SiteWindow>()
 
+/** 这条记录自己的游标（后端每条都带着，往回翻就从这个值接着读）。 */
+function cursorOf(block: Block): string | null {
+  const cursor = (block.meta as { cursor?: unknown } | null | undefined)?.cursor
+  return typeof cursor === 'string' ? cursor : null
+}
+
 function keyOf(topicId: string, author: string | null): string {
   return `${topicId}\u0000${author ?? '*'}`.toString()
 }
 
-/** 这个视角上次手上那一窗；没有（没看过、或换了对话）就是 null。 */
+/** 这个视角上次手上那一窗；没有（没看过、或换了对话）就是 null。
+ *
+ *  打开只画一页：更早的那些（上次往上翻出来的、预取补的那两页）不铺上屏面，否则
+ *  切回来先铺一屏旧历史、再把读者放在错的地方。但**游标要说真话**：画出来这一页的
+ *  头一条就是往回翻的起点，上面还有没有也照实说——不然读者往上翻会漏掉中间那几页。 */
 export function cachedWindow(topicId: string, author: string | null, limit: number): SiteWindow | null {
   const held = WINDOWS.get(keyOf(topicId, author))
   if (!held || held.blocks.length === 0) return null
-  // 只画一页：读者上次往上翻出来的历史不在这里（那是另一件事，翻的时候再读），
-  // 免得切回来先铺一屏旧历史、再把位置算错。
-  const blocks = held.blocks.slice(-limit)
-  return { ...held, blocks, hasMore: held.hasMore || blocks.length < held.blocks.length }
+  const dropped = Math.max(0, held.blocks.length - limit)
+  const blocks = held.blocks.slice(dropped)
+  return {
+    ...held,
+    blocks,
+    hasMore: held.hasMore || dropped > 0,
+    oldestCursor: dropped > 0 ? cursorOf(blocks[0]) : held.oldestCursor,
+  }
 }
 
-/** 把这一窗写回去。只留一页的量：见 `cachedWindow`。 */
+/** 把这一窗写回去。整窗留着（到窗口封顶为止）：往上翻过的那几页也在，回来接着翻
+ *  就不用再读一次；`cachedWindow` 只画最后一页。 */
 export function rememberWindow(topicId: string, author: string | null, window: SiteWindow, limit: number): void {
   if (window.blocks.length === 0) {
     WINDOWS.delete(keyOf(topicId, author))
     return
   }
-  WINDOWS.set(keyOf(topicId, author), { ...window, blocks: window.blocks.slice(-limit) })
+  const kept = window.blocks.slice(-Math.max(limit * 3, limit))
+  WINDOWS.set(keyOf(topicId, author), { ...window, blocks: kept })
 }
 
 /** 测试和换人登录用：整张表清掉。 */

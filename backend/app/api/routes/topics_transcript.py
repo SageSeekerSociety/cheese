@@ -128,7 +128,10 @@ async def _newer_page(
     taken = candidates[:limit]
     # 游标取**交出去的那几条**里的最后一条，不是藏掉平台提醒之后剩下的最后一条：
     # 否则一页全是提醒时读者手上的游标不动，下一次又把同一段读回来。
-    newest = taken[-1]["meta"]["cursor"] if taken else None
+    #
+    # 一条都没有（读者已经追上了）时把进来的那个游标原样还回去：不还的话读者手上
+    # 的游标就被清空了，下一次只能整页重读——正是这一路要消掉的那件事。
+    newest = taken[-1]["meta"]["cursor"] if taken else service.encode_cursor(forward)
     shown = hide_platform_reminders(taken)
     starts = await turn_starts(
         db,

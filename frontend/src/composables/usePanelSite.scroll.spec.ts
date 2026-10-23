@@ -181,6 +181,27 @@ describe('the window from last time', () => {
     await settle()
     // 新的接在末尾，不是把整窗换掉。
     expect(site.transcript.value.map((b) => b.id)).toEqual(['a', 'b', 'c'])
+    // 往前读的这一路不说「上面还有没有」，所以它不该把缓存里的往上翻能力冲掉。
+    expect(site.hasOlder.value, '缓存打开后仍能往上翻').toBe(true)
+    scope.stop()
+  })
+
+  it('keeps the cursor when a refresh brings nothing new', async () => {
+    forgetWindows()
+    rememberWindow('room', null, { blocks: [row('a', 1)], hasMore: false, oldestCursor: null, newestCursor: 'n1' }, 120)
+    // 追平了：这一页是空的，也没有新的游标可给。
+    api.getTranscript.mockResolvedValue(page([], { newest_id: null }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockClear()
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    // 又一次从同一个游标往后读，没有退回整页重读。
+    expect(api.getTranscript.mock.calls[0][1], '空的一页之后手上还有游标').toMatchObject({
+      after: 'n1',
+    })
     scope.stop()
   })
 
