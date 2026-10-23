@@ -272,6 +272,28 @@ describe('the window from last time', () => {
     scope.stop()
   })
 
+  it('never shows the same record twice when paging up past the cursor it held', async () => {
+    // 缓存的游标可能退到一条**更靠后**的行上（画出来的头一条是 socket 换上来的、
+    // 不带游标的那种，见 lib/siteWindow）。从它往回读会把已经画出来的几条再读一遍：
+    // 拼之前必须按 id 去重，不然同一个 id 在列表里出现两次。
+    forgetWindows()
+    const a = row('a', 1)
+    a.meta = { ...a.meta, cursor: 'c-a' }
+    const b = row('b', 2)
+    b.meta = { ...b.meta, cursor: 'c-b' }
+    rememberWindow('room', null, { blocks: [a, b], hasMore: true, oldestCursor: 'c-b', newestCursor: 'n1' }, 1)
+    api.getTranscript.mockResolvedValue(page([a, b], { has_more: false }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    site.onSiteScroll()
+    await settle()
+
+    const ids = site.transcript.value.map((x) => x.id)
+    expect(ids.length, '同一个 id 不该出现两次').toBe(new Set(ids).size)
+    scope.stop()
+  })
+
   it('reads a fresh page again once the window has outgrown its cap', async () => {
     // 窗口涨过封顶：裁掉的是**最新**那一截。读者回到末尾时得整页重读一页最新的把它
     // 接回来——不能再从手上那个游标往后接，那个游标指的是已经被裁出窗口的那一条。

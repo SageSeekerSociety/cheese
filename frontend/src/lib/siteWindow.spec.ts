@@ -38,7 +38,8 @@ describe('the window held for next time', () => {
   it('pages up from the oldest painted row that carries a cursor', () => {
     // socket 换上来的平台记账行不带游标。画出来的第一行正好是它时，不能因此把
     // 「上面还有」连同游标一起丢掉（那会让往上翻整场失效）。退到这一页里最早
-    // 那条**带着游标**的：它已经在屏上，不会漏。
+    // 那条**带着游标**的：它已经在屏上，往回读到的东西会重叠几条，由 reader
+    // 拼之前按 id 去重挡掉，不会漏也不会重。
     const blocks = [row('r0', 0, 'c0'), row('r1', 1, null), row('r2', 2, 'c2')]
     rememberWindow('room', null, { blocks, hasMore: false, oldestCursor: 'c0', newestCursor: 'c2' }, 2)
 
@@ -46,6 +47,7 @@ describe('the window held for next time', () => {
 
     expect(held.blocks.map((b) => b.id)).toEqual(['r1', 'r2'])
     expect(held.hasMore).toBe(true)
+    // 退到 r2 自己的游标：往回读会带上已经画出来的 r2，reader 去重后正好不重不漏。
     expect(held.oldestCursor).toBe('c2')
   })
 

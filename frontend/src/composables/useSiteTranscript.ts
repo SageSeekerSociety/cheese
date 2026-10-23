@@ -119,7 +119,11 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       const el = hooks.scrollRef.value
       beginMeasuredLayout(el)
       const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
-      transcript.value = [...page.data, ...transcript.value]
+      // 按 id 去重再往上拼：这一页的边界是「比游标更早」，和手上那一窗可能重叠（缓存
+      // 的时候游标退到了一条更靠后的行上，见 `lib/siteWindow` 的兜底）。重叠的那几条
+      // 已经在屏上，再拼一遍就是同一 id 出现两次——Vue 的列表会当场炸。
+      const known = new Set(transcript.value.map((b) => b.id))
+      transcript.value = [...page.data.filter((b) => !known.has(b.id)), ...transcript.value]
       hasOlder.value = page.has_more === true
       olderCursor = page.oldest_id ?? null
       // Prepending grows the content ABOVE the viewport; without this the reader
