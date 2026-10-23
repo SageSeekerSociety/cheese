@@ -71,6 +71,12 @@ class _CountingBucket(_Bucket):
         self.bodies: list[bytes] = []
         self.in_flight = 0
         self.max_in_flight = 0
+        self.listings = 0
+
+    async def list_keys(self, prefix: str):
+        self.listings += 1
+        async for key in super().list_keys(prefix):
+            yield key
 
     async def download(self, key: str) -> bytes | None:
         self.in_flight += 1
@@ -129,6 +135,22 @@ def test_the_newest_page_does_not_fetch_the_beginning_of_a_long_turn(
     # The page is the tail of the turn; its first steps are not on screen and
     # must not be fetched (gzip cannot be read from the middle).
     assert '"step 0000"' not in fetched
+
+
+def test_a_page_the_rows_already_hold_never_lists_the_index(
+    client, tmp_path, monkeypatch
+):
+    # Sealed runs keep their rows until the retention sweep, so the newest page
+    # is answerable from the database alone. Listing the bucket costs a round
+    # trip the open panel pays every three seconds; it must not be spent when
+    # the rows have already filled the page.
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=600)
+    bucket.listings = 0
+
+    page = _site(client, topic)
+
+    assert len(page["data"]) == 120
+    assert bucket.listings == 0, "读者要的那一页数据库自己就有"
 
 
 def test_reading_the_same_page_again_keeps_the_sealed_body(

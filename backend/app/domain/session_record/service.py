@@ -645,11 +645,66 @@ async def read(
             seen.add(key)
             found.append(item)
 
-    # The bucket's index survives the database's thirty-day index. Identity and
-    # time bounds in the key let us skip bodies belonging to other turns and
-    # stop opening runs once the page is full. Objects stay private.
+    # The database still holds every record younger than thirty days — a sealed
+    # run keeps its row until the retention sweep — so its rows are read first
+    # and the bucket's index is consulted only when they cannot fill the page.
+    # They are read in the same widening batches the index walk uses: a page
+    # that spans several turns must fetch those bodies together, and one that
+    # already has all it needs must stop opening runs.
+    sealed = None
+    batch: list = []
+
+    async def flush() -> None:
+        nonlocal sealed
+        if not batch:
+            return
+        keys = [r.object_key for r in batch if r.object_key is not None]
+        if keys and sealed is None:
+            sealed = storage or private_storage()
+        bodies = dict(
+            zip(
+                keys,
+                await asyncio.gather(*(sealed_body(sealed, key) for key in keys)),
+                strict=True,
+            )
+        )
+        for row in batch:
+            body = bodies.get(row.object_key) if row.object_key is not None else None
+            if body is not None:
+                opened.add(row.object_key)
+                collect(
+                    await asyncio.to_thread(unpack, body),
+                    row.turn_id,
+                    row.agent_handle,
+                    row.harness,
+                )
+            else:
+                collect(
+                    await open_run(row, storage),
+                    row.turn_id,
+                    row.agent_handle,
+                    row.harness,
+                )
+        batch.clear()
+
+    width = 1
+    async for row in await db.stream_scalars(query):
+        if row.object_key is not None and row.object_key in opened:
+            continue
+        if _page_is_full(found, limit, newest, row.last_at if newest else row.first_at):
+            break
+        batch.append(row)
+        if len(batch) >= width:
+            await flush()
+            width = min(width * 2, SEALED_FETCH_PARALLEL)
+    await flush()
+    # The bucket's index survives the database's thirty-day index: what the
+    # rows no longer hold is still there, under its own key. Skipped when the
+    # rows alone already filled the newest page — nothing older could displace
+    # it, and the listing is a round trip the open panel pays every three
+    # seconds.
     archive = storage or bucket()
-    if archive is not None:
+    if archive is not None and not (newest and len(found) >= limit):
         runs = []
         async for key in archive.list_keys(f"{INDEX_PREFIX}/{conversation_id}/"):
             run = describe(key)
@@ -660,6 +715,8 @@ async def read(
             if after is not None and run["last_at"] < after[0]:
                 continue
             if before is not None and run["first_at"] > before[0]:
+                continue
+            if run["object_key"] in opened:
                 continue
             runs.append(run)
         runs.sort(
@@ -700,14 +757,6 @@ async def read(
             if stopped:
                 break
             width = min(width * 2, SEALED_FETCH_PARALLEL)
-    async for row in await db.stream_scalars(query):
-        if row.object_key in opened:
-            continue
-        if _page_is_full(found, limit, newest, row.last_at if newest else row.first_at):
-            break
-        collect(
-            await open_run(row, storage), row.turn_id, row.agent_handle, row.harness
-        )
     found.sort(key=_key, reverse=newest)
     page = found[:limit]
     cursor = encode_cursor(_key(page[-1])) if len(found) > limit else None
