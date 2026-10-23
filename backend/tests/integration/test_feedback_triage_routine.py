@@ -11,10 +11,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.core.config import settings
-from app.domain.routine.models import Routine
+from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import sweep
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -107,6 +107,26 @@ def _fire(client, routine_id: str) -> Runner:
     return runner
 
 
+def _end_latest_run(client, routine_id: str, status: str) -> None:
+    """Settle the last run as `status`, so the rule may fire again."""
+
+    async def end():
+        async with client.test_request_factory() as session:
+            run = await session.scalar(
+                select(RoutineRun)
+                .where(RoutineRun.routine_id == uuid.UUID(routine_id))
+                .order_by(RoutineRun.created_at.desc())
+                .limit(1)
+            )
+            assert run is not None
+            run.status = status
+            if status == "failed":
+                run.error = "没跑起来"
+            await session.commit()
+
+    client.portal.call(end)
+
+
 def _runs(client, routine_id: str) -> list[dict]:
     r = client.get(f"/routines/{routine_id}/runs", headers=session_auth_headers(DEV))
     assert r.status_code == 200, r.text
@@ -151,19 +171,43 @@ def test_a_report_someone_holds_is_not_handed_out(client, platform_room):
     assert held["display_id"] not in content
 
 
-def test_a_report_a_triage_run_let_go_is_not_handed_out_again(client, platform_room):
-    """查过又放下的不再交回来，更不能占掉真正没人看过的那条的名额。"""
-    looked_at = _report(client, "查过又放下了")
-    free = _report(client, "真正没人碰过")
-    assert _claim(client, DEV, looked_at["display_id"]).status_code == 200
-    assert _release(client, DEV, looked_at["display_id"]).status_code == 200
+def test_a_report_released_by_hand_is_still_handed_out(client, platform_room):
+    """领取再放弃就是没领过：分诊照常把它交出来。"""
+    row = _report(client, "点过领取又放下了")
+    assert _claim(client, DEV, row["display_id"]).status_code == 200
+    assert _release(client, DEV, row["display_id"]).status_code == 200
     rule = _triage_rule(client, platform_room, batch=1).json()["data"]
 
     runner = _fire(client, rule["id"])
 
+    assert row["display_id"] in runner.submitted[0][1]["content"]
+
+
+def test_a_report_an_earlier_run_offered_is_not_offered_again(client, platform_room):
+    """发过一遍的下一轮不再发，也不占掉真正没发过的那条的名额。"""
+    first = _report(client, "第一晚发过的")
+    rule = _triage_rule(client, platform_room, batch=1).json()["data"]
+    assert first["display_id"] in _fire(client, rule["id"]).submitted[0][1]["content"]
+    _end_latest_run(client, rule["id"], "succeeded")
+
+    second = _report(client, "第二晚的新报告")
+    runner = _fire(client, rule["id"])
+
     content = runner.submitted[0][1]["content"]
-    assert looked_at["display_id"] not in content
-    assert free["display_id"] in content
+    assert first["display_id"] not in content
+    assert second["display_id"] in content
+
+
+def test_a_run_that_failed_hands_its_batch_out_again(client, platform_room):
+    """那次没跑起来，等于没发出去：下一轮照常发。"""
+    row = _report(client, "发过但那次没跑起来")
+    rule = _triage_rule(client, platform_room, batch=1).json()["data"]
+    assert row["display_id"] in _fire(client, rule["id"]).submitted[0][1]["content"]
+
+    _end_latest_run(client, rule["id"], "failed")
+    runner = _fire(client, rule["id"])
+
+    assert row["display_id"] in runner.submitted[0][1]["content"]
 
 
 def test_nothing_waiting_wakes_nobody_and_tells_nobody(client, platform_room):
