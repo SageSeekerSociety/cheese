@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import lifecycle, runner
 
@@ -426,11 +427,6 @@ def file_entry(entry: dict) -> dict | None:
 
 #: How often the runner looks at its stuck-work clocks (``lifecycle.Watchdog``).
 WATCH_S = 5.0
-#: How long a session a clock has called stuck is given to end the work itself
-#: after being interrupted. Past this the runner reports the ending for it:
-#: a build that stopped answering will not, and until something does the work
-#: stays open — and so does every clock that reads it as still running.
-STUCK_GRACE_S = 60.0
 #: How long a runner whose agent process ended keeps answering, so the
 #: platform can take the events that say so. What it has not taken by then is
 #: still in the journal, and the next runner on this state delivers it.
@@ -903,48 +899,8 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.stuck = fired
-            print(
-                f"work {self.work} stuck ({fired}); interrupting it",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.helpers.append(asyncio.ensure_future(self._interrupt_stuck()))
-            self.helpers.append(
-                asyncio.ensure_future(self._settle_after_grace(STUCK_GRACE_S))
-            )
+            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
         self._watching()
-
-    async def _interrupt_stuck(self) -> None:
-        # A control the session did not answer changes nothing it was doing;
-        # the clock looks again, and the work ends when the session does.
-        with contextlib.suppress(Exception):
-            await self.control({"subtype": "interrupt"})
-
-    async def _settle_after_grace(self, delay: float) -> None:
-        """What the session did not do itself after being interrupted, the
-        runner does for it. Waited out beside the interrupt, not after it: an
-        answer nobody will give must not hold the ending back."""
-        await asyncio.sleep(delay)
-        if self.working and self.stuck is not None:
-            self._settle_stuck()
-
-    def _settle_stuck(self) -> None:
-        """Report the ending of work the session a clock called stuck did not
-        end. The work is over either way: nobody else is left to say so, and
-        until a result is reported the platform keeps counting it as running.
-        The process goes with it — a build that could not answer an interrupt
-        is no use to the next work, and the next runner starts one."""
-        clock = self.stuck
-        self._drop_unread(lifecycle.STUCK)
-        self._finish(
-            failure={"kind": lifecycle.STUCK, "stuck": clock}, text="", usage=None
-        )
-        # Nothing on the session moves any more, so nothing else would wake the
-        # platform to read this: said here, as an exit is (``_report_exit``).
-        self.announce()
-        if self.process is not None and self.process.returncode is None:
-            self.process.terminate()
 
     # --- stdout --------------------------------------------------------------
 
