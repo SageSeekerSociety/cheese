@@ -134,6 +134,8 @@ describe('the pages above the window', () => {
     // The page above the first one came in without the reader asking for it, and
     // it is on screen above what they opened on.
     expect(site.transcript.value.map((b) => b.id)).toEqual(['z', 'a', 'b'])
+    // 它取的是**更早**那一页：从第一页的最老一条往前读，不是重读最新一页。
+    expect(api.getTranscript.mock.calls[1][1]).toMatchObject({ before: 'c1' })
     expect(site.loadingOlder.value, '预取是安静的，不摆「加载更早的现场…」').toBe(false)
     // 他在末尾，往上多出一页不该把他挪走。
     expect(box.scrollTop).toBe(1500)
