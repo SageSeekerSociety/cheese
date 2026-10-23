@@ -99,7 +99,7 @@ def test_the_newest_page_does_not_fetch_the_beginning_of_a_long_turn(
     assert len(page["data"]) == 120
     bodies = [gzip.decompress(body).decode() for body in bucket.bodies]
     fetched = "".join(bodies)
-    assert "step 1500" in fetched or "step 1535" in fetched, "the page's own steps"
+    assert "step 1199" in fetched, "the page's own steps"
     # The page is the tail of the turn; its first steps are not on screen and
     # must not be fetched (gzip cannot be read from the middle).
     assert '"step 0000"' not in fetched
