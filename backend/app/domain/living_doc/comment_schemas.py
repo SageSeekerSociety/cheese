@@ -42,7 +42,7 @@ class CommentIn(BaseModel):
     quote: str | None = None
 
 
-class CommentOut(BaseModel):
+class ThreadCommentOut(BaseModel):
     """One comment as the client reads it. ``anchor`` is where a thread on a
     room file points; a document's thread carries none, its own text does."""
 
@@ -56,7 +56,7 @@ class CommentOut(BaseModel):
     notified: list[str] = Field(default_factory=list)
 
 
-class CommentOutsideOut(BaseModel):
+class ThreadOutsideOut(BaseModel):
     """The people a comment @s who cannot open the subject, said to its writer
     alone and never stored (the same shape a message's is)."""
 
@@ -68,21 +68,21 @@ class CommentOutsideOut(BaseModel):
 
 class ThreadReplyOut(BaseModel):
     sequence: int
-    comment: CommentOut
+    comment: ThreadCommentOut
 
 
-class CommentThreadOut(BaseModel):
+class ThreadOut(BaseModel):
     """One thread: its opening comment, its replies, and the revision a writer
     must have read before changing it."""
 
-    comment: CommentOut
+    comment: ThreadCommentOut
     revision: int
     state: str
     replies: list[ThreadReplyOut] = Field(default_factory=list)
     #: Whom it named who could not open the subject — the writer's answer only.
-    mentioned_outside: CommentOutsideOut | None = None
+    mentioned_outside: ThreadOutsideOut | None = None
 
 
-class CommentThreadListOut(BaseModel):
-    data: list[CommentThreadOut]
+class ThreadListOut(BaseModel):
+    data: list[ThreadOut]
     total: int

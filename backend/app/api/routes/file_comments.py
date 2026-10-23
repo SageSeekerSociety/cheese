@@ -37,14 +37,15 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.mentions import announce_comment_mentions, comment_notified
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import QuotedContextIn
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc.comment_schemas import (
-    CommentThreadListOut,
-    CommentThreadOut,
     ReplyIn,
+    ThreadListOut,
     ThreadMutation,
+    ThreadOut,
 )
 from app.domain.living_doc.comments import (
     CommentThreads,
@@ -52,6 +53,7 @@ from app.domain.living_doc.comments import (
     OnRoomFile,
     comment_out,
 )
+from app.domain.mentions import canonicalize_refs
 from app.domain.project.room_files import clean_artifact_path
 from app.domain.project.services import refuse_writes_if_archived
 from app.domain.project_permissions import Permission
@@ -124,6 +126,14 @@ def _check_anchor(anchor, path: str) -> dict | None:
     return stored
 
 
+async def _as_stored(db, place: Place, content: str) -> str:
+    """A comment's text as stored: a friendly @名字 becomes the person's
+    ``<@handle>`` token, as every other text a person writes does."""
+    if place.project_id is None:
+        return content
+    return await canonicalize_refs(db, place.project_id, content, team=project_team)
+
+
 async def _with_notified(db, described: dict) -> dict:
     comments = [described["comment"]] + [r["comment"] for r in described["replies"]]
     told = await comment_notified(db, [uuid.UUID(c["id"]) for c in comments])
@@ -148,7 +158,7 @@ async def _announce(db, place: Place, path: str, comment) -> object:
 
 
 @router.get(
-    "/{topic_id}/files/comments/threads", **typed_response(CommentThreadListOut)
+    "/{topic_id}/files/comments/threads", **typed_response(ThreadListOut)
 )
 async def list_file_threads(
     topic_id: uuid.UUID,
@@ -172,7 +182,7 @@ async def list_file_threads(
 @router.post(
     "/{topic_id}/files/comments",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(CommentThreadOut),
+    **typed_response(ThreadOut),
 )
 async def add_file_comment(
     topic_id: uuid.UUID,
@@ -192,7 +202,7 @@ async def add_file_comment(
     comment = await CommentThreads(db).open(
         subject,
         author=actor.handle,
-        content=content,
+        content=await _as_stored(db, place, content),
         quote=(body.quote or "").strip() or None,
         anchor=_check_anchor(body.anchor, clean),
     )
@@ -204,7 +214,7 @@ async def add_file_comment(
 
 @router.get(
     "/{topic_id}/files/comments/{comment_id}/thread",
-    **typed_response(CommentThreadOut),
+    **typed_response(ThreadOut),
 )
 async def read_file_thread(
     topic_id: uuid.UUID,
@@ -255,7 +265,7 @@ async def _mutate(
         author=actor.handle,
         expected_revision=body.expected_revision,
         action=action,
-        content=body.content.strip() if reply else None,
+        content=await _as_stored(db, place, body.content.strip()) if reply else None,
     )
     told = None
     if reply:
@@ -277,7 +287,7 @@ async def _mutate(
 @router.post(
     "/{topic_id}/files/comments/{comment_id}/replies",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(CommentThreadOut),
+    **typed_response(ThreadOut),
 )
 async def reply_to_file_thread(
     topic_id: uuid.UUID,
@@ -293,7 +303,7 @@ async def reply_to_file_thread(
 @router.post(
     "/{topic_id}/files/comments/{comment_id}/resolve",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(CommentThreadOut),
+    **typed_response(ThreadOut),
 )
 async def resolve_file_thread(
     topic_id: uuid.UUID,
@@ -309,7 +319,7 @@ async def resolve_file_thread(
 @router.post(
     "/{topic_id}/files/comments/{comment_id}/reopen",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(CommentThreadOut),
+    **typed_response(ThreadOut),
 )
 async def reopen_file_thread(
     topic_id: uuid.UUID,
@@ -320,5 +330,3 @@ async def reopen_file_thread(
     path: Annotated[str, Query(min_length=1)],
 ) -> dict:
     return await _mutate(db, resolver, topic_id, path, comment_id, body, "reopen")
-
-

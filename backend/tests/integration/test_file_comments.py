@@ -112,7 +112,9 @@ def test_thread_on_a_file_keeps_its_anchor_and_behaves_like_a_document_thread(cl
     )
 
     resolve_body = _mutation(2)
-    resolved = client.post(prefix + "/resolve", params={"path": PATH}, json=resolve_body)
+    resolved = client.post(
+        prefix + "/resolve", params={"path": PATH}, json=resolve_body
+    )
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["data"]["state"] == "resolved"
     assert (
@@ -126,7 +128,9 @@ def test_thread_on_a_file_keeps_its_anchor_and_behaves_like_a_document_thread(cl
     assert reopened.json()["data"]["revision"] == 4
     # 存下的回执是那一刻的证据，不是此刻的线程状态。
     assert (
-        client.post(prefix + "/resolve", params={"path": PATH}, json=resolve_body).json()
+        client.post(
+            prefix + "/resolve", params={"path": PATH}, json=resolve_body
+        ).json()
         == resolved.json()
     )
 

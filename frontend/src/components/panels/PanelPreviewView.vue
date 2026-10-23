@@ -23,15 +23,17 @@
 // 留在这里的还有全屏：它要的就是这个 DOM 节点，所以 `panelElement` 在这一只身上。
 
 import type { PreviewLocate } from '../../lib/previewQuestion'
+import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 
+import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
 import PreviewHeadBar from './preview/PreviewHeadBar.vue'
@@ -129,6 +131,7 @@ const {
   annotateError,
   imageRegion,
   pageLocator,
+  quoted,
   pick,
   clearLocator,
   sendLocator,
@@ -144,6 +147,23 @@ const {
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+// ---- 这一份文件上的评论 ----
+// 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
+const showComments = ref(false)
+const commentTarget = computed(() => props.comments?.target.value ?? null)
+// 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
+const commentPick = computed(() => {
+  const anchor = pageLocator.anchor() ?? quoted.anchor()
+  const quote = locator.value?.quote ?? ''
+  if (!anchor && !quote) return null
+  return { quote, anchor }
+})
+/** 发一条评论；成不成由这一栏自己说，发出去之后把指认撤掉。 */
+async function postFileComment(payload: { content: string; quote: string | null; anchor: QuotedContext | null }) {
+  await props.comments?.post(payload)
+  clearLocator()
+}
 
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
@@ -313,6 +333,35 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。 -->
+    <BaseButton
+      v-if="commentTarget"
+      class="panel-preview__comments-toggle"
+      kind="secondary"
+      size="sm"
+      prepend-icon="mdi-comment-text-outline"
+      :title="t('work.room.comments.title')"
+      @click="showComments = !showComments"
+    >
+      {{ t('work.room.comments.title') }}
+    </BaseButton>
+    <PreviewComments
+      v-if="showComments && commentTarget"
+      class="panel-preview__comments"
+      :topic-id="commentTarget.topicId"
+      :path="commentTarget.path"
+      :version="commentTarget.version"
+      :author="props.comments?.author ?? ''"
+      :thread-state="props.comments!.threads.state"
+      :thread-actions="props.comments!.threads.actions"
+      :pick="commentPick"
+      :writable="true"
+      :post="postFileComment"
+      :name-of="(handle: string) => handle"
+      :agent-name="agentName"
+      @clear-pick="clearLocator"
+    />
+
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
@@ -359,5 +408,20 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 .panel-preview:fullscreen {
   width: 100%;
   height: 100%;
+}
+
+/* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */
+.panel-preview__comments {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: var(--z-raised);
+  width: min(340px, 100%);
+  box-shadow: var(--shadow-2);
+}
+.panel-preview__comments-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  z-index: var(--z-raised);
 }
 </style>
