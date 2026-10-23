@@ -1,4 +1,5 @@
-// 频道里点一枚文件 chip，右侧开的那一格：项目当前版本里的这份文件，只读。
+// 频道里点一枚文件 chip，右侧开的那一格：项目当前版本里的这份文件，只读；项目里读不
+// 到时，是频道自己的那一份（见下）。
 //
 // 频道里没有人改项目的文件——支线里的 AI 队友只能读，改东西的事在任务里做——所以
 // 频道里提到的一份文件，说的就是项目现在的样子。当前版本里没有它时（某件任务新建的、
@@ -9,6 +10,7 @@ import { computed, ref, watch } from 'vue'
 
 import {
   ApiError,
+  attachmentRawUrl,
   downloadFile,
   getGitDiff,
   listRoomTasks,
@@ -46,9 +48,12 @@ export function useProjectFile(opts: {
   const isImage = computed(() => IMAGE_EXT.has(suffixOf(opts.path())))
   const isDocument = computed(() => needsDocumentView(opts.path()))
   const documentType = computed(() => DOCUMENT_TYPES[suffixOf(opts.path())] ?? null)
+  // 读自频道的那一份，图片和「下载原文件」也要从频道取：项目里没有它。
   const rawUrl = computed(() => {
     const pid = opts.projectId()
-    return pid ? workspaceFileRawUrl(pid, opts.path(), opts.channelId() ?? undefined, null, 'committed') : ''
+    const channel = opts.channelId()
+    if (inRoom.value && channel) return attachmentRawUrl(channel, opts.path())
+    return pid ? workspaceFileRawUrl(pid, opts.path(), channel ?? undefined, null, 'committed') : ''
   })
   const doc = useDocumentBytes({
     topicId: () => opts.channelId(),

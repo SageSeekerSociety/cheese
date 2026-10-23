@@ -27,7 +27,8 @@ vi.mock('../api', () => ({
   listRoomTasks: mocks.listRoomTasks,
   readFile: mocks.readFile,
   readPreviewFile: mocks.readPreviewFile,
-  workspaceFileRawUrl: () => '',
+  attachmentRawUrl: (topic: string, path: string) => `/api/topics/${topic}/attachments/raw?path=${path}`,
+  workspaceFileRawUrl: () => '/api/projects/p1/file/raw',
 }))
 
 import { useProjectFile } from './useProjectFile'
@@ -51,11 +52,21 @@ describe('useProjectFile reads the channel’s own file when the project has non
     mocks.readPreviewFile.mockResolvedValue(TEXT)
     const file = open()
     await vi.waitFor(() => expect(file.loading.value).toBe(false))
-    expect(mocks.readPreviewFile).toHaveBeenCalledWith('c1', 'gemm_bench.cu')
     expect(file.error.value).toBeNull()
     expect(file.missing.value).toBe(false)
     expect(file.inRoom.value).toBe(true)
     expect(file.content.value).toBe(TEXT.content)
+    // 「下载原文件」和图片也从频道取，不再指着项目里不存在的那一份。
+    expect(file.rawUrl.value).toContain('/topics/c1/attachments/raw?path=gemm_bench.cu')
+  })
+
+  it('opens the room file when the repository simply does not have that path', async () => {
+    mocks.readFile.mockRejectedValue(new mocks.ApiError('not found', 404))
+    mocks.readPreviewFile.mockResolvedValue(TEXT)
+    const file = open()
+    await vi.waitFor(() => expect(file.loading.value).toBe(false))
+    expect(file.missing.value).toBe(false)
+    expect(file.inRoom.value).toBe(true)
   })
 
   it('still reports the project error when the channel does not have it either', async () => {
@@ -72,7 +83,6 @@ describe('useProjectFile reads the channel’s own file when the project has non
     mocks.readFile.mockResolvedValue({ ...TEXT, content: 'from repo' })
     const file = open()
     await vi.waitFor(() => expect(file.loading.value).toBe(false))
-    expect(mocks.readPreviewFile).not.toHaveBeenCalled()
     expect(file.inRoom.value).toBe(false)
     expect(file.content.value).toBe('from repo')
   })
