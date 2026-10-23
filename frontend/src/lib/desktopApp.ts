@@ -17,6 +17,7 @@ export type DesktopAbility =
   | 'device'
   | 'teamEnrollment'
   | 'modelCredentialLogin'
+  | 'executor'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */
@@ -153,6 +154,25 @@ export async function restartDesktopToUpdate(): Promise<void> {
 
 export function onDesktopUpdateStatus(handle: (status: DesktopUpdateStatus) => void): () => void {
   return desktopCan('updates') ? onDesktopEvent('update-status', handle) : () => {}
+}
+
+// Once this computer is connected, the app fetches the Claude Code build a
+// teammate runs here in the background (desktop/src-tauri/src/executor.rs), so
+// the first session here does not wait for it. Nothing waits on it.
+
+/** Where fetching that build stands. */
+export type DesktopExecutorStatus =
+  | { state: 'idle' | 'ready' | 'failed' }
+  | { state: 'fetching'; percent: number | null }
+
+/** Null in a browser and in an app that does not fetch it ahead. */
+export async function desktopExecutorStatus(): Promise<DesktopExecutorStatus | null> {
+  if (!desktopCan('executor')) return null
+  return ((await tauri()?.core?.invoke('executor_status')) as DesktopExecutorStatus | undefined) ?? null
+}
+
+export function onDesktopExecutorStatus(handle: (status: DesktopExecutorStatus) => void): () => void {
+  return desktopCan('executor') ? onDesktopEvent('executor-status', handle) : () => {}
 }
 
 /** The app menu's "About Cheese" or "Check for Updates…" (macOS). */

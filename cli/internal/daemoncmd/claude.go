@@ -49,7 +49,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 				return err
 			}
 			ctx := context.Background()
-			binary, err := claudecode.Ensure(ctx, base, os.Stdout)
+			binary, err := claudecode.Ensure(ctx, base, os.Stdout, nil)
 			if err != nil {
 				return err
 			}
@@ -82,6 +82,36 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 	login.MarkFlagsRequiredTogether("ticket", "server")
 	login.Flags().StringVar(&loginID, "login", "",
 		"log in again the login with this id (`cheesehost claude status` lists them) instead of adding one")
+
+	var showProgress bool
+	install := withConfig(&cobra.Command{
+		Use:   "install",
+		Short: "Download the Claude Code build the platform runs, if this machine does not have it yet",
+		Long: "Places the build the server names where the platform's sessions look for\n" +
+			"it, so the first session on this machine does not wait for the download.\n" +
+			"A download that was cut off is continued, by this command or by a session.\n" +
+			"The desktop app runs it in the background once this computer is connected.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			base, err := serverBase(*cfgPath)
+			if err != nil {
+				return err
+			}
+			var onPercent func(int)
+			if showProgress {
+				// The desktop app reads the last percentage on stderr, as it
+				// reads curl's bar (desktop/src-tauri/src/connect.rs).
+				onPercent = func(p int) { fmt.Fprintf(os.Stderr, "\r%d%%", p) }
+			}
+			binary, err := claudecode.Ensure(context.Background(), base, os.Stdout, onPercent)
+			if err != nil {
+				return err
+			}
+			fmt.Println(binary)
+			return nil
+		},
+	})
+	install.Flags().BoolVar(&showProgress, "progress", false, "print how far the download has got on stderr")
 
 	status := withConfig(&cobra.Command{
 		Use:   "status",
@@ -170,7 +200,7 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 		Use:   "claude",
 		Short: "Your own Claude Code, as the platform runs it on this machine",
 	}
-	group.AddCommand(login, status, logout)
+	group.AddCommand(login, install, status, logout)
 	return group
 }
 

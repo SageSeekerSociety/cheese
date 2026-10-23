@@ -233,14 +233,18 @@ def bootstrap_script(
     # The floor and the pin are the launcher's, read from there rather than
     # restated: a machine enrolled against a different number than the launcher
     # enforces is a machine that enrolls cleanly and then runs nothing.
-    origin_clean = origin.rstrip("/")
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
     data_disk = DATA_DISK.format() if sandbox_disk else ""
     return f"""set -eu
-arch=$(uname -m)
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"
+# The credential the device flow would have stored. umask first: this file is
+# the machine's identity to the platform.
+umask 077
+cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
+{config}
+CHEESE_CONFIG_EOF
 # claude — the agent itself. A machine with no claude, or one too old, does not
 # fail here: it enrolls cleanly, reports healthy, and then every topic assigned
 # to it never starts, because the launcher refuses a build below the floor.
@@ -254,21 +258,11 @@ export PATH="$HOME/.local/bin:$PATH"
 # about what the machine downloaded into a fact about what we handed it — the
 # same reason the cheesehost this script runs is the one we serve.
 #
-# Platform strings are the VENDOR's, and the musl check matters: Alpine-style
-# machines need a different build, and only the machine can tell.
-case "$arch" in
-  x86_64|amd64) carch=x64 ;;
-  aarch64|arm64) carch=arm64 ;;
-esac
-if [ "$(uname -s)" = "Linux" ]; then
-  if ldd /bin/ls 2>&1 | grep -q musl; then
-    cplat="linux-$carch-musl"
-  else
-    cplat="linux-$carch"
-  fi
-else
-  cplat="darwin-$carch"
-fi
+# The connector installs it, from the server the config above names, the way
+# every installer of it on a machine does: the build for this machine's libc,
+# continued where a cut-off attempt stopped, checked against the digest the
+# server names, one install at a time (`claudecode.Ensure`).
+#
 # The pinned build lives under Cheese's own directory. The owner's Claude
 # installation, version store, and command links remain untouched.
 #
@@ -283,16 +277,8 @@ fi
 # their next upgrade or downgrade becomes our behaviour change. Pinning has to
 # mean the version we put there, not the version we found.
 claude_pin="$HOME/.cheese/claude/versions/{pinned_version}"
-if [ ! -x "$claude_pin" ]; then
-  mkdir -p "$HOME/.cheese/claude/versions"
-  curl -fsSL --retry 3 --retry-delay 2 -m 300 \
-    "{origin_clean}/connector/claude/{pinned_version}/$cplat/claude" \
-    -o "$claude_pin.new" \
-    || {{ echo "could not download claude {pinned_version} for $cplat" >&2; exit 1; }}
-  test -s "$claude_pin.new"
-  chmod +x "$claude_pin.new"
-  mv "$claude_pin.new" "$claude_pin"
-fi
+"$HOME/.local/bin/cheesehost" claude install < /dev/null > /dev/null \
+  || {{ echo "could not install claude {pinned_version}" >&2; exit 1; }}
 # Verify what we placed, not what `claude` resolves to — the owner's entry point
 # is none of our business and could be any version at all.
 have=$("$claude_pin" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')
@@ -301,12 +287,6 @@ if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
   echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
   exit 1
 fi
-# The credential the device flow would have stored. umask first: this file is
-# the machine's identity to the platform.
-umask 077
-cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
-{config}
-CHEESE_CONFIG_EOF
 # Already logged in as far as the cli is concerned, so this only installs and
 # starts the background service — for THIS account, no root involved.
 # stdin is closed: this script arrives ON stdin, and anything the command reads

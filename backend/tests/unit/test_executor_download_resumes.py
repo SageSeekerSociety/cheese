@@ -215,3 +215,33 @@ def test_an_executor_that_is_not_the_digest_the_platform_names_is_not_installed(
     assert not _installed(owner).exists()
     # Nothing it fetched is left to be picked up as a part of the next one.
     assert not list(_installed(owner).parent.glob(f"{bootstrap.VERSION}.*partial*"))
+
+
+def test_a_bootstrap_waits_for_an_install_under_way_and_uses_it(platform):
+    """The desktop app fetches the executor in the background once a computer
+    is connected (`cheesehost claude install`), and a session may start before
+    it finishes. The bootstrap then waits for that install and runs what it
+    placed, rather than fetching a second copy alongside it."""
+    owner, release, cut, asked = platform
+    destination = _installed(owner)
+    destination.parent.mkdir(parents=True)
+    answer: list[object] = []
+    with destination.with_name(destination.name + ".lock").open("a") as held:
+        import fcntl  # deferred-import: POSIX-only; this module is skipped on Windows
+
+        fcntl.flock(held, fcntl.LOCK_EX)
+        waiting = threading.Thread(
+            target=lambda: answer.append(bootstrap.binary(owner, cut.url, release))
+        )
+        waiting.start()
+        time.sleep(0.5)
+        assert not answer, "installed while another installer held the lock"
+        # What the other installer places, as it does: whole, then renamed in.
+        placed = destination.with_name("placed")
+        placed.write_bytes(EXECUTOR)
+        placed.chmod(0o700)
+        placed.replace(destination)
+    waiting.join(30)
+
+    assert answer == [str(destination)]
+    assert asked == []

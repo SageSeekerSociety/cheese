@@ -390,6 +390,9 @@ CHEESE_SKILLS"""
     settings_json = json.dumps(session_settings(), ensure_ascii=False)
     claude_args = " " + shlex.join(LAUNCH_ARGS)
     pinned_version = CLAUDE_PINNED_VERSION
+    executor_download = (
+        Path(release.__file__).with_name("executor_download.py").read_text()
+    )
     helper_sources = release.sources()
     # base64 through the script: the archive is bytes. Single-quoted into the
     # script: the literal `$HOME` in the state is the CONNECTOR's placeholder,
@@ -518,13 +521,19 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
       MINGW*|MSYS*|CYGWIN*) _cplat="win32-$_carch" ;;
       *) _cplat="darwin-$_carch" ;;
     esac
-    mkdir -p "$(dirname "$_pin")"
-    if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
-        "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
-        -o "$_pin.new" && [ -s "$_pin.new" ]; then
-      chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
-    else
-      rm -f "$_pin.new"
+    # By the installer every room's preparation uses (`executor_download`): a
+    # download cut off — here, in a room, or by the desktop app fetching it
+    # ahead — is continued rather than restarted, checked against the digest
+    # the platform names, and one install at a time on the machine.
+    if python3 - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
+        "$_pin" "{pinned_version}" <<'CHEESE_EXECUTOR_DOWNLOAD'
+{executor_download}
+try:
+    install(sys.argv[1], __import__("pathlib").Path(sys.argv[2]), sys.argv[3])
+except Exception as stopped:  # noqa: BLE001 - said, and the launch goes on
+    sys.exit("cheese-launch: " + str(stopped))
+CHEESE_EXECUTOR_DOWNLOAD
+    then :; else
       echo "cheese-launch: could not fetch claude {pinned_version} for \\
 $_cplat from the platform; trying what the machine has" >&2
     fi
