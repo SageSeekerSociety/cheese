@@ -269,6 +269,9 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
+    审阅重点也走这里：它是审阅人的核对清单，推了新提交之后可能已经过期。它
+    不进 PR 正文，所以改它不必碰 GitHub。
+
     署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
@@ -278,6 +281,7 @@ async def describe_card(
         actor=actor.handle,
         change_subject=body.change_subject,
         change_body=body.change_body,
+        focus=body.focus,
     )
     await db.commit()
     return ok(await _accept_service(db).describe(card))

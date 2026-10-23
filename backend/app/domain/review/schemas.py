@@ -74,6 +74,10 @@ class AcceptCardDescribe(BaseModel):
     #: None = 不动正文（只改标题）；空串 = 把正文清空。这两件事不一样，所以
     #: 「没传」和「传了空的」必须能区分，默认值才是 None 而不是 ""。
     change_body: str | None = None
+    #: 审阅重点：交付的人请审阅人确认的那几件事。None = 不动它；空串 = 清空。
+    #: 上限和递卡时同一道检查（`cards.clean_focus`：三条、合计 300 字），理由
+    #: 写在 `AcceptService.redescribe` 里。
+    focus: str | None = None
 
 
 class AcceptCardRedeliver(BaseModel):
