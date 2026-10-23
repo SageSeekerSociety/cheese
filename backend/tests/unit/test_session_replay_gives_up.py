@@ -31,7 +31,9 @@ class _Prewarm:
 
 
 @pytest.mark.anyio
-async def test_a_session_that_never_replays_stops_blocking_the_room(monkeypatch, caplog):
+async def test_a_session_that_never_replays_stops_blocking_the_room(
+    monkeypatch, caplog
+):
     monkeypatch.setattr(recovery, "REPLAY_RETRY_S", 0.001)
     monkeypatch.setattr(recovery, "REPLAY_GIVE_UP_S", 0.02)
 
