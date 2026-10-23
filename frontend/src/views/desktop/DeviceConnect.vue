@@ -6,7 +6,7 @@ import { ref, watch } from 'vue'
 import { listMyTeams } from '@/api'
 import DeviceConnectDialog from '@/components/desktop/DeviceConnectDialog.vue'
 import { t } from '@/i18n'
-import { cancelConnecting, desktopBridge, deviceFlow, markAsked, startConnecting } from '@/lib/desktop'
+import { cancelConnecting, desktopBridge, deviceFlow, markDeclinedToConnect, startConnecting } from '@/lib/desktop'
 import accountService from '@/services/account'
 const teams = ref<MyTeam[]>([])
 const error = ref<string | null>(null)
@@ -28,15 +28,15 @@ watch(
     }
   }
 )
-function asked() {
-  if (accountService.user?.id) markAsked(accountService.user.id)
-}
 function connect(teamId: number) {
-  asked()
   void startConnecting({ teamId })
 }
+function later() {
+  // 「暂不接入」 stands: the app does not connect this computer at the next launch.
+  if (accountService.user?.id) markDeclinedToConnect(accountService.user.id)
+  deviceFlow.open = false
+}
 function close() {
-  asked()
   deviceFlow.open = false
 }
 </script>
@@ -55,7 +55,7 @@ function close() {
     :error="error"
     @connect="connect"
     @retry="startConnecting({ teamId: deviceFlow.teamId! })"
-    @later="close"
+    @later="later"
     @finish="close"
     @cancel="cancelConnecting"
   />
