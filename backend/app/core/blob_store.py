@@ -50,6 +50,13 @@ UPLOAD_URL_SECONDS = 15 * 60
 #: expires what was left under ``.incoming/``.
 UPLOAD_TOKEN_SECONDS = 6 * 60 * 60
 
+#: How long an address to fetch one stored file stays good. It is handed to a
+#: machine that fetches the file at once (a person's 芝士 putting a file of
+#: theirs onto its computer), so minutes are plenty.
+DOWNLOAD_URL_SECONDS = 10 * 60
+#: What a download token is sealed for, so no other sealed value opens as one.
+OUTGOING = "/files/outgoing"
+
 #: Bytes to keep: whole in memory, or a readable file that can be rewound.
 Content = bytes | BinaryIO
 
@@ -95,6 +102,12 @@ class BlobStore(ABC):
         """An address a browser PUTs exactly ``size`` bytes to, landing under
         ``key``, with no credential of its own. A path starting with ``/`` is
         this backend's own."""
+
+    @abstractmethod
+    async def download_url(self, key: str, size: int) -> str:
+        """An address that answers a GET with the ``size`` bytes under ``key``
+        for :data:`DOWNLOAD_URL_SECONDS`, with no credential of its own. A path
+        starting with ``/`` is this backend's own."""
 
     @abstractmethod
     async def take_in(self, incoming: str, key: str) -> None:
@@ -188,6 +201,9 @@ class LocalStore(BlobStore):
         token = seal_upload(SealedUpload(LOCAL, key, size), bound_to=INCOMING)
         return f"/files/incoming/{token}"
 
+    async def download_url(self, key: str, size: int) -> str:
+        return f"/files/outgoing/{seal_download(SealedUpload(LOCAL, key, size))}"
+
     def _move(self, incoming: str, key: str) -> None:
         target = self._path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -264,6 +280,9 @@ class BucketStore(BlobStore):
             key, "put_object", UPLOAD_URL_SECONDS, ContentLength=size
         )
 
+    async def download_url(self, key: str, size: int) -> str:
+        return await self.bucket.presign(key, "get_object", DOWNLOAD_URL_SECONDS)
+
     async def take_in(self, incoming: str, key: str) -> None:
         if not await self.bucket.move(incoming, key):
             raise BlobMissingError(incoming)
@@ -302,6 +321,34 @@ def open_upload(token: str, *, bound_to: str) -> SealedUpload | None:
     except (DecryptionError, ValueError):
         return None
     if claims["until"] < time.time() or not claims["key"].startswith(INCOMING):
+        return None
+    return SealedUpload(
+        location=claims["location"], key=claims["key"], size=int(claims["size"])
+    )
+
+
+def seal_download(stored: SealedUpload) -> str:
+    """A token that lets whoever holds it read one stored file, for
+    :data:`DOWNLOAD_URL_SECONDS`."""
+    body = json.dumps(
+        {
+            "location": stored.location,
+            "key": stored.key,
+            "size": stored.size,
+            "until": int(time.time()) + DOWNLOAD_URL_SECONDS,
+        }
+    )
+    return encrypt(Purpose.FILE_DOWNLOAD, body, bound_to=OUTGOING)
+
+
+def open_download(token: str) -> SealedUpload | None:
+    """The file a download token stands for, or None for one that is forged,
+    damaged or past its time."""
+    try:
+        claims = json.loads(decrypt(Purpose.FILE_DOWNLOAD, token, bound_to=OUTGOING))
+    except (DecryptionError, ValueError):
+        return None
+    if claims["until"] < time.time():
         return None
     return SealedUpload(
         location=claims["location"], key=claims["key"], size=int(claims["size"])

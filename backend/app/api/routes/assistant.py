@@ -274,8 +274,24 @@ def _page_of(row) -> PageIn | None:
 
 
 class FileIn(BaseModel):
-    id: int = Field(ge=1)
+    """A file handed over with a question: one kept in the person's own
+    library (``path``), or, on a page whose files are a task's materials, the
+    attachment it was uploaded as (``id``)."""
+
+    id: int | None = Field(default=None, ge=1)
+    path: str | None = Field(default=None, min_length=1, max_length=512)
     name: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def _one(self) -> "FileIn":
+        if (self.id is None) == (self.path is None):
+            raise ValueError("a file is an attachment id or a library path")
+        return self
+
+    @property
+    def ref(self) -> str:
+        """How 芝士 reads it (``cheese_read``)."""
+        return f"library/{self.path}" if self.path is not None else f"files/{self.id}"
 
 
 class AskIn(BaseModel):
@@ -347,7 +363,7 @@ async def ask(
             held_at=held_at,
             slot=slot,
             context=said,
-            files=[(f.id, f.name) for f in body.files],
+            files=[(f.ref, f.name) for f in body.files],
             kind=pages.billed_as(None if shown is None else shown.kind),
             project=None if page is None else page.project,
         )

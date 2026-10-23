@@ -20,10 +20,13 @@ import { toast } from 'vuetify-sonner'
 import { AgentProposalsApi, ApiError, createRoomTask } from '@/api'
 import { AttachmentsApi } from '@/api/attachments'
 import { postChatMessage } from '@/api/messages'
+import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { proposalView, stepView } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
+import { uploadLibraryFile } from '@/lib/libraryApi'
+import { myHandle } from '@/me'
 import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
 
 /** 这一页在面板上说什么、芝士读什么。 */
@@ -36,8 +39,9 @@ export interface AgentContext {
   starters?: string[]
   placeholder?: string
   hint?: string
-  /** 这一页能把文件交给芝士。 */
-  canAttach?: boolean
+  /** 这一页交给芝士的文件是题目的材料（发布题目、改题目）：存成附件，芝士把它挂到题目上。
+   *  别的页面交的文件存进这个人自己的资料库。 */
+  attachAsMaterials?: boolean
 }
 
 /** 面板上那几样随这一页变的东西。 */
@@ -171,7 +175,10 @@ export function toggleAgent() {
 // ---- 交给芝士的文件 -----------------------------------------------------------------
 
 export interface AgentFile {
+  /** 存成题目材料的那一份的附件编号。 */
   id: number | null
+  /** 存进自己资料库的那一份叫什么。 */
+  path: string | null
   name: string
   mime: string
   uploading: boolean
@@ -180,13 +187,30 @@ export interface AgentFile {
 /** 先传上去，下一个问题带上它们。浅的：传完按那一行本身找回它，行不能被换成代理。 */
 export const agentFiles = shallowRef<AgentFile[]>([])
 
+/** 这个人自己的资料库（他名下那个团队的）；问一次就记住。 */
+let ownLibrary: Promise<number> | null = null
+function myLibrary(): Promise<number> {
+  ownLibrary ??= TeamsApi.detailByHandle(myHandle()).then(({ team }) => team.id)
+  ownLibrary.catch(() => (ownLibrary = null))
+  return ownLibrary
+}
+
+async function keep(file: File): Promise<Pick<AgentFile, 'id' | 'path'>> {
+  if (agentContext.value?.attachAsMaterials) {
+    const done = await AttachmentsApi.upload({ type: 'file', file })
+    return { id: done.id, path: null }
+  }
+  const placed = await uploadLibraryFile({ team: await myLibrary() }, file)
+  return { id: null, path: placed.path }
+}
+
 export async function attachToAgent(picked: File[]) {
   for (const file of picked) {
-    const row: AgentFile = { id: null, name: file.name, mime: file.type, uploading: true }
+    const row: AgentFile = { id: null, path: null, name: file.name, mime: file.type, uploading: true }
     agentFiles.value = [...agentFiles.value, row]
     try {
-      const done = await AttachmentsApi.upload({ type: 'file', file })
-      agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, id: done.id, uploading: false } : f))
+      const done = await keep(file)
+      agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
       toast.error(t('tasks.assistant.files.failed'))
@@ -207,7 +231,9 @@ export function resetAgent() {
 
 /** 说一句话：带上已经传好的文件。 */
 export async function askAgent(text: string) {
-  const handed = agentFiles.value.filter((f) => f.id !== null).map((f) => ({ id: f.id as number, name: f.name }))
+  const handed = agentFiles.value
+    .filter((f) => !f.uploading)
+    .map((f) => (f.path !== null ? { path: f.path, name: f.name } : { id: f.id as number, name: f.name }))
   agentFiles.value = []
   await agentThread.ask(text, t('tasks.assistant.failed'), handed)
 }

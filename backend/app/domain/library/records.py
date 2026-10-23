@@ -271,6 +271,13 @@ async def stored_file(session: AsyncSession, shelf: Shelf, name: str) -> Stored:
     return Stored(row.location, row.blob_key, row.bytes)
 
 
+async def download_url(session: AsyncSession, shelf: Shelf, name: str) -> str:
+    """一个几分钟内有效、只读得到这一份的地址（`BlobStore.download_url`）：给手上
+    没有凭据的机器去取。以 ``/`` 开头的是本后端自己的地址。"""
+    row = await _current_or_404(session, shelf, name)
+    return await blob_store.store(row.location).download_url(row.blob_key, row.bytes)
+
+
 async def stored_version(
     session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> Stored:

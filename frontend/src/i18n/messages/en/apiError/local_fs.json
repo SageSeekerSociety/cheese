@@ -1,5 +1,6 @@
 {
   "artifactVersionNoFile": "No file was kept for this version",
+  "downloadExpired": "The download address has expired. Get a new one",
   "fileNotFound": "This file doesn't exist",
   "fileTooLarge": "The file is too large ({mb}MB max)",
   "grantProjectForbidden": "A grant for everything can't be bound to a single project",
