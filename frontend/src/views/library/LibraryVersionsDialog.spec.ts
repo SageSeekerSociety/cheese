@@ -16,6 +16,10 @@ vi.mock('@/api', async () => ({
   downloadFile: vi.fn(async () => {}),
 }))
 
+import { defineComponent, h, ref } from 'vue'
+
+import { useLibraryVersions } from '@/composables/useLibraryVersions'
+
 import LibraryVersionsDialog from './LibraryVersionsDialog.vue'
 
 import { downloadFile } from '@/api'
@@ -52,11 +56,35 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+const restored = vi.fn()
+
+/** The dialog the way a library page puts it up: its versions come from `useLibraryVersions`. */
+const Page = defineComponent({
+  setup() {
+    const path = ref<string | null>('预算.xlsx')
+    const history = useLibraryVersions(
+      () => 'p1',
+      () => path.value,
+      (name, version) => restored(name, version)
+    )
+    return () =>
+      h(LibraryVersionsDialog, {
+        path: path.value,
+        versions: history.versions.value,
+        loading: history.loading.value,
+        failed: history.failed.value,
+        actionError: history.actionError.value,
+        restoring: history.restoring.value,
+        canRestore: true,
+        fmtBytes: (n: number) => `${n} B`,
+        onDownload: history.download,
+        onRestore: history.restore,
+      })
+  },
+})
+
 function mount() {
-  return render(LibraryVersionsDialog, {
-    props: { projectId: 'p1', path: '预算.xlsx', canRestore: true, fmtBytes: (n: number) => `${n} B` },
-    global: { plugins: [createVuetify({ components, directives })] },
-  })
+  return render(Page, { global: { plugins: [createVuetify({ components, directives })] } })
 }
 
 describe('资料库文件版本', () => {
@@ -78,13 +106,13 @@ describe('资料库文件版本', () => {
 
   it('恢复先确认，确认后才复制成新一版', async () => {
     vi.mocked(restoreLibraryVersion).mockResolvedValue({})
-    const view = mount()
+    mount()
     await screen.findByText(/第 2 版/)
     await fireEvent.click(screen.getByRole('button', { name: t('work.library.restoreVersion') }))
     expect(restoreLibraryVersion).not.toHaveBeenCalled()
     const confirm = await screen.findAllByRole('button', { name: t('work.library.restoreVersion') })
     await fireEvent.click(confirm[confirm.length - 1])
     await waitFor(() => expect(restoreLibraryVersion).toHaveBeenCalledWith('p1', '预算.xlsx', 'r1'))
-    await waitFor(() => expect(view.emitted().restored?.[0]).toEqual(['预算.xlsx', 1]))
+    await waitFor(() => expect(restored).toHaveBeenCalledWith('预算.xlsx', 1))
   })
 })

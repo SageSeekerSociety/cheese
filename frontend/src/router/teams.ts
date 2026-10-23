@@ -57,6 +57,11 @@ export default {
           ],
         },
         {
+          path: 'library',
+          name: 'TeamsDetailLibrary',
+          component: () => import('@/views/teams/detail/Library.vue'),
+        },
+        {
           path: 'compute',
           name: 'TeamsDetailCompute',
           component: () => import('@/views/teams/detail/Compute.vue'),

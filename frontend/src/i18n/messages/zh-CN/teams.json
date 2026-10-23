@@ -168,5 +168,10 @@
     "delete": "删除",
     "loadFailed": "文档加载失败",
     "newFailed": "新建文档失败"
+  },
+  "library": {
+    "intro": "团队成员共用的文件，成员都能上传、替换和删除",
+    "introPersonal": "你的文件：附给芝士的文件和芝士交给你的文件都存在这里，换个话题也能接着用",
+    "room": "已用 {used}，共 {total}"
   }
 }

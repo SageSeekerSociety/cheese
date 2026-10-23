@@ -130,26 +130,31 @@ watch(
 )
 const isOpen = (team: Team) => open.value.some((h) => h.toLowerCase() === team.handle.toLowerCase())
 
+// 侧栏上只留常去的三样；成员、设备、模型、额度这些偶尔才去的收在 ⋯ 里的「设置」
+// 一页，一栏一样（`teams/Detail.vue`）。
 const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
-  { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers', exact: false },
   { name: 'TeamsDetailDocs', label: 'home.nav.teamDocs', exact: false },
-  { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
-  { name: 'TeamsDetailModels', label: 'home.nav.teamModels', exact: false },
-  { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', exact: false },
+  { name: 'TeamsDetailLibrary', label: 'home.nav.teamLibrary', exact: false },
 ] as const
-// 自己名下谁也加不进来（后端拒），「成员」一页就不列；自己的额度在个人设置里，「额度」
-// 一页也不列。
-const PERSONAL_HIDDEN: readonly string[] = ['TeamsDetailMembers']
-const pagesOf = (team: Team) =>
-  team.personal ? TEAM_PAGES.filter((page) => !PERSONAL_HIDDEN.includes(page.name)) : TEAM_PAGES
+/** 「设置」打开的第一栏：自己名下没有成员那一栏，从设备开始。 */
+const settingsOf = (team: Team) => ({
+  name: team.personal ? 'TeamsDetailCompute' : 'TeamsDetailMembers',
+  params: { handle: team.handle },
+})
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
 /** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
-  if (team.personal) return []
-  const actions: MenuAction[] = []
+  const settings: MenuAction = {
+    key: 'settings',
+    label: t('home.nav.teamSettings'),
+    icon: 'mdi-cog-outline',
+    to: settingsOf(team),
+  }
+  if (team.personal) return [settings]
+  const actions: MenuAction[] = [settings]
   if (isAdmin(team))
     actions.push(
       {
@@ -304,7 +309,7 @@ const transferModel = computed({
         </v-list-item>
         <template v-if="isOpen(team)">
           <v-list-item
-            v-for="page in pagesOf(team)"
+            v-for="page in TEAM_PAGES"
             :key="page.name"
             rounded="lg"
             class="home-nav__leaf"

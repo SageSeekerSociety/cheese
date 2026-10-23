@@ -12,6 +12,8 @@
     :page-title="pageTitle"
     :page-width="pageWidth"
     :team-intro="teamIntro"
+    :tabs="settingsTabs"
+    :active-tab="inSettings ? String(route.name) : null"
     :join="join"
     @retry-load="retryLoad"
   >
@@ -53,14 +55,32 @@ const forbidden = computed(() => isForbidden(loadError.value))
 
 const PAGE_TITLES: Record<string, string> = {
   TeamsDetailDefault: 'home.nav.teamProjects',
-  TeamsDetailMembers: 'home.nav.teamMembers',
   TeamsDetailDocs: 'home.nav.teamDocs',
   TeamsDocument: 'home.nav.teamDocs',
-  TeamsDetailCompute: 'home.nav.teamCompute',
-  TeamsDetailModels: 'home.nav.teamModels',
-  TeamsDetailCredits: 'home.nav.teamCredits',
+  TeamsDetailLibrary: 'home.nav.teamLibrary',
 }
-const pageTitle = computed(() => t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects'))
+
+// 偶尔才去的几样收在一页「设置」里，一栏一样：侧栏上只留常去的项目、文档、资料库。
+// 自己名下谁也加不进来，没有「成员」那一栏。
+const SETTINGS = [
+  { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers' },
+  { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute' },
+  { name: 'TeamsDetailModels', label: 'home.nav.teamModels' },
+  { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits' },
+] as const
+const inSettings = computed(() => SETTINGS.some((tab) => tab.name === route.name))
+const settingsTabs = computed(() => {
+  const team = teamData.value
+  if (!team || !inSettings.value) return []
+  return SETTINGS.filter((tab) => !(team.personal && tab.name === 'TeamsDetailMembers')).map((tab) => ({
+    key: tab.name,
+    label: t(tab.label),
+    to: { name: tab.name, params: { handle: team.handle } },
+  }))
+})
+const pageTitle = computed(() =>
+  inSettings.value ? t('home.nav.teamSettings') : t(PAGE_TITLES[String(route.name)] ?? 'home.nav.teamProjects')
+)
 
 // 成员、设备、模型和额度是读的一栏，页头跟着正文封顶居中；其余几页铺满内容区，自己管
 // 内边距。

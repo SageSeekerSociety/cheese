@@ -71,6 +71,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'docs', name: 'TeamsDetailDocs', component: blank },
+          { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
@@ -122,15 +123,13 @@ function menuLabels() {
 }
 
 describe('首页目录的画面', () => {
-  it('正在看的那个团队展开着，四样东西都点得到；别的团队收着', async () => {
+  it('正在看的那个团队展开着，项目、文档、资料库都点得到；别的团队收着', async () => {
     await mount({
       teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')],
       currentHandle: 'crew',
     })
     await waitFor(() =>
-      expect(hrefs()).toEqual(
-        expect.arrayContaining(['/teams/crew', '/teams/crew/members', '/teams/crew/docs', '/teams/crew/compute'])
-      )
+      expect(hrefs()).toEqual(expect.arrayContaining(['/teams/crew', '/teams/crew/docs', '/teams/crew/library']))
     )
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
   })
@@ -146,15 +145,15 @@ describe('首页目录的画面', () => {
   it('点一个团队在原地展开，再点收起', async () => {
     await mount({ teams: [team('lab', '数据课第三组')] })
     await fireEvent.click(await screen.findByLabelText('展开 数据课第三组'))
-    await waitFor(() => expect(hrefs()).toContain('/teams/lab/members'))
+    await waitFor(() => expect(hrefs()).toContain('/teams/lab/library'))
     await fireEvent.click(screen.getByLabelText('收起 数据课第三组'))
-    await waitFor(() => expect(hrefs()).not.toContain('/teams/lab/members'))
+    await waitFor(() => expect(hrefs()).not.toContain('/teams/lab/library'))
   })
 
   it.each([
-    ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
-    ['MEMBER', ['退出团队']],
-    ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
+    ['ADMIN', ['设置', '邀请成员', '编辑团队资料', '退出团队']],
+    ['MEMBER', ['设置', '退出团队']],
+    ['OWNER', ['设置', '邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
     await mount({ teams: [team('crew', '知是开发组', role)] })
     await fireEvent.click(await screen.findByLabelText('团队操作'))
@@ -182,25 +181,29 @@ describe('首页目录的画面', () => {
   })
 
   // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
-  // 展开后没有「成员」，也没有团队的 ⋯ 操作。
-  it('自己名下在「团队」之上单独一行，没有成员页，也没有团队操作', async () => {
+  // 它的 ⋯ 里只有「设置」，从设备那一栏开始（没有成员那一栏）。
+  it('自己名下在「团队」之上单独一行，⋯ 里只有「设置」', async () => {
     const own = team('andy', '林夏', 'OWNER', { personal: true })
-    await mount({ teams: [own, team('crew', '知是开发组', 'OWNER')], currentHandle: 'andy' })
+    await mount({ teams: [own], currentHandle: 'andy' })
     await waitFor(() =>
-      expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/docs', '/teams/andy/compute']))
+      expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/docs', '/teams/andy/library']))
     )
-    expect(hrefs()).not.toContain('/teams/andy/members')
-    expect(hrefs()).toContain('/teams/andy/credits')
-
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))
-    expect(text.indexOf('团队')).toBeLessThan(text.indexOf('知是开发组'))
-    expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await screen.findByText('设置')
+    expect(menuLabels()).toEqual(['设置'])
+    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/teams/andy/compute')
   })
 
-  it('团队展开后有「额度」一页', async () => {
+  it('成员、设备、模型、额度不在侧栏上，从 ⋯ 的「设置」进去', async () => {
     await mount({ teams: [team('crew', '知是开发组')], currentHandle: 'crew' })
-    await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
+    await waitFor(() => expect(hrefs()).toContain('/teams/crew/library'))
+    for (const page of ['members', 'compute', 'models', 'credits']) expect(hrefs()).not.toContain(`/teams/crew/${page}`)
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await screen.findByText('设置')
+    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/teams/crew/members')
   })
 
   it('空间点了就进那个空间', async () => {

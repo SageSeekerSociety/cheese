@@ -4,12 +4,14 @@
 -->
 
 <script setup lang="ts">
+import type { NavTarget } from '@/lib/navTarget'
 import type { Team } from '@/types'
 
 import TeamProfile from './TeamProfile.vue'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
+import PageTabs from '@/components/common/PageTabs.vue'
 import { t } from '@/i18n'
 
 defineProps<{
@@ -29,6 +31,10 @@ defineProps<{
   /** 读的一栏跟着正文封顶居中，其余几页铺满内容区。 */
   pageWidth: 'read' | 'full'
   teamIntro: string
+  /** 「设置」那一页的几栏（成员、设备、模型、额度）；别的页没有。 */
+  tabs?: ReadonlyArray<{ key: string; label: string; to: NavTarget }>
+  /** 正看着的那一栏。 */
+  activeTab?: string | null
   /** 没加入的人点「加入」走哪条路，由容器接上。 */
   join: (message: string) => Promise<void>
 }>()
@@ -65,6 +71,7 @@ defineSlots<{ default?: () => unknown }>()
     <template v-if="teamIntro" #meta>
       <span class="team-intro" data-user-content>{{ teamIntro }}</span>
     </template>
+    <PageTabs v-if="tabs?.length" :tabs="tabs" :active="activeTab ?? null" :label="pageTitle" />
     <slot />
   </AppPage>
 </template>

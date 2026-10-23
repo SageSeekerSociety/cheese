@@ -3,17 +3,19 @@
 // 列表右边一栏，手机上是整一页（底下一颗「下载」）。
 //
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
-import type { LibraryFile } from '@/lib/libraryApi'
+import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 
 const props = defineProps<{
-  projectId: string
+  /** 哪一个资料库：项目的资料库才有「在哪个频道给的」。 */
+  shelf: LibraryShelf
   file: LibraryFile
   /** 桌面（右边一栏）还是手机（整一页）。 */
   wide: boolean
@@ -34,12 +36,11 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
       <p class="t-meta c-faint library-detail__meta">
         {{ props.file.added_by ?? t('work.library.unknownSource') }} · {{ relTime(props.file.added_at) }} ·
         {{ fmtBytes(props.file.bytes) }}
-        <template v-if="props.file.room">
+        <template v-if="props.file.room && typeof props.shelf === 'string'">
           · {{ t('work.library.from') }}
-          <router-link
-            :to="{ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.file.room.id } }"
-            >{{ t('work.topic.quoted', { title: topicTitle(props.file.room) }) }}</router-link
-          >
+          <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: props.file.room.id } }">{{
+            t('work.topic.quoted', { title: topicTitle(props.file.room) })
+          }}</NavLink>
         </template>
       </p>
       <p v-if="props.file.references || props.file.replaced" class="t-meta c-faint library-detail__meta">

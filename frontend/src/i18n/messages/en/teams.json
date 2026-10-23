@@ -168,5 +168,10 @@
     "delete": "Delete",
     "loadFailed": "Failed to load documents",
     "newFailed": "Failed to create the document"
+  },
+  "library": {
+    "intro": "Files the team shares. Every member can upload, replace and delete them",
+    "introPersonal": "Your files: what you attach for Cheese and what Cheese hands back to you are kept here, across topics",
+    "room": "{used} of {total} used"
   }
 }

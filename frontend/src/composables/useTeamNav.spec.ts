@@ -96,6 +96,7 @@ async function mount(path = '/inbox') {
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'docs', name: 'TeamsDetailDocs', component: blank },
+          { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },

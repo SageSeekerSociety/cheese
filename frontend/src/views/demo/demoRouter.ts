@@ -60,6 +60,7 @@ const catalogTargets = [
   { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
   { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: blank },
   { path: '/teams/:handle/docs', name: 'TeamsDetailDocs', component: blank },
+  { path: '/teams/:handle/library', name: 'TeamsDetailLibrary', component: blank },
   { path: '/teams/:handle/docs/:docId', name: 'TeamsDocument', component: blank },
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
   { path: '/teams/:handle/models', name: 'TeamsDetailModels', component: blank },
