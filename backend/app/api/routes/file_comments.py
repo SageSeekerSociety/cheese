@@ -37,7 +37,11 @@ from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.mentions import announce_comment_mentions, comment_notified
+from app.domain.agent.mentions import (
+    CommentMentions,
+    announce_comment_mentions,
+    comment_notified,
+)
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import QuotedContextIn
 from app.domain.identity.actor import Actor
@@ -78,7 +82,7 @@ class FileCommentIn(BaseModel):
 
 async def _in_room(
     db: DbSession, resolver: ActorResolverDep, topic_id: uuid.UUID
-) -> tuple[Place, Actor, str]:
+) -> tuple[Place, Actor]:
     place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -86,7 +90,7 @@ async def _in_room(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    return place, actor, place.conversation_id
+    return place, actor
 
 
 async def _reached(db, resolver, topic_id: uuid.UUID, raw_path: str, *, writes: bool):
@@ -95,7 +99,7 @@ async def _reached(db, resolver, topic_id: uuid.UUID, raw_path: str, *, writes: 
     ``writes`` also asks that their role lets them do what they are about to
     do — commenting is ``comment``, the same permission a document's threads
     ask for."""
-    place, actor, _ = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id)
     path = clean_artifact_path(raw_path)
     if library.library_name(path) is not None:
         # 资料库那一份的地址不是这个房间的文件；评论挂在房间自己的文件上。
@@ -148,7 +152,7 @@ def _outside(told) -> dict:
     return {"mentioned_outside": told.outside.as_json()} if told.outside else {}
 
 
-async def _announce(db, place: Place, path: str, comment) -> object:
+async def _announce(db, place: Place, path: str, comment) -> CommentMentions:
     return await announce_comment_mentions(
         db,
         place.project_id,
