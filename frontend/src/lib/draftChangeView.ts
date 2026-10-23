@@ -345,5 +345,6 @@ export function panelMessages(
     ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),
     proposals: (m.proposals ?? []).map(proposalView),
+    handed: m.handed ?? [],
   }))
 }

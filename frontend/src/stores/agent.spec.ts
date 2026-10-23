@@ -1,7 +1,13 @@
-// 交给芝士的文件：先传上去，传完那一行不再转圈，下一个问题带上它。
+// 交给芝士的文件：先传上去，传完那一行不再转圈，下一个问题带上它。普通页面交的文件
+// 进这个人自己的资料库；发布、改题目页上交的是题目的材料，存成附件。
+import { effectScope } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const upload = vi.fn()
+const keep = vi.fn()
+vi.mock('@/lib/libraryApi', () => ({ uploadLibraryFile: (...a: unknown[]) => keep(...a) }))
+vi.mock('@/api/teams', () => ({ TeamsApi: { detailByHandle: async () => ({ team: { id: 9 } }) } }))
+vi.mock('@/me', () => ({ myHandle: () => 'lin' }))
 const post = vi.fn()
 const openTask = vi.fn()
 const settle = vi.fn()
@@ -16,37 +22,75 @@ vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 import type { AssistantProposal } from './agentThread'
 
-import { agentFiles, agentThread, attachToAgent, removeAgentFile, resetAgent, sendProposal } from './agent'
+import { toast } from 'vuetify-sonner'
+
+import {
+  agentFiles,
+  agentThread,
+  attachToAgent,
+  removeAgentFile,
+  resetAgent,
+  sendProposal,
+  useAgentContext,
+} from './agent'
+
+import { ApiError } from '@/api'
 
 describe('交给芝士的文件', () => {
   afterEach(() => {
     resetAgent()
     upload.mockReset()
+    keep.mockReset()
   })
 
-  it('传完的那一行带上编号，不再是上传中', async () => {
-    upload.mockResolvedValue({ id: 7 })
+  it('传完的那一行带上它在资料库里的名字，不再是上传中', async () => {
+    keep.mockResolvedValue({ path: '实验3-缓存实验.pdf', bytes: 1 })
 
     await attachToAgent([new File(['x'], '实验3-缓存实验.pdf', { type: 'application/pdf' })])
 
-    expect(agentFiles.value).toEqual([{ id: 7, name: '实验3-缓存实验.pdf', mime: 'application/pdf', uploading: false }])
+    expect(keep.mock.calls[0][0]).toEqual({ team: 9 })
+    expect(agentFiles.value).toEqual([
+      { id: null, path: '实验3-缓存实验.pdf', name: '实验3-缓存实验.pdf', mime: 'application/pdf', uploading: false },
+    ])
+  })
+
+  it('题目页上交的是题目的材料：存成附件', async () => {
+    const scope = effectScope()
+    scope.run(() => useAgentContext(() => ({ attachAsMaterials: true })))
+    upload.mockResolvedValue({ id: 7 })
+
+    await attachToAgent([new File(['x'], '实验说明.pdf', { type: 'application/pdf' })])
+
+    scope.stop()
+    expect(keep).not.toHaveBeenCalled()
+    expect(agentFiles.value).toEqual([
+      { id: 7, path: null, name: '实验说明.pdf', mime: 'application/pdf', uploading: false },
+    ])
   })
 
   it('传不上去的那一行拿掉', async () => {
-    upload.mockRejectedValue(new Error('offline'))
+    keep.mockRejectedValue(new Error('offline'))
 
     await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
 
     expect(agentFiles.value).toEqual([])
   })
 
+  it('放不进资料库时说服务端给的原因', async () => {
+    keep.mockRejectedValue(new ApiError(422, '资料库已满（上限 1024 MB），删掉一些文件后再试'))
+
+    await attachToAgent([new File(['x'], 'a.pdf', { type: 'application/pdf' })])
+
+    expect(toast.error).toHaveBeenCalledWith('资料库已满（上限 1024 MB），删掉一些文件后再试')
+  })
+
   it('点掉一个文件', async () => {
-    upload.mockResolvedValueOnce({ id: 1 }).mockResolvedValueOnce({ id: 2 })
+    keep.mockResolvedValueOnce({ path: 'a.pdf' }).mockResolvedValueOnce({ path: 'b.pdf' })
     await attachToAgent([new File(['x'], 'a.pdf'), new File(['y'], 'b.pdf')])
 
     removeAgentFile(0)
 
-    expect(agentFiles.value.map((f) => f.id)).toEqual([2])
+    expect(agentFiles.value.map((f) => f.path)).toEqual(['b.pdf'])
   })
 })
 

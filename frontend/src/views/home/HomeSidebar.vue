@@ -24,13 +24,6 @@ const {
   createBusy,
   createError,
   createSpace,
-  editing,
-  editingBusy,
-  editingError,
-  editingNameError,
-  edit,
-  clearErrors,
-  saveProfile,
   disbanding,
   disbandBusy,
   disbandError,
@@ -49,7 +42,6 @@ const {
 
 <template>
   <HomeSidebarView
-    v-model:editing="editing"
     v-model:disbanding="disbanding"
     v-model:transferring="transferring"
     v-model:join-open="joinOpen"
@@ -59,9 +51,6 @@ const {
     :spaces="spaces"
     :awaiting="awaiting"
     :current-handle="currentHandle"
-    :editing-busy="editingBusy"
-    :editing-error="editingError"
-    :editing-name-error="editingNameError"
     :disband-busy="disbandBusy"
     :disband-error="disbandError"
     :transfer-candidates="transferCandidates"
@@ -72,9 +61,6 @@ const {
     :join-error="joinError"
     :create-busy="createBusy"
     :create-error="createError"
-    @edit="edit"
-    @clear-errors="clearErrors"
-    @save-profile="saveProfile"
     @open-disband="openDisband"
     @confirm-disband="confirmDisband"
     @open-transfer="openTransfer"

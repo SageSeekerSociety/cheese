@@ -2,6 +2,8 @@
 //
 // 名字就是位置，所以挪动和改名是同一个请求。新建文件夹不发请求：文件夹在里面有文件
 // 时才存在，新建就是走进那一层，往里放东西它就在了。
+import type { LibraryShelf } from '@/lib/libraryApi'
+
 import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
@@ -12,7 +14,8 @@ import { folderOf, leafOf } from '@/lib/libraryFolders'
 type Pending = { path: string } | { newFolder: true }
 
 export function useLibraryNaming(page: {
-  projectId: () => string
+  /** 哪一个资料库（`LibraryShelf`）。 */
+  shelf: () => LibraryShelf
   /** 现在看着的那一层。 */
   dir: () => string
   goTo: (dir: string) => void
@@ -33,7 +36,7 @@ export function useLibraryNaming(page: {
     pending.value = next
     folders.value = []
     if ('path' in next)
-      void listLibraryFolders(page.projectId())
+      void listLibraryFolders(page.shelf())
         .then((all) => {
           if (pending.value === next) folders.value = all
         })
@@ -67,7 +70,7 @@ export function useLibraryNaming(page: {
     moving.value = true
     error.value = ''
     try {
-      await moveLibraryFile(page.projectId(), target.path, to)
+      await moveLibraryFile(page.shelf(), target.path, to)
       pending.value = null
       toast(t('work.library.moved'))
       const opened = page.opened()

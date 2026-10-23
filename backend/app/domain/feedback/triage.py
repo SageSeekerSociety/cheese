@@ -7,9 +7,13 @@ the agent's, so two days' runs do not each decide differently what "untriaged"
 means, and a day with nothing waiting runs no turn at all.
 
 **Untriaged** is 已收录 with no assignee: assigning and claiming both move a
-report to 处理中 (`FeedbackService.advance`), so a report still at `received`
-is one nobody has touched. Only reports the teammate could read are handed out
-— public and not flagged as a security matter, the arm `may_see` opens to a
+report to 处理中 (`FeedbackService.advance`), and a claim that is let go of puts
+it back at 已收录 (`FeedbackService.release`) — releasing means 「as if it had
+never been claimed」, so the report carries no trace of it. A batch is still not
+handed out twice: the caller passes what that rule already handed out on an
+earlier run (`RoutineRun.feedback_offered`), because that record belongs to the
+rule, not to the report. Only reports the teammate could read are handed out —
+public and not flagged as a security matter, the arm `may_see` opens to a
 non-admin. The private and security queues stay with the people on the triage
 roster.
 
@@ -24,7 +28,7 @@ task.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.announce import KIND_LABELS
@@ -53,20 +57,27 @@ STEPS = "\n".join(
 )
 
 
-async def untriaged(session: AsyncSession, limit: int) -> list[Feedback]:
-    """The oldest public reports nobody has picked up, at most `limit`."""
+async def untriaged(
+    session: AsyncSession, limit: int, *, exclude: Select | None = None
+) -> list[Feedback]:
+    """The oldest public reports nobody has picked up, at most `limit`.
+
+    `exclude`, when given, selects feedback ids this rule already handed out
+    on an earlier run. It comes from the caller because that record lives on
+    the rule's runs, not on the report.
+    """
+    query = select(Feedback).where(
+        Feedback.deleted_at.is_(None),
+        Feedback.status == FeedbackStatus.received,
+        Feedback.assignee_handle.is_(None),
+        Feedback.visibility == FeedbackVisibility.public,
+        Feedback.security.is_(False),
+    )
+    if exclude is not None:
+        query = query.where(Feedback.id.not_in(exclude))
     return list(
         await session.scalars(
-            select(Feedback)
-            .where(
-                Feedback.deleted_at.is_(None),
-                Feedback.status == FeedbackStatus.received,
-                Feedback.assignee_handle.is_(None),
-                Feedback.visibility == FeedbackVisibility.public,
-                Feedback.security.is_(False),
-            )
-            .order_by(Feedback.created_at, Feedback.display_no)
-            .limit(limit)
+            query.order_by(Feedback.created_at, Feedback.display_no).limit(limit)
         )
     )
 

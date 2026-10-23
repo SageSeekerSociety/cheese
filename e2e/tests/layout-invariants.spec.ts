@@ -1277,6 +1277,36 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
     }
   });
 
+  // 桌面版 macOS 把红黄绿三颗窗口按钮画在页面上面（desktop/src-tauri/src/main.rs 的
+  // traffic_light_position 12,16）：它们占窗口左缘 12..64 那一带，系统画在网页上层。
+  // 让位的宽度由 style.css 的 --window-buttons-inset 给（这台桌面版 72 = 三颗右缘 64 + 8，
+  // 别处 0），顶栏、设置、全屏编辑器、放映、画布全屏、文档里的应用、跳转链接都读它。
+  // 这里量网页里的盒子：在浏览器里模拟外壳只要 __CHEESE_APP__.titleBar，不需要真窗口。
+  // 每层的「本来位置」由上面那条不设外壳的测试守着——同一个浏览器里它必须仍在 24。
+  test('macOS 桌面版：返回键落在窗口按钮右边，仍在灰栏里', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __CHEESE_APP__: unknown }).__CHEESE_APP__ = { titleBar: 'overlay' };
+    });
+    await apiLogin(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/users/settings/security');
+    await expect(page.locator('.so__close')).toBeVisible();
+    const g = await overlayGeometry(page);
+    expect(g.side, '没落在桌面外壳里').not.toBeNull();
+    expect(g.close, '没有关闭按钮').not.toBeNull();
+
+    // 这一层认出了自己在哪种窗口里：令牌是 72，不是 0。
+    const inset = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--window-buttons-inset').trim(),
+    );
+    expect(inset, '没认出 macOS 桌面版，让位令牌还是 0').toBe('72px');
+
+    // 三颗的右缘到 64，和顶栏同一条 8px 空隙。
+    expect(g.close!.left, '返回键压到了窗口按钮').toBeGreaterThanOrEqual(g.side!.left + 64 + 8 - 0.5);
+    // 让开之后还在这条灰栏里，没被挤出目录。
+    expect(g.close!.right, '返回键伸出了灰栏').toBeLessThanOrEqual(g.side!.right);
+  });
+
   test('同一宽度下，四类设置页的内容列左右缘一致', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await apiLogin(page);

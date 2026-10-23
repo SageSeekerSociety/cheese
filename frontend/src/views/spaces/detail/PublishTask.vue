@@ -273,7 +273,7 @@ useAgentContext(() => ({
   ],
   placeholder: t('tasks.assistant.draft.placeholder'),
   hint: t('tasks.assistant.draft.hint'),
-  canAttach: true,
+  attachAsMaterials: true,
 }))
 
 const { mdAndUp } = useDisplay()

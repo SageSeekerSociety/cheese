@@ -32,6 +32,7 @@ from app.core.sentences import say
 from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc.services import Documents
 from app.domain.living_doc.shares import Shares
 from app.domain.project.room_files import (
@@ -282,7 +283,7 @@ async def shared_image(
     name = library.library_name(clean)
     if kind not in _IMAGE_KINDS or doc.project_id is None or name is None:
         raise UnprocessableEntityError(say("docShareImageUnavailable"))
-    data = await library_records.read(db, doc.project_id, name)
+    data = await library_records.read(db, Shelf.of_project(doc.project_id), name)
     return Response(
         content=data,
         media_type=ARTIFACT_MIME[kind],

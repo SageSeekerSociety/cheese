@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from sqlalchemy import Uuid, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,6 +65,20 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         "没有交回结果的一次执行会被记为失败。",
     ]
     return "\n".join(lines)
+
+
+def _offered_before(routine_id: uuid.UUID):
+    """The feedback earlier runs of this rule already handed to a teammate.
+
+    A run that failed does not count: never delivered, never started, or the
+    work it was read into failed — those reports may be handed out again.
+    """
+    return select(
+        func.jsonb_array_elements_text(RoutineRun.feedback_offered).cast(Uuid)
+    ).where(
+        RoutineRun.routine_id == routine_id,
+        RoutineRun.status != RunStatus.failed.value,
+    )
 
 
 async def _fire(
@@ -128,7 +143,9 @@ async def _fire(
     content = run_prompt(routine, run)
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
-        batch = await feedback_triage.untriaged(session, batch_size)
+        batch = await feedback_triage.untriaged(
+            session, batch_size, exclude=_offered_before(routine.id)
+        )
         if not batch:
             # Nothing waiting is not news: no turn, no message, and no daily
             # notice to the owner saying so (`notified` is what
@@ -140,6 +157,7 @@ async def _fire(
             run.finished_at = stamp
             run.notified = True
             return run
+        run.feedback_offered = [str(row.id) for row in batch]
         content = f"{content}\n\n{feedback_triage.batch_prompt(batch)}"
     event_id = uuid.uuid4()
     line = say("routineRunStarted", title=routine.title)

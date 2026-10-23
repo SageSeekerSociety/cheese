@@ -49,6 +49,16 @@ interface StoredParts {
   files?: string[]
   /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条例行事务。 */
   shown?: AssistantShown
+  /** 芝士交给人的文件。 */
+  handed?: AssistantHanded[]
+}
+
+/** 芝士交给人的一份文件（`cheese_file_give`）：存在他自己的资料库里——他名下那个团队
+ *  （`team`）的，叫 `path`。 */
+export interface AssistantHanded {
+  team: number
+  path: string
+  bytes: number
 }
 
 /** 平台说的那一句在面板上怎么写：哪条例行事务开始运行。 */
@@ -126,6 +136,7 @@ export interface AssistantMessage {
   edits?: AssistantEdit[]
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
+  handed?: AssistantHanded[]
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
@@ -178,6 +189,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const edits = ref<AssistantEdit[]>([])
   const published = ref<AssistantPublished[]>([])
   const proposals = ref<AssistantProposal[]>([])
+  /** 这一轮交出来的文件。 */
+  const handed = ref<AssistantHanded[]>([])
   /** 在等会话机空出来，还没开始答。 */
   const queued = ref(false)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
@@ -300,7 +313,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return data.id
   }
 
-  async function ask(question: string, fallback: string, files: { id: number; name: string }[] = []) {
+  async function ask(
+    question: string,
+    fallback: string,
+    files: ({ id: number; name: string } | { path: string; name: string })[] = []
+  ) {
     const text = question.trim()
     if ((!text && !files.length) || busy.value) return
     notice.value = null
@@ -343,7 +360,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
   function kept(
     parts: StoredParts
-  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown'> {
+  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed'> {
     return {
       ...(parts.files?.length ? { files: parts.files } : {}),
       ...(parts.shown ? { shown: parts.shown } : {}),
@@ -358,6 +375,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       edits: (parts.edits ?? []).map(toEdit),
       published: parts.published ?? [],
       proposals: parts.proposals ?? [],
+      handed: parts.handed ?? [],
     }
   }
 
@@ -429,6 +447,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
+    } else if (event === 'handed') {
+      handed.value = [...handed.value, payload as unknown as AssistantHanded]
     } else if (event === 'proposal') {
       proposals.value = [...proposals.value, payload as unknown as AssistantProposal]
     } else if (event === 'published') {
@@ -453,6 +473,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     edits.value = []
     published.value = []
     proposals.value = []
+    handed.value = []
     let answer = ''
     let failed = false
     let stopped = false
@@ -495,7 +516,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     } finally {
       settleSteps()
       const did =
-        steps.value.length > 0 || edits.value.length > 0 || published.value.length > 0 || proposals.value.length > 0
+        steps.value.length > 0 ||
+        edits.value.length > 0 ||
+        published.value.length > 0 ||
+        proposals.value.length > 0 ||
+        handed.value.length > 0
       if (current.value === conversation && ((answer && !failed && done) || stopped || did))
         messages.value = [
           ...messages.value,
@@ -508,6 +533,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             edits: edits.value,
             published: published.value,
             proposals: proposals.value,
+            handed: handed.value,
           },
         ]
       if (current.value === conversation) {
@@ -518,6 +544,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         edits.value = []
         published.value = []
         proposals.value = []
+        handed.value = []
       }
     }
   }
@@ -564,6 +591,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     edits,
     published,
     proposals,
+    handed,
     queued,
     notice,
     creditRefused,

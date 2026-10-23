@@ -22,7 +22,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from app.api.assistant_deps import ProjectPages, show_proposal, tell_change, where_of
+from app.api.assistant_deps import (
+    ProjectPages,
+    show_proposal,
+    tell_change,
+    tell_handed,
+    where_of,
+)
 from app.api.auth import ActorResolverDep
 from app.api.awaiting_asks import MembershipAsk, RunAsk, TaskAsk
 from app.api.awaiting_deps import all_waiting
@@ -31,6 +37,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import standing
+from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.personal import reading
@@ -38,6 +45,10 @@ from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
 from app.domain.assistant import memory as assistant_memory
 from app.domain.fetch.preapproved import preapproved
+from app.domain.library import listing as library_listing
+from app.domain.library import records as library_records
+from app.domain.library import service as library_service
+from app.domain.library.shelf import Shelf
 from app.domain.memory.files import MemoryFileError, parse_memory_file
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
@@ -45,6 +56,7 @@ from app.domain.project.services import ProjectService
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.routine import personal as routine_personal
+from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
 from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
 
@@ -1255,3 +1267,144 @@ async def agent_notify_me(
     )
     await db.commit()
     return ok({"text": "已通知用户。"})
+
+
+# --- 用户的资料库：芝士交给用户的、用户附给芝士的文件 -------------------------------
+#
+# 一个人的资料库是他名下那个团队的（`library.shelf.Shelf`）。文件在芝士的电脑和存储
+# 之间直接走：这里给一个只管一份文件、几分钟就失效的地址，电脑自己去传、去取，
+# 字节不经过芝士那一侧，电脑里也没有任何凭据（`sandbox/cheese` 的
+# `cheese_file_give`、`cheese_file_to_computer`）。
+
+
+async def _my_library(resolver, db) -> tuple[Person, Shelf]:
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    team = await team_service(db).ensure_personal_team(me.user_id)
+    return me, Shelf.of_team(team.id)
+
+
+def _reachable(url: str) -> str:
+    """一个电脑上能直接用的地址：后端自己的地址（以 ``/`` 开头）补上平台对外的
+    那一段；对象存储给的本来就是完整的。"""
+    if url.startswith("/"):
+        return f"{settings.frontend_url.rstrip('/')}/api{url}"
+    return url
+
+
+class FileSlotIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=1)
+
+
+@router.post("/files/slot", include_in_schema=False)
+async def agent_file_slot(
+    body: FileSlotIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_file_give 的第一步：一个放 ``size`` 个字节进用户资料库的地址。放不下
+    （总量、单个文件的上限）就在这里说。"""
+    _, shelf = await _my_library(resolver, db)
+    name = library_service.clean_upload_name(body.name)
+    await library_records.refuse_past_room(db, shelf, body.size)
+    slot = await library_records.upload_slot(shelf, name, body.size)
+    return ok({**slot, "url": _reachable(slot["url"])})
+
+
+class FileHandedIn(BaseModel):
+    upload: str
+    name: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/files/handed", include_in_schema=False)
+async def agent_file_handed(
+    body: FileHandedIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_file_give 的最后一步：传上来的那一份登记进用户的资料库，回答里出现
+    一张文件卡片。撞名不覆盖，拿下一个 ``(n)``。"""
+    me, shelf = await _my_library(resolver, db)
+    upload = await library_records.received(shelf, body.upload)
+    name = await library_records.add(
+        db,
+        shelf,
+        filename=library_service.clean_library_path(body.name),
+        data=upload,
+        added_by=me.handle,
+        room_id=None,
+    )
+    await db.commit()
+    claims = resolver.delegation()
+    assert claims is not None
+    await tell_handed(
+        questions, claims, {"team": shelf.team_id, "path": name, "bytes": upload.size}
+    )
+    return ok({"path": name, "bytes": upload.size})
+
+
+class FileLinkIn(BaseModel):
+    path: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/files/link", include_in_schema=False)
+async def agent_file_link(
+    body: FileLinkIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_file_to_computer：用户资料库里一份文件的地址，几分钟内有效，电脑拿它
+    把文件取下来。"""
+    _, shelf = await _my_library(resolver, db)
+    name = body.path.strip().removeprefix("library/")
+    stored = await library_records.stored_file(db, shelf, name)
+    url = await library_records.download_url(db, shelf, name)
+    return ok({"url": _reachable(url), "path": name, "bytes": stored.size})
+
+
+class LibraryReadIn(BaseModel):
+    #: ``library`` 列出全部，``library/<名字>`` 读那一份。
+    ref: str
+    page: int = Field(default=1, ge=1)
+
+
+#: 列出资料库时最多列多少份；多了就说还有多少。
+LIBRARY_LIST_LIMIT = 100
+
+
+@router.post("/library", include_in_schema=False)
+async def agent_library(
+    body: LibraryReadIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_read 读 ``library``：用户资料库里有哪些文件；读 ``library/<名字>``：
+    那一份的文字（PDF 取文字层，别的二进制只说大小）。"""
+    me, shelf = await _my_library(resolver, db)
+    name = body.ref.strip().strip("/").removeprefix("library").strip("/")
+    if not name:
+        rows, more = await library_listing.page(
+            db, shelf, {}, flat=True, limit=LIBRARY_LIST_LIMIT
+        )
+        if not rows:
+            return ok({"text": "用户的资料库里还没有文件。"})
+        lines = [
+            f"- library/{row['path']}（{_size(row['bytes'])}，"
+            f"{_when(datetime.fromisoformat(row['added_at']), me.timezone)}）"
+            for row in rows
+        ]
+        if more:
+            lines.append(f"（只列了最近的 {LIBRARY_LIST_LIMIT} 份）")
+        return ok({"text": "\n".join(lines)})
+    found = await library_records.read_text(db, shelf, name)
+    if found.get("content") is None:
+        return ok(
+            {
+                "text": f"library/{name} 是二进制文件（{_size(found['bytes'])}），"
+                "读不成文字；要处理就用 cheese_file_to_computer 放进电脑。"
+            }
+        )
+    return ok({"text": str(found["content"])})
+
+
+def _size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.0f} KB"
+    return f"{n / 1024 / 1024:.1f} MB"

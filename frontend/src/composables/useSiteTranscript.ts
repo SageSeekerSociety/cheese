@@ -9,7 +9,7 @@ import type { ScrollAnchor } from './useStickToBottom'
 import { nextTick, ref } from 'vue'
 
 import { getTranscript, SITE_PAGE_SIZE } from '../api'
-import { capWindow, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
+import { capWindow, MAX_WINDOW, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 
 import { t } from '@/i18n'
@@ -18,6 +18,8 @@ import { t } from '@/i18n'
 export interface SiteTranscriptHooks {
   /** 现在开着哪段对话：房间的，或者任务的（没开就是 null）。 */
   topicId: () => string | null
+  /** 这一格还在不在屏幕上：切走了就别在后台替它预取。 */
+  active?: () => boolean
   /** 现在看的是谁：null = 全部（同 PanelSite 的 `viewing`）。 */
   viewing: () => string | null
   /** 这一窗自己的滚动容器。 */
@@ -63,11 +65,24 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 手上这一窗是哪段对话的。换了对话又没读回来时，屏上那份是上一个对话的，失败要报出来。
   let loadedTopic: string | null = null
 
-  async function loadOlder() {
+  //: 预取走在读者前面两页：打开时先多拉两页放在上面，之后每次读到边上，
+  //: 后台再补到「手上这些 + 两页」。
+  const PREFETCH_AHEAD = 2 * SITE_PAGE_SIZE
+  //: 预取到此为止。窗口上限是 MAX_WINDOW；预取不把窗口堆到触发裁剪的程度——
+  //: 那样裁掉的正是读者此刻在看的底下那一截。留一页给读者自己翻。
+  const PREFETCH_CEILING = MAX_WINDOW - SITE_PAGE_SIZE
+
+  // 一次只让一个「往上读」的请求在飞：读者翻到边上与后台预取可能同时要读上一页。
+  let olderBusy = false
+
+  /** 读上一页。`quiet` 是预取：不摆「加载更早的现场…」，读者看不见它。
+   *  回来了没有（这一页真的合进窗口了）。 */
+  async function loadOlder(quiet = false): Promise<boolean> {
     const tid = hooks.topicId()
-    if (!tid || !olderCursor || loadingOlder.value || !hasOlder.value) return
+    if (!tid || !olderCursor || olderBusy || !hasOlder.value) return false
     const author = hooks.viewing()
-    loadingOlder.value = true
+    olderBusy = true
+    if (!quiet) loadingOlder.value = true
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
@@ -76,13 +91,16 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       })
       // 读的人可能已经换了视角：这一页是上一位的，丢掉——合进来就是把别人的行塞进
       // 这个人的时间线。
-      if (hooks.topicId() !== tid || hooks.viewing() !== author) return
+      if (hooks.topicId() !== tid || hooks.viewing() !== author) return false
       hooks.noteAgents(page.data)
       hooks.noteStarts(page.turn_starts)
       // 量在行进去之前：这一窗里的离屏行带着 content-visibility（PanelSite 的
-      // .site-act），报的是估计高度，量出来的差补进去就会跳。测量帧让这一窗按真实高度
+      // .record-row），报的是估计高度，量出来的差补进去就会跳。测量帧让这一窗按真实高度
       // 铺开，量完再撤——见 lib/contentVisibility。位置在请求回来之后再取（和对话栏的
       // 分页器同一条理由：请求在飞的时候读的人可能还在滚，飞出前的位置会把他拉回去）。
+      // 读者在不在末尾，按请求回来的这一刻说：他在等这一页的时候可能已经滚过。停在
+      // 末尾的人往上多出一页不该把他挪走——钉回末尾；停在历史里的人按位置补。
+      const following = hooks.following.value
       const el = hooks.scrollRef.value
       beginMeasuredLayout(el)
       const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
@@ -92,18 +110,40 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // Prepending grows the content ABOVE the viewport; without this the reader
       // is thrown backwards by exactly that much (same fix as the chat's pager).
       await nextTick()
-      const sc = hooks.scrollRef.value
-      if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+      if (following) hooks.scrollToTail()
+      else if (el && before) el.scrollTop = scrollTopAfterPrepend(before, el.scrollHeight)
       endMeasuredLayout(el)
       // Trim AFTER the compensation, never before: the rows this drops are below the
       // viewport, so removing them moves nothing on screen, but they shrink
       // scrollHeight and compensating with a scrollHeight that already excludes them
       // pulls the reader up by their height on every page. See capWindow.
       capSite()
+      return true
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
+      // 也还是好的，把整栏换成一条红条等于一次读慢了就让人看不成现场（同 loadPage
+      // 那条规矩）。预取的失败只是这一次没提前拿到，下次滚到边上再补。
+      if (!quiet) errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      return false
     } finally {
-      loadingOlder.value = false
+      olderBusy = false
+      if (!quiet) loadingOlder.value = false
+    }
+  }
+
+  let prefetching = false
+  /** 把上一页提前拿到手：读者往上翻时通常已经在屏上了。这次只有一页在飞，
+   *  同一时刻不会和读者自己触发的那一页抢。 */
+  async function prefetchOlder(): Promise<void> {
+    if (prefetching) return
+    prefetching = true
+    try {
+      const target = Math.min(PREFETCH_CEILING, transcript.value.length + PREFETCH_AHEAD)
+      while ((hooks.active?.() ?? true) && hasOlder.value && !hasNewer.value && transcript.value.length < target) {
+        if (!(await loadOlder(true))) break
+      }
+    } finally {
+      prefetching = false
     }
   }
 
@@ -130,7 +170,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const el = hooks.scrollRef.value
     if (!el) return
     if (shouldLoadOlder(el.scrollTop, { hasMore: hasOlder.value, loading: loadingOlder.value })) {
-      void loadOlder()
+      void loadOlder().then((landed) => {
+        if (landed) void prefetchOlder()
+      })
     }
     // 窗口被裁过、读的人又滚回了末尾：重读一页最新的把它接上（`load` 见 hasNewer 时
     // 会就地换成最新的一页，而不是往旧窗口上拼）。
@@ -204,6 +246,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
           hooks.restoreAnchor(anchor)
         }
       }
+      // 首屏已经在屏上了，再在后台把上面两页补出来：读者往上翻时不必等。
+      void prefetchOlder()
     } catch (e) {
       if (firstRead || switched || switchedTopic) {
         errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
