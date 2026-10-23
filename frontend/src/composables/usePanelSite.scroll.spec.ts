@@ -70,8 +70,8 @@ function row(id: string, second: number): Block {
   return { ...block(id, second), run_record: false } as Block
 }
 
-function page(rows: Block[]) {
-  return { data: rows, has_more: false }
+function page(rows: Block[], extra: { has_more?: boolean; oldest_id?: string | null } = {}) {
+  return { data: rows, has_more: extra.has_more ?? false, oldest_id: extra.oldest_id ?? null }
 }
 
 const OPEN = page([block('a', 1), block('b', 2)])
@@ -119,6 +119,23 @@ describe('where 现场 opens', () => {
     site.selectAgent('cheese-a')
     await settle()
 
+    expect(box.scrollTop).toBe(1500)
+    scope.stop()
+  })
+})
+
+describe('the pages above the window', () => {
+  it('prefetches older pages after the first one lands, without any scrolling', async () => {
+    api.getTranscript
+      .mockResolvedValueOnce(page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'c1' }))
+      .mockResolvedValue(page([block('z', 0)]))
+    const { box, site, scope } = await openAtBottom()
+
+    // The first page is on screen; the page above it came in without the reader
+    // asking for it, and it did not move them.
+    expect(api.getTranscript).toHaveBeenCalledTimes(2)
+    expect(api.getTranscript.mock.calls[1][1]).toMatchObject({ before: 'c1' })
+    expect(site.loadingOlder.value, '预取是安静的，不摆「加载更早的现场…」').toBe(false)
     expect(box.scrollTop).toBe(1500)
     scope.stop()
   })
