@@ -1624,6 +1624,11 @@ def self_test() -> int:
 
     check("a re-pointed key follows the chain, not file names", chained_rules("runs, conversations"), [])
     check("... and its old target is not enough", chained_rules("runs, topics"), ["fk-table-not-locked"])
+    chained["later.py"] = (
+        rev("r4", "r3") + "def upgrade():\n"
+        "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'elsewhere', ['topic_id'], ['id'])\n"
+    )
+    check("... and a later migration's re-point is not seen yet", chained_rules("runs, conversations"), [])
     check(
         "a key this migration drops and re-adds under its name was locked at its old target",
         judged(
@@ -1633,6 +1638,15 @@ def self_test() -> int:
             created,
         ),
         ["fk-table-not-locked"],
+    )
+    check(
+        "a key this migration created, then dropped, points where it created it",
+        _rules_found(
+            "    with_lock_retries('runs, users')\n"
+            "    op.create_foreign_key('runs_owner_fkey', 'runs', 'users', ['u'], ['id'], postgresql_not_valid=True)\n"
+            "    op.drop_constraint('runs_owner_fkey', 'runs', type_='foreignkey')"
+        ),
+        [],
     )
     helper = "def _move():\n    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)\n"
     check(
