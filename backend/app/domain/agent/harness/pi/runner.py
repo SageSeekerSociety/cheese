@@ -658,7 +658,12 @@ class Runner(runner.Runner[Journal]):
             }
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
-            None,
+            # A person's 芝士 works on a computer of its own and moves files
+            # between it and their library (`cheese_file_give`): the commands
+            # run there, the requests go out under the question's credential.
+            # One that only reads a room's machine (a document's 芝士) runs
+            # nothing on it.
+            self._invoke if self.tools.get("works") and self.machine else None,
             call_id,
             self.doc_versions,
             no_run,

@@ -30,6 +30,7 @@ from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.domain.library import records, service
 from app.domain.library.models import LibraryFileRecord
+from app.domain.library.shelf import Shelf
 
 # 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少，而报出去的那个
 # 数要能在断言里认出来。超限与「正好等于上限」都真跑一遍，所以上限压到几 MB 才发得动。
@@ -187,7 +188,7 @@ async def test_a_library_replace_over_the_ceiling_is_refused_before_bytes_are_st
     with pytest.raises(UnprocessableEntityError) as refused:
         await records.replace(
             session,
-            project_id=project,
+            shelf=Shelf.of_project(project),
             name="预算.xlsx",
             data=b"x" * (CEILING + 1),
             by="user-1",

@@ -34,6 +34,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
 from app.domain.library import listing as library_listing
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc import search as doc_search
 from app.domain.living_doc.schemas import document_row
 from app.domain.membership.roster import roster
@@ -263,7 +264,7 @@ async def _page(
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
     if "library" in groups:
         hits["library"] = await library_listing.matching(
-            db, project_id, q, limit=limit, offset=offset
+            db, Shelf.of_project(project_id), q, limit=limit, offset=offset
         )
     return hits
 
@@ -302,7 +303,9 @@ async def _counts(
             )
             or 0
         )
-    counts["library"] = await library_listing.count_matching(db, project_id, q)
+    counts["library"] = await library_listing.count_matching(
+        db, Shelf.of_project(project_id), q
+    )
     return counts
 
 
@@ -457,7 +460,9 @@ async def search_everything(
         )
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
 
-    hits["library"] = await library_listing.matching(db, project_id, q, limit=limit)
+    hits["library"] = await library_listing.matching(
+        db, Shelf.of_project(project_id), q, limit=limit
+    )
     artifacts = await db.scalars(
         select(ProjectArtifact)
         .where(

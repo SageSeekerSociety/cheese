@@ -22,7 +22,6 @@ import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
-import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 /** 目录里的字要 i18n，行、按钮、抽屉要 vuetify，带 `to` 的行还要路由（`demoRouter`）。 */
@@ -62,7 +61,6 @@ function navArgs(overrides: Record<string, unknown> = {}) {
   return {
     teams: [CREW, LAB],
     spaces: SPACES,
-    editing: null,
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
@@ -279,42 +277,6 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         note: '读完了、名单是空的，这时候才说这句话 —— 一个人也交不出去，只能去解散。',
         props: { candidates: [], loading: false },
         expect: '团队里还没有别的成员可以接手。',
-      },
-    ],
-  },
-  {
-    id: 'team-profile-edit-dialog',
-    title: 'TeamProfileEditDialog',
-    about: '改团队对外的样子：名字、介绍、头像。地址、可见性、加入方式都不在这里。',
-    file: 'src/views/teams/TeamProfileEditDialog.vue',
-    component: TeamProfileEditDialog,
-    needs: ['vuetify', 'i18n'],
-    teleport: true,
-    args: { modelValue: true, team: CREW },
-    states: [
-      {
-        name: '刚打开',
-        note: '照小队现在的样子起手；每次打开都重来一遍，上一次取消留下的半截输入不跟到下一次。保存本身（换头像、PATCH、撞名怎么落格）在 `useTeamNav`。',
-        props: {},
-        expect: '显示在侧栏团队名字下面，最多 250 字',
-      },
-      {
-        name: '名字被别人占了',
-        note: '撞名是人自己能修的（换一个名字就行），所以要落在名字那一格上，不能混成一句「保存失败」。',
-        props: { nameError: '这个名称已被占用，换一个试试' },
-        expect: '这个名称已被占用，换一个试试',
-      },
-      {
-        name: '保存失败',
-        note: '没网、没权限这类人自己修不了的，报在整张表单上。',
-        props: { error: '保存失败，请稍后重试' },
-        expect: '保存失败，请稍后重试',
-      },
-      {
-        name: '正在保存',
-        note: '保存时按钮转圈，弹窗关不掉 —— 上一次的请求还在路上。',
-        props: { busy: true },
-        expectSelector: '.v-btn--loading',
       },
     ],
   },

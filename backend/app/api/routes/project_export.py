@@ -60,7 +60,7 @@ async def export_project(
         actor,
         resolver,
         file_store=library,
-        library_files=library_records,
+        library_files=library_records.ProjectLibraries(),
     )
     return ProjectArchiveResponse(
         archive,

@@ -22,7 +22,7 @@ the index is built `CONCURRENTLY`. The previous release still serving does not
 map the new columns and is unaffected.
 
 Revision ID: b7f3c1a90e42
-Revises: b2f6d18c9a73
+Revises: d2f7a4c8e913
 Create Date: 2026-10-23
 """
 
@@ -34,7 +34,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "b7f3c1a90e42"
-down_revision: str | Sequence[str] | None = "b2f6d18c9a73"
+down_revision: str | Sequence[str] | None = "d2f7a4c8e913"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

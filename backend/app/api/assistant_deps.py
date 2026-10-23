@@ -93,3 +93,14 @@ async def tell_change(questions, claims, shown: dict) -> None:
         return
     if asked is not None and asked.kind == personal.KIND:
         await questions.publish(asked, "change", shown)
+
+
+async def tell_handed(questions, claims, handed: dict) -> None:
+    """Show a file 芝士 handed the person on the question's stream
+    (``handed``): the answer carries it as a card the person downloads."""
+    try:
+        asked = await questions.get(claims.work)
+    except RuntimeError:  # no Valkey: nobody to tell
+        return
+    if asked is not None and asked.kind == personal.KIND:
+        await questions.publish(asked, "handed", handed)

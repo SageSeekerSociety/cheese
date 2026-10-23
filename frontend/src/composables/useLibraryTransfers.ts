@@ -7,6 +7,7 @@
 // 里面的一起走。
 //
 // 只有 `busy` 里的那一个在飞，所以同一时刻屏幕上只有一处的按钮转着圈。
+import type { LibraryShelf } from '@/lib/libraryApi'
 import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import type { LibraryRow } from './useLibraryPages'
 
@@ -18,7 +19,8 @@ import { t } from '../i18n'
 import { replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
 
 export function useLibraryTransfers(page: {
-  projectId: () => string
+  /** 哪一个资料库（`LibraryShelf`）。 */
+  shelf: () => LibraryShelf
   /** 现在看着的那一层：放进来就放进这里。 */
   dir: () => string
   /** 清单变了：重新列一遍。 */
@@ -50,7 +52,7 @@ export function useLibraryTransfers(page: {
 
   // 换了项目：上一条错误和没答完的那一句确认都不属于新的一份。
   watch(
-    () => page.projectId(),
+    () => page.shelf(),
     () => {
       confirming.value = null
       page.error.value = ''
@@ -64,7 +66,7 @@ export function useLibraryTransfers(page: {
     let done = 0
     try {
       for (const file of list) {
-        await uploadLibraryFile(page.projectId(), file, page.dir())
+        await uploadLibraryFile(page.shelf(), file, page.dir())
         done++
       }
     } catch (e) {
@@ -106,7 +108,7 @@ export function useLibraryTransfers(page: {
     busy.value = pending.target.path
     page.error.value = ''
     try {
-      await replaceLibraryFile(page.projectId(), pending.target.path, pending.file)
+      await replaceLibraryFile(page.shelf(), pending.target.path, pending.file)
       page.changed()
       toast(t('work.library.replacedDone'))
       page.reset()
@@ -127,7 +129,7 @@ export function useLibraryTransfers(page: {
   async function download(file: LibraryFile) {
     page.error.value = ''
     try {
-      await downloadFile(libraryFileRawUrl(page.projectId(), file.path), file.path.split('/').pop() || file.path)
+      await downloadFile(libraryFileRawUrl(page.shelf(), file.path), file.path.split('/').pop() || file.path)
     } catch (e) {
       page.error.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
     }
@@ -145,7 +147,7 @@ export function useLibraryTransfers(page: {
     page.error.value = ''
     const gone = (path: string) => path === target.path || path.startsWith(`${target.path}/`)
     try {
-      await deleteLibraryFile(page.projectId(), target.path)
+      await deleteLibraryFile(page.shelf(), target.path)
       page.drop((row) => gone(row.file?.path ?? row.folder?.path ?? ''))
       if (gone(page.opened())) page.close()
     } catch (e) {
