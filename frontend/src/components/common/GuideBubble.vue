@@ -110,7 +110,18 @@ watch(
     dragFrom = null
   }
 )
+/** 窗口改小了之后，人拖到边上那一版也得跟着收回来，不然会跑到屏幕外面。 */
+function clampDragged() {
+  const d = dragged.value
+  if (!d) return
+  const w = bubbleNode?.offsetWidth || BUBBLE_W
+  const h = bubbleNode?.offsetHeight || bubbleH
+  const left = clamp(d.left, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE))
+  const top = clamp(d.top, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE))
+  if (left !== d.left || top !== d.top) dragged.value = { left, top }
+}
 function measure() {
+  clampDragged()
   const target = props.target
   const el = target instanceof HTMLElement ? target : null
   const rect: DOMRectReadOnly | null = el ? el.getBoundingClientRect() : (target as DOMRectReadOnly | null)
