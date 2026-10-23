@@ -200,6 +200,15 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
    *  就会给点过的那一条补上框。也不能用浏览器的 :focus-visible，它对任何一次按键
    *  都亮，而上面那几种没有按键的聚焦它又看心情。 */
   let pointerHeld = false
+  /** 指针没抬起就把这次按下作废的兜底：拖到窗口外松手、pointercancel 被吞掉时，
+   *  不然后面所有聚焦都画不出框。聚焦本身发生在按下那一轮里，等不到这么久。 */
+  let pointerRelease: ReturnType<typeof setTimeout> | undefined
+  function releasePointer() {
+    clearTimeout(pointerRelease)
+    // 大多数浏览器在按下时就聚焦，Safari 那种按下不聚焦、抬起才聚焦的也要接住：
+    // 让这一轮的事件先走完再撤。
+    pointerRelease = setTimeout(() => (pointerHeld = false), 0)
+  }
   const modalityTarget = typeof window === 'undefined' ? undefined : window
   useEventListener(modalityTarget, 'keydown', (e: KeyboardEvent) => {
     if (isTimelineKey(e)) keyboardFocus = true
@@ -207,12 +216,12 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   useEventListener(modalityTarget, 'pointerdown', () => {
     keyboardFocus = false
     pointerHeld = true
+    clearTimeout(pointerRelease)
+    pointerRelease = setTimeout(() => (pointerHeld = false), 1000)
   })
-  useEventListener(modalityTarget, 'pointerup', () => {
-    // 大多数浏览器在按下时就聚焦，Safari 那种按下不聚焦、抬起才聚焦的也要接住：
-    // 让这一轮的事件先走完再撤。
-    setTimeout(() => (pointerHeld = false), 0)
-  })
+  useEventListener(modalityTarget, 'pointerup', releasePointer)
+  useEventListener(modalityTarget, 'pointercancel', releasePointer)
+  useEventListener(modalityTarget, 'blur', releasePointer)
 
   function onRowFocus(e: FocusEvent) {
     const target = e.target as HTMLElement | null

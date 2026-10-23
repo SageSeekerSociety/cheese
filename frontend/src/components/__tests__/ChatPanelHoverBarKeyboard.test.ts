@@ -251,4 +251,15 @@ describe('只有这一列自己用的键才算「在用键盘」', () => {
     await flush()
     expect(ringOn(container)).toBe(true)
   })
+
+  it('指针没抬起（被系统取消）之后，键盘聚焦照旧画框', async () => {
+    const { container } = await mount()
+    pointerDown()
+    window.dispatchEvent(new Event('pointercancel'))
+    await flush()
+    useKeyboard()
+    row(container, 'a1').focus()
+    await flush()
+    expect(ringOn(container)).toBe(true)
+  })
 })
