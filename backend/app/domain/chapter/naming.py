@@ -22,6 +22,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import model_roles
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.domain.block.models import Block
 from app.domain.chapter.models import Chapter
@@ -36,10 +37,20 @@ logger = logging.getLogger(__name__)
 USAGE_KIND = "bookmark_naming"
 
 #: One name is a dozen tokens; the cap only stops a model that decides to
-#: explain itself.
-_ANSWER_TOKENS = 48
+#: explain itself. It is not tighter than that because a model that spends a
+#: few tokens on preamble before the name would otherwise come back empty and
+#: leave the rule name in place, which reads to a reader as "it never names".
+_ANSWER_TOKENS = 128
+
+
 #: How long the background call may take before the rule name simply stays.
-_TIMEOUT_S = 8.0
+#: The same budget task naming allows itself (``topic_naming_timeout_seconds``),
+#: read per call as that side reads it: one naming call, one call's worth of
+#: patience, and a deployment that changes the setting is obeyed without a
+#: restart.
+def _timeout() -> float:
+    return settings.topic_naming_timeout_seconds
+
 
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -90,21 +101,30 @@ async def refine(
         async with factory() as session:
             chapter = await _chapter(session, block_id)
             block = await session.get(Block, block_id)
-            if chapter is None or block is None or not chapter.title:
+            if chapter is None or block is None:
                 return False
+            # A row the rule could not name (a message with no words, or one
+            # bookmarked before names existed) has ``title`` None and shows a
+            # cut-off excerpt instead. It is exactly the row that needs the
+            # model most, so ask for it too; ``_write`` then only lands while
+            # the row is still unnamed.
             rule_title = chapter.title
             key = await service_key(session, key_spec(), transport)
             if key is None:
                 return False
         chat = GatewayChat(
-            key, model_roles.model("topic_naming_model"), max_tokens=_ANSWER_TOKENS
+            key,
+            model_roles.model("topic_naming_model"),
+            max_tokens=_ANSWER_TOKENS,
+            transport=transport,
         )
+        timeout = _timeout()
         try:
-            async with asyncio.timeout(_TIMEOUT_S):
+            async with asyncio.timeout(timeout):
                 answer = await chat.complete(
                     system=SYSTEM_PROMPT,
                     prompt=_material(block.content),
-                    timeout=_TIMEOUT_S,
+                    timeout=timeout,
                     max_tokens=_ANSWER_TOKENS,
                     # Naming is a judgement with a two-word answer; a reasoning
                     # model thinks past the cap and comes back empty.
@@ -139,14 +159,21 @@ async def _write(
     *,
     conversation_id: uuid.UUID,
     block: Block,
-    rule_title: str,
+    rule_title: str | None,
     title: str,
     answer,
 ) -> bool:
     async with factory() as session:
+        # Still the name we were asked about: either the rule's, or none at
+        # all. A name somebody typed in the meantime is not ours to replace.
+        unchanged = (
+            Chapter.title.is_(None)
+            if rule_title is None
+            else Chapter.title == rule_title
+        )
         changed = await session.scalar(
             update(Chapter)
-            .where(Chapter.block_id == block.id, Chapter.title == rule_title)
+            .where(Chapter.block_id == block.id, unchanged)
             .values(title=title)
             .returning(Chapter.id)
         )
