@@ -9,7 +9,7 @@ import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { postFileThread } from '../../api/fileThreads'
 import { myHandle } from '../../me'
@@ -38,6 +38,11 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   function toggle() {
     open.value = !open.value
   }
+  // 这一份不能挂评论了（换到资料库原件、消息附件，或者回到还没有文件的格子）：
+  // 那一栏跟着收起来，别让它以打开的姿态留到下一份上。
+  watch(commentable, (current) => {
+    if (!current) open.value = false
+  })
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,
     () => commentable.value?.path ?? null,

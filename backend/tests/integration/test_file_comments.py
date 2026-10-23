@@ -147,10 +147,14 @@ def test_a_thread_on_one_file_is_not_a_thread_on_another(client):
 
 
 def test_a_path_with_nothing_behind_it_takes_no_comment(client):
-    """一份不在那儿的文件上开一条评论，谁也看不见——拒掉。"""
+    """一份不在那儿的文件上开一条评论，谁也看不见——拒掉。
+
+    指认也跟着指那一份（不然先撞上的是「指认说的是另一份文件」那条），这样这一
+    条测的就只是「文件在不在」。"""
     room = _room(client)
     _file(client, room)
-    assert _open(client, room, path="output/没有这份.pdf").status_code == 404
+    missing = "output/没有这份.pdf"
+    assert _open(client, room, path=missing, anchor=_anchor(missing)).status_code == 404
 
 
 def test_an_archived_room_takes_no_new_comment(client):

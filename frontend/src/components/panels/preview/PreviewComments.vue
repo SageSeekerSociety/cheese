@@ -45,6 +45,8 @@ const emit = defineEmits<{ (e: 'clear-pick'): void }>()
 const openId = ref<string | null>(null)
 
 const text = ref('')
+/** 发不出去的那句话：写在这儿，别让读者点了「评论」却什么都没有发生。 */
+const error = ref('')
 const draftKey = computed(() => `cheese.file-comments.draft.v1:${props.author}:${props.topicId}:${props.path}`)
 // 存不下就只留在这一页上：草稿是随手写的东西，丢了不报错。
 if (draftKey.value) text.value = storageGet(draftKey.value) ?? ''
@@ -70,8 +72,6 @@ function grow() {
 watch(text, () => void nextTick(grow))
 
 const sending = ref(false)
-/** 发不出去的那句话：写在这儿，别让读者点了「评论」却什么都没有发生。 */
-const error = ref('')
 async function send() {
   const body = text.value.trim()
   if (!body || !props.writable || sending.value) return
