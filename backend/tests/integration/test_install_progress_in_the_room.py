@@ -277,3 +277,22 @@ async def test_a_download_heard_only_as_the_install_ends_still_installs_and_says
     assert "target" in leased.json()["data"], leased.text
     lines = await _lines_in_room(client, room.topic_id)
     assert [line.meta["state"] for line in lines] == ["installed"]
+
+
+async def test_an_install_whose_line_cannot_be_written_still_installs(
+    client, monkeypatch, room_frames
+):
+    """The line only shows how the install goes: when the room cannot be
+    written to, the install that worked still hands over its machine."""
+    room = await _room_on_alices_computer(client)
+
+    async def unwritable(*args, **kwargs):
+        raise RuntimeError("the database is away")
+
+    monkeypatch.setattr(install_progress.InstallProgress, "_write", unwritable)
+    _computer(monkeypatch, _downloading(room_frames, room.topic_id, until="done"))
+
+    leased = client.post(room.lease_path, headers=room.agent, json={"env": {}})
+
+    assert leased.status_code == 200, leased.text
+    assert "target" in leased.json()["data"], leased.text
