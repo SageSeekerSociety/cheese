@@ -378,6 +378,21 @@ describe('production surface comment selections', () => {
     await nextTick()
     expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
   })
+
+  it('puts the bar back when the browser cancels the gesture and the selection is still there', async () => {
+    const f = await mountDoc('<p>第一段 第二段</p>')
+    f.ed.commands.setTextSelection(span(f.ed, '第一段'))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+    f.ed.view.dom.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).toBeNull()
+    // 滚动手势接管：指针被取消，但选区还在
+    document.dispatchEvent(new MouseEvent('pointercancel', { bubbles: true }))
+    await nextTick()
+    expect(f.ed.state.selection.empty).toBe(false)
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+  })
 })
 
 describe('asking the AI teammate from a selection', () => {

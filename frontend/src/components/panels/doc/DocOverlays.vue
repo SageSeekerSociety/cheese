@@ -127,7 +127,11 @@ function onSelectPointerUp() {
   if (bound && !disposed) updateCommentCta(bound)
 }
 function onSelectPointerCancel() {
+  // 手势被系统接管（滚动、原生拖拽）时同样收尾：选区可能还在，而且不会再有一次
+  // selectionUpdate 来补这一下，只清标志会让浮条一直不回来。
+  if (!draggingSelection) return
   draggingSelection = false
+  if (bound && !disposed) updateCommentCta(bound)
 }
 function positionCta() {
   const cta = commentCta.value
