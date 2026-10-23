@@ -465,7 +465,7 @@ class _Migration(ast.NodeVisitor):
         # The tables `with_lock_retries` names, and each table a foreign key
         # added or dropped in the migration's own transaction touches.
         self._locked: set[str] | None = None
-        self._fk_tables: list[tuple[ast.AST, str]] = []
+        self._fk_tables: list[tuple[ast.AST, str, frozenset[str]]] = []
         # Keys this migration has created so far, by name: a later drop of the
         # same name drops this one, not the one history knows.
         self._created_here: dict[str, str] = {}
@@ -671,7 +671,7 @@ class _Migration(ast.NodeVisitor):
     def _fk_touches(self, node: ast.AST, *tables: str | None) -> None:
         # Only a lock taken after with_lock_retries holds the listed tables.
         if self._locked is not None and not self._autocommit:
-            self._fk_tables.extend((node, t) for t in tables if t)
+            self._fk_tables.extend((node, t, frozenset(self._locked)) for t in tables if t)
 
     def _op_drop_constraint(self, node: ast.Call) -> None:
         name = _sql_text(node.args[0] if node.args else _kw(node, "constraint_name"), self.constants)
@@ -933,17 +933,16 @@ class _Migration(ast.NodeVisitor):
         constraint and its ``VALIDATE`` are safe only when the VALIDATE runs in
         its own transaction. In the migration's own, it holds the lock to the
         end of the migration and cancels what ``NOT VALID`` bought. And a
-        foreign key's tables are judged against the whole ``with_lock_retries``
-        list."""
-        if self._locked is not None:
-            for node, table in self._fk_tables:
-                if table not in self._locked and table not in self.new_tables:
-                    self.report(
-                        node,
-                        "fk-table-not-locked",
-                        f"this foreign key locks {table}, which with_lock_retries does not name; "
-                        "taken after the listed tables, it deadlocks with the live backend - add it to the list",
-                    )
+        foreign key's tables are judged against the ``with_lock_retries`` list
+        held when it ran."""
+        for node, table, locked in self._fk_tables:
+            if table not in locked and table not in self.new_tables:
+                self.report(
+                    node,
+                    "fk-table-not-locked",
+                    f"this foreign key locks {table}, which with_lock_retries does not name; "
+                    "taken after the listed tables, it deadlocks with the live backend - add it to the list",
+                )
         if not self._not_valid_added:
             return
         for node in self._unblocked_validates:
@@ -1662,6 +1661,24 @@ def self_test() -> int:
                 {
                     "m.py": _HEAD + helper + "\ndef upgrade() -> None:\n    with_lock_retries('task')\n"
                     "\ndef downgrade() -> None:\n    _move()\n"
+                },
+                _BASE_MODELS,
+            )
+        ),
+        [],
+    )
+    own_lock = (
+        "def _undo():\n    with_lock_retries('task, users')\n"
+        "    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)\n"
+    )
+    check(
+        "a downgrade helper is judged against its own lock list, not upgrade()'s",
+        sorted(
+            f.rule
+            for f in analyze(
+                {
+                    "m.py": _HEAD + own_lock + "\ndef upgrade() -> None:\n    with_lock_retries('runs')\n"
+                    "\ndef downgrade() -> None:\n    _undo()\n"
                 },
                 _BASE_MODELS,
             )
