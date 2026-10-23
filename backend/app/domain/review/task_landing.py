@@ -447,13 +447,19 @@ def task_summary_prompt(*, title: str, pr_number: int | None = None) -> str:
     """What a task's agent is told when its last delivery lands: write the task
     up, post the record of it on its own, then close it.
 
-    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去托管平台读标题、合并时间和
-    正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；没有 PR 的交付（文件
-    或网址）换成交付物名字和交付说明原文。"""
+    ``pr_number`` 是这次交付的 PR。有它，AI 队友自己去**这个项目实际用的托管平台**
+    读标题、合并时间和正文全文（这一段话是纯字符串，平台在这一轮取不到远端）；
+    没有 PR 的交付（文件或网址）换成交付物名字和交付说明原文。
+
+    两个命令名都给出来，是因为这一段话写不出项目用的是哪一种：仓库默认
+    `forge_kind=forgejo`，而 `forge_cli` 会**拒掉**在 Forgejo 项目上跑 `gh`
+    （「This project's repository uses fj; run fj instead」），所以只写 `gh`
+    的话，默认那一档上一次都读不到。"""
     if pr_number is not None:
         record = (
-            f"先在托管平台上读这次交付的 PR #{pr_number}（GitHub 用 "
-            f"`gh pr view {pr_number} --json number,title,mergedAt,url,body`），"
+            f"先读这次交付的 PR #{pr_number}，用这个项目实际用的那把 CLI："
+            f"GitHub 项目用 `gh pr view {pr_number} --json number,title,mergedAt,url,body`；"
+            "Forgejo 项目用 `fj`（先 `fj pr view --help` 看它的参数，别照抄 `gh` 那一串）。"
             "顺序写：任务名、PR 号加链接、标题、合并时间（写成读它的人当地的时间）、"
             "「正文：」后面原样贴 PR 正文全文，不概括、不改写。"
             "读不到的那一项照实写没读到，不要编。"

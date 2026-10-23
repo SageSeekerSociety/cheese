@@ -37,8 +37,18 @@ def test_the_agent_reads_the_pr_itself_from_the_number_it_was_given():
     text = _text(pr_number=4693)
     assert "gh pr view 4693" in text
     assert "gh pr view" not in _text(pr_number=None)
-    # 平台也托管 Forgejo，`gh` 是 GitHub 那一条的具体写法，不能写成唯一的路。
-    assert "托管平台" in text
+
+
+def test_both_forges_are_named_because_gh_is_refused_on_forgejo():
+    """仓库默认 `forge_kind=forgejo`，而 `forge_cli.run` 会拒掉在 Forgejo 项目上跑
+    `gh`（「This project's repository uses fj; run fj instead」）。只写 `gh` 的话，
+    默认那一档上一次都读不到 PR——所以这一句必须同时点名 Forgejo 和 `fj`，
+    并且不要把 `gh` 的那串参数当成通用的。"""
+    text = _text(pr_number=4693)
+
+    assert "Forgejo" in text and "`fj`" in text
+    assert "这个项目实际用的" in text
+    assert "别照抄 `gh` 那一串" in text
 
 
 def test_a_delivery_without_a_pr_writes_the_deliverable_instead():
