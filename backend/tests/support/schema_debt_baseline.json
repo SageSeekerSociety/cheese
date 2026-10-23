@@ -19,7 +19,6 @@
     "compute_grants.project_id",
     "compute_grants.team_id",
     "compute_runs.project_id",
-    "compute_runs.topic_id",
     "conversations.project_id",
     "device_health.device_id",
     "dispatches.place_id",
@@ -168,7 +167,6 @@
   ],
   "foreign_keys_without_index": [
     "cloud_hosts.project_id",
-    "compute_runs.topic_id",
     "docs_visits.user_id",
     "feedback.project_id",
     "feedback.topic_id",

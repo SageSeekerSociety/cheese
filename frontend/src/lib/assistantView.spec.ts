@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { stepError } from './assistantView'
+import { stepError, stepView } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -19,6 +19,18 @@ describe('stepError', () => {
   it('平台拒绝时说的那句原样留着', () => {
     const said = '这份草稿已经发布，不能再改'
     expect(stepError(said)).toBe(said)
+  })
+})
+
+describe('stepView', () => {
+  it('在电脑上做的一步，写出跑的命令或读写的文件', () => {
+    const step = (name: string, args: object) =>
+      stepView({ call: name, name, args: JSON.stringify(args), state: 'done' })
+    expect(step('bash', { command: 'python3 stats.py\n  --all' })).toMatchObject({
+      verb: t('toolLabels.piBash'),
+      arg: 'python3 stats.py --all',
+    })
+    expect(step('write', { path: 'report.md', content: '……' }).arg).toBe('report.md')
   })
 })
 
