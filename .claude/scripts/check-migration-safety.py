@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import os
 import re
 import shutil
@@ -469,7 +470,6 @@ class _Migration(ast.NodeVisitor):
         # Keys this migration has created so far, by name: a later drop of the
         # same name drops this one, not the one history knows.
         self._created_here: dict[str, str] = {}
-        self._loop_values: dict[str, list[str]] = {}
         self._helpers: dict[str, ast.FunctionDef] = {}
         self._helpers_visited: set[str] = set()
 
@@ -502,7 +502,9 @@ class _Migration(ast.NodeVisitor):
     # -- plumbing --------------------------------------------------------
 
     def report(self, node: ast.AST, rule: str, message: str) -> None:
-        self.findings.append(Finding(self.path, getattr(node, "lineno", 1), rule, message))
+        finding = Finding(self.path, getattr(node, "lineno", 1), rule, message)
+        if finding not in self.findings:  # a loop judged once per row says it once
+            self.findings.append(finding)
 
     def existing(self, table: str | None) -> bool:
         return table is not None and table not in self.new_tables
@@ -540,33 +542,41 @@ class _Migration(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_For(self, node: ast.For) -> None:
-        """``for t in ("a", "b")`` (or over a module constant, or unpacking
-        tuples of them): ``t`` stands for each of those names in the body."""
+        """A loop over literal rows (a tuple or list, or a module constant
+        holding one; unpacked or not) is judged once per row, with each loop
+        variable replaced by that row's value, so every rule reads the names it
+        would read had the loop been written out. Any other loop is judged once,
+        as written."""
         rows = _literal_rows(node.iter, self.constants)
         targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
-        bound: dict[str, list[str]] = {}
-        for i, target in enumerate(targets):
-            if not isinstance(target, ast.Name) or rows is None:
-                continue
-            values = [_str(row[i]) if i < len(row) else None for row in rows]
-            if values and all(v is not None for v in values):
-                bound[target.id] = values  # type: ignore[assignment]
-        saved = {name: self._loop_values.get(name) for name in bound}
-        self._loop_values.update(bound)
-        self.generic_visit(node)
-        for name, value in saved.items():
-            if value is None:
-                self._loop_values.pop(name, None)
-            else:
-                self._loop_values[name] = value
+        if (
+            rows is None
+            or not all(isinstance(t, ast.Name) for t in targets)
+            or any(len(row) != len(targets) for row in rows)
+            # A body that rebinds a loop variable would see a stale value.
+            or any(
+                isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in {t.id for t in targets}  # type: ignore[attr-defined]
+                for stmt in node.body
+                for n in ast.walk(stmt)
+            )
+        ):
+            self.generic_visit(node)
+            return
+        self.visit(node.iter)
+        for row in rows:
+            bind = _Bind({t.id: value for t, value in zip(targets, row, strict=True)})  # type: ignore[attr-defined]
+            for stmt in node.body:
+                self.visit(bind.visit(copy.deepcopy(stmt)))
+        for stmt in node.orelse:
+            self.visit(stmt)
 
     def _table_names(self, node: ast.AST | None) -> list[str] | None:
-        """The table(s) an argument names: a literal, or a loop variable over literals."""
-        if _str(node) is not None:
-            return [_str(node).rsplit(".", 1)[-1]]  # type: ignore[union-attr]  # schema.table -> table
-        if isinstance(node, ast.Name) and node.id in self._loop_values:
-            return [value.rsplit(".", 1)[-1] for value in self._loop_values[node.id]]
-        return None
+        """The table an argument names (a literal or a module constant),
+        ``schema.table`` read as ``table``."""
+        name = _sql_text(node, self.constants)
+        if name is None or HOLE in name:
+            return None
+        return [name.rsplit(".", 1)[-1]]
 
     def visit_With(self, node: ast.With) -> None:
         autocommit = any(
@@ -783,7 +793,15 @@ class _Migration(ast.NodeVisitor):
     def _op_add_column(self, node: ast.Call) -> None:
         table = _str(node.args[0]) if node.args else None
         if len(node.args) > 1 and isinstance(node.args[1], ast.Call):
-            self._fk_created(node, table, _inline_keys(table, node.args[1], self.constants))
+            keys = _inline_keys(table, node.args[1], self.constants)
+            self._fk_created(node, table, keys)
+            if keys and table is None and self._locked is not None and not self._autocommit:
+                self.report(
+                    node,
+                    "unresolved",
+                    "could not read the table this foreign key's column is added to; "
+                    "check that with_lock_retries names it",
+                )
         column = _column(node.args[1]) if len(node.args) > 1 and isinstance(node.args[1], ast.Call) else None
         if column is None:
             return
@@ -1072,6 +1090,36 @@ def _fk_referent(call: ast.Call) -> str | None:
     return spelled.rsplit(".", 2)[-2] if spelled and "." in spelled else None
 
 
+class _Bind(ast.NodeTransformer):
+    """Replace loop variables with one row's values, folding an f-string whose
+    every part became a literal into that literal."""
+
+    def __init__(self, values: dict[str, ast.AST]) -> None:
+        self.values = values
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if isinstance(node.ctx, ast.Load) and node.id in self.values:
+            return ast.copy_location(copy.deepcopy(self.values[node.id]), node)
+        return node
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.AST:
+        self.generic_visit(node)
+        parts = []
+        for value in node.values:
+            if _str(value) is not None:
+                parts.append(_str(value))
+            elif (
+                isinstance(value, ast.FormattedValue)
+                and value.conversion == -1
+                and value.format_spec is None
+                and _str(value.value) is not None
+            ):
+                parts.append(_str(value.value))
+            else:
+                return node
+        return ast.copy_location(ast.Constant("".join(parts)), node)  # type: ignore[arg-type]
+
+
 def _literal_rows(node: ast.AST | None, constants: dict[str, ast.AST]) -> list[list[ast.AST]] | None:
     """The items of a literal tuple/list (a module constant included), each as
     a row: a tuple item is its elements, anything else a row of one."""
@@ -1105,7 +1153,7 @@ def _created_key(call: ast.Call, constants: dict[str, ast.AST]) -> list[tuple[st
     """``op.create_foreign_key(name, source, referent, ...)`` as ``[(name, referent)]``."""
     name = _sql_text(call.args[0] if call.args else _kw(call, "constraint_name"), constants)
     ref = _sql_text(call.args[2] if len(call.args) > 2 else _kw(call, "referent_table"), constants)
-    return [(name, ref)] if name and ref and HOLE not in name and HOLE not in ref else []
+    return [(name, ref.rsplit(".", 1)[-1])] if name and ref and HOLE not in name and HOLE not in ref else []
 
 
 @dataclass
@@ -1256,7 +1304,7 @@ def analyze(
                 finding.message = (
                     f"foreign key column {table}.{column} has no index starting with it; add index=True or an Index"
                 )
-            if not _allowed(lines, finding, spans.get(finding.line, (finding.line, finding.line))):
+            if finding not in findings and not _allowed(lines, finding, spans.get(finding.line, (finding.line, finding.line))):
                 findings.append(finding)
     return findings
 
@@ -1537,8 +1585,13 @@ def self_test() -> int:
         ["drop-column"],
     )
     check(
-        "a hole where the clause goes is reported",
+        "a clause from a loop over literals is judged as written out",
         _rules_found('    for clause in ("DROP COLUMN video_url",):\n        op.execute(f"ALTER TABLE task {clause}")'),
+        ["drop-column"],
+    )
+    check(
+        "a hole where the clause goes is reported",
+        _rules_found('    for clause in clauses():\n        op.execute(f"ALTER TABLE task {clause}")'),
         ["unresolved"],
     )
     check(
@@ -1942,17 +1995,25 @@ def self_test() -> int:
     # Found in review (2026-10-07): a name no literal spells, and a NOT VALID
     # constraint validated in the migration's own transaction.
     check(
-        "a unique constraint on a table named by a loop variable",
+        "a unique constraint on each table a literal loop names",
         _rules_found(
             "    for table in ('tasks', 'topics'):\n"
+            "        op.create_unique_constraint(f'uq_{table}_number', table, ['project_id', 'number'])"
+        ),
+        ["unique-constraint", "unique-constraint"],
+    )
+    check(
+        "a unique constraint on a table an unreadable loop names",
+        _rules_found(
+            "    for table in tables():\n"
             "        op.create_unique_constraint(f'uq_{table}_number', table, ['project_id', 'number'])"
         ),
         ["unresolved-table"],
     )
     check(
-        "an index on a table named by a loop variable",
+        "an index on each table a literal loop names",
         _rules_found("    for t in ('task', 'tasks'):\n        op.create_index('ix', t, ['x'])"),
-        ["unresolved-table"],
+        ["index-not-concurrent", "index-not-concurrent"],
     )
     check(
         "a nullable column on a table only a loop variable names",
@@ -1962,11 +2023,104 @@ def self_test() -> int:
         [],
     )
     check(
-        "a NOT NULL column on a table only a loop variable names",
+        "a NOT NULL column on a table a literal loop names",
         _rules_found(
             "    for t in ('task',):\n        op.add_column(t, sa.Column('n', sa.Integer(), nullable=False))"
         ),
+        ["add-column-not-null"],
+    )
+    check(
+        "a NOT NULL column on a table an unreadable loop names",
+        _rules_found(
+            "    for t in tables():\n        op.add_column(t, sa.Column('n', sa.Integer(), nullable=False))"
+        ),
         ["unresolved-table"],
+    )
+    check(
+        "a key added with a column in a literal loop, its table left out",
+        _rules_found(
+            "    with_lock_retries('users')\n"
+            "    for t in ('task',):\n"
+            "        op.add_column(t, sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), index=True))"
+        ),
+        ["fk-on-add-column", "fk-table-not-locked"],
+    )
+    check(
+        "a referent held in a module constant is the table it names",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    op.create_foreign_key(None, 'task', USERS, ['u'], ['id'], postgresql_not_valid=True)\n"
+            "    op.create_foreign_key(None, 'task', referent_table=USERS, source_table='task',"
+            " local_cols=['u'], remote_cols=['id'], postgresql_not_valid=True)",
+            "USERS = 'users'\n",
+        ),
+        ["fk-table-not-locked", "fk-table-not-locked"],
+    )
+    check(
+        "a schema-qualified key dropped later is the table it names",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    op.create_foreign_key('fk', 'task', 'public.users', ['u'], ['id'], postgresql_not_valid=True)\n"
+            "    op.drop_constraint('fk', 'task', type_='foreignkey')"
+        ),
+        [],
+    )
+    check(
+        "a starred loop target is not unrolled",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    for *rest, ref in (('x', 'y', 'users'),):\n"
+            "        op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a loop whose body rebinds its variable is not unrolled",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    for ref in ('users',):\n"
+            "        ref = other()\n"
+            "        op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a key added with a column on an unreadable table is not passed silently",
+        _rules_found(
+            "    with_lock_retries('users')\n"
+            "    for t in tables():\n"
+            "        op.add_column(t, sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), index=True))"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a loop variable is not bound after its loop",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    for ref in ('users',):\n"
+            "        pass\n"
+            "    op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["unresolved"],
+    )
+    check(
+        "a schema-qualified table in a literal loop is the table it names",
+        _rules_found(
+            "    with_lock_retries('task, users')\n"
+            "    for ref in ('public.users',):\n"
+            "        op.create_foreign_key(None, 'task', ref, ['u'], ['id'], postgresql_not_valid=True)"
+        ),
+        [],
+    )
+    check(
+        "a key dropped by name in a literal loop is read from history",
+        judged(
+            "    with_lock_retries('runs')\n"
+            "    for t in ('runs',):\n"
+            "        op.drop_constraint(f'{t}_topic_id_fkey', t, type_='foreignkey')",
+            created,
+        ),
+        ["fk-table-not-locked"],
     )
     check(
         "a concurrent index in an autocommit block on a loop-variable table",
