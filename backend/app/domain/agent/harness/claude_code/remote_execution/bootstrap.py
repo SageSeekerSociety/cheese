@@ -553,7 +553,7 @@ def remember(destination, record):
         temporary.unlink(missing_ok=True)
 
 
-def binary(owner, api):
+def binary(owner, api, release):
     windows = sys.platform == "win32"
     executable = ".exe" if windows else ""
     destination = owner / ".cheese/claude/versions" / (VERSION + executable)
@@ -594,7 +594,6 @@ def binary(owner, api):
                 return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
     import platform  # deferred-import: warm-room prep skips this
-    from urllib.request import urlopen  # deferred-import: warm-room prep skips this
 
     architecture = {
         "x86_64": "x64",
@@ -611,24 +610,39 @@ def binary(owner, api):
     if system == "linux" and platform.libc_ver()[0] == "musl":
         target += "-musl"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = temporary_beside(destination)
-    with urlopen(
-        f"{api}/connector/claude/{VERSION}/{target}/claude{executable}", timeout=300
-    ) as source:
-        with temporary.open("xb") as output:
-            shutil.copyfileobj(source, output)
-    temporary.chmod(0o700)
-    result = subprocess.run(
-        [str(temporary), "--version"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=15,
-    )
-    if result.stdout.split()[0] != VERSION:
-        raise RuntimeError("The executor binary does not match the verified version")
-    temporary.replace(destination)
-    remember(destination, record)
+    # Every room of this owner installs into the one directory, and the download
+    # below writes one partial file there: one install at a time, and one that
+    # waited finds the pin another just proved.
+    with destination.with_name(destination.name + ".lock").open("a") as held:
+        lock(held)
+        try:
+            if json.loads(record.read_text()) == identity(destination):
+                return str(destination)
+        except (OSError, ValueError):
+            pass
+        # Shipped beside the runtime (`runtime_core.RELEASE_FILES`), and read
+        # from the source tree when this runs from a checkout.
+        downloader = Path(release) / "remote-execution/executor_download.py"
+        if not downloader.exists():
+            downloader = Path(__file__).with_name("executor_download.py")
+        temporary = runpy.run_path(str(downloader))["download"](
+            f"{api}/connector/claude/{VERSION}/{target}/claude{executable}",
+            destination,
+        )
+        temporary.chmod(0o700)
+        result = subprocess.run(
+            [str(temporary), "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+        if result.stdout.split()[0] != VERSION:
+            raise RuntimeError(
+                "The executor binary does not match the verified version"
+            )
+        temporary.replace(destination)
+        remember(destination, record)
     return str(destination)
 
 
@@ -1143,7 +1157,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
             env["USERPROFILE"] = scoped_env["USERPROFILE"] = str(home)
         config = {
             "workspace": str(work),
-            "claude": binary(owner, env["CHEESE_API"]),
+            "claude": binary(owner, env["CHEESE_API"], release),
             "env": scoped_env,
             # What the environment above may have taken away, and what it would
             # have put there: a room holding anything else keeps it (`runtime`).

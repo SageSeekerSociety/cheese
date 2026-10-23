@@ -373,7 +373,13 @@ async def claude_pin() -> dict[str, str]:
 
 
 @router.get("/claude/{version}/{platform}/{name}")
-async def download_claude(version: str, platform: str, name: str) -> Response:
+async def download_claude(
+    version: str, platform: str, name: str, request: Request
+) -> Response:
+    """The pinned Claude Code build. ``X-Checksum-SHA256`` names the binary a
+    machine ends up running; a client that accepts gzip gets the packed copy
+    and unpacks it itself. Either copy answers a Range request, so a machine
+    whose download was cut off asks only for the rest of it."""
     if not claude_dist.VERSION_RE.match(version):
         return PlainTextResponse("bad version", status_code=400)
     if not claude_dist.PLATFORM_RE.match(platform):
@@ -388,7 +394,20 @@ async def download_claude(version: str, platform: str, name: str) -> Response:
         return PlainTextResponse(
             f"claude {version} unavailable: {exc}", status_code=503
         )
-    return FileResponse(binary, media_type="application/octet-stream", filename=name)
+    headers = {
+        "Vary": "Accept-Encoding",
+        "X-Checksum-SHA256": await asyncio.to_thread(claude_dist.served_digest, binary),
+    }
+    if _accepts_gzip(request):
+        return FileResponse(
+            await asyncio.to_thread(claude_dist.packed, binary),
+            media_type="application/octet-stream",
+            filename=name,
+            headers={**headers, "Content-Encoding": "gzip"},
+        )
+    return FileResponse(
+        binary, media_type="application/octet-stream", filename=name, headers=headers
+    )
 
 
 # pi, served for the same reason and in the same shape. The artifact is a
