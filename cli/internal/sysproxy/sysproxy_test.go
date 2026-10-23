@@ -3,7 +3,10 @@ package sysproxy
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestParseServers(t *testing.T) {
@@ -149,6 +152,20 @@ func TestSystemProxyFor(t *testing.T) {
 		}
 	})
 
+	t.Run("a request to this machine", func(t *testing.T) {
+		stubSystemProxy(t, servers, "", true)
+		for _, target := range []string{
+			"http://localhost:8080/api",
+			"http://127.0.0.1:8080/api",
+			"http://[::1]:8080/api",
+		} {
+			got, _ := systemProxyFor(request(target))
+			if got != nil {
+				t.Errorf("systemProxyFor(%s) = %v, want a direct connection", target, got)
+			}
+		}
+	})
+
 	t.Run("a host the person set to go direct", func(t *testing.T) {
 		stubSystemProxy(t, servers, "*.internal;<local>", true)
 		got, _ := systemProxyFor(request("https://db.internal/"))
@@ -172,6 +189,72 @@ func TestEnvironmentIsInChargeWhenItSaysAnything(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://10.0.0.1:8080")
 	if !proxyConfiguredInEnvironment() {
 		t.Fatal("HTTPS_PROXY is set, yet the environment claims to name none")
+	}
+	// Go ignores ALL_PROXY, so a machine whose only variable is that one still
+	// needs the system setting.
+	clearProxyEnvironment(t)
+	t.Setenv("ALL_PROXY", "http://10.0.0.1:8080")
+	if proxyConfiguredInEnvironment() {
+		t.Fatal("ALL_PROXY is not read by Go, yet the environment claims to name a proxy")
+	}
+}
+
+// swapInstallTargets gives the test its own transport and dialer, so what
+// Install does to the process-wide ones is both visible and undone afterwards.
+func swapInstallTargets(t *testing.T) {
+	t.Helper()
+	previousTransport, previousDialer := http.DefaultTransport, websocket.DefaultDialer
+	http.DefaultTransport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	websocket.DefaultDialer = &websocket.Dialer{Proxy: http.ProxyFromEnvironment}
+	t.Cleanup(func() {
+		http.DefaultTransport = previousTransport
+		websocket.DefaultDialer = previousDialer
+	})
+}
+
+// Install is the only thing that makes the connector's own requests — the
+// control link, the runtime it fetches, its update — follow the system proxy.
+// Without it the package changes nothing at all.
+func TestInstallMakesTheConnectorRequestsUseTheSystemProxy(t *testing.T) {
+	clearProxyEnvironment(t)
+	stubSystemProxy(t, parseServers("127.0.0.1:7890"), "", true)
+	swapInstallTargets(t)
+
+	Install()
+
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		t.Fatal("Install left the standard transport without a proxy")
+	}
+	for _, target := range []string{
+		"https://okcheese.com/",
+		"wss://okcheese.com/connector/agent",
+	} {
+		got, err := transport.Proxy(request(target))
+		if err != nil || got == nil || got.String() != "http://127.0.0.1:7890" {
+			t.Errorf("transport proxy for %s = %v (%v), want the system proxy", target, got, err)
+		}
+	}
+	got, err := websocket.DefaultDialer.Proxy(request("wss://okcheese.com/connector/agent"))
+	if err != nil || got == nil || got.String() != "http://127.0.0.1:7890" {
+		t.Errorf("dialer proxy = %v (%v), want the system proxy", got, err)
+	}
+}
+
+// A machine the environment already configures keeps that configuration: the
+// system setting is a fallback, not an override.
+func TestInstallLeavesAnEnvironmentProxyAlone(t *testing.T) {
+	clearProxyEnvironment(t)
+	t.Setenv("HTTPS_PROXY", "http://10.0.0.1:8080")
+	stubSystemProxy(t, parseServers("127.0.0.1:7890"), "", true)
+	swapInstallTargets(t)
+
+	transport := http.DefaultTransport.(*http.Transport)
+	before := reflect.ValueOf(transport.Proxy).Pointer()
+	Install()
+	after := reflect.ValueOf(transport.Proxy).Pointer()
+	if after != before {
+		t.Fatal("Install replaced the proxy of a machine the environment already configures")
 	}
 }
 

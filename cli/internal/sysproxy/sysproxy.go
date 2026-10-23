@@ -20,6 +20,7 @@
 package sysproxy
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -53,14 +54,16 @@ func Install() {
 }
 
 // proxyConfiguredInEnvironment reports whether any of the variables Go's own
-// proxy lookup reads is set. NO_PROXY counts: a machine that names what must
-// go direct has thought about proxies, and quietly routing it through the
-// system's would be the opposite of what it asked for.
+// proxy lookup reads — HTTP_PROXY, HTTPS_PROXY, NO_PROXY, in either case — is
+// set. NO_PROXY counts: a machine that names what must go direct has thought
+// about proxies, and quietly routing it through the system's would be the
+// opposite of what it asked for. ALL_PROXY is deliberately absent: Go ignores
+// it, so counting it would both misstate what decides the answer and leave a
+// machine whose only variable is ALL_PROXY still dialling past its proxy.
 func proxyConfiguredInEnvironment() bool {
 	for _, name := range []string{
 		"HTTP_PROXY", "http_proxy",
 		"HTTPS_PROXY", "https_proxy",
-		"ALL_PROXY", "all_proxy",
 		"NO_PROXY", "no_proxy",
 	} {
 		if os.Getenv(name) != "" {
@@ -83,7 +86,7 @@ func systemProxyFor(req *http.Request) (*url.URL, error) {
 		return nil, nil
 	}
 	host := req.URL.Hostname()
-	if host == "" || bypassed(override, host) {
+	if host == "" || isLoopback(host) || bypassed(override, host) {
 		return nil, nil
 	}
 	scheme := req.URL.Scheme
@@ -144,6 +147,19 @@ func parseServers(raw string) map[string]string {
 		}
 	}
 	return servers
+}
+
+// isLoopback is the bypass Go's own environment lookup applies without being
+// asked: a request to this machine never goes through a proxy, however the
+// desktop is configured. Without it, `cheese api` against its default
+// http://localhost:8080 base would leave for the proxy on a Windows machine
+// that has one, and a local dev server would answer nothing.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // bypassed reports whether the override list — the ProxyOverride value, the
