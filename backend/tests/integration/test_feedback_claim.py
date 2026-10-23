@@ -230,10 +230,32 @@ def test_after_the_holder_releases_someone_else_can_claim(client, platform):
     assert released.status_code == 200, released.text
     seen = _view(client, REPORTER, row["id"])
     assert seen["assignee_handle"] is None
-    # Somebody did work on it; letting go does not unsay that.
-    assert seen["status"] == "in_progress"
+    # 没人在修了，就不能还挂着「处理中」——那一档说的是有人正在动它。
+    assert seen["status"] == "received"
+    step = seen["timeline"][-1]
+    assert (step["status"], step["by_handle"], step["note"]) == (
+        "received",
+        DEV,
+        "已放弃领取",
+    )
     assert _claim(client, DEV2, row["id"]).status_code == 200
     assert _view(client, REPORTER, row["id"])["assignee_handle"] == DEV2
+
+
+def test_releasing_one_already_back_at_received_does_not_move_it_again(
+    client, platform
+):
+    row = _report(client)
+    assert _claim(client, DEV, row["id"]).status_code == 200
+    _set_status(client, row["id"], "received")
+    before = _view(client, REPORTER, row["id"])["timeline"]
+
+    released = _release(client, DEV, row["id"])
+
+    assert released.status_code == 200, released.text
+    seen = _view(client, REPORTER, row["id"])
+    assert seen["status"] == "received"
+    assert seen["timeline"] == before
 
 
 def test_only_the_holder_or_a_feedback_admin_can_release(client, platform):

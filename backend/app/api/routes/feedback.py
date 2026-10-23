@@ -742,7 +742,7 @@ async def release_feedback(
     resolver: ActorResolverDep,
     topic: Annotated[uuid.UUID | None, Query()] = None,
 ) -> dict:
-    """放弃领取：持有人自己或反馈管理员。没人领着时是空操作；状态不退回。
+    """放弃领取：持有人自己或反馈管理员。没人领着时是空操作；状态退回「已收录」。
 
     已经办完的（已修复 / 已上线 / 不修复）回 409，持有人保持原样：领取和放弃
     是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人走管理端的改派。
