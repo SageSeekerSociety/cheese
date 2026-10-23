@@ -1589,12 +1589,12 @@ def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
     fallback.parent.mkdir(parents=True)
     fallback.write_text(binary.read_text())
     fallback.chmod(0o700)
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     binary.write_text("#!/bin/sh\necho '0.0.0'\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     assert binary.read_bytes() == fallback.read_bytes()
     fallback.write_text("#!/bin/sh\necho 0.0.0\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
 
 
 def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
@@ -1624,7 +1624,7 @@ def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
                 "import runpy, sys\n"
                 "from pathlib import Path\n"
                 "found = runpy.run_path(sys.argv[1])['binary']"
-                "(Path(sys.argv[2]), 'http://unused')\n"
+                "(Path(sys.argv[2]), 'http://unused', sys.argv[2])\n"
                 "print(found)\n",
                 bootstrap.__file__,
                 str(tmp_path),
