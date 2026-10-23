@@ -225,6 +225,31 @@ describe('the window from last time', () => {
     expect(site.transcript.value.map((b) => b.id)).toEqual(['b'])
     scope.stop()
   })
+
+  it('reads a fresh page again once the window has outgrown its cap', async () => {
+    // 窗口涨过封顶：裁掉的是**最新**那一截。读者回到末尾时得整页重读一页最新的把它
+    // 接回来——不能再从手上那个游标往后接，那个游标指的是已经被裁出窗口的那一条。
+    forgetWindows()
+    rememberWindow('room', null, { blocks: [row('a', 1)], hasMore: false, oldestCursor: null, newestCursor: 'n1' }, 120)
+    // 第一批就超过 600 条封顶（MAX_WINDOW），于是当场裁掉最新的那些。
+    const flood = Array.from({ length: 700 }, (_, i) => row(`f${i}`, 10 + i))
+    api.getTranscript.mockResolvedValue(page(flood, { newest_id: 'n2' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+    expect(site.transcript.value.length, '窗口封在 MAX_WINDOW').toBe(600)
+
+    api.getTranscript.mockClear()
+    api.getTranscript.mockResolvedValue(page([row('tail', 9999)], { newest_id: 'n3' }))
+    site.onSiteScroll()
+    await settle()
+
+    // 整页读（没有 `after`），不是接着旧游标往下接。
+    expect(api.getTranscript.mock.calls[0][1], '回到末尾整页重读').not.toMatchObject({
+      after: 'n1',
+    })
+    expect(site.transcript.value.map((b) => b.id)).toContain('tail')
+    scope.stop()
+  })
 })
 
 describe('the pages above the window', () => {

@@ -64,7 +64,15 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
 
   // 此刻才到的行（不是打开时先画出来的缓存、也不是往上翻出来的历史）：它们淡入
   // 一下，说明「刚来的是这条」。由 PanelSite 绑成 class，行的 `animationend` 清掉。
+  //
+  // 兜底也要有：记账行那样画不出一行的块永远不会触发 `animationend`（根本没有元素
+  // 挂上去），只靠事件的话这个集合会一直攥着它。加进来时顺手排一个闹钟，演完了
+  // 就没它的事。
   const arrived: Set<string> = reactive(new Set<string>())
+  function arrive(id: string): void {
+    arrived.add(id)
+    setTimeout(() => arrived.delete(id), 1000)
+  }
 
   // 手上这一窗是给哪个视角读的（null = 全部）。换视角时它和这一栏现在要读的东西就
   // 不是一回事了，重读时不能再和它合。
@@ -165,11 +173,15 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    * 事——这时不能再从手上的游标往后读（接上去中间会留一个从没取过的洞），要整页读
    * 一页最新的把窗口重新连上；读的人回到末尾时 `onSiteScroll` 会那么做。
    */
-  function capSite(): void {
+  function capSite(): boolean {
     const capped = capWindow(transcript.value)
-    if (!capped) return
+    if (!capped) return false
     transcript.value = capped.keep
     hasNewer.value = true
+    // 裁掉的那几条里有还没演完的「刚到的」：把它们的 id 一并忘掉，不然这个集合
+    // 会一直攥着永远不再挂上的 id（`arrived` 只增不减）。
+    for (const b of capped.dropped) arrived.delete(b.id)
+    return true
   }
 
   // 和对话栏同一个判据：离顶还有一屏就开始拉上一页，已经有的人不用等。
@@ -223,6 +235,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     // 换对话必须进来：游标上一个对话的，不能接到新的上面。
     const opening = firstRead || switched || switchedTopic
     if (opening && errorMsg.value === null) loading.value = true
+    let painted = false
     if (opening) {
       const held = cachedWindow(tid, author, SITE_PAGE_SIZE)
       if (held) {
@@ -234,6 +247,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
         hooks.noteAgents(held.blocks)
         loading.value = false
         hooks.scrollToTail()
+        painted = true
       } else {
         // 这个视角没有手上的东西（第一次看，或换了对话）：游标一律从头来，别把上
         // 一段对话的接着用。屏上那几行照旧留着,直到这一页到手（`switched` 会把它
@@ -262,7 +276,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
       // 里他可能已经往上翻了，而量到的那一下还停在底部——那就把他拽回去了。
-      const follow = switched || firstRead || hooks.following.value
+      // 画过缓存的那一次不能再由「刚打开」来定：那一窗已经在屏上，读者完全可以已经
+      // 在读它，这一刻他自己滚出来的状态说了算。
+      const follow = painted ? hooks.following.value : switched || firstRead || hooks.following.value
       // 窗口下面被裁过、读的人还在历史中间：把最新的一页拼上去，会在两段之间留一个
       // 从没取过的洞。这时什么也别动——他回到末尾时，那次 load 会重新接上。
       if (!(hasNewer.value && !follow)) {
@@ -275,9 +291,13 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
           // 为 false、oldest_id 恒为 null）。照抄过来的话，刚从缓存画出来的那一窗
           // 会当场失去往上翻的能力。
           appendSite(tx.data, follow && !opening)
-          capSite()
-          // 空的一页也带着原样的游标（后端把它还回来），追平时手上这个不会丢。
-          if (tx.newest_id !== undefined && tx.newest_id !== null) newestCursor = tx.newest_id
+          // 涨过上限了：`hasNewer` 由 `capSite` 立着，别在下面清掉——那一截要走
+          // 「回到末尾时重读一页最新的」接回来。游标也跟着停下（它指的是已经被裁出
+          // 窗口的那一条，从它往后接会在中间留一个洞）。
+          if (!capSite()) {
+            // 空的一页也带着原样的游标（后端把它还回来），追平时手上这个不会丢。
+            if (tx.newest_id !== undefined && tx.newest_id !== null) newestCursor = tx.newest_id
+          }
         } else {
           const reset = switched || firstRead || switchedTopic || hasNewer.value
           transcript.value = mergeSite(tx.data, transcript.value, switched)
@@ -288,8 +308,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
             olderCursor = tx.oldest_id ?? null
           }
           newestCursor = tx.newest_id ?? null
+          hasNewer.value = false
         }
-        hasNewer.value = false
         // Follow the tail on every open of a topic's 现场 — that is what "open on
         // the newest" means. 换视角也是「打开这个人的现场」，同样停在最新的那一条。
         if (follow) hooks.scrollToTail()
@@ -318,7 +338,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const known = new Set(transcript.value.map((b) => b.id))
     const fresh = rows.filter((b) => !known.has(b.id))
     if (!fresh.length) return
-    if (animate) for (const b of fresh) arrived.add(b.id)
+    if (animate) for (const b of fresh) arrive(b.id)
     transcript.value = [...transcript.value, ...fresh]
   }
 
@@ -426,7 +446,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     // 读者停在末尾时这一行就在他眼前落下来，淡入一下说明刚来的是它；他在历史里
     // 时它落在视口下方，没人看见，别动。`hasNewer` 那一路上面已经先返回了。
     if (follow) {
-      arrived.add(block.id)
+      arrive(block.id)
       hooks.scrollToTail()
     } else if (anchor) void nextTick(() => hooks.restoreAnchor(anchor))
     remember()
