@@ -117,7 +117,15 @@ function measure(): boolean {
   const obstacles = collectObstacles(rect)
   const moving = animating()
   const here = spot.value
-  const clear = !!here && covers(obstacles, here.left, here.top, BUBBLE_W, bubbleH) === 0
+  // 原来那块地方还站得住：谁也不压，而且整个小窗还在窗口里。窗口变小、或者这一步的
+  // 字让小窗变高之后，原来那个位置可能已经出了边——那也得重新找，不能留着被裁掉。
+  const clear =
+    !!here &&
+    here.left >= EDGE &&
+    here.left + BUBBLE_W <= window.innerWidth - EDGE &&
+    here.top >= EDGE &&
+    here.top + bubbleH <= window.innerHeight - EDGE &&
+    covers(obstacles, here.left, here.top, BUBBLE_W, bubbleH) === 0
   if (moving) {
     parked.value = !clear
     return true
@@ -241,27 +249,20 @@ function placeBubble(anchor: HTMLElement | null, rect: DOMRectReadOnly, obstacle
   }
   let bestCover = Infinity
   let bestNear = Infinity
-  // 两趟扫：先用粗格扫整个窗口（步长大，几千格就够），再只在本趟胜出点周围用细格扫一遍。
-  // 一趟全用细格时会随页面上的字线性变贵——正文多到上千行就是一百多毫秒；两趟之后开
-  // 销由细格那点面积决定，和页面上有多少字无关。粗格扫不到、细格扫得到的位置仍然找得
-  // 到：只要粗格那一点离得够近，它落在细格那一圈里。
-  for (const step of [GRID * 4, GRID]) {
-    const spread = step === GRID ? GRID * 4 : 0
-    const loLeft = clamp(bestNear === Infinity ? EDGE : best.left - spread, EDGE, maxLeft)
-    const hiLeft = clamp(bestNear === Infinity ? maxLeft : best.left + spread, EDGE, maxLeft)
-    const loTop = clamp(bestNear === Infinity ? EDGE : best.top - spread, EDGE, maxTop)
-    const hiTop = clamp(bestNear === Infinity ? maxTop : best.top + spread, EDGE, maxTop)
-    // 这一趟要扫的范围固定，先只留落在里面的障碍物（外扩一圈，免得边上的漏掉）。
-    const local = within(obstacles, loLeft - w, loTop - h, hiLeft + w, hiTop + h)
-    for (let tp = loTop; tp <= hiTop; tp += step) {
-      for (let l = loLeft; l <= hiLeft; l += step) {
-        const cover = covers(local, l, tp, w, h)
-        const d = near(l, tp)
-        if (cover < bestCover || (cover === bestCover && d < bestNear)) {
-          best = { left: l, top: tp }
-          bestCover = cover
-          bestNear = d
-        }
+  // 整个窗口按细格扫一遍：先挑压得最少的，一样少时挑离目标最近的。每一行只称和这一行
+  // 相交的障碍物——只扫一条 126 px 高的带子，页面上别的字不参与——所以一趟细扫的开销
+  // 由这一行的字数定，不是整页的行数。一行都没有可挑的（有地方可放）时，比当前最优更
+  // 远的那些位置连算都不用算：压住的面积不会小于 0。
+  for (let tp = EDGE; tp <= maxTop; tp += GRID) {
+    const local = within(obstacles, EDGE, tp, maxLeft + w, tp + h)
+    for (let l = EDGE; l <= maxLeft; l += GRID) {
+      const d = near(l, tp)
+      if (bestCover === 0 && d >= bestNear) continue
+      const cover = covers(local, l, tp, w, h)
+      if (cover < bestCover || (cover === bestCover && d < bestNear)) {
+        best = { left: l, top: tp }
+        bestCover = cover
+        bestNear = d
       }
     }
   }

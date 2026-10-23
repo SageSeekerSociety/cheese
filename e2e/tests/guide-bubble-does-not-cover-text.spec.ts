@@ -227,3 +227,66 @@ test("with nowhere free it covers the least text, not the spot nearest the targe
     "the bubble must cover exactly as little as the least-covering spot",
   ).toBeLessThanOrEqual(Math.round(least));
 });
+
+
+test("shrinking the window re-places a bubble that would be clipped", async ({ page }) => {
+  // A fixed target in the bottom-right corner and no text: the first placement is
+  // clear, so nothing but the window bounds can make it re-place. Shrink the window
+  // and the old spot is out of bounds while still covering nothing — the bubble has
+  // to move rather than stay where it is and be cut off at the edge.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.route("**/__guide-bubble-window__", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body:
+        '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">' +
+        "<title>guide bubble window</title></head>\n<body>\n" +
+        '<div style="position:relative;width:100vw;height:100vh;overflow:hidden">' +
+        '<button id="target" style="position:fixed;left:1120px;top:700px;width:96px;height:28px;' +
+        'border:1px solid var(--line-2);border-radius:6px;background:var(--raised);color:var(--text)">' +
+        "打开任务</button>" +
+        '<div id="bubble-host"></div></div>\n' +
+        '<script type="module">\n' +
+        "import { createApp, h } from '/node_modules/.vite/deps/vue.js';\n" +
+        "import { VApp } from '/node_modules/.vite/deps/vuetify_components.js';\n" +
+        "import GuideBubble from '/src/components/common/GuideBubble.vue';\n" +
+        "import vuetify from '/src/plugins/vuetify.ts';\n" +
+        "import i18n, { setLocale } from '/src/i18n/index.ts';\n" +
+        "import '/src/style.css';\n" +
+        "import '/src/styles/fonts.css';\n" +
+        "setLocale('zh-CN');\n" +
+        "createApp({ render: () => h(VApp, {}, { default: () => h(GuideBubble, {\n" +
+        "  target: document.getElementById('target'),\n" +
+        "  title: '任务',\n" +
+        "  text: '芝士把这件事做成了任务。点开任务，看进度和改动。',\n" +
+        "  step: 1, total: 7, ring: true,\n" +
+        "}) }) }).use(vuetify).use(i18n).mount('#bubble-host');\n" +
+        "</script></body></html>",
+    }),
+  );
+  await page.goto("/__guide-bubble-window__", { waitUntil: "commit" });
+  await expect(page.locator(".gb__bubble")).toBeVisible({ timeout: 30_000 });
+  await page.waitForFunction(() => !document.querySelector(".gb__bubble--parked"), null, {
+    timeout: 15_000,
+  });
+
+  await page.setViewportSize({ width: 900, height: 560 });
+  await page.waitForTimeout(600);
+  const box = await page.evaluate(() => {
+    const b = document.querySelector(".gb__bubble")!.getBoundingClientRect();
+    return { right: b.right, bottom: b.bottom, vw: window.innerWidth, vh: window.innerHeight };
+  });
+  await test.info().attach("bubble-after-resize.json", {
+    body: JSON.stringify(box, null, 2),
+    contentType: "application/json",
+  });
+  await test.info().attach("bubble-after-resize.png", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  // The whole bubble stays inside the window, a 12px margin included.
+  expect(box.right, "the bubble must not be clipped on the right").toBeLessThanOrEqual(box.vw - 12);
+  expect(box.bottom, "the bubble must not be clipped at the bottom").toBeLessThanOrEqual(
+    box.vh - 12,
+  );
+});
