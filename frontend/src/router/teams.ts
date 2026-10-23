@@ -69,6 +69,13 @@ export default {
           meta: { settingsOverlay: true, hideTabs: true },
         },
         {
+          // 名称、头像、简介和团队地址。
+          path: 'profile',
+          name: 'TeamsDetailProfile',
+          component: () => import('@/views/teams/detail/Profile.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
           path: 'members',
           name: 'TeamsDetailMembers',
           component: () => import('@/views/teams/detail/Members.vue'),
@@ -91,6 +98,13 @@ export default {
           path: 'credits',
           name: 'TeamsDetailCredits',
           component: () => import('@/views/teams/detail/Credits.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
+          // 所有者在这里转让或解散团队，其他成员在这里退出。
+          path: 'leave',
+          name: 'TeamsDetailLeave',
+          component: () => import('@/views/teams/detail/Leave.vue'),
           meta: { settingsOverlay: true, hideTabs: true },
         },
       ],

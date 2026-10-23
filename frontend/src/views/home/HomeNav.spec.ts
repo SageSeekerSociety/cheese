@@ -44,7 +44,6 @@ function props(overrides: Record<string, unknown> = {}) {
     inbox: true,
     teams: [] as Team[],
     spaces: [] as SpaceLink[],
-    editing: null,
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
@@ -64,6 +63,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+      { path: '/users/settings/compute', name: 'UserSettingsCompute', component: blank },
       {
         path: '/teams/:handle',
         component: { template: '<router-view />' },
@@ -71,6 +71,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
           { path: 'settings', name: 'TeamsDetailSettings', component: blank },
+          { path: 'profile', name: 'TeamsDetailProfile', component: blank },
           { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
@@ -161,7 +162,6 @@ describe('首页目录的画面', () => {
   })
 
   it.each([
-    ['OWNER', '编辑团队资料', 'edit'],
     ['OWNER', '解散团队', 'openDisband'],
     ['OWNER', '转让团队', 'openTransfer'],
     ['MEMBER', '退出团队', 'leave'],
@@ -180,7 +180,7 @@ describe('首页目录的画面', () => {
   })
 
   // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
-  // 它的 ⋯ 里只有「设置」。
+  // 它的 ⋯ 里只有「设置」，打开的是个人设置：自己名下的设备、模型、额度在那里。
   it('自己名下在「团队」之上单独一行，⋯ 里只有「设置」', async () => {
     const own = team('andy', '林夏', 'OWNER', { personal: true })
     await mount({ teams: [own], currentHandle: 'andy' })
@@ -191,7 +191,7 @@ describe('首页目录的画面', () => {
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     await screen.findByText('设置')
     expect(menuLabels()).toEqual(['设置'])
-    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/teams/andy/settings')
+    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/users/settings/compute')
   })
 
   it('成员、设备、模型、额度不在侧栏上，从 ⋯ 的「设置」进去', async () => {
@@ -201,6 +201,12 @@ describe('首页目录的画面', () => {
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     await screen.findByText('设置')
     expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/teams/crew/settings')
+  })
+
+  it('「编辑团队资料」打开团队设置的「基本信息」', async () => {
+    await mount({ teams: [team('crew', '知是开发组', 'OWNER')] })
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    expect((await screen.findByText('编辑团队资料')).closest('a')?.getAttribute('href')).toBe('/teams/crew/profile')
   })
 
   it('空间点了就进那个空间', async () => {
@@ -239,23 +245,6 @@ describe('首页目录的画面', () => {
 
 describe('目录带的四个弹窗', () => {
   let view: ReturnType<typeof render>
-
-  it('在改哪个团队：弹窗开着他的名字，保存报上去的是填的三样', async () => {
-    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
-    const name = await screen.findByLabelText('团队名称')
-    await waitFor(() => expect((name as HTMLInputElement).value).toBe('知是开发组'))
-    await fireEvent.update(name, '知是开发组二部')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() =>
-      expect(view.emitted('saveProfile')).toEqual([[{ name: '知是开发组二部', intro: '', avatarFile: undefined }]])
-    )
-  })
-
-  it('关掉改资料的弹窗就是把「在改哪个团队」交回空', async () => {
-    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
-    await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
-    await waitFor(() => expect(view.emitted('update:editing')).toEqual([[null]]))
-  })
 
   it('解散：要把团队名打一遍才报得上去', async () => {
     const crew = team('crew', '知是开发组', 'OWNER')

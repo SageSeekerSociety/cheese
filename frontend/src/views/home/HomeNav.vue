@@ -32,7 +32,6 @@ import { t } from '@/i18n'
 import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
-import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 const props = defineProps<{
@@ -46,11 +45,6 @@ const props = defineProps<{
   awaiting?: number
   /** 正在看的是哪个团队（`/teams/<handle>/…`）——那一个必须是展开的。 */
   currentHandle?: string | null
-  /** 正在改资料的团队；null 就是没在改。 */
-  editing: Team | null
-  editingBusy?: boolean
-  editingError?: string
-  editingNameError?: string
   /** 正在解散的团队；null 就是没在解散。 */
   disbanding: Team | null
   disbandBusy?: boolean
@@ -71,13 +65,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** 点了「编辑团队资料」：改资料这件事由外面开。 */
-  edit: [team: Team]
-  'update:editing': [team: Team | null]
-  /** 「保存」按下去了：payload 是弹窗里填的那三样。 */
-  saveProfile: [payload: { name: string; intro: string; avatarFile?: File }]
-  /** 人在名字那一格里动了一下：外面把上一次那两句报错撤掉。 */
-  clearErrors: []
   /** 点了「解散团队」。 */
   openDisband: [team: Team]
   'update:disbanding': [team: Team | null]
@@ -136,11 +123,14 @@ const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
   { name: 'TeamsDetailLibrary', label: 'home.nav.teamLibrary', exact: false },
 ] as const
-const settingsOf = (team: Team) => ({ name: 'TeamsDetailSettings', params: { handle: team.handle } })
+// 自己名下的设备、模型和额度在「个人设置」里，那一行的「设置」打开它。
+const settingsOf = (team: Team) =>
+  team.personal ? { name: 'UserSettingsCompute' } : { name: 'TeamsDetailSettings', params: { handle: team.handle } }
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
-/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
+/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料（打开设置的「基本信息」）；
+ *  不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
   const settings: MenuAction = {
     key: 'settings',
@@ -162,7 +152,7 @@ function teamActions(team: Team): MenuAction[] {
         key: 'edit',
         label: t('work.teamProfile.edit'),
         icon: 'mdi-pencil-outline',
-        onSelect: () => emit('edit', team),
+        to: { name: 'TeamsDetailProfile', params: { handle: team.handle } },
       }
     )
   // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
@@ -208,12 +198,6 @@ const createModel = computed({
 function spaceTo(space: SpaceLink) {
   return space.review ? { name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } } : spaceEntryRoute(space)
 }
-const editingModel = computed({
-  get: () => props.editing !== null,
-  set: (value: boolean) => {
-    if (!value) emit('update:editing', null)
-  },
-})
 const disbandModel = computed({
   get: () => props.disbanding !== null,
   set: (value: boolean) => {
@@ -368,16 +352,6 @@ const transferModel = computed({
     :busy="createBusy"
     :error="createError"
     @submit="(payload) => emit('createSpace', payload)"
-  />
-  <TeamProfileEditDialog
-    v-if="editing"
-    v-model="editingModel"
-    :team="editing"
-    :busy="editingBusy"
-    :error="editingError"
-    :name-error="editingNameError"
-    @save="(payload) => emit('saveProfile', payload)"
-    @clear-errors="emit('clearErrors')"
   />
   <DisbandTeamDialog
     v-if="disbanding"

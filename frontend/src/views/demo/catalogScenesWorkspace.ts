@@ -211,7 +211,6 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       roomNames: { 'topic-weekly': '周会' },
       roomName: '周会',
       formOpen: false,
-      editing: null,
       saving: false,
       formError: '',
       templates: [],
