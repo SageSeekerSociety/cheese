@@ -13,6 +13,7 @@ import { toast } from 'vuetify-sonner'
 import { replayTour } from './useProjectTour'
 
 import { t } from '@/i18n'
+import { isUuid, projectRefusal, routeIds } from '@/lib/addresses'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 频道清单还没读到时等它一会儿（刚打开项目的那一瞬）。等不到就照「没有」说，不晾着人。 */
@@ -53,9 +54,19 @@ export function useInterfaceTour() {
 
   async function start() {
     const param = route.params.projectId
-    const projectId = typeof param === 'string' && param ? param : null
-    if (!projectId) {
+    const ref = typeof param === 'string' && param ? param : null
+    if (!ref) {
       toast(t('navigation.feedback.tourStartsInGeneral'))
+      return
+    }
+    // 地址上的项目是短名（`/projects/cheese/...`），页面和接口认的是 UUID（`lib/addresses`
+    // 的守卫已经把这个短名换成 UUID 记在表里）。拿短名去 `openProject`，频道清单会被服务端
+    // 当成参数不合法挡回来：侧栏只剩一句报错，人还停在原地。
+    const projectId = routeIds(route.params).projectId
+    if (!projectId || !isUuid(projectId)) {
+      // 短名换不出来（项目不存在、或者看不到）：这一页自己就会说打不开，别再发那个注定
+      // 被挡回来的请求。只是还没换出来（守卫没跑过）时，照旧说一句该去哪儿点。
+      if (!projectRefusal(ref)) toast(t('navigation.feedback.tourStartsInGeneral'))
       return
     }
     const general = await openGeneral(projectId)
