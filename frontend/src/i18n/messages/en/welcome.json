@@ -183,7 +183,8 @@
     "done": "Done",
     "skip": "Skip the tour",
     "gotIt": "Got it",
-    "auto": "Moves on once you do it"
+    "auto": "Moves on once you do it",
+    "dragHint": "Drag to move"
   },
   "stepOf": "Step {n} of {total}",
   "guide": {

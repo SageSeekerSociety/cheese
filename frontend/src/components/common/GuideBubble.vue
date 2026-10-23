@@ -7,10 +7,12 @@
 // 人离开了那一页，气泡跟着控件一起走。整层不吃指针，被圈着的控件照常能点；只有小窗
 // 自己那一块收回指针。
 //
-// 小窗尽量不盖住能点、能输入的东西——被圈的控件、它所在的输入框都算。放哪由这里
-// 一处定（`placeBubble`）：先试目标右边，再从目标一层层往外试上面和下面；哪儿都会
-// 压住点什么时照样放在目标旁边，导览不能停在半路。
-import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+// 小窗不盖住人在读的正文，也尽量不盖住能点、能输入的东西——被圈的控件、它所在的
+// 输入框都算。放哪由这里一处定（`placeBubble`）：先试目标右边、左边，再从目标一层层
+// 往外试上面和下面，然后是正文那块的上方、下方和两侧的空白；哪儿都会压住点什么时，
+// 挑压得最少的那个，导览不能停在半路。人也可以拖：拖过之后这一站就停在他放的地方，
+// 走到下一站重新算。
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { t } from '@/i18n'
@@ -44,6 +46,8 @@ const EDGE = 12
 /** 小窗不能压住的东西：人会去点、会去输入的控件。 */
 const CONTROLS =
   'button, a[href], input:not([type="hidden"]), textarea, select, [contenteditable="true"], [role="button"], [role="option"], [role="menuitem"]'
+/** 人在读的正文。消息时间线把自己的阅读栏登记成这个，气泡宁可放远也不压在上面。 */
+const TEXTS = '[data-guide-text]'
 
 interface Box {
   left: number
@@ -60,11 +64,52 @@ interface Spot {
 
 const box = ref<Box | null>(null)
 const spot = ref<Spot | null>(null)
+/** 人把它拖到哪了。拖过之后这一站就停在他放的地方，走到下一站再清掉重算。 */
+const dragged = ref<{ left: number; top: number } | null>(null)
+let dragFrom: { x: number; y: number; left: number; top: number } | null = null
 let bubbleNode: HTMLElement | null = null
 let bubbleH = BUBBLE_H
 function holdBubble(el: unknown) {
   bubbleNode = el instanceof HTMLElement ? el : null
 }
+// 拖的是标题那一条：按住它挪，小窗跟着走。点在「下一步」上不算拖——那两个按钮不在
+// 这一行里。挪过 3px 才算拖，单纯点一下标题不会把自动摆的位置钉住。
+function startDrag(e: PointerEvent) {
+  if (e.button !== 0 || !bubbleNode) return
+  const r = bubbleNode.getBoundingClientRect()
+  dragFrom = { x: e.clientX, y: e.clientY, left: r.left, top: r.top }
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  e.preventDefault()
+}
+function moveDrag(e: PointerEvent) {
+  if (!dragFrom || !bubbleNode) return
+  const dx = e.clientX - dragFrom.x
+  const dy = e.clientY - dragFrom.y
+  if (!dragged.value && Math.abs(dx) + Math.abs(dy) < 3) return
+  const w = bubbleNode.offsetWidth || BUBBLE_W
+  const h = bubbleNode.offsetHeight || bubbleH
+  dragged.value = {
+    left: clamp(dragFrom.left + dx, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE)),
+    top: clamp(dragFrom.top + dy, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE)),
+  }
+}
+function endDrag(e: PointerEvent) {
+  if (!dragFrom) return
+  dragFrom = null
+  try {
+    ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+  } catch {
+    // 没捕获住（浏览器已经自己收回了）就什么都不用做。
+  }
+}
+// 走到下一站：人上一次拖的位置到这里为止，重新按新目标算一次。
+watch(
+  () => `${props.title}::${props.step ?? ''}`,
+  () => {
+    dragged.value = null
+    dragFrom = null
+  }
+)
 function measure() {
   const target = props.target
   const el = target instanceof HTMLElement ? target : null
@@ -88,29 +133,49 @@ function clear(a: DOMRect, left: number, top: number, w: number, h: number): boo
   return a.right <= left || left + w <= a.left || a.bottom <= top || top + h <= a.top
 }
 
+/** 页面上看得见的这些元素现在都占着哪几块地方。 */
+function visibleRects(selector: string): DOMRect[] {
+  return [...document.querySelectorAll<HTMLElement>(selector)]
+    .filter(
+      (el) => !el.closest('.gb') && (el.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true)
+    )
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.width > 0 && r.height > 0)
+}
+
+/** 小窗压在这块地方上的面积。 */
+function covered(spot: { left: number; top: number }, rects: DOMRect[], w: number, h: number): number {
+  return rects.reduce((sum, r) => {
+    const x = Math.min(spot.left + w, r.right) - Math.max(spot.left, r.left)
+    const y = Math.min(spot.top + h, r.bottom) - Math.max(spot.top, r.top)
+    return x > 0 && y > 0 ? sum + x * y : sum
+  }, 0)
+}
+
 function placeBubble(anchor: HTMLElement | null, rect: DOMRectReadOnly): Spot {
   const w = BUBBLE_W
   if (bubbleNode?.offsetHeight) bubbleH = bubbleNode.offsetHeight
   const h = bubbleH
   const aboveFirst = rect.top > window.innerHeight * BELOW_CUT
-  const controls = [...document.querySelectorAll<HTMLElement>(CONTROLS)]
-    .filter(
-      (c) => !c.closest('.gb') && (c.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true)
-    )
-    .map((c) => c.getBoundingClientRect())
-    .filter((r) => r.width > 0 && r.height > 0)
+  const controls = visibleRects(CONTROLS)
+  const texts = visibleRects(TEXTS)
+  const blocked = [...controls, ...texts]
   const inWindow = (left: number, top: number) =>
     left >= EDGE && left + w <= window.innerWidth - EDGE && top >= EDGE && top + h <= window.innerHeight - EDGE
-  const fits = (left: number, top: number) => inWindow(left, top) && controls.every((c) => clear(c, left, top, w, h))
+  const fits = (left: number, top: number) => inWindow(left, top) && blocked.every((c) => clear(c, left, top, w, h))
   // 左栏里的目标（频道、总览、资料库）放在它右边：上下都是一排可点的行。
   const right = rect.right + BUBBLE_GAP
+  const onLeft = rect.left - BUBBLE_GAP - w
   const sideTop = clamp(rect.top + rect.height / 2 - h / 2, EDGE, window.innerHeight - h - EDGE)
   if (fits(right, sideTop)) return { left: right, top: sideTop, above: false }
+  if (fits(onLeft, sideTop)) return { left: onLeft, top: sideTop, above: false }
   const left = clamp(rect.left + rect.width / 2 - w / 2, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE))
   // 从目标自己一层层往外（按钮、它那一行、它所在的输入框……）；固定的框只试它自己。
   const layers: DOMRectReadOnly[] = [rect]
   for (let el = anchor?.parentElement ?? null; el && el !== document.body; el = el.parentElement)
     layers.push(el.getBoundingClientRect())
+  // 正文那一块的上方和下方也算候选：消息没铺满半屏时，那儿是空的。
+  layers.push(...texts)
   for (const r of layers) {
     if (!r.width && !r.height) continue
     const above = r.top - BUBBLE_GAP
@@ -119,9 +184,27 @@ function placeBubble(anchor: HTMLElement | null, rect: DOMRectReadOnly): Spot {
       if (up ? fits(left, above - h) : fits(left, below)) return { left, top: up ? above : below, above: up }
     }
   }
-  // 哪儿都会压住点什么：照样放出来，贴在目标右边（放不下就上面或下面）。导览不能
-  // 因为找不到空地就停在半路——人看不到「下一步」，整条导览就卡死了。
-  if (inWindow(right, sideTop)) return { left: right, top: sideTop, above: false }
+  // 读的一栏两侧的空白：和人正在看的那一行同高，只要横向放得下就不压字。
+  for (const r of texts) {
+    for (const x of [r.left - BUBBLE_GAP - w, r.right + BUBBLE_GAP]) {
+      if (fits(x, sideTop)) return { left: x, top: sideTop, above: false }
+    }
+  }
+  // 哪儿都会压住点什么：挑压得最少的那个（先挑不压控件的），放远不如放近。
+  // 导览不能因为找不到空地就停在半路——人看不到「下一步」，整条导览就卡死了。
+  // 这几个候选的 top 都是小窗自己的上沿（不再借 translateY），
+  // 和 covered() 量的重合面积对得上。
+  const near: Spot[] = [
+    { left: right, top: sideTop, above: false },
+    { left: onLeft, top: sideTop, above: false },
+    { left, top: Math.max(rect.top - BUBBLE_GAP - h, EDGE), above: false },
+    { left, top: Math.min(rect.bottom + BUBBLE_GAP, window.innerHeight - h - EDGE), above: false },
+  ].filter((s) => inWindow(s.left, s.top))
+  const free = near.filter((s) => controls.every((c) => clear(c, s.left, s.top, w, h)))
+  const pool = free.length ? free : near
+  if (pool.length) {
+    return pool.reduce((best, s) => (covered(s, texts, w, h) < covered(best, texts, w, h) ? s : best))
+  }
   return aboveFirst
     ? { left, top: Math.max(rect.top - BUBBLE_GAP, h + EDGE), above: true }
     : { left, top: Math.min(rect.bottom + BUBBLE_GAP, window.innerHeight - h - EDGE), above: false }
@@ -169,6 +252,7 @@ const ringStyle = computed(() => {
   }
 })
 const bubbleStyle = computed(() => {
+  if (dragged.value) return { left: `${dragged.value.left}px`, top: `${dragged.value.top}px` }
   const p = spot.value
   if (!p) return null
   return p.above
@@ -192,7 +276,14 @@ const last = computed(() => !!props.total && props.step === props.total)
         role="dialog"
         :aria-label="title"
       >
-        <div class="gb__head">
+        <div
+          class="gb__head"
+          :title="t('welcome.tour.dragHint')"
+          @pointerdown="startDrag"
+          @pointermove="moveDrag"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+        >
           <span class="t-title">{{ title }}</span>
           <span v-if="total" class="t-meta">{{ step }}/{{ total }}</span>
         </div>
@@ -255,6 +346,13 @@ const last = computed(() => !!props.total && props.step === props.total)
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  /* 这一条是拖动的手柄：光标说得出可以拖，手机上别把滚动抢走。 */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.gb__head:active {
+  cursor: grabbing;
 }
 .gb__text {
   margin: 0;

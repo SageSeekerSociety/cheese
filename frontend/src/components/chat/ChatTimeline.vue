@@ -437,7 +437,9 @@ const rowLabels = computed(() =>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (the host's start slot + rows + streaming bubble +
              timeline-end slot). -->
-    <div :ref="contentRef" class="tl-content">
+    <!-- data-guide-text：这是人在读的那一栏，界面导览的气泡按它避让，不压在上面的
+         字上（GuideBubble 的 placeBubble）。 -->
+    <div :ref="contentRef" class="tl-content" data-guide-text>
       <!-- Start of the conversation — the host puts what stands above the first
              message here (a thread's opening message). Inside the scroller, with
              the rows: it scrolls with them rather than pinning above them, where
