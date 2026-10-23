@@ -22,6 +22,7 @@ from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.canvas.block import blocks
@@ -107,6 +108,7 @@ async def _columns(
     asked = await awaiting_an_answer(db, task_ids)
     now = datetime.now(UTC)
     rows = await TaskService(db).list_by_ids(task_ids)
+    runs = await teammate_runs(db, rows)
     teammates = await _teammates(
         db, {t.id: (t.project_id, t.room_id, t.agent_handle) for t in rows}
     )
@@ -114,7 +116,10 @@ async def _columns(
         task.id: {
             **presentation.task_presentation(
                 presentation.facts_for_task(
-                    task, cards.get(task.id), awaiting_answer=task.id in asked
+                    task,
+                    cards.get(task.id),
+                    awaiting_answer=task.id in asked,
+                    teammate_runs=runs.get(task.id),
                 ),
                 now=now,
             ).as_dict(),

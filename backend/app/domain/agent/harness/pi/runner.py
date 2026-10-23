@@ -35,6 +35,7 @@ from app.domain.agent.executor_transport import (
     PlatformHost,
     RemoteClient,
     failure_text,
+    no_run,
 )
 from app.domain.agent.harness import PI
 from app.domain.agent.harness.driven import monitor, runner
@@ -624,6 +625,7 @@ class Runner(runner.Runner[Journal]):
                 self._invoke,
                 call_id,
                 self.doc_versions,
+                no_run,
                 self.request_compact,
             )
             try:
@@ -659,6 +661,7 @@ class Runner(runner.Runner[Journal]):
             None,
             call_id,
             self.doc_versions,
+            no_run,
             self.request_compact,
         )
         # A person's 芝士 asked from a project's page acts in that project: its

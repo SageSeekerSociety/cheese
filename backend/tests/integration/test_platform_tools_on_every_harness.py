@@ -49,6 +49,7 @@ from tests.integration.conftest import (
 )
 from tests.support.room_machine import NO_MACHINE
 from tests.support.session_records import wait_for_read, wait_for_record
+from tests.support.session_runner import standing_runner
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -165,13 +166,21 @@ def harness(request, client, room, tmp_path, monkeypatch):
             )
         )
         log = (tmp_path / "central.log").open("w")
+        # The session's runner, which names the run each platform call is made
+        # in (`executor_transport.PlatformHost.run`): a real session has one.
+        runner = standing_runner("claude-code/1/1")
+        runner_socket = runner.__enter__()
         process = mcp_process.MCPProcess(
             [sys.executable, central.__file__, "transport", str(config)],
             str(tmp_path),
-            {**os.environ, **env},
+            {**os.environ, **env, "CHEESE_SESSION_SOCKET": runner_socket},
             log,
         )
-        closers[:0] = [process.close, log.close]
+        closers[:0] = [
+            process.close,
+            log.close,
+            lambda: runner.__exit__(None, None, None),
+        ]
         module = release.hook_module(
             Path(central.__file__).with_name("proxy.js").read_text(),
             {"central_config": str(tmp_path), "session_workspace": str(tmp_path)},

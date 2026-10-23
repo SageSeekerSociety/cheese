@@ -56,6 +56,7 @@ const CASES: Case[] = [
     over: {
       session_running: true,
       moving: true,
+      progress_state: 'working',
       progress_note: '在改登录表单，加「记住我」那个勾选框',
       progress_set_at: ago(12 * MIN),
     },
@@ -69,6 +70,7 @@ const CASES: Case[] = [
     over: {
       session_running: false,
       moving: false,
+      progress_state: 'working',
       progress_note: '首页的轮播图换成静态的三张',
       progress_set_at: ago(40 * MIN),
     },
