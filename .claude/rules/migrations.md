@@ -63,8 +63,12 @@ every migration a PR **adds** (CI: backend `static` job; locally: the
    foreign key points at. A table left out is locked after the listed ones are
    held and deadlocks with the live backend (`b8d3f1a6c254` left out `topics`).
    ✓ Where `upgrade()` calls `with_lock_retries`, both tables of every foreign
-   key it adds or drops afterwards in that transaction are in the list. ✓ No
-   pasted `DO $$ … lock_not_available` loops.
+   key it then adds or drops by name in that transaction are in the list
+   (`create_foreign_key`, `drop_constraint`, keys written into `add_column` /
+   `create_table`, and their raw SQL). Not checked, so list them by hand: the
+   key a `drop_column` or `drop_table` takes with it, and any migration that
+   does not call `with_lock_retries`. ✓ No pasted `DO $$ … lock_not_available`
+   loops.
 3. **Adding a column**: nullable, or NOT NULL with a `server_default`. ✓
    A value computed per row: add it nullable → backfill → `CHECK (c IS NOT
    NULL) NOT VALID` → `VALIDATE` → `SET NOT NULL` (no full scan once a

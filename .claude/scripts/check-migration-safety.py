@@ -63,7 +63,8 @@ checks the ones that can be read off the source:
       (``b8d3f1a6c254``: ``topics``). A dropped key's target is read from the
       ``upgrade()`` that created it; one that cannot be found, or was created
       pointing at more than one table, is an ``unresolved`` warning. An
-      ``upgrade()`` that never calls ``with_lock_retries`` is not judged.
+      ``upgrade()`` that never calls ``with_lock_retries`` is not judged, nor
+      is the key a ``drop_column`` / ``drop_table`` removes along with it.
   empty-downgrade
       A migration whose ``downgrade()`` does nothing — a lone ``pass``, once
       its docstring is set aside — must say why in that docstring: what it
@@ -894,6 +895,7 @@ class _Migration(ast.NodeVisitor):
                     )
         if match := _SQL_CREATE_TABLE.search(sql):
             self.facts.created_tables.add(match.group(1))
+            self._fk_touches(node, *_SQL_REFERENCES.findall(sql))
 
     def finish(self) -> None:
         """Rules that need the whole file, not one statement: a ``NOT VALID``
@@ -1549,6 +1551,61 @@ def self_test() -> int:
             "    op.add_column('task', sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=True))"
         ),
         ["fk-on-add-column", "fk-table-not-locked", "fk-without-index"],
+    )
+    check(
+        "a new table's inline key, target left out",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    op.create_table('fresh', sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), index=True))"
+        ),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "a new table's ForeignKeyConstraint, target left out",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    op.create_table('fresh', sa.Column('owner_id', sa.Integer()),"
+            " sa.ForeignKeyConstraint(['owner_id'], ['users.id']), sa.Index('ix_fresh_owner_id', 'owner_id'))"
+        ),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "raw SQL: a new table's REFERENCES target left out",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            '    op.execute("CREATE TABLE fresh (id int PRIMARY KEY, owner_id int REFERENCES users (id))")'
+        ),
+        ["fk-table-not-locked"],
+    )
+    check(
+        "a key added before with_lock_retries holds nothing yet",
+        _rules_found(add_fk + "\n    with_lock_retries('task')"),
+        [],
+    )
+    check(
+        "raw SQL: a dropped key nothing says the target of",
+        _rules_found('    with_lock_retries(\'runs\')\n    op.execute("ALTER TABLE runs DROP CONSTRAINT mystery_fkey")'),
+        ["unresolved"],
+    )
+    check(
+        "raw SQL: a dropped constraint that is not named like a key",
+        _rules_found('    with_lock_retries(\'runs\')\n    op.execute("ALTER TABLE runs DROP CONSTRAINT ck_runs_kind")'),
+        [],
+    )
+    two_targets = {
+        "a.py": _HEAD + "def upgrade():\n    op.create_foreign_key('owner_link', 'runs', 'users', ['u'], ['id'])\n",
+        "b.py": _HEAD + "def upgrade():\n    op.create_foreign_key('owner_link', 'runs', 'teams', ['u'], ['id'])\n",
+    }
+    check(
+        "a re-pointed key with an unremarkable name is not guessed at",
+        judged("    with_lock_retries('runs, users')\n    op.execute(\"ALTER TABLE runs DROP CONSTRAINT owner_link\")", two_targets),
+        ["unresolved"],
+    )
+    check("a dropped unknown key with no lock list", _rules_found(drop_fk), [])
+    check(
+        "a dropped unknown key in its own autocommit transaction",
+        _rules_found("    with_lock_retries('runs')\n    with op.get_context().autocommit_block():\n    " + drop_fk),
+        [],
     )
     check(
         "an exception with a reason",
