@@ -285,7 +285,7 @@ class FileIn(BaseModel):
     @model_validator(mode="after")
     def _one(self) -> "FileIn":
         if (self.id is None) == (self.path is None):
-            raise ValueError("a file is an attachment id or a library path")
+            raise ValueError(say("assistantFileOneOf"))
         return self
 
     @property

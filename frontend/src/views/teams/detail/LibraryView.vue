@@ -63,7 +63,7 @@ const kind = defineModel<Kind>('kind', { required: true })
 
 const emit = defineEmits<{
   go: [dir: string]
-  open: [path: string]
+  open: [file: LibraryFile]
   close: []
   upload: [files: File[]]
   download: [file: LibraryFile]
@@ -210,7 +210,7 @@ defineExpose({
         :browsing="browsing"
         :members="[]"
         agent-name=""
-        @open-file="(path: string) => emit('open', path)"
+        @open-file="(file: LibraryFile) => emit('open', file)"
         @open-folder="(d: string) => emit('go', d)"
         @download="(file: LibraryFile) => emit('download', file)"
         @replace="pickReplacement"

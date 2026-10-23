@@ -41,7 +41,19 @@ async def put_incoming_file(token: str, request: Request) -> dict:
     return ok({})
 
 
-@router.get("/files/outgoing/{token}")
+@router.get(
+    "/files/outgoing/{token}",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+)
 async def get_outgoing_file(token: str, request: Request) -> Response:
     """The bytes of one stored file, for whoever holds the address
     (``blob_store.LocalStore.download_url``): a person's 芝士 fetching a file

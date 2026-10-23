@@ -435,6 +435,67 @@ async def move_library_file(
 teams = APIRouter(prefix="/teams", tags=["library"])
 
 
+class LibraryFolderOut(BaseModel):
+    """清单里的一个文件夹（`library_listing._folders` 写的那一行）。"""
+
+    type: Literal["folder"]
+    path: str
+    name: str
+    count: int
+    modified: float
+    rank: str
+
+
+class LibraryPageOut(BaseModel):
+    """一页清单：文件夹在前，然后是文件；``next`` 是下一页的游标。"""
+
+    data: list[LibraryFolderOut | LibraryFileOut]
+    next: str | None
+
+
+class LibraryVersionOut(BaseModel):
+    id: str
+    version: int
+    bytes: int
+    added_by: str | None
+    created_at: str | None
+    current: bool
+
+
+class LibraryVersionsOut(BaseModel):
+    versions: list[LibraryVersionOut]
+
+
+class LibraryPlacedOut(BaseModel):
+    """放进、换成新版本之后它叫什么、多大。"""
+
+    path: str
+    bytes: int
+
+
+class LibraryRestoredOut(BaseModel):
+    path: str
+
+
+class LibraryDeletedOut(BaseModel):
+    deleted: bool
+
+
+#: 一份资料的字节，原样给出。
+BYTES = {
+    "response_class": Response,
+    "responses": {
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+}
+
+
 class LibraryRoomOut(BaseModel):
     """团队的资料库占了多少、一共能放多少（字节）。"""
 
@@ -464,7 +525,7 @@ def _team_shelf(team_id: int) -> Shelf:
     return Shelf.of_team(team_id)
 
 
-@teams.get("/{team_id}/library")
+@teams.get("/{team_id}/library", **typed_response(LibraryPageOut))
 async def list_team_library(
     team_id: int,
     db: DbSession,
@@ -520,7 +581,7 @@ async def team_library_folders(
     return ok({"folders": await library_listing.folders(db, _team_shelf(team_id))})
 
 
-@teams.get("/{team_id}/library/raw")
+@teams.get("/{team_id}/library/raw", **BYTES)
 async def team_library_file_raw(
     team_id: int,
     path: str,
@@ -537,7 +598,7 @@ async def team_library_file_raw(
     )
 
 
-@teams.get("/{team_id}/library/versions")
+@teams.get("/{team_id}/library/versions", **typed_response(LibraryVersionsOut))
 async def list_team_library_versions(
     team_id: int, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -548,7 +609,11 @@ async def list_team_library_versions(
     return ok({"versions": versions})
 
 
-@teams.post("/{team_id}/library/restore", dependencies=[ROUTE_DECIDES])
+@teams.post(
+    "/{team_id}/library/restore",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryRestoredOut),
+)
 async def restore_team_library_version(
     team_id: int,
     path: str,
@@ -589,7 +654,11 @@ async def team_library_upload_slot(
     return ok(await library_records.upload_slot(shelf, name, body.size))
 
 
-@teams.post("/{team_id}/library", dependencies=[ROUTE_DECIDES])
+@teams.post(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryPlacedOut),
+)
 async def upload_team_library_file(
     team_id: int, body: LibraryAddIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -606,7 +675,11 @@ async def upload_team_library_file(
     return ok({"path": name, "bytes": upload.size})
 
 
-@teams.put("/{team_id}/library", dependencies=[ROUTE_DECIDES])
+@teams.put(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryPlacedOut),
+)
 async def replace_team_library_file(
     team_id: int,
     path: str,
@@ -625,7 +698,11 @@ async def replace_team_library_file(
     return ok({"path": name, "bytes": upload.size})
 
 
-@teams.delete("/{team_id}/library", dependencies=[ROUTE_DECIDES])
+@teams.delete(
+    "/{team_id}/library",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryDeletedOut),
+)
 async def delete_team_library_file(
     team_id: int, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

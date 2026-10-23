@@ -2,6 +2,7 @@
 // 团队的「资料库」：团队成员共用的文件；一个人名下的就是他自己的资料库，附给芝士的
 // 文件和芝士交给他的文件都存在这里。这一页取数、上传、替换、挪动、删除，把看哪一份、
 // 在哪一层记在地址上（`?file=`、`?dir=`），画面在同目录的 `LibraryView.vue`。
+import type { LocationQueryRaw } from 'vue-router'
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 import type { Kind } from '@/lib/libraryKinds'
 
@@ -50,7 +51,7 @@ const pages = useLibraryPages(
 const anything = computed(() => !(browsing.value && !dir.value && pages.exhausted.value && !pages.rows.value.length))
 
 function goTo(path: string) {
-  const next = { ...route.query, dir: path || undefined }
+  const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
   delete next.file
   void router.push({ query: next })
 }
@@ -110,6 +111,9 @@ const naming = useLibraryNaming({
   reload: async () => pages.reset(),
 })
 
+/** 还没开着哪一份时给详情栏的读法：它不会被调到。 */
+const nothing = async () => new ArrayBuffer(0)
+
 function read(file: LibraryFile) {
   return (asPdf: boolean) => libraryFileBytes(shelf.value, file.path, asPdf)
 }
@@ -156,7 +160,7 @@ useCommands(() => [
     :busy="transfers.busy.value"
     :wide="mdAndUp"
     :revision="revision"
-    :read="selected ? read(selected) : async () => new ArrayBuffer(0)"
+    :read="selected ? read(selected) : nothing"
     :versions-of="transfers.versionsOf.value"
     :versions="history.versions.value"
     :versions-loading="history.loading.value"
