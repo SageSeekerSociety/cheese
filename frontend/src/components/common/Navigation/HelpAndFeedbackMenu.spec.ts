@@ -153,6 +153,25 @@ describe('帮助与反馈入口', () => {
     expect(plain.querySelector('.v-list-item__append')).toBeNull()
   })
 
+  it('「我的反馈」上的件数到 99 都照写，超过 99 写成 99+', async () => {
+    const at99 = await mount({}, { unread: 99 })
+    const entry99 = at99.container.querySelector('.help-entry') as HTMLElement
+    await waitFor(() => expect(entry99.querySelector('.v-badge')).not.toBeNull())
+    await fireEvent.click(entry99)
+    const row99 = await screen.findByRole('link', { name: /我的反馈.*99/ })
+    expect(row99.textContent).toContain('99')
+    expect(row99.textContent).not.toContain('99+')
+    at99.unmount()
+    document.body.innerHTML = ''
+
+    const at100 = await mount({}, { unread: 100 })
+    const entry100 = at100.container.querySelector('.help-entry') as HTMLElement
+    await waitFor(() => expect(entry100.querySelector('.v-badge')).not.toBeNull())
+    await fireEvent.click(entry100)
+    const row100 = await screen.findByRole('link', { name: /我的反馈.*100/ })
+    expect(row100.textContent).toContain('99+')
+  })
+
   it('管理后台那一项只对管理员出现，而且由服务端说了算', async () => {
     const plain = await mount({}, { admin: false })
     await fireEvent.click(plain.container.querySelector('.help-entry') as HTMLElement)
