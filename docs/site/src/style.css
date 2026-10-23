@@ -5783,8 +5783,7 @@ html:not(.js) .sm-nojs {
     transform: translateY(100%);
   }
 
-  .dock-resize,
-  .hide-sm {
+  .dock-resize {
     display: none;
   }
 
@@ -5945,6 +5944,15 @@ html:not(.js) .sm-nojs {
 
   .hdr-actions {
     gap: 2px;
+  }
+
+  /* On a phone this is the header's only way back to the product, so it
+     stays, a size smaller, and fits beside the icons down to 320px. */
+  .hdr-enter {
+    height: 32px;
+    margin-left: 4px;
+    padding: 0 10px;
+    font-size: 13px;
   }
 }
 
