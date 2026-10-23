@@ -269,3 +269,33 @@ describe('a chapter starts where someone marked it', () => {
     expect(queryAllByRole('heading', { level: 3 })).toHaveLength(0)
   })
 })
+
+describe('a merged line someone opened stays open', () => {
+  // The same person archives channels one after another: one merged line.
+  function archived(id: string, room: string, minute: number): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'wang',
+      content: `<@wang> archived 「${room}」`,
+      created_at: `2026-09-01T10:${String(minute).padStart(2, '0')}:00Z`,
+      meta: { platform: true, i18n: { content: { key: 'roomArchived', params: { actor: '<@wang>', room } } } },
+    } as unknown as Block
+  }
+
+  it('shows the one that just joined without folding back up', async () => {
+    const first = [archived('x1', 'weekly', 1), archived('x2', 'hiring', 2)]
+    const view = mount({ rows: collapseNotices(first), runEdges: ['start'] })
+    await fireEvent.click(screen.getByTestId('notice-repeats'))
+    expect(view.container.textContent).toContain('hiring')
+
+    const next = [...first, archived('x3', 'budget', 3)]
+    await view.rerender({ rows: collapseNotices(next), runEdges: ['start'], arrived: new Set(['x3']) })
+
+    expect(screen.getByTestId('notice-repeats').getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('weekly')
+    expect(view.container.textContent).toContain('budget')
+  })
+})

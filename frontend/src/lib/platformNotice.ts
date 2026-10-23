@@ -231,5 +231,14 @@ export interface NoticeRow {
   notice: PlatformNotice | null
 }
 
+/**
+ * 这一行是哪一行：它折进来的第一块。合成的行画的是最后一条（时间、正文），可后来
+ * 又并进来一条时它还是原来那一行——按 `block` 认，人点开的那一串会被换成一行新的、
+ * 收起来的。
+ */
+export function rowKey(row: NoticeRow): string {
+  return row.run[0].id
+}
+
 export { actionResource, confirmTarget, environmentTarget, mailOutcomes, platformNotice } from './platformNoticeCards'
 export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'

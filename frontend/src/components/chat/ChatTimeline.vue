@@ -30,6 +30,7 @@ import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
+import { rowKey } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import AskGroupCard from '../ask/AskGroupCard.vue'
@@ -506,7 +507,7 @@ const rowLabels = computed(() =>
         :aria-label="t('work.room.chat.timelineLabel')"
         :aria-busy="loadingHistory || loadingOlder"
       >
-        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="rowKey(rows[i])">
           <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
           <template v-if="i >= (hiddenRows ?? 0)">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
