@@ -9,8 +9,9 @@
 //
 // 小窗尽量不盖住能点、能输入的东西——被圈的控件、它所在的输入框都算。放哪由这里
 // 一处定（`placeBubble`）：先试目标右边，再从目标一层层往外试上面和下面；哪儿都会
-// 压住点什么时照样放在目标旁边，导览不能停在半路。
-import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
+// 压住点什么时照样放在目标旁边，导览不能停在半路。人觉得它挡着东西时可以拖：拖过
+// 之后这一站就停在他放的地方，走到下一站重新算。
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { t } from '@/i18n'
@@ -60,12 +61,68 @@ interface Spot {
 
 const box = ref<Box | null>(null)
 const spot = ref<Spot | null>(null)
+/** 人把它拖到哪了。拖过之后这一站就停在他放的地方，走到下一站再清掉重算。 */
+const dragged = ref<{ left: number; top: number } | null>(null)
+let dragFrom: { x: number; y: number; left: number; top: number } | null = null
 let bubbleNode: HTMLElement | null = null
 let bubbleH = BUBBLE_H
 function holdBubble(el: unknown) {
   bubbleNode = el instanceof HTMLElement ? el : null
 }
+// 拖的是标题那一条：按住它挪，小窗跟着走。点在「下一步」上不算拖——那两个按钮不在
+// 这一行里。挪过 3px 才算拖，单纯点一下标题不会把自动摆的位置钉住。
+function startDrag(e: PointerEvent) {
+  if (e.button !== 0 || !bubbleNode) return
+  const r = bubbleNode.getBoundingClientRect()
+  dragFrom = { x: e.clientX, y: e.clientY, left: r.left, top: r.top }
+  try {
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  } catch {
+    // 合成出来的事件、或者指针已经不在了：捕获不上也不影响挪。
+  }
+  e.preventDefault()
+}
+function moveDrag(e: PointerEvent) {
+  if (!dragFrom || !bubbleNode) return
+  const dx = e.clientX - dragFrom.x
+  const dy = e.clientY - dragFrom.y
+  if (!dragged.value && Math.abs(dx) + Math.abs(dy) < 3) return
+  const w = bubbleNode.offsetWidth || BUBBLE_W
+  const h = bubbleNode.offsetHeight || bubbleH
+  dragged.value = {
+    left: clamp(dragFrom.left + dx, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE)),
+    top: clamp(dragFrom.top + dy, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE)),
+  }
+}
+function endDrag(e: PointerEvent) {
+  if (!dragFrom) return
+  dragFrom = null
+  try {
+    ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+  } catch {
+    // 没捕获住（浏览器已经自己收回了）就什么都不用做。
+  }
+}
+// 走到下一站：人上一次拖的位置到这里为止，重新按新目标算一次。
+watch(
+  () => `${props.title}::${props.step ?? ''}`,
+  () => {
+    dragged.value = null
+    dragFrom = null
+  }
+)
+/** 窗口改小了之后，人拖到边上那一版也得跟着收回来，不然会跑到屏幕外面。 */
+function clampDragged() {
+  const d = dragged.value
+  if (!d) return
+  const w = bubbleNode?.offsetWidth || BUBBLE_W
+  const h = bubbleNode?.offsetHeight || bubbleH
+  const left = clamp(d.left, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE))
+  const top = clamp(d.top, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE))
+  if (left !== d.left || top !== d.top) dragged.value = { left, top }
+}
 function measure() {
+  clampDragged()
   const target = props.target
   const el = target instanceof HTMLElement ? target : null
   const rect: DOMRectReadOnly | null = el ? el.getBoundingClientRect() : (target as DOMRectReadOnly | null)
@@ -169,6 +226,7 @@ const ringStyle = computed(() => {
   }
 })
 const bubbleStyle = computed(() => {
+  if (dragged.value) return { left: `${dragged.value.left}px`, top: `${dragged.value.top}px` }
   const p = spot.value
   if (!p) return null
   return p.above
@@ -192,7 +250,14 @@ const last = computed(() => !!props.total && props.step === props.total)
         role="dialog"
         :aria-label="title"
       >
-        <div class="gb__head">
+        <div
+          class="gb__head"
+          :title="t('welcome.tour.dragHint')"
+          @pointerdown="startDrag"
+          @pointermove="moveDrag"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+        >
           <span class="t-title">{{ title }}</span>
           <span v-if="total" class="t-meta">{{ step }}/{{ total }}</span>
         </div>
@@ -255,6 +320,13 @@ const last = computed(() => !!props.total && props.step === props.total)
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  /* 这一条是拖动的手柄：光标说得出可以拖，手机上别把滚动抢走。 */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.gb__head:active {
+  cursor: grabbing;
 }
 .gb__text {
   margin: 0;
