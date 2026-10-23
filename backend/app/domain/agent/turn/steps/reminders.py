@@ -11,14 +11,10 @@ runner 说在干活，`ComputePool.working_conversations`），它为手上这�
 （`native_inputs` 的回执，`_read_at`）带着谁的话，它之后说没说过话（房间里它署名的消息），清单
 是不是它这一段工作写的（`TopicProgress.turn_id` 是会话手上那段工作）。
 
-**两句都只在「看得见的东西不在原地」时才说，而且一段沉默只说一次。** 两处判据：
-- **这一步还在它手上。** 它所在的对话上有一张还开着的验收卡时，做到哪一步由卡说
-  （`_spoken_for`，和 `StaleProgressReminder` 同一个集合），平台不再去问队友；卡递出去
-  等验收人看的窗口，正是这两句最不该敲的时候。
-- **说的还是同一段。** 一段沉默指「它自上次开口（或读到那句话）以来一直没动」。同
-  一段沉默只敲一次；它自己再说一句、或把清单改写一遍，才是新的一段。以前是过了阈值
-  就从上次提醒重新计时，于是一个一直不说话的会话每十分钟被敲一次——每次都是一遍真
-  实的模型调用，而且被敲醒的会话又算「在干活」。
+**两句都不在「这一步已经不归它管」的时候说。** 它所在的对话上有一张还开着的验收卡
+时，做到哪一步由卡说（`_spoken_for`，和 `StaleProgressReminder` 同一个集合），平台不
+再去问队友：卡递出去、等验收人看的那个窗口，正是这两句最不该敲的时候，而每敲一次都
+是一遍真实的模型调用。
 
 放进去的路和人的中途消息是同一条（`notify_running_session`）：会话开工时取的那份
 快照，之后只有人打字或者平台叫它一声才能变。这里的两句就是「平台叫它一声」。
@@ -215,11 +211,11 @@ class QuietSessionReminders:
     """会话在干活、房间里看得见的东西却停在原地，叫它一声。
 
     按座位算（会话所在的对话、它署名用的那一席）：一间房里几位队友并行在干，各
-    有各的沉默，别人说话不算它说了。两样记在这台进程里（这一次沉默已经敲过、这一版
-    清单已经敲过），只记在干活的座位上：不在干活了就忘掉，下一次从头算。
+    有各的沉默，别人说话不算它说了。两样记在这台进程里（上一次为话提醒、上一次为
+    清单提醒），只记在干活的座位上：不在干活了就忘掉，下一次从头算。换了进程最多
+    早一个阈值多问一句。
 
-    两处不说：**这一步还轮到它动**（`_spoken_for`：卡开着就由卡说），和**这一段沉默
-    已经说过一次**。"""
+    一处不说：**这一步还轮到它动**（`_spoken_for`：卡开着就由卡说）。"""
 
     def __init__(self, chat: SessionNotices, working: Working) -> None:
         self._chat = chat
@@ -285,10 +281,8 @@ class QuietSessionReminders:
                     continue
                 spoke = await _said_since(session, conversation, acting, asked.read_at)
                 quiet_since = spoke or asked.read_at
-                last = self._silence_reminded.get(seat)
-                if last is not None and quiet_since <= last:
-                    continue
-                if (now - quiet_since).total_seconds() < threshold:
+                since = max(quiet_since, self._silence_reminded.get(seat, quiet_since))
+                if (now - since).total_seconds() < threshold:
                     continue
                 minutes = int((now - quiet_since).total_seconds() // 60)
                 due.append((seat, minutes, await language_of(session, asked.author)))
@@ -333,10 +327,8 @@ class QuietSessionReminders:
                 if row.turn_id != work:
                     continue
                 written_at = row.updated_at
-                last = self._checklist_reminded.get(seat)
-                if last is not None and written_at <= last:
-                    continue
-                if (now - written_at).total_seconds() < threshold:
+                since = max(written_at, self._checklist_reminded.get(seat, written_at))
+                if (now - since).total_seconds() < threshold:
                     continue
                 asked = await _asked(session, conversation, acting, work)
                 due.append(

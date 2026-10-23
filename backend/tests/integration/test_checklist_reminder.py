@@ -15,13 +15,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import update
 
 from app.api.deps import get_chat_service, get_work_runner
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.turn.steps.reminders import QuietSessionReminders
-from app.domain.topic.models import TopicProgress
 from tests.integration.conftest import (
     in_thread,
     open_task,
@@ -108,26 +106,6 @@ def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
         json={"todos": todos, **extra},
         headers=headers,
     )
-
-
-def _stamp_at(client, topic_id: str, at: datetime) -> None:
-    """把清单的 ``updated_at`` 钉到 ``at``。
-
-    真写一次是用真钟盖章的，而这个用例的钟已经走到未来去了：再写一版，章还是
-    「现在」，落在上一次提醒之前，于是它永远算「还是那一版」。这里直接把章挪到
-    用例说的地方。
-    """
-
-    async def stamp():
-        async with client.test_factory() as db:
-            await db.execute(
-                update(TopicProgress)
-                .where(TopicProgress.conversation_id == uuid.UUID(topic_id))
-                .values(updated_at=at)
-            )
-            await db.commit()
-
-    client.portal.call(stamp)
 
 
 def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
@@ -234,13 +212,12 @@ def test_a_running_turns_stalled_checklist_is_asked_for_again(
         assert len(notices) == 1
         assert "todo_write" in notices[0]
         assert "10 分钟" in notices[0]
-        # 还是那一版：再久也只说一次。以前是过了窗口就重新计时，于是一个一直
-        # 不写清单的会话每十分钟被敲一次，每次都是一遍真实的模型调用。
+        # 叫过就等下一次窗口，别在同一次停歇里反复说。
         clock[0] += timedelta(seconds=THRESHOLD - 1)
         assert client.portal.call(quiet.checklist, clock[0]) == 0
         clock[0] += timedelta(seconds=1)
-        assert client.portal.call(quiet.checklist, clock[0]) == 0
-        assert len(notices) == 1
+        assert client.portal.call(quiet.checklist, clock[0]) == 1
+        assert len(notices) == 2
         # 那一轮听话写了下一步：清单又动了，时刻从写下的那一刻重新算。
         _write(
             client,
@@ -252,14 +229,15 @@ def test_a_running_turns_stalled_checklist_is_asked_for_again(
                 {**PLAN[2], "status": "in_progress"},
             ],
         )
-        _stamp_at(client, topic, clock[0])
+        # 时刻往前推一个窗口（上面那次提醒的时刻也记着，两样一起看才不会提前
+        # 开口）。
         clock[0] += timedelta(seconds=THRESHOLD - 1)
         assert client.portal.call(quiet.checklist, clock[0]) == 0
-        assert len(notices) == 1
-        # 新版停够一个窗口，就再叫一次——不是「叫过这一轮就再也不叫」。
+        assert len(notices) == 2
+        # 再停够一个窗口，就再叫一次——不是「叫过这一轮就再也不叫」。
         clock[0] += timedelta(seconds=1)
         assert client.portal.call(quiet.checklist, clock[0]) == 1
-        assert len(notices) == 2
+        assert len(notices) == 3
 
 
 def test_a_checklist_left_by_an_earlier_turn_is_not_this_turns_problem(
