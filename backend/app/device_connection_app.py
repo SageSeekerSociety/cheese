@@ -229,11 +229,12 @@ def _streamed_exec(body: dict[str, Any]) -> StreamingResponse:
     `_unanswered` would otherwise have answered with."""
     global _active_rpc_calls
     lines: asyncio.Queue[str | None] = asyncio.Queue()
+    run = asyncio.create_task(device_hub.exec(**body, on_stderr=lines.put_nowait))
     # Counted until the exec ends, not until the handler returns: the answer
     # outlives the handler, and a release has to wait for the exec, which is in
-    # `exec_pending` only once it has been sent.
+    # `exec_pending` only once it has been sent. Counted only once the task
+    # exists: a body the hub cannot take raises above, and nothing then ends it.
     _active_rpc_calls += 1
-    run = asyncio.create_task(device_hub.exec(**body, on_stderr=lines.put_nowait))
     run.add_done_callback(_ended)
     run.add_done_callback(lambda _: lines.put_nowait(None))
     # A caller that goes away does not stop the command, as with an exec

@@ -16,11 +16,12 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
+from app import device_connection_app
 from app.core.config import settings
 from app.device_connection_app import app as owner_app
 from app.domain.agent.device_hub import DeviceOffline, calls
 from app.domain.agent.device_hub import device_hub as owner_hub
-from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+from app.domain.agent.device_hub_rpc import STREAMED_EXEC, RemoteDeviceHub
 
 LINES = ["downloading", '{"executor_download": {"have": 1, "total": 2}}']
 #: How long the machine waits for the backend to hear a line before it goes on
@@ -229,6 +230,31 @@ async def test_a_streamed_exec_the_machine_never_answers_is_a_timeout(
     monkeypatch.setattr(calls, "EXEC_REPLY_SLACK_S", 0)
     with pytest.raises(TimeoutError, match="did not answer exec"):
         await _exec(_backend(), _Machine(answers=False), timeout=0.1)
+
+
+@pytest.mark.anyio
+async def test_a_streamed_exec_the_owner_cannot_take_does_not_hold_a_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer backend can send an exec an older owner does not understand.
+    It fails, and the owner can still be released afterwards."""
+    monkeypatch.setattr(device_connection_app, "_release_draining", False)
+    async with httpx.AsyncClient(
+        base_url="http://owner",
+        transport=_Owner(),
+        headers={"X-Device-Connection-Secret": "test-owner-secret"},
+    ) as owner:
+        with pytest.raises(TypeError):
+            await owner.post(
+                "/internal/device-connection/call/exec",
+                headers={"Accept": STREAMED_EXEC},
+                json={"device_id": "m", "argv": ["true"], "a_later_option": 1},
+            )
+
+        drained = await owner.post("/internal/device-connection/release-drain")
+        await owner.post("/internal/device-connection/release-resume")
+
+    assert drained.status_code == 200, drained.text
 
 
 @pytest.mark.anyio
