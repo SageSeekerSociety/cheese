@@ -341,8 +341,13 @@ defineExpose({
   gap: 12px;
 }
 
+.team-library__room > span {
+  white-space: nowrap;
+}
+
 .team-library__meter {
   flex: 0 1 240px;
+  min-width: 80px;
   height: 6px;
   overflow: hidden;
   background: var(--line);
