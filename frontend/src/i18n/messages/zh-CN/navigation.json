@@ -1,6 +1,7 @@
 {
   "home": "首页",
   "inbox": "待办",
+  "market": "市场",
   "newProject": "新建{project}",
   "project": {
     "library": "资料库",
@@ -30,7 +31,8 @@
     "mine": "我的反馈",
     "admin": "管理后台",
     "guide": "新手引导",
-    "tour": "界面导览"
+    "tour": "界面导览",
+    "tourStartsInGeneral": "导览从项目的「综合」频道开始：进那里再点一次。"
   },
   "admin": {
     "queue": "反馈",
@@ -153,7 +155,7 @@
     "checking": "正在检查更新…",
     "downloading": "正在下载新版本 {version}…",
     "latest": "已是最新版本",
-    "failed": "没能检查更新，稍后再试",
+    "failed": "检查更新失败，稍后重试",
     "ready": "新版本 {version} 已下载",
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",

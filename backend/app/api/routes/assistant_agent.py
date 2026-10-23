@@ -22,7 +22,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from app.api.assistant_deps import ProjectPages, show_proposal, tell_change, where_of
+from app.api.assistant_deps import (
+    ProjectPages,
+    show_proposal,
+    tell_change,
+    tell_handed,
+    where_of,
+)
 from app.api.auth import ActorResolverDep
 from app.api.awaiting_asks import MembershipAsk, RunAsk, TaskAsk
 from app.api.awaiting_deps import all_waiting
@@ -31,18 +37,26 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import standing
+from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.personal import reading
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
+from app.domain.assistant import memory as assistant_memory
 from app.domain.fetch.preapproved import preapproved
+from app.domain.library import listing as library_listing
+from app.domain.library import records as library_records
+from app.domain.library import service as library_service
+from app.domain.library.shelf import Shelf
+from app.domain.memory.files import MemoryFileError, parse_memory_file
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.routine import personal as routine_personal
+from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
 from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
 
@@ -364,6 +378,9 @@ class ActIn(BaseModel):
     #: A web page, and what to learn from it.
     url: str = ""
     prompt: str = ""
+    #: Put it to the person if the gate stops it, rather than hand it back:
+    #: 芝士 has nothing to put right, only the person's yes is missing.
+    confirm: bool = False
 
 
 def _need(value: str, what: str) -> str:
@@ -797,8 +814,11 @@ async def agent_act(
     questions: Questions,
 ) -> dict:
     """An action 芝士 is about to take for the person, through its gate: let
-    through (``done``, with the pass and the calls that do it) or turned into
-    a card the person confirms (``asked``, and why)."""
+    through (``done``, with the pass and the calls that do it), handed back to
+    芝士 with the reason (``returned``), or turned into a card the person
+    confirms (``card``). A look's stop goes back to 芝士 the first few times in
+    an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
+    (``confirm``) or nobody is there to ask."""
     started = time.monotonic()
     claims = resolver.delegation()
     if claims is None or claims.user_id is None or not claims.work:
@@ -823,6 +843,14 @@ async def agent_act(
     verdict = await gate.judge(
         db, user_id=me.user_id, conversation_id=conversation, action=plan.action
     )
+    returned = (
+        not verdict.allowed
+        and verdict.stage in ("quick", "reasoned")
+        and not body.confirm
+        and not await _unattended(questions, claims.work)
+        and await gate.returned_in(db, me.user_id, claims.work)
+        < gate.RETURNS_PER_ANSWER
+    )
     await gate.keep(
         db,
         user_id=me.user_id,
@@ -831,8 +859,18 @@ async def agent_act(
         action=plan.action,
         verdict=verdict,
         started=started,
+        returned=returned,
     )
     await db.commit()
+    if returned:
+        return ok(
+            {
+                "done": False,
+                "returned": True,
+                "reason": verdict.reason,
+                "said": say("assistantActReturned", reason=verdict.reason),
+            }
+        )
     if verdict.allowed:
         token = await passes.issue(claims.work, plan.doors)
         if token is not None:
@@ -976,6 +1014,93 @@ async def _notify_back(db, resolver, same, parts: list[str], redo: bool) -> dict
 changes.register("notify", parts=lambda payload: ["level"], apply=_notify_back)
 
 
+class MemoryIn(BaseModel):
+    action: Literal["save", "read", "forget"]
+    name: str = ""
+    description: str = ""
+    type: str = "user"
+    text: str = ""
+
+
+@router.post("/memory", include_in_schema=False)
+async def agent_memory(
+    body: MemoryIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_memory: what the person's 芝士 remembers about them
+    (``assistant.memory``), saved, read or forgotten in the person's panel.
+    Each save and forget is kept as a change the person can undo there. A
+    routine's run does not write it, and nothing is kept while the person has
+    turned memory off."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    name = _need(body.name, "name")
+    if body.action == "read":
+        found = await assistant_memory.read(db, me.handle, name)
+        if found is None:
+            raise NotFoundError.for_resource("memory", name)
+        return ok({"text": f"{found.description}\n\n{found.body}"})
+    if not (await gate.rules_of(db, me.user_id)).memory:
+        raise BadRequestError(say("assistantMemoryOff"))
+    if await _unattended(questions, claims.work):
+        raise BadRequestError(say("assistantMemoryNotInRuns"))
+    path = assistant_memory.path_of(name)
+    if body.action == "save":
+        try:
+            memory = assistant_memory.made(
+                name, body.description, body.type, _need(body.text, "text")
+            )
+        except MemoryFileError as exc:
+            raise BadRequestError(str(exc)) from exc
+        before = await assistant_memory.save(db, me.handle, memory, by=me.handle)
+        after: str | None = memory.text()
+        label, said = memory.description, "已记住：" + memory.description
+    else:
+        before = await assistant_memory.put(db, me.handle, path, None, by=me.handle)
+        if before is None:
+            raise NotFoundError.for_resource("memory", name)
+        after = None
+        label = _described(before) or name
+        said = "已忘记：" + label
+    row = await changes.report(
+        db,
+        user_id=me.user_id,
+        work=claims.work,
+        kind="memory",
+        target=path,
+        payload={
+            "title": "记忆",
+            "changed": {"memory": {"label": label, "before": before, "after": after}},
+        },
+    )
+    await db.commit()
+    await tell_change(questions, claims, changes.view(row))
+    return ok({"text": said})
+
+
+def _described(content: str) -> str:
+    try:
+        return parse_memory_file(content).description
+    except MemoryFileError:
+        return ""
+
+
+async def _memory_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
+    """Put a memory back as it was before the answer, or as it left it, as
+    the person's own change."""
+    actor = await resolver.resolve()
+    first, last = same[0], same[-1]
+    content = (last if redo else first).payload["changed"]["memory"][
+        "after" if redo else "before"
+    ]
+    await assistant_memory.put(db, actor.handle, first.target, content, by=actor.handle)
+    return {"memory": first.target, "kept": content is not None}
+
+
+changes.register("memory", parts=lambda payload: ["memory"], apply=_memory_back)
+
+
 # --- what 芝士 does on its own ----------------------------------------------
 
 #: How many notifications 芝士 may send the person in an hour.
@@ -1005,7 +1130,8 @@ class RoutineIn(BaseModel):
 
 def _routine_line(row, tz: str | None) -> str:
     state = {"credits": "（额度用完，已暂停）", "away": "（长时间未登录，已暂停）"}.get(
-        row.paused, "（已暂停）" if row.state == "paused" else ""
+        row.paused,
+        {"paused": "（已暂停）", "done": "（已运行过）"}.get(row.state, ""),
     )
     nxt = (
         f"，下次运行 {_when(row.next_run_at, tz)}"
@@ -1141,3 +1267,144 @@ async def agent_notify_me(
     )
     await db.commit()
     return ok({"text": "已通知用户。"})
+
+
+# --- 用户的资料库：芝士交给用户的、用户附给芝士的文件 -------------------------------
+#
+# 一个人的资料库是他名下那个团队的（`library.shelf.Shelf`）。文件在芝士的电脑和存储
+# 之间直接走：这里给一个只管一份文件、几分钟就失效的地址，电脑自己去传、去取，
+# 字节不经过芝士那一侧，电脑里也没有任何凭据（`sandbox/cheese` 的
+# `cheese_file_give`、`cheese_file_to_computer`）。
+
+
+async def _my_library(resolver, db) -> tuple[Person, Shelf]:
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    me = await _person(resolver, db)
+    team = await team_service(db).ensure_personal_team(me.user_id)
+    return me, Shelf.of_team(team.id)
+
+
+def _reachable(url: str) -> str:
+    """一个电脑上能直接用的地址：后端自己的地址（以 ``/`` 开头）补上平台对外的
+    那一段；对象存储给的本来就是完整的。"""
+    if url.startswith("/"):
+        return f"{settings.frontend_url.rstrip('/')}/api{url}"
+    return url
+
+
+class FileSlotIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=1)
+
+
+@router.post("/files/slot", include_in_schema=False)
+async def agent_file_slot(
+    body: FileSlotIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_file_give 的第一步：一个放 ``size`` 个字节进用户资料库的地址。放不下
+    （总量、单个文件的上限）就在这里说。"""
+    _, shelf = await _my_library(resolver, db)
+    name = library_service.clean_upload_name(body.name)
+    await library_records.refuse_past_room(db, shelf, body.size)
+    slot = await library_records.upload_slot(shelf, name, body.size)
+    return ok({**slot, "url": _reachable(slot["url"])})
+
+
+class FileHandedIn(BaseModel):
+    upload: str
+    name: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/files/handed", include_in_schema=False)
+async def agent_file_handed(
+    body: FileHandedIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
+) -> dict:
+    """cheese_file_give 的最后一步：传上来的那一份登记进用户的资料库，回答里出现
+    一张文件卡片。撞名不覆盖，拿下一个 ``(n)``。"""
+    me, shelf = await _my_library(resolver, db)
+    upload = await library_records.received(shelf, body.upload)
+    name = await library_records.add(
+        db,
+        shelf,
+        filename=library_service.clean_library_path(body.name),
+        data=upload,
+        added_by=me.handle,
+        room_id=None,
+    )
+    await db.commit()
+    claims = resolver.delegation()
+    assert claims is not None
+    await tell_handed(
+        questions, claims, {"team": shelf.team_id, "path": name, "bytes": upload.size}
+    )
+    return ok({"path": name, "bytes": upload.size})
+
+
+class FileLinkIn(BaseModel):
+    path: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/files/link", include_in_schema=False)
+async def agent_file_link(
+    body: FileLinkIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_file_to_computer：用户资料库里一份文件的地址，几分钟内有效，电脑拿它
+    把文件取下来。"""
+    _, shelf = await _my_library(resolver, db)
+    name = body.path.strip().removeprefix("library/")
+    stored = await library_records.stored_file(db, shelf, name)
+    url = await library_records.download_url(db, shelf, name)
+    return ok({"url": _reachable(url), "path": name, "bytes": stored.size})
+
+
+class LibraryReadIn(BaseModel):
+    #: ``library`` 列出全部，``library/<名字>`` 读那一份。
+    ref: str
+    page: int = Field(default=1, ge=1)
+
+
+#: 列出资料库时最多列多少份；多了就说还有多少。
+LIBRARY_LIST_LIMIT = 100
+
+
+@router.post("/library", include_in_schema=False)
+async def agent_library(
+    body: LibraryReadIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_read 读 ``library``：用户资料库里有哪些文件；读 ``library/<名字>``：
+    那一份的文字（PDF 取文字层，别的二进制只说大小）。"""
+    me, shelf = await _my_library(resolver, db)
+    name = body.ref.strip().strip("/").removeprefix("library").strip("/")
+    if not name:
+        rows, more = await library_listing.page(
+            db, shelf, {}, flat=True, limit=LIBRARY_LIST_LIMIT
+        )
+        if not rows:
+            return ok({"text": "用户的资料库里还没有文件。"})
+        lines = [
+            f"- library/{row['path']}（{_size(row['bytes'])}，"
+            f"{_when(datetime.fromisoformat(row['added_at']), me.timezone)}）"
+            for row in rows
+        ]
+        if more:
+            lines.append(f"（只列了最近的 {LIBRARY_LIST_LIMIT} 份）")
+        return ok({"text": "\n".join(lines)})
+    found = await library_records.read_text(db, shelf, name)
+    if found.get("content") is None:
+        return ok(
+            {
+                "text": f"library/{name} 是二进制文件（{_size(found['bytes'])}），"
+                "读不成文字；要处理就用 cheese_file_to_computer 放进电脑。"
+            }
+        )
+    return ok({"text": str(found["content"])})
+
+
+def _size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.0f} KB"
+    return f"{n / 1024 / 1024:.1f} MB"

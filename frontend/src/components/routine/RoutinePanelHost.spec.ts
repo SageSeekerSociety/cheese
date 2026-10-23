@@ -71,6 +71,7 @@ const live = {
   timezone: 'Asia/Shanghai',
   state: 'active' as const,
   last_run_status: 'succeeded' as const,
+  credits_this_month: 0,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   created_by: 'cheese-x',

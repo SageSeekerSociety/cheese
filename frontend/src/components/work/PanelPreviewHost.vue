@@ -28,8 +28,10 @@ const props = withDefaults(
     refreshTick?: number
     // 自由区的一个页签：这一格只看房间里这一份文件，不跟着当前预览走。
     path?: string | null
+    /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined }
+  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -52,6 +54,9 @@ const preview = usePanelPreview(props, {
   onLoaded: (artifactId) => emit('loaded', artifactId),
   onEscape: () => panelRef.value?.handleEscape(),
   onPick: (pick) => panelRef.value?.handlePick(pick),
+  // 第三方 View 里的表单点提交：取数那一层已经把它拼成一条普通提问（带当前这一帧的
+  // 地址），这里只负责送进房间——和「圈一处说一句话」走的是同一条出口。
+  onAppMessage: (question) => props.submitQuestion?.(question),
   // 「另存一份」另存出了新的一份：开成自由区的一个页签。
   onOpenFile: (path) => emit('open-file', path),
 })
@@ -67,6 +72,7 @@ const preview = usePanelPreview(props, {
     :refresh-tick="props.refreshTick"
     :path="props.path"
     :frame-name="frameName"
+    :agent-name="props.agentName"
     :preview="preview"
     @loaded="emit('loaded', $event)"
     @locate="emit('locate', $event)"

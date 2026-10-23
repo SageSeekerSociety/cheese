@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { RememberedPlace } from '@/stores/workspace'
+
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
@@ -70,21 +72,45 @@ useAgentContext(() => {
     ],
   }
 })
+/**
+ * 这一页在项目里那一段地址：`tasks/318`、`overview`、`members/lisi`；项目首页是空串。
+ * 地址里项目那一段用的是短名或编号（守卫 `canonicalAddress` 换过），所以按当前地址
+ * 上写的那个 ref 截，不是按项目 id。
+ */
+function placePathOf(path: string, projectRef: string): string {
+  const prefix = `/projects/${projectRef}/`
+  return path.startsWith(prefix) ? path.slice(prefix.length) : ''
+}
+
+/**
+ * 正待着的这一页，记进「上次待的地方」。
+ *
+ * 记的是地址，不分页面种类——项目里的每一页都算一个地方。只认任务和频道的话，从
+ * 成员页、资料库离开再回来就掉回频道列表，那正是「只能回到任务」这一句说的毛病。
+ *
+ * 两类不算：盖在页面上的一层（`settingsOverlay`，回到它等于回来时先站在设置里），
+ * 和只有查询才说得清是哪一页的搜索页（查询串不记，回来就是一张空搜索页）。
+ */
+function placeOf(): RememberedPlace | null {
+  if (route.meta.settingsOverlay === true || route.name === 'project-search') return null
+  const ref = typeof route.params.projectId === 'string' ? route.params.projectId : ''
+  const topicId = ids.value.topicId
+  return {
+    path: placePathOf(route.path, ref),
+    room: typeof topicId === 'string' ? topicId : null,
+  }
+}
+
 watch(
-  () => [ids.value.topicId, ids.value.taskId, route.params.peer, props.projectId] as const,
-  ([topicId, taskId, peer, projectId]) => {
+  () => [route.path, ids.value.topicId, route.params.peer, props.projectId] as const,
+  ([, topicId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null
-    // 正待着的这个地方记在这个项目名下：下次从 rail 点回来，直接落回它。在任务页
-    // 上记的是那件任务（房间也一起记，任务页画不出来时退回它）。带上 projectId
-    // 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
-    if (typeof topicId === 'string' && projectId) {
-      store.rememberPlace(projectId, {
-        kind: typeof taskId === 'string' ? 'task' : 'channel',
-        id: typeof taskId === 'string' ? taskId : topicId,
-        room: topicId,
-      })
-    }
+    // 正待着的这一页记在这个项目名下：下次从 rail 点回来、或者重开应用，直接落回它。
+    // 带上 projectId 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
+    if (!projectId) return
+    const place = placeOf()
+    if (place) store.rememberPlace(projectId, place)
   },
   { immediate: true }
 )

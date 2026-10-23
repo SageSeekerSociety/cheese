@@ -14,10 +14,10 @@
   "failed": "Execution failed",
   "fullOutput": "View complete output",
   "showImage": "View image",
-  "image": "Image in session record",
+  "image": "Image in the record",
   "imageUnavailable": "Image content was not saved",
   "imageOmitted": "Image exceeded 10 MB and was not saved ({bytes} bytes)",
   "recordJson": "View original JSON",
   "subagent": "Subagent records ({count})",
-  "beforeLaunch": "This turn predates raw records. Only the conversation is available."
+  "beforeLaunch": "This run predates raw records. Only the conversation is available."
 }

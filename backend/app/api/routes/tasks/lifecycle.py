@@ -243,7 +243,12 @@ async def get_task(
         }
 
     # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。
-    task_dict = _task_to_api_model(task)
+    # 私有指导只给出题人/板管理员：这条读是学生也看得到的题详情，判据用同一只
+    # `may_teach_task`（与发题、打分同一个答案），不新造开关。
+    may_teach = auth_user.user_id > 0 and await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    )
+    task_dict = _task_to_api_model(task, include_private_teaching=may_teach)
 
     joined = False
     joined_teams: list[dict] = []

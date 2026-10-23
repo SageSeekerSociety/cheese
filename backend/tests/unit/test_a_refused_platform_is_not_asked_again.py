@@ -28,6 +28,20 @@ _REFUSED = {
         "retryable": False,
     },
 }
+#: The task credential's refusal, said as a catalog sentence: the words are
+#: Chinese and the reader's language, so only the key is stable
+#: (`app/core/errors.py`).
+_REFUSED_IN_WORDS = {
+    "code": 403,
+    "message": "任务里的 AI 队友只在自己那段对话里读写。…",
+    "error": {
+        "name": "ForbiddenError",
+        "message": "任务里的 AI 队友只在自己那段对话里读写。…",
+        "data": None,
+        "retryable": False,
+        "i18n": {"key": "taskCredentialOtherConversation", "params": {}},
+    },
+}
 _LEASE = {
     "data": {
         "target": {"kind": "device", "url": "http://executor.test"},
@@ -93,6 +107,22 @@ def test_a_credential_refused_for_good_ends_the_sessions_machine_calls(
     with pytest.raises(RuntimeError) as again:
         RemoteClient(dict(config)).acquire(deadline=0)
     assert str(again.value) == SESSION_ENDED
+    assert platform.asked == 1
+
+
+def test_a_catalog_sentence_ends_the_session_by_its_key(tmp_path, monkeypatch):
+    """The refusal's words are the reader's language; the key does not change.
+
+    A task's credential reaching another conversation is said as a catalog
+    sentence now, and a leave note that only matched the English it used to say
+    would have let the session ask again every two seconds.
+    """
+    platform = Platform([(403, _REFUSED_IN_WORDS)])
+    platform.install(monkeypatch)
+    config = _session(tmp_path)
+    with pytest.raises(RuntimeError) as refused:
+        RemoteClient(dict(config)).acquire(deadline=0)
+    assert str(refused.value) == SESSION_ENDED
     assert platform.asked == 1
 
 

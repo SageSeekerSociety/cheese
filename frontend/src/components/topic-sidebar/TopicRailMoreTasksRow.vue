@@ -42,7 +42,9 @@ const emit = defineEmits<{
   width: 100%;
   min-height: 32px;
   padding-block: 0;
-  padding-inline-start: var(--task-indent);
+  /* 和任务行的标题同一个左缘：任务行在标题前留了 20px 给状态记号（TopicRailTaskRow.vue
+     的 `--text-start`），这一行没有记号，字也从那里开始。 */
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -76,19 +78,5 @@ const emit = defineEmits<{
 }
 .rail-more__chevron {
   color: var(--faint);
-}
-.topic-rail--page .rail-more {
-  padding-inline-start: calc(var(--task-indent) + 28px);
-}
-.topic-rail--page .rail-more::before {
-  left: calc(var(--guide-x) + 14px);
-}
-@media (hover: none) {
-  .rail-more {
-    padding-inline-start: calc(var(--task-indent) + 28px);
-  }
-  .rail-more::before {
-    left: calc(var(--guide-x) + 14px);
-  }
 }
 </style>

@@ -37,7 +37,7 @@
   "migrationPlanInvalid": "这一版搬迁计划不成立：{reason}",
   "migrationPlanNotFound": "没有这份搬迁计划",
   "migrationPlanNotReviewed": "这份计划还没复核（现在是 {status}）。复核人是 {reviewer}。",
-  "migrationReviewerOnly": "旧表迁移由 {reviewer} 复核，不是你。报告在计划 {plan} 上。",
+  "migrationReviewerOnly": "旧记忆的迁移由 {reviewer} 复核，不是你。报告在计划 {plan} 上。",
   "migrationScopeMissing": "{source} 要去 {scope}，但那个作用域还没建立",
   "migrationSuggestNoTarget": "{source} 要提建议，但没说提到哪儿",
   "migrationTwoDestinations": "{source} 有两个去处",

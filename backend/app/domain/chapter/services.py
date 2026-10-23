@@ -9,7 +9,7 @@ added or taken away — it is a reading aid, not an event.
 
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.chapter.models import Chapter
+from app.domain.chapter.titles import auto_title
 from app.domain.membership.ports import ProjectTeam
 from app.domain.room_task.place import Place
 from app.domain.topic.models import TopicStatus, is_private_chat
@@ -53,11 +54,36 @@ class Chapters:
                 conversation_id=place.conversation_id,
                 block_id=block.id,
                 pinned_by=by,
+                title=auto_title(block.content),
             )
             .on_conflict_do_nothing(index_elements=[Chapter.block_id])
             .returning(Chapter.id)
         )
         return inserted is not None
+
+    async def rename(
+        self, place: Place, block_id: uuid.UUID, title: str, *, by: str
+    ) -> str:
+        """``by`` gives the bookmark a name of their own. Returns the name as
+        stored, stripped of surrounding space; an empty name is refused."""
+        await self._may_chapter(place, by)
+        name = " ".join(title.split())
+        if not name:
+            raise ValidationError(say("chapterTitleRequired"))
+        if len(name) > 80:
+            raise ValidationError(say("chapterTitleTooLong"))
+        changed = await self._session.scalar(
+            update(Chapter)
+            .where(
+                Chapter.conversation_id == place.conversation_id,
+                Chapter.block_id == block_id,
+            )
+            .values(title=name)
+            .returning(Chapter.id)
+        )
+        if changed is None:
+            raise NotFoundError(say("chapterMessageNotHere"))
+        return name
 
     async def remove(self, place: Place, block_id: uuid.UUID, *, by: str) -> None:
         """``by`` takes the chapter off. Nothing when it was not one."""

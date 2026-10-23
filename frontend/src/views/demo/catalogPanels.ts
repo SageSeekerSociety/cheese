@@ -78,15 +78,21 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'changes-diff-list',
     title: 'ChangesDiffList',
-    about: '「改动」默认那一面：这次改到的每个文件一段，差异连着往下排，段头写路径和增删，可以单独收起或打开。',
+    about: '「改动」默认那一面：这次改到的每个文件一段，段头写路径和增删，差异默认收着，点段头铺开。',
     file: 'src/components/panels/ChangesDiffList.vue',
     component: ChangesDiffList,
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '三个文件',
-        note: '新增、改过、删掉的各一份；git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        name: '三个文件，都收着',
+        note: '新增、改过、删掉的各一份，每一段只留段头：一件活改几十个文件是常态，先给「改了哪些东西」这一眼清单。',
         props: { diffs: FILE_DIFFS },
+        expect: 'docs/old-plan.md',
+      },
+      {
+        name: '铺开其中一段',
+        note: '铺开的那一段里是它的差异：git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        props: { diffs: FILE_DIFFS, expanded: new Set(['README.md']) },
         expect: '这个项目放本课程的课件和作业。',
       },
       {
@@ -272,17 +278,23 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'changes-all-view',
     title: 'ChangesAllView',
-    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，再把每一份的差异全摊开。',
+    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，每一段的差异默认收着，点段头铺开。',
     file: 'src/components/panels/ChangesAllView.vue',
     component: ChangesAllView,
     needs: UI,
     args: {},
     states: [
       {
-        name: '整支活的改动',
-        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
+        name: '整支活改到的文件',
+        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列、每段只留段头；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
         props: CHANGES_ALL_PROPS,
         expect: '个文件 · +',
+      },
+      {
+        name: '铺开其中一段',
+        note: '要看哪一份就点哪一段的段头：那一段铺开，其余照旧收着。',
+        props: { ...CHANGES_ALL_PROPS, expanded: new Set(['docs/week-1.md']) },
+        expect: '习题答案：第 3、5、7、9 题',
       },
       {
         name: '这一轮什么都没改',
@@ -466,7 +478,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读记录的时候',
-        note: '还在路上时画的是那条流的形状（一条条「圆点 + 动作 + 参数」的单行），不是一个居中的转圈。',
+        note: '还在路上时画的是现场一页的形状：一轮的组头与用时条，底下几种记录行，不是一个居中的转圈。',
         props: { site: siteBundle({ transcript: [], loading: true }) },
         expect: '加载中',
         expectSelector: '.skel--site',
@@ -645,6 +657,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这份文件多半是某件任务里新建、还没合进项目的：说清这一点，再列出改过它的任务。',
         props: projectFileProps({ path: 'README.md', missing: true, tasks: [CHANGES_TASK] }),
         expect: '在任务「整理第一周的课件」里看',
+      },
+      {
+        name: '频道自己的文件',
+        note: '项目没有代码仓库、或仓库里没有它，而它是频道里交付或存下的一份：照样打开，顶上写明读的是频道里的文件。',
+        props: projectFileProps({ path: 'gemm_bench.cu', inRoom: true }),
+        expect: '频道里的文件 · 只读',
       },
       {
         name: '文件太大',

@@ -140,6 +140,8 @@ export const CHANGES_ALL_PROPS = {
   refreshing: CHANGES.refreshing,
   summaryAll: false,
   review: CHANGES.review,
+  /** 默认一段都不铺：先给「改了哪些文件」这一眼清单。 */
+  expanded: new Set<string>(),
 }
 
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
@@ -186,7 +188,7 @@ export function fileTreeRows(collapsed: string[] = []) {
   return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, collapsedDirs: new Set(collapsed) })
 }
 
-/** `ProjectFileView` 的那十八样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
+/** `ProjectFileView` 的那十九样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
 export function projectFileProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     path: 'docs/week-1.md',
@@ -199,6 +201,7 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
     binary: false,
     tooLarge: false,
     tasks: [],
+    inRoom: false,
     isImage: false,
     isDocument: false,
     documentType: null,
@@ -600,6 +603,7 @@ function routine(over: Partial<Routine>): Routine {
     timezone: 'Asia/Shanghai',
     state: 'active',
     last_run_status: 'succeeded',
+    credits_this_month: 128.4,
     agent_handle: 'cheese',
     owner_handle: 'wang',
     created_by: 'cheese',

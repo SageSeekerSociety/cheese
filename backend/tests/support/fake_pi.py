@@ -59,6 +59,7 @@ def main() -> None:
     )
     produced: list[dict] = []
     prompts: list[str] = []
+    compactions: list[str] = []
     before_next_page: list[dict] = []
     # What pi had written before any prompt (model and thinking level).
     while (
@@ -119,8 +120,27 @@ def main() -> None:
         elif kind == "abort":
             reply(request, kind)
             emit({"type": "agent_settled"})
+        elif kind == "compact":
+            # A manual compaction (`cheese_compact` through the runner). The
+            # real pi answers when its summary is written and reports the two
+            # ends as events of their own (`compaction_start` / `compaction_end`),
+            # which the runner journals as the room's line.
+            compactions.append(command.get("customInstructions") or "")
+            emit({"type": "compaction_start", "reason": "manual"})
+            reply(request, kind, {"summary": "a summary", "tokensBefore": 1000})
+            emit({"type": "compaction_end", "reason": "manual", "result": {}})
         elif kind == "get_session_stats":
-            reply(request, kind, {"sessionId": session_id, "prompts": len(prompts)})
+            reply(
+                request,
+                kind,
+                {
+                    "sessionId": session_id,
+                    "prompts": len(prompts),
+                    # What a test reads to see how many times the session was
+                    # asked to compact itself.
+                    "compactions": len(compactions),
+                },
+            )
         else:
             reply(request, kind, success=False)
         time.sleep(0)

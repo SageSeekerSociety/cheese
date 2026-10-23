@@ -79,7 +79,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
         name: '芝士提的',
         note: '来源那一颗写「Agent 发现」；谁按的发送是另一件事（提案卡那条规矩），这里管不着。',
         props: { item: FEEDBACK_ROWS.agent },
-        expect: 'Agent 发现',
+        expect: 'AI 队友发现',
       },
       {
         name: '办完了的',
@@ -120,7 +120,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '还没领体验额度',
-        note: '主按钮是「领取 500 点」，旁边「稍后」。每月方案那一行是这个人自己方案的数。',
+        note: '主按钮是「领取 500 点」，旁边「稍后」。开头那句的每月点数是这个人自己方案的数。',
         props: {
           open: true,
           offer: {
@@ -152,7 +152,7 @@ export const ACCOUNT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '方案不按月计',
-        note: '不限、或者按时间窗口计的方案没有「每月方案额度」这一行。',
+        note: '不限、或者按时间窗口计的方案没有每月的数，开头那句就不写数。',
         props: {
           open: true,
           offer: {

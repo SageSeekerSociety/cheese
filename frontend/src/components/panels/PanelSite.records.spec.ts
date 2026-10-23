@@ -102,6 +102,45 @@ describe('the header stays put', () => {
   })
 })
 
+describe('a record with nothing to show', () => {
+  it('gets no group head of its own in the overview', async () => {
+    // 输入排队这类平台记账行没有可显示的内容。它们没有轮次 id，一个个都单独成组，
+    // 组头就会顶出一串「时刻 · 0 步」、底下什么也没有。
+    const queued = record('1', [])
+    queued.turn_id = null
+    queued.created_at = '2026-10-19T10:00:01Z'
+    queued.meta = {
+      record: { type: 'command_lifecycle', state: 'queued' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [queued, tool('2', 'make test')], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.getAllByText('make test').length).toBeGreaterThan(0))
+
+    expect(view.container.querySelectorAll('.turn__head'), '记账行不该有自己的组头').toHaveLength(1)
+    // 原始记录视图照旧把它们摊开。
+    await fireEvent.click(view.getByRole('button', { name: 'Raw records' }))
+    expect(view.getByText('command_lifecycle')).toBeTruthy()
+  })
+
+  it('keeps a turn that has not drawn a step yet, with its head', async () => {
+    // 一轮开头那条 `command_lifecycle/started` 也没有可显示的内容，但它属于这一轮：
+    // 丢掉它，这一轮连组头一起消失，直到第一个步骤到达。
+    const started = record('1', [])
+    started.turn_id = 'turn-1'
+    started.created_at = '2026-10-19T10:00:01Z'
+    started.meta = {
+      record: { type: 'command_lifecycle', state: 'started' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [started], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.container.querySelectorAll('.turn__head')).toHaveLength(1))
+  })
+})
+
 describe('raw records and overview share one timeline', () => {
   it('starts in overview, reveals thinking in raw view, and remembers the choice', async () => {
     api.getTranscript.mockResolvedValue({
@@ -250,5 +289,55 @@ describe('raw records and overview share one timeline', () => {
     const view = open()
     await waitFor(() => expect(view.container.textContent).toContain('B 改了一条之前的消息'))
     expect(view.container.textContent).not.toContain('cheese-b')
+  })
+
+  it('keeps prose, status lines, and 3-line previews selectable without toggling the fold', async () => {
+    vi.stubEnv('DEV', false)
+    ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: async () => undefined } }
+    const { behaveAsDesktopApp } = await import('../../lib/desktopNative')
+    behaveAsDesktopApp()
+    try {
+      const longOutput = 'OUT-LINE-1\nOUT-LINE-2\nOUT-LINE-3\n' + 'more output\n'.repeat(20)
+      const longProse = 'PROSE-LINE-1\nPROSE-LINE-2\nPROSE-LINE-3\n' + 'more prose\n'.repeat(20)
+      const platformNotice = {
+        ...record('1', []),
+        run_record: true,
+        turn_id: null,
+        content: '平台状态提示可复制',
+        meta: { event_type: 'message_edited' },
+      }
+      api.getTranscript.mockResolvedValue({
+        data: [
+          platformNotice,
+          record('2', [
+            { kind: 'text', text: '短正文可复制' },
+            { kind: 'status', label: 'retry', text: '重试状态可复制' },
+          ]),
+          record('3', [{ kind: 'output', text: longOutput, failed: false }]),
+          record('4', [{ kind: 'text', text: longProse }]),
+        ],
+        has_more: false,
+      })
+      const view = open()
+      const statusEl = await view.findByText('平台状态提示可复制')
+      const partStatusEl = await view.findByText(/重试状态可复制/)
+      const proseEl = await view.findByText('短正文可复制')
+      const outPreview = await view.findByText('OUT-LINE-1 OUT-LINE-2 OUT-LINE-3')
+      const prosePreview = await view.findByText('PROSE-LINE-1 PROSE-LINE-2 PROSE-LINE-3')
+
+      for (const el of [statusEl, partStatusEl, proseEl, outPreview, prosePreview]) {
+        const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+        el.dispatchEvent(menu)
+        expect(menu.defaultPrevented).toBe(false)
+      }
+      for (const preview of [outPreview, prosePreview]) {
+        expect(preview.closest('summary')).toBeNull()
+      }
+    } finally {
+      vi.unstubAllEnvs()
+      delete (window as { __TAURI__?: unknown }).__TAURI__
+      delete document.documentElement.dataset.desktopApp
+      document.head.querySelectorAll('style').forEach((s) => s.remove())
+    }
   })
 })

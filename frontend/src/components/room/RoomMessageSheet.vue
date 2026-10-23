@@ -33,6 +33,14 @@ const props = defineProps<{
   isAgent: boolean
   /** 这条是我自己发的消息：多一项「编辑」。 */
   editable: boolean
+  /** 这是频道主线、我能在这里说话：面板里能把消息置顶到频道。 */
+  pinnable?: boolean
+  /** 已经置顶的那几条（block id）：面板里是「取消置顶」。 */
+  pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉书签（频道主线、任务）：面板里多一项「加书签 / 取消书签」。 */
+  chapterable?: boolean
+  /** 已经是书签的那几条（block id）：面板里是「取消书签」。 */
+  chapteredIds?: ReadonlySet<string>
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +50,10 @@ const emit = defineEmits<{
   (e: 'process', turnId: string): void
   (e: 'upgrade', blockId: string): void
   (e: 'edit', block: Block): void
+  (e: 'pin', block: Block): void
+  (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
 }>()
 
 // 复制成没成由共享的复制助子弹 toast，这里只管发起。
@@ -113,6 +125,33 @@ const actions = computed<MenuAction[]>(() => {
     icon: 'mdi-format-text',
     onSelect: () => openSelect(block),
   })
+  if (props.pinnable && block.kind === 'message')
+    list.push(
+      props.pinnedIds?.has(block.id)
+        ? {
+            key: 'unpin',
+            label: t('work.room.pin.unpin'),
+            icon: 'mdi-pin-off-outline',
+            onSelect: () => emit('unpin', block),
+          }
+        : { key: 'pin', label: t('work.room.pin.pin'), icon: 'mdi-pin-outline', onSelect: () => emit('pin', block) }
+    )
+  if (props.chapterable && block.kind === 'message')
+    list.push(
+      props.chapteredIds?.has(block.id)
+        ? {
+            key: 'unchapter',
+            label: t('work.room.chapter.unpin'),
+            icon: 'mdi-bookmark',
+            onSelect: () => emit('unchapter', block),
+          }
+        : {
+            key: 'chapter',
+            label: t('work.room.chapter.pin'),
+            icon: 'mdi-bookmark-outline',
+            onSelect: () => emit('chapter', block),
+          }
+    )
   if (props.editable) {
     list.push({
       key: 'edit',

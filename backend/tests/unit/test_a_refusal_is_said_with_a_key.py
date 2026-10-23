@@ -241,7 +241,7 @@ def scan(paths: list[Path]) -> tuple[list[str], Counter[str], list[str]]:
 #: to it goes through review, as ``test_legacy_error_ratchet.py`` puts it.
 _BASELINE: dict[str, int] = {
     "app/api/auth/__init__.py": 4,
-    "app/api/auth/resolver.py": 8,
+    "app/api/auth/resolver.py": 7,
     "app/api/preview_host.py": 4,
     "app/api/preview_owner_internal.py": 8,
     "app/api/routes/addresses.py": 2,
@@ -448,7 +448,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/machine/lifecycle.py": 1,
     "app/domain/machine/microcloud.py": 3,
     "app/domain/machine/pi_dist.py": 6,
-    "app/domain/machine/services.py": 7,
+    "app/domain/machine/services.py": 3,
     "app/domain/machine/session_work.py": 13,
     "app/domain/machine/supply.py": 2,
     "app/domain/machine/toolchain_dist.py": 4,

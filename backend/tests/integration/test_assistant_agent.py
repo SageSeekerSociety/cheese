@@ -336,29 +336,73 @@ def test_without_the_gate_the_route_refuses_the_persons_cheese(client):
     assert r.status_code == 403
 
 
-def test_a_message_the_person_did_not_ask_for_becomes_a_card(client, monkeypatch):
+def test_a_message_the_person_did_not_ask_for_goes_back_to_cheese_first(
+    client, monkeypatch
+):
+    """A stopped message is handed back to 芝士 with the reason, not shown to
+    the person: 芝士 may put it right or ask. Asked again with ``confirm``, it
+    becomes a card."""
     room, _ = _room(client)
     slug, number = _names(client, room)
     token = _acting(client, "alice", _asked_in(client, "alice", "帮我看看综合频道"))
-    keeper = _Gatekeeper("拦", "你只让芝士查看频道，没有提到发消息。\n结论：拦")
+    stopped = "你只让芝士查看频道，没有提到发消息。\n结论：拦"
 
     async def looks(session):
-        return keeper
+        return _Gatekeeper("拦", stopped)
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
 
-    r = client.post(
-        "/assistant/agent/act",
-        json={"kind": "message", "where": f"{slug}/channels/{number}", "text": "收到"},
-        headers=_as(token),
-    )
+    def act(**more) -> dict:
+        r = client.post(
+            "/assistant/agent/act",
+            json={
+                "kind": "message",
+                "where": f"{slug}/channels/{number}",
+                "text": "收到",
+                **more,
+            },
+            headers=_as(token),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]
 
-    got = r.json()["data"]
+    back = act()
+    assert back["done"] is False and back["returned"] is True
+    assert "card" not in back and "pass" not in back
+    assert "你只让芝士查看频道，没有提到发消息。" in back["said"]
+
+    got = act(confirm=True)
     assert got["done"] is False and "pass" not in got
     assert got["card"]["kind"] == "message" and got["card"]["text"] == "收到"
     assert got["reason"] == "你只让芝士查看频道，没有提到发消息。"
-    [check] = _checks(client, "alice")
-    assert (check.verdict, check.stage) == ("asked", "reasoned")
+    returned, asked = _checks(client, "alice")
+    assert (returned.verdict, asked.verdict) == ("returned", "asked")
+    assert asked.stage == "reasoned"
+
+
+def test_after_three_returns_in_an_answer_a_stopped_action_is_a_card(
+    client, monkeypatch
+):
+    """芝士 cannot keep trying: the fourth stopped action in one answer goes to
+    the person whether 芝士 asked for that or not."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _acting(client, "alice", _asked_in(client, "alice", "帮我看看综合频道"))
+
+    async def looks(session):
+        return _Gatekeeper("拦", "你没有提到发消息。\n结论：拦")
+
+    monkeypatch.setattr(gate, "gatekeeper", looks)
+    got = [
+        client.post(
+            "/assistant/agent/act",
+            json={"kind": "message", "where": f"{slug}/channels/{number}", "text": t},
+            headers=_as(token),
+        ).json()["data"]
+        for t in ("收到", "好的", "明白", "了解")
+    ]
+    assert [bool(g.get("returned")) for g in got] == [True, True, True, False]
+    assert got[3]["card"]["text"] == "了解"
 
 
 def test_cheese_waits_for_the_person_to_decide_on_its_card(client, monkeypatch):
@@ -382,6 +426,7 @@ def test_cheese_waits_for_the_person_to_decide_on_its_card(client, monkeypatch):
                 "kind": "message",
                 "where": f"{slug}/channels/{number}",
                 "text": text,
+                "confirm": True,
             },
             headers=_as(token),
         )

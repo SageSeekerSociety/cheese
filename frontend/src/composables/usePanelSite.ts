@@ -89,6 +89,7 @@ export function usePanelSite(scope: PanelSiteScope) {
   // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
   const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
     topicId: scope.topicId,
+    active: scope.active,
     viewing: () => viewing.value,
     scrollRef,
     following: stick.following,

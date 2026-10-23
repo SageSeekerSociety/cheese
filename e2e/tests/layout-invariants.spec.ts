@@ -172,13 +172,13 @@ test.describe('sidebar channel row geometry', () => {
       // The subtree is expanded here; only the task block is collapsed.
       await expect(subtree).toHaveAttribute('aria-expanded', 'true');
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const rowBox = await boxOf(row);
+      expect(rowBox.height).toBeGreaterThanOrEqual(44);
       const boxes = await Promise.all([subtree, arrow, title, light, more].map(boxOf));
       for (const leading of [boxes[0], boxes[1]]) {
         expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
       }
       for (const target of [boxes[0], boxes[1], boxes[4]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
         expect(target.x).toBeGreaterThanOrEqual(0);
         expect(target.x + target.width).toBeLessThanOrEqual(400);
       }
@@ -201,13 +201,11 @@ test.describe('sidebar channel row geometry', () => {
   });
 
   // 触屏不等于「整页形态」。桌面宽度、但输入是手指的机器（触屏笔记本）上，⋯ 也必须
-  // 常驻、两个控件各自撑到 44×44——不能靠 page fixture 改写出来的 44px 规则通过。
-  // 媒体查询用 CDP 明确置为 hover:none，而不是假设某个 Playwright 设备描述符会顺带
-  // 让它成立。
+  // 常驻、行高至少 44px，同时保持紧凑的 16px 前置图标槽位而不把文字挤偏。
   test.describe('desktop-width touch', () => {
     test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
 
-    test('hover:none at desktop width keeps ⋯ resident and both 44px targets separate', async ({ page }) => {
+    test('hover:none at desktop width keeps ⋯ resident and controls separate', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
       await cdp.send('Emulation.setEmulatedMedia', {
         features: [
@@ -236,17 +234,12 @@ test.describe('sidebar channel row geometry', () => {
       const more = row.locator('.row-actions__btn');
 
       await expect(actions).toHaveCSS('opacity', '1');
-      // The collapsed fixture really is collapsed and really carries its light;
-      // otherwise the geometry below would be measuring an expanded, lightless row.
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
       await expect(light).toHaveCount(1);
       await expect(light).toHaveClass(/row-light--yellow/);
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
       const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
       expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
-      for (const target of [boxes[0], boxes[3]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
-      }
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
       }
@@ -257,7 +250,7 @@ test.describe('sidebar channel row geometry', () => {
 
     // 「同层：子频道和任务都能折叠」 is a channel with both controls, expanded and lightless: measure the
     // controls, not a light, and do not assume the task arrow is collapsed.
-    test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
+    test('both fold controls keep separate targets when the row is expanded', async ({ page }) => {
       const cdp = await page.context().newCDPSession(page);
       await cdp.send('Emulation.setEmulatedMedia', {
         features: [
@@ -281,14 +274,11 @@ test.describe('sidebar channel row geometry', () => {
       await expect(arrow).toHaveCount(1);
       await expect(subtree).toHaveAttribute('aria-expanded', 'true');
       await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+      expect((await boxOf(row)).height).toBeGreaterThanOrEqual(44);
 
       const boxes = await Promise.all([subtree, arrow, title, more].map(boxOf));
       for (const leading of [boxes[0], boxes[1]]) {
         expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
-      }
-      for (const target of [boxes[0], boxes[1], boxes[3]]) {
-        expect(target.width).toBeGreaterThanOrEqual(44);
-        expect(target.height).toBeGreaterThanOrEqual(44);
       }
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
@@ -1285,6 +1275,36 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
       });
       expect(g.close!.top + g.close!.height, `${label}：关闭按钮压到了目录`).toBeLessThanOrEqual(navTop + 1);
     }
+  });
+
+  // 桌面版 macOS 把红黄绿三颗窗口按钮画在页面上面（desktop/src-tauri/src/main.rs 的
+  // traffic_light_position 12,16）：它们占窗口左缘 12..64 那一带，系统画在网页上层。
+  // 让位的宽度由 style.css 的 --window-buttons-inset 给（这台桌面版 72 = 三颗右缘 64 + 8，
+  // 别处 0），顶栏、设置、全屏编辑器、放映、画布全屏、文档里的应用、跳转链接都读它。
+  // 这里量网页里的盒子：在浏览器里模拟外壳只要 __CHEESE_APP__.titleBar，不需要真窗口。
+  // 每层的「本来位置」由上面那条不设外壳的测试守着——同一个浏览器里它必须仍在 24。
+  test('macOS 桌面版：返回键落在窗口按钮右边，仍在灰栏里', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __CHEESE_APP__: unknown }).__CHEESE_APP__ = { titleBar: 'overlay' };
+    });
+    await apiLogin(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/users/settings/security');
+    await expect(page.locator('.so__close')).toBeVisible();
+    const g = await overlayGeometry(page);
+    expect(g.side, '没落在桌面外壳里').not.toBeNull();
+    expect(g.close, '没有关闭按钮').not.toBeNull();
+
+    // 这一层认出了自己在哪种窗口里：令牌是 72，不是 0。
+    const inset = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--window-buttons-inset').trim(),
+    );
+    expect(inset, '没认出 macOS 桌面版，让位令牌还是 0').toBe('72px');
+
+    // 三颗的右缘到 64，和顶栏同一条 8px 空隙。
+    expect(g.close!.left, '返回键压到了窗口按钮').toBeGreaterThanOrEqual(g.side!.left + 64 + 8 - 0.5);
+    // 让开之后还在这条灰栏里，没被挤出目录。
+    expect(g.close!.right, '返回键伸出了灰栏').toBeLessThanOrEqual(g.side!.right);
   });
 
   test('同一宽度下，四类设置页的内容列左右缘一致', async ({ page }) => {

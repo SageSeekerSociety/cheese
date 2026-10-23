@@ -54,6 +54,9 @@ type Manifest = {
   // A session without hands that reads the room's machine (a document's 芝士):
   // pi's read, ls, find and grep on the room's checkout, and nothing else of it.
   reading?: boolean;
+  // A session without hands that works on a sandbox of its own (a person's
+  // 芝士): pi's own tools there, commands included.
+  works?: boolean;
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
@@ -1116,7 +1119,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
       }
       if (signal?.aborted) {
         await ask(spec.socket, "subagent_stop", { agent_id: id }).catch(() => {});
-        throw new Error(`${id} 随这一轮一起停了`);
+        throw new Error(`${id} 已随你一起停下`);
       }
       await ask(spec.socket, "subagent_background", { agent_id: id });
       return {
@@ -1287,11 +1290,15 @@ function withoutHands(pi: any, spec: Manifest) {
     // (`buildSystemPromptSections` writes `cwd` for every session), and what
     // this session has to say about its directory is that it has none.
     // One that reads the room's machine is in the room's checkout.
-    options.cwd = spec.reading ? spec.workspace : "";
+    // One that works on a machine of its own is in its directory there.
+    options.cwd = spec.reading || spec.works ? spec.workspace : "";
   });
   guardTheRound(pi);
   registerPlatformTools(pi, spec);
   if (spec.reading) registerReadingTools(pi, spec);
+  // pi's own tools, on the session's own sandbox: a person's 芝士 has no
+  // project, so nothing of one's hooks or background jobs comes with them.
+  if (spec.works) registerMachineTools(pi, spec);
 }
 
 // The tools of pi's that only read, on the room's machine, with the project's

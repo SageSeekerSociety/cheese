@@ -72,6 +72,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
@@ -314,7 +315,8 @@ class SandboxLifecycle:
                 if since is None:
                     continue
                 idle = now - since
-            # A home its session still uses is destroyed under its room's lock.
+            # A home its session still uses is destroyed under its holder's
+            # lock.
             if await self._destroy(
                 home.id,
                 home.topic_id if current else None,
@@ -559,7 +561,7 @@ class SandboxLifecycle:
     async def _destroy(
         self,
         home_id: uuid.UUID,
-        room_id: uuid.UUID | None,
+        holder_id: uuid.UUID | None,
         device_id: str,
         idle: timedelta | None,
         *,
@@ -572,15 +574,12 @@ class SandboxLifecycle:
         ``idle_for`` is how long this home was to be kept before it counts as
         idle — the shorter pressed time for a cloud sandbox (``_held_for``);
         without it, its spec's."""
-        # deferred-import: tests replace this name on app.domain.topic.services
-        from app.domain.topic.services import TopicService
-
-        if room_id is not None:
-            # The room's lock first, as a tool call takes it: one that arrives
+        if holder_id is not None:
+            # The holder's lock first, as a tool call takes it: one that arrives
             # now waits until the home is marked, and then waits for it to go.
             # An archived room takes no tool call, but its sandbox still goes:
             # one left running holds its host's slot, and its host, for good.
-            await TopicService(self._session).lock(room_id)
+            await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
         now = datetime.now(UTC)
         if home is None:
@@ -609,7 +608,7 @@ class SandboxLifecycle:
             return False
         unpaid = home.stopped_at is None and idle is None
         home.stopped_at = now
-        project, resource = str(home.project_id), home.resource_id
+        project, resource = str(holders.namespace_of(home)), home.resource_id
         await self._session.commit()
         try:
             await run_on_host(
@@ -624,8 +623,8 @@ class SandboxLifecycle:
             # Marked, it takes no tool call; a later sweep tries again.
             logger.warning("destroying sandbox %s failed", home_id, exc_info=True)
             return False
-        if room_id is not None:
-            await TopicService(self._session).lock(room_id)
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
         if home is None:
             await self._session.commit()

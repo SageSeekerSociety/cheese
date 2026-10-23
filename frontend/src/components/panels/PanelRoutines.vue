@@ -45,6 +45,8 @@ withDefaults(
     defaultRoom: string
     /** 那个频道叫什么：新建那一页的「频道」那一行上写出来给人看一眼。 */
     roomName?: string
+    /** 这间房的队友叫什么：新建那一页说到它。 */
+    agentName?: string
     /** 这个项目里存下来的模板（「项目里存的」那一段）。预置的几条在 `lib/routineTemplates.ts` 里。 */
     templates?: RoutineTemplate[]
   }>(),
@@ -60,6 +62,7 @@ withDefaults(
     formError: '',
     saving: false,
     roomName: '',
+    agentName: () => t('work.room.defaultAgentName'),
     templates: () => [],
   }
 )
@@ -116,6 +119,7 @@ const emit = defineEmits<{
         :routine="editing"
         :default-room="defaultRoom"
         :room-name="roomName"
+        :agent-name="agentName"
         :templates="templates"
         :saving="saving"
         :error="formError"
@@ -129,6 +133,7 @@ const emit = defineEmits<{
         :title="records.title"
         :runs="records.runs"
         :total="records.total"
+        :credits-this-month="records.creditsThisMonth"
         :page="records.page"
         :pages="records.pages"
         :failed-only="records.failedOnly"

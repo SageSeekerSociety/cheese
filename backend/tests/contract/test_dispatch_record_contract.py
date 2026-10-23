@@ -112,6 +112,12 @@ class _Chat:
     def replaying(self, topic_id):
         return None
 
+    def draining(self, topic_id, agent_handle):
+        return False
+
+    def tell_draining(self, topic_id, agent_handle):
+        return False
+
     async def converse(self, **kw):
         self.converse_calls.append(kw)
         yield {"type": "done"}

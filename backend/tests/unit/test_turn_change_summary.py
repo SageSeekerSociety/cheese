@@ -89,7 +89,7 @@ def test_git_quoted_chinese_paths_are_readable():
 def test_the_room_line_leads_with_the_counts():
     line = _format_change_summary(_diff_file_stats(DIFF))
     head, paths = line.split("\n")
-    assert head == "这一轮改了 2 个文件（+3 -2）"
+    assert head == "这次改了 2 个文件（+3 -2）"
     assert paths == "backend/app/x.py · README.md"
 
 
@@ -97,7 +97,7 @@ def test_the_path_list_is_bounded_and_says_how_many_it_dropped():
     """不刷屏: a 60-file turn must not paste 60 paths into the timeline."""
     files = [{"path": f"f{i}.py", "added": 1, "removed": 0} for i in range(60)]
     head, paths = _format_change_summary(files).split("\n")
-    assert head == "这一轮改了 60 个文件（+60 -0）"
+    assert head == "这次改了 60 个文件（+60 -0）"
     listed = paths.split(" · ")
     assert len(listed) == _CHANGE_FILES_LISTED + 1
     assert listed[-1] == f"…另 {60 - _CHANGE_FILES_LISTED} 个"

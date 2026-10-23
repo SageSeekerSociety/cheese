@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 
 from app.core import model_roles
+from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, mint_session_token
@@ -30,6 +31,7 @@ from app.domain.agent.session_host.contract import (
     Access,
     ModelSettings,
     Owner,
+    SessionError,
     SessionSpec,
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
@@ -55,6 +57,17 @@ async def ensure(
     how long each step took (`send` logs it)."""
     mark = Stopwatch(phases)
     seat = svc._seat_of(session)
+    if svc._draining(seat):
+        # Starting one now would close the old runner's screen in the middle
+        # of the work it is being left to finish. A turn waits for the drain
+        # at admission (``admitted_initial``); a start that never passes there
+        # (the platform's own work, the memory dream) fails, and that work
+        # runs again when its own schedule next takes it up.
+        # i18n-exempt: only starts that skip admission get here, and they log it
+        raise SessionError(
+            "This seat's runner is finishing work another release started; "
+            "it is replaced once that is done"
+        )
     previous = svc.live.get(seat)
     if previous is not None and acting is not None and acting != previous.acting:
         # A different teammate is taking this seat over; the conversation
@@ -119,6 +132,10 @@ async def ensure(
                     if session.inner_id is not None
                     else {}
                 ),
+                # 这次部署多给的一张牌：请平台压缩自己这个会话（v1 只在 dev
+                # 开着看）。写进环境是唯一一处决定——`sandbox/cheese` 按它挑
+                # 清单、也按它放行，三个骨架都不各自判断。
+                **({"CHEESE_COMPACT_TOOL": "1"} if settings.agent_compact_tool else {}),
             },
             acting=prepared.agent_handle,
             skills=session_skill_files(session.project_id),
@@ -153,6 +170,8 @@ async def ensure(
     )
     mark("ensure_attach")
     # Compared with what it would be started with now: up to date, or a
-    # relaunch the channel owes (``prewarm_due``).
+    # relaunch the channel owes (``prewarm_due``). A runner another release
+    # started is replaced by now (``ClaudeCodeDriver.launch``).
     svc.unchecked.discard(seat)
+    svc.replace_due.pop(seat, None)
     return attached

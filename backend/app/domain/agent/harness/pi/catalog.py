@@ -50,7 +50,7 @@ def tools() -> list[dict]:
     The table is the same constant the other harnesses serve (结论 63); the
     leaves are what is left for the machine to run as a process."""
     return [
-        *_module().PLATFORM_TOOLS.schemas(),
+        *_module().offered_tools(),
         *cli_worker._tools(_module().build_parser()),
     ]
 

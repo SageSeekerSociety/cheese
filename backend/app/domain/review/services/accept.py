@@ -88,7 +88,7 @@ async def accept(
         raise ValidationError(say("reviewEndedNoAccept"))
     # 递给某个具体的人 (spec §4.4): only the routed reviewer may accept —
     # decided_by is the caller's verified actor handle, never body-trusted.
-    if decided_by != card.reviewer_handle:
+    if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
@@ -748,11 +748,9 @@ async def _stop_accept_title_disagrees(
         ),
     )
     note = (
-        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和卡片标题"
-        f"（{subject}）不是同一行。平台按卡片标题落 squash 提交标题，而仓库自己的"
-        "检查评判的是 PR 上那个标题；合下去会往历史里写一行没人检查过的字，所以"
-        "停下了。用 cheese_describe 把这张卡的标题改成该落的那一行（平台会同时"
-        "改掉 PR 标题，检查会按新标题重跑），绿了之后重新采纳。"
+        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和提交审阅时的标题"
+        f"（{subject}）不一致。现在合并会把一行仓库检查没看过的标题写进历史，所以"
+        "停下了；两个标题改成同一行、检查通过后再采纳。"
     )
     await self._session.rollback()
     await self._note_outside_accept_txn(

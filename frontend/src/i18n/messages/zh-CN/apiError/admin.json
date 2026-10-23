@@ -1,6 +1,6 @@
 {
   "adminAddWhom": "要加的人不能是空的",
-  "adminAgentCannotAdmin": "{handle} 是 agent，而管理动作 agent 不能做",
+  "adminAgentCannotAdmin": "{handle} 是 AI 队友，不能设为平台管理员",
   "adminAlreadyRootAdmin": "{handle} 是部署配置里的根管理员，不用在页面上加",
   "adminNoSuchAccount": "平台里没有 handle 是 {handle} 的账号",
   "adminRootAdminCannotRemove": "{handle} 是部署配置里的根管理员，页面上删不掉 —— 改配置要有服务器权限",

@@ -19,22 +19,15 @@ export function columnLabel(column: BoardColumn): string {
 }
 
 /** 卡面上那一句，按当前语言现取。后端给的是码（`presentation.phrase`）；这一版
- *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。 */
-export function phraseLabel(phrase: BoardPhrase): string {
-  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
-}
-
-/** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」。没有专门说法的
- *  照通用那一句。 */
-export function myPhraseLabel(phrase: BoardPhrase): string {
-  return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN') ? t(`work.board.mine.${phrase}`) : phraseLabel(phrase)
-}
-
-/** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
- *  和频道里的卡说的是同一件事，对同一个人不能一处「待审阅」一处「待你审阅」。 */
-export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_on'>, viewer: string): string {
-  const { phrase } = task.presentation
-  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase) : phraseLabel(phrase)
+ *  不认识的码（后端先发了新短语）照原样写出来，不写成空白。
+ *
+ *  有几句说的是做这件事的那位队友（「{agent}在做」）：项目可以给它改名，所以名字由
+ *  调用方给（任务的 `agent_handle` 在名册上叫什么，没有就是项目默认那位）。还说不出是
+ *  哪位的调用方不给，才写默认名。 */
+export function phraseLabel(phrase: BoardPhrase, agent?: string): string {
+  return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN')
+    ? t(`work.board.phrase.${phrase}`, { agent: agent || t('work.room.defaultAgentName') })
+    : phrase
 }
 
 /** 色点长什么样。
@@ -52,15 +45,6 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
   if (column === 'needs_you') return { borderColor: 'var(--warn)', background: 'var(--warn)' }
   if (column === 'done') return { borderColor: 'var(--faint)', background: 'var(--faint)' }
   return { borderColor: 'var(--line-2)' }
-}
-
-/** 一件任务自己的那颗点：列决定颜色，但「已退回」画成红的 —— 交付被人退回来、还
- *  等着队友去改，这不是「有事等你」。和侧栏那盏灯、频道里那张任务卡同一个意思。 */
-export function taskDotStyle(task: Pick<RoomTask, 'presentation'>): Record<string, string> {
-  if (task.presentation.phrase === 'bounced') {
-    return { borderColor: 'var(--danger)', background: 'var(--danger)' }
-  }
-  return columnDotStyle(task.presentation.column)
 }
 
 /** 还有人要管的那些任务：去掉已归档频道里没走完的。

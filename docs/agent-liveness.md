@@ -69,14 +69,15 @@ assistant 文本、也没有一次工具调用，就按「环境没起来」结�
 每种结束各发一次事件（`who=human`），交给人看一眼，修好后在房间里重新 @；下一轮接着同一个会话
 （`agent-principles.md` 第十四条）。前三种平台不自动重跑。API 拒绝里属于模型服务临时故障的那些
 （限流、过载、5xx/529、流中断、写明了重置时间的额度）由 `agent/turn_resume.py` 退避后自动续上，
-连续次数有上限；密钥失效这类不会自己过去的不续。另外，发版替换 runner 打断的那一轮
-（`runner_replaced`）立刻续上，不算次数。
+连续次数有上限；密钥失效这类不会自己过去的不续。另外，发版替换 runner 时，在干活的旧 runner
+先排空，到 `runner_drain_s` 还没干完才打断，被打断的那一轮（`runner_replaced`）立刻续上，不算次数。
 
 ## 设置一览
 
 | 设置 | 默认 | 管什么 |
 |---|---|---|
 | `agent_no_progress_s` | 1800 | 有输出没动作多久算「只说话不干活」 |
+| `runner_drain_s` | 1800 | 发版后，上一版在干活的 runner 最多再干多久才被打断（`RUNNER_DRAIN_S`） |
 | `agent_unread_grace_s` | 1800 | 说给它的消息多久没回执算「不读」 |
 | `agent_turn_hard_ceiling_s` | 10800 | 过线只记录，不结束 |
 | `agent_first_output_timeout_s` | 300 | 一轮多久没有任何输出算「没起来」 |

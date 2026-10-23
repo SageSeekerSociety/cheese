@@ -71,6 +71,10 @@ class TaskOut(BaseModel):
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
+    # Attention includes people following the outcome, such as the reporter.
+    awaits_me: bool = False
+    # Whether the displayed next action is assigned to the caller.
+    needs_my_action: bool = False
 
 
 class ProgressIn(BaseModel):

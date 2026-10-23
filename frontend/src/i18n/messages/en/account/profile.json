@@ -21,6 +21,6 @@
   "title": "Profile",
   "unsaved": "You have unsaved changes",
   "username": "Username",
-  "usernameNote": "The name people use to {'@'} you; it cannot be changed",
+  "usernameNote": "Your unique account username cannot be changed; others see your display name",
   "viewPage": "View my page"
 }

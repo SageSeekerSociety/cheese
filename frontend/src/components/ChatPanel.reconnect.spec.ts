@@ -655,6 +655,6 @@ describe('a task card when the channel says its tasks changed', () => {
     const status = view.container.querySelector<HTMLElement>(
       '[data-testid="task-card"][data-task-id="k1"] [data-testid="task-card-status"]'
     )
-    expect(status?.dataset.tone).toBe('done')
+    expect(status?.dataset.kind).toBe('closed')
   })
 })

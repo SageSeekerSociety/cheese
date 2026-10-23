@@ -37,6 +37,8 @@ export interface SkillImportPreview extends ProjectSkillContent {
   name: string
   /** 不是文本或太大、不会一起添加的文件。 */
   skipped: string[]
+  /** 关于「这次读得全不全」的话，比如仓库太大、目录树被截断。 */
+  notes: string[]
   /** 配套文件里脚本的个数；芝士会在工作电脑上运行它们。 */
   scripts: number
 }

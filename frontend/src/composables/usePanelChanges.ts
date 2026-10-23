@@ -42,8 +42,10 @@ export function usePanelChanges(props: PanelChangesProps) {
   const currentTask = computed(() => (taskRow.value?.id === selectedTask.value ? taskRow.value : undefined))
   // 任务结束了，它的文件就只读——跟在状态后面说。
   const sourceStatus = computed(() => {
-    const phrase = currentTask.value?.presentation.phrase
-    const status = phrase ? phraseLabel(phrase) : ''
+    const task = currentTask.value
+    const phrase = task?.presentation.phrase
+    const agent = (task?.agent_handle && props.memberNames?.[task.agent_handle]) || props.agentName
+    const status = phrase ? phraseLabel(phrase, agent) : ''
     return currentTask.value && currentTask.value.status !== 'open'
       ? t('work.room.changes.statusReadOnly', { status })
       : status
@@ -171,6 +173,8 @@ export function usePanelChanges(props: PanelChangesProps) {
       // 清单先超时。等完再切来源，文件清单才不会落在上一代的请求上。
       await Promise.all([gitChanges.loadGit(opts), pane.loadFiles(opts)])
       await adoptCommittedFallback()
+      // 读到了才记「这一格已经有东西了」：失败的那一次下次切回来还要重试。
+      if (!errorMsg.value) loadedOnce.value = true
     } finally {
       done?.()
     }
@@ -212,10 +216,25 @@ export function usePanelChanges(props: PanelChangesProps) {
     }
   }
 
+  // 这一格读到过没有：读到了，切回来就接着用屏幕上那一份，不再整格清空重来。
+  const loadedOnce = ref(false)
+  // 不在这一格的时候有某一轮收工：回来得补一次静默重读，否则看的是旧差异。
+  let missedTick = false
+
   watch(
     () => props.active,
     (on) => {
-      if (on) loadAll()
+      if (!on) return
+      if (!loadedOnce.value) {
+        void loadAll()
+        return
+      }
+      // 切回来：屏幕上那份留着（树、差异、滚动位置都在），不转圈、不重建。
+      // 只有离开期间 AI 干完过一轮（下面的 `refreshTick`）才静默补读一次。
+      if (missedTick) {
+        missedTick = false
+        void loadAll({ silent: true, fresh: true })
+      }
     },
     { immediate: true }
   )
@@ -224,7 +243,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   watch(
     () => props.refreshTick,
     () => {
-      if (props.active) loadAll({ silent: true, fresh: true })
+      if (props.active) void loadAll({ silent: true, fresh: true })
+      else missedTick = true
     }
   )
 
@@ -266,6 +286,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     errorMsg.value = null
     liveFallback.value = 'none'
     liveTimeout.value = false
+    // 换了来源 / 换了任务：屏幕上那份已经不是这一份了，下次进来要重读。
+    loadedOnce.value = false
+    missedTick = false
   }
 
   async function selectVersion(source: FileSource) {
@@ -276,6 +299,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     requestedSource.value = source
     pane.setPendingOpen(path ?? pane.lastFileForSource())
     await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
+    if (!errorMsg.value) loadedOnce.value = true
   }
 
   watch(
@@ -304,6 +328,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     clearSource()
     pane.setPendingOpen(path)
     await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
+    if (!errorMsg.value) loadedOnce.value = true
     return pane.hasOpenFileFound()
   }
 

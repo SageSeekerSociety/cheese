@@ -61,7 +61,8 @@ from app.domain.agent.session_host.contract import (
     StartAbandoned,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.assistant import proposals
+from app.domain.assistant import gate, proposals
+from app.domain.assistant import memory as assistant_memory
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
@@ -323,13 +324,14 @@ class AssistantConversations:
 def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
-    whether it failed, each draft write, each publish. Kept with the answer, so
-    the conversation shows them again."""
+    whether it failed, each draft write, each publish, each file it handed the
+    person. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
+    handed: list[dict] = []
     reasoning: dict | None = None
 
     def ms(position: str) -> int:
@@ -368,15 +370,18 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             published.append(data)
         elif event == "proposal":
             proposed.append(data)
+        elif event == "handed":
+            handed.append(data)
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed):
+    if not (steps or edits or published or proposed or handed):
         return None
     return {
         "steps": steps,
         "edits": edits,
         "published": published,
         **({"proposals": proposed} if proposed else {}),
+        **({"handed": handed} if handed else {}),
     }
 
 
@@ -543,7 +548,7 @@ async def ask(
     slot: Slot,
     context: str = "",
     kind: str = billing.ASKING,
-    files: list[tuple[int, str]] | None = None,
+    files: list[tuple[str, str]] | None = None,
     project: uuid.UUID | None = None,
     run: uuid.UUID | None = None,
     shown: dict | None = None,
@@ -560,7 +565,7 @@ async def ask(
     ``started`` (`personal.session`). ``context`` is the page the person has
     open, when the conversation has not been told it yet (``page_to_say``);
     ``kind`` the line its spend is charged under (``billing``); ``files`` the
-    ones handed over with it, as (id, name); ``project`` the one the page is
+    ones handed over with it, as (the ref 芝士 reads it by, name); ``project`` the one the page is
     in, which its tools are let into as the person (and into no other).
 
     ``run`` is a routine's run asking on its own (``routine.personal``): what
@@ -585,6 +590,13 @@ async def ask(
         )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
+        # What it remembers of them goes with the start of a conversation, never
+        # in the rules, which stay the same for everyone.
+        remembered = (
+            await assistant_memory.index(session, handle)
+            if handle and (await gate.rules_of(session, user_id)).memory
+            else None
+        )
         # Cards the person decided on after the answer that put them up had
         # ended: that answer never heard how they ended, so this one is told.
         decided = await proposals.untold(
@@ -619,7 +631,7 @@ async def ask(
         said = "\n\n".join(part for part in (page(context), question) if part)
         if files:
             said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
-                f"- {name}（files/{file_id}）" for file_id, name in files
+                f"- {name}（{ref}）" for ref, name in files
             )
         if decided:
             said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(
@@ -630,7 +642,10 @@ async def ask(
         said += "\n\n" + now_line(timezone)
         preface = "\n\n".join(
             part
-            for part in (about(handle or str(user_id), timezone), earlier(before))
+            for part in (
+                about(handle or str(user_id), timezone, remembered),
+                earlier(before),
+            )
             if part
         )
         return Prompt(work, said, acting=acting, preface=preface)

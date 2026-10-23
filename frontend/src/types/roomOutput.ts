@@ -5,7 +5,7 @@
 export interface RoomOutput {
   path: string
   mime: string
-  kind: 'file' | 'app'
+  kind: 'file' | 'app' | 'mcp-app'
   shown_at: string
 }
 

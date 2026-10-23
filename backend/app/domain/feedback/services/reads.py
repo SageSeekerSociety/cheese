@@ -413,12 +413,21 @@ async def detail_of(
     activity = await svc._repo.latest_activity_of([row.id])
     # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
     can_delete = svc.may_delete_feedback(row, handle=handle, is_admin=is_admin)
-    # 领取和放弃也一样：和 `claim` / `release` 同一处判据。
+    # 领取和放弃也一样：和 `claim` / `release` 同一处判据。办完的不能再领，
+    # 否则详情上会挂出一个「处理人」，而这条已经没有要修的了。
     holder = row.assignee_handle
-    can_claim = holder is None and await svc.may_claim(
-        handle, is_admin=is_admin, room_project_id=room_project_id
+    can_claim = (
+        holder is None
+        and row.status not in repo.CLOSED_STATUSES
+        and await svc.may_claim(
+            handle, is_admin=is_admin, room_project_id=room_project_id
+        )
     )
-    can_release = holder is not None and (is_admin or holder == handle)
+    can_release = (
+        holder is not None
+        and row.status not in repo.CLOSED_STATUSES
+        and (is_admin or holder == handle)
+    )
     # Notes are admin-only, so resolving faces for them is not extra work a
     # non-admin pays for: the list is empty and contributes no handles.
     notes = await svc._repo.list_notes(row.id) if is_admin else []

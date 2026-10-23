@@ -26,9 +26,12 @@ rest are local.
 """
 
 import asyncio
+import gzip
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 from pathlib import Path
 
 import httpx
@@ -152,3 +155,48 @@ async def ensure_cached(root: Path, version: str, platform: str) -> Path:
             tmp.unlink(missing_ok=True)
             raise
     return target
+
+
+# What each cached binary hashes to, by the size and mtime it had when hashed:
+# a quarter of a gigabyte is read once per process, not once per download. The
+# process owns it and nothing clears it; a cached binary never changes in place.
+_digests: dict[Path, tuple[tuple[int, int], str]] = {}
+
+
+def served_digest(binary: Path) -> str:
+    """Hex sha256 of the bytes a machine is handed for ``binary``, so it can
+    tell a download that arrived whole from one that did not. Blocking (the
+    whole file off disk the first time) — call it off the event loop."""
+    stat = binary.stat()
+    key = (stat.st_size, stat.st_mtime_ns)
+    known = _digests.get(binary)
+    if known is not None and known[0] == key:
+        return known[1]
+    digest = hashlib.sha256()
+    with binary.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    _digests[binary] = (key, digest.hexdigest())
+    return _digests[binary][1]
+
+
+def packed(binary: Path) -> Path:
+    """A gzip copy of ``binary`` beside it, for a machine that asks for one.
+
+    The executor is a quarter of a gigabyte and packs to under half (2.1.306
+    for darwin-arm64: 272,984,176 bytes, 119,307,420 gzipped), and a machine on
+    a slow link has to fetch it inside the deadline of one install. Written
+    once, under a fresh name and renamed into place, so two first requests
+    racing each other both end with the same complete file. Blocking (seconds
+    of compression the first time) — call it off the event loop."""
+    copy = binary.with_name(binary.name + ".gz")
+    if copy.is_file():
+        return copy
+    with tempfile.NamedTemporaryFile(dir=binary.parent, delete=False) as staged:
+        with (
+            binary.open("rb") as source,
+            gzip.GzipFile(fileobj=staged, mode="wb", compresslevel=6, mtime=0) as out,
+        ):
+            shutil.copyfileobj(source, out, 1 << 20)
+    Path(staged.name).replace(copy)
+    return copy

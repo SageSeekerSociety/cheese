@@ -178,7 +178,7 @@ function mount(props: Record<string, unknown>) {
 
 describe('机器', () => {
   it('provider 连续失败、平台在拒绝新会话时，页面说出来', () => {
-    const refusing = /Refusing new sessions now|此刻在拒绝新会话/
+    const refusing = /Not starting new AI teammates now|此刻不再接新的 AI 队友/
     const calm = mount({ overview: overview() })
     expect(calm.queryByText(refusing)).toBeNull()
     calm.unmount()
@@ -193,6 +193,16 @@ describe('机器', () => {
     expect(queryByText(/Launch room/)).toBeNull()
     await fireEvent.click(getByText('pool-a'))
     expect(queryByText(/Launch room/)).not.toBeNull()
+  })
+
+  it('个人芝士对话的沙箱只写「个人对话」，不链到任何项目', async () => {
+    const [mine] = host().sandboxes
+    const personal = host({ sandboxes: [{ ...mine, project_id: null, project: null, room: null }] })
+    const { getByText, queryByRole } = mount({ overview: overview({}, [personal]) })
+    await fireEvent.click(getByText('pool-a'))
+    const named = i18n.global.t('admin.machines.personal')
+    expect(getByText(named).tagName).not.toBe('A')
+    expect(queryByRole('link', { name: named })).toBeNull()
   })
 
   it('宿主机数和上限放在一起比时，整机虚拟机也算进去：上限就是这样数的', () => {

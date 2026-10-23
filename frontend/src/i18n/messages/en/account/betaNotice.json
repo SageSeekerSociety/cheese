@@ -1,10 +1,9 @@
 {
   "eyebrow": "Beta",
   "title": "Cheese is in beta",
-  "body": "We're still polishing Cheese. During the beta, on top of your monthly plan credits, these also earn you extra credits.",
+  "body": "We're still polishing Cheese. On top of the {n} credits your plan gives you each month (reset on the 1st), these earn you extra credits during the beta.",
+  "bodyNoPlan": "We're still polishing Cheese. On top of your plan's credits, these earn you extra credits during the beta.",
   "points": "{n} credits",
-  "plan": "Monthly plan credits",
-  "planRule": "Reset on the 1st of each month",
   "beta": "Beta credits",
   "betaRule": "Once per account",
   "betaClaimed": "You've already claimed these",

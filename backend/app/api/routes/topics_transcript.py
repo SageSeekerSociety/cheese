@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.session_record_rows import no_platform_reminders, text_of
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -37,7 +38,8 @@ def hide_platform_reminders(items: list[dict]) -> list[dict]:
     read them.
 
     A text part left with nothing is dropped, so a notice-only input leaves no
-    empty row behind.
+    empty row behind. The stripping itself lives in `session_record_rows`, which
+    a pulled transcript goes through too — one set of words, one place.
     """
     for item in items:
         meta = item.get("meta")
@@ -48,21 +50,10 @@ def hide_platform_reminders(items: list[dict]) -> list[dict]:
             if isinstance(item.get("content"), str):
                 item["content"] = without_reminders(item["content"])
             continue
-        kept = []
-        changed = False
-        for part in parts:
-            text = part.get("text") if part.get("kind") == "text" else None
-            if isinstance(text, str):
-                hidden = without_reminders(text)
-                if hidden != text:
-                    changed = True
-                if not hidden:
-                    continue
-                part = {**part, "text": hidden}
-            kept.append(part)
+        kept, changed = no_platform_reminders(parts)
         if changed:
             meta["parts"] = kept
-            item["content"] = "\n".join(p.get("text", "") for p in kept)
+            item["content"] = text_of(kept)
     return items
 
 

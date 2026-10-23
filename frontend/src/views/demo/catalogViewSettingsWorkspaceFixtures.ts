@@ -11,7 +11,7 @@
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。
  */
-import type { AssistantActivityItem, AssistantRoutine, AssistantRules, ProjectArtifact } from '@/api'
+import type { AssistantActivityItem, AssistantMemory, AssistantRoutine, AssistantRules, ProjectArtifact } from '@/api'
 import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
@@ -74,6 +74,7 @@ export const NOTIF_PREFS: NotificationPreferences = {
     invitation: { inApp: true, push: false, email: true },
     announcement: { inApp: true, push: false, email: false },
     billing: { inApp: true, push: false, email: true },
+    assistant: { inApp: true, push: true, email: true },
   },
 }
 
@@ -679,7 +680,45 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
     weekCredits: 0,
   },
+  {
+    id: 'r4',
+    title: '提醒交开题报告',
+    note: '提醒用户把开题报告发给导师',
+    when: '10月22日 17:00 运行一次',
+    state: 'done',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:20Z', asked: 0, conversationId: 'c4' },
+    weekCredits: 0.2,
+  },
 ]
+
+export const ASSISTANT_MEMORY: AssistantMemory = {
+  enabled: true,
+  items: [
+    {
+      name: 'ta-os-course',
+      description: '在带「操作系统（2026 秋）」助教课，负责第 3、4 次实验',
+      type: 'user',
+      text: '本学期是操作系统课的助教，负责第 3、4 次实验的答疑和批改，助教频道在项目「操作系统（2026 秋）助教」里。',
+      updatedAt: '2026-10-20T08:00:00Z',
+    },
+    {
+      name: 'formal-to-teachers',
+      description: '给老师写东西用书面语',
+      type: 'feedback',
+      text: '给老师的消息和邮件用书面语，不用「哈」「呀」，称呼用「老师」。她纠正过一次。',
+      updatedAt: '2026-10-21T02:00:00Z',
+    },
+    {
+      name: 'midterm-defense',
+      description: '中期答辩定在 11 月 12 日',
+      type: 'project',
+      text: '课题组中期答辩定在 11 月 12 日（周四），PPT 和中期报告要在那之前给李老师过一遍。',
+      updatedAt: '2026-10-22T09:30:00Z',
+    },
+  ],
+}
 
 export const ASSISTANT_RECENT: AssistantActivityItem[] = [
   {

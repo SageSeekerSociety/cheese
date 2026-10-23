@@ -334,14 +334,13 @@ button.app-rail-item {
   }
 }
 
-// 「你在这儿」画在 rail 左边缘的一条圆头竖条上（Discord 式），不碰头像，也不和
-// 右上角的件数角标打架：选中是长的一条，悬停没选中的格子是短的一截。原来的琥珀
-// 描边框在头像外面再套一圈，和头像自己的颜色混在一起，不好看也不好认。
+// 「你在这儿」是贴着 rail 左边缘的一条竖条（Discord 式）：靠边一侧平直、朝里一侧
+// 圆头，像从屏幕边上长出来的一截，不碰头像，也不和右上角的件数角标打架。
+// 选中是长的一条，悬停没选中的格子是短的一截。
 //
 // 格子 48px 居中在 64px 的 rail 里，左边离 rail 边缘 8px，所以竖条往外挪 8px 贴边。
-// 颜色用 on-surface：深色 rail 上是白的，浅色 rail 上是深墨，同一个 token 两套
-// 主题都够亮眼；不用琥珀，琥珀留给主操作和品牌标记。「＋新建项目」不是目的地，
-// 不画竖条。
+// 颜色用 --rail-mark：深色主题是浅灰；浅色主题是中灰，不用正文的深墨——窗口最大化
+// 时贴着的是显示器的黑边，深墨会和黑边连成一片。不用琥珀，琥珀留给主操作和品牌标记。「＋新建项目」不是目的地，不画竖条。
 .app-rail-item:not(.app-rail-item--add)::before {
   content: '';
   position: absolute;
@@ -349,8 +348,8 @@ button.app-rail-item {
   top: 50%;
   width: 4px;
   height: 0;
-  border-radius: var(--radius-pill);
-  background-color: rgb(var(--v-theme-on-surface));
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background-color: var(--rail-mark);
   transform: translateY(-50%);
   transition: height var(--dur-quick) var(--ease-standard);
   pointer-events: none;

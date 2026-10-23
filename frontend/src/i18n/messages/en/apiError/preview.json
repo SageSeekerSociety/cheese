@@ -8,7 +8,8 @@
   "previewNotHtml": "The conversion didn't produce a valid web page",
   "previewNotPdf": "The conversion didn't produce a valid PDF",
   "previewOver10Mb": "The file is over 10 MB, so no preview can be made",
-  "previewServiceError": "The document preview service failed",
+  "previewSelectionStale": "The preview's selection is no longer the one you opened; open the preview again",
+  "previewServiceError": "The document preview service failed. Try again shortly",
   "previewServiceUnreachable": "The document preview service can't be reached right now",
   "previewTooLarge": "The file is over {mb}MB, so no preview can be made"
 }

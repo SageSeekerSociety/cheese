@@ -307,13 +307,15 @@ class SandboxHome(UuidPk, Timestamps, Base):
     )
     # The spec of the sandbox (``agent.environment``): how long it is kept idle.
     spec: Mapped[str] = mapped_column(String(80))
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    # None for a sandbox of a conversation in no project (``holder``).
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
             name="fk_sandbox_homes_project_id_projects",
         ),
         index=True,
+        nullable=True,
     )
     # The room the home was made for. A room that has since become a task keeps
     # its id as that task's conversation, and its cleanup still finds the home

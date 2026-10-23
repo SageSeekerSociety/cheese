@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * 「知是正在内测」那一次说明（接线在 `composables/useBetaNotice.ts`，挂在
- * `layouts/AppShell.vue`）。一张安静的表：每样额度多少、怎么得，数都从接口来——
- * 每月方案是这个人自己的方案，按时间窗口计或不限的方案没有这一行。
+ * `layouts/AppShell.vue`）。一张安静的表：方案之外每样额度多少、怎么得，数都从
+ * 接口来。方案不进表，只在开头那句当背景提一句：这个人自己的方案每月多少点；按
+ * 时间窗口计或不限的方案没有这个数，那句就不写数。
  * 还没领内测体验额度的，主按钮是领取；领过的只剩「知道了」。
  */
 import type { BetaCredits } from '@/types/creditOffers'
@@ -25,18 +26,15 @@ const emit = defineEmits<{ claim: []; dismiss: [] }>()
 
 const points = (n: number) => t('account.betaNotice.points', { n: n.toLocaleString('en-US') })
 
+const body = computed(() =>
+  props.offer.plan_credits == null
+    ? t('account.betaNotice.bodyNoPlan')
+    : t('account.betaNotice.body', { n: props.offer.plan_credits.toLocaleString('en-US') })
+)
+
 const rows = computed(() => {
   const o = props.offer
   return [
-    ...(o.plan_credits == null
-      ? []
-      : [
-          {
-            what: t('account.betaNotice.plan'),
-            amount: points(o.plan_credits),
-            rule: t('account.betaNotice.planRule'),
-          },
-        ]),
     {
       what: t('account.betaNotice.beta'),
       amount: points(o.credits),
@@ -67,7 +65,7 @@ const DOCS = docsUrl('/rewards')
     <v-card rounded="lg" class="beta-notice" aria-labelledby="beta-notice-title">
       <p class="beta-notice__eyebrow">{{ t('account.betaNotice.eyebrow') }}</p>
       <h2 id="beta-notice-title" class="t-dialog-title beta-notice__title">{{ t('account.betaNotice.title') }}</h2>
-      <p class="t-body-readable beta-notice__body">{{ t('account.betaNotice.body') }}</p>
+      <p class="t-body-readable beta-notice__body">{{ body }}</p>
       <dl class="beta-notice__list">
         <div v-for="row in rows" :key="row.what" class="beta-notice__row">
           <dt class="beta-notice__what">{{ row.what }}</dt>

@@ -7,6 +7,7 @@
 // 点哪份打开哪份；旁边写着存到哪了。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
 import type { SaveState } from '@/composables/useTaskDraft'
+import type { AgentType } from '@/cx_types'
 import type { NavTarget } from '@/lib/navTarget'
 import type {
   DomainGroup,
@@ -29,6 +30,7 @@ import TaskDraftStrip from './TaskDraftStrip.vue'
 
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -77,6 +79,9 @@ const props = withDefaults(
     /** 空间的 AI 队友辅导：和本题的同时生效，摆在本题设置底下。 */
     spaceTeaching?: SpaceTeaching | null
     agentName: string
+    /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
+    agentTypes?: AgentType[]
+    agentTypesFailed?: boolean
   }>(),
   {
     selectedCategoryId: undefined,
@@ -86,12 +91,16 @@ const props = withDefaults(
     strip: null,
     agentWriting: null,
     spaceTeaching: null,
+    agentTypes: () => [],
+    agentTypesFailed: false,
   }
 )
 
 const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 /** 这道题单独写了 AI 指导；没有就沿用空间的默认。 */
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
+/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。发题页没有原始值。 */
+const defaultRole = defineModel<string>('defaultRole', { required: true })
 
 /** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
 function setTeaching(value: SpaceTeaching) {
@@ -303,6 +312,12 @@ defineExpose({
               <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
                 <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
                 <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
+                <DefaultTeammatePicker
+                  v-model="defaultRole"
+                  :types="agentTypes"
+                  :types-failed="agentTypesFailed"
+                  class="pub__teammate"
+                />
                 <TeachingFields
                   :model-value="teaching"
                   class="pub__teaching-fields"
@@ -424,6 +439,10 @@ defineExpose({
 
 .pub__teaching-hint {
   margin: 4px 0 8px;
+}
+
+.pub__teammate {
+  margin-top: 12px;
 }
 
 .pub__teaching-fields {

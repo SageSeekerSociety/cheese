@@ -89,6 +89,20 @@ describe('AssistantPanel', () => {
     expect(view.getByText('已停止')).toBeTruthy()
   })
 
+  it('a file 芝士 handed over is a card under its answer, and its download goes to the page', async () => {
+    const file = { team: 9, path: '数据结构/成绩分布.png', bytes: 84 * 1024 }
+    const view = mount({
+      messages: [
+        { role: 'user', text: '画一张分布图', at: '2026-10-04T08:00:00Z' },
+        { role: 'assistant', text: '画好了。', at: '2026-10-04T08:00:05Z', handed: [file] },
+      ],
+    })
+
+    expect(view.getByText('成绩分布.png')).toBeTruthy()
+    await fireEvent.click(view.getByRole('button', { name: '下载' }))
+    expect(view.emitted('downloadFile')).toEqual([[file]])
+  })
+
   it('asks a starter question in one click when the conversation is empty', async () => {
     const view = mount({ messages: [] })
     await fireEvent.click(view.getByRole('button', { name: '做这道题要先会什么？' }))

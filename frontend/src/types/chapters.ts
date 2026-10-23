@@ -7,6 +7,9 @@ import type { Block } from '../cx_types'
 export interface ChapterRow {
   pinned_by: string
   pinned_at: string
+  /** 这条书签叫什么：加的时候从消息里读的短名，人改过或模型改过就是那一版。
+   *  null 表示消息里没有可取的文字，由界面说「没有字的书签」。 */
+  title: string | null
   /** 这一章开始的那条消息。 */
   block: Block
 }

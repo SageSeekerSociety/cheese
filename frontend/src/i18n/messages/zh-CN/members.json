@@ -29,8 +29,8 @@
     "addedBy": "{by} 加的 · {time}",
     "noAccount": "平台上没有这个账号",
     "noAccountTitle": "这个 handle 在平台上没有账号（或账号已注销）—— 检查部署配置里的拼写；改配置要有服务器权限",
-    "agentBadge": "agent",
-    "agentBadgeTitle": "agent 不能做管理动作，这行权限实际用不上 —— 检查部署配置里的这个名字"
+    "agentBadge": "AI 队友",
+    "agentBadgeTitle": "AI 队友不能做管理动作，这行权限实际用不上。检查部署配置里的这个名字"
   },
   "empty": {
     "root": "配置里没写人（本地开发如此；部署时必须填）",
@@ -61,8 +61,8 @@
   "error": {
     "loadFailed": "成员加载失败",
     "searchFailed": "搜账号失败",
-    "addFailed": "没加成",
-    "removeFailed": "没移出去",
+    "addFailed": "添加失败",
+    "removeFailed": "移出失败",
     "retry": "重试"
   }
 }

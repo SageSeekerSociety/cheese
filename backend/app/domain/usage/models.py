@@ -497,11 +497,19 @@ class ComputeRun(UuidPk, Timestamps, Base):
     # The price list entry: ``sandbox`` for a sandbox, the VM's spec name.
     spec: Mapped[str] = mapped_column(String(64))
     subject: Mapped[str] = mapped_column(String(64))
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    # None for a run of a conversation in no project: its person pays.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    # The conversation the sandbox ran for.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="SET NULL",
+            name="fk_compute_runs_topic_id_conversations",
+        ),
+        index=True,
+        nullable=True,
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

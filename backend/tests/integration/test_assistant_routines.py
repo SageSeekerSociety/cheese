@@ -21,6 +21,7 @@ from sqlalchemy import select, update
 from app.api.deps import get_consumptions, get_session_host
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.session_host.answer import Answer
 from app.domain.assistant import gate
 from app.domain.assistant.models import (
     AssistantConversation,
@@ -634,3 +635,69 @@ def test_the_persons_entries_are_read_by_the_gate_one_a_line(client, monkeypatch
 
     assert "需要确认：\n- 发给老师的消息" in keeper.shown[0]
     assert "无需确认：\n- 在我负责的频道里回答问题" in keeper.shown[0]
+
+
+def test_a_one_off_routine_that_ran_is_done_frees_its_place_and_is_cleared_later(
+    client,
+):
+    """A routine that runs once is done after its run: it cannot be paused,
+    does not count toward the limit, and is gone with its runs once the cards
+    it could have left have expired."""
+    at = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
+    routine = _routine(
+        client,
+        "dora",
+        title="提醒交报告",
+        trigger="schedule",
+        spec={"freq": "once", "at": at},
+        next_run_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    me = _auth(client, "dora")
+
+    async def run_it(db):
+        run = AssistantRun(
+            user_id=routine.user_id,
+            routine_id=routine.id,
+            occurrence=f"{routine.id}:once",
+            status="running",
+        )
+        db.add(run)
+        await db.flush()
+        return run.id
+
+    run_id = _db(client, run_it)
+    asyncio.run(
+        personal.ended(client.test_factory, run_id, Answer("已提醒。"), False, False)
+    )
+
+    [listed] = client.get("/assistant/routines", headers=me).json()["data"]["routines"]
+    assert (listed["state"], listed["nextRunAt"]) == ("done", None)
+    assert "运行一次" in listed["when"]
+    paused = client.post(f"/assistant/routines/{routine.id}/pause", headers=me)
+    assert paused.status_code in (400, 422), paused.text
+
+    conversation = _conversation(client, "dora", "有人 @ 我就告诉我")
+    acting = _acting(client, "dora", conversation)
+    for i in range(personal.MAX_ROUTINES):
+        r = client.post(
+            "/assistant/agent/routine",
+            json={"action": "create", "title": f"第 {i} 条", "trigger": "mention"},
+            headers=acting,
+        )
+        assert r.status_code == 200, r.text
+
+    async def long_ago(db):
+        await db.execute(
+            update(AssistantRoutine)
+            .where(AssistantRoutine.id == routine.id)
+            .values(
+                updated_at=datetime.now(UTC) - personal.KEPT_FOR - timedelta(hours=1)
+            )
+        )
+
+    _db(client, long_ago)
+    _sweep(client)
+    left = _routines(client, routine.user_id)
+    assert routine.id not in {r.id for r in left}
+    assert len(left) == personal.MAX_ROUTINES
+    assert run_id not in {r.id for r in _runs(client, routine.user_id)}

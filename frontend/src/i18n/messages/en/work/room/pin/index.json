@@ -1,5 +1,5 @@
 {
-  "failed": "Couldn't pin. Try again later",
+  "failed": "Couldn't update the pin. Try again later",
   "pin": "Pin to channel",
   "pinned": "Pinned",
   "unpin": "Unpin",

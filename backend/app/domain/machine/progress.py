@@ -62,7 +62,12 @@ async def say_in(
 async def _line(
     session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
-    """Say it in the conversation: a person has something to do."""
+    """Say it in the conversation: a person has something to do. A person's
+    own 芝士 conversation has no lines of the platform's in it; its 芝士 hears
+    on its next tool call that the sandbox is a new one (``LOST_KEY``) and
+    tells its person, and the line is kept as a record."""
+    if home.project_id is None:
+        return await _record(session, home, content, meta)
     return await say_in(
         session,
         await _conversation(session, home),

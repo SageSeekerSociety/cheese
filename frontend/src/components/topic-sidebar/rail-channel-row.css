@@ -71,16 +71,17 @@
   right: auto;
   top: auto;
   transform: none;
+  width: 28px;
+  min-height: 28px;
+  margin-inline-end: -4px;
   background: transparent;
   border: 0;
   box-shadow: none;
 }
 
-.rail-channel-page .row-actions,
-.rail-channel-page .row-actions .v-btn,
-.rail-channel.rail-channel-page .row-slot {
-  width: 44px;
-  min-height: 44px;
+.rail-channel-page .row-actions .v-btn {
+  width: 28px;
+  height: 28px;
 }
 
 @media (hover: none) {
@@ -95,6 +96,9 @@
     right: auto;
     top: auto;
     transform: none;
+    width: 28px;
+    min-height: 28px;
+    margin-inline-end: -4px;
     background: transparent;
     border: 0;
     box-shadow: none;
@@ -102,11 +106,9 @@
     opacity: 1;
   }
 
-  .rail-channel .row-actions,
-  .rail-channel .row-actions .v-btn,
-  .rail-channel .row-leading .row-slot {
-    width: 44px;
-    min-height: 44px;
+  .rail-channel .row-actions .v-btn {
+    width: 28px;
+    height: 28px;
   }
 }
 

@@ -24,6 +24,7 @@
     "failed": "Call failed"
   },
   "changes": {
+    "memory": {"title": "Memory", "saved": "Remembered", "changed": "Updated", "forgotten": "Forgotten"},
     "title": "Form changes",
     "created": "New draft",
     "untitled": "Untitled task",

@@ -27,6 +27,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
 import {
+  creditsLabel,
   routineFileName,
   routineRunLabel,
   routineRunTime,
@@ -78,6 +79,23 @@ const whenLine = computed(() =>
   props.routine.room_archived ? t('routines.archivedStopped') : routineWhenLine(props.routine)
 )
 const roomLine = computed(() => [props.roomName, whenLine.value].filter(Boolean).join(' · '))
+/**
+ * 这一行说的第二句：什么时候跑，外加本月花了多少。
+ *
+ * 「本月」这一句**不点开也能看到** —— 它回答的是「哪条规则在花钱」，那正是列表该
+ * 一眼看出来的。数只有一位小数，长的加起来也不会把这行撑开。没花过写 0（刚建好的
+ * 规则就是 0），不是省掉不说。
+ */
+const summaryLine = computed(() =>
+  [
+    roomLine.value,
+    t('routines.spend.thisMonth', {
+      points: creditsLabel(props.routine.credits_this_month),
+    }),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+)
 const running = computed(() => props.routine.state === 'active')
 const busyOn = (action: string) => props.busy === action
 
@@ -158,7 +176,7 @@ const actions = computed<MenuAction[]>(() =>
     <div class="routine-row__head">
       <div class="routine-row__id">
         <div class="t-body routine-row__title">{{ routine.title || t('routines.unnamed') }}</div>
-        <div v-if="roomLine" class="t-meta c-faint">{{ roomLine }}</div>
+        <div v-if="summaryLine" class="t-meta c-faint" data-testid="routine-row-summary">{{ summaryLine }}</div>
       </div>
       <span
         class="routine-row__state"
@@ -188,6 +206,10 @@ const actions = computed<MenuAction[]>(() =>
           <span class="t-meta c-faint">{{ routineRunTime(run.scheduled_for || run.created_at) }}</span>
           <span class="routine-run__what">
             <span class="t-body routine-run__status">{{ routineRunLabel(run.status) }}</span>
+            <!-- 这一次花了多少点。没有了是「结算中」（刚跑完还没落账），不是 0。 -->
+            <span v-if="run.credits != null" class="t-meta c-faint routine-run__spend" data-testid="routine-run-spend">
+              {{ creditsLabel(run.credits) }}
+            </span>
             <!-- 没能执行的这几次：原因收在「原因 ▸」后面。 -->
             <template v-if="missed(run)">
               <button
@@ -310,6 +332,11 @@ const actions = computed<MenuAction[]>(() =>
 }
 .routine-run__status {
   color: var(--text);
+}
+/* 这一次花了多少点：和「已完成」并排，安静一档。 */
+.routine-run__spend {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 /* 「原因 ▸」：一个箭头，点开看那句话。 */
 .routine-run__why {

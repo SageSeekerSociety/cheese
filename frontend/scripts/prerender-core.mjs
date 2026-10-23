@@ -6,6 +6,7 @@ export const PAGES = [
   { url: '/', file: 'prerender/index.html' },
   { url: '/about', file: 'prerender/about.html' },
   { url: '/solutions', file: 'prerender/solutions.html' },
+  { url: '/download', file: 'prerender/download.html' },
 ]
 
 /**
@@ -32,6 +33,8 @@ export function pageAssets(modules, ssrManifest, template) {
  * - 渲染出来的 HTML 进 `#app`，客户端在这上面 hydrate（`main.ts`）。
  * - `<meta name="cx-prerendered">` 写在 `<head>` 最前面，启动脚本读它决定画预渲染的这
  *   一页还是骨架（见 index.html）；它必须在那段脚本之前被解析到。
+ * - 每页写明自己的规范地址。相对地址会在各主机上解析成那一页，不必把 okcheese.com
+ *   和 okcheese.cn 拆成两份构建。
  * - 这一页自己的样式和代码块：样式随后由 beasties 拆成首屏内联的一份和异步加载的其余，
  *   代码块预加载（只在要接管这份 HTML 时），不等入口跑起来再去取。
  * - 主题变量。Vuetify 的主题样式表平时由脚本插进 `<head>`，预渲染的这一页在脚本到之前
@@ -57,7 +60,7 @@ export function assemblePage(template, { url, html, title, css, js, themeCss }) 
     .replace(/<meta charset="UTF-8" \/>/, (m) => `${m}\n    <meta name="cx-prerendered" content="${url}" />`)
     .replace(
       '</head>',
-      `    ${links}\n    ${preload}\n    <style id="cx-prerender-theme">${themeCss}</style>\n  </head>`
+      `    <link rel="canonical" href="${url}">\n    ${links}\n    ${preload}\n    <style id="cx-prerender-theme">${themeCss}</style>\n  </head>`
     )
     .replace('<div id="app"></div>', `<div id="app">${html}</div>`)
   if (title) out = out.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`)

@@ -4,7 +4,7 @@
   "close": "Close",
   "copyFailed": "Couldn't copy",
   "copyName": "Save in the channel as",
-  "editorError": "The editor ran into an error",
+  "editorError": "The editor stopped working. Close it and open the file again",
   "history": "History",
   "loadNew": "Load the new version",
   "makeCopy": "Make a copy to edit",

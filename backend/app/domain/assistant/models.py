@@ -25,6 +25,7 @@ from sqlalchemy import (
     false,
     func,
     text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -178,8 +179,9 @@ class AssistantProposal(Timestamps, Base):
 class AssistantRules(Timestamps, Base):
     """What a person tells their 芝士 about acting for them
     (``assistant.gate``): which kinds of action it always asks first
-    (``ask``, codes of ``gate.CATEGORIES``), and in their own words what it may
-    simply do (``allow_text``) and what it should ask about (``ask_text``).
+    (``ask``, codes of ``gate.CATEGORIES``), in their own words what it may
+    simply do (``allow_text``) and what it should ask about (``ask_text``),
+    and whether it keeps a memory of them (``memory``).
     Only the person sets these, on their settings page; 芝士 cannot.
     """
 
@@ -198,12 +200,22 @@ class AssistantRules(Timestamps, Base):
     ask_text: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    #: Whether their 芝士 uses and keeps a memory of them
+    #: (``assistant.memory``); on until they turn it off.
+    memory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    #: When that memory was last tidied (``assistant.memory_tidy``); the next
+    #: tidy waits from it, and taking one moves it.
+    memory_tidied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AssistantGateCheck(Base):
     """One action a 芝士 was about to take for a person, and what the gate made
-    of it (``assistant.gate``): done (``allowed``) or turned into a card for
-    the person (``asked``), at which ``stage`` that was settled — by one of
+    of it (``assistant.gate``): done (``allowed``), turned into a card for
+    the person (``asked``) or handed back to 芝士 (``returned``), at which ``stage`` that was settled — by one of
     the person's rules, by the gate's quick look, or by its second, reasoned
     look — why, and what the look cost. The platform pays for the looks; these
     rows are how it sees them, and how the person sees what was done for them.
@@ -259,7 +271,9 @@ class AssistantRoutine(UuidPk, Timestamps, Base):
     ``routine.schedule`` spec, or ``{"freq": "once", "at": ISO}``) or one of
     ``routines.EVENTS`` (``spec`` may name a ``project`` it is limited to).
     ``paused`` says why a paused rule stopped: ``person``, ``credits`` (out of
-    credits) or ``away`` (not signed in for long).
+    credits) or ``away`` (not signed in for long). ``state`` is ``active``,
+    ``paused``, or ``done``: a one-off that has run, cleared with its runs
+    once the cards they left expire.
     """
 
     __tablename__ = "assistant_routines"
