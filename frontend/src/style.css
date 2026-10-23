@@ -42,6 +42,10 @@
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
   --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
+  /* The rail's you-are-here bar sits flush against the screen edge, and on a
+     maximised window that edge is the monitor's black bezel. --text (1.8:1 on
+     black) merges into it; --faint holds 4.1:1 on the rail and 4.8:1 on black. */
+  --rail-mark: var(--faint);
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -418,6 +422,7 @@
   --text: #d3d6db;
   --muted: #aeb4bd;
   --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
+  --rail-mark: var(--text);
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
