@@ -32,6 +32,7 @@ const file = useProjectFile({
     :binary="file.binary.value"
     :too-large="file.tooLarge.value"
     :tasks="file.tasks.value"
+    :in-room="file.inRoom.value"
     :is-image="file.isImage.value"
     :is-document="file.isDocument.value"
     :document-type="file.documentType.value"

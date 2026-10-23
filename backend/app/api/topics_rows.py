@@ -51,8 +51,6 @@ class CardRow(presentation.CardRow, Protocol):
 
     topic_id: Mapped[uuid.UUID]
 
-    reviewer_handle: Mapped[str]
-
     decided_at: Mapped[datetime | None]
 
     note: Mapped[str]

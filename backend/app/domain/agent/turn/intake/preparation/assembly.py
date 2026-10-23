@@ -23,6 +23,7 @@ from app.auth.audience import seats_only
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness.prompt import task_section
 from app.domain.agent.prompt import _topic_ref_lists, offered_attachments
 from app.domain.agent.queries import _acting_handle, _agent_at, require_pinned_seat
@@ -32,6 +33,7 @@ from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.turn.intake.context import (
     TurnBail,
     TurnContext,
+    carried_skills,
     human_private_owner,
     living_doc_text,
 )
@@ -445,6 +447,7 @@ async def prepare(
         topic_refs_for_prompt=topic_refs_for_prompt,
         artifacts=artifact_refs,
         teaching=teaching,
+        skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
         turn_images=turn_images,
         untitled=untitled,
     )

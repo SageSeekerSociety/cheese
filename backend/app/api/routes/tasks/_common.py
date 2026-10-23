@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
+    apply_task_default_role,
     apply_task_teaching,
     coerce_teaching,
     validate_task_teaching,
@@ -76,6 +77,9 @@ class CreateTaskRequest(BaseModel):
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
     teaching: TeachingRequest | None = None
+    # 这道题自己的默认队友类型名 (#944)，盖过 项目集 那份。省略 = 不设（沿用上层）；
+    # 给了（含空串 = 明说「不要」）就整份替换掉这一格。
+    default_role: str | None = Field(default=None, alias="defaultRole")
     # Who joins every claimer's project as a mentor (#3830): the publisher or
     # an admin of the space. Empty = nobody.
     mentors: list[str] = Field(default_factory=list)
@@ -166,6 +170,9 @@ class PatchTaskRequest(BaseModel):
     # config — the protocol's whole-key semantics; omitting it leaves it exactly
     # as it is, so a PATCH that only renames a 题目 does not wipe the 指导.
     teaching: TeachingRequest | None = None
+    # 这道题自己的默认队友类型名 (#944)。省掉 = 不动；给了（含空串）就替换这一格，
+    # 与 `teaching` 同一条整键语义。
+    default_role: str | None = Field(default=None, alias="defaultRole")
     # The whole list of mentors; omitted leaves it as it is.
     mentors: list[str] | None = None
 
@@ -218,6 +225,7 @@ async def _create_task_entity(
         rubric_raw = payload.rubric
         rubric_public = payload.rubric_public
         teaching = coerce_teaching(payload.teaching)
+        default_role = payload.default_role
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -309,6 +317,8 @@ async def _create_task_entity(
 
         # The PDF path carries `teaching` as free-form JSON, not a typed body.
         teaching = coerce_teaching(payload.get("teaching"))
+        default_role_raw = payload.get("defaultRole")
+        default_role = default_role_raw if isinstance(default_role_raw, str) else None
 
         rubric_raw = payload.get("rubric") or []
         rubric_public = bool(payload.get("rubricPublic", True))
@@ -398,6 +408,8 @@ async def _create_task_entity(
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
     apply_task_teaching(task, teaching)
+    # 题目级默认队友 (#944)：同一份覆盖里的另一格，语义同上；省掉 = 不写。
+    apply_task_default_role(task, default_role)
     task.rubric_public = rubric_public
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records

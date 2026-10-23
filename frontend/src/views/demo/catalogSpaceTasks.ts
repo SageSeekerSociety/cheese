@@ -14,6 +14,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
   PANEL_DONE,
@@ -114,7 +115,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       get hint() {
         return t('tasks.assistant.draft.hint')
       },
-      canAttach: true,
+      attachAsMaterials: true,
     },
     states: [
       {
@@ -383,6 +384,10 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       publishing: false,
       teaching: {},
       teachingOwn: false,
+      // 这道题指定的默认队友（#944）：发题页没有原始值，起手就是「继承」。
+      defaultRole: '',
+      agentTypes: AGENT_TYPES,
+      agentTypesFailed: false,
       drafts: PUBLISH_DRAFTS,
       currentDraftId: 41,
       saveState: 'saved',

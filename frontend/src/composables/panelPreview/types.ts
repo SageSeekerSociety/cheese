@@ -1,6 +1,7 @@
 // 「预览」这一格对外的那一份 props、取数那一层的选项，和进出的两样载荷（要进房间的一张
 // 图、画完的那张合成图）。取数那一半（`../usePanelPreview.ts`）和拆开的几个子模块都读它，
 // 所以它单独放一处，而不是挂在组合根上。
+import type { PreviewQuestion } from '@/lib/previewQuestion'
 import type { ChatAttachment } from '../../cx_types'
 import type { FramePick, usePreviewFrames } from '../usePreviewFrames'
 
@@ -34,6 +35,8 @@ export interface PanelPreviewOptions {
   onEscape?: () => void
   /** 帧里圈选了一处：画不画标注条、发不发引用是画的那一半的事，这一层只往上递。 */
   onPick?: (pick: FramePick) => void
+  /** 第三方 View 里的表单点提交：这一层拼成一条普通提问再往上递。 */
+  onAppMessage?: (question: PreviewQuestion) => void
   /** 编辑里「另存一份」另存出了一份新的：宿主要把它开成自由区的一个页签。 */
   onOpenFile?: (path: string) => void
 }

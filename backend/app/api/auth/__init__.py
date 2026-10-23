@@ -92,6 +92,13 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.assistant_agent.agent_routine": True,
     "app.api.routes.assistant_agent.agent_notify_me": True,
     "app.api.routes.assistant_agent.agent_memory": True,
+    # The person's own library: what they attached and what it hands back,
+    # moved between it and its computer at addresses good for one file and a
+    # few minutes (`assistant_agent._my_library`).
+    "app.api.routes.assistant_agent.agent_library": False,
+    "app.api.routes.assistant_agent.agent_file_link": False,
+    "app.api.routes.assistant_agent.agent_file_slot": True,
+    "app.api.routes.assistant_agent.agent_file_handed": True,
 }
 
 

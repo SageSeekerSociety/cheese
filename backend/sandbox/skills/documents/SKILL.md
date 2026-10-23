@@ -1,6 +1,6 @@
 ---
 name: documents
-description: 读取、产出或修改 Word、PowerPoint、Excel、PDF 文件时使用：用户上传了这类文件要你看；用户明确要一个 .docx、.pptx、.xlsx 或 .pdf 文件，比如幻灯片、表格、要交给外面的人的 Word 稿；用户要你改一份已有的文件、还要求格式别动。只要一份给人读的文档、没说要文件时，写芝士文档（cheese-docs），不用这个。说明工具在哪、改已有文件为什么不走「打开再另存」、产出之后怎么让用户看见。
+description: 读写或修改 Word、PowerPoint、Excel、PDF 文件时用：用户传了这类文件，或要产出带格式的办公文档。只要给人读的文档，就写芝士文档。
 ---
 
 # 办公文档

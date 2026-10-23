@@ -154,6 +154,7 @@ async def _tell_the_reviewer(
     `about_card` 填一句话是不是「等你动手」那一类：是就填卡的 id，卡一有决定它
     就从收件箱里消失（`_settle_the_card`）；说结局的那几句不填。
     """
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
@@ -161,7 +162,7 @@ async def _tell_the_reviewer(
         content=content,
         meta={"source": "accept", **meta},
         author="accept",
-        points_at=Event(reviewers=(card.reviewer_handle, *also)),
+        points_at=Event(reviewers=(*reviewers, *also)),
         about_card=about_card,
     )
 
@@ -226,12 +227,15 @@ async def _announce_filed(
         for part in (card.change_subject or "", (card.change_body or "").strip())
         if part
     )
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
         task_id=task.id,
         content=say(
-            "cardFiled", task=task.title, reviewer=f"<@{card.reviewer_handle}>"
+            "cardFiled",
+            task=task.title,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
         ),
         meta=notice(
             EVENT_CARD_FILED,
@@ -241,7 +245,7 @@ async def _announce_filed(
             detail_label=say("labelChanges"),
         ),
         points_at=Event(
-            reviewers=(card.reviewer_handle,),
+            reviewers=tuple(reviewers),
             reporter=task.reporter_handle,
         ),
         about_card=card.id,
@@ -309,11 +313,16 @@ async def _notify_ready(
     signature = pr_signals.signature("ready", card.pr_head_sha or "")
     if ledger.already_sent(pr_signals.NudgeKind.ready, signature):
         return
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await _tell_the_reviewer(
         session,
         card,
         topic,
-        say("acceptReady", pr=card.pr_number, reviewer=f"<@{card.reviewer_handle}>"),
+        say(
+            "acceptReady",
+            pr=card.pr_number,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        ),
         meta=notice(
             EVENT_ACCEPT_READY,
             severity=SEVERITY_INFO,

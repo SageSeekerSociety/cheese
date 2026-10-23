@@ -171,9 +171,8 @@ class RunnerIntake:
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_session`
         # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = self._address_agent(
-            recipient_seat(recipient) if mentioned else None
-        )
+        seat = recipient_seat(recipient) if mentioned else None
+        addressed = self._address_agent(seat)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(

@@ -14,10 +14,11 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { ANNOUNCEMENT_HTML, attachmentImageViewProps, EDITOR_DOC } from './catalogSharedFixtures'
+import { AGENT_TYPES, ANNOUNCEMENT_HTML, attachmentImageViewProps, EDITOR_DOC } from './catalogSharedFixtures'
 
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import AttachmentImageView from '@/components/common/Editor/AttachmentImageView.vue'
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -212,6 +213,42 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
         note: '只给 handle、名册又没注入：查不到显示名就退回 handle，画成 alice，照样没有去处。',
         props: { handle: 'alice' },
         expect: 'alice',
+      },
+    ],
+  },
+  {
+    id: 'default-teammate-picker',
+    title: 'DefaultTeammatePicker',
+    about:
+      '「默认队友」那一格（发题页、改题页、项目集设置共用）：这道题（或这个项目集）底下建出的项目，芝士会带着哪一位预设队友的技能出生。预设清单由调用方取好传进来，这一格只吃 props、只往上发。',
+    file: 'src/components/common/DefaultTeammatePicker.vue',
+    component: DefaultTeammatePicker,
+    needs: UI_T,
+    args: { types: AGENT_TYPES },
+    states: [
+      {
+        name: '停在「继承」',
+        note: '这一层没单独指定（modelValue 是空串）：选中项是第一项「继承」，每个预设的副标题是它的技能清单，没有技能的那一位退回自己的说明。',
+        props: {},
+        expectSelector: '[data-testid="default-teammate"]',
+      },
+      {
+        name: '选定了某一位',
+        note: 'modelValue 是一个预设名：选中项就画那一位的名字。',
+        props: { modelValue: 'reviewer' },
+        expect: '代码审查',
+      },
+      {
+        name: '清单没读到',
+        note: 'typesFailed 为真时只留「继承」那一项，并在它的副标题里说一句 —— 把整格藏掉反而让人没法表达「继承」。',
+        props: { typesFailed: true },
+        expectSelector: '[data-testid="default-teammate"]',
+      },
+      {
+        name: '写过又选回「继承」',
+        note: 'rawValue 有值、modelValue 是空串：这一层本来单独指定过，保存会把它清掉，所以多一句提醒。',
+        props: { rawValue: 'reviewer' },
+        expectSelector: '[data-testid="default-teammate-will-clear"]',
       },
     ],
   },

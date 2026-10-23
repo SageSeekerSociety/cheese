@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 团队（或自己名下）的一份文档，整页打开（#3774）。和资料库里打开一份是同一个面板，
-// 只是上一级是团队的「文档」，名册是团队成员，没有芝士：这一步项目里的芝士读不到团队文档。
+// 只是上一级是团队的「资料库」，名册是团队成员，没有芝士：这一步项目里的芝士读不到团队文档。
 // 这一页取数、删除、移动；画面在同目录的 `TeamDocumentView.vue`。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { ProjectMemberRow } from '@/cx_types'
@@ -27,7 +27,7 @@ const dialog = useDialog()
 const mover = useDocumentMove((to) => void router.push(to))
 const sharer = useDocumentShare()
 const teamData = inject(teamDataInjectionKey, ref())
-/** 页头的上一级：自己名下是「我的文档」，团队是「某团队的文档」。 */
+/** 页头的上一级：自己名下是「我的资料库」，团队是「某团队的资料库」。 */
 const parentLabel = computed(() =>
   teamData.value?.personal ? t('teams.docs.mine') : t('teams.docs.ofTeam', { name: teamData.value?.name ?? '' })
 )
@@ -45,7 +45,7 @@ const authors = computed(() =>
 )
 const parent = computed(() => ({
   label: parentLabel.value,
-  to: { name: 'TeamsDetailDocs', params: { handle: props.handle } },
+  to: { name: 'TeamsDetailLibrary', params: { handle: props.handle } },
 }))
 
 watch(
@@ -88,7 +88,7 @@ async function remove() {
   if (!confirmed) return
   try {
     await deleteDocument(props.docId)
-    void router.push({ name: 'TeamsDetailDocs', params: { handle: props.handle } })
+    void router.push({ name: 'TeamsDetailLibrary', params: { handle: props.handle } })
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }

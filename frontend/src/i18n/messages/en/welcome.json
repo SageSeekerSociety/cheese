@@ -173,6 +173,7 @@
   "next": "Continue",
   "back": "Back",
   "skipAll": "Skip the guide",
+  "exit": "Leave the guide",
   "finish": "Create project",
   "finishing": "Creating…",
   "failed": "The project was not created: {reason}",
@@ -183,7 +184,8 @@
     "done": "Done",
     "skip": "Skip the tour",
     "gotIt": "Got it",
-    "auto": "Moves on once you do it"
+    "auto": "Moves on once you do it",
+    "dragHint": "Drag to move"
   },
   "stepOf": "Step {n} of {total}",
   "guide": {
@@ -194,7 +196,7 @@
     "reply": {
       "title": "{agent}'s reply",
       "text": "{agent} has replied, in a thread under your message. Open it.",
-      "textWaiting": "{agent} is working on it. The reply appears in a thread under your message; you can leave and will be notified.",
+      "textWaiting": "The reply is in a thread under your message; open it. If it is still being written, you can leave and will be notified.",
       "textFailed": "{agent} could not reply this time; the thread says why. Open it, and once that is sorted, press Retry."
     },
     "confirm": {
@@ -205,7 +207,7 @@
     "task": {
       "title": "Task",
       "text": "{agent} turned this thread into a task. Open it to follow progress and changes.",
-      "textWaiting": "Before it starts, {agent} turns this thread into a task listed under your message."
+      "textWaiting": "This thread becomes a task listed under your message: open it to follow progress and changes."
     },
     "taskPage": {
       "title": "Task page",
@@ -215,11 +217,12 @@
     "accept": {
       "title": "Accept",
       "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason.",
-      "textWaiting": "When it is done, {agent} hands the result to you to review and the review card appears here. You can leave and will be notified."
+      "textWaiting": "The review card appears here: accept the result, or send it back with a reason. You can leave while it is still working and will be notified."
     },
     "overview": {
       "title": "Overview",
-      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress."
+      "text": "Accepted results show up here: a new version of the project under What was made, and the acceptance under Recent progress.",
+      "textWaiting": "Accepted results are on the Overview in the sidebar: What was made gains a new version of the project."
     }
   }
 }

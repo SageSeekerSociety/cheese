@@ -203,11 +203,22 @@ export function useSpaceData() {
     }
   }
 
-  const createCategory = async (name: string, description?: string | null, displayOrder?: number) => {
+  const createCategory = async (
+    name: string,
+    description?: string | null,
+    displayOrder?: number,
+    defaultRole?: string
+  ) => {
     if (!space.currentSpaceId) return
 
     try {
-      await SpacesApi.createCategory(space.currentSpaceId, { name, description, displayOrder })
+      await SpacesApi.createCategory(space.currentSpaceId, {
+        name,
+        description,
+        displayOrder,
+        // 没指定就不带这个键（`undefined` 与「省略」同义，但显式省掉更清楚）。
+        ...(defaultRole !== undefined ? { defaultRole } : {}),
+      })
       await fetchCategories()
       toast.success(t('spaces.detail.manageCategories.createSuccess'))
     } catch (error) {

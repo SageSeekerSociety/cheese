@@ -17,6 +17,7 @@ from app.api.task_serialization import (
     _task_to_api_model,
 )
 from app.api.task_teaching import (
+    apply_task_default_role,
     apply_task_teaching,
     coerce_teaching,
     validate_task_teaching,
@@ -78,7 +79,7 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
     # 请求就找不到（同 ``spaces.create_space``，合并队列 run 36296605673 实测）。
     await db.commit()
 
-    task_model = _task_to_api_model(task)
+    task_model = _task_to_api_model(task, include_private_teaching=True)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
     ]
@@ -286,6 +287,8 @@ async def update_task(
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
+    # 「默认队友」: 同一份 `protocol_override` 里的另一格 (#944)。
+    apply_task_default_role(task, payload.default_role)
 
     if payload.mentors is not None:
         await set_task_mentors(
@@ -310,7 +313,7 @@ async def update_task(
 
     # Fetch submissionSchema for response
     schema_entries = await service.list_submission_schema(task.id)
-    task_response = _task_to_api_model(task)
+    task_response = _task_to_api_model(task, include_private_teaching=True)
     task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response["rubric"] = rubric_to_api(await service.list_rubric(task.id))
     task_response = (

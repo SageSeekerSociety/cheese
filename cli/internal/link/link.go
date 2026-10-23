@@ -159,6 +159,12 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 	}()
 
 	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true})
+	// Say it heartbeats immediately, not at the first tick. The backend starts
+	// its silence clock only after a heartbeat has been heard
+	// (`DeviceHub.silence_allowed`), so until the first one a machine that went
+	// to sleep right after dialling in was never timed out and calls to it
+	// waited for the socket to close.
+	_ = c.Send(Heartbeat())
 
 	// Liveness: reset the read deadline on every pong (and every message below).
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))

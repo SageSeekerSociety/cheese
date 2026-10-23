@@ -18,7 +18,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VApp } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -31,6 +31,7 @@ const readDraft = vi.fn()
 const saveDraft = vi.fn()
 const publishDraft = vi.fn()
 const removeDraft = vi.fn()
+const updateTask = vi.fn()
 
 const spaceDetail = vi.fn()
 const listCategories = vi.fn()
@@ -41,6 +42,8 @@ const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
 const toastError = vi.fn()
 
+// 「默认队友」那一格自己按需拉的预设清单（走 `useAgentTypes` → `@/api`）。
+const listAgentTypes = vi.fn()
 // 芝士：开对话走 `request`，问一句走事件流。事件流按 `script` 一条条念出来，照的是
 // 服务端真推的那几种（`tool`、`tool_args`、`change`、`delta`、`done`）。撤销芝士的改动
 // 走 `/assistant/changes`。
@@ -50,6 +53,7 @@ let script: [string, Record<string, unknown>][] = []
 
 vi.mock('@/api', async (original) => ({
   ...(await original<Record<string, unknown>>()),
+  listAgentTypes: (...a: unknown[]) => listAgentTypes(...a),
   request: (...a: unknown[]) => apiRequest(...a),
   AgentChangesApi: { undo: (...a: unknown[]) => undoChange(...a), redo: vi.fn() },
 }))
@@ -75,6 +79,7 @@ vi.mock('@/api/eventStream', async (original) => ({
 vi.mock('@/api/taskBoard', () => ({
   TaskBoardApi: {
     list: (...a: unknown[]) => listTasks(...a),
+    update: (...a: unknown[]) => updateTask(...a),
   },
 }))
 
@@ -249,6 +254,22 @@ async function check(input: Element) {
   await nextTick()
 }
 
+/** 点开「更多设置」，等「默认队友」那一格画出来（它在那一节里）。 */
+async function openMore(view: ReturnType<typeof render>) {
+  await fireEvent.click(view.getByTestId('task-form-more'))
+  await waitFor(() => expect(view.getByTestId('default-teammate')).toBeTruthy())
+}
+
+/** 在「默认队友」那一格选一个选项。选项画在浮层里，查询挂在 `document.body` 上。 */
+async function pickTeammate(view: ReturnType<typeof render>, name: RegExp) {
+  const picker = view.getByTestId('default-teammate')
+  // Vuetify 3.13 把 `role=combobox` 同时挂在字段的壳和里面的 `<input>` 上；
+  // 带 `aria-label` 的是 `<input>`，按名字找它。
+  await fireEvent.mouseDown(within(picker).getByRole('combobox', { name: '默认队友' }))
+  await fireEvent.click(await view.findByRole('option', { name }))
+  await nextTick()
+}
+
 /** 这条板子的分类/域名组/空间那一份（`activeCategories` 按 `displayOrder` 排、
  *  滤掉已归档，`TaskForm` 那枚下拉的选项就是它）。 */
 function categoriesBody() {
@@ -329,6 +350,20 @@ beforeEach(() => {
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
+  listAgentTypes.mockReset().mockResolvedValue({
+    data: [
+      {
+        name: 'academic-research',
+        title: '学术研究',
+        description: '',
+        body: '',
+        skills: ['documents'],
+        mcp_servers: [],
+        builtin: true,
+      },
+    ],
+    total: 1,
+  })
 })
 
 afterEach(() => {
@@ -444,6 +479,30 @@ describe('发题页：发一道', () => {
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
     expect(sent().teaching).toEqual({})
+  })
+
+  it('默认队友不动选择器：发出去不带 defaultRole，让项目集 / 空间那一层生效', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await openMore(view)
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    // 草稿字段里没有它，发布后再按题目补写一次；这一格没动就不发那次补写。
+    expect(updateTask).not.toHaveBeenCalled()
+  })
+
+  it('默认队友选了预设：发出去带上它的名字', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await openMore(view)
+    await pickTeammate(view, /学术研究/)
+
+    await publish(view)
+    await waitFor(() => expect(updateTask).toHaveBeenCalledTimes(1))
+    expect(updateTask).toHaveBeenCalledWith(501, { defaultRole: 'academic-research' })
   })
 
   it('选一份模板：表单按它填好', async () => {

@@ -48,6 +48,7 @@ from app.domain.agent.turn.intake.context import (
     _Machines,
     _MemoryBooks,
     _proposal_frames,  # noqa: F401  (re-exported)
+    carried_skills,  # noqa: F401  (re-exported; the branch's test imports it here)
     human_private_owner,  # noqa: F401  (re-exported)
     living_doc_text,  # noqa: F401  (re-exported; read by tests)
 )
