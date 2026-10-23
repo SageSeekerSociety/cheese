@@ -75,7 +75,9 @@ function event(roomId: string, content: string, meta: Record<string, unknown> | 
     author: 'system',
     content,
     meta,
-    created_at: `2026-08-15T10:${String(blockSeq).padStart(2, '0')}:00Z`,
+    // One minute apart, counted across the whole file: past the 59th block a
+    // hand-built `10:${seq}` stops being a time at all.
+    created_at: new Date(Date.UTC(2026, 7, 15, 10, blockSeq)).toISOString(),
   }
 }
 
