@@ -20,7 +20,12 @@ type Operation = { id: string; action: 'replies' | 'resolve' | 'reopen'; body: D
 /** 这一包递给画的那一层（props）：取数在这一层，面板不再自己去取。 */
 export type FileThreadsBundle = ReturnType<typeof useFileThreads>
 
-export function useFileThreads(topic: () => string | null, path: () => string | null) {
+export function useFileThreads(
+  topic: () => string | null,
+  path: () => string | null,
+  /** 这一栏开着没有：没开就不去问，打开时再读。 */
+  wanted: () => boolean = () => true
+) {
   const state = reactive<DocThreadState>({ threads: [], activity: {}, errors: {}, busy: false, unknown: null })
   let where = [topic(), path()] as const
   let actor = myId()
@@ -44,7 +49,7 @@ export function useFileThreads(topic: () => string | null, path: () => string | 
     const sequence = ++reads
     const tid = topic()
     const file = path()
-    if (!tid || !file || !active(generation)) return
+    if (!tid || !file || !wanted() || !active(generation)) return
     try {
       const { data } = await listFileThreads(tid, file)
       if (!active(generation) || sequence !== reads) return
@@ -148,7 +153,7 @@ export function useFileThreads(topic: () => string | null, path: () => string | 
     void refresh()
   }
 
-  watch([topic, path], reset, { immediate: true, flush: 'sync' })
+  watch([topic, path, wanted], reset, { immediate: true, flush: 'sync' })
   const timer = setInterval(() => {
     if (actor !== myId()) reset()
   }, 500)

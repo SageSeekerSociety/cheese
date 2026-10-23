@@ -196,7 +196,10 @@ async def read_thread(
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
     result = await _with_notified(
-        db, await service.describe(await service.root(OnDocument(reached.doc.id), comment_id))
+        db,
+        await service.describe(
+            await service.root(OnDocument(reached.doc.id), comment_id)
+        ),
     )
     await db.commit()
     return ok(result)

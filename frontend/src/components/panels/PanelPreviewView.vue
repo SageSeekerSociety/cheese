@@ -150,7 +150,7 @@ const {
 
 // ---- 这一份文件上的评论 ----
 // 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
-const showComments = ref(false)
+const showComments = computed(() => props.comments?.open.value ?? false)
 const commentTarget = computed(() => props.comments?.target.value ?? null)
 // 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
 const commentPick = computed(() => {
@@ -341,7 +341,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       size="sm"
       prepend-icon="mdi-comment-text-outline"
       :title="t('work.room.comments.title')"
-      @click="showComments = !showComments"
+      @click="props.comments?.toggle()"
     >
       {{ t('work.room.comments.title') }}
     </BaseButton>

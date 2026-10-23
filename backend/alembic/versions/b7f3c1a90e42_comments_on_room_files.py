@@ -40,9 +40,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "document_comments", sa.Column("room_id", sa.Uuid(), nullable=True)
-    )
+    op.add_column("document_comments", sa.Column("room_id", sa.Uuid(), nullable=True))
     op.add_column(
         "document_comments",
         sa.Column("room_path", sa.String(512), nullable=True),

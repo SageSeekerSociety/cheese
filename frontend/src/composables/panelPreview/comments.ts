@@ -9,7 +9,7 @@ import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { postFileThread } from '../../api/fileThreads'
 import { myHandle } from '../../me'
@@ -31,9 +31,15 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     if (path.startsWith('library/') || path.startsWith('attachments/')) return null
     return { topicId: props.topicId, path, version: file.version }
   })
+  // 这一栏开着没有：关着就不去问接口——预览每一格打开都多打一次，不值。
+  const open = ref(false)
+  function toggle() {
+    open.value = !open.value
+  }
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,
-    () => commentable.value?.path ?? null
+    () => commentable.value?.path ?? null,
+    () => open.value
   )
 
   /** 写一条新的：说的是什么、指着哪一处。 */
@@ -52,6 +58,9 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   return {
     /** 这一份能不能挂评论：能就是它的地址与版本，不能是 null。 */
     target: commentable,
+    /** 这一栏开着没有；关着时不读接口。 */
+    open,
+    toggle,
     author: myHandle(),
     threads,
     post,

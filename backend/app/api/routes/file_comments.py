@@ -157,9 +157,7 @@ async def _announce(db, place: Place, path: str, comment) -> object:
     )
 
 
-@router.get(
-    "/{topic_id}/files/comments/threads", **typed_response(ThreadListOut)
-)
+@router.get("/{topic_id}/files/comments/threads", **typed_response(ThreadListOut))
 async def list_file_threads(
     topic_id: uuid.UUID,
     db: DbSession,
