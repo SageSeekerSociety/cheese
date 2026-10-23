@@ -63,7 +63,7 @@ def _make_topic(client, project_id: str) -> str:
 def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> str:
     """Insert a historical `pending_gate` row directly — the shape a card had
     before the gate was retired (the API can no longer mint this state)."""
-    from app.domain.review.models import AcceptCard, AcceptStatus
+    from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 
     task_id = delivery_task_id(client, topic_id)
 
@@ -72,12 +72,13 @@ def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> s
             card = AcceptCard(
                 topic_id=uuid.UUID(topic_id),
                 task_id=task_id,
-                reviewer_handle=reviewer,
                 focus="最懂",
                 status=AcceptStatus.pending_gate,
             )
             session.add(card)
             await session.flush()
+            # 评审人搬进 `accept_card_reviewer` 表了（`reviewer_handle` 列已退役）。
+            session.add(AcceptCardReviewer(card_id=card.id, handle=reviewer))
             cid = str(card.id)
             await session.commit()
             return cid

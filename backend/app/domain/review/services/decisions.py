@@ -408,7 +408,7 @@ async def reject(
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReturn"))
-    if decided_by != card.reviewer_handle:
+    if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("returnReviewerOnly"))
 
     await self._cancel_queued_accept(card)
@@ -699,9 +699,11 @@ async def void(
     project = await self._projects.get(topic.project_id)
     self._forbid_ai(project, decided_by, say("reviewActionVoid"))
 
-    if decided_by != card.reviewer_handle and not await MemberService(
-        self._session
-    ).manages(topic.project_id, decided_by, Permission.manage_channels):
+    if decided_by not in await self._repo.reviewer_handles(
+        card.id
+    ) and not await MemberService(self._session).manages(
+        topic.project_id, decided_by, Permission.manage_channels
+    ):
         raise ForbiddenError(say("voidForbidden"))
 
     await self._cancel_queued_accept(card)

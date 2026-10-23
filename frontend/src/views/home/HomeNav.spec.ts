@@ -58,6 +58,9 @@ async function mount(overrides: Record<string, unknown> = {}) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
@@ -130,6 +133,14 @@ describe('首页目录的画面', () => {
       )
     )
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
+  })
+
+  // 手机端不占底栏格（底栏固定三格），市场从这份目录进——两端都要到得着。
+  it('目录里有通往「市场」的一行', async () => {
+    await mount({ teams: [team('crew', '知是开发组')] })
+    await screen.findByText('知是开发组')
+    expect(screen.getByText('市场')).toBeTruthy()
+    expect(hrefs()).toContain('/market')
   })
 
   it('点一个团队在原地展开，再点收起', async () => {

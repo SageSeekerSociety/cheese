@@ -3,7 +3,8 @@
   "loadFailed": "加载市场失败",
   "tabs": {
     "tasks": "题目匹配",
-    "pools": "模型与环境"
+    "pools": "模型与环境",
+    "skills": "技能与插件"
   },
   "tasksIntro": "机构把 {challenges} 发布到市场；团队用自己的项目 {apply}。应征被接受后，项目自动链接到题目，资源包与条件即刻生效。",
   "tasksIntroChallenges": "题目",
