@@ -238,6 +238,11 @@ def test_arming_a_teammate_does_not_depend_on_rooms(
     ``api_client`` and not ``client``: this test reshapes rooms through
     ``db_session``, and only the integration client shares that session.
     """
+    # ``api_client`` 上没有人可替它注册（`_register` 只在拿得出会话的客户端上动手），
+    # 所以这两个人要在这条测试共享的会话里自己建出来：邀请问的是「这个 handle 有
+    # 人持有吗」，没有就是 422。
+    _portal.call(registered, db_session, "alice")
+    _portal.call(registered, db_session, "bob")
     made = post_project(api_client, json={"name": f"rooms-{shape}"}, owner="alice")
     project = made.json()["data"]
     pid = uuid.UUID(project["id"])

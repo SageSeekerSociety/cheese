@@ -174,12 +174,10 @@ onMounted(() => {
 
 // --- 保存 ---------------------------------------------------------------------------
 
-
 /** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。`raw` 是这道题原始的覆盖值。 */
 const defaultRole = ref('')
 const defaultRoleRaw = ref<string | null>(null)
 
-const form = ref<{ submit: () => void } | null>(null)
 const formInvalid = ref(0)
 const attempted = ref(false)
 const saving = ref(false)

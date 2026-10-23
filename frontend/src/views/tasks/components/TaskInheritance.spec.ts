@@ -29,6 +29,7 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
       documentIds: [],
       source: 'both',
     },
+    agent: null,
     materials: [],
     ...overrides,
   }
@@ -150,5 +151,4 @@ describe('建项目会继承什么', () => {
     expect(text).toContain(i18n.global.t('tasks.inheritance.agentNone'))
     expect(text).not.toContain(i18n.global.t('tasks.inheritance.agentSkills'))
   })
-
 })

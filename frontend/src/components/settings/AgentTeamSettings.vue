@@ -99,9 +99,13 @@ const skills = useAgentSkills(
   (agentId, list, version) => {
     const row = agents.value.find((a) => a.id === agentId)
     if (row) {
-      row.configuration = { ...row.configuration, skills: list }
-      // 这一笔把队友的版本顶了一格，就地跟着更新：下一次开面板/保存要带的就是它。
-      row.version = version
+      // 名册是 query 缓存里那一份、只读：改它会被静默丢掉。换一份新对象指给面板，
+      // 这一次保存带的就是翻过页的 version，下一次不用白撞一次 409。
+      skillTarget.value = {
+        ...row,
+        configuration: { ...row.configuration, skills: list },
+        version,
+      }
     }
   },
   // 409：别人先写了。重读一遍，并把面板目标重指到新读回来的那一行 —— 名单

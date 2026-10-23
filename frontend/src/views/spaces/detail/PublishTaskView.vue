@@ -6,8 +6,8 @@
 // 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
 // 点哪份打开哪份；旁边写着存到哪了。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
-import type { AgentType } from '@/cx_types'
 import type { SaveState } from '@/composables/useTaskDraft'
+import type { AgentType } from '@/cx_types'
 import type { NavTarget } from '@/lib/navTarget'
 import type {
   DomainGroup,

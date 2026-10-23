@@ -390,6 +390,7 @@ def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestCli
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.agent_type.library import preset_types
     from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms
     from app.domain.task.models import TaskMembership
     from app.domain.user.repositories import UserRepository
 
@@ -419,7 +420,9 @@ def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestCli
             )
             await session.flush()
             project = await ProjectService(
-                session, default_teammate=default_teammate
+                session,
+                default_teammate=default_teammate,
+                task_terms=TaskTerms(session),
             ).create(
                 owner_handle=handle,
                 name="教育项目",
@@ -486,6 +489,7 @@ def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.agent_type.library import preset_types
     from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms
     from app.domain.task.models import TaskMembership
     from app.domain.user.repositories import UserRepository
 
@@ -521,7 +525,9 @@ def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
             )
             await session.flush()
             project = await ProjectService(
-                session, default_teammate=default_teammate
+                session,
+                default_teammate=default_teammate,
+                task_terms=TaskTerms(session),
             ).create(
                 owner_handle=handle,
                 name="题目包项目",

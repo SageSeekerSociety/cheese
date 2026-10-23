@@ -116,18 +116,25 @@ def card_row(card, version: int | None) -> dict | None:
         "pr_url": card.pr_url,
         "version": version,
         # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
-        "reviewer": card.reviewer_handle,
+        "reviewer": "、".join(_card_reviewers(card)) or None,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
     }
 
 
+def _card_reviewers(card) -> tuple[str, ...]:
+    """一张卡的审阅人集合：ORM 行还留着 `reviewer_handle` 那一列，`RailCard` 只有集合。"""
+    handles = getattr(card, "reviewer_handles", None)
+    if handles:
+        return tuple(handles)
+    single = getattr(card, "reviewer_handle", None)
+    return (single,) if single else ()
+
+
 def _task_markers(task, card, shown, asking, me: str, reviewers=()) -> dict[str, bool]:
     """Attention includes the reporter; personal wording names the next actor."""
     asked = () if asking is None else asking.waiting(task.people)
-    handles = tuple(reviewers) or (
-        (card.reviewer_handle,) if card is not None and card.reviewer_handle else ()
-    )
+    handles = tuple(reviewers) or (_card_reviewers(card) if card is not None else ())
     reviewer = handles[0] if handles else None
     owner = task.owner_handle if presentation.owner_acts_on(shown) else None
     attention = address(

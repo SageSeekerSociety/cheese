@@ -3,7 +3,6 @@
 //
 // 这一层管「拿到什么」：当前预览是哪一件、它读成的字节是什么、授权签下来没有。用哪种查看器
 // 画、空态写哪句话、全屏按钮在不在，是画的那一半的事（判据都在递下去的 props 里）。
-import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
 import type { PreviewInfo } from '../../cx_types'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewOptions, PanelPreviewProps, PreviewFrames } from './types'
@@ -12,6 +11,7 @@ import { readPreviewFile, requestPreviewSession } from '../../api'
 import { APP_NAVIGATION_BUDGET_MS } from '../usePreviewFrames'
 
 import { t } from '@/i18n'
+import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
 import { readPreview } from '@/query/room'
 
 export interface CurrentPreviewDeps {

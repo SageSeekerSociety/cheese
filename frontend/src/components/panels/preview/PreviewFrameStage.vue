@@ -64,7 +64,6 @@ const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popup
 function sandboxFor(mime?: string | null): string {
   return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
 }
-
 </script>
 
 <template>

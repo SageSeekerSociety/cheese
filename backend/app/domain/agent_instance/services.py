@@ -449,7 +449,7 @@ class AgentInstanceService:
         writers that read the same version would both pass a comparison made
         here (``living_doc.repositories.set_content`` takes the same stand).
         """
-        await self._validate_model(instance.project_id, config)
+        await self._validate_model(instance.project_id, config, instance.id)
         if expected_version is None:
             instance.configuration = config.model_dump()
             # The attribute, not the SQL expression below: assigning the

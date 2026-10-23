@@ -77,10 +77,7 @@ export function buildTeaching(draft: TeachingDraft): SpaceTeaching {
  *
  * `undefined` 就是「不带这个键」，由调用方据此决定放不放进 payload。
  */
-export function defaultRolePayload(
-  selected: string,
-  raw: string | null | undefined
-): string | undefined {
+export function defaultRolePayload(selected: string, raw: string | null | undefined): string | undefined {
   if (selected === '') return raw == null ? undefined : ''
   return selected
 }

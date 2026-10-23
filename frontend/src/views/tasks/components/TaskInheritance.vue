@@ -42,14 +42,7 @@ const sourceLabel = computed(() => {
 /** 辅导里有没有一句话可说 —— 都没说时连标题都不摆。 */
 const hasTeaching = computed(() => {
   const g = teaching.value
-  return (
-    !!g &&
-    (!!g.mode ||
-      !!g.systemPrompt ||
-      !!g.privatePrompt ||
-      !!g.spacePrompt ||
-      !!g.learningGoals?.length)
-  )
+  return !!g && (!!g.mode || !!g.systemPrompt || !!g.privatePrompt || !!g.spacePrompt || !!g.learningGoals?.length)
 })
 
 const materials = computed(() => props.inheritance?.materials ?? [])

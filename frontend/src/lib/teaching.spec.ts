@@ -2,13 +2,7 @@
 // `Teaching.is_empty` 同一个意思），否则「留空」会被读成「写了些空的东西」。
 import { describe, expect, it } from 'vitest'
 
-import {
-  buildTeaching,
-  defaultRolePayload,
-  draftFromConfig,
-  emptyTeachingDraft,
-  isTeachingBlank,
-} from './teaching'
+import { buildTeaching, defaultRolePayload, draftFromConfig, emptyTeachingDraft, isTeachingBlank } from './teaching'
 
 describe('teaching 表单转换', () => {
   it('接口那一份读成表单那几格，没设的落成空', () => {
@@ -43,9 +37,7 @@ describe('teaching 表单转换', () => {
 
   it('全空才算没说：只选了方式也算这一层说了话', () => {
     expect(isTeachingBlank(null)).toBe(true)
-    expect(
-      isTeachingBlank({ mode: null, systemPrompt: ' ', materialIds: [], documentIds: [] })
-    ).toBe(true)
+    expect(isTeachingBlank({ mode: null, systemPrompt: ' ', materialIds: [], documentIds: [] })).toBe(true)
     expect(isTeachingBlank({ mode: 'guide' })).toBe(false)
     expect(isTeachingBlank({ materialIds: [3] })).toBe(false)
   })

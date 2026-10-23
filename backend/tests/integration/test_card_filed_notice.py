@@ -208,9 +208,8 @@ def test_rejecting_the_card_clears_the_wait_from_both_inboxes(client):
     assert len(_unread(client, alice)) == 1
     assert len(_unread(client, reporter)) == 1
 
-    # 撤回只认递卡人（或武装自动合并的人），所以这张卡由递它的 bob 退回 ——
-    # 审阅人 alice 撤不了（那条判据在 `test_accept_authorization.py` 里单列）。
-    r = _decide(client, card, "reject", who="bob", note="口径和上一版对不上")
+    # 退回只认这张卡的审阅人：alice 是递卡时点名的那一位，所以由她退回。
+    r = _decide(client, card, "reject", who="alice", note="口径和上一版对不上")
     assert r.status_code == 200, r.text
     wait_work_idle()
 

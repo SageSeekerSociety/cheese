@@ -184,7 +184,9 @@ async def _may_configure(
         project_id, actor.handle, team=project_team
     ):
         return True
-    return await MemberService(db).manages(project_id, actor.handle)
+    return await MemberService(db).manages(
+        project_id, actor.handle, Permission.configure_agents
+    )
 
 
 @router.get("/{project_id}/agents")

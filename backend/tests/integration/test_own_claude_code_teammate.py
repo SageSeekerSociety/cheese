@@ -69,6 +69,12 @@ def _add(client, project_id, handle: str, connection: str):
             await place_in_project_team(
                 sql_device_service(db), row.device_id, uuid.UUID(project_id)
             )
+            # 这份连接跟着机器归队：`logins(team_id)` 认的是**登录行**的 team_id，
+            # 只把机器挪过去，连接还在原来那个团队名下，加队友时就看不着它。
+            from app.domain.project.models import Project
+
+            team = await db.get(Project, uuid.UUID(project_id))
+            row.team_id = team.team_id
             await db.commit()
             return "sonnet", row.device_id
 

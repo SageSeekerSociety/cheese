@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.delivery_events import SettleCard
@@ -298,11 +297,7 @@ class ProjectService:
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
-            # ponytail: 本地没配 Forgejo 时跳过建仓，项目照样建得起来（上限：
-            # 该项目没有代码仓库；要用 git 功能的路由仍会如实报
-            # forgeHostingNotConfigured。升级路径：配 FORGEJO_URL 后此分支自动恢复）。
-            if settings.forgejo_url or settings.environment != "development":
-                await provision_repository(project.id, self._session)
+            await provision_repository(project.id, self._session)
         # What the person said they wanted to do, carried into the project's
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)

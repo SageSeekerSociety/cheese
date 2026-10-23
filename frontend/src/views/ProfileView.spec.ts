@@ -12,7 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProfileView from './ProfileView.vue'
 
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics, listProjectAgents, setUserRemark } from '@/api'
+import {
+  deleteUnderstanding,
+  getMemberSummary,
+  getUserProfile,
+  getUserTopics,
+  listProjectAgents,
+  setUserRemark,
+} from '@/api'
 import i18n, { setLocale } from '@/i18n'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))

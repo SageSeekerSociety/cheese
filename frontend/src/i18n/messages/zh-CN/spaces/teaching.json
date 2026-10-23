@@ -25,7 +25,7 @@
     "materialsUpload": "上传到资料库",
     "mode": "方式",
     "privatePrompt": "出题人私有指导",
-    "privatePromptHint": "只有出题人和板管理员看得到这段配置；AI 队友照它做，但不会原样告诉学生。参考答案、评分口径这类不该进学生资料集的东西写在这里。",
+    "privatePromptHint": "只有出题人和板管理员看得到这段配置；AI 队友照它做，但不会原样转述给答题的人。参考答案、评分口径这类不该进公开资料的东西写在这里。",
     "spacePrompt": "同时生效的空间要求",
     "systemPrompt": "补充要求",
     "systemPromptPlaceholder": "例如：可协助解读评测输出，不提供完整代码",

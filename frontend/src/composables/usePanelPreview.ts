@@ -16,6 +16,7 @@
 // 文档的字节与两种读法（`documentBytes.ts`）、在线编辑与历史（`editing.ts`）、元数据的
 // 轮询（`polling.ts`）各自成篇拆在 `panelPreview/` 下。返回的那一包和拆之前一模一样，
 // 组件、演示夹具与单测都不用动。
+import type { McpAppMessage } from '@/lib/mcpAppBridge'
 import type { ChatAttachment } from '../cx_types'
 import type { ImageUpload, PanelPreviewOptions, PanelPreviewProps } from './panelPreview/types'
 

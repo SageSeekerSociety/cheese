@@ -320,23 +320,17 @@ def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
     )
 
 
-def test_only_the_filer_can_void_not_a_member_or_a_team_admin(client):
-    """作废只认递卡人（这张卡是 alice 递的）或布防人 —— 团队成员、团队管理员都不行。
-
-    这相对旧口径（审阅人 / 项目所有者 / 团队管理员）是一条收紧：撤回是递卡人的
-    动作，不是看的人或管事的动作。
-    """
+def test_a_team_admin_can_void_but_an_ordinary_member_cannot(client):
     tid, card_id = _orphan_card(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     join_project_team(client, pid, "lead-user", admin=True)
     join_project_team(client, pid, "member-user")
 
     assert _void(client, card_id, "member-user").status_code == 403
-    assert _void(client, card_id, "lead-user").status_code == 403
     assert _void(client, card_id, "mallory").status_code == 403
     assert _latest_card(client, tid)["status"] == "pending_gate"
 
-    assert _void(client, card_id, "alice").status_code == 200
+    assert _void(client, card_id, "lead-user").status_code == 200
     assert _latest_card(client, tid)["status"] == "revoked"
 
 

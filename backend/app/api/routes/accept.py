@@ -149,10 +149,13 @@ async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Ac
     return actor
 
 
-def _requested_reviewers(body: AcceptCardCreate) -> list[str] | None:
+def _requested_reviewers(
+    body: AcceptCardCreate | AcceptCardReassign,
+) -> list[str] | None:
     """请求体里点名递给谁：集合优先，其次是单个；都没给就是 None（爬默认阶梯）。"""
-    if body.reviewer_handles:
-        return body.reviewer_handles
+    handles = getattr(body, "reviewer_handles", None)
+    if handles:
+        return handles
     if body.reviewer_handle:
         return [body.reviewer_handle]
     return None

@@ -1,9 +1,9 @@
 // 「预览」这一格对外的那一份 props、取数那一层的选项，和进出的两样载荷（要进房间的一张
 // 图、画完的那张合成图）。取数那一半（`../usePanelPreview.ts`）和拆开的几个子模块都读它，
 // 所以它单独放一处，而不是挂在组合根上。
+import type { PreviewQuestion } from '@/lib/previewQuestion'
 import type { ChatAttachment } from '../../cx_types'
 import type { FramePick, usePreviewFrames } from '../usePreviewFrames'
-import type { PreviewQuestion } from '@/lib/previewQuestion'
 
 export interface PanelPreviewProps {
   topicId: string | null

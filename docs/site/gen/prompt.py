@@ -215,6 +215,10 @@ class _Week:
             or self.private_prompt
         )
 
+    def fill(self, template: str) -> str:
+        """`Teaching.fill` 的替身：`{learning_goals}` 换成这一节的目标。"""
+        return template.replace("{learning_goals}", "、".join(self.learning_goals))
+
 
 #: A stand-in for ``task.teaching.TeachingContext``: a resolved week, the two
 #: kinds of material it points at: 课件 and team documents.

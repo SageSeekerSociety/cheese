@@ -22,7 +22,7 @@
   "marketTabPlugins": "插件",
   "marketTabSkills": "技能",
   "marketTitle": "技能市场",
-  "noMachine": "这个房间还没绑工作电脑，机器上的技能读不到。",
+  "noMachine": "这个频道还没绑工作电脑，机器上的技能读不到。",
   "saveFailed": "技能没能保存",
   "stale": "别人刚改过这个队友",
   "title": "技能"
