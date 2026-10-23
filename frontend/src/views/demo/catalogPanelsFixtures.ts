@@ -364,9 +364,11 @@ export function previewBundle(
     comments: {
       target: computed(() => null),
       author: 'demo',
+      open: ref(false),
+      toggle: noop,
       threads: docThreadsBundle(),
       post: noopAsync,
-    } as never,
+    },
     revs: v.revs,
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
