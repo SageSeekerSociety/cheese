@@ -53,9 +53,11 @@
     "@tanstack/query-persist-client-core": "5.104.1",
     "@tanstack/vue-query": "5.104.1",
     "@tiptap/core": "3.30.5",
+    "@tiptap/extension-blockquote": "3.30.5",
     "@tiptap/extension-code-block-lowlight": "3.30.5",
     "@tiptap/extension-collaboration": "3.30.5",
     "@tiptap/extension-collaboration-caret": "3.30.5",
+    "@tiptap/extension-document": "3.30.5",
     "@tiptap/extension-drag-handle": "3.30.5",
     "@tiptap/extension-drag-handle-vue-3": "3.30.5",
     "@tiptap/extension-highlight": "3.30.5",
@@ -185,6 +187,10 @@
       "prosemirror-view": "1.42.3",
       "qs": "6.16.0",
       "source-map-js": "1.2.2"
+    },
+    "patchedDependencies": {
+      "@tiptap/y-tiptap@3.0.7": "patches/@tiptap__y-tiptap@3.0.7.patch",
+      "@handlewithcare/prosemirror-suggest-changes@0.1.8": "patches/@handlewithcare__prosemirror-suggest-changes@0.1.8.patch"
     }
   }
 }

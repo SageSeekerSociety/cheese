@@ -188,7 +188,7 @@ else
     # dependencies both are installed from.
     case "$changed_path" in
       frontend/collab/* | frontend/src/lib/docSchema/* \
-        | frontend/package.json | frontend/pnpm-lock.yaml)
+        | frontend/package.json | frontend/pnpm-lock.yaml | frontend/patches/*)
         collab=true
         ;;
     esac

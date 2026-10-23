@@ -200,9 +200,10 @@ def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, task)
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 
-def test_a_suggestion_that_reshapes_paragraphs_is_not_sent_back_to_reread(client, task):
-    """Quoting the document again cannot turn a new paragraph into something a
-    suggestion can mark, so the refusal says what can be done instead."""
+def test_a_suggestion_that_cannot_be_made_is_not_sent_back_to_reread(client, task):
+    """Quoting the document again cannot turn a change a suggestion cannot
+    mark (a row added to a table) into one it can, so the refusal says what
+    can be done instead."""
     host = BackendHost(client, *task)
     cheese.run_platform_tool("cheese_doc_get", {}, host)
     cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
@@ -221,7 +222,7 @@ def test_a_suggestion_that_reshapes_paragraphs_is_not_sent_back_to_reread(client
     said = str(refused.value)
     assert "一处都没改" in said
     assert "重读" not in said
-    assert "直接改" in said and "段落末尾" in said
+    assert "直接改" in said and "在对话里说" in said
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 
