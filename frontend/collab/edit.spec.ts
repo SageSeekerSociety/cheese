@@ -285,3 +285,22 @@ describe('an edit in a list whose item opens empty above a nested list', () => {
     }
   })
 })
+
+describe('an agent proposing words at the end of the last paragraph', () => {
+  const live = parseMarkdown('第一段，讲范围。\n\n第二段，讲目标。\n')
+
+  it('proposes them inside that paragraph', () => {
+    const result = applyEdits(live, [{ old: '讲目标。', new: '讲目标。先定边界再排期。' }], 'suggest', 'cheese')
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(withoutSuggestions(result.doc))).toBe('第一段，讲范围。\n\n第二段，讲目标。')
+    const [proposed] = pendingSuggestions(result.doc)
+    let accepted = ''
+    decideSuggestion(
+      EditorState.create({ doc: result.doc }),
+      (tr) => (accepted = nodeMarkdown(tr.doc)),
+      proposed.id,
+      true
+    )
+    expect(accepted).toBe('第一段，讲范围。\n\n第二段，讲目标。先定边界再排期。')
+  })
+})
