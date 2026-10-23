@@ -47,6 +47,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     Integer,
+    String,
     Uuid,
     cast,
     column,
@@ -66,7 +67,7 @@ _turns = table(
     column("conversation_id", Uuid),
     column("started_at", DateTime(timezone=True)),
     column("stopped_at", DateTime(timezone=True)),
-    column("stop_reason"),
+    column("stop_reason", String(32)),
 )
 
 #: 房间里的块（`block.models.Block`，表 `blocks`）。失败事件和提示计数都落在这。
