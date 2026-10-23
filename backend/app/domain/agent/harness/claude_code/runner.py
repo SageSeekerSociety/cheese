@@ -1036,6 +1036,11 @@ class Runner(runner.Runner[Journal]):
             delta, block = event.get("delta") or {}, self.live_blocks[-1]
             if delta.get("type") == "text_delta" and block["type"] == "text":
                 block["text"] += str(delta.get("text") or "")
+                # Writing is working, however long one message takes: the
+                # finished block below would be the only other stamp, and a
+                # single answer that streams for half an hour would leave the
+                # silence clock with nothing to go on.
+                self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
                 block["arguments"] += str(delta.get("partial_json") or "")
