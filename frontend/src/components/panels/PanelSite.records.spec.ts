@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePanelSite } from '../../composables/usePanelSite'
 import { storageRemove } from '../../lib/browserStorage'
+import { forgetWindows } from '../../lib/siteWindow'
 
 import PanelSite from './PanelSite.vue'
 
@@ -72,6 +73,8 @@ function open() {
   )
 }
 beforeEach(() => {
+  // 现场那一窗存在模块级的表里：前一条用例留下的窗口会变成这一条的「上次打开」。
+  forgetWindows()
   storageRemove('cheese.site.view')
   api.getTranscript.mockReset()
   api.sessionRecordImageUrl.mockReset()

@@ -97,8 +97,12 @@ class RunRecordRepository:
         limit: int = 500,
         seat: str | None = None,
         before: tuple[datetime, str, uuid.UUID] | None = None,
+        after: tuple[datetime, str, uuid.UUID] | None = None,
     ) -> list[RunRecord]:
-        """The conversation's records between two moments, oldest first."""
+        """The conversation's records between two moments, oldest first.
+
+        `before` takes the newest `limit` up to that bound; `after` takes the
+        oldest `limit` past it — one call per direction a reader pages in."""
         stmt = select(RunRecord).where(RunRecord.conversation_id == conversation_id)
         if seat is not None:
             stmt = stmt.where(RunRecord.seat == seat)
@@ -111,6 +115,15 @@ class RunRecordRepository:
             stmt = stmt.where(
                 tuple_(RunRecord.created_at, author, RunRecord.id) < before
             )
+        if after is not None:
+            stmt = stmt.where(
+                tuple_(RunRecord.created_at, author, RunRecord.id) > after
+            )
+        if after is not None and before is None:
+            rows = await self._session.scalars(
+                stmt.order_by(RunRecord.created_at, author, RunRecord.id).limit(limit)
+            )
+            return list(rows)
         rows = await self._session.scalars(
             stmt.order_by(
                 RunRecord.created_at.desc(), author.desc(), RunRecord.id.desc()

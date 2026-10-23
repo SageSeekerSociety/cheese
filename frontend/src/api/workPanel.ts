@@ -24,11 +24,12 @@ import { ApiError, authHeaders, BASE, request } from './http'
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string; author?: string | null } = {}
+  opts: { limit?: number; before?: string; after?: string; author?: string | null } = {}
 ): Promise<SitePage> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
+  if (opts.after) q.set('after', opts.after)
   if (opts.author) q.set('author', opts.author)
   const qs = q.toString()
   return request<SitePage>(`/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`)

@@ -513,6 +513,7 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    arrived: reactive(new Set<string>()),
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {
