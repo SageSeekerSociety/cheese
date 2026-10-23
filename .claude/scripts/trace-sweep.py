@@ -88,7 +88,11 @@ NEW = "新"
 KINDS = [
     ("工具参数类型不符", "平台", r"InputValidationError|failed schema validation|invalid_type|缺少参数"),
     ("未回复消息就调别的工具", "平台", r"has sent a message you have not answered"),
-    ("凭据只管另一段对话", "平台", r"credential works another conversation"),
+    (
+        "凭据只管另一段对话",
+        "平台",
+        r"credential works another conversation|taskCredentialOtherConversation|只在自己那段对话里读写",
+    ),
     ("改文件前没读/读后被改", "平台", r"has not been read yet|modified since read"),
     ("文档版本冲突或撞上建议", "平台", r"文档现在是第|一处都没改|待处理的修改建议"),
     ("平台接口 5xx", "平台", r"Bad Gateway|HTTP 50\d|Platform HTTP 5"),

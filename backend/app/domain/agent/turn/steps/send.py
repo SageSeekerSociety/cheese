@@ -372,7 +372,7 @@ async def send_prepared(
             topic_id,
             turn_id,
             AgentResult(
-                text=exception_text(exc) or "这次没能把消息送进机器上的会话",
+                text=exception_text(exc) or "这次没能把消息送到 AI 队友那里",
                 session_id=resume_session_id,
                 is_error=True,
                 failure_code=failure_code,

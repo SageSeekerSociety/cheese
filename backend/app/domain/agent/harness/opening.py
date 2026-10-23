@@ -27,9 +27,17 @@ from app.domain.task.teaching import TeachingContext
 _STANDING = {"owner": "项目所有者", "team": "团队成员", "external": "外部成员"}
 
 
-def _standing(member: dict) -> str:
+def _standing(member: dict, names: dict[str, str]) -> str:
+    """An agent a member brought says whose it is, by the name the roster gives
+    that person: what the agent says is its own, and without this line a reader
+    of the transcript cannot tell it from what its owner said."""
     if member.get("agent"):
-        return "AI 队友"
+        owner = member.get("owner_handle")
+        if owner is None:
+            return "AI 队友"
+        if owner in names:
+            return f"AI 队友，{names[owner]}带来的"
+        return "AI 队友，带它来的人不在这张表上"
     return _STANDING.get(member.get("source") or "", "成员")
 
 
@@ -331,8 +339,9 @@ def build_session_opening(
                 "仓库。细则看 `cheese_accept_request` 的说明。"
             )
     if roster:
+        names = {m["handle"]: m["name"] for m in roster if not m.get("agent")}
         lines = "\n".join(
-            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}"
+            f"- {m['name']}（{_standing(m, names)}，handle: {m['handle']}"
             + (f"，{m['about']}" if m.get("about") else "")
             + (f"，时区 {m['timezone']}" if m.get("timezone") else "")
             + "）"

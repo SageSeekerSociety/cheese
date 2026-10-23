@@ -10,6 +10,8 @@
 // 报回去。
 import type { BoardColumn } from '@/cx_types'
 
+import { computed } from 'vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { columnDotStyle } from '@/lib/board'
@@ -63,6 +65,10 @@ function onStatus() {
   if (props.expandable) emit('toggle')
   else emit('review')
 }
+
+/** 待审阅的卡点状态那半句是去「改动」：右边跟一颗向右的箭头，让人先看得出这里能点。
+ *  手机上有独立的「审阅」按钮，历史卡有自己的上下箭头，都不再跟这一颗。 */
+const goToChanges = computed(() => !props.expandable && !props.revoke && !props.reviewButton)
 </script>
 
 <template>
@@ -92,6 +98,7 @@ function onStatus() {
       <v-icon v-if="expandable" size="16" class="accept-bar__caret">{{
         expanded ? 'mdi-chevron-down' : 'mdi-chevron-up'
       }}</v-icon>
+      <v-icon v-else-if="goToChanges" size="16" class="accept-bar__go" aria-hidden="true"> mdi-chevron-right </v-icon>
     </button>
     <BaseButton v-if="reviewButton" kind="primary" size="sm" @click="emit('review')">
       {{ t('work.room.accept.review') }}
@@ -179,6 +186,11 @@ function onStatus() {
 .accept-bar__caret {
   flex: none;
   margin-left: auto;
+  color: var(--faint);
+}
+/* 去「改动」的箭头贴着标题，不推到行尾：它说明的是「这几个字能点」。 */
+.accept-bar__go {
+  flex: none;
   color: var(--faint);
 }
 .accept-bar__accept {

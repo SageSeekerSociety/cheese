@@ -22,7 +22,7 @@ carries ``can_delete`` and no refusal narrows who may remove one.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
@@ -47,6 +47,7 @@ from app.domain.routine.templates import RoutineTemplateService
 from app.domain.routine.trigger import describe_trigger
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.windows import month_end, month_of, month_start
 
 router = APIRouter(prefix="", tags=["routines"])
 
@@ -129,6 +130,7 @@ def _routine(
     can_delete: bool = False,
     room_archived: bool = False,
     last_run_status: str | None = None,
+    credits_this_month: float = 0.0,
 ) -> dict:
     trigger_text = describe_trigger(row)
     return {
@@ -137,6 +139,7 @@ def _routine(
         "can_delete": can_delete,
         "room_archived": room_archived,
         "last_run_status": last_run_status,
+        "credits_this_month": credits_this_month,
         "project_id": str(row.project_id),
         "topic_id": str(row.topic_id),
         "title": row.title,
@@ -174,7 +177,7 @@ def _template(row: RoutineTemplate) -> dict:
     }
 
 
-def _run(row: RoutineRun) -> dict:
+def _run(row: RoutineRun, *, credits: float | None = None) -> dict:
     return {
         "id": str(row.id),
         "routine_id": str(row.routine_id),
@@ -190,6 +193,9 @@ def _run(row: RoutineRun) -> dict:
         "started_at": _iso(row.started_at),
         "finished_at": _iso(row.finished_at),
         "turn_id": str(row.turn_id) if row.turn_id else None,
+        # 点数，本月窗口内。`None` 是「还没有数」—— 还没跑完，或者刚跑完花费还没落账
+        # （几秒到几十秒）。写 0 是在说「这一轮没花钱」，两件事画出来不一样。
+        "credits": credits,
     }
 
 
@@ -304,16 +310,27 @@ async def _present(
 
     行上那颗图形还有两档要说：正在排队、上一次没跑成。这两档同样不写规则那一行，
     一起在这里问完（`last_run_status`）。
+
+    「本月花了多少点」（`credits_this_month`）也一样：规则表上不存累计（`spend.py`
+    说明了为什么不存），一起在这里对账本问完这一批。窗口是平台口径的一个月
+    （`month_start`），和团队额度页的「本月」是同一个起点。
     """
     service = RoutineService(db)
     archived = await service.archived_room_ids([r.topic_id for r in rows])
     latest = await service.latest_run_statuses([r.id for r in rows])
+    month = month_of(datetime.now(UTC))
+    credits = await service.credits_by_rule(
+        [r.id for r in rows],
+        since=month_start(month),
+        until=month_end(month),
+    )
     return [
         _routine(
             r,
             can_delete=_may_delete(r, actor, admin=admin),
             room_archived=r.topic_id in archived,
             last_run_status=latest.get(r.id),
+            credits_this_month=credits.get(r.id, 0.0),
         )
         for r in rows
     ]
@@ -425,8 +442,18 @@ async def get_routine(
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
     presented = await _present_one(db, actor, row)
-    runs, _ = await RoutineService(db).runs(row.id)
-    return ok({**presented, "runs": [_run(r) for r in runs]})
+    service = RoutineService(db)
+    runs, _ = await service.runs(row.id)
+    month = month_of(datetime.now(UTC))
+    per_run = await service.credits_by_run(
+        runs, since=month_start(month), until=month_end(month)
+    )
+    return ok(
+        {
+            **presented,
+            "runs": [_run(r, credits=per_run.get(r.id)) for r in runs],
+        }
+    )
 
 
 @router.patch("/routines/{routine_id}", dependencies=[ROUTE_DECIDES])
@@ -515,12 +542,26 @@ async def list_runs(
     """这条规则的一页执行记录。行里展开时读最近几次，「看全部」那一页翻着读。
 
     `total` 是**筛过之后的全部**：翻页器上那句「共 N 次」说的是它。
+
+    每一行带它自己本月的点数（`credits`），顶上另外给这条规则本月的合计
+    （`credits_this_month`）—— 合计是整条规则的，不是这一页的：读者要看的是「这条
+    规则这个月花了多少」，翻到第几页都该是同一个数（`spend.credits_by_rule`）。
     """
     row, _ = await _routine_actor(db, resolver, routine_id)
-    items, total = await RoutineService(db).runs(
+    service = RoutineService(db)
+    items, total = await service.runs(
         row.id, offset=offset, limit=limit, failed_only=failed_only
     )
-    return ok(page([_run(r) for r in items], total))
+    month = month_of(datetime.now(UTC))
+    window = {"since": month_start(month), "until": month_end(month)}
+    per_run = await service.credits_by_run(items, **window)
+    whole = await service.credits_by_rule([row.id], **window)
+    return ok(
+        {
+            **page([_run(r, credits=per_run.get(r.id)) for r in items], total),
+            "credits_this_month": whole.get(row.id, 0.0),
+        }
+    )
 
 
 @router.post("/routine-runs/{run_id}/report", dependencies=[ROUTE_DECIDES])

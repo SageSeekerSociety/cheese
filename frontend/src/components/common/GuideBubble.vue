@@ -15,6 +15,8 @@
 // 点一下常会带出一段动画（支线滑出来、任务页换进来、一段文字展开），动画中途量到的
 // 位置是错的。页面还在动的时候圈跟着目标走，小窗原来那块地方被占了就先收起来，等
 // 动画停了再落位；原来那块地方还空着就不挪，免得文字一长出来小窗满屏跳。
+//
+// 人觉得它挡着东西时可以拖：拖过之后这一站就停在他放的地方，走到下一站重新算。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
@@ -80,12 +82,14 @@ const spot = ref<Spot | null>(null)
 const parked = ref(false)
 /** 小窗落位时目标在哪：目标挪了，小窗要跟着重新找地方。 */
 let placedFor: DOMRectReadOnly | null = null
+/** 人把它拖到哪了。拖过之后这一站就停在他放的地方，走到下一站再清掉重算。 */
+const dragged = ref<{ left: number; top: number } | null>(null)
+let dragFrom: { x: number; y: number; left: number; top: number } | null = null
 let bubbleNode: HTMLElement | null = null
 let bubbleH = BUBBLE_H
 function holdBubble(el: unknown) {
   bubbleNode = el instanceof HTMLElement ? el : null
 }
-
 /** 页面上还有没有在演的动画（过渡、入场）。一直转的（加载圈、「正在工作」的点）不算。 */
 function animating(): boolean {
   return (document.getAnimations?.() ?? []).some((a) => {
@@ -97,7 +101,61 @@ function animating(): boolean {
   })
 }
 
+// 拖的是标题那一条：按住它挪，小窗跟着走。点在「下一步」上不算拖——那两个按钮不在
+// 这一行里。挪过 3px 才算拖，单纯点一下标题不会把自动摆的位置钉住。
+function startDrag(e: PointerEvent) {
+  if (e.button !== 0 || !bubbleNode) return
+  const r = bubbleNode.getBoundingClientRect()
+  dragFrom = { x: e.clientX, y: e.clientY, left: r.left, top: r.top }
+  try {
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  } catch {
+    // 合成出来的事件、或者指针已经不在了：捕获不上也不影响挪。
+  }
+  e.preventDefault()
+}
+function moveDrag(e: PointerEvent) {
+  if (!dragFrom || !bubbleNode) return
+  const dx = e.clientX - dragFrom.x
+  const dy = e.clientY - dragFrom.y
+  if (!dragged.value && Math.abs(dx) + Math.abs(dy) < 3) return
+  const w = bubbleNode.offsetWidth || BUBBLE_W
+  const h = bubbleNode.offsetHeight || bubbleH
+  dragged.value = {
+    left: clamp(dragFrom.left + dx, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE)),
+    top: clamp(dragFrom.top + dy, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE)),
+  }
+}
+function endDrag(e: PointerEvent) {
+  if (!dragFrom) return
+  dragFrom = null
+  try {
+    ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+  } catch {
+    // 没捕获住（浏览器已经自己收回了）就什么都不用做。
+  }
+}
+// 走到下一站：人上一次拖的位置到这里为止，重新按新目标算一次。
+watch(
+  () => `${props.title}::${props.step ?? ''}`,
+  () => {
+    dragged.value = null
+    dragFrom = null
+  }
+)
+/** 窗口改小了之后，人拖到边上那一版也得跟着收回来，不然会跑到屏幕外面。 */
+function clampDragged() {
+  const d = dragged.value
+  if (!d) return
+  const w = bubbleNode?.offsetWidth || BUBBLE_W
+  const h = bubbleNode?.offsetHeight || bubbleH
+  const left = clamp(d.left, EDGE, Math.max(EDGE, window.innerWidth - w - EDGE))
+  const top = clamp(d.top, EDGE, Math.max(EDGE, window.innerHeight - h - EDGE))
+  if (left !== d.left || top !== d.top) dragged.value = { left, top }
+}
+
 function measure(): boolean {
+  clampDragged()
   const target = props.target
   const el = target instanceof HTMLElement ? target : null
   const rect: DOMRectReadOnly | null = el ? el.getBoundingClientRect() : (target as DOMRectReadOnly | null)
@@ -114,6 +172,11 @@ function measure(): boolean {
     radius: el ? getComputedStyle(el).borderRadius || '' : '',
   }
   if (bubbleNode?.offsetHeight) bubbleH = bubbleNode.offsetHeight
+  // 人已经把它拖到自己放的地方了：位置不再由这里挑，只要那圈跟着目标走。
+  if (dragged.value) {
+    parked.value = false
+    return false
+  }
   const obstacles = collectObstacles(rect)
   const moving = animating()
   const here = spot.value
@@ -333,6 +396,7 @@ const ringStyle = computed(() => {
   }
 })
 const bubbleStyle = computed(() => {
+  if (dragged.value) return { left: `${dragged.value.left}px`, top: `${dragged.value.top}px` }
   const p = spot.value
   if (!p) return null
   return { left: `${p.left}px`, top: `${p.top}px` }
@@ -355,7 +419,14 @@ const last = computed(() => !!props.total && props.step === props.total)
         role="dialog"
         :aria-label="title"
       >
-        <div class="gb__head">
+        <div
+          class="gb__head"
+          :title="t('welcome.tour.dragHint')"
+          @pointerdown="startDrag"
+          @pointermove="moveDrag"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+        >
           <span class="t-title">{{ title }}</span>
           <span v-if="total" class="t-meta">{{ step }}/{{ total }}</span>
         </div>
@@ -421,6 +492,13 @@ const last = computed(() => !!props.total && props.step === props.total)
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  /* 这一条是拖动的手柄：光标说得出可以拖，手机上别把滚动抢走。 */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.gb__head:active {
+  cursor: grabbing;
 }
 .gb__text {
   margin: 0;

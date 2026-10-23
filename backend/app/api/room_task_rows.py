@@ -64,7 +64,7 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, task, card=None) -> dict:
+async def task_out(db, task, card=None, *, me: str) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
@@ -83,6 +83,7 @@ async def task_out(db, task, card=None) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
+    out.update(_task_markers(task, card, shown, asked.get(task.id), me))
     # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
@@ -111,6 +112,29 @@ def card_row(card, version: int | None) -> dict | None:
         "reviewer": card.reviewer_handle,
         "subject": card.change_subject or card.deliverable_name or None,
         "since": _iso(card.created_at),
+    }
+
+
+def _task_markers(task, card, shown, asking, me: str) -> dict[str, bool]:
+    """Attention includes the reporter; personal wording names the next actor."""
+    asked = () if asking is None else asking.waiting(task.people)
+    reviewer = None if card is None else card.reviewer_handle
+    owner = task.owner_handle if presentation.owner_acts_on(shown) else None
+    attention = address(
+        Event(
+            reviewers=() if not reviewer else (reviewer,),
+            reporter=task.reporter_handle,
+            asked_also=asked,
+            owner=owner,
+        ),
+        hand_of(shown.column),
+    ).reason_for(me)
+    waiting = presentation.waiting_on(
+        shown, reviewer=reviewer, asked=me if me in asked else None
+    )
+    return {
+        "awaits_me": attention is not None,
+        "needs_my_action": bool(me) and (waiting == me or owner == me),
     }
 
 
@@ -178,7 +202,7 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
+                **_task_markers(task, card, shown, asked.get(task.id), actor.handle),
                 "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
@@ -336,30 +360,11 @@ async def project_task_rows(
         last_activity = said_at or task.created_at
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
-        asking = asked.get(task.id)
-        awaits = address(
-            Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
-                reporter=task.reporter_handle,
-                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知、待办
-                # 同一个名单（`announce.notify_question`）。题根本不在等，就没有这
-                # 一层。
-                asked_also=() if asking is None else asking.waiting(task.people),
-                owner=(
-                    task.owner_handle if presentation.owner_acts_on(shown) else None
-                ),
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
         items.append(
             {
                 **task_row_json(task),
                 "presentation": shown.as_dict(),
-                "awaits_me": awaits is not None,
+                **_task_markers(task, card, shown, asked.get(task.id), me),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
                 # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、
@@ -515,14 +520,14 @@ async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict
     ]
 
 
-async def task_page_row(db: AsyncSession, place, task) -> dict:
+async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
     cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
         [task.id]
     )
-    out = await task_out(db, task, cards.get(task.id))
+    out = await task_out(db, task, cards.get(task.id), me=me)
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)

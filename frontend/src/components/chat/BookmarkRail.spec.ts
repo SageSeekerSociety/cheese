@@ -6,15 +6,16 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-// 菜单的弹层在测试环境里画不出来；这里只关心菜单里给了哪几项、点了做什么。
+// 菜单的弹层在测试环境里画不出来；这里只关心菜单里给了哪几项、点了做什么，并模拟打开菜单时的 modelValue。
 vi.mock('@/components/common/AdaptiveMenu.vue', () => ({
   default: {
     name: 'AdaptiveMenu',
-    props: ['actions'],
+    props: ['actions', 'modelValue'],
+    emits: ['update:modelValue'],
     template:
-      '<div><button v-for="a in actions" :key="a.key" type="button" @click="a.onSelect()">{{ a.label }}</button></div>',
+      '<div><button v-for="a in actions" :key="a.key" type="button" @click="$emit(\'update:modelValue\', true); a.onSelect()">{{ a.label }}</button></div>',
   },
 }))
 
@@ -56,10 +57,6 @@ async function mountOpen(chapters: ChapterRow[], canChapter = true) {
   return ui
 }
 
-beforeEach(() => {
-  localStorage.clear()
-})
-
 describe('对话左上角的书签条', () => {
   it('没有书签就整块不画', () => {
     const { container } = mount([])
@@ -92,6 +89,7 @@ describe('对话左上角的书签条', () => {
 
     await fireEvent.click(rows[1]!)
     expect(ui.emitted().jump).toEqual([['b2']])
+    expect(ui.queryByRole('button', { name: '收起书签' })).toBeTruthy()
   })
 
   it('没有名字时退回消息的第一行', async () => {
@@ -99,7 +97,7 @@ describe('对话左上角的书签条', () => {
     expect(ui.getByText('把三条路径再过一遍')).toBeTruthy()
   })
 
-  it('说得上话的人能在 ⋯ 里改名，回车保存', async () => {
+  it('说得上话的人能在 ⋯ 里改名与取消，改完移开照常收起', async () => {
     const ui = await mountOpen([bookmark('b1', '登录')])
     await fireEvent.click(ui.getByRole('button', { name: '重命名' }))
 
@@ -108,6 +106,12 @@ describe('对话左上角的书签条', () => {
     await fireEvent.keyDown(field, { key: 'Enter' })
 
     expect(ui.emitted().rename).toEqual([['b1', '登录页']])
+
+    await fireEvent.click(ui.getByRole('button', { name: '取消书签' }))
+    expect(ui.emitted().unpin).toEqual([['b1']])
+
+    await fireEvent.mouseLeave(ui.getByTestId('bookmark-rail'))
+    expect(ui.queryByRole('button', { name: '展开书签' })).toBeTruthy()
   })
 
   it('没资格改的人只有跳回这一条', async () => {

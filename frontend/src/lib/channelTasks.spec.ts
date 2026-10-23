@@ -28,9 +28,41 @@ function task(over: Partial<ChannelTask> = {}): ChannelTask {
 }
 
 describe('任务卡', () => {
+  it('只是关注结果的人不被写成等你回答', () => {
+    const line = taskLine(
+      task({
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+        awaits_me: true,
+        needs_my_action: false,
+      }),
+      'chenmo',
+      nameOf,
+      '芝士'
+    )
+    expect(line.mine).toBe(false)
+    expect(line.state.line).toContain('林晓')
+    expect(line.state.line).not.toContain('等你')
+  })
+
+  it('多人候答时，当前被问者仍有行动强调', () => {
+    const line = taskLine(
+      task({
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+        waiting_on: null,
+        awaits_me: true,
+        needs_my_action: true,
+      }),
+      'linxiao',
+      nameOf,
+      '芝士'
+    )
+    expect(line.mine).toBe(true)
+    expect(line.state.line).toContain('等你')
+  })
+
   it('等的是看的人自己，就对他说；别人看到的是在等谁', () => {
-    const mine = taskLine(task(), 'linxiao', nameOf, '芝士')
-    const theirs = taskLine(task(), 'chenmo', nameOf, '芝士')
+    const mine = taskLine(task({ needs_my_action: true }), 'linxiao', nameOf, '芝士')
+    const theirs = taskLine(task({ needs_my_action: false }), 'chenmo', nameOf, '芝士')
     expect(mine.mine).toBe(true)
     expect(mine.state.line).toContain('等你')
     expect(mine.state.line).not.toContain('林晓')
