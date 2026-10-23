@@ -73,6 +73,7 @@ def download(url, destination):
                 span = response.headers["Content-Range"].split()[1]
                 first, _, size = span.replace("-", "/", 1).split("/")
                 if int(first) != have:
+                    # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                     raise RuntimeError(f"the server resumed at byte {first}")
                 total = int(size)
                 mode = "ab"
@@ -83,6 +84,7 @@ def download(url, destination):
                 mode = "wb"
             digest = response.headers.get("X-Checksum-SHA256")
             if not digest:
+                # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise RuntimeError("the server named no checksum for it")
             with partial.open(mode) as output:
                 said = time.monotonic()
@@ -96,8 +98,10 @@ def download(url, destination):
                         print(account("still going"), file=sys.stderr, flush=True)
                         said = time.monotonic()
         if total is not None and have < total:
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError("the connection closed early")
     except Exception as stopped:  # whatever stopped it, said with how far it got
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise RuntimeError(account(f"stopped ({stopped})")) from stopped
     temporary = destination.with_name(f"{destination.name}.{uuid.uuid4().hex}{suffix}")
     try:
@@ -114,12 +118,14 @@ def download(url, destination):
             for chunk in iter(lambda: written.read(1 << 20), b""):
                 hasher.update(chunk)
         if hasher.hexdigest() != digest.lower():
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise ValueError(
                 f"sha256 {hasher.hexdigest()[:12]}…, expected {digest[:12]}…"
             )
     except (gzip.BadGzipFile, EOFError, zlib.error, ValueError) as wrong:
         partial.unlink(missing_ok=True)
         temporary.unlink(missing_ok=True)
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise RuntimeError(
             f"the executor downloaded from {url} is not the one the platform "
             f"serves ({wrong}); it was discarded and the next attempt fetches it "
