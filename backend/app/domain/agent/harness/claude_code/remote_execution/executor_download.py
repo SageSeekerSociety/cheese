@@ -2,19 +2,99 @@
 
 Shipped in the release (`runtime_core.RELEASE_FILES`) and run by
 `bootstrap.binary` only when a machine has no proven executor of its own, so
-nothing here weighs on a warm room's preparation.
+nothing here weighs on a warm room's preparation. A device launch carries this
+file in its script and runs `install` the same way (`device_launch`).
 """
 
 import gzip
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 import sys
 import time
 import urllib.request
 import uuid
 import zlib
 from urllib.error import HTTPError
+
+if sys.platform != "win32":
+    import fcntl
+
+
+def lock(file, waiting):
+    """flock(LOCK_EX), or on Windows the byte `bootstrap.lock` takes. The
+    connector's installer of the same executor takes this same lock
+    (`cli/internal/claudecode/lock_*.go`). `waiting` is called once if another
+    holder makes this wait."""
+    if sys.platform == "win32":
+        import msvcrt  # deferred-import: Windows-only module; absent on other platforms
+
+        told = False
+        while True:
+            os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
+            try:
+                msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if not told:
+                    waiting()
+                    told = True
+                time.sleep(0.05)
+    try:
+        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        waiting()
+        fcntl.flock(file, fcntl.LOCK_EX)
+
+
+def runs_as(path, version):
+    """Whether `path` is a program that reports itself as `version`."""
+    if not (path.is_file() and os.access(path, os.X_OK)):
+        return False
+    result = subprocess.run(
+        [str(path), "--version"], capture_output=True, text=True, timeout=15
+    )
+    return result.returncode == 0 and result.stdout.split()[:1] == [version]
+
+
+def install(url, destination, version):
+    """Place the executor `version` at `destination`, fetched from `url` unless
+    what is there already runs as it.
+
+    Every installer of the executor on a machine — a room's preparation, a
+    device launch, and the connector's `cheesehost claude install`, which the
+    desktop app runs in the background once a computer is connected — writes
+    the one destination and the one partial file beside it. So each holds
+    `<destination>.lock` while it installs: one that waited finds the executor
+    the other placed and fetches nothing, and one that was stopped leaves what
+    arrived for whichever comes next to continue."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.with_name(destination.name + ".lock").open("a") as held:
+        # Waiting can outlast an install's deadline (the desktop app fetching
+        # it ahead holds the lock for the whole download): this is then the
+        # last line the room is told.
+        lock(
+            held,
+            lambda: print(
+                f"waiting for another install of the executor at {destination} "
+                "on this machine to finish",
+                file=sys.stderr,
+                flush=True,
+            ),
+        )
+        if runs_as(destination, version):
+            return
+        temporary = download(url, destination)
+        temporary.chmod(0o700)
+        if not runs_as(temporary, version):
+            temporary.unlink(missing_ok=True)
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+            raise RuntimeError(
+                "The executor binary does not match the verified version"
+            )
+        temporary.replace(destination)
 
 
 def megabytes(count):
