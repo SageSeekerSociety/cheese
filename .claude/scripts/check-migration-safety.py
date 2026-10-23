@@ -702,7 +702,12 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_foreign_key(self, node: ast.Call) -> None:
         source = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "source_table"))
-        self._fk_created(node, source, _created_key(node, self.constants))
+        referent = _sql_text(node.args[2] if len(node.args) > 2 else _kw(node, "referent_table"), self.constants)
+        # Locked whatever the key is called (None, an f-string in a loop); only
+        # a readable name can be remembered for a later drop.
+        self._fk_touches(node, source, referent if referent and HOLE not in referent else None)
+        for name, ref in _created_key(node, self.constants):
+            self._created_here[name] = ref
         not_valid = _truthy(_kw(node, "postgresql_not_valid"))
         if not_valid:
             self._not_valid_added = True
@@ -1607,7 +1612,7 @@ def self_test() -> int:
     )
 
     # The chain, not the file name, says which creation came last.
-    def rev(revision: str, down: str | None) -> str:
+    def rev(revision: str, down: str | tuple[str, ...] | None) -> str:
         return f"import sqlalchemy as sa\nfrom alembic import op\nrevision = {revision!r}\ndown_revision = {down!r}\n"
 
     chained = {
@@ -1628,6 +1633,23 @@ def self_test() -> int:
         "    op.create_foreign_key('runs_topic_id_fkey', 'runs', 'elsewhere', ['topic_id'], ['id'])\n"
     )
     check("... and a later migration's re-point is not seen yet", chained_rules("runs, conversations"), [])
+
+    def merged_rules(lock: str) -> list[str]:
+        source = rev("r3", ("r2", "r1b")) + f"def upgrade():\n    with_lock_retries('{lock}')\n{drop_fk}\n"
+        return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS, {**chained, "y.py": rev("r1b", None)}))
+
+    check("a merge migration reads its keys through every parent", merged_rules("runs, conversations"), [])
+    check(
+        "a key whose name is not a literal is still judged",
+        _rules_found(
+            "    with_lock_retries('task')\n"
+            "    for table in ('task',):\n"
+            "        op.create_foreign_key(f'fk_{table}_owner_id', table, 'users', ['owner_id'], ['id'],"
+            " postgresql_not_valid=True)\n"
+            "    op.create_foreign_key(None, 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)"
+        ),
+        ["fk-table-not-locked", "fk-table-not-locked"],
+    )
     check(
         "a key this migration drops and re-adds under its name was locked at its old target",
         judged(
