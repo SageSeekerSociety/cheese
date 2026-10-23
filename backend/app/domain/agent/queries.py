@@ -478,7 +478,7 @@ def _dream_refusal_phrase(before: dict[str, str], answer: dict) -> str:
     """
     held = [str(path) for path in (answer.get("held") or [])]
     if held:
-        return f"会话侧拦下 {len(held)} 条删除：" + "、".join(sorted(held)[:10])
+        return f"AI 队友那边拦下 {len(held)} 条删除：" + "、".join(sorted(held)[:10])
     files = {
         str(path): content
         for path, content in (answer.get("files") or {}).items()

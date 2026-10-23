@@ -1457,8 +1457,8 @@
       "note": "The default: one host in use, one offline, one broken by the provider and given up; opening the one in use shows a working sandbox and one waiting for its host."
     },
     "s2": {
-      "name": "Refusing new sessions",
-      "note": "The provider broke three hosts within the hour: the page says new sessions are being refused, instead of leaving a number to interpret."
+      "name": "Not starting new AI teammates",
+      "note": "The provider broke three hosts within the hour: the page says no new AI teammates are being started, instead of leaving a number to interpret."
     },
     "s3": {
       "name": "A failed read is not an empty pool",
@@ -1590,8 +1590,8 @@
   },
   "thisDeviceView": {
     "sleepOff": {
-      "name": "No sessions, sleep prevention off",
-      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+      "name": "No AI teammates working, sleep prevention off",
+      "note": "The list of working AI teammates is empty and the switch is off. The computer can sleep when idle."
     }
   },
   "teamAgentPicker": {
