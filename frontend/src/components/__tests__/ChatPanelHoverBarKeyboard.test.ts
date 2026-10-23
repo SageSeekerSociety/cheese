@@ -81,9 +81,22 @@ function useKeyboard() {
 function pressOther(key: string) {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }))
 }
-/** 鼠标按下的那一下：输入方式回到指针。 */
-function usePointer() {
+/** 指针按下还没抬起：浏览器此时把焦点放到指针下的那一行上，就是点一条消息的那一下。 */
+function pointerDown() {
   window.dispatchEvent(new Event('pointerdown'))
+}
+function pointerUp() {
+  window.dispatchEvent(new Event('pointerup'))
+}
+/** 点一条消息：按下、聚焦、抬起，和浏览器里的顺序一样。 */
+function clickRow(el: HTMLElement) {
+  pointerDown()
+  el.focus()
+  pointerUp()
+}
+/** 时间线上是不是挂着「用键盘走这一列」那个类：行上的焦点框就靠它。 */
+function ringOn(container: Element): boolean {
+  return container.querySelector('[data-chat-feed]')!.classList.contains('tl-feed--kbd')
 }
 
 beforeAll(() => {
@@ -189,8 +202,7 @@ describe('消息动作条的键盘可达性', () => {
 describe('只有这一列自己用的键才算「在用键盘」', () => {
   it('点过一条消息再按音量键，不算在用键盘走这一列', async () => {
     const { container } = await mount()
-    usePointer()
-    row(container, 'a1').focus()
+    clickRow(row(container, 'a1'))
     await flush()
     expect(barShown(container)).toBe(false)
 
@@ -203,5 +215,40 @@ describe('只有这一列自己用的键才算「在用键盘」', () => {
     row(container, 'a2').focus()
     await flush()
     expect(barShown(container)).toBe(false)
+  })
+
+  it('点一条消息不画焦点框；键盘走过来画', async () => {
+    const { container } = await mount()
+    clickRow(row(container, 'a1'))
+    await flush()
+    expect(ringOn(container)).toBe(false)
+    expect(document.activeElement).toBe(row(container, 'a1'))
+
+    useKeyboard()
+    row(container, 'a2').focus()
+    await flush()
+    expect(ringOn(container)).toBe(true)
+  })
+
+  it('指针只是按下、没碰到消息行时，已经画着的焦点框留着', async () => {
+    const { container } = await mount()
+    useKeyboard()
+    const r = row(container, 'a1')
+    r.focus()
+    await flush()
+    expect(ringOn(container)).toBe(true)
+
+    // 拖滚动条、点在行与行的空隙上：焦点没动，框该留着。
+    pointerDown()
+    await flush()
+    expect(document.activeElement).toBe(r)
+    expect(ringOn(container)).toBe(true)
+  })
+
+  it('没有按键参与、直接聚焦到一条消息（读屏、脚本、浏览器把焦点还回来）也画框', async () => {
+    const { container } = await mount()
+    row(container, 'a1').focus()
+    await flush()
+    expect(ringOn(container)).toBe(true)
   })
 })

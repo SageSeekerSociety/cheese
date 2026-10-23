@@ -191,24 +191,34 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
    *  只认这一列自己用的键（`isTimelineKey`）：音量/媒体键不算一次「在用键盘」。有的
    *  系统会把它们也递进网页，按一下就把点过的那一条算成键盘停在那儿了。 */
   let keyboardFocus = false
-  /** 用键盘走这一列时，时间线自己画焦点框（见 ChatTimeline 的 .tl-feed--kbd）。浏览器
-   *  的 :focus-visible 见到任何一次按键都画，不能拿来当判据。 */
+  /** 焦点框画不画，判据是「这一次聚焦是不是指针带来的」，见下面的 pointerHeld。 */
   const kbdNav = ref(false)
+  /** 指针正按着。指针按下到随之而来的那次聚焦之间为真，所以点进这一列的行不画框
+   *  （那是悬停条的旧活儿）；指针没参与的那些聚焦照画——键盘走过来的、读屏或脚本
+   *  `focus()` 的、浏览器把焦点还回页面的（地址栏 Tab 回来、F6 切面板）。
+   *  判据不能是「刚才按了哪个键」：有的系统把音量/媒体键也递进网页，按一下音量键
+   *  就会给点过的那一条补上框。也不能用浏览器的 :focus-visible，它对任何一次按键
+   *  都亮，而上面那几种没有按键的聚焦它又看心情。 */
+  let pointerHeld = false
   const modalityTarget = typeof window === 'undefined' ? undefined : window
   useEventListener(modalityTarget, 'keydown', (e: KeyboardEvent) => {
-    if (!isTimelineKey(e)) return
-    keyboardFocus = true
-    kbdNav.value = true
+    if (isTimelineKey(e)) keyboardFocus = true
   })
   useEventListener(modalityTarget, 'pointerdown', () => {
     keyboardFocus = false
-    kbdNav.value = false
+    pointerHeld = true
+  })
+  useEventListener(modalityTarget, 'pointerup', () => {
+    // 大多数浏览器在按下时就聚焦，Safari 那种按下不聚焦、抬起才聚焦的也要接住：
+    // 让这一轮的事件先走完再撤。
+    setTimeout(() => (pointerHeld = false), 0)
   })
 
   function onRowFocus(e: FocusEvent) {
-    if (touchOnly.value || !keyboardFocus) return
     const target = e.target as HTMLElement | null
     if (!target || target.closest('.hover-bar')) return
+    kbdNav.value = !pointerHeld && !touchOnly.value
+    if (touchOnly.value || !keyboardFocus) return
     const row = target.closest<HTMLElement>(ACTION_ROW)
     const id = row?.dataset.mid
     if (!row || !id) {
