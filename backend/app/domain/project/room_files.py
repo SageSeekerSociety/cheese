@@ -55,7 +55,7 @@ from app.core.sentences import say
 from app.domain.notice_meta import (
     EVENT_LIBRARY_SAVED,
     SEVERITY_INFO,
-    WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.project.models import RoomFileRevision
@@ -114,7 +114,8 @@ async def save_to_library(
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
-            who=WHO_HUMAN,
+            # 一个人已经存好了，没有谁要再动手：不是「等人处理」那一档。
+            who=WHO_PLATFORM,
             detail=say("librarySavedDetail", actor=by, file=leaf),
             detail_label=say("labelSaveToLibrary"),
         ),
