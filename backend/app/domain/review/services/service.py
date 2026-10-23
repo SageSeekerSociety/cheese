@@ -589,6 +589,7 @@ class AcceptService:
         actor: str,
         change_subject: str | None = None,
         change_body: str | None = None,
+        focus: str | None = None,
     ) -> AcceptCard:
         return await decisions.redescribe(
             self,
@@ -596,6 +597,7 @@ class AcceptService:
             actor=actor,
             change_subject=change_subject,
             change_body=change_body,
+            focus=focus,
         )
 
     async def push_fix(
