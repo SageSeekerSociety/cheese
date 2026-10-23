@@ -146,6 +146,13 @@ def test_a_thread_on_one_file_is_not_a_thread_on_another(client):
     assert bad.status_code == 422, bad.text
 
 
+def test_a_path_with_nothing_behind_it_takes_no_comment(client):
+    """一份不在那儿的文件上开一条评论，谁也看不见——拒掉。"""
+    room = _room(client)
+    _file(client, room)
+    assert _open(client, room, path="output/没有这份.pdf").status_code == 404
+
+
 def test_an_archived_room_takes_no_new_comment(client):
     """归档的房间冻结，和它的文档一样：新评论进不去。"""
     room = _room(client)

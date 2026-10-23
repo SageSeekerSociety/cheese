@@ -23,6 +23,7 @@ thread is handed (``agent.document.thread``). That session reads and writes a
 document; pointing it at a file is the next step.
 """
 
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -34,7 +35,7 @@ from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import UnprocessableEntityError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.mentions import announce_comment_mentions, comment_notified
 from app.domain.agent_instance.adapters import project_team
@@ -193,6 +194,11 @@ async def add_file_comment(
     An archived room's files, and every file of an archived project, take no
     new thread — as its document does not."""
     place, actor, clean = await _reached(db, resolver, topic_id, body.path, writes=True)
+    # 指着的东西得真的在：一份不在的文件上的评论谁也看不见。
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, clean
+    ):
+        raise NotFoundError(say("fileNotFound"))
     content = body.content.strip()
     if not content:
         raise ValidationError(say("commentEmpty"))
