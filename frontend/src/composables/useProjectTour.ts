@@ -40,8 +40,7 @@ export interface GuideStep {
 }
 
 export const GUIDE_STEPS: GuideStep[] = [
-  // 芝士正在回的时候发送键会变成「停」：那一下没有 `composer-send`，退而指输入框本身。
-  { key: 'send', anchors: ['composer-send'], waiting: ['composer-input'], done: (c) => c.facts.asked },
+  { key: 'send', anchors: ['composer-send'], done: (c) => c.facts.asked },
   {
     key: 'reply',
     anchors: ['reply-thread', 'reply-failed'],
