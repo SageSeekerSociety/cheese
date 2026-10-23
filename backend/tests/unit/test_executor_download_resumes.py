@@ -217,7 +217,7 @@ def test_an_executor_that_is_not_the_digest_the_platform_names_is_not_installed(
     assert not list(_installed(owner).parent.glob(f"{bootstrap.VERSION}.*partial*"))
 
 
-def test_a_bootstrap_waits_for_an_install_under_way_and_uses_it(platform):
+def test_a_bootstrap_waits_for_an_install_under_way_and_uses_it(platform, capfd):
     """The desktop app fetches the executor in the background once a computer
     is connected (`cheesehost claude install`), and a session may start before
     it finishes. The bootstrap then waits for that install and runs what it
@@ -245,3 +245,5 @@ def test_a_bootstrap_waits_for_an_install_under_way_and_uses_it(platform):
 
     assert answer == [str(destination)]
     assert asked == []
+    # Said while it waited, in case the wait outlasts the install's deadline.
+    assert "waiting for another install" in capfd.readouterr().err

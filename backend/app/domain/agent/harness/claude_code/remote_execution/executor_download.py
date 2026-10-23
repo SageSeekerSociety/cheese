@@ -22,21 +22,30 @@ if sys.platform != "win32":
     import fcntl
 
 
-def lock(file):
+def lock(file, waiting):
     """flock(LOCK_EX), or on Windows the byte `bootstrap.lock` takes. The
     connector's installer of the same executor takes this same lock
-    (`cli/internal/claudecode/lock_*.go`)."""
+    (`cli/internal/claudecode/lock_*.go`). `waiting` is called once if another
+    holder makes this wait."""
     if sys.platform == "win32":
         import msvcrt  # deferred-import: Windows-only module; absent on other platforms
 
+        told = False
         while True:
             os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
             try:
                 msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
                 return
             except OSError:
+                if not told:
+                    waiting()
+                    told = True
                 time.sleep(0.05)
-    fcntl.flock(file, fcntl.LOCK_EX)
+    try:
+        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        waiting()
+        fcntl.flock(file, fcntl.LOCK_EX)
 
 
 def runs_as(path, version):
@@ -62,7 +71,18 @@ def install(url, destination, version):
     arrived for whichever comes next to continue."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.with_name(destination.name + ".lock").open("a") as held:
-        lock(held)
+        # Waiting can outlast an install's deadline (the desktop app fetching
+        # it ahead holds the lock for the whole download): this is then the
+        # last line the room is told.
+        lock(
+            held,
+            lambda: print(
+                f"waiting for another install of the executor at {destination} "
+                "on this machine to finish",
+                file=sys.stderr,
+                flush=True,
+            ),
+        )
         if runs_as(destination, version):
             return
         temporary = download(url, destination)

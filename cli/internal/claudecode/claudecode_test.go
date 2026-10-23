@@ -140,7 +140,40 @@ func TestADownloadThatWasCutOffIsContinued(t *testing.T) {
 	}
 }
 
-func TestABuildThatIsNotTheServedDigestIsNotInstalled(t *testing.T) {
+// The server names the digest of the build it serves; bytes that do not hash
+// to it (a proxy that substituted them, a corrupted copy) are never installed.
+func TestABuildThatIsNotTheDigestTheServerNamesIsNotInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake build is a shell script")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	build := fakeBuild("2.1.299")
+	named := sha256.Sum256([]byte("another build"))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/connector/claude/pin", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"version":"2.1.299"}`))
+	})
+	mux.HandleFunc("/connector/claude/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Checksum-SHA256", hex.EncodeToString(named[:]))
+		w.Write(build)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := Ensure(context.Background(), srv.URL, nil, nil); err == nil {
+		t.Fatal("a build that is not the one the server names was installed")
+	}
+	versions := filepath.Join(home, ".cheese", "claude", "versions")
+	if _, err := os.Stat(filepath.Join(versions, "2.1.299")); !os.IsNotExist(err) {
+		t.Fatal("a build was placed")
+	}
+	if _, err := os.Stat(filepath.Join(versions, "2.1.299.partial")); !os.IsNotExist(err) {
+		t.Fatal("what arrived was kept for the next attempt to continue")
+	}
+}
+
+func TestBytesThatAreNotTheServedCopyAreDiscarded(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake build is a shell script")
 	}

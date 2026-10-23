@@ -404,10 +404,12 @@ CHEESE_SKILLS"""
     quoted_state = f'"{root}"'.join(shlex.quote(part) for part in state.split(root))
     archive = base64.b64encode(build()).decode()
 
-    def holes(system_prompt: str, helper_sources: dict[str, str]) -> tuple[str, str]:
-        """The configure and prepare holes, written for this prompt and these
-        helpers: once for the launch, and once for what the launch is compared
-        by (below)."""
+    def holes(
+        system_prompt: str, helper_sources: dict[str, str], installer: str
+    ) -> tuple[str, str]:
+        """The configure and prepare holes, written for this prompt, these
+        helpers and this installer of the pinned build: once for the launch,
+        and once for what the launch is compared by (below)."""
         execution_setup = 'mkdir -p "$SEAT/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (
@@ -527,7 +529,7 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
     # the platform names, and one install at a time on the machine.
     if python3 - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
         "$_pin" "{pinned_version}" <<'CHEESE_EXECUTOR_DOWNLOAD'
-{executor_download}
+{installer}
 try:
     install(sys.argv[1], __import__("pathlib").Path(sys.argv[2]), sys.argv[3])
 except Exception as stopped:  # noqa: BLE001 - said, and the launch goes on
@@ -632,7 +634,7 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
         # Which start of the runner this is, so a wait on it reads only what
         # this start left in the runner's log (``runner.LAUNCH``).
         env[LAUNCH] = launch_name
-    configure, prepare = holes(system_prompt, helper_sources)
+    configure, prepare = holes(system_prompt, helper_sources, executor_download)
     launch = MachineLaunch(
         configure=configure,
         credentials=_OWN_KEY_CREDENTIALS
@@ -661,13 +663,15 @@ cheese_launch_phase credentials_selected
     # started with. The resume offer names the conversation, which a relaunch
     # continues, and the launch name is new on every turn. The helpers a
     # release puts into a running session are left out too, since changing
-    # one is a release and not a relaunch. Everything
+    # one is a release and not a relaunch, and so is the installer of the
+    # pinned build, which runs before the session starts and is not kept by
+    # it. Everything
     # else here is read once by a process that keeps it for its life — the
     # binary, the argv, the seat's base settings, the skills, the runner,
     # the environment,
     # and everything `client.prepare` writes — so any change to it has to
     # reach a live session as a new one.
-    configured, prepared = holes("", release.launch_only(helper_sources))
+    configured, prepared = holes("", release.launch_only(helper_sources), "")
     fixed_env = {
         k: v for k, v in env.items() if k not in ("CHEESE_RESUME_SESSION", LAUNCH)
     }

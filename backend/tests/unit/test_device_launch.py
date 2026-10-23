@@ -190,6 +190,25 @@ def test_the_contract_stays_put_across_the_rooms_own_turns():
     assert later.contract == first.contract
 
 
+def test_a_release_that_changes_only_the_installer_relaunches_no_session(
+    monkeypatch,
+):
+    """The installer of the pinned build runs before a session starts and is
+    not kept by it, so a deploy that edits only it leaves live sessions be."""
+    before = device_launch.launch_holes(state=STATE)
+    real = Path.read_text
+
+    def edited(self, *args, **kwargs):
+        text = real(self, *args, **kwargs)
+        return text + "\n# edited\n" if self.name == "executor_download.py" else text
+
+    monkeypatch.setattr(Path, "read_text", edited)
+    after = device_launch.launch_holes(state=STATE)
+
+    assert "# edited" in after.prepare
+    assert after.contract == before.contract
+
+
 def test_the_contract_moves_with_whatever_the_session_reads_only_at_launch(
     monkeypatch,
 ):
