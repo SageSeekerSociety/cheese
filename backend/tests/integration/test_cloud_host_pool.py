@@ -257,7 +257,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
 
 
 LOST_LINE = (
-    "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了"
+    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
 )
 
 

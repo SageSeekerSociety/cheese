@@ -21,40 +21,45 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { taskPhraseLabel } from '@/lib/board'
 import { environmentName } from '@/lib/environment'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
-const props = defineProps<{
-  room: Topic
-  task: RoomTask | null
-  memberNames: Record<string, string>
-  agentName: string
-  people: TopicMemberRow[]
-  /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
-  agents: TopicMemberRow[]
-  machine: TopicEnvironment | null
-  machineError: boolean
-  actionError: string | null
-  connected?: boolean
-  close: (conclusion: string) => Promise<boolean>
-  reopen: () => Promise<boolean>
-  handOver: (owner: string) => Promise<boolean>
-  rename: (title: string) => Promise<boolean>
-  setCollaborators: (handles: string[]) => Promise<boolean>
-  setAgent: (handle: string | null) => Promise<boolean>
-  loadMachine: () => Promise<void>
-  /** 换这个任务里一条会话的环境；换「新会话默认」。 */
-  setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
-  panelOpen?: boolean
-  /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
-  copyLink?: () => void
-}>()
+const props = withDefaults(
+  defineProps<{
+    room: Topic
+    task: RoomTask | null
+    memberNames: Record<string, string>
+    agentName: string
+    people: TopicMemberRow[]
+    /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
+    agents: TopicMemberRow[]
+    machine: TopicEnvironment | null
+    machineError: boolean
+    actionError: string | null
+    connected?: boolean
+    close: (conclusion: string) => Promise<boolean>
+    reopen: () => Promise<boolean>
+    handOver: (owner: string) => Promise<boolean>
+    rename: (title: string) => Promise<boolean>
+    setCollaborators: (handles: string[]) => Promise<boolean>
+    setAgent: (handle: string | null) => Promise<boolean>
+    loadMachine: () => Promise<void>
+    /** 换这个任务里一条会话的环境；换「新会话默认」。 */
+    setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    /** 右侧面板是不是开着——「概览」那颗开关读它。 */
+    panelOpen?: boolean
+    /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
+    copyLink?: () => void
+  }>(),
+  // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
+  { connected: true }
+)
 
 const emit = defineEmits<{
   (e: 'open-room'): void
@@ -74,10 +79,22 @@ const taskAgentName = computed(() => {
   const handle = props.task?.agent_handle
   return (handle && props.memberNames[handle]) || props.agentName
 })
-// 做这件事的队友报的那一句：看板那一格已经照它画了，页头再把它的原话、谁什么时候报的
-// 摆出来。它报完之后会话结束了，旁边写「已离开」，不改它报的。任务关了就不再说。
+// 状态那一格（`lib/taskState.ts`）和它后面那一句：在做什么、已做多久，在等什么，卡在哪
+// （没留话时说一句打开看看），待谁审阅、第几版。队友报的原话照写，悬停看谁什么时候报的。
+// 它报完之后会话结束了，旁边写「已离开」，不改它报的。
+const state = computed(() =>
+  props.task ? taskState(props.task, { viewer: ME, nameOf, agentName: taskAgentName.value }) : null
+)
 const progressNote = computed(() => (isOpen.value ? props.task?.progress_note ?? '' : ''))
 const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
+// 「已离开」说的是报那一句的那位，不是任务现在的队友：任务换过人时，两处名字不是同一个，
+// 照着任务当前的队友写，就把「离开」栽到了别人的头上。
+const leftName = computed(() => {
+  const by = props.task?.progress_set_by
+  if (!by) return taskAgentName.value
+  // 名册上查不到就用 handle 本身：退回默认的队友名字等于又把别人的名字栽上去。
+  return props.memberNames[by] || by
+})
 const progressTitle = computed(() => {
   const by = props.task?.progress_set_by
   const at = props.task?.progress_set_at
@@ -229,19 +246,25 @@ function actionTestId(id: string): string | undefined {
         task ? taskTitle(task) : ''
       }}</span>
       <span class="task-header__meta">
-        <span v-if="task" class="task-header__state" data-testid="task-phrase" :title="progressTitle">{{
-          taskPhraseLabel(task, ME)
-        }}</span>
+        <TaskStateMark
+          v-if="state"
+          class="task-header__state"
+          data-testid="task-phrase"
+          :title="progressTitle"
+          :state="state"
+          :emphasis="task?.needs_my_action === true"
+          :size="13"
+        />
         <span
-          v-if="progressNote"
+          v-if="state?.line"
           class="task-header__note"
           data-testid="task-progress-note"
-          data-user-content
-          :title="progressTitle"
-          >{{ progressNote }}</span
+          :data-user-content="progressNote ? '' : undefined"
+          :title="progressTitle ?? state?.line"
+          >{{ state?.line }}</span
         >
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
-          t('work.task.progress.left', { name: taskAgentName })
+          t('work.task.progress.left', { name: leftName })
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
@@ -599,7 +622,7 @@ function actionTestId(id: string): string | undefined {
 }
 .task-header__disconnected {
   flex: 0 0 auto;
-  color: var(--warn-ink);
+  color: var(--muted);
   font-size: 12px;
 }
 .task-header__owner {

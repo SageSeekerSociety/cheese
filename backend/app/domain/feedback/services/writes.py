@@ -22,6 +22,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.feedback import announce, claims
+from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import Feedback, FeedbackStatus
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackPatch
@@ -129,6 +130,13 @@ async def create(
     # a report with no `received` entry would show an empty history for the
     # one event that definitely happened.
     await svc._repo.append_timeline(row.id, FeedbackStatus.received, actor_handle)
+    # 附件和这条反馈同一笔事务：报告发出去了、截图没挂上，屏幕上就是一条没有证据的
+    # 报告，而人以为自己传了。有一个 id 挂不上，整条提交退回（`attach` 的说明）。
+    await svc.attach_attachments(
+        feedback_id=row.id,
+        attachment_ids=body.attachment_ids,
+        uploader_handle=actor_handle,
+    )
     announce.after_commit(svc._session, row)
     return row
 
@@ -171,6 +179,12 @@ async def _create_from_proposal(
     # did not move this report into `received`, the person did.
     await svc._repo.append_timeline(
         row.id, FeedbackStatus.received, submitted_by_handle
+    )
+    # 上传者是按下发送的人，不是提案的 agent：文件是他在表单里选（或粘）上去的。
+    await svc.attach_attachments(
+        feedback_id=row.id,
+        attachment_ids=body.attachment_ids,
+        uploader_handle=submitted_by_handle,
     )
     announce.after_commit(svc._session, row)
     return row
@@ -298,8 +312,9 @@ async def claim(
     之前先锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个读到的是先到的
     已经提交的持有人。
 
-    自己再领一次是空操作，不是第二条时间线。状态走 `advance`：只往前走，已经
-    修好、上线或不修复的，领了也不动它的状态。
+    自己再领一次是空操作，不是第二条时间线。已经办完的（`CLOSED_STATUSES`：
+    已修复、已上线、不修复）不接领取：领取记的是「谁在修」，这些没有可修的了，
+    回 409 让 agent 不要动它，而不是在详情上挂一个处理人。
     """
     row = await svc.visible_ref(ref, handle=handle, is_admin=is_admin)
     if not await svc.may_claim(
@@ -309,6 +324,8 @@ async def claim(
     locked = await claims.lock(svc._session, row.id)
     if locked is None:
         raise NotFoundError(say("feedbackNotFound"))
+    if locked.status in repo.CLOSED_STATUSES:
+        raise ConflictError(say("feedbackClaimClosed"))
     holder = locked.assignee_handle
     if holder == handle:
         return locked
@@ -332,11 +349,17 @@ async def release(
     """放弃领取：持有人自己，或反馈管理员。没人领着时是空操作。
 
     状态不退回：「处理中」记的是有人动过它，这件事放弃之后也还是发生过。
+
+    已经办完的（`CLOSED_STATUSES`）不接放弃：领取和放弃是修这件事的两端，办完
+    之后这一组动作一起关掉。管理员要清掉挂错的人走 `patch_admin` 的改派，那是
+    数据修正，不是「放弃领取」。
     """
     row = await svc.visible_ref(ref, handle=handle, is_admin=is_admin)
     locked = await claims.lock(svc._session, row.id)
     if locked is None:
         raise NotFoundError(say("feedbackNotFound"))
+    if locked.status in repo.CLOSED_STATUSES:
+        raise ConflictError(say("feedbackReleaseClosed"))
     holder = locked.assignee_handle
     if holder is None:
         return locked

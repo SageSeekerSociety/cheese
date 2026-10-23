@@ -8,7 +8,7 @@ export type NotificationEmailMode = 'instant' | 'digest' | 'off'
 
 export type NotificationDigestCadence = 'daily' | 'weekly' | 'off'
 
-/** 矩阵里的八行。值是后端 `PreferenceCategory` 的稳定键（驼峰）。 */
+/** 矩阵里的九行。值是后端 `PreferenceCategory` 的稳定键（驼峰）。 */
 export type NotificationEventCategory =
   | 'mention'
   | 'reply'
@@ -18,6 +18,7 @@ export type NotificationEventCategory =
   | 'invitation'
   | 'announcement'
   | 'billing'
+  | 'assistant'
 
 export type NotificationEventChannel = 'inApp' | 'push' | 'email'
 
@@ -49,6 +50,7 @@ export const NOTIFICATION_EVENT_CATEGORIES: NotificationEventCategory[] = [
   'invitation',
   'announcement',
   'billing',
+  'assistant',
 ]
 
 export const NOTIFICATION_EVENT_CHANNELS: NotificationEventChannel[] = ['inApp', 'push', 'email']
@@ -79,6 +81,7 @@ export const CATEGORY_LABEL_KEY: Record<NotificationEventCategory, string> = {
   invitation: 'account.notifications.matrix.invitation',
   announcement: 'account.notifications.matrix.announcement',
   billing: 'account.notifications.matrix.billing',
+  assistant: 'account.notifications.matrix.assistant',
 }
 
 export const EVENT_CHANNEL_LABEL_KEY: Record<NotificationEventChannel, string> = {

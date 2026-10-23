@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,6 +99,13 @@ SHARED_READ_ONLY = (
 )
 
 
+def _in_project(project_id: uuid.UUID | None) -> ColumnElement[bool]:
+    """The rows of one project, or the personal rows, which are in none."""
+    if project_id is None:
+        return MemoryFileRecord.project_id.is_(None)
+    return MemoryFileRecord.project_id == project_id
+
+
 def _owner(scope: MemoryFileScope, handle: str | None) -> str:
     return "" if scope is MemoryFileScope.team else (handle or "")
 
@@ -111,7 +118,7 @@ class MemoryFileStore:
 
     async def list(
         self,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None = None,
         *,
@@ -121,7 +128,7 @@ class MemoryFileStore:
         stmt = (
             select(MemoryFileRecord)
             .where(
-                MemoryFileRecord.project_id == project_id,
+                _in_project(project_id),
                 MemoryFileRecord.scope == scope,
                 MemoryFileRecord.owner_handle == _owner(scope, owner_handle),
             )
@@ -133,7 +140,7 @@ class MemoryFileStore:
 
     async def get(
         self,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None,
         path: str,
@@ -142,7 +149,7 @@ class MemoryFileStore:
     ) -> MemoryFileRecord | None:
         check_path(path)
         stmt = select(MemoryFileRecord).where(
-            MemoryFileRecord.project_id == project_id,
+            _in_project(project_id),
             MemoryFileRecord.scope == scope,
             MemoryFileRecord.owner_handle == _owner(scope, owner_handle),
             MemoryFileRecord.path == path,
@@ -164,7 +171,7 @@ class MemoryFileStore:
     async def write(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None,
         path: str,
@@ -235,7 +242,7 @@ class MemoryFileStore:
     async def delete(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None,
         path: str,
@@ -256,7 +263,7 @@ class MemoryFileStore:
     async def forget(
         self,
         *,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None,
         paths: Sequence[str],
@@ -300,7 +307,7 @@ class MemoryFileStore:
 
     async def index_text(
         self,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         scope: MemoryFileScope,
         owner_handle: str | None = None,
     ) -> str | None:
@@ -321,7 +328,7 @@ async def private_owners(session: AsyncSession, project_id: uuid.UUID) -> list[s
     rows = await session.scalars(
         select(MemoryFileRecord.owner_handle)
         .where(
-            MemoryFileRecord.project_id == project_id,
+            _in_project(project_id),
             MemoryFileRecord.scope == MemoryFileScope.private,
         )
         .distinct()

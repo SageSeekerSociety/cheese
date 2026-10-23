@@ -64,6 +64,7 @@ export function emptyDraft(): FeedbackDraft {
     repro: '',
     expectation: '',
     tags: [],
+    attachments: [],
     attachContext: false,
     visibility: 'public',
   }
@@ -95,6 +96,10 @@ export function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
     evidence: agent?.evidence ?? null,
     session_id: agent?.sessionId ?? null,
     environment: agent?.environment ?? null,
+    // 附件只发 id：字节早在选中那一刻就传上去了。**这份数组里只有传成功的那些**
+    // （上传中、上传失败的都在表单自己的那一格，见 `useFeedbackAttachments`），
+    // 所以这里不必再筛一遍——没有 id 的占位根本进不了这个数组。
+    attachment_ids: draft.attachments.map((file) => file.id),
   }
 }
 

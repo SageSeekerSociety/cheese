@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { stepError } from './assistantView'
+import { stepError, stepView } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -19,6 +19,18 @@ describe('stepError', () => {
   it('平台拒绝时说的那句原样留着', () => {
     const said = '这份草稿已经发布，不能再改'
     expect(stepError(said)).toBe(said)
+  })
+})
+
+describe('stepView', () => {
+  it('在电脑上做的一步，写出跑的命令或读写的文件', () => {
+    const step = (name: string, args: object) =>
+      stepView({ call: name, name, args: JSON.stringify(args), state: 'done' })
+    expect(step('bash', { command: 'python3 stats.py\n  --all' })).toMatchObject({
+      verb: t('toolLabels.piBash'),
+      arg: 'python3 stats.py --all',
+    })
+    expect(step('write', { path: 'report.md', content: '……' }).arg).toBe('report.md')
   })
 })
 
@@ -130,5 +142,38 @@ describe('writesView', () => {
     expect(card.rows.map((r) => [r.label, r.value])).toEqual([['推送通知', t('tasks.assistant.changes.setting.off')]])
     expect(card.canUndo).toBe(true)
     expect(card.collapsed).toBeFalsy()
+  })
+
+  it('记下、改写、忘掉一条记忆：各一张卡，写做了哪一种和它的描述，能撤销', () => {
+    const memory = (id: number, before: string | null, after: string | null) =>
+      ({
+        ...edit(id, 0, {}),
+        kind: 'memory',
+        title: '记忆',
+        undoable: true,
+        changed: { memory: { label: '给老师写东西用书面语', before, after } },
+      }) as unknown as AssistantEdit
+    const view = writesView([memory(1, null, 'a'), memory(2, 'a', 'b'), memory(3, 'b', null)], terms, null)
+
+    expect(view.changes.map((c) => [c.title, c.rows[0].value, c.rows[0].label, c.canUndo])).toEqual([
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.saved'),
+        true,
+      ],
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.changed'),
+        true,
+      ],
+      [
+        t('tasks.assistant.changes.memory.title'),
+        '给老师写东西用书面语',
+        t('tasks.assistant.changes.memory.forgotten'),
+        true,
+      ],
+    ])
   })
 })

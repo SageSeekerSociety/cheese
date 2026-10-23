@@ -11,9 +11,11 @@ import { DOMSerializer } from '@tiptap/pm/model'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import { parseMarkdown } from '@/lib/docSchema'
+import { refChip } from '@/lib/refChip'
 
 // Read from disk: the test config stubs stylesheet imports, `?raw` included.
 const docBlocksCss = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'docBlocks.css'), 'utf8')
+const styleCss = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../style.css'), 'utf8')
 
 let style: HTMLStyleElement
 
@@ -59,4 +61,25 @@ it('a list row that records a status is not drawn as a tag', () => {
   const row = document.querySelector('[role="row"]') as HTMLElement
 
   expect(getComputedStyle(row).paddingLeft).not.toBe('6px')
+})
+
+it('a focusable reference chip keeps its colour over Vuetify’s later [role=button] { color: inherit } rule', () => {
+  const appStyle = document.createElement('style')
+  appStyle.textContent = styleCss
+  const vuetifyReset = document.createElement('style')
+  vuetifyReset.textContent = 'button, [type=button], [role=button] { cursor: pointer; color: inherit; }'
+  document.head.append(appStyle, vuetifyReset)
+  try {
+    const names = { mentionNames: { alice: 'Alice' }, topicTitles: {} }
+    const referred = refChip('@', 'alice', names)
+    const notified = refChip('@', 'alice', { ...names, notified: true })
+    document.body.append(referred, notified)
+
+    const root = getComputedStyle(document.documentElement)
+    expect(getComputedStyle(referred).color).toBe(root.getPropertyValue('--accent').trim())
+    expect(getComputedStyle(notified).color).toBe(root.getPropertyValue('--accent-on').trim())
+  } finally {
+    appStyle.remove()
+    vuetifyReset.remove()
+  }
 })

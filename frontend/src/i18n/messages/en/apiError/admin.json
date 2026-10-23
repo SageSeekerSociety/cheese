@@ -1,6 +1,6 @@
 {
   "adminAddWhom": "Choose who to add",
-  "adminAgentCannotAdmin": "{handle} is an agent, and agents can't take admin actions",
+  "adminAgentCannotAdmin": "{handle} is an AI teammate and can't be a platform admin",
   "adminAlreadyRootAdmin": "{handle} is a root admin in the deployment config and doesn't need to be added here",
   "adminNoSuchAccount": "There's no account with the handle {handle} on the platform",
   "adminRootAdminCannotRemove": "{handle} is a root admin in the deployment config and can't be removed here. Changing the config needs server access",

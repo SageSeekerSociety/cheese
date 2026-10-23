@@ -4,20 +4,20 @@
 // 东西钉在置顶里，要做成的事是任务。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
+import type { TaskState } from '@/lib/taskState'
 import type { ChannelPin } from '@/types/channels'
-import type { ChapterRow } from '@/types/chapters'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
-import ChapterList from '@/components/channel/ChapterList.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
-import { taskDotStyle, taskPhraseLabel } from '@/lib/board'
 import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -32,13 +32,9 @@ const props = defineProps<{
   /** 项目总览现在写着什么。这里只读地显示开头，改它是整份打开（`edit-overview`）。 */
   overviewText: string
   pins: ChannelPin[]
-  /** 这段对话的章节，按对话里的顺序。 */
-  chapters?: ChapterRow[]
   tasks: RoomTask[]
   /** 能不能取消置顶：在主线说得上话的人。 */
   canPin: boolean
-  /** 能不能取消章节：在主线说得上话的人。 */
-  canChapter?: boolean
   memberNames: Record<string, string>
   agentName: string
   saveDescription: (text: string) => Promise<boolean>
@@ -46,7 +42,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'unpin', blockId: string): void
-  (e: 'unchapter', blockId: string): void
   (e: 'jump', blockId: string): void
   (e: 'open-task', taskId: string): void
   (e: 'open-all'): void
@@ -79,6 +74,16 @@ const recentDone = computed(() =>
     .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
     .slice(0, RECENT_DONE)
 )
+
+// 状态那一格和频道里的卡是同一个记号（`lib/taskState.ts`）；它下面那一行有话要说时写它，
+// 没有时写这件任务里最后说的一句。
+function stateOf(task: RoomTask): TaskState {
+  const agentName = (task.agent_handle && props.memberNames[task.agent_handle]) || props.agentName
+  return taskState(task, { viewer: ME, nameOf, agentName })
+}
+function secondOf(task: RoomTask): string | null {
+  return stateOf(task).line || latest(task)
+}
 
 function latest(task: RoomTask): string | null {
   const block = task.last_message
@@ -230,15 +235,6 @@ async function save() {
       @jump="emit('jump', $event)"
     />
 
-    <ChapterList
-      :chapters="chapters ?? []"
-      :can-chapter="!!canChapter"
-      :member-names="memberNames"
-      :refs="refs"
-      @jump="emit('jump', $event)"
-      @unpin="emit('unchapter', $event)"
-    />
-
     <section class="co-section">
       <h3 class="co-title">{{ t('work.channel.overview.running', { count: running.length }) }}</h3>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
@@ -252,12 +248,9 @@ async function save() {
       >
         <span class="co-task__head">
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
-          <span class="co-task__state t-meta">
-            <span class="co-dot" :style="taskDotStyle(task)" aria-hidden="true" />
-            {{ taskPhraseLabel(task, ME) }}
-          </span>
+          <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" />
         </span>
-        <span v-if="latest(task)" class="co-task__latest t-meta">{{ latest(task) }}</span>
+        <span v-if="secondOf(task)" class="co-task__latest t-meta">{{ secondOf(task) }}</span>
         <span class="co-task__meta t-meta c-faint">{{
           t('work.channel.overview.owner', {
             name: nameOf(task.owner_handle ?? ''),
@@ -414,17 +407,7 @@ async function save() {
   color: var(--ink);
 }
 .co-task__state {
-  display: inline-flex;
   flex: none;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-}
-.co-dot {
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid var(--faint);
-  border-radius: var(--radius-pill);
 }
 .co-task__latest {
   display: -webkit-box;

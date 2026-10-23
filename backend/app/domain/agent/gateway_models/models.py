@@ -73,7 +73,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
                 "reachable": False,
                 "readiness": None,
                 "admin_configured": False,
-                "detail": "未配置网关管理凭据（llm_gateway_admin_base / key）",
+                "detail": "未配置网关管理密钥（llm_gateway_admin_base / key）",
                 "fetched_at": fetched_at,
             },
             "window": window,

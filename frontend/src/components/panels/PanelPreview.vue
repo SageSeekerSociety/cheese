@@ -40,8 +40,10 @@ const props = withDefaults(
     frameName: string
     /** 这一格的取数（`composables/usePanelPreview.ts` 那一包）。 */
     preview: PanelPreviewBundle
+    /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined }
+  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -135,6 +137,7 @@ function refresh() {
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="props.frameName"
+    :agent-name="props.agentName"
     :frames="frames"
     :displayed-frame="displayedFrame"
     :navigation="navigation"

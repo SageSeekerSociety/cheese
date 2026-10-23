@@ -109,17 +109,17 @@
     <AgentHost />
     <DeviceConnect />
     <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
-         挂在最外层：任务页、支线里也要接着带。 -->
+         挂在最外层：任务页、支线里也要接着带。队友写项目给它起的名字：「界面导览」在改过名的项目里也能重走。 -->
     <GuideBubble
       v-if="guideStep"
       :target="guideStep.target"
       :ring="!guideStep.area"
-      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: workspace.agentName })"
       :text="
         t(
           `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
           {
-            agent: t('work.room.defaultAgentName'),
+            agent: workspace.agentName,
           }
         )
       "
@@ -523,7 +523,10 @@ const guideStep = computed(() => {
   const hit = step.anchors.find((name) => guideAnchor(name))
   const target = hit ? guideAnchor(hit) : null
   const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
-  const at = target ?? waitingAt
+  // 重播时每一站都要有落脚点：这一步该指的地方没开着（支线、任务页、手机上没侧栏），
+  // 就落到频道的时间线上。不然点到这一站整块浮窗会消失，后面也没处点。
+  const replayAt = !target && !waitingAt && guide.replaying.value ? guideAnchor('timeline') : null
+  const at = target ?? waitingAt ?? replayAt
   if (!at) return null
   return {
     key: step.key,
@@ -531,7 +534,9 @@ const guideStep = computed(() => {
     waiting: !target,
     failed: !!hit && hit === step.failed,
     area: !!step.area || !target,
-    action: !!step.done,
+    // 重播时**每一站**都有「下一步」：它不从人的旧记录里跳步（`settle` 在重播时不动），
+    // 没有这一步的话，已经发过消息的人会停在第一站，永远出不去。
+    action: !!step.done && !guide.replaying.value,
   }
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))

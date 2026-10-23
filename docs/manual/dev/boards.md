@@ -33,7 +33,7 @@ covers:
 
 `GET /projects/{id}/tasks` 一次把「全部任务」、「总览」和侧栏要的东西拼出来（`api/routes/projects.py`）：任务的列表、每条任务最新那张卡（`latest_cards_by_task`）、哪几条停在一个未回答的提问上（`tasks_awaiting_an_answer`）——三次批查询，不是每条任务三次。一个项目一百多个房间，按房间的形状（`/topics/{id}/tasks`）画一次侧栏要发一百多次请求。
 
-两个刻意的细节：**一次只取一个「现在几点」**（`now = datetime.now(UTC)`），逐行取 now 会让同一批数据里两条本该一样的活分到不同格子，而那种差别没人再能复现；**任务不问「在跑吗」**：在做、在等、卡住读的是 AI 队友自己报的进度（`TaskFacts.progress`，即 `Task.progress_state`），房间的任务列表（`/topics/{id}/tasks`）和房间快照每行另带的 `session_running`（`session_state.running_conversations`，读 `session_states`）只说它的会话此刻是不是在干活（`worker_status` 为 running），会话开着但闲着也是 false；房间自己那一格的「运行中」读的也是它自己那条线的 `session_states`（同一个 `running_conversations`）。事实被收窄成显式的小结构（`CardFacts` / `TaskFacts` / `RoomFacts`）再交给纯函数，这样这层测得起来，也说清了它到底读了哪几个字段。
+两个刻意的细节：**一次只取一个「现在几点」**（`now = datetime.now(UTC)`），逐行取 now 会让同一批数据里两条本该一样的活分到不同格子，而那种差别没人再能复现；**任务的会话在跑是事实，队友报的进度只填空**：这条活自己那位队友的会话在跑（`TaskFacts.teammate_runs`，`agent.teammate_runs` 读 `session_states`，`worker_status` 为 running，每个在跑的会话在哪一次跑由 runner 说）而它在这一次跑里没报过别的（`TaskFacts.progress_run` 不是其中一次），就是在做；其余时候在做、在等、卡住读的是 AI 队友自己报的进度（`TaskFacts.progress`，即 `Task.progress_state`）。房间的任务列表（`/topics/{id}/tasks`）和房间快照每行另带的 `session_running` 只说它的会话此刻是不是在干活，会话开着但闲着也是 false；房间自己那一格的「运行中」读的也是它自己那条线的 `session_states`（同一个 `running_conversations`）。事实被收窄成显式的小结构（`CardFacts` / `TaskFacts` / `RoomFacts`）再交给纯函数，这样这层测得起来，也说清了它到底读了哪几个字段。
 
 ## 待我处理 {#awaiting}
 

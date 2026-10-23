@@ -28,6 +28,7 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
@@ -68,7 +69,23 @@ def _service(db: AsyncSession) -> IntegrationService:
     assembles the route's dependencies hands it in — the shape
     `app.domain.user.ports` uses for the same reason.
     """
-    return IntegrationService(db, library)
+    return IntegrationService(db, library, _Teammates(db))
+
+
+class _Teammates:
+    """`integration.ports.TeammateNames`, answered by the project's roster of
+    teammates (`agent_instance`, a layer above `integration`)."""
+
+    def __init__(self, db: AsyncSession):
+        self._db = db
+
+    async def name_of(self, project_id: uuid.UUID, seat: str) -> str:
+        named = await AgentInstanceService(self._db).for_seat_handle_in(
+            project_id, seat
+        )
+        if named is not None and str(named.name_source) != "default":
+            return named.display_name
+        return say("teammateDefaultName")
 
 
 class MailIn(BaseModel):
@@ -612,6 +629,8 @@ async def mail_draft(
                     # checks is what the teammate wrote, in the room it was written.
                     "mail": {
                         "owner": row.owner_handle,
+                        # 写它的那位队友：卡上那句「由 X 起草」叫它的名字。
+                        "drafted_by": speaker,
                         "account": row.label,
                         "to": draft.to,
                         "cc": draft.cc,

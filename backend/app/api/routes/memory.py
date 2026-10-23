@@ -50,7 +50,7 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 # `ProjectRow` 同一形状。
 class MemoryFileRow(Protocol):
     id: Mapped[uuid.UUID]
-    project_id: Mapped[uuid.UUID]
+    project_id: Mapped[uuid.UUID | None]
     scope: Mapped[MemoryFileScope]
     owner_handle: Mapped[str]
     path: Mapped[str]
@@ -145,7 +145,9 @@ async def delete_memory(
     missing = NotFoundError(say("memoryEntryNotFound"))
     store = MemoryFileStore(db)
     entry = await store.get_by_id(row_id)
-    if entry is None or entry.path == INDEX_NAME:
+    # A person's own memory is in no project: it is pruned on their settings
+    # page, never here, and its id is answered as one that does not exist.
+    if entry is None or entry.path == INDEX_NAME or entry.project_id is None:
         raise missing
     try:
         await resolver.authorize_project(

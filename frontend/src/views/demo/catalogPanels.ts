@@ -78,15 +78,21 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'changes-diff-list',
     title: 'ChangesDiffList',
-    about: '「改动」默认那一面：这次改到的每个文件一段，差异连着往下排，段头写路径和增删，可以单独收起或打开。',
+    about: '「改动」默认那一面：这次改到的每个文件一段，段头写路径和增删，差异默认收着，点段头铺开。',
     file: 'src/components/panels/ChangesDiffList.vue',
     component: ChangesDiffList,
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '三个文件',
-        note: '新增、改过、删掉的各一份；git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        name: '三个文件，都收着',
+        note: '新增、改过、删掉的各一份，每一段只留段头：一件活改几十个文件是常态，先给「改了哪些东西」这一眼清单。',
         props: { diffs: FILE_DIFFS },
+        expect: 'docs/old-plan.md',
+      },
+      {
+        name: '铺开其中一段',
+        note: '铺开的那一段里是它的差异：git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        props: { diffs: FILE_DIFFS, expanded: new Set(['README.md']) },
         expect: '这个项目放本课程的课件和作业。',
       },
       {
@@ -272,17 +278,23 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'changes-all-view',
     title: 'ChangesAllView',
-    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，再把每一份的差异全摊开。',
+    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，每一段的差异默认收着，点段头铺开。',
     file: 'src/components/panels/ChangesAllView.vue',
     component: ChangesAllView,
     needs: UI,
     args: {},
     states: [
       {
-        name: '整支活的改动',
-        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
+        name: '整支活改到的文件',
+        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列、每段只留段头；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
         props: CHANGES_ALL_PROPS,
         expect: '个文件 · +',
+      },
+      {
+        name: '铺开其中一段',
+        note: '要看哪一份就点哪一段的段头：那一段铺开，其余照旧收着。',
+        props: { ...CHANGES_ALL_PROPS, expanded: new Set(['docs/week-1.md']) },
+        expect: '习题答案：第 3、5、7、9 题',
       },
       {
         name: '这一轮什么都没改',

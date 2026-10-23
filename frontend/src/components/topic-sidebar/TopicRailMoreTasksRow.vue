@@ -22,7 +22,7 @@ const emit = defineEmits<{
   <button
     type="button"
     class="rail-more"
-    :style="{ '--task-indent': 40 + props.depth * 20 + 'px', '--guide-x': 16 + props.depth * 20 + 'px' }"
+    :style="{ '--task-indent': 32 + props.depth * 20 + 'px', '--guide-x': 16 + props.depth * 20 + 'px' }"
     :aria-expanded="expanded"
     @click="emit('toggle', channelId)"
   >
@@ -42,6 +42,8 @@ const emit = defineEmits<{
   width: 100%;
   min-height: 32px;
   padding-block: 0;
+  /* 和任务行的标题同一个左缘：任务行在标题前留了 20px 给状态记号（TopicRailTaskRow.vue
+     的 `--text-start`），这一行没有记号，字也从那里开始。 */
   padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
@@ -76,19 +78,5 @@ const emit = defineEmits<{
 }
 .rail-more__chevron {
   color: var(--faint);
-}
-.topic-rail--page .rail-more {
-  padding-inline-start: calc(var(--task-indent) + 76px);
-}
-.topic-rail--page .rail-more::before {
-  left: calc(var(--guide-x) + 14px);
-}
-@media (hover: none) {
-  .rail-more {
-    padding-inline-start: calc(var(--task-indent) + 76px);
-  }
-  .rail-more::before {
-    left: calc(var(--guide-x) + 14px);
-  }
 }
 </style>

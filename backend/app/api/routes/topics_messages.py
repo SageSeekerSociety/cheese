@@ -113,6 +113,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
+from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
 from app.domain.topic_membership.services import TopicMemberService
@@ -352,7 +353,9 @@ async def _publish_as_agent(
         # recording its mention deliveries. The ledger is idempotent by
         # event × seat (`delivery/mention.py`), so running it again here is the
         # same at-least-once recovery the retry got before this early return.
-        if block is not None and place.task is None:
+        if block is not None:
+            if place.task is not None:
+                naming.nudge(place.conversation_id, "message")
             await _summon_the_named(chat, runner, place, block, author)
         return block
     attachments = await _write_agent_attachments(place, prepared)
@@ -385,8 +388,9 @@ async def _publish_as_agent(
         )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    # A task's session names nobody into its task: it works for its owner.
-    if payload is not None and place.task is None:
+    if payload is not None:
+        if place.task is not None:
+            naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
 

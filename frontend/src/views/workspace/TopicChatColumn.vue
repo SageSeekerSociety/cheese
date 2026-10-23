@@ -100,9 +100,10 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
-  // 消息的 ⋯ 里钉成章节/取消章节：这一页拿着这段对话的地址，由它去改。
+  // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
-  (e: 'unchapter', block: Block): void
+  (e: 'unchapter', target: Block | string): void
+  (e: 'rename', blockId: string, title: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
@@ -202,7 +203,7 @@ const madeHere = computed(() => {
         made.id !== conversationId.value &&
         (!made.source_block_id || made.source_block_id === id)
     )
-    .map((made) => taskLine(made, viewer.value, nameOf))
+    .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
@@ -210,6 +211,12 @@ const refs = computed(() => ({
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
+/** 做这件任务的队友叫什么：它单独指定的那位，否则这间房名册上的队友，再否则项目的默认队友。 */
+function madeAgentName(made: RoomTask): string {
+  const seat = made.agent_handle || props.topic.agent_handle || props.taskAgentHandle
+  return (seat && props.memberNames?.[seat]) || store.agentName
+}
+
 function nameOf(handle: string): string {
   return props.memberNames?.[handle] || handle
 }
@@ -274,6 +281,7 @@ defineExpose({
       :chapter-ids="chapterIds"
       @chapter="emit('chapter', $event)"
       @unchapter="emit('unchapter', $event)"
+      @rename="(id: string, title: string) => emit('rename', id, title)"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"

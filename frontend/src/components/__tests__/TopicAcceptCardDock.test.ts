@@ -232,12 +232,23 @@ describe('横条只说现在在等什么', () => {
     expect(emitted().review).toHaveLength(1)
   })
 
+  it('电脑端状态右边跟一颗向右的箭头，贴着「待你审阅」', async () => {
+    const { container } = await mountWith([card({})])
+    const status = container.querySelector('.accept-bar__status') as HTMLElement
+    const arrow = status.querySelector('.accept-bar__go')
+    expect(arrow?.classList.contains('mdi-chevron-right')).toBe(true)
+    // 挨着标题，不是被推到行尾：它说的是「这几个字能点」。
+    expect(status.lastElementChild).toBe(arrow)
+  })
+
   it('手机上横条只放「审阅」：决定在「改动」页底部', async () => {
     const { container, emitted } = await mountWith([card({ pr_number: 12, merge_state: CLEAN })], {
       reviewButton: true,
     })
     const strip = container.querySelector('.accept-bar')!
     expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
+    // 已经有一颗「审阅」，状态那半句不再跟箭头。
+    expect(strip.querySelector('.accept-bar__go')).toBeNull()
     await fireEvent.click(buttonNamed(strip, '审阅')!)
     expect(emitted().review).toHaveLength(1)
   })
@@ -250,6 +261,8 @@ describe('横条只说现在在等什么', () => {
     expect(bar(container)).toContain('@Bob Chen 已采纳')
     expect(bar(container)).not.toContain('@bob')
     expect(buttonNamed(container, '撤回采纳')).toBeDefined()
+    // 已采纳的卡没有去处，不画那颗去「改动」的箭头。
+    expect(container.querySelector('.accept-bar__go')).toBeNull()
   })
 })
 

@@ -41,7 +41,7 @@ covers:
 
 ## 状态只有两个 {#status}
 
-`TaskStatus` 是 `open` / `closed`，只有这两档：一条活要么开着，要么关了。开着的任务在做、在等、卡住还是等审，不是这一列的值，是从卡和 AI 队友报的进度算出来的显示状态，见[任务列表与待处理清单](#awaiting)。
+`TaskStatus` 是 `open` / `closed`，只有这两档：一条活要么开着，要么关了。开着的任务在做、在等、卡住还是等审，不是这一列的值，是从卡、做它的 AI 队友的会话在不在跑和它报的进度算出来的显示状态，见[任务列表与待处理清单](#awaiting)。
 
 三个时间戳各说各的事，不互相顶替：
 
@@ -125,11 +125,11 @@ covers:
 
 备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」；未跟踪文件已经被[预算](#backup-contents)挡住，能超的只剩提交过、托管平台上还没有的内容和跟踪文件的改动），服务端按 sha256 复核 digest、并校验它真是个 git bundle。同一份内容再交一次不会再存一遍；它要是已经不是最新那份（文件改动过又改了回去），就新记一行指向原来那个对象，让它重新成为最新——否则恢复出来的是那次已经撤掉的改动，下一轮 sync 也会因为「最新」对不上而每次都重传。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
 
-同步失败**会在房间里说一句**（`_report_sync_failure`）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。成功不发消息，那会是训练人跳过它的噪音。
+同步失败**会写进现场**（`_report_sync_failure`，一条 `sync_failed` 记录）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。它写进跑这次同步那个会话的现场，不属于房间：房间里没有人能重推，而原来那句「请重试本轮」是给机器看的，摆在人面前只会让人去找一个不存在的按钮。它带的是检查点自己那一轮的 id：平台跑 `cheese sync --all` 时把刚结束的那一轮放进 `CHEESE_TURN`（Claude Code 的 Stop 钩子先问运行器 `checkpoint_turn`；driven 的骨架在 `turn_ended` 里读自己那份 owner），机器同步失败时随 `X-Cheese-Turn` 带回来，所以它出现在那一轮的「查看过程」里，也在整段现场里。没有轮次的同步（提交钩子自己跑的那一次）照样写，`as_block` 把它标成平台自己的话，现场按没有轮次的那一行画它。房间的检查点做 `sync --all` 时会带上同屋别的任务，那条记录就落在房间的现场、正文点名是哪条分支；任务自己的凭据不许写进另一个任务的会话，所以它不会出现在那个任务的页面上。PR 在合并队列里是例外——重试救不了，要人决定退回卡还是换个任务交——那一条仍旧在房间里说。成功不发消息，那会是训练人跳过它的噪音。
 
 ### 每轮的检查点 {#checkpoint}
 
-每一轮结束时，会话让机器跑一次 checkpoint（执行器的 `checkpoint` 控制，跑的是 `cheese sync --all`）：这台机器上每个有东西没推的任务目录都备份、推送一遍。三个骨架是同一个动作，只是谁在一轮结束时去要它不同：Claude Code 用平台装的 Stop 钩子（`remote_execution/client.py` 的 `checkpoint`），Codex 和 pi 由 runner 在一轮结束时要（`driven/runner.py` 的 `turn_ended`）。runner 不让这一轮等它：房间在 agent 停下时就看到这一轮结束，checkpoint 在后面跑，一次只跑一个，跑的时候又结束了一轮就跑完再来一次；失败由 `cheese sync` 自己在房间里说。
+每一轮结束时，会话让机器跑一次 checkpoint（执行器的 `checkpoint` 控制，跑的是 `cheese sync --all`）：这台机器上每个有东西没推的任务目录都备份、推送一遍。三个骨架是同一个动作，只是谁在一轮结束时去要它不同：Claude Code 用平台装的 Stop 钩子（`remote_execution/client.py` 的 `checkpoint`），Codex 和 pi 由 runner 在一轮结束时要（`driven/runner.py` 的 `turn_ended`）。runner 不让这一轮等它：房间在 agent 停下时就看到这一轮结束，checkpoint 在后面跑，一次只跑一个，跑的时候又结束了一轮就跑完再来一次；失败由 `cheese sync` 自己写进现场，是平台的一行。
 
 ### 新环境里的自动恢复 {#restore}
 
@@ -190,7 +190,7 @@ covers:
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
-一件任务只有一个状态：开启、在做、在等、卡住、等审、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是等审，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task_state`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：在做是「芝士在做」，在等构建或 CI 是「在等结果」，卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_accept_request` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。平台不从轮次推断，一轮结束不改它；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
+一件任务只有一个状态：开启、在做、在等、卡住、待回答、待审阅、退回、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task_state`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的标签分别是「在做」「在等」「卡住」，它那句说明写在标签后面那一行（`lib/taskState.ts`）；卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_accept_request` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示在做。报了「在等」之后被构建叫醒、报了「卡住」之后有人回了它，都是在做；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
 
 「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 
@@ -215,5 +215,6 @@ covers:
 ## 边界与坑 {#traps}
 
 - 「待回答」压过队友报的「在做」：它停在那个问题上等回答，列表上显示「芝士在做」正是让人不来看的那句话。
+- 待回答只读问题上的回答、跳过记录：旁聊或提问 AI 继续发言都不结题。各任务视图共用寻址，包含多人提问、未点名时的任务参与者，并扣除已跳过的人。`awaits_me` 保留提需求人等关注提醒，个人称谓读 `needs_my_action`：只有当前实际被问、被指定审阅或需要处理问题的人，才写成「待你…」。显示单个人名的 `waiting_on` 不能代表多个被问者。
 - `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**，任务会话的执行路径也不读它们。卡上显示哪个模型从 `usage` 里这条任务最后一行算出来（`presentation.card_model`），不存一列。
-- 上一次检查点之后的改动只在那个沙箱里：沙箱换掉时它们就没有了；那次检查点的同步失败了也一样——房间里那句失败通知是唯一的信号。
+- 上一次检查点之后的改动只在那个沙箱里：沙箱换掉时它们就没有了；那次检查点的同步失败了也一样——现场里那条失败记录是唯一的信号。

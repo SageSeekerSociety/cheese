@@ -63,7 +63,7 @@
     "fullscreen": "全屏",
     "exitFullscreen": "退出全屏"
   },
-  "renderError": "渲染错误: {text}",
+  "renderError": "这段内容无法显示：{text}",
   "placeholder": "输入内容...",
   "question": {
     "placeholder": "问题描述",

@@ -11,6 +11,7 @@ import type { Ref } from 'vue'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { GroupAnswer } from '../../lib/askGroups'
 import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
@@ -29,8 +30,10 @@ import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
+import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
@@ -67,6 +70,11 @@ const props = defineProps<{
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
+  /** 组头块的 id → 这一组的每道题（`lib/askGroups`）；组里其余几行不单独画。 */
+  askGroups?: Map<string, Block[]>
+  /** 整组提交在路上 / 失败时那一句：由面板拿着（`useAskGroupAnswer`）。 */
+  askGroupBusy?: boolean
+  askGroupFailure?: string | null
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
   dayLabels: Map<string, string>
@@ -166,6 +174,7 @@ const emit = defineEmits<{
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
+  (e: 'ask-group-submit', questionId: string, answers: Record<string, GroupAnswer>): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -183,6 +192,16 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
+// 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
+// 不是要画的东西，所以不放进响应式状态。
+let keyedBefore: ReadonlyMap<string, string> = new Map()
+const rowKeyList = computed(() => {
+  const { keys, byBlock } = rowKeys(props.rows, keyedBefore)
+  keyedBefore = byBlock
+  return keys
+})
 
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
 // 「正在做」，也是上一轮没走完的，不该跟着转。
@@ -377,14 +396,14 @@ function rowLabel(name: string | null, iso: string, text: string): string {
   const time = props.fmtTime(iso)
   return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
-// 章节刻度：每条被钉成章节的消息是第几章、叫什么。标题取那条消息的第一行；不在
-// 当前窗口里的章节也照样占一个号，所以翻动历史时刻度上的号不会跳。
+// 章节刻度：每条被钉成章节的消息是第几章、叫什么。优先用书签自己的名字（人改的或模型起的），
+// 没有时退回那条消息的第一行；不在当前窗口里的章节也照样占一个号，翻动历史时刻度上的号不会跳。
 const chapterMarks = computed(() => {
   const marks = new Map<string, { no: number; title: string }>()
   inReadingOrder(props.chapters ?? []).forEach((chapter, i) => {
     marks.set(chapter.block.id, {
       no: i + 1,
-      title: replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
+      title: chapter.title || replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
     })
   })
   return marks
@@ -498,7 +517,7 @@ const rowLabels = computed(() =>
         :aria-label="t('work.room.chat.timelineLabel')"
         :aria-busy="loadingHistory || loadingOlder"
       >
-        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="rowKeyList[i]">
           <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
           <template v-if="i >= (hiddenRows ?? 0)">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
@@ -560,6 +579,28 @@ const rowLabels = computed(() =>
               @retry="emit('retry')"
               @jump="emit('jump', $event)"
             />
+            <!-- 一次问的几道题：收成一张卡画（`lib/askGroups` 把同组的行并到组头）。 -->
+            <section
+              v-else-if="!notice && askGroups?.get(m.id)"
+              class="tl-ask-group"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <AskGroupCard
+                :blocks="askGroups!.get(m.id)!"
+                :asker="displayName(m)"
+                :names="refs.mentionNames"
+                :viewer="viewer"
+                :closed="askClosed"
+                :busy="askGroupBusy"
+                :failure="askGroupFailure"
+                @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+              />
+            </section>
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
@@ -633,7 +674,7 @@ const rowLabels = computed(() =>
             <div
               v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
-              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
             >
               <div v-if="threadable && m.thread" class="msg-work__talk">

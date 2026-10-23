@@ -96,7 +96,7 @@ from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.place import place_or_404
-from app.domain.room_task.progress import set_progress
+from app.domain.room_task.progress import RUN_HEADER, parse_run, set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -197,8 +197,8 @@ async def get_task(
     """The task this conversation is — the same shape a room's `/tasks` lists.
     404 for a room's own conversation. What is said in it is read like any
     conversation's (`/topics/{task}/blocks`)."""
-    place, _actor, task = await task_conversation(db, resolver, topic_id)
-    return ok(await task_page_row(db, place, task))
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await task_page_row(db, place, task, me=actor.handle or ""))
 
 
 @router.get("/{topic_id}/related")
@@ -321,7 +321,7 @@ async def conclude_task(
     # The 支线 line under the message the task was made from is said by its AI
     # teammate, so whose teammate it is comes in here too.
     await tell_origin(db, task, ended, task_teammate=task_teammate)
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -336,10 +336,13 @@ async def report_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    run: str | None = Header(default=None, alias=RUN_HEADER),
 ) -> dict:
     """The task's AI teammate says where its work stands (`cheese_task_state`):
-    what the board shows for it until it says again. Only the task's own
-    session reports; a person reads it, and says what they need in the task.
+    what the board shows for it until it says again, or until its session
+    runs again in a run it has not reported in (`presentation.task_presentation`).
+    Only the task's own session reports; a person reads it, and says what they
+    need in the task.
 
     Refused while a card waits on the task's review: the card says where the
     task stands then (等审), and a report would either change nothing on the
@@ -352,15 +355,19 @@ async def report_progress(
     card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     if card is not None and card.status in OPEN_CARD_STATUSES:
         raise ConflictError(say("taskProgressWhileInReview"))
+    by = actor.handle or ""
     set_progress(
         task,
         body.state,
         note=body.note,
-        by=actor.handle or "",
+        by=by,
         at=datetime.now(UTC),
+        # Which run of its session the call was made in, as its runner
+        # names it (`executor_transport.PlatformHost.run`).
+        run=parse_run(run),
     )
     await db.flush()
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -391,7 +398,7 @@ async def reopen_task(
             ),
         ),
     )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -474,7 +481,7 @@ async def update_task(
                 by=actor.handle, added=[], removed=[actor.handle]
             ),
         )
-        out = await task_out(db, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     members = TopicMemberService(db)
@@ -529,7 +536,7 @@ async def update_task(
                     by=actor.handle, added=added, removed=removed
                 ),
             )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 

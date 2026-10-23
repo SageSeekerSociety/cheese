@@ -24,6 +24,7 @@ import pytest
 from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import mcp_process
+from tests.support.session_runner import standing_runner
 
 TASK = "9f8e7d6c-0000-4000-8000-000000000000"
 #: The conversation these sessions run in (CHEESE_TOPIC): a task's own
@@ -288,7 +289,7 @@ def _serve(executor):
     return server, platform_calls, executor_calls
 
 
-def _session(tmp_path, server, target):
+def _session(tmp_path, server, target, extra_env=None, *, runner_socket):
     config = tmp_path / "central.json"
     config.write_text(
         json.dumps({"workspace": str(tmp_path), "central_hooks": {}, **target})
@@ -304,14 +305,25 @@ def _session(tmp_path, server, target):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": TOPIC,
             "CHEESE_PROJECT": "fixture-project",
+            # The session's runner, which names the run each platform call
+            # is made in (`executor_transport.PlatformHost.run`).
+            "CHEESE_SESSION_SOCKET": runner_socket,
+            **(extra_env or {}),
         },
         log,
     )
     return process, log
 
 
+@pytest.fixture
+def runner_socket():
+    """The session's runner: it names the run every platform call is made in."""
+    with standing_runner("claude-code/1/1") as path:
+        yield path
+
+
 @pytest.fixture(params=["answers-503", "unavailable", "deferred"])
-def machine_is_gone(tmp_path, request):
+def machine_is_gone(tmp_path, request, runner_socket):
     """一个平台在、机器不在的会话，三种不在法。"""
     server, platform_calls, executor_calls = _serve(lambda _: (503, b""))
     port = server.server_port
@@ -320,7 +332,7 @@ def machine_is_gone(tmp_path, request):
         "unavailable": {"kind": "unavailable"},
         "deferred": {"kind": "deferred"},
     }[request.param]
-    process, log = _session(tmp_path, server, target)
+    process, log = _session(tmp_path, server, target, runner_socket=runner_socket)
     try:
         yield process, platform_calls, executor_calls
     finally:
@@ -334,7 +346,7 @@ DOC = "# 实况\n\n数据口径定为新版。\n"
 
 
 @pytest.fixture
-def machine_is_here(tmp_path):
+def machine_is_here(tmp_path, runner_socket):
     """机器在：推分支的那条命令和等机器的空命令答成功。"""
 
     def executor(payload):
@@ -348,6 +360,7 @@ def machine_is_here(tmp_path):
         tmp_path,
         server,
         {"kind": "device", "url": f"http://127.0.0.1:{server.server_port}/execution"},
+        runner_socket=runner_socket,
     )
     try:
         yield process, platform_calls, executor_calls
@@ -611,3 +624,37 @@ def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
     offered = schema["inputSchema"]["properties"]["state"]["enum"]
     assert set(offered) == {state.value for state in TaskProgress}
     assert tools.TASK_PROGRESS_NOTE_CHARS == NOTE_MAX_CHARS
+
+
+def test_the_switch_decides_whether_the_tool_is_on_the_listing(tmp_path, runner_socket):
+    """`cheese_compact` 默认关着，这一条钉的是**清单**：会话侧那份 `tools/list`
+    里没有它，agent 连它的名字都看不到；部署在会话的环境里写下那一句，它才在清单
+    上。表本身两种情况下都完整（上面那条用例读的就是它）。"""
+    server, _, _ = _serve(lambda _: (503, b""))
+    try:
+        target = {"kind": "unavailable"}
+        (tmp_path / "off").mkdir()
+        (tmp_path / "on").mkdir()
+        off, log = _session(
+            tmp_path / "off", server, target, runner_socket=runner_socket
+        )
+        on, log_on = _session(
+            tmp_path / "on",
+            server,
+            target,
+            {"CHEESE_COMPACT_TOOL": "1"},
+            runner_socket=runner_socket,
+        )
+        try:
+            assert "cheese_compact" not in _listing(off)
+            assert "cheese_compact" in _listing(on)
+            # 别的行不受影响：开关动的只有这一样。
+            assert set(_listing(off)) == set(_listing(on)) - {"cheese_compact"}
+        finally:
+            off.close()
+            on.close()
+            log.close()
+            log_on.close()
+    finally:
+        server.shutdown()
+        server.server_close()

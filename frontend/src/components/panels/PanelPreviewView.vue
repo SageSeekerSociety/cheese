@@ -47,6 +47,7 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEditor.vue'))
 
 const props = withDefaults(defineProps<PreviewViewProps>(), {
+  agentName: () => t('work.room.defaultAgentName'),
   submitQuestion: undefined,
   uploadAnnotation: undefined,
   active: true,
@@ -182,6 +183,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
       :pick-on="pick.on.value"
+      :agent-name="agentName"
       @refresh="emit('refresh')"
       @frame-load="(id: number, event: Event) => emit('frame-load', id, event)"
       @frame-error="(id: number, event: Event) => emit('frame-error', id, event)"
@@ -194,7 +196,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <div>{{ t('work.room.preview.loadFailed') }}</div>
       <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
       <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
-        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        {{
+          t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
+            agent: agentName,
+          })
+        }}
       </div>
       <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
@@ -222,10 +228,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
       <div>{{ t('tasks.preview.unavailable') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        {{ t('tasks.preview.appUnavailable') }}
+        {{ t('tasks.preview.appUnavailable', { agent: agentName }) }}
       </div>
       <div v-else class="text-caption mt-1">
-        {{ t('tasks.preview.connectionUnavailable') }}
+        {{ t('tasks.preview.connectionUnavailable', { agent: agentName }) }}
       </div>
     </div>
     <PreviewDocStage

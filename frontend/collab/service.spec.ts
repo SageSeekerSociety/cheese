@@ -581,6 +581,29 @@ describe('an edit to part of the live document', () => {
     expect(exportMarkdown(a.doc)).toBe(TWO)
   })
 
+  it('as a suggestion of a whole new paragraph, reaches every editor and is still pending when the document is opened again', async () => {
+    const { backend, http, a } = await opened()
+    const response = await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲范围。\n\n第三段讲排期。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    expect(response.status).toBe(200)
+    const pending = [
+      { id: (await response.json()).edits[0].suggestion_id, author: 'cheese-agent', old: '', new: '第三段讲排期。' },
+    ]
+    expect(backend.content).toBe(TWO)
+    expect(backend.sent.at(-1)!.suggestions).toEqual(pending)
+    await until(() => liveSuggestions(a.doc).length === 1)
+    expect(liveSuggestions(a.doc)).toEqual(pending)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+    // Opened again: from what was stored.
+    const reopened = new Y.Doc()
+    Y.applyUpdate(reopened, backend.state!)
+    expect(liveSuggestions(reopened)).toEqual(pending)
+    expect(exportMarkdown(reopened)).toBe(TWO)
+  })
+
   it('applied directly, leaves somebody else’s pending suggestion where it was', async () => {
     const { backend, http, a } = await opened()
     await edit(http, {
@@ -662,15 +685,17 @@ describe('an edit to part of the live document', () => {
     expect(exportMarkdown(a.doc)).toBe(TWO)
   })
 
-  it('cannot suggest reshaping paragraphs, and changes nothing', async () => {
-    const { backend, http, a } = await opened()
+  it('cannot suggest a row added to a table, and changes nothing', async () => {
+    const { backend, http, a } = await opened(`${TWO}\n\n| 周 | 次数 |\n| --- | --- |\n| 一 | 10 |`)
     const versions = backend.versions.length
-    for (const change of ['- 第二段讲范围。', '第一段讲目标。第二段讲范围。']) {
-      const old = change.startsWith('-') ? '第二段讲范围。' : TWO
-      const response = await edit(http, { edits: [{ old, new: change }], actor: 'cheese-agent', mode: 'suggest' })
-      expect(response.status).toBe(422)
-      expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
-    }
+    const row = exportMarkdown(a.doc).trimEnd().split('\n').at(-1)!
+    const response = await edit(http, {
+      edits: [{ old: row, new: `${row}\n${row.replace('一', '二')}` }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    expect(response.status).toBe(422)
+    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'structure' })
     expect(backend.versions.length).toBe(versions)
     expect(backend.sent.some((sent) => sent.suggested || sent.suggestions.length)).toBe(false)
     expect(liveSuggestions(a.doc)).toEqual([])

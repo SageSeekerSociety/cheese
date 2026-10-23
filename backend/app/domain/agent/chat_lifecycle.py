@@ -192,6 +192,16 @@ class TurnLifecycle:
             self.live, self._compute, topic_id, agent_handle
         )
 
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Is this seat's runner another release's, finishing its work? Its
+        messages wait until it has been replaced (``ComputePool.draining``)."""
+        return self._compute.draining(topic_id, agent_handle)
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Whether the room is to be told now that a message waits for this
+        seat's drain: once per drain."""
+        return self._compute.tell_draining(topic_id, agent_handle)
+
     def has_live_screen(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool:

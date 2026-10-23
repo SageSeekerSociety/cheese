@@ -309,6 +309,22 @@ def test_a_send_is_written_read_and_its_work_goes_idle_in_order(screen, contract
     assert echo["record"]["cheese"]["work_id"] == work
 
 
+def test_a_platform_call_is_told_the_run_by_the_event_that_began_it(screen):
+    """The session's helper asks which run its platform call is made in, and is
+    told the run by the same name the platform applies the ``running`` event
+    under: its epoch and seq. Idle afterwards (a background task's call), it is
+    still that run; before the session has run, there is no run to name."""
+    assert screen.call("run") == {}
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+    running = next(e for e in screen.events() if _status("running", work)(e))
+
+    assert screen.call("run") == {
+        "run": f"claude-code/{running['epoch']}/{running['seq']}"
+    }
+
+
 def test_an_acknowledged_event_is_not_handed_over_again(screen):
     """The runner keeps an event until the platform acknowledges it, and only
     that long: a read that acknowledges nothing gets it again, one that
@@ -688,6 +704,57 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
     finally:
         reading.cancel()
         await runner.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("previous", ["idle", "running", "restarted"])
+async def test_a_queued_input_is_not_filed_under_the_previous_work(
+    tmp_path, monkeypatch, previous
+):
+    """The next input can queue long after the last result, or while another
+    work is running. Its queue notice names its delivery, but queueing alone
+    does not make it part of any execution work."""
+    state = tmp_path / "state"
+    runner = Runner(state)
+    runner.session_id = "session-queue"
+    runner.outbox.register(1)
+
+    async def written(message):
+        pass
+
+    monkeypatch.setattr(runner, "_write", written)
+    old_input, old_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(old_input, "first", work_id=old_work)
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": old_input, "state": "started"}
+    )
+    if previous != "running":
+        runner.observe({"type": "result", "result": "done"})
+    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(next_input, "next", work_id=next_work)
+    if previous == "restarted":
+        runner = Runner(state)
+        runner.session_id = "session-queue"
+        runner.outbox.register(1)
+        monkeypatch.setattr(runner, "_write", written)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "queued"}
+    )
+    queued = runner.journal.read(0)[-1]["record"]
+    assert queued["cheese"].get("work_id") is None
+    assert queued["cheese"]["input_work_id"] == next_work
+    assert runner.working is (previous == "running")
+    assert runner.work == (old_work if previous == "running" else None)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "started"}
+    )
+    started = runner.journal.read(0)[-1]["record"]
+    execution = old_work if previous == "running" else next_work
+    assert started["cheese"]["work_id"] == execution
+    assert started["cheese"]["input_work_id"] == next_work
+    assert runner.working and runner.work == execution
 
 
 @pytest.mark.anyio
@@ -1258,3 +1325,69 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
     assert calls.read_text().count("called") == 2, "once before each turn"
     assert offered, "the first turn was not offered the skill the project gained"
     assert loaded
+
+
+# --- N. the session compacting itself -------------------------------------------
+
+
+def test_an_idle_session_compacts_itself_when_asked(screen, contract):
+    """`cheese_compact` reaches this runner as `compact`, and the runner writes
+    `/compact` — the same door `/reload-skills` goes through. An idle session
+    has no turn to wait for, so it goes at once, and the build reports the
+    compaction the way the room already reads it (`system/status`)."""
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    answer = screen.call("compact", {})
+
+    assert answer == {"requested": True, "already": False}
+    started = screen.wait(lambda r: r.get("status") == "compacting")
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"
+
+
+def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract):
+    """A tool call is answered at a tool boundary, and the build takes stdin at
+    those boundaries: `/compact` written from inside one would arrive inside the
+    turn that asked. So it waits for that turn's ending — one per request, and
+    the second asking in the same turn is told it is already asked."""
+    work = str(uuid.uuid4())
+    screen.send(
+        contract.do("Bash", command="sleep 4; echo HELD", description="hold the turn"),
+        work_id=work,
+    )
+    # The Bash is really running: asked for a tool call, the build is inside
+    # one, and the turn cannot end before its result comes back.
+    screen.wait(_is("system", "task_started"))
+    assert screen.call("ping")["work_id"] == work
+
+    first = screen.call("compact", {})
+    second = screen.call("compact", {})
+
+    assert first == {"requested": True, "already": False}
+    assert second == {"already": True}
+    held = screen.records()
+    assert not any(
+        block.get("text") == "/compact"
+        for entry in held
+        for block in _blocks(entry["record"])
+    ), "the command went out inside the turn that asked"
+    screen.wait_event(_status("idle", work))
+    screen.wait(lambda r: r.get("status") == "compacting")
+
+    # Once per turn, not once for ever: the session's next turn can ask again,
+    # and this time nothing is running, so the command goes at once.
+    second_work = str(uuid.uuid4())
+    screen.send("again", work_id=second_work)
+    screen.wait_event(_status("idle", second_work))
+    assert screen.call("compact", {}) == {"requested": True, "already": False}
+    started = screen.wait(
+        lambda r: r.get("status") == "compacting", after=held[-1]["sequence"]
+    )
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"

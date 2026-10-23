@@ -13,6 +13,7 @@ import type { ChapterRow } from '../types/chapters'
 
 import { computed, ref, watch } from 'vue'
 
+import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
@@ -27,6 +28,7 @@ import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
+import BookmarkRail from './chat/BookmarkRail.vue'
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
@@ -167,9 +169,14 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
+// 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
+const chatRoot = ref<HTMLElement | null>(null)
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
@@ -182,11 +189,14 @@ const panel = useChatPanel({
   emit: panelEmit,
 })
 
+// 一件任务交给的那位 AI 队友叫什么；没单独指定的，是这间房的那位。
+const taskAgentName = (handle: string | null | undefined) =>
+  (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value
 const threadLines = useThreadLines({
   mainLine: () => mainLine.value,
   roomId: () => props.topic?.id ?? null,
   timeline: panel.timeline,
-  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+  agentNameOf: taskAgentName,
 })
 // 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
 const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
@@ -220,7 +230,13 @@ function nameOf(handle: string): string {
 // 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () =>
+    new Map(
+      knownTasks.value.map((task) => [
+        task.id,
+        taskLine(task, panel.viewer.value, nameOf, taskAgentName(task.agent_handle)),
+      ])
+    )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 function taskOf(taskId: string): TaskLine | null {
@@ -243,6 +259,7 @@ const {
   prState,
   composerHint,
   rows,
+  askGroups,
   hiddenRows,
   refMaps,
   hasMore,
@@ -338,6 +355,8 @@ const {
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
+// 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
+const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
 // 打开的那一刻做一次，删掉了不会再长回来。
@@ -394,7 +413,6 @@ const submitQuestion = createQuestionSubmit({
 defineExpose({ send, linkDown, submitQuestion })
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
-const chatRoot = ref<HTMLElement | null>(null)
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
@@ -433,116 +451,132 @@ useComposerShortcut({
       <!-- The timeline gets its own boundary: one bad row must not take the
            composer, the new-message pill or the error toast down with it.
            resetKey = topic id, so switching topics recovers on its own. -->
-      <ErrorBoundary :reset-key="topic.id">
-        <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- the keyboard twins are the focusin/focusout listeners useChatRowActions puts on the same scroller -->
-        <ChatTimeline
-          v-guide-anchor="onProjectLine ? 'timeline' : ''"
-          :topic="topic"
-          :ask-closed="askClosed"
-          :no-upgrade="noUpgrade"
-          :threadable="threadable"
-          :processable="inThread"
-          :fold-plain="!!conversationId"
-          :replying-for="threadLines.replyingFor"
-          :replying-seats-for="threadLines.replyingSeats"
-          :thread-status-for="threadLines.statusFor"
-          :pinnable="pinnable"
-          :pinned-ids="pins.pinnedIds.value"
-          :chapterable="chapterable"
-          :chapter-ids="chapterIds"
+      <div class="timeline-zone">
+        <ErrorBoundary :reset-key="topic.id">
+          <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- the keyboard twins are the focusin/focusout listeners useChatRowActions puts on the same scroller -->
+          <ChatTimeline
+            v-guide-anchor="onProjectLine ? 'timeline' : ''"
+            :topic="topic"
+            :ask-closed="askClosed"
+            :no-upgrade="noUpgrade"
+            :threadable="threadable"
+            :processable="inThread"
+            :fold-plain="!!conversationId"
+            :replying-for="threadLines.replyingFor"
+            :replying-seats-for="threadLines.replyingSeats"
+            :thread-status-for="threadLines.statusFor"
+            :pinnable="pinnable"
+            :pinned-ids="pins.pinnedIds.value"
+            :chapterable="chapterable"
+            :chapter-ids="chapterIds"
+            :chapters="chapters"
+            :task-of="taskOf"
+            :tasks-under="tasksUnder"
+            :name-of="nameOf"
+            :rows="rows"
+            :ask-groups="askGroups"
+            :ask-group-busy="askGroupBusy"
+            :ask-group-failure="errorMsg"
+            :hidden-rows="hiddenRows"
+            :day-labels="dayLabels"
+            :unread-anchor-id="unreadAnchorId"
+            :run-edges="runEdges"
+            :arrived="arrived"
+            :delivered="delivered"
+            :sent-now="sentNow"
+            :flash-id="flashId"
+            :time-shown-id="timeShownId"
+            :bar="bar"
+            :bar-block="barBlock"
+            :bar-editable="barEditable"
+            :reaction-picker-for="reactionPickerFor"
+            :loading-history="loadingHistory"
+            :has-more="hasMore"
+            :loading-older="loadingOlder"
+            :retry-index="retryIndex"
+            :retry-busy="retryBusy"
+            :working="awaitingReply"
+            :show-starters="showStarters"
+            :starter-prompts="starterPrompts"
+            :agent-name="agentName"
+            :refs="refMaps"
+            :outbox="outbox"
+            :typing="typingRows"
+            :editing-id="editingId"
+            :edit-saving="editSaving"
+            :mention-pool="mentionPool"
+            :topic-list="topicList"
+            :scroll-ref="timelineRefs.scrollRef"
+            :content-ref="timelineRefs.contentRef"
+            :is-agent-block="isAgentBlock"
+            :is-mine="isMine"
+            :is-external="isExternal"
+            :avatar-of="avatarSrc"
+            :display-name="displayName"
+            :author-title="authorTitle"
+            :notice-agent="noticeAgent"
+            :agent-faces="agentFaces"
+            :parent-of="parentOf"
+            :show-reply-cue="showReplyCue"
+            :fmt-time="fmtTime"
+            :pending-block="pendingBlock"
+            :outgoing-state="outgoingState"
+            :outbox-edge="outboxEdge"
+            :my-name="myName"
+            :viewer="viewer"
+            @scroll="onTimelineScroll"
+            @click="onMessagesClick"
+            @mouseover="onTimelinePointer"
+            @mouseleave="hideBar"
+            @react="onReact"
+            @reply="setReply"
+            @open-thread="emit('open-thread', $event)"
+            @open-process="emit('open-process', $event)"
+            @upgrade-message="emit('upgrade-message', $event)"
+            @edit="startEdit"
+            @edit-send="editSend"
+            @toggle-picker="togglePicker"
+            @open-file="(path) => emit('open-file', path)"
+            @open-card="emit('open-card', $event)"
+            @open-resource="
+              (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
+            "
+            @ask-reply="replyToQuestion"
+            @ask-withdraw="withdrawQuestionAnswer"
+            @ask-skip="skipQuestion"
+            @ask-group-submit="submitAskGroup"
+            @checklist="changeChecklist"
+            @download="downloadAttachment"
+            @jump="openAt"
+            @save-edit="saveEdit"
+            @cancel-edit="editingId = null"
+            @retry="retryNow"
+            @retry-send="retrySend"
+            @starter="startDraft"
+            @settle-arrival="settleArrival"
+            @settle-sent="settleSent"
+            @outbox-leave="outboxLeave"
+            @pin="pins.pin"
+            @unpin="pins.unpin"
+            @chapter="emit('chapter', $event)"
+            @unchapter="emit('unchapter', $event)"
+            @keep="keepFile"
+          >
+            <template #timeline-start><slot name="timeline-start" /></template>
+            <template #timeline-end><slot name="timeline-end" /></template>
+          </ChatTimeline>
+        </ErrorBoundary>
+        <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
+        <BookmarkRail
           :chapters="chapters"
-          :task-of="taskOf"
-          :tasks-under="tasksUnder"
-          :name-of="nameOf"
-          :rows="rows"
-          :hidden-rows="hiddenRows"
-          :day-labels="dayLabels"
-          :unread-anchor-id="unreadAnchorId"
-          :run-edges="runEdges"
-          :arrived="arrived"
-          :delivered="delivered"
-          :sent-now="sentNow"
-          :flash-id="flashId"
-          :time-shown-id="timeShownId"
-          :bar="bar"
-          :bar-block="barBlock"
-          :bar-editable="barEditable"
-          :reaction-picker-for="reactionPickerFor"
-          :loading-history="loadingHistory"
-          :has-more="hasMore"
-          :loading-older="loadingOlder"
-          :retry-index="retryIndex"
-          :retry-busy="retryBusy"
-          :working="awaitingReply"
-          :show-starters="showStarters"
-          :starter-prompts="starterPrompts"
-          :agent-name="agentName"
+          :can-chapter="chapterable"
           :refs="refMaps"
-          :outbox="outbox"
-          :typing="typingRows"
-          :editing-id="editingId"
-          :edit-saving="editSaving"
-          :mention-pool="mentionPool"
-          :topic-list="topicList"
-          :scroll-ref="timelineRefs.scrollRef"
-          :content-ref="timelineRefs.contentRef"
-          :is-agent-block="isAgentBlock"
-          :is-mine="isMine"
-          :is-external="isExternal"
-          :avatar-of="avatarSrc"
-          :display-name="displayName"
-          :author-title="authorTitle"
-          :notice-agent="noticeAgent"
-          :agent-faces="agentFaces"
-          :parent-of="parentOf"
-          :show-reply-cue="showReplyCue"
-          :fmt-time="fmtTime"
-          :pending-block="pendingBlock"
-          :outgoing-state="outgoingState"
-          :outbox-edge="outboxEdge"
-          :my-name="myName"
-          :viewer="viewer"
-          @scroll="onTimelineScroll"
-          @click="onMessagesClick"
-          @mouseover="onTimelinePointer"
-          @mouseleave="hideBar"
-          @react="onReact"
-          @reply="setReply"
-          @open-thread="emit('open-thread', $event)"
-          @open-process="emit('open-process', $event)"
-          @upgrade-message="emit('upgrade-message', $event)"
-          @edit="startEdit"
-          @edit-send="editSend"
-          @toggle-picker="togglePicker"
-          @open-file="(path) => emit('open-file', path)"
-          @open-card="emit('open-card', $event)"
-          @open-resource="
-            (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
-          "
-          @ask-reply="replyToQuestion"
-          @ask-withdraw="withdrawQuestionAnswer"
-          @ask-skip="skipQuestion"
-          @checklist="changeChecklist"
-          @download="downloadAttachment"
+          :active-id="flashId"
           @jump="openAt"
-          @save-edit="saveEdit"
-          @cancel-edit="editingId = null"
-          @retry="retryNow"
-          @retry-send="retrySend"
-          @starter="startDraft"
-          @settle-arrival="settleArrival"
-          @settle-sent="settleSent"
-          @outbox-leave="outboxLeave"
-          @pin="pins.pin"
-          @unpin="pins.unpin"
-          @chapter="emit('chapter', $event)"
-          @unchapter="emit('unchapter', $event)"
-          @keep="keepFile"
-        >
-          <template #timeline-start><slot name="timeline-start" /></template>
-          <template #timeline-end><slot name="timeline-end" /></template>
-        </ChatTimeline>
-      </ErrorBoundary>
+          @unpin="emit('unchapter', $event)"
+          @rename="(id: string, title: string) => emit('rename', id, title)"
+        />
+      </div>
 
       <RoomMessageSheet
         v-model="sheet.open"
@@ -552,12 +586,20 @@ useComposerShortcut({
         :no-upgrade="noUpgrade"
         :threadable="threadable"
         :processable="inThread"
+        :pinnable="pinnable"
+        :pinned-ids="pins.pinnedIds.value"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"
         @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
+        @pin="pins.pin"
+        @unpin="pins.unpin"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 
@@ -675,6 +717,14 @@ useComposerShortcut({
   flex-direction: column;
   height: 100%;
   background: var(--surface);
+}
+/* 时间线的那一块：书签条要浮在它上面，而不是跟着消息滚走。 */
+.timeline-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* 手机底部的安全区（Home 横杠 / 圆角）由输入框这一块的最后一样东西出：输入区，
    或者说明为什么不能说话的那一格。 */

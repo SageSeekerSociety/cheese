@@ -82,6 +82,7 @@ export function usePanelSurface(parts: {
     composerHint: parts.people.naming.composerHint,
     // timeline
     rows: parts.rows.rows,
+    askGroups: parts.rows.askGroups,
     hiddenRows: parts.rowBatch.hidden,
     refMaps: parts.people.refMaps,
     awaitingReply: parts.turns.awaitingReply,

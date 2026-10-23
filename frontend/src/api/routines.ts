@@ -36,17 +36,22 @@ export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }
  *
  * `failedOnly` 问的是「哪几次没成」：失败和未执行两种一起来（后端那一边）。回来的
  * `total` 是**筛过之后的全部**，翻页器上那句「共 N 次」说的是它。
+ *
+ * `credits_this_month` 是**整条规则**本月的点数，不是这一页的 —— 翻到第几页都一样。
+ * 每一行自己的那一次在 `runs[].credits` 上（`null` 是还没结算，不是 0）。
  */
 export function listRoutineRuns(
   id: string,
   opts: { offset?: number; limit?: number; failedOnly?: boolean } = {}
-): Promise<ListPayload<RoutineRun>> {
+): Promise<ListPayload<RoutineRun> & { credits_this_month: number }> {
   const q = new URLSearchParams()
   if (opts.offset) q.set('offset', String(opts.offset))
   if (opts.limit) q.set('limit', String(opts.limit))
   if (opts.failedOnly) q.set('failed_only', 'true')
   const suffix = q.toString()
-  return request<ListPayload<RoutineRun>>(`/routines/${encodeURIComponent(id)}/runs${suffix ? `?${suffix}` : ''}`)
+  return request<ListPayload<RoutineRun> & { credits_this_month: number }>(
+    `/routines/${encodeURIComponent(id)}/runs${suffix ? `?${suffix}` : ''}`
+  )
 }
 
 export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {

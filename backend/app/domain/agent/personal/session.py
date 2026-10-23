@@ -1,10 +1,14 @@
 """A conversation's session on the session host: one pi session per
-conversation, with no hands.
+conversation, and a sandbox of the conversation's own for its hands.
 
 What a room needs and a person's 芝士 does not is absent rather than idle: no
-project, no machine, no topic, no lease, no screen, no room log. The session is
-told to use only the tools it is given, which act as the person through the
-platform's own routes.
+project, no topic, no screen, no room log. Its platform tools act as the person
+through the platform's own routes. Its own tools — reading and writing files,
+running commands — work in a standard sandbox the conversation takes the first
+time one of them is used and not before (``machine.holder.Personal``): a
+question that runs nothing never waits for one, and never pays for one. The
+sandbox holds no credential of the platform's, keeps nothing once it is idle,
+and is paid for from the person's own credits.
 
 One conversation is one session, at a home of its own under the person's, so a
 person's sessions are counted together: a person keeps at most
@@ -16,9 +20,12 @@ its conversation stays on disk, and the next question starts it again on it.
 import uuid
 
 from app.core import model_roles
+from app.core.config import settings
 from app.core.sandbox_auth import mint_personal_credential
 from app.domain.agent import gateway_catalog
+from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import PI
+from app.domain.agent.market import cloud_provisionable
 from app.domain.agent.personal.prompt import system_prompt
 from app.domain.agent.session_host.contract import (
     Access,
@@ -103,6 +110,9 @@ TOOLS = (
     "cheese_member_set",
     "cheese_channel_create",
     "cheese_settings_set",
+    "cheese_routine",
+    "cheese_notify_me",
+    "cheese_memory",
     "cheese_web_fetch",
     "cheese_web_search",
     "cheese_problem_write",
@@ -116,16 +126,38 @@ def ref(user_id: int, conversation_id: uuid.UUID) -> SessionRef:
     return SessionRef(PI, f"personal/{user_id}/{conversation_id}")
 
 
+def target(conversation_id: uuid.UUID) -> dict | None:
+    """The sandbox the conversation's session works on, taken when a tool first
+    needs it (``RemoteClient``): the conversation's own, which it asks for at
+    the same path a room's session asks at. None where the deployment has no
+    session host to name, and so no sandbox to give."""
+    if not settings.agent_session_device_id or not cloud_provisionable(settings):
+        return None
+    conversation = str(conversation_id)
+    return {
+        "kind": "deferred",
+        # The topic's session is named by the topic (``holder.personal_claims``).
+        "resource_id": conversation,
+        "session_id": conversation,
+        "lease_path": f"/topics/{conversation}/sessions/{conversation}/work-lease",
+        "setup_env": {},
+        "workspace": DEFERRED_WORKSPACE,
+        "mcp_servers": [],
+    }
+
+
 def session(
     user_id: int, conversation_id: uuid.UUID
 ) -> tuple[SessionRef, SessionSpec, Access]:
     """The conversation's session, what it is started as, and what it acts
-    with: the person's own credential, which reaches the model and nothing
-    else (`sandbox_auth.mint_personal_credential`)."""
+    with: the person's own credential, which reaches the model and its own
+    sandbox and nothing else (`sandbox_auth.mint_personal_credential`)."""
+    machine = target(conversation_id)
     spec = SessionSpec(
-        system_prompt=system_prompt(),
+        system_prompt=system_prompt(computer=machine is not None),
         model=model_roles.model("assistant_model"),
         tools=TOOLS,
+        works=machine is not None,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,
@@ -143,6 +175,7 @@ def session(
         resume_token=str(conversation_id),
     )
     access = Access(
-        mint_personal_credential(user_id=user_id, conversation_id=str(conversation_id))
+        mint_personal_credential(user_id=user_id, conversation_id=str(conversation_id)),
+        target=machine,
     )
     return ref(user_id, conversation_id), spec, access

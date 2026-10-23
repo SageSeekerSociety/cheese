@@ -140,6 +140,8 @@ export const CHANGES_ALL_PROPS = {
   refreshing: CHANGES.refreshing,
   summaryAll: false,
   review: CHANGES.review,
+  /** 默认一段都不铺：先给「改了哪些文件」这一眼清单。 */
+  expanded: new Set<string>(),
 }
 
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
@@ -600,6 +602,7 @@ function routine(over: Partial<Routine>): Routine {
     timezone: 'Asia/Shanghai',
     state: 'active',
     last_run_status: 'succeeded',
+    credits_this_month: 128.4,
     agent_handle: 'cheese',
     owner_handle: 'wang',
     created_by: 'cheese',

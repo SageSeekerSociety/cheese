@@ -248,7 +248,10 @@ export function useChatComposer(deps: ChatComposerDeps) {
     try {
       const res = await summonAgent(id)
       if (res.started) awaitingReply.value = true
+      else if (res.reason === 'working') errorMsg.value = t('work.room.retry.working')
       else if (res.reason === 'nothing_pending') errorMsg.value = t('work.room.retry.nothingPending')
+      // 说不清为什么没开起来的那一种也要说一句：按了没反应是最糟的结果。
+      else errorMsg.value = t('work.room.retry.failed')
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
     } finally {

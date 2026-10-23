@@ -33,8 +33,16 @@ done. What it asks about is an action the person never wanted, one aimed
 elsewhere or doing more, a message deciding or promising something for them,
 and a review or invitation they have not decided.
 
-An action stopped is not lost: it becomes a card the person confirms. So the
-gate leans to asking when unsure.
+An action stopped is not lost. The first few times in an answer it goes back
+to 芝士 with the reason, the way Claude Code's auto mode hands a denial back to
+the agent (``RETURNS_PER_ANSWER``): 芝士 puts right what strayed from the
+person's words, or asks them in its reply. After that, when 芝士 asks for it
+(``confirm``), or when nobody is there to ask (a routine's run), it becomes a
+card the person confirms. So the gate leans to stopping when unsure.
+
+An action of a kind the person may want asked about (``CATEGORIES``), which
+they have taken off their list, skips the quick look: it reaches more people
+or is harder to undo, so it gets the reasoned one.
 
 The text it reads only ever grows at its end within a conversation — rules,
 then what was said and done in order, then the action — so each look reuses
@@ -51,13 +59,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import model_roles
 from app.domain.assistant.models import (
+    AssistantConversation,
     AssistantGateCheck,
     AssistantMessage,
+    AssistantRoutine,
     AssistantRules,
 )
 from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat, Usage
@@ -78,8 +88,15 @@ CATEGORIES = {
 #: What a person who has set nothing is asked about.
 DEFAULT_ASK = tuple(CATEGORIES)
 
+#: How many stopped actions in one answer go back to 芝士 before the next
+#: becomes a card at once; Claude Code's auto mode hands three back in a row.
+RETURNS_PER_ANSWER = 3
+
 #: How long a look may take before it counts as stopping the action.
 LOOK_S = 20.0
+#: A look that fails is tried again this many times: a gateway hiccup should
+#: not cost the person a card (evals/assistant/gate_eval: 3 in 92).
+LOOK_TRIES = 2
 #: The quick look's whole answer is one word.
 QUICK_TOKENS = 8
 #: The second look thinks before it answers, and its thinking counts here: at
@@ -109,6 +126,8 @@ POLICY = """芝士是知是平台上用户自己的 AI 助手，正要代用户�
 _QUICK = "只回答一个字：放（直接执行）或 拦（需要确认）。"
 _REASONED = (
     "先用一句话写需要确认的原因，直接对用户说，用书面语，例如「你没有提到要发这条消息」；"
+    "这句话是写给用户本人看的：称用户为「你」，不写「用户」；芝士写「芝士」；其他人写名字，"
+    "不用「他」「她」。"
     "可以直接执行时写「你已经要求过这项操作」。最后一行只写「结论：放」或「结论：拦」。"
 )
 
@@ -161,22 +180,33 @@ class Verdict:
     cost_usd: float = 0.0
 
 
+def entries(text: str) -> list[str]:
+    """A person's list of what needs or needs no confirming: one entry a line."""
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 async def rules_of(session: AsyncSession, user_id: int) -> AssistantRules:
     """The person's rules; the defaults when they have set none (not stored)."""
     row = await session.get(AssistantRules, user_id)
     return row or AssistantRules(
-        user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text=""
+        user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text="", memory=True
     )
 
 
 def _rules_text(rules: AssistantRules) -> str:
     always = "、".join(CATEGORIES[c] for c in rules.ask if c in CATEGORIES) or "无"
+
+    def listed(text: str) -> list[str]:
+        return [f"- {e}" for e in entries(text)] or ["无"]
+
     return "\n".join(
         [
             "<用户的设置>",
             f"始终需要确认：{always}",
-            f"无需确认：{rules.allow_text.strip() or '无'}",
-            f"需要确认：{rules.ask_text.strip() or '无'}",
+            "需要确认：",
+            *listed(rules.ask_text),
+            "无需确认：",
+            *listed(rules.allow_text),
             "</用户的设置>",
         ]
     )
@@ -189,6 +219,14 @@ async def _said_and_done(
     the order it happened."""
     if conversation_id is None:
         return []
+    # A routine's run: what the person said when they asked for it is theirs,
+    # said before anything in the run.
+    first: list[str] = []
+    conversation = await session.get(AssistantConversation, conversation_id)
+    if conversation is not None and conversation.place_kind == "routine":
+        routine = await session.get(AssistantRoutine, uuid.UUID(conversation.place_id))
+        if routine is not None and routine.words:
+            first = [f"[用户（建这条例行事务时说）] {routine.words}"]
     said = await session.execute(
         select(AssistantMessage.created_at, AssistantMessage.text).where(
             AssistantMessage.conversation_id == conversation_id,
@@ -204,14 +242,14 @@ async def _said_and_done(
     )
     events = [(at, 0, f"[用户] {text}") for at, text in said.all()]
     events += [
-        (
-            at,
-            1,
-            f"[芝士{'已执行' if verdict == 'allowed' else '已请用户确认'}] {summary}",
-        )
+        (at, 1, f"[{_DONE_LABEL.get(verdict, '芝士已请用户确认')}] {summary}")
         for at, summary, verdict in done.all()
     ]
-    return [line for _, _, line in sorted(events, key=lambda e: (e[0], e[1]))]
+    return first + [line for _, _, line in sorted(events, key=lambda e: (e[0], e[1]))]
+
+
+#: How each verdict reads in the history a later look is given.
+_DONE_LABEL = {"allowed": "芝士已执行", "returned": "芝士想执行，未执行"}
 
 
 def _prompt(rules: AssistantRules, history: list[str], action: Action) -> str:
@@ -255,10 +293,13 @@ async def judge(
     prompt = _prompt(rules, await _said_and_done(session, conversation_id), action)
     spent, cost = Usage(), 0.0
     try:
-        quick = await _look(chat, prompt + "\n" + _QUICK, QUICK_TOKENS, thinking=False)
-        spent, cost = spent + quick.usage, cost + quick.cost_usd
-        if quick.content.strip().startswith("放"):
-            return Verdict(True, "quick", usage=spent, cost_usd=cost)
+        if not action.categories:
+            quick = await _look(
+                chat, prompt + "\n" + _QUICK, QUICK_TOKENS, thinking=False
+            )
+            spent, cost = spent + quick.usage, cost + quick.cost_usd
+            if quick.content.strip().startswith("放"):
+                return Verdict(True, "quick", usage=spent, cost_usd=cost)
         second = await _look(
             chat, prompt + "\n" + _REASONED, REASONED_TOKENS, thinking=True
         )
@@ -277,13 +318,19 @@ async def judge(
 async def _look(
     chat: GatewayChat, prompt: str, max_tokens: int, *, thinking: bool
 ) -> Completion:
-    return await chat.complete(
-        system=POLICY,
-        prompt=prompt,
-        timeout=LOOK_S,
-        max_tokens=max_tokens,
-        extra=None if thinking else {"thinking": {"type": "disabled"}},
-    )
+    for tried in range(1, LOOK_TRIES + 1):
+        try:
+            return await chat.complete(
+                system=POLICY,
+                prompt=prompt,
+                timeout=LOOK_S,
+                max_tokens=max_tokens,
+                extra=None if thinking else {"thinking": {"type": "disabled"}},
+            )
+        except GatewayCallError:
+            if tried == LOOK_TRIES:
+                raise
+    raise AssertionError("unreachable")
 
 
 async def keep(
@@ -295,15 +342,17 @@ async def keep(
     action: Action,
     verdict: Verdict,
     started: float,
+    returned: bool = False,
 ) -> AssistantGateCheck:
-    """Note the judgment and its cost; the caller commits."""
+    """Note the judgment and its cost; the caller commits. ``returned``: a
+    stopped action handed back to 芝士 rather than put to the person."""
     row = AssistantGateCheck(
         user_id=user_id,
         conversation_id=conversation_id,
         work=work,
         kind=action.kind,
         summary=action.summary,
-        verdict="allowed" if verdict.allowed else "asked",
+        verdict="allowed" if verdict.allowed else ("returned" if returned else "asked"),
         stage=verdict.stage,
         reason=verdict.reason,
         input_tokens=verdict.usage.prompt_tokens,
@@ -330,6 +379,18 @@ async def keep(
     return row
 
 
+async def returned_in(session: AsyncSession, user_id: int, work: str) -> int:
+    """How many stopped actions one answer was handed back already."""
+    count = await session.scalar(
+        select(func.count()).where(
+            AssistantGateCheck.user_id == user_id,
+            AssistantGateCheck.work == work,
+            AssistantGateCheck.verdict == "returned",
+        )
+    )
+    return count or 0
+
+
 async def save_rules(
     session: AsyncSession,
     user_id: int,
@@ -352,13 +413,31 @@ async def save_rules(
     return row
 
 
+async def set_memory(session: AsyncSession, user_id: int, on: bool) -> AssistantRules:
+    """Whether the person's 芝士 uses and keeps a memory of them; the caller
+    commits."""
+    row = await session.get(AssistantRules, user_id)
+    if row is None:
+        row = AssistantRules(
+            user_id=user_id, ask=list(DEFAULT_ASK), allow_text="", ask_text=""
+        )
+        session.add(row)
+    row.memory = on
+    await session.flush()
+    return row
+
+
 async def recent(
     session: AsyncSession, user_id: int, *, limit: int
 ) -> list[AssistantGateCheck]:
-    """What the gate did for the person lately, newest first."""
+    """What the gate did for the person lately, newest first: what was done
+    and what was put to them, not what went back to 芝士 unseen."""
     rows = await session.scalars(
         select(AssistantGateCheck)
-        .where(AssistantGateCheck.user_id == user_id)
+        .where(
+            AssistantGateCheck.user_id == user_id,
+            AssistantGateCheck.verdict != "returned",
+        )
         .order_by(AssistantGateCheck.id.desc())
         .limit(limit)
     )

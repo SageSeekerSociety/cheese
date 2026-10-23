@@ -30,7 +30,7 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-changes',
     title: 'PanelChangesView',
-    about: '改动那一格：一棵标着增删的树，默认把全部改动连着排，单独打开一份可以看全文或编辑。',
+    about: '改动那一格：一棵标着增删的树，改到的文件一份一段、差异默认收着，单独打开一份可以看全文或编辑。',
     file: 'src/components/panels/PanelChangesView.vue',
     component: PanelChangesView,
     needs: UI,
@@ -54,7 +54,7 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '全部改动',
-        note: '默认那一面：树上每行一个文件（+N −M 标着改了多少），右边每个文件一段连着往下排。顶部那块（这次交付的情况）由宿主塞进 head 插槽，这里没有。',
+        note: '默认那一面：树上每行一个文件（+N −M 标着改了多少），右边每个文件一段连着往下排、每段的差异收着，点段头铺开。顶部那块（这次交付的情况）由宿主塞进 head 插槽，这里没有。',
         props: changesPanelProps({ openPath: null, openDiff: null, openDiffLines: [] }),
         expect: '3 个文件',
       },

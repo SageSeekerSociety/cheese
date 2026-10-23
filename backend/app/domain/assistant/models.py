@@ -21,8 +21,11 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     false,
     func,
+    text,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -88,7 +91,10 @@ class AssistantMessage(UuidPk, Timestamps, Base):
         ForeignKey("assistant_conversations.id", ondelete="CASCADE"), nullable=False
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant
+    #: ``user``, ``assistant``, or ``platform``: what the platform said to
+    #: start a routine's run (``personal.routines``). Only ``user`` is the
+    #: person's own words; the gate reads nothing else.
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     #: The answer was stopped by the person before it was done; ``text`` is
     #: what had been written.
@@ -173,8 +179,9 @@ class AssistantProposal(Timestamps, Base):
 class AssistantRules(Timestamps, Base):
     """What a person tells their 芝士 about acting for them
     (``assistant.gate``): which kinds of action it always asks first
-    (``ask``, codes of ``gate.CATEGORIES``), and in their own words what it may
-    simply do (``allow_text``) and what it should ask about (``ask_text``).
+    (``ask``, codes of ``gate.CATEGORIES``), in their own words what it may
+    simply do (``allow_text``) and what it should ask about (``ask_text``),
+    and whether it keeps a memory of them (``memory``).
     Only the person sets these, on their settings page; 芝士 cannot.
     """
 
@@ -193,12 +200,22 @@ class AssistantRules(Timestamps, Base):
     ask_text: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    #: Whether their 芝士 uses and keeps a memory of them
+    #: (``assistant.memory``); on until they turn it off.
+    memory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    #: When that memory was last tidied (``assistant.memory_tidy``); the next
+    #: tidy waits from it, and taking one moves it.
+    memory_tidied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AssistantGateCheck(Base):
     """One action a 芝士 was about to take for a person, and what the gate made
-    of it (``assistant.gate``): done (``allowed``) or turned into a card for
-    the person (``asked``), at which ``stage`` that was settled — by one of
+    of it (``assistant.gate``): done (``allowed``), turned into a card for
+    the person (``asked``) or handed back to 芝士 (``returned``), at which ``stage`` that was settled — by one of
     the person's rules, by the gate's quick look, or by its second, reasoned
     look — why, and what the look cost. The platform pays for the looks; these
     rows are how it sees them, and how the person sees what was done for them.
@@ -240,4 +257,134 @@ class AssistantGateCheck(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssistantRoutine(UuidPk, Timestamps, Base):
+    """Something a person's 芝士 does on its own, on a clock or when something
+    happens to the person (``personal.routines``): a rule, made by 芝士 in a
+    conversation when the person asked for it.
+
+    ``words`` is what the person said in that conversation: the only words a
+    run's gate reads as theirs. ``title`` and ``note`` are 芝士's own, and
+    say nothing for the person. ``trigger`` is ``schedule`` (``spec`` is a
+    ``routine.schedule`` spec, or ``{"freq": "once", "at": ISO}``) or one of
+    ``routines.EVENTS`` (``spec`` may name a ``project`` it is limited to).
+    ``paused`` says why a paused rule stopped: ``person``, ``credits`` (out of
+    credits) or ``away`` (not signed in for long). ``state`` is ``active``,
+    ``paused``, or ``done``: a one-off that has run, cleared with its runs
+    once the cards they left expire.
+    """
+
+    __tablename__ = "assistant_routines"
+    __table_args__ = (
+        Index("ix_assistant_routines_user_id", "user_id"),
+        Index(
+            "ix_assistant_routines_due",
+            "next_run_at",
+            postgresql_where=text("state = 'active' AND next_run_at IS NOT NULL"),
+        ),
+        Index("ix_assistant_routines_conversation_id", "conversation_id"),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_assistant_routines_user_id_user"
+        ),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    words: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    spec: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    paused: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="", server_default=""
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Notifications written before this moment are never this rule's.
+    event_cursor: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The conversation it was made in.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "assistant_conversations.id",
+            ondelete="SET NULL",
+            name="fk_assistant_routines_conversation_id",
+        ),
+        nullable=True,
+    )
+
+
+class AssistantRun(UuidPk, Base):
+    """One time a person's 芝士 went to work on its own: a routine fired.
+
+    ``occurrence`` names what started it — a scheduled moment, a notification
+    — once per person, so a second sweep finds the row instead of running the
+    same thing twice. Its id is the answer it ran as (``work``): the cards it
+    put up are found by it."""
+
+    __tablename__ = "assistant_runs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "occurrence", name="uq_assistant_runs_occurrence"),
+        Index("ix_assistant_runs_routine_id", "routine_id", "created_at"),
+        Index(
+            "ix_assistant_runs_open",
+            "user_id",
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
+        Index("ix_assistant_runs_conversation_id", "conversation_id"),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "user.id", ondelete="CASCADE", name="fk_assistant_runs_user_id_user"
+        ),
+        nullable=False,
+    )
+    routine_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "assistant_routines.id",
+            ondelete="CASCADE",
+            name="fk_assistant_runs_routine_id",
+        ),
+        nullable=False,
+    )
+    occurrence: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: What started it, as the run is told it.
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "assistant_conversations.id",
+            ondelete="SET NULL",
+            name="fk_assistant_runs_conversation_id",
+        ),
+        nullable=True,
+    )
+    #: ``queued``, ``running``, ``done``, ``failed`` or ``skipped``.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    cost_usd: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    #: How many actions it left for the person to confirm.
+    asked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 芝士 sent the person a notification itself (``cheese_notify_me``), so
+    #: its end is not announced again.
+    told: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

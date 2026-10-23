@@ -13,6 +13,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { landingForMember } from '@/router/home'
+import { ensureStackBehind } from '@/router/pageStack'
 import AccountService from '@/services/account'
 
 export function useSessionRestore() {
@@ -45,6 +46,9 @@ export function useSessionRestore() {
   async function goHome() {
     try {
       await router.replace(await landingForMember())
+      // 落回的那一页也可能在页面栈中间：身后那条来路照垫（见 router/pageStack.ts）。
+      // 这一层还盖在屏幕上，中间那几步导航没人看得见。
+      await ensureStackBehind(router)
     } catch {
       // 路由这一下失败说明网络还是不稳；那一层留在原地，重试按钮还在。
       navigationFailed.value = true

@@ -686,6 +686,7 @@ class RunnerIntake:
                 post_admission_event,
                 topic_id,
                 delivery_id,
+                draining=chat_service,
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,

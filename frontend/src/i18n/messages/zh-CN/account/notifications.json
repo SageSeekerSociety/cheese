@@ -12,9 +12,10 @@
     "title": "渠道"
   },
   "lede": "哪一类事件走哪个渠道、什么时候安静下来、多久收一次摘要。改一项存一项。",
-  "loadFailed": "通知设置没读出来",
+  "loadFailed": "通知设置加载失败",
   "loading": "正在读取通知设置",
   "matrix": {
+    "assistant": "芝士发来的通知",
     "announcement": "空间公告",
     "billing": "额度与计费提醒",
     "desc": "每一类都能单独挑渠道",

@@ -97,7 +97,7 @@ async def refuse_management_action(
     it out, so a refusal left to them would not exist.
     """
     if actor.via == "cheese":
-        return "作用域凭证不能执行管理动作，请用本人会话"
+        return say("managementNeedsOwnSignIn")
     if await carries_agent_binding(actor.handle):
-        return "agent 不能执行管理动作"
+        return say("managementNotForTeammates")
     return None

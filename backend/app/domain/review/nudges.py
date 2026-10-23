@@ -306,9 +306,12 @@ def _title_nudge(
         ),
         # 平台提示统一契约：房间那条可见的一行是 `event`，两行标题（都来自外部、
         # 都可能很长）折进 `meta.detail`，谁看都能一眼对上。
-        detail=f"PR 标题：{shown}\n卡片标题：{subject}",
+        detail=f"PR 标题：{shown}\n提交审阅时的标题：{subject}",
         detail_label=say("labelReason"),
-        note=f"PR #{card.pr_number} 的标题和卡片不一致，合并已暂停",
+        note=(
+            f"PR #{card.pr_number} 在 GitHub 上的标题和提交审阅时的标题不一致，合并已暂停；"
+            "两个标题改成同一行、检查通过后就能合并"
+        ),
         note_code=notes.NoteCode.pr_title_disagrees,
         # 复用 `merge_refused`：标题分家的后果正是「这次不能这样合并」，语义够用，
         # 也不需要为一个新事件码重建 `CHECKS_FOR_THE_AGENT` 那个部分索引（那会牵出

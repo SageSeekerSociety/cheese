@@ -63,7 +63,7 @@
     "fullscreen": "Full screen",
     "exitFullscreen": "Exit full screen"
   },
-  "renderError": "Couldn't render: {text}",
+  "renderError": "This content can't be shown: {text}",
   "placeholder": "Type here…",
   "question": {
     "placeholder": "Describe your question",

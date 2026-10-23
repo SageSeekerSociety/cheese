@@ -56,30 +56,37 @@ describe('记着每个项目上次待的地方', () => {
 
   it('记下的地方，下次进这个项目还认得出来', () => {
     const store = useWorkspaceStore()
-    store.rememberPlace('p1', { kind: 'channel', id: 't9', room: 't9' })
-    expect(store.placeFor('p1')).toEqual({ kind: 'channel', id: 't9', room: 't9' })
+    store.rememberPlace('p1', { path: 'channels/t9', room: 't9' })
+    expect(store.placeFor('p1')).toEqual({ path: 'channels/t9', room: 't9' })
     // 换一份 store（刷新页面）也读得回来：它写进了布局那份存储。
     setActivePinia(createPinia())
-    expect(useWorkspaceStore().placeFor('p1')).toEqual({ kind: 'channel', id: 't9', room: 't9' })
+    expect(useWorkspaceStore().placeFor('p1')).toEqual({ path: 'channels/t9', room: 't9' })
   })
 
-  it('在任务页上记的是那件任务，连它所在的频道一起', () => {
+  it('任务页记的是那件任务，连它所在的频道一起', () => {
     const store = useWorkspaceStore()
-    store.rememberPlace('p1', { kind: 'task', id: 'task-1', room: 't9' })
-    // 回到项目要落回的是任务，不是它所在的频道——但频道也得记着：任务页画不出来
-    // 时（任务没了、没权限）退回它，而且任务页本身要借频道的外框和名册。
-    expect(store.placeFor('p1')).toEqual({ kind: 'task', id: 'task-1', room: 't9' })
+    store.rememberPlace('p1', { path: 'tasks/task-1', room: 't9' })
+    // 回到项目要落回的是任务，不是它所在的频道——但频道也得记着：频道没了，任务
+    // 页那个地址就画不出来，所以校验的是它。
+    expect(store.placeFor('p1')).toEqual({ path: 'tasks/task-1', room: 't9' })
+  })
+
+  // 项目里别的页也是一样记：成员页不在任何频道里，所以没有频道可校验。
+  it('项目里的其它页（成员、总览、资料库……）同样记得住', () => {
+    const store = useWorkspaceStore()
+    store.rememberPlace('p1', { path: 'members/lisi', room: null })
+    expect(store.placeFor('p1')).toEqual({ path: 'members/lisi', room: null })
   })
 
   it('别的项目不受影响', () => {
     const store = useWorkspaceStore()
-    store.rememberPlace('p1', { kind: 'channel', id: 't9', room: 't9' })
+    store.rememberPlace('p1', { path: 'channels/t9', room: 't9' })
     expect(store.placeFor('p2')).toBeNull()
   })
 
   it('记着的那个频道已经不在项目清单里了，就不再落回去', async () => {
     const store = useWorkspaceStore()
-    store.rememberPlace('p1', { kind: 'channel', id: 'gone', room: 'gone' })
+    store.rememberPlace('p1', { path: 'channels/gone', room: 'gone' })
     vi.mocked(listTopics).mockResolvedValue({ data: [topic('t1', 'p1')], total: 1 })
 
     store.openProject('p1')
@@ -92,7 +99,7 @@ describe('记着每个项目上次待的地方', () => {
   // 频道没了就一定读得出来：那时候记的地方已经打不开了，忘掉它。
   it('记着的任务，它所在的频道没了，也不再落回去', async () => {
     const store = useWorkspaceStore()
-    store.rememberPlace('p1', { kind: 'task', id: 'task-1', room: 'gone' })
+    store.rememberPlace('p1', { path: 'tasks/task-1', room: 'gone' })
     vi.mocked(listTopics).mockResolvedValue({ data: [topic('t1', 'p1')], total: 1 })
 
     store.openProject('p1')
@@ -101,12 +108,24 @@ describe('记着每个项目上次待的地方', () => {
     expect(store.placeFor('p1')).toBeNull()
   })
 
+  // 不在频道里的页（总览、成员、资料库）不靠频道活着：清单读回来照旧留着它。
+  it('不在频道里的那一页，清单读回来照旧留着', async () => {
+    const store = useWorkspaceStore()
+    store.rememberPlace('p1', { path: 'members/lisi', room: null })
+    vi.mocked(listTopics).mockResolvedValue({ data: [topic('t1', 'p1')], total: 1 })
+
+    store.openProject('p1')
+    await flush()
+
+    expect(store.placeFor('p1')).toEqual({ path: 'members/lisi', room: null })
+  })
+
   it('归档掉的频道也不再落回去', async () => {
     seedProject('p1', { topics: [topic('t9', 'p1')] })
     const store = useWorkspaceStore()
     store.openProject('p1')
     await flush()
-    store.rememberPlace('p1', { kind: 'channel', id: 't9', room: 't9' })
+    store.rememberPlace('p1', { path: 'channels/t9', room: 't9' })
     // 归档的话题还在清单里（只是状态变了）。
     vi.mocked(listTopics).mockResolvedValue({ data: [topic('t9', 'p1', 'archived')], total: 1 })
     vi.mocked(archiveTopic).mockResolvedValue(topic('t9', 'p1', 'archived'))

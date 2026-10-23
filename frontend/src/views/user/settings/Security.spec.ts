@@ -21,6 +21,9 @@ const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 const SAFARI_ON_IPHONE =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+// The desktop app's window: the system webview, which reports Edge on Windows.
+const EDGE_ON_WINDOWS =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0'
 
 function session(id: string, userAgent: string, current: boolean, loginMethod = 'password', trusted = false) {
   return {
@@ -103,6 +106,39 @@ describe('signed-in devices', () => {
     expect(view.getByText('Password sign-in')).toBeTruthy()
     expect(view.getByText('GitHub sign-in')).toBeTruthy()
     expect(view.queryByText('Trusted')).toBeNull()
+  })
+
+  it('names the desktop app as the app, and a browser with the same User-Agent as that browser', async () => {
+    // The two rows carry the same User-Agent — that is the point: only the way
+    // each signed in tells the app from the Edge it is built on.
+    vi.mocked(UserApi.listSessions).mockResolvedValue({
+      sessions: [session('app', EDGE_ON_WINDOWS, true, 'app_sign_in'), session('edge', EDGE_ON_WINDOWS, false)],
+    } as never)
+    const view = await renderPage()
+
+    await view.findByText('Desktop app on Windows')
+    expect(view.getByText('Edge on Windows')).toBeTruthy()
+    expect(view.getByText('Desktop app sign-in')).toBeTruthy()
+    expect(view.getByText('Password sign-in')).toBeTruthy()
+  })
+
+  it('still names the desktop app when its webview names a system but no browser', async () => {
+    // macOS's webview sends no Safari token, so only the system is readable.
+    vi.mocked(UserApi.listSessions).mockResolvedValue({
+      sessions: [
+        session(
+          'app',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+          true,
+          'app_sign_in'
+        ),
+        session('bare', 'CheeseDesktop/0.1.43', false, 'app_sign_in'),
+      ],
+    } as never)
+    const view = await renderPage()
+
+    await view.findByText('Desktop app on macOS')
+    expect(view.getByText('Desktop app')).toBeTruthy()
   })
 
   it('marks a device trusted to skip two-step verification', async () => {

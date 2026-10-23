@@ -49,7 +49,7 @@ ${moved ? `<script>(function(m){function go(){var to=m[decodeURIComponent(locati
     <button class="search-btn" data-open-search>${ic('search')}<span>搜索</span><kbd>⌘K</kbd></button>
     <button class="ghost-btn" data-open-ask>${ic('chat')}<span>问芝士</span></button>
     <button class="icon-btn" id="themeBtn" aria-label="切换深浅色"><span class="theme-ico">${ic('sun').replace('class="ico"', 'class="ico sun"')}${ic('moon').replace('class="ico"', 'class="ico moon"')}</span></button>
-    <a class="btn btn-primary hide-sm" href="${PLATFORM}/">进入知是</a>
+    <a class="btn btn-primary hdr-enter" href="${PLATFORM}/">进入知是</a>
   </div>
 </header>
 <div id="main">${main}</div>

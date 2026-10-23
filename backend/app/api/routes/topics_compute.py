@@ -39,6 +39,7 @@ from app.domain.agent.environment import Environment, dump, parse, stored
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine import holder as holders
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.environments import (
     check_allowed,
@@ -299,12 +300,19 @@ async def acquire_session_work_lease(
 
     token = request.headers.get("x-cheese-token", "")
     claims = scoped_token_claims(token)
+    if claims is not None:
+        place = await place_or_404(db, topic_id)
+        await require_seated_agent(
+            db, token, project_id=place.project_id, topic_id=topic_id
+        )
+        holder_id = place.room_id
+    else:
+        # A person's own 芝士 asks with its own credential, for a sandbox of
+        # the conversation's own (``machine.holder.Personal``).
+        claims = await holders.personal_claims(db, token, topic_id, session_id)
+        holder_id = topic_id
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
-    place = await place_or_404(db, topic_id)
-    await require_seated_agent(
-        db, token, project_id=place.project_id, topic_id=topic_id
-    )
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s), and the whole call is held to it. A session that
@@ -316,7 +324,7 @@ async def acquire_session_work_lease(
             return ok(
                 await work_lease.ensure(
                     db,
-                    topic_id=place.room_id,
+                    topic_id=holder_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,

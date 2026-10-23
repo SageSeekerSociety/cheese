@@ -5,6 +5,7 @@ summary: 会话进程和干活的机器分开时，工具调用怎么落到机�
 covers:
   - backend/app/domain/agent/executor_transport.py
   - backend/app/domain/machine/session_work.py
+  - backend/app/domain/machine/holder.py
   - backend/app/domain/agent/place.py
   - backend/app/domain/agent/environment_runner.py
   - backend/app/domain/agent/toolchain.py
@@ -63,6 +64,33 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
 - 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支和上一轮的快照开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
 - 会话主机不能干项目的活：租约所在的机器就是会话进程所在的那台时，`_attempt` 抛 `ForbiddenError("Project tools cannot execute on the session host")`——两处（`_attempt` 里 lease 那一处、以及 777 行附近那一处）。房间正在跑任务且 `if_idle` 时整个不换（`SessionWorking`，「正在运行任务，稍后再换」）。
+
+## 沙箱归谁 {#holder}
+
+开沙箱、计费、闲置回收和会话自己要手时，都要先知道这台沙箱是谁的。这些答案只在 `machine/holder.py` 里给，别处不自己去查项目或频道：
+
+| 问题 | 方法 | 频道（`Room`）的答案 | 个人芝士对话（`Personal`）的答案 |
+| --- | --- | --- | --- |
+| 谁能让它开一台 | `require_use` | 项目名单上的人和 AI 队友 | 对话的主人 |
+| 谁付钱 | `payer` / `payers` | 项目所在团队 | 主人自己的个人额度 |
+| 要手时锁哪一行 | `lock_for_work` / `lock` / `look` | 频道那一行；归档的频道不接新的工具调用，但它的沙箱照样能销毁 | `assistant_conversations` 那一行 |
+| 会话在哪种环境里干活 | `environment` | 会话自己选的，否则任务、频道、项目的默认 | 总是平台机器上的标准沙箱 |
+| 是否正在干活 | `at_work` | 频道里任何一个对话有没跑完的一轮 | 不算（个人对话的一轮不记在 `agent_turns`），只看最近一次工具调用 |
+| 机器上的目录名 | `namespace` / `namespace_of` | 项目编号，同项目的沙箱共用包缓存 | 对话编号，什么都不共用 |
+| 会话凭据签给的是不是它 | `signed_for` | 凭据里的项目和频道代数与现在一致 | 凭据里的主人和对话与现在一致 |
+
+一台沙箱的行（`sandbox_homes.topic_id`）和它的计时（`compute_runs.topic_id`）都指向对话总表 `conversations`，不指向某一种对话的表。频道里每条会话、每个任务和支线的沙箱都算频道的；个人芝士对话在总表里登记为 `personal`，`project_id` 为空，它的沙箱和计时的 `project_id` 也为空。别人的电脑和不进沙箱直接用只有频道的环境会选到，项目以外的归属方只走平台机器上的标准沙箱。
+
+### 个人芝士对话的沙箱 {#personal-sandbox}
+
+个人芝士（`agent/personal/session.py`）的会话在部署的会话主机上跑，自己的工具（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`）落在这段对话自己的沙箱里。沙箱和频道的一样按需开：第一次调用这些工具时，会话用主人的个人凭据（`cxpu_`）到 `/topics/{对话}/sessions/{对话}/work-lease` 要手，只聊天、只用平台工具的问题不开机。
+
+- 一段对话只有一个会话，会话编号就是对话编号；要手时平台按需写下这条 `agent_sessions`。
+- 执行凭据是单独一种（`cxpx_`），只签给主人和这段对话；执行路由按主人核对，只放行平台自己的主机，不写派发记录。执行路由由设备连接的属主进程提供，**属主进程要随这次改动一起发布**，否则个人对话拿到沙箱后调用不通。
+- 沙箱里不放平台的任何凭据：`CHEESE_PROJECT` 为空，`cheese` 命令在里面什么都做不了。
+- 进度不发到任何频道，只记成运行记录。
+- 闲置回收和频道的沙箱一样；回收后下一次要手告诉芝士「沙箱环境已换成新的」，并说明之前的文件都不在了（个人沙箱没有检查点）。
+- 主人的个人额度用完时，沙箱随下一次清扫销毁，新的不开。
 
 ## 地点：我们的东西放在哪、能给什么 {#place}
 

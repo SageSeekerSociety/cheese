@@ -18,6 +18,9 @@
  *
  * 记录里**没有凭据**：可见范围、类型这些都是本机偏好，正文里可能出现的密钥是用户
  * 自己写进去的，和它存在哪里无关（`localStorage` 不出这台浏览器）。
+ *
+ * **附件跟着草稿一起存**（只存 id、名字和大小，不存字节）：字节在选中的那一刻就
+ * 到了服务端，丢掉这几个 id 就得让重新选一遍 —— 而选它的人以为早就传好了。
  */
 
 import type { FeedbackKind, FeedbackVisibility } from '@/cx_types'
@@ -59,6 +62,7 @@ export function isDraftMeaningful(draft: FeedbackDraft | null | undefined): bool
     draft.repro?.trim() ||
     draft.expectation?.trim() ||
     draft.tags.length ||
+    draft.attachments.length ||
     draft.proposal
   )
 }
@@ -90,6 +94,22 @@ function parseDraft(value: unknown): FeedbackDraft | null {
     title: raw.title,
     body: raw.body,
     tags: Array.isArray(raw.tags) ? raw.tags.filter((n) => typeof n === 'string') : [],
+    // 附件逐项点名：这份对象最终会把 id 交给 `POST /feedback`，而从 `localStorage`
+    // 里捞出来的东西是人手可改的 —— 一个多出来的字段就是让本机上的一个字符串变成
+    // 请求里的一个附件 id。名字和大小是给界面看的，缺了就退回一个能识别的说法。
+    attachments: Array.isArray(raw.attachments)
+      ? raw.attachments.flatMap((item) => {
+          const file = item as Record<string, unknown>
+          if (typeof file?.id !== 'string' || !file.id) return []
+          return [
+            {
+              id: file.id,
+              name: typeof file.name === 'string' ? file.name : '',
+              bytes: typeof file.bytes === 'number' ? file.bytes : 0,
+            },
+          ]
+        })
+      : [],
     attachContext: !!raw.attachContext,
     repro: str(raw.repro),
     expectation: str(raw.expectation),
@@ -104,6 +124,7 @@ function parseDraft(value: unknown): FeedbackDraft | null {
       evidence: str(agent.evidence),
       ...(typeof agent.sessionId === 'string' ? { sessionId: agent.sessionId } : {}),
       ...(typeof agent.environment === 'string' ? { environment: agent.environment } : {}),
+      ...(typeof agent.agentHandle === 'string' ? { agentHandle: agent.agentHandle } : {}),
     }
   }
   const proposal = raw.proposal as Record<string, unknown> | undefined

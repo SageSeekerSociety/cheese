@@ -7,7 +7,7 @@
   "listLoadFailed": "反馈列表加载失败",
   "loadMoreFailed": "加载更多失败",
   "mineLoadFailed": "「我的反馈」加载失败",
-  "openFailed": "这条反馈打不开",
+  "openFailed": "无法打开这条反馈",
   "queueLoadFailed": "管理队列加载失败",
   "repliesLoadFailed": "回复加载失败",
   "submitFailed": "提交失败"

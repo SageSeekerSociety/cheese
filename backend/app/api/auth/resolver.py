@@ -152,7 +152,12 @@ class ActorResolver:
         conversation — not its room, not another task — even the session-wide
         one that otherwise reaches across its project. Routes that name no
         conversation (the project's library, its documents) it reaches as any
-        session of the project does."""
+        session of the project does.
+
+        The refusal points the way out rather than naming the rule: a session
+        that stopped here once stood still for a task next to its own, while
+        what the task said stays readable through the channel-scoped search.
+        """
         if not self._cheese_token or topic_id is None:
             return
         claims = scoped_token_claims(self._cheese_token)
@@ -160,7 +165,7 @@ class ActorResolver:
         if not named or named == str(topic_id):
             return
         if await conversations.is_task(self._session, uuid.UUID(named)):
-            raise ForbiddenError("This credential works another conversation")
+            raise ForbiddenError(say("taskCredentialOtherConversation"))
 
     def delegation(self) -> DelegatedClaims | None:
         """The question the presented credential acts for, when it is a valid

@@ -164,3 +164,43 @@ describe('滚动框底下那一块闪了一下', () => {
     expect(box.el.scrollTop).toBe(1600)
   })
 })
+
+// 时间线自己包了一层（#4662 起的 `.timeline-zone`，书签条浮在它上面），输入区是那一层
+// 的兄弟：滚动框的直接父元素看不到输入区。观察它的话，「谁在忙」那一行来了又走把停在
+// 底部的人夹上去 196px，会被当成他自己往上翻——桌面端（WebKit）真用户每次任务一动都中。
+describe('时间线外面还包了一层，输入区在包装层外面', () => {
+  async function mountedZoned(content: number) {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const box = pane(content)
+    const timelineZone = document.createElement('div')
+    const composerZone = document.createElement('div')
+    const column = document.createElement('div')
+    column.append(timelineZone, composerZone)
+    timelineZone.append(box.el)
+    let scroll!: ReturnType<typeof useChatScroll>
+    render(
+      defineComponent({
+        setup() {
+          scroll = useChatScroll({ column: () => column })
+          return () => h('div')
+        },
+      })
+    )
+    scroll.scrollRef.value = box.el
+    scroll.contentRef.value = document.createElement('div')
+    await nextTick()
+    box.el.scrollTop = content
+    scroll.rememberScroll('room')
+    return { box, scroll, composerZone }
+  }
+
+  it('没人动，输入区那一块却往上挪了：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll, composerZone } = await mountedZoned(2000)
+    composerZone.append(document.createElement('div'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+    box.el.scrollTop = 1600 - 196
+    scroll.rememberScroll('t-zone')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
+})

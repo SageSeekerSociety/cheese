@@ -75,4 +75,6 @@ export interface PreviewViewProps {
   editing: string | null
   /** 文档条下面那一栏历史开着没有。 */
   showHistory: boolean
+  /** 这间房的队友叫什么：预览连不上时那句话请它去查（项目可以给它改名）。 */
+  agentName?: string
 }

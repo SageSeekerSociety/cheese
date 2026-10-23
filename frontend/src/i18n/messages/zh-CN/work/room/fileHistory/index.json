@@ -5,7 +5,7 @@
   "downloadVersion": "下载这一版",
   "empty": "还没有保存记录。下一次保存起，这里会留下每一版。",
   "hint": "每次保存留一版，可以取回任何一版",
-  "loadFailed": "读不到历史",
+  "loadFailed": "历史加载失败",
   "loading": "正在读取…",
   "restore": "恢复",
   "restoreConfirm": "把文件恢复成第 {seq} 版的内容？现在这一版不会丢，仍在历史里。",

@@ -800,6 +800,8 @@ defineExpose({
             :project-id="projectId"
             :active="active === 'changes'"
             :refresh-tick="refreshTick"
+            :agent-name="agentName"
+            :member-names="memberNames"
           />
           <PanelPreviewHost
             v-if="mounted.has('preview')"
@@ -810,6 +812,7 @@ defineExpose({
             :project-id="projectId"
             :active="active === 'preview'"
             :refresh-tick="refreshTick"
+            :agent-name="agentName"
             @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
             @open-file="openFileTab"
@@ -835,6 +838,7 @@ defineExpose({
             :room-title="topic?.title ?? ''"
             :routine-id="routineId ?? null"
             :refresh-tick="refreshTick"
+            :agent-name="agentName"
             @open-file="openFile"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
@@ -874,6 +878,7 @@ defineExpose({
               :path="f.path"
               :active="active === fileKey(f.path)"
               :refresh-tick="refreshTick"
+              :agent-name="agentName"
               @locate="emit('locate', $event)"
               @mention-click="emit('mention-click', $event)"
             />

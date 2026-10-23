@@ -159,7 +159,7 @@ def test_running_twice_then_green_wakes_the_line_exactly_once(said):
     client = _Client([RUNNING, RUNNING, GREEN])
     assert run(client) == []
     assert run(client) == []
-    assert run(client) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert run(client) == ["PR #1542 的检查已全绿，可以提交审阅了"]
     # 第四次读到同一个 head 的全绿：没有从 running 过来的那一步，不再说。
     assert run(_Client([GREEN])) == []
     assert client.asked == [HEAD, HEAD, HEAD]
@@ -197,7 +197,7 @@ def test_a_cancelled_run_is_not_a_verdict(said):
     # 再读到 running 也不叫：上一次不是 running，这次也不是 green。
     assert run(_Client([RUNNING])) == []
     # 真跑到绿才叫一次。
-    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以提交审阅了"]
     # 之后再来一次 cancelled 也不叫（上一轮已是 green，不是 running）。
     assert run(_Client([CANCELLED])) == []
 
@@ -226,7 +226,7 @@ def test_a_closed_task_is_not_told_to_file_a_card(said):
     assert run(_Client([GREEN])) == []
     task.status = TaskStatus.open
     assert run(_Client([RUNNING])) == []
-    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以提交审阅了"]
 
 
 def test_a_restart_keeps_the_last_state_so_the_flip_is_not_lost(said):
@@ -236,7 +236,7 @@ def test_a_restart_keeps_the_last_state_so_the_flip_is_not_lost(said):
     assert run(_Client([RUNNING])) == []
     assert (task.pr_checks_head, task.pr_checks_state) == (HEAD, "running")
     assert not hasattr(pr_poll, "_uncarded_checks_seen")
-    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，可以提交审阅了"]
     assert task.pr_checks_state == "green"
 
 
@@ -246,7 +246,7 @@ def test_a_carded_task_waiting_for_review_is_woken_once(said):
     run, task = said
     task.pending_card = uuid.uuid4()
     assert run(_Client([RUNNING])) == []
-    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，等待验收"]
+    assert run(_Client([GREEN])) == ["PR #1542 的检查已全绿，待审阅"]
     assert run(_Client([GREEN])) == []
 
 
@@ -311,7 +311,7 @@ def test_a_provider_without_batch_support_keeps_its_existing_read(said):
 
     client = SinglePrClient()
     assert run(client) == []
-    assert run(client) == ["PR #1542 的检查已全绿，可以递卡了"]
+    assert run(client) == ["PR #1542 的检查已全绿，可以提交审阅了"]
     assert inner.single_reads == 2 and inner.metadata_calls == []
 
 

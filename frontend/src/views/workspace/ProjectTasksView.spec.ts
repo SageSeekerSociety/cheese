@@ -5,7 +5,7 @@ import type { RoomTask } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import ProjectTasksView from './ProjectTasksView.vue'
@@ -87,17 +87,37 @@ it('下一步在人手上的那一组排在最前面', () => {
   expect(titles(view)).toEqual(['等人的', '在检查的', '在做的'])
 })
 
-it('等你的那一件写成「待你…」，等别人的照通用的说法', () => {
+it('等你的那一件在后面那一行说「等你」，两件的标签都只说状态', () => {
   const mine = task({
     title: '我的',
     owner_handle: 'alice',
     awaits_me: true,
+    needs_my_action: true,
     presentation: { column: 'needs_you', phrase: 'awaiting_review' },
   })
   const theirs = task({ title: '别人的', presentation: { column: 'needs_you', phrase: 'awaiting_review' } })
   const view = mount([mine, theirs])
-  expect(view.getByText(t('work.board.mine.awaiting_review'))).toBeTruthy()
-  expect(view.getByText(t('work.board.phrase.awaiting_review'))).toBeTruthy()
+  // 等你的那一件只有一行写「等你」；两件的状态标签都是「待审阅」。
+  expect(view.getAllByText(t('work.taskState.waitsOnYou'))).toHaveLength(1)
+  expect(view.getAllByText(t('work.taskState.label.review'))).toHaveLength(2)
+})
+
+it('关注结果的人保留提醒，但不写成等待本人回答', () => {
+  const view = mount(
+    [
+      task({
+        title: '需要关注的任务',
+        reporter_handle: 'alice',
+        waiting_on: 'bob',
+        awaits_me: true,
+        needs_my_action: false,
+        presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      }),
+    ],
+    { names: { alice: 'Alice', bob: 'Bob' } }
+  )
+  expect(view.queryByText(t('work.taskState.waitsOnYou'))).toBeNull()
+  expect(view.getByText(t('work.taskState.waitsOn', { name: 'Bob' }))).toBeTruthy()
 })
 
 it('十四天没动静的收进「已停滞」，点开才列出来', async () => {
@@ -174,7 +194,8 @@ it('全部状态同时列进行中与已关闭，并把两边的总数相加', (
   expect(view.getByRole('button', { name: `${t('work.channelTasks.all')} 121` })).toBeTruthy()
   expect(view.getByRole('button', { name: `${t('work.channelTasks.mine')} 41` })).toBeTruthy()
   const row = view.getByRole('button', { name: /结束了/ })
-  expect(row.textContent).toContain(t('work.channelTasks.closed'))
+  // 状态那一格自己说「已采纳」（不是「已关闭」），交付那一列另说交付被采纳。
+  expect(within(row).getByTestId('task-state').textContent?.trim()).toBe(t('work.taskState.label.accepted'))
   expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
 })
 
@@ -207,7 +228,8 @@ it('按采纳记录筛选，保留已采纳前几步和仍在收尾的进行中�
   await fireEvent.click(view.getByRole('button', { name: t('taskList.acceptedDelivery') }))
   expect(titles(view)).toEqual(['前几步采纳了', '正在写总结'])
   expect(view.getByRole('button', { name: /^全部 2$/ })).toBeTruthy()
-  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('taskList.open'))
+  // 最后一步采纳后、任务还开着（在写总结）的那一会儿：还是在做。
+  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('work.taskState.label.running'))
   await fireEvent.click(view.getByRole('button', { name: t('taskList.anyDelivery') }))
   expect(titles(view)).toHaveLength(4)
 })
@@ -242,4 +264,13 @@ it('全部状态为空且关闭任务读失败时，不把失败当成暂无任�
   expect(view.getByRole('alert').textContent).toContain(t('work.channelTasks.loadFailed'))
   await fireEvent.click(view.getByRole('button', { name: t('global.loadError.retry') }))
   expect(view.emitted().more).toHaveLength(1)
+})
+
+it('任务没单独指定队友时，卡住那一句叫它所在频道那位队友的名字，不叫默认的「芝士」', () => {
+  const view = mount([task({ room_id: 'front', presentation: { column: 'needs_you', phrase: 'blocked' } })], {
+    agentName: '芝士',
+    roomAgentNames: { front: 'Nova' },
+  })
+  expect(view.container.textContent).toContain('打开看看Nova需要什么')
+  expect(view.container.textContent).not.toContain('芝士')
 })

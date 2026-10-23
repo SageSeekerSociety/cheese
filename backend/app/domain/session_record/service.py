@@ -171,7 +171,13 @@ def _entries(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _queued(record: dict) -> bool:
+    return record.get("type") == "command_lifecycle" and record.get("state") == "queued"
+
+
 def _turn(record: dict) -> uuid.UUID | None:
+    if _queued(record):
+        return None
     work = (record.get("cheese") or {}).get("work_id")
     try:
         return uuid.UUID(str(work)) if work else None
@@ -273,6 +279,48 @@ async def _not_sealed(
             for s in spans
         )
     ]
+
+
+async def note(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    agent_handle: str,
+    record: dict,
+    turn_id: uuid.UUID | None = None,
+    harness: str = "machine",
+    at: datetime | None = None,
+) -> None:
+    """Keep one record the machine itself wrote for 现场 (a sync that failed).
+
+    Not a harness journal row (`append`): the machine speaks in its own voice,
+    so it gets a sequence of its own and `harness` keeps it out of every
+    agent's run. It is sealed and read back exactly like a harness record.
+
+    The turn is the caller's to name, not this function's to guess: the sync
+    runs after the turn ended, and the newest turn then (of the conversation,
+    or of this seat) can be a co-seated agent's or the next one. A checkpoint
+    names the turn it ended; a sync with none is drawn by 现场 as a platform
+    line of its own (`as_block` marks harness "machine" as platform)."""
+    when = at or datetime.now(UTC)
+    sequence = int(when.timestamp() * 1_000_000)
+    entry = {"sequence": sequence, "at": when.isoformat(), "record": scrubbed(record)}
+    db.add(
+        SessionRecord(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            first_sequence=sequence,
+            last_sequence=sequence,
+            first_at=when,
+            last_at=when,
+            count=1,
+            bytes=size(entry),
+            records=[entry],
+        )
+    )
+    await db.flush()
 
 
 # --- sealing -----------------------------------------------------------------
@@ -506,6 +554,12 @@ async def read(
 
     def collect(entries: list[dict], turn, agent: str, harness: str) -> None:
         for entry in entries:
+            # Old runners stamped a queued command with the last execution.
+            # Keep that evidence intact, but do not treat it as execution;
+            # the row and archive turn indexes are only candidate selectors.
+            execution = str(turn) if turn and not _queued(entry["record"]) else None
+            if turn_id is not None and execution != str(turn_id):
+                continue
             if (
                 search is not None
                 and search.casefold()
@@ -516,7 +570,7 @@ async def read(
             item = {
                 "sequence": int(entry["sequence"]),
                 "at": at.astimezone(UTC).isoformat(),
-                "turn_id": str(turn) if turn else None,
+                "turn_id": execution,
                 "agent_handle": agent,
                 "harness": harness,
                 "record": entry["record"],

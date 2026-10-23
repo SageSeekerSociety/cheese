@@ -350,8 +350,10 @@ class SessionHost:
     def answers(self, ref: SessionRef) -> bool | None:
         return speaking.answers(self, ref)
 
-    async def stop(self, ref: SessionRef) -> bool:
-        return await control.stop(self, ref)
+    async def stop(
+        self, ref: SessionRef, *, host: str | None = None, epoch: int = 0
+    ) -> bool:
+        return await control.stop(self, ref, host=host, epoch=epoch)
 
     def release(self, ref: SessionRef) -> None:
         return control.release(self, ref)

@@ -108,7 +108,7 @@ covers:
 
 谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
 
-领取走 `advance` 记「处理中」，所以已经修好、上线、不修复的，领了也不动它的状态。放弃只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好，详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮。
+领取走 `advance` 记「处理中」。已经办完的（`CLOSED_STATUSES` = 已修复 + 已上线 + 不修复）不接领取：回 409（`feedbackClaimClosed`），不改持有人、不写时间线——领取记的是「谁在修」，这几档已经没有要修的了，挂一个处理人只会让详情自相矛盾。同样也不接放弃：回 409（`feedbackReleaseClosed`），持有人保持原样；领取和放弃是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人，走管理端的改派（`patch_admin` 把 `assignee_handle` 置空），那是数据修正，不是放弃领取。放弃本身只清掉持有人，不退回状态，也不写时间线：「处理中」记的是有人动过它，放弃之后这件事也还是发生过。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好（两者都要求状态没办完），详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮；办完且没人领着的，那一格不出现，有人领着的只显示处理人。
 
 ## agent 读反馈中心 {#agent-reads}
 

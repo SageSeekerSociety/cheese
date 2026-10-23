@@ -29,18 +29,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def stop(svc: SessionHost, ref: SessionRef) -> bool:
+async def stop(
+    svc: SessionHost,
+    ref: SessionRef,
+    *,
+    host: str | None = None,
+    epoch: int = 0,
+) -> bool:
     """Stop what the session is doing, whichever process started it; the
     session and its conversation stay. False when there was nothing to
-    stop or the host could not be reached."""
+    stop or the host could not be reached.
+
+    ``host`` and ``epoch`` reach a runner this process holds no registration
+    of (one another release started, ``SessionStatus.outdated``): the host it
+    was placed on, and the registration its ping named."""
     running = svc._running.get(ref)
-    host = running.host if running else settings.agent_session_device_id
+    host = running.host if running else host or settings.agent_session_device_id
     if not host or not svc.hub.is_online(host):
         return False
     method, key = svc._driver(ref).stop
     try:
         answer = await svc._look(
-            host, ref, method, {}, epoch=running.launched.epoch if running else 0
+            host, ref, method, {}, epoch=running.launched.epoch if running else epoch
         )
     except (DeviceOffline, DeviceCallError, TimeoutError):
         logger.warning("stopping a session on the host failed", exc_info=True)

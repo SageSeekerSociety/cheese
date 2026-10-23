@@ -50,6 +50,7 @@ PUSHABLE: Final = frozenset(
         NotificationType.CHEESE_QUESTION,
         NotificationType.TEAM_JOIN_REQUEST,
         NotificationType.TASK_DUE_SOON,
+        NotificationType.ASSISTANT_NOTICE,
     }
 )
 
@@ -171,6 +172,10 @@ def push_text(
     if said is None:
         locale = LOCALES[0]
     content = (said or str(payload.get("content") or "")).strip()
+    if type_ is NotificationType.ASSISTANT_NOTICE:
+        # What the person's own 芝士 did on its own: the sentence, then what
+        # it said about it.
+        return (content, str(payload.get("quote") or "").strip())
     where = in_language(say("pushInRoom", room=room), locale) if room else ""
     return (content or in_language(say("pushNotice"), locale), where)
 
@@ -190,6 +195,10 @@ def push_link(payload: dict[str, Any]) -> str:
 
     和 `frontend/public/push-sw.js` 的 `readPayload` 是同一条规则。
     """
+    # The person's own 芝士 (`routine.personal`): the conversation, in the
+    # panel, over their inbox.
+    if conversation := payload.get("assistantConversation"):
+        return f"/inbox?assistant={conversation}"
     project_id = payload.get("projectId")
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")

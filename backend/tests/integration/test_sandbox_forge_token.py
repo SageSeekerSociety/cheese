@@ -98,7 +98,7 @@ def test_missing_credentials_is_actionable_service_error(
     monkeypatch.setattr("app.domain.project.forge.tokens_for_project", unavailable)
     response = client.get("/sandbox/forge-token", headers=configured[3])
     assert response.status_code == 503
-    assert "代码托管凭据尚未配置" in response.json()["message"]
+    assert "没有配置代码托管的授权" in response.json()["message"]
 
 
 def test_provider_failure_does_not_expose_credentials(client, configured, monkeypatch):
@@ -108,7 +108,7 @@ def test_provider_failure_does_not_expose_credentials(client, configured, monkey
     monkeypatch.setattr(configured[1], "installation_token", failed)
     response = client.get("/sandbox/forge-token", headers=configured[3])
     assert response.status_code == 503
-    assert "暂时无法签发" in response.json()["message"]
+    assert "暂时无法为项目签发" in response.json()["message"]
     assert "secret" not in response.text
 
 

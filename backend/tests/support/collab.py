@@ -44,6 +44,10 @@ class FakeCollab:
         #: tested there); here a test says what it would answer: (message, line)
         #: for every checked write, or None to take them.
         self.refuse_writes: tuple[str, int] | None = None
+        #: Which change can be a suggestion is also the service's to judge
+        #: (frontend/collab/edit.ts, tested there); here a test says it: True
+        #: refuses every suggestion as one that cannot be suggested (reason 'structure').
+        self.refuse_suggestions = False
         #: Per document: the suggestions pending in it.
         self.pending: dict[str, list[dict]] = {}
         #: Per document: (text, handle) typed since the last store.
@@ -147,6 +151,11 @@ class FakeCollab:
                         json={"error": "edit", "index": index, "reason": "suggested"},
                     )
                 pending = [s for s in pending if s not in hit]
+                if suggest and self.refuse_suggestions:
+                    return httpx.Response(
+                        422,
+                        json={"error": "edit", "index": index, "reason": "structure"},
+                    )
                 if suggest:
                     sid = f"{body['actor']}:{len(pending) + 1}"
                     pending.append({"id": sid, "author": body["actor"], **_pair(edit)})

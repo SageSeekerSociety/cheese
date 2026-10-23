@@ -100,6 +100,9 @@ export interface Topic {
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
+  // 这间房的 AI 队友坐在名册上哪一席：没人点名的话交给它，行上那句状态说到队友时叫的也是
+  // 它（backend `TopicOut.agent_handle`）。一位都没坐是 null。只有 list/get 话题时才带。
+  agent_handle?: string | null
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
@@ -276,6 +279,7 @@ export interface RoomTask {
   owner_handle?: string | null
   contributor_handles?: string[] // 协作者：负责人拉进来的人，说的话和负责人一样是给 AI 队友的指令
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
+  reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
@@ -307,7 +311,8 @@ export interface RoomTask {
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
-  awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  awaits_me?: boolean // 有事需要本人关注，包括提需求人等结果；侧栏提醒读它
+  needs_my_action?: boolean // 当前显示的下一步是否需要本人执行；“待你回答/审阅”等称谓读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
@@ -322,6 +327,10 @@ export interface RoomTask {
   // 这条活此刻在不在往前走（侧栏的呼吸绿）：它自己的会话在跑，或者卡走在交付链路
   // 上。和 `unseen_delivery` 是两档绿。侧栏行和项目级列表都带。
   moving?: boolean
+  // 做它的 AI 队友此刻有没有一次会话在跑（频道的任务列表、房间快照、单个任务才带；
+  // 后端 `room_task_rows.with_session_running`）。「在做」那颗记号只在它为真时动
+  // （`lib/taskState.ts`）；项目级列表和侧栏行不带，那边用 `moving`。
+  session_running?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
@@ -363,6 +372,14 @@ export interface ThreadCard {
   status: string
   pr_number?: number | null
   pr_url?: string | null
+  /** 这张卡什么时候递上来的（ISO）。 */
+  since?: string | null
+  /** 这件任务递过的第几张卡，从 1 数。 */
+  version?: number | null
+  /** 被审阅的是什么：改动的标题，或文件名。 */
+  subject?: string | null
+  /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
+  reviewer?: string | null
 }
 
 export interface TopicProgress {

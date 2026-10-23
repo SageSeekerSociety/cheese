@@ -324,6 +324,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
+    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
+    # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
+    # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
+    agent_compact_tool: bool = False
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -622,6 +627,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a Claude Code runner another release started may go on with the
+    # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
+    # counted from when the drain began (`agent_sessions.drain_started_at`). It
+    # gets nothing new meanwhile, and the seat's messages wait; past this its
+    # work is interrupted and resumed on a runner of this release.
+    runner_drain_s: float = 1800.0
 
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no

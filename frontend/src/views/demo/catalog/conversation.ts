@@ -29,14 +29,14 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import { platformNotice } from '@/lib/platformNotice'
 
-/** 平台升级换掉会话之后，房间里那一行：这一轮约几分钟后自动接着做（`turn_resume_wait`）。 */
+/** 平台更新换掉 AI 队友运行的程序之后，房间里那一行：约几分钟后自动接着做（`turn_resume_wait`）。 */
 const UPGRADE_RESUME_WAIT: Block = {
   id: 'catalog-upgrade-resume-wait',
   conversation_id: 'demo',
   kind: 'event',
   author_type: 'platform',
   author: 'cheese',
-  content: '平台升级重启了会话，约 1 分钟后自动继续',
+  content: '平台更新后，<@cheese>要重新连上，这次做到一半的会在 1 分钟内接着做',
   turn_id: 'catalog-turn',
   created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
   meta: {
@@ -44,29 +44,27 @@ const UPGRADE_RESUME_WAIT: Block = {
     severity: 'warn',
     who: 'platform',
     reason: 'runner_replaced',
-    i18n: { content: { key: 'turnResumeWaitRunnerReplaced', params: { minutes: 1 } } },
+    i18n: { content: { key: 'turnResumeWaitRunnerReplaced', params: { minutes: 1, agent: '<@cheese>' } } },
   },
 }
 
-/** 同一件事没排上自动继续时，这一轮的失败那一行（`turn_failed`），升级那句嵌在里面。 */
+/** 同一件事没排上自动继续时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
 const UPGRADE_TURN_FAILED: Block = {
   id: 'catalog-upgrade-turn-failed',
   conversation_id: 'demo',
   kind: 'event',
   author_type: 'platform',
   author: 'cheese',
-  content: '本轮未完成：平台升级重启了会话，这一轮被打断了',
+  content: '平台更新打断了<@cheese>这次的工作，改好的文件都还在，重试一次就会接着做',
   turn_id: 'catalog-turn',
   created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
   meta: {
     event_type: 'turn_failed',
-    severity: 'error',
+    severity: 'warn',
     who: 'human',
-    detail: '稍后可以重试。',
-    detail_label: '详细说明',
     retryable: true,
     i18n: {
-      content: { key: 'turnFailedWith', params: { reason: { key: 'sessionReplacedForUpgrade', params: {} } } },
+      content: { key: 'sessionReplacedForUpgrade', params: { agent: '<@cheese>' } },
     },
   },
 }
@@ -224,16 +222,16 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         expect: '3 处',
       },
       {
-        name: '平台升级：这一轮自动接着做',
-        note: '升级换掉了上一版本起的会话，新会话接着同一段对话；这一行说约几分钟后自动继续。',
+        name: '平台更新：自动接着做',
+        note: '更新换掉了上一版本起的程序，新程序接着同一段对话；这一行说约几分钟后自动接着做。',
         props: upgradeNotice(UPGRADE_RESUME_WAIT),
-        expect: '平台升级重启了会话',
+        expect: '平台更新后',
       },
       {
-        name: '平台升级：没排上自动继续',
-        note: '自动继续没排上时，这一轮按失败写出来，升级那一句嵌在「本轮未完成」后面。',
+        name: '平台更新：没排上自动继续',
+        note: '自动继续没排上时，这一行说改动都还在，给一个「重试」。',
         props: upgradeNotice(UPGRADE_TURN_FAILED),
-        expect: '平台升级重启了会话',
+        expect: '平台更新打断了',
       },
     ],
   },

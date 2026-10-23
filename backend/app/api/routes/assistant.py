@@ -36,7 +36,6 @@ from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
-from app.core import model_roles
 from app.core.background import spawn
 from app.core.db import async_session_factory
 from app.core.errors import BadRequestError, NotFoundError
@@ -44,7 +43,6 @@ from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.personal import pages
 from app.domain.agent.personal import service as assistant
-from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.contract import (
@@ -54,10 +52,12 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import changes, gate, proposals
+from app.domain.assistant import memory as assistant_memory
+from app.domain.memory.files import MemoryFileError
+from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
-from app.domain.usage import pricing
-from app.domain.usage.ledger import Ledger, Rates, payer_for_person
-from app.domain.user.services import timezones_by_ids
+from app.domain.usage.credits import CREDIT_USD
+from app.domain.user.services import timezones_by_ids, usernames_by_ids
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -82,6 +82,8 @@ def _conversation_out(row, questions: int | None = None) -> dict:
         "id": str(row.id),
         "title": row.title,
         "lastActiveAt": row.last_active_at.isoformat(),
+        # A routine's run: started by the platform, not by the person.
+        "routine": row.place_kind == "routine",
     }
     if questions is not None:
         out["questions"] = questions
@@ -94,6 +96,7 @@ class ConversationOut(BaseModel):
     id: str
     title: str
     lastActiveAt: str
+    routine: bool = False
     questions: int | None = None
 
 
@@ -318,23 +321,18 @@ async def ask(
     page = None if shown is None else await _page(db, spaces, shown, auth, resolver)
     context = "" if page is None else page.text
 
-    rates = Rates.of(model_roles.model("assistant_model"), await pricing.model_rates())
-    key = await person_key(db, auth.user_id, async_session_factory)
-    if rates is None or key is None or not people.available():
-        return refuse(503, say("assistantNotOpen"), 60)
-    refused = await Ledger(db).admit(await payer_for_person(db, auth.user_id))
-    await db.commit()
-    if refused is not None:
-        return refuse(429, refused.message, refused.retry_after_s())
-
     redis = get_redis_client()
-    slot = (
-        None
-        if redis is None
-        else await assistant.take_conversation(redis, conversation_id)
+    slot = await assistant.admit(
+        db,
+        redis,
+        people,
+        user_id=auth.user_id,
+        conversation_id=conversation_id,
+        sessions=async_session_factory,
     )
-    if redis is None or slot is None:
-        return refuse(429, say("assistantStillAnswering"), 5)
+    if isinstance(slot, assistant.Refused):
+        return refuse(slot.status, slot.message, slot.retry_after_s)
+    assert redis is not None
     held_at = time.monotonic()
     said = await assistant.page_to_say(redis, conversation_id, context)
 
@@ -518,10 +516,21 @@ async def settle_proposal(
 # cannot change its own rules.
 
 
+#: The most entries a person keeps in either list, and the longest one.
+RULE_ENTRIES = 50
+RULE_CHARS = 200
+
+
 class RulesIn(BaseModel):
+    #: Kinds of action always asked about (``gate.CATEGORIES``).
     ask: list[str] = Field(default_factory=list, max_length=len(gate.CATEGORIES))
-    allowText: str = Field(default="", max_length=2000)
-    askText: str = Field(default="", max_length=2000)
+    #: The person's own entries: what needs confirming, and what does not.
+    askItems: list[Annotated[str, Field(max_length=RULE_CHARS)]] = Field(
+        default_factory=list, max_length=RULE_ENTRIES
+    )
+    allowItems: list[Annotated[str, Field(max_length=RULE_CHARS)]] = Field(
+        default_factory=list, max_length=RULE_ENTRIES
+    )
 
 
 class RuleCategoryOut(BaseModel):
@@ -530,11 +539,12 @@ class RuleCategoryOut(BaseModel):
 
 
 class RulesOut(BaseModel):
-    """What the person told their 芝士: kinds always asked, and their notes."""
+    """What the person told their 芝士: kinds always asked, and their own
+    entries of what needs confirming and what does not."""
 
     ask: list[str]
-    allowText: str
-    askText: str
+    askItems: list[str]
+    allowItems: list[str]
     categories: list[RuleCategoryOut]
 
 
@@ -555,10 +565,16 @@ class ActivityOut(BaseModel):
 def _rules_out(row) -> dict:
     return {
         "ask": [c for c in row.ask if c in gate.CATEGORIES],
-        "allowText": row.allow_text,
-        "askText": row.ask_text,
+        "askItems": gate.entries(row.ask_text),
+        "allowItems": gate.entries(row.allow_text),
         "categories": [{"code": c, "label": t} for c, t in gate.CATEGORIES.items()],
     }
+
+
+def _lines(items: list[str]) -> str:
+    """The person's entries as kept: one a line, each said once."""
+    kept = dict.fromkeys(" ".join(i.split()) for i in items if i.strip())
+    return "\n".join(kept)
 
 
 @router.get("/rules", **typed_response(RulesOut))
@@ -576,11 +592,122 @@ async def put_rules(body: RulesIn, db: DbSession, auth: AuthUser) -> dict:
         db,
         auth.user_id,
         ask=list(dict.fromkeys(body.ask)),
-        allow_text=body.allowText.strip(),
-        ask_text=body.askText.strip(),
+        allow_text=_lines(body.allowItems),
+        ask_text=_lines(body.askItems),
     )
     await db.commit()
     return ok(_rules_out(row))
+
+
+class MemoryItemOut(BaseModel):
+    name: str
+    description: str
+    type: str
+    text: str
+    updatedAt: str
+
+
+class MemoryOut(BaseModel):
+    """What the person's 芝士 remembers of them, and whether it may."""
+
+    enabled: bool
+    items: list[MemoryItemOut]
+
+
+class MemoryEnabledIn(BaseModel):
+    enabled: bool
+
+
+class MemoryItemIn(BaseModel):
+    description: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=1000)
+
+
+async def _handle(db, user_id: int) -> str:
+    handle = (await usernames_by_ids(db, [user_id])).get(user_id)
+    if not handle:
+        raise NotFoundError.for_resource("user", str(user_id))
+    return handle
+
+
+async def _memory_out(db, user_id: int) -> dict:
+    handle = await _handle(db, user_id)
+    rows = await assistant_memory.entries(db, handle)
+    return {
+        "enabled": (await gate.rules_of(db, user_id)).memory,
+        "items": [
+            {
+                "name": e.memory.name,
+                "description": e.memory.description,
+                "type": e.memory.type.value,
+                "text": e.memory.body,
+                "updatedAt": e.updated_at,
+            }
+            for e in rows
+        ],
+    }
+
+
+@router.get("/memory", **typed_response(MemoryOut))
+async def get_memory(db: DbSession, auth: AuthUser) -> dict:
+    """What the person's 芝士 remembers of them. Theirs alone: 芝士's own
+    credential does not reach it, so it cannot change what it was told."""
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.put("/memory", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def put_memory_enabled(
+    body: MemoryEnabledIn, db: DbSession, auth: AuthUser
+) -> dict:
+    """Memory on or off. Off keeps what is remembered, neither used nor added
+    to."""
+    await gate.set_memory(db, auth.user_id, body.enabled)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.put("/memory/{name}", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def put_memory_item(
+    name: Annotated[str, Path()], body: MemoryItemIn, db: DbSession, auth: AuthUser
+) -> dict:
+    """The person rewrites one memory: what it says and what it is for."""
+    handle = await _handle(db, auth.user_id)
+    found = await assistant_memory.read(db, handle, name)
+    if found is None:
+        raise NotFoundError.for_resource("memory", name)
+    try:
+        memory = assistant_memory.made(
+            name, body.description, found.type.value, body.text
+        )
+    except MemoryFileError as exc:
+        raise BadRequestError(str(exc)) from exc
+    await assistant_memory.save(db, handle, memory, by=handle)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.delete(
+    "/memory/{name}", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut)
+)
+async def delete_memory_item(
+    name: Annotated[str, Path()], db: DbSession, auth: AuthUser
+) -> dict:
+    handle = await _handle(db, auth.user_id)
+    before = await assistant_memory.put(
+        db, handle, assistant_memory.path_of(name), None, by=handle
+    )
+    if before is None:
+        raise NotFoundError.for_resource("memory", name)
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
+
+
+@router.delete("/memory", dependencies=[ROUTE_DECIDES], **typed_response(MemoryOut))
+async def clear_memory(db: DbSession, auth: AuthUser) -> dict:
+    """Forget everything the person's 芝士 remembers of them."""
+    await assistant_memory.clear(db, await _handle(db, auth.user_id))
+    await db.commit()
+    return ok(await _memory_out(db, auth.user_id))
 
 
 @router.get("/activity", **typed_response(ActivityOut))
@@ -608,3 +735,129 @@ async def get_activity(
             ]
         }
     )
+
+
+# A person's routines, as their settings page lists them: what 芝士 does on its
+# own for them, how its last run went, and what it cost this week.
+
+
+class RoutineRunOut(BaseModel):
+    status: str
+    at: str
+    asked: int
+    conversationId: str | None = None
+
+
+class RoutineOut(BaseModel):
+    id: str
+    title: str
+    note: str
+    #: When it runs, in a line.
+    when: str
+    #: ``done``: a one-off that has run; it is cleared once its cards expire.
+    state: Literal["active", "paused", "done"]
+    #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
+    paused: str
+    nextRunAt: str | None = None
+    lastRun: RoutineRunOut | None = None
+    #: What its runs cost over the last seven days, in credits.
+    weekCredits: float
+
+
+class RoutinesOut(BaseModel):
+    routines: list[RoutineOut]
+    limit: int
+
+
+async def _routines_out(db, user_id: int) -> dict:
+    rows = await routine_personal.mine(db, user_id)
+    ids = [r.id for r in rows]
+    last = await routine_personal.last_runs(db, ids)
+    costs = await routine_personal.week_costs(db, ids)
+    return {
+        "limit": routine_personal.MAX_ROUTINES,
+        "routines": [
+            {
+                "id": str(r.id),
+                "title": r.title,
+                "note": r.note,
+                "when": routine_personal.describe(r),
+                "state": r.state,
+                "paused": r.paused,
+                "nextRunAt": r.next_run_at.isoformat()
+                if r.next_run_at and r.state == "active"
+                else None,
+                "lastRun": None
+                if r.id not in last
+                else {
+                    "status": last[r.id].status,
+                    "at": (last[r.id].finished_at or last[r.id].created_at).isoformat(),
+                    "asked": last[r.id].asked,
+                    "conversationId": str(last[r.id].conversation_id)
+                    if last[r.id].conversation_id
+                    else None,
+                },
+                "weekCredits": round(costs.get(r.id, 0.0) / CREDIT_USD, 2),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/routines", **typed_response(RoutinesOut))
+async def list_routines(db: DbSession, auth: AuthUser) -> dict:
+    """The person's routines, oldest first."""
+    return ok(await _routines_out(db, auth.user_id))
+
+
+async def _routine(db, user_id: int, routine_id: uuid.UUID):
+    row = await routine_personal.one(db, user_id, routine_id)
+    if row is None:
+        raise NotFoundError.for_resource("routine", str(routine_id))
+    return row
+
+
+@router.post(
+    "/routines/{routineId}/pause",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutinesOut),
+)
+async def pause_routine(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    routine_personal.pause(await _routine(db, auth.user_id, routine_id))
+    await db.commit()
+    return ok(await _routines_out(db, auth.user_id))
+
+
+@router.post(
+    "/routines/{routineId}/resume",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutinesOut),
+)
+async def resume_routine(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    """Running again from now; what it missed while paused is not made up."""
+    routine_personal.resume(await _routine(db, auth.user_id, routine_id))
+    await db.commit()
+    return ok(await _routines_out(db, auth.user_id))
+
+
+@router.delete(
+    "/routines/{routineId}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutinesOut),
+)
+async def delete_routine(
+    routine_id: Annotated[uuid.UUID, Path(alias="routineId")],
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    await db.delete(await _routine(db, auth.user_id, routine_id))
+    await db.commit()
+    return ok(await _routines_out(db, auth.user_id))
