@@ -105,14 +105,22 @@ class HubDevice:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 
-    async def send(self, msg: dict[str, Any]) -> None:
+    async def send(self, msg: dict[str, Any]) -> bool:
+        """Write one frame to the machine; ``False`` when there was no link.
+
+        A caller that tells anyone what it did must not report a frame that had
+        nowhere to go: ``open_screen`` used to register a screen and return it
+        after a send that quietly did nothing, so the room believed the screen
+        was up and its turn waited on a runner that was never started.
+
+        A frame that raises did not go out either — the link is gone."""
         # Serialize sends to one device: a WebSocket is not safe for concurrent
         # writes, and the orchestrator, exec, and every viewer's fan-out all send
         # here. Without this, interleaved frames corrupt the channel.
         async with self.send_lock:
             transport = self.transport
             if transport is None:
-                return
+                return False
             # A write to a peer that stopped reading does not fail: the server
             # waits for its buffer to drain, which on a machine that went to
             # sleep behind the proxy is until the socket finally closes —
@@ -139,6 +147,7 @@ class HubDevice:
                 # send is the proof the receive loop never gets.
                 self.drop_transport(transport)
                 raise LinkInterrupted(self.device_id) from exc
+            return True
 
     def drop_transport(self, transport: DeviceTransport) -> bool:
         """Forget ``transport`` if it is still the live one; fail what waited on it.
