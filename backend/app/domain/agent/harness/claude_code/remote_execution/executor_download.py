@@ -57,28 +57,36 @@ def download(url, destination):
             "continues from"
         )
 
+    start = have
     try:
         try:
-            response = ask(have)
+            response = ask(start)
         except HTTPError as refused:
-            # Nothing left past what is held: the copy held is longer than the
-            # one served, so it is not a part of it.
             if refused.code != 416:
                 raise
-            partial.unlink()
-            have = 0
-            response = ask(0)
+            # Nothing past what is held. Held at exactly the served copy's
+            # size, it is whole — the attempt that fetched it was stopped
+            # before unpacking it — and its last byte is asked for again, for
+            # the digest the answer carries. Held longer, it is not a part of
+            # the copy served, and is fetched again.
+            served = (refused.headers.get("Content-Range") or "").rpartition("/")[2]
+            if served == str(have):
+                start = have - 1
+            else:
+                partial.unlink()
+                have = start = 0
+            response = ask(start)
         with response:
             if response.status == 206:
                 span = response.headers["Content-Range"].split()[1]
                 first, _, size = span.replace("-", "/", 1).split("/")
-                if int(first) != have:
+                if int(first) != start:
                     # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                     raise RuntimeError(f"the server resumed at byte {first}")
                 total = int(size)
                 mode = "ab"
             else:
-                have = 0
+                have = start = 0
                 length = response.headers.get("Content-Length")
                 total = int(length) if length else None
                 mode = "wb"
@@ -87,6 +95,8 @@ def download(url, destination):
                 # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise RuntimeError("the server named no checksum for it")
             with partial.open(mode) as output:
+                # The byte asked for again is already held.
+                response.read(have - start)
                 said = time.monotonic()
                 while chunk := response.read(1 << 20):
                     output.write(chunk)

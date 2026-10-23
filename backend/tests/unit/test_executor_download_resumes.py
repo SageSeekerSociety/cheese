@@ -180,3 +180,38 @@ def test_bytes_that_are_not_the_served_executor_are_never_installed(platform):
     # Thrown away, so the attempt after it starts over and succeeds.
     assert bootstrap.binary(owner, cut.url, release) == str(_installed(owner))
     assert _installed(owner).read_bytes() == EXECUTOR
+
+
+def test_a_download_that_arrived_whole_is_installed_without_fetching_it_again(
+    platform, tmp_path
+):
+    """The attempt that received the last byte can still be killed at the
+    deadline before unpacking it; the next one installs what is held."""
+    owner, release, cut, asked = platform
+    whole = claude_dist.packed(tmp_path / "cache" / "claude").read_bytes()
+    versions = _installed(owner).parent
+    versions.mkdir(parents=True)
+    (versions / f"{bootstrap.VERSION}.partial").write_bytes(whole)
+
+    assert bootstrap.binary(owner, cut.url, release) == str(_installed(owner))
+
+    assert _installed(owner).read_bytes() == EXECUTOR
+    # Nothing past what was held was fetched: one byte at most, to learn the
+    # digest the platform names.
+    starts = [int(a.removeprefix("bytes=").rstrip("-")) for a in asked if a]
+    assert len(starts) == len(asked) and min(starts) >= len(whole) - 1, asked
+
+
+def test_an_executor_that_is_not_the_digest_the_platform_names_is_not_installed(
+    platform, monkeypatch
+):
+    owner, release, cut, _ = platform
+    monkeypatch.setattr(claude_dist, "served_digest", lambda binary: "0" * 64)
+
+    with pytest.raises(RuntimeError) as wrong:
+        bootstrap.binary(owner, cut.url, release)
+
+    assert "sha256" in str(wrong.value).splitlines()[-1]
+    assert not _installed(owner).exists()
+    # Nothing it fetched is left to be picked up as a part of the next one.
+    assert not list(_installed(owner).parent.glob(f"{bootstrap.VERSION}.*partial*"))

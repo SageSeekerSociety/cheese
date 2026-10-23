@@ -620,11 +620,8 @@ def binary(owner, api, release):
                 return str(destination)
         except (OSError, ValueError):
             pass
-        # Shipped beside the runtime (`runtime_core.RELEASE_FILES`), and read
-        # from the source tree when this runs from a checkout.
+        # Shipped beside the runtime (`runtime_core.RELEASE_FILES`).
         downloader = Path(release) / "remote-execution/executor_download.py"
-        if not downloader.exists():
-            downloader = Path(__file__).with_name("executor_download.py")
         temporary = runpy.run_path(str(downloader))["download"](
             f"{api}/connector/claude/{VERSION}/{target}/claude{executable}",
             destination,
