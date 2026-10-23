@@ -158,7 +158,7 @@ describe('任务页头', () => {
   // 说在等谁——是看的人就说「等你」。
   it('标签只说待审阅；等的是看的人，后面那一行说等你，等的是别人就写出是谁', () => {
     me = 'alice'
-    const mine = mount({ waiting_on: 'alice' })
+    const mine = mount({ waiting_on: 'alice', needs_my_action: true })
     expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
     expect(mine.getByTestId('task-progress-note').textContent).toContain('等你')
     mine.unmount()
@@ -167,6 +167,27 @@ describe('任务页头', () => {
     expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
     expect(theirs.getByTestId('task-progress-note').textContent).toContain('等 ')
     expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
+  })
+
+  it('关注人不被页头写成实际答题人', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: 'bob',
+      awaits_me: true,
+      needs_my_action: false,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).not.toContain('等你')
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等 ')
+  })
+
+  it('多人问题的实际被问者在页头看到等你', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: null,
+      awaits_me: true,
+      needs_my_action: true,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等你')
   })
 
   // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。

@@ -96,7 +96,7 @@ async def set_title(
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await task_out(db, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     # A channel's name is one of its settings, like its 说明 and who sees it

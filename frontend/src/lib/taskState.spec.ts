@@ -90,7 +90,7 @@ describe('等审', () => {
   const card = { id: 'c1', status: 'pending', since: minutesAgo(30), version: 3, subject: '原型' }
 
   it('等的是看的人：后面那一行说「等你」', () => {
-    const state = taskState(task('awaiting_review', { waiting_on: 'chenmo', card }), ctx)
+    const state = taskState(task('awaiting_review', { waiting_on: 'chenmo', needs_my_action: true, card }), ctx)
     expect(state.line).toContain('等你')
     expect(state.line).toContain('第 3 版')
   })
@@ -142,13 +142,26 @@ describe('等审', () => {
   })
 })
 
+describe('当前行动人和关注人', () => {
+  it.each(['awaiting_answer', 'awaiting_review'] as const)('关注提醒不代表要本人执行：%s', (phrase) => {
+    const state = taskState(task(phrase, { waiting_on: 'linxiao', awaits_me: true, needs_my_action: false }), ctx)
+    expect(state.line).not.toContain('等你')
+    expect(state.line).toContain('林晓')
+  })
+
+  it('多人问题没有单个人名时，实际被问者仍看到等你', () => {
+    const state = taskState(task('awaiting_answer', { waiting_on: null, awaits_me: true, needs_my_action: true }), ctx)
+    expect(state.line).toContain('等你')
+  })
+})
+
 describe('标签只说状态', () => {
   it('每种状态的标签是那两三个字，后面那一行不再重复它', () => {
     const cases: [BoardPhrase, Partial<RoomTask>, string][] = [
       ['running', {}, '在做'],
       ['waiting', {}, '在等'],
       ['blocked', {}, '卡住'],
-      ['awaiting_answer', { waiting_on: 'chenmo' }, '待回答'],
+      ['awaiting_answer', { waiting_on: 'chenmo', needs_my_action: true }, '待回答'],
       ['awaiting_review', { waiting_on: 'linxiao' }, '待审阅'],
       ['bounced', {}, '退回'],
       ['started', {}, '开启'],
@@ -161,7 +174,7 @@ describe('标签只说状态', () => {
   })
 
   it('待回答：等的是看的人就说「等你」', () => {
-    expect(taskState(task('awaiting_answer', { waiting_on: 'chenmo' }), ctx).line).toBe('等你')
+    expect(taskState(task('awaiting_answer', { waiting_on: 'chenmo', needs_my_action: true }), ctx).line).toBe('等你')
     expect(taskState(task('awaiting_answer', { waiting_on: 'linxiao' }), ctx).line).toBe('等 林晓')
   })
 

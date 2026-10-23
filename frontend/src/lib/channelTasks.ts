@@ -55,7 +55,7 @@ export function taskLine(
   nameOf: (handle: string) => string,
   agentName: string
 ): TaskLine {
-  const mine = !!task.waiting_on && task.waiting_on === viewer
+  const mine = task.needs_my_action === true
   const open = task.status !== 'closed'
   const n = task.accepted_count ?? 0
   const state = taskState(task, { viewer, nameOf, agentName })
