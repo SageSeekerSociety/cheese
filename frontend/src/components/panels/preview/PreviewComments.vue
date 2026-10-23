@@ -48,7 +48,11 @@ const text = ref('')
 const draftKey = computed(() => `cheese.file-comments.draft.v1:${props.author}:${props.topicId}:${props.path}`)
 // 存不下就只留在这一页上：草稿是随手写的东西，丢了不报错。
 if (draftKey.value) text.value = storageGet(draftKey.value) ?? ''
-watch(draftKey, (key) => (text.value = storageGet(key) ?? ''))
+watch(draftKey, (key) => {
+  text.value = storageGet(key) ?? ''
+  // 上一份文件发失败的那句话，不该挂在下一份文件上。
+  error.value = ''
+})
 watch(text, (value) => {
   const key = draftKey.value
   if (!key) return
