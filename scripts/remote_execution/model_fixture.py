@@ -2,8 +2,8 @@
 
 import datetime as dt
 import gzip
+import hashlib
 import json
-import shutil
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,13 +74,23 @@ class Handler(BaseHTTPRequestHandler):
             assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
             return self.reply({"data": {"title": "PLATFORM_API_READ"}})
         if self.path.startswith("/connector/claude/"):
-            binary = Path(self.server.state["claude_binary"])
-            self.send_response(200)
+            # As the platform's route serves it (`installer.download_claude`):
+            # the digest of the binary named, and the rest of it for a Range.
+            # Every installer of the build checks the digest and refuses a
+            # copy that names none.
+            data = Path(self.server.state["claude_binary"]).read_bytes()
+            asked = self.headers.get("Range")
+            first = int(asked.removeprefix("bytes=").split("-")[0]) if asked else 0
+            self.send_response(206 if asked else 200)
             self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(binary.stat().st_size))
+            self.send_header("Content-Length", str(len(data) - first))
+            self.send_header("X-Checksum-SHA256", hashlib.sha256(data).hexdigest())
+            if asked:
+                self.send_header(
+                    "Content-Range", f"bytes {first}-{len(data) - 1}/{len(data)}"
+                )
             self.end_headers()
-            with binary.open("rb") as source:
-                shutil.copyfileobj(source, self.wfile)
+            self.wfile.write(data[first:])
             return
         self.reply({})
 
