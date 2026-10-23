@@ -43,6 +43,7 @@ from app.domain.block.message_input import QuotedContextIn
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.living_doc.comment_schemas import (
+    CommentCreatedOut,
     ReplyIn,
     ThreadListOut,
     ThreadMutation,
@@ -182,7 +183,7 @@ async def list_file_threads(
 @router.post(
     "/{topic_id}/files/comments",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(ThreadOut),
+    **typed_response(CommentCreatedOut),
 )
 async def add_file_comment(
     topic_id: uuid.UUID,

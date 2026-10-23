@@ -155,8 +155,11 @@ const commentTarget = computed(() => props.comments?.target.value ?? null)
 // 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
 const commentPick = computed(() => {
   const anchor = pageLocator.anchor() ?? quoted.anchor()
-  const quote = locator.value?.quote ?? ''
-  if (!anchor && !quote) return null
+  const target = locator.value
+  if (!anchor && !target) return null
+  // 位置和原文两样都说：钉在页上时位置是「第 3 页」，原文是「从左 42%、从上 60%」，
+  // 只留一样就说不清指的是哪一页的哪一处。
+  const quote = [target?.label, target?.quote].filter((part) => part && part.trim()).join(' · ')
   return { quote, anchor }
 })
 /** 发一条评论；成不成由这一栏自己说，发出去之后把指认撤掉。 */

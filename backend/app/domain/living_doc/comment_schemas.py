@@ -66,6 +66,14 @@ class ThreadOutsideOut(BaseModel):
     members_only: bool
 
 
+class CommentCreatedOut(ThreadCommentOut):
+    """A thread's opening comment as its writer gets it back: the comment, whom
+    its @s told, and — to the writer alone — whom it named who cannot open the
+    subject."""
+
+    mentioned_outside: ThreadOutsideOut | None = None
+
+
 class ThreadReplyOut(BaseModel):
     sequence: int
     comment: ThreadCommentOut
