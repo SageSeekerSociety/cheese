@@ -38,13 +38,16 @@ from sqlalchemy import DateTime, String, column, exists, or_, select, table, upd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domain.agent import session_state
 from app.domain.agent.models import (
+    STOP_MACHINE_DESTROYED,
     STOP_SWEEP,
     STOP_TAKEN_OVER,
     STOP_TASK_CLOSED,
     STOP_UNDELIVERED,
     AgentTurn,
     Base,
+    SessionState,
 )
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
@@ -486,6 +489,86 @@ async def stamp_delivery_fact(
             await session.commit()
     except Exception:  # bookkeeping must not kill a working turn
         logger.exception("could not stamp delivery for turn %s", turn_id)
+
+
+async def close_turns_of_a_destroyed_machine(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    agent_handle: str,
+    harness: str,
+    at: datetime,
+) -> set[uuid.UUID]:
+    """End the turns a session had open when the platform destroyed its machine,
+    and give up on the inputs those turns held.
+
+    The one authority that can say these turns are over is the platform itself:
+    it took the machine away, and the runner that would have reported their end
+    went with it — reachability is a lease on that runner, never an exit
+    (``harness/driven/lifecycle``). Without this the interval stays open and
+    the room keeps reporting the teammate at work, because
+    ``death_evidence.unknown_row`` reads it as "nobody has said it died" and
+    holds it open — correctly, since a machine merely out of reach looks
+    exactly the same and must not be judged dead (FB-56 legacy③).
+
+    So this is not that judgement being loosened. It fires only where the
+    platform did the destroying, and says nothing about a machine that stopped
+    answering.
+
+    Runs in the caller's transaction, under the destroyed home's lock, so the
+    close and the removal it belongs to land together. The seat's own state row
+    goes idle with it: its process is gone, so "running" is a fact nobody can
+    correct any more. That row is read by conversation rather than built from
+    the session's handle — it is keyed by the seat the agent ACTS under, which
+    is not the same string as the agent's own handle, and only the row itself
+    names both. Two seats in one conversation is a room seating two teammates;
+    the other one's session is still running and this destruction says nothing
+    about it, so nothing is written then.
+    """
+    open_ids = list(
+        await session.scalars(
+            select(AgentTurn.id).where(
+                AgentTurn.conversation_id == conversation_id,
+                or_(
+                    AgentTurn.agent_handle.is_(None),
+                    AgentTurn.agent_handle == agent_handle,
+                ),
+                AgentTurn.stopped_at.is_(None),
+            )
+        )
+    )
+    if open_ids:
+        claimed = await AgentTurnRepository(session).close(
+            open_ids, at, reason=STOP_MACHINE_DESTROYED
+        )
+        if claimed:
+            # Nothing will report whether these were read: the runner that
+            # would have is the process the destruction stopped.
+            await terminate_inputs_of_dead_works(
+                session, claimed, reason="machine_destroyed"
+            )
+    seats = (
+        (
+            await session.execute(
+                select(SessionState)
+                .where(
+                    SessionState.conversation_id == conversation_id,
+                    SessionState.harness == harness,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(seats) == 1:
+        state = seats[0]
+        await session_state.declare(
+            session,
+            session_state.SeatKey(state.conversation_id, state.agent_handle, harness),
+            session_state.IDLE,
+        )
+    return set(open_ids)
 
 
 async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:

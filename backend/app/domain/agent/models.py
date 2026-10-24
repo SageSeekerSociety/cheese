@@ -60,6 +60,10 @@ STOP_SWEEP = "sweep"
 STOP_TASK_CLOSED = "task_closed"
 STOP_TAKEN_OVER = "taken_over"
 STOP_UNDELIVERED = "undelivered"
+#: The platform destroyed the machine this turn was running on: its executor went
+#: with it, and no report about that turn can ever arrive
+#: (``turn_inputs.close_turns_of_a_destroyed_machine``).
+STOP_MACHINE_DESTROYED = "machine_destroyed"
 
 
 class AgentTurn(Base):
