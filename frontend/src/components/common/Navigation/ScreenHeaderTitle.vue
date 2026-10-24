@@ -33,6 +33,12 @@ defineProps<{
   align-items: center;
   min-width: 0;
   height: 100%;
+
+  /* 这一屏自己的页头和壳的操作之间留 4px。页头最后一颗常是 40px 的图标按钮，
+     `.tap-target` 把它能点的范围撑到 44，右边那 2px 会落进紧挨着的下一页操作里；
+     房间页的「更多」和芝士入口就是这么盖住的（docs/design-system.md §10.1：间距
+     不够时拉开间距，不要只撑其中一颗；量它的是 layout-invariants 的 44×44 那条）。 */
+  padding-inline-end: 4px;
 }
 
 /* Vuetify 的工具栏标题自带 20px/400，比页内页头的标题 (.t-title 15/600) 大一号——
