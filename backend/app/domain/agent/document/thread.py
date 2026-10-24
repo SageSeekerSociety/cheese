@@ -62,7 +62,7 @@ from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
-from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.comments import CommentThreads, OnDocument
 from app.domain.living_doc.services import Documents
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,9 @@ async def thread_question(
     """A thread's question: the thread so far, what it points at, the document
     and, for a task's document, the task's latest messages."""
     threads = CommentThreads(db)
-    thread = await threads.describe(await threads.root(document_id, thread_id))
+    thread = await threads.describe(
+        await threads.root(OnDocument(document_id), thread_id)
+    )
     comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
     said = "\n".join(f"<@{c['author']}>：{c['content']}" for c in comments)
     quote = thread["comment"].get("anchor_quote") or ""
@@ -338,10 +340,10 @@ async def reply(
                         if doc is None:
                             raise NotFoundError("document gone")
                         current = await threads.describe(
-                            await threads.root(doc.id, thread_id)
+                            await threads.root(OnDocument(doc.id), thread_id)
                         )
                         await threads.mutate(
-                            doc,
+                            OnDocument(doc.id),
                             comment_id=thread_id,
                             author=bound.agent_handle,
                             expected_revision=current["revision"],
