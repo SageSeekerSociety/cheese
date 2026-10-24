@@ -124,11 +124,20 @@ export function useChatScroll(
   let pointerHeld = false
   let rewrittenAt = -Infinity
   const touched = () => (readerInputAt = performance.now())
-  for (const type of ['wheel', 'touchmove'] as const) useEventListener(scrollRef, type, touched, { passive: true })
+  // 读的人自己动手，就是他说了算：回填还没落到位的话，目标作废。只认这一栏上的输入 —
+  // 别的页签里、输入框里敲的字不是「他在这一栏里翻了」。
+  const readerTookOver = () => {
+    touched()
+    settlePendingTop()
+  }
+  for (const type of ['wheel', 'touchmove'] as const)
+    useEventListener(scrollRef, type, readerTookOver, { passive: true })
   useEventListener(scrollRef, 'pointerdown', () => {
     pointerHeld = true
-    touched()
+    readerTookOver()
   })
+  // 键盘也在这栏里翻（PageUp / 方向键、带焦点的消息行）。
+  useEventListener(scrollRef, 'keydown', readerTookOver)
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
     if (!pointerHeld) return
     pointerHeld = false
@@ -190,6 +199,34 @@ export function useChatScroll(
   // 一份预览再关掉，位置没了). So the position waits here, and the observer below
   // applies it as soon as the pane has a size again.
   let pendingTop: number | null = null
+  // 回填等多久算等不到：内容一直没长到记下那个位置（时间线真的短了，或有行再也不挂），
+  // 落回当前能到的位置就是当时最好的答案。**必须**有这一条：没有的话目标永远留着，
+  // 这一栏就再也不跟新消息了。
+  const PENDING_SETTLE_MS = 1500
+  let pendingSettle: ReturnType<typeof setTimeout> | null = null
+  function clearPendingSettle() {
+    if (pendingSettle !== null) clearTimeout(pendingSettle)
+    pendingSettle = null
+  }
+  /** 定一个回填目标，并给它一个到期时间。 */
+  function holdPendingTop(top: number) {
+    pendingTop = top
+    clearPendingSettle()
+    pendingSettle = setTimeout(() => {
+      pendingSettle = null
+      if (pendingTop === null) return
+      pendingTop = null
+      const sc = scrollRef.value
+      if (!sc || !sc.clientHeight) return
+      atBottom.value = isAtBottom(sc)
+      const id = showingNewest() ? topicId() : undefined
+      if (id) scrollMemory.set(id, { top: sc.scrollTop, atBottom: atBottom.value })
+    }, PENDING_SETTLE_MS)
+  }
+  function settlePendingTop() {
+    clearPendingSettle()
+    pendingTop = null
+  }
   watch([contentRef, scrollRef], ([content, pane]) => {
     contentObserver?.disconnect()
     contentObserver = null
@@ -202,14 +239,18 @@ export function useChatScroll(
         // 藏起来的那一刻这张 0×0 的回调就会发一次，那时 `lastTop` 还是他最后报的位
         // 置；之后再读这个元素只会读到 0。停在底部的人不用记——下面那条分支会把他带
         // 到**当前**的底部，离开期间到的消息才看得见。
-        if (pendingTop === null && !atBottom.value && showingNewest()) pendingTop = lastTop
+        if (pendingTop === null && !atBottom.value && showingNewest()) holdPendingTop(lastTop)
         return
       }
       if (pendingTop !== null) {
         if (!sc.clientHeight) return
-        place(sc, pendingTop)
-        pendingTop = null
-        atBottom.value = isAtBottom(sc)
+        // 还没到想去的那个位置：内容此刻比记下位置时短（行是分批挂上来的），放不进去。
+        // 「卡在当前末端」不是「他本来就停在底部」——把它当后者正是「退出支线被甩到
+        // 最底」的来路。目标留着，等长够了再放；在这之前也不跟新消息。
+        const want = pendingTop
+        place(sc, want)
+        if (sc.scrollTop >= want) settlePendingTop()
+        atBottom.value = pendingTop === null && isAtBottom(sc)
         return
       }
       // 停在底部的人，内容一变高就在同一帧跟到底，差一个像素也跟。BOTTOM_THRESHOLD
@@ -246,7 +287,7 @@ export function useChatScroll(
   // `place` 写不进去（见 `pendingTop`），滚动事件也不来，留着旧的那两份，露出来、或者
   // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
-    pendingTop = null
+    settlePendingTop()
     // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
     // 把它记成「停在底部」会盖掉它自己记下的位置。
     const id = topicId()
@@ -271,6 +312,13 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
+    // 回填还没落到位：这期间的「位置」都是它自己一次次试着放的结果（而且没放进去），
+    // 读它只会把「还没到」记成「就在这里」。目标还等着，先不记。
+    if (pendingTop !== null) {
+      lastTop = el.scrollTop
+      lastHeight = el.scrollHeight
+      return
+    }
     const movedUp = el.scrollTop < lastTop
     const relaid = el.scrollHeight !== lastHeight
     const clamped = movedUp && layoutMoved(performance.now())
@@ -294,15 +342,15 @@ export function useChatScroll(
       const el = scrollRef.value
       if (!el) return
       const saved = scrollMemory.get(topicId)
-      pendingTop = null
+      settlePendingTop()
       if (saved && !saved.atBottom) {
-        if (!el.clientHeight) {
-          pendingTop = saved.top
-          atBottom.value = false
-          return
-        }
+        // 有布局也未必放得进去：这一帧内容还只有估高的那一份短，记下的偏移在它之外。
+        // 放不到就不认这帧的结果，目标留给 ResizeObserver，等长够了再落（同上面那条）。
+        holdPendingTop(saved.top)
+        atBottom.value = false
+        if (!el.clientHeight) return
         place(el, saved.top)
-        atBottom.value = isAtBottom(el)
+        if (el.scrollTop >= saved.top) settlePendingTop()
       } else {
         place(el, el.scrollHeight)
         atBottom.value = true
@@ -324,6 +372,7 @@ export function useChatScroll(
   onScopeDispose(() => {
     if (catchUpTimer) clearTimeout(catchUpTimer)
     catchUpTimer = null
+    clearPendingSettle()
     contentObserver?.disconnect()
     contentObserver = null
   })
