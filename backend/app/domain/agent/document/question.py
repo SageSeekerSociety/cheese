@@ -225,11 +225,12 @@ class Asked:
                 else OnRoomFile(uuid.UUID(room), data["path"])
             ),
             task_id=uuid.UUID(task) if task else None,
-            # Absent from questions stored before it was kept. ``credential``
-            # then falls back to the task or the file's room; a stored comment
-            # thread reaches neither — one of a document kept in a room names no
-            # task and no room file — so its answer reaches the project's own
-            # people, as every such answer did until this field existed.
+            # Absent from questions stored before it was kept. Nothing reading a
+            # stored question back uses it — ``of()`` serves the reply, the
+            # progress tells and the charge, which take the task and the subject
+            # — and the credential is minted once, from the question in hand and
+            # never from a rebuilt one. A question put back together should
+            # still say where its answer is read.
             conversation_id=uuid.UUID(conversation) if conversation else None,
         )
 
