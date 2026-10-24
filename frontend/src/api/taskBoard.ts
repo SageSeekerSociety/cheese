@@ -3,7 +3,7 @@
 // 为避开它。返回的都是 payload（新栈），不再是整只 `{code,message,data}` 信封。
 //
 // 从旧网络栈搬过来时地址、查询、正文与超时一字未改：附件上传 60000 且带上传进度。
-import type { EncodedCursorPage, Page, Task, TaskMembership, TaskSubmission, TeamSummary } from '@/types'
+import type { EncodedCursorPage, Page, Task, TaskMembership, TaskProgress, TaskSubmission, TeamSummary } from '@/types'
 import type {
   AddTaskParticipantRequestData,
   PatchTaskParticipantRequestData,
@@ -218,11 +218,21 @@ export namespace TaskBoardApi {
       true
     )
 
-  export const createSubmission = (taskId: number, participantId: number, data: PostTaskSubmissionRequestData[]) =>
+  /** 交一版：`stage` 是交第几个阶段（从 0 数），不分阶段的题是 0。 */
+  export const createSubmission = (
+    taskId: number,
+    participantId: number,
+    data: PostTaskSubmissionRequestData[],
+    stage = 0
+  ) =>
     axiosRequest<{ submission: TaskSubmission }>(
-      { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'POST', data },
+      { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'POST', data, params: { stage } },
       true
     )
+
+  /** 每个阶段上的进度：我的，和（批改的人才有）全体的分布。 */
+  export const progress = (taskId: number) =>
+    axiosRequest<TaskProgress>({ url: `/tasks/${taskId}/progress`, method: 'GET' }, true)
 
   export const updateSubmission = (
     taskId: number,
@@ -245,6 +255,8 @@ export namespace TaskBoardApi {
       sort_by: 'createdAt' | 'updatedAt'
       sort_order: 'asc' | 'desc'
       queryReview?: boolean
+      /** 只要这个阶段的提交。 */
+      stage?: number
     }
   ) =>
     axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(

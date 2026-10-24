@@ -22,6 +22,7 @@ import { storeToRefs } from 'pinia'
 import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -51,6 +52,7 @@ const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
 // 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
 const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
@@ -535,6 +537,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :publishing="publishing"
     :agent-types="agentTypes"
     :agent-types-failed="agentTypesFailed"
+    :skill-catalog="skillCatalog"
+    :skill-catalog-failed="skillCatalogFailed"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"

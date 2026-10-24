@@ -80,6 +80,7 @@ export function useTaskData() {
       submissionSchema: taskData.value.submissionSchema,
       rubric: taskData.value.rubric ?? [],
       rubricPublic: taskData.value.rubricPublic ?? true,
+      stages: taskData.value.stages ?? [],
     }
   })
 

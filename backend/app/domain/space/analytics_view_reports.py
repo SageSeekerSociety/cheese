@@ -298,11 +298,10 @@ async def get_people(service, *, space_id: int) -> dict:
 
     两处口径，页面上也照说一遍：
 
-    - **一条领取走到哪一步**由提交与评审算（``submission_state`` 里那两句
-      判据）：没有 live 提交＝在做，有 live 提交且其评审通过＝通过，有 live
-      提交但没通过（还在队列里、或被打回）＝已交。不看
-      ``task_membership.completion_status`` —— 那一列后端还没有人推进，
-      读了只会说谎。
+    - **一条领取走到哪一步**：没有 live 提交＝在做；每个阶段都通过
+      （``task_membership.completion_status`` 为 ``SUCCESS``，由
+      ``submission_state`` 在每次提交与评审之后推出来）＝通过；有 live 提交但还
+      没全部通过＝已交。
     - **领了没动**逐条给：领取时间早于 14 天、而且一版 live 提交都没有。14
       天与 alerts 那一格的 ``STALLED_TASK_DAYS`` 同一个数，不是另定一个。
 

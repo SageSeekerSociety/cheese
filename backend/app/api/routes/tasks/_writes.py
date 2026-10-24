@@ -42,6 +42,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+from app.domain.task.stages import stage_lines, stages_to_api
 from app.domain.task_notices import notices as task_notices
 
 
@@ -264,12 +265,18 @@ async def update_task(
         )
         task.category_id = effective_category_id
 
-    # 领过这道题的人要知道提交内容或评分要点变了：先记下改之前的样子，和改之后比。
+    # 领过这道题的人要知道提交内容、评分要点或阶段变了：先记下改之前的样子，和改之后比。
     # 发布页保存时整份带上这两样，没改也一样，所以比的是内容，不是带没带。
     requirements_before = (
         _submission_schema_to_api(await service.list_submission_schema(task.id)),
         rubric_to_api(await service.list_rubric(task.id)),
+        stages_to_api(await service.list_stages(task.id)),
     )
+
+    # 阶段先写：已交的提交、提交项和评分要点跟着它们的阶段挪到新位置，再由下面两份
+    # （若给了）整份替换。
+    if payload.stages is not None:
+        await service.replace_stages(task.id, stage_lines(payload.stages))
 
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
@@ -280,6 +287,7 @@ async def update_task(
         await service.replace_rubric(task.id, rubric_lines(payload.rubric))
     if payload.rubric_public is not None:
         task.rubric_public = payload.rubric_public
+    await service.check_stage_references(task.id)
 
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if payload.topics is not None:
@@ -300,6 +308,7 @@ async def update_task(
     requirements_after = (
         _submission_schema_to_api(await service.list_submission_schema(task.id)),
         rubric_to_api(await service.list_rubric(task.id)),
+        stages_to_api(await service.list_stages(task.id)),
     )
     if requirements_after != requirements_before and task.approved == 0:
         await task_notices.requirements_changed(
@@ -316,6 +325,7 @@ async def update_task(
     task_response = _task_to_api_model(task, include_private_teaching=True)
     task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response["rubric"] = rubric_to_api(await service.list_rubric(task.id))
+    task_response["stages"] = stages_to_api(await service.list_stages(task.id))
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]

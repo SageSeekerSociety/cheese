@@ -29,5 +29,6 @@
   "trendEmptyTitle": "No claims yet",
   "trendSeries": "Total claims",
   "trendSubtitle": "Total claims over the last 12 days",
-  "trendTitle": "Claims over time"
+  "trendTitle": "Claims over time",
+  "stagesTitle": "Progress by stage"
 }

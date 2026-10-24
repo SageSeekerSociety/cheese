@@ -16,10 +16,12 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import memory_block
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 
 # How a roster row is in the project, in the words the agent reads. An external
@@ -80,6 +82,45 @@ DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
 胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
 
 
+#: How a stage stands, in the words the task page shows it by
+#: (`submission_state` STAGE_*).
+_STAGE_SAYS = {
+    "NOT_SUBMITTED": "未提交",
+    "PENDING_REVIEW": "待批改",
+    "PASSED": "已通过",
+    "REJECTED": "被退回",
+}
+
+
+def stages_section(stages: Sequence[StageProgress]) -> str | None:
+    """这个项目所出自的题目分成的阶段：每个阶段的名称、截止时间、要求，以及这个
+    项目在每个阶段上走到哪一步。题目不分阶段时是 None，一个字都不加。
+
+    它会变（交了一版、批改了、出题人改了截止），所以是一段跟踪着再说一次的现状
+    （``TRACKED_SECTIONS``）。"""
+    if not stages:
+        return None
+    lines = []
+    for stage in stages:
+        due = (
+            f"截止 {stage.due_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
+            if stage.due_at is not None
+            else "不设截止"
+        )
+        lines.append(
+            f"{stage.index + 1}. {stage.name}（{due}）："
+            + _STAGE_SAYS.get(stage.status, stage.status)
+        )
+        if stage.description:
+            lines.append("   " + stage.description.replace("\n", "\n   "))
+    return (
+        "## 这道题的阶段\n"
+        "这个项目来自一道分阶段的题目：按阶段提交，每个阶段单独批改，一个阶段最新"
+        "的提交被采纳，这个阶段就完成；过了截止的阶段不再收提交。各阶段现在的状态：\n"
+        + "\n".join(lines)
+    )
+
+
 def teaching_section(context: TeachingContext) -> str | None:
     """这门课希望 AI 队友怎么帮学生 —— 课程那一段，或者 None。
 
@@ -138,6 +179,10 @@ def teaching_section(context: TeachingContext) -> str | None:
                 f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )
         )
+    if len(parts) == 1 and teaching.skills:
+        # 只配了技能的题目：技能正文走技能那一段（`carried_skills`），这一段没有
+        # 话要说。
+        return None
     return "\n\n".join(parts)
 
 
@@ -220,6 +265,7 @@ TRACKED_SECTIONS = (
     "overview",
     "memory",
     "task",
+    "stages",
 )
 
 
@@ -329,6 +375,7 @@ def build_session_opening(
     overview_doc_id: uuid.UUID | None = None,
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
+    stages: Sequence[StageProgress] = (),
     keeps_memory: bool = False,
     task: str | None = None,
 ) -> SessionOpening:
@@ -346,6 +393,8 @@ def build_session_opening(
         sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
+    if section := stages_section(stages):
+        sections["stages"] = section
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (

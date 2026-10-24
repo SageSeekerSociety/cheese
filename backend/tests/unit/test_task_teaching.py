@@ -166,6 +166,27 @@ def test_the_space_and_the_task_are_both_in_force() -> None:
     assert got.teaching_source == "both"
 
 
+def test_the_skills_of_the_space_and_the_task_are_both_carried() -> None:
+    """Skills ride the guidance: the space's and the 题目's are both in force,
+    each named once, and a level with only skills is still a configuration."""
+    got = resolve(
+        space=_space({"skills": ["documents"]}),
+        task=_task({"teaching": {"skills": ["wolfram", "documents", "  "]}}),
+        project=_project(),
+    )
+
+    assert got.teaching.skills == ["documents", "wolfram"]
+    assert got.teaching_source == "both"
+
+
+def test_a_task_with_only_skills_adds_no_guidance_section() -> None:
+    """The skills reach the agent as skills; the 辅导学生 section has nothing to
+    say for them, so it is not there at all."""
+    context = TeachingContext(course=None, teaching=Teaching(skills=["wolfram"]))
+
+    assert teaching_section(context) is None
+
+
 def test_a_task_that_picks_no_way_of_helping_keeps_the_spaces() -> None:
     got = resolve(
         space=_space(GUIDE),

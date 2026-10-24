@@ -44,6 +44,8 @@ const toastError = vi.fn()
 
 // 「默认队友」那一格自己按需拉的预设清单（走 `useAgentTypes` → `@/api`）。
 const listAgentTypes = vi.fn()
+// 「技能」那一格的候选：平台发货的技能目录（`useSkillCatalog`）。
+const listPlatformSkills = vi.fn()
 // 芝士：开对话走 `request`，问一句走事件流。事件流按 `script` 一条条念出来，照的是
 // 服务端真推的那几种（`tool`、`tool_args`、`change`、`delta`、`done`）。撤销芝士的改动
 // 走 `/assistant/changes`。
@@ -74,6 +76,11 @@ vi.mock('@/api/eventStream', async (original) => ({
       onEvent(event, data, String(++n))
     }
   },
+}))
+
+vi.mock('@/api/projectSkills', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  listPlatformSkills: (...a: unknown[]) => listPlatformSkills(...a),
 }))
 
 vi.mock('@/api/taskBoard', () => ({
@@ -224,7 +231,8 @@ async function publish(view: ReturnType<typeof render>) {
 
 /** 选中分类那枚下拉里的一项。选项画在浮层里，查询挂在 `document.body` 上找得到。 */
 async function pickCategory(view: ReturnType<typeof render>, name = '基础题') {
-  await fireEvent.mouseDown(view.getAllByRole('combobox')[0])
+  const field = view.container.querySelector('[data-agent-field="category"]') as HTMLElement
+  await fireEvent.mouseDown(within(field).getAllByRole('combobox')[0])
   await fireEvent.click(await view.findByRole('option', { name }))
   await nextTick()
 }
@@ -242,9 +250,8 @@ async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定
   await fillSettings(view)
 }
 
-/** 点开「更多设置」，露出 AI 队友辅导那几格。 */
+/** 「AI 的设置」那几格画出来（它们一直摊开，不收在「更多设置」里）。 */
 async function ownTeaching(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('task-form-more'))
   await view.findByLabelText('本题补充要求')
 }
 
@@ -254,9 +261,8 @@ async function check(input: Element) {
   await nextTick()
 }
 
-/** 点开「更多设置」，等「默认队友」那一格画出来（它在那一节里）。 */
+/** 等「默认队友」那一格画出来（它在「AI 的设置」里，一直摊开）。 */
 async function openMore(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('task-form-more'))
   await waitFor(() => expect(view.getByTestId('default-teammate')).toBeTruthy())
 }
 
@@ -350,6 +356,7 @@ beforeEach(() => {
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
+  listPlatformSkills.mockReset().mockResolvedValue({ data: [], total: 0 })
   listAgentTypes.mockReset().mockResolvedValue({
     data: [
       {
@@ -406,11 +413,74 @@ describe('发题页：发一道', () => {
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
     expect(sent().submissionSchema).toEqual([
-      { prompt: 'csim.c 源文件', type: 'FILE' },
-      { prompt: '合作与参考说明', type: 'TEXT' },
+      { prompt: 'csim.c 源文件', type: 'FILE', stage: 0 },
+      { prompt: '合作与参考说明', type: 'TEXT', stage: 0 },
     ])
-    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对' }])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对', stage: 0 }])
     expect(sent().rubricPublic).toBe(false)
+  })
+
+  it('分阶段：每个阶段带名称和要求发出去，提交项和评分要点各归它所在的阶段', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    // The first stage takes what the form already had; the second brings a file item of its own.
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+    await fireEvent.update(view.getByLabelText('第 1 个阶段的名称'), '需求分析')
+    await fireEvent.update(view.getByLabelText('第 1 个阶段的要求'), '交一份需求文档')
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+    await fireEvent.update(view.getByLabelText('第 2 个阶段的名称'), '实现')
+    await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[1], '代码')
+    await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[1])
+    await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect(sent().stages).toEqual([
+      { name: '需求分析', description: '交一份需求文档', dueAt: null, previousIndex: null },
+      { name: '实现', description: '', dueAt: null, previousIndex: null },
+    ])
+    expect(sent().submissionSchema).toEqual([
+      { prompt: '提交文件', type: 'FILE', stage: 0 },
+      { prompt: '代码', type: 'FILE', stage: 1 },
+    ])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 0, criteria: '', stage: 1 }])
+  })
+
+  it('删掉一个阶段：它的提交项一起去掉，后面阶段的往前挪', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    for (const name of ['一', '二', '三']) {
+      await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+      const fields = view.getAllByPlaceholderText('例如：需求分析')
+      await fireEvent.update(fields[fields.length - 1], name)
+    }
+    await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[2], '第三阶段的文件')
+
+    await fireEvent.click(view.getByRole('button', { name: '删除第 2 个阶段' }))
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect((sent().stages as { name: string }[]).map((s) => s.name)).toEqual(['一', '三'])
+    expect(sent().submissionSchema).toEqual([
+      { prompt: '提交文件', type: 'FILE', stage: 0 },
+      { prompt: '第三阶段的文件', type: 'FILE', stage: 1 },
+    ])
+  })
+
+  it('有阶段没写名称：不发，那一节说为什么', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+
+    await publish(view)
+
+    expect(await view.findByText('每个阶段都需要填写名称')).toBeTruthy()
+    expect(publishDraft).not.toHaveBeenCalled()
   })
 
   it('评分行写了标准没写名称：不发，那一节说为什么', async () => {
@@ -443,7 +513,7 @@ describe('发题页：发一道', () => {
     expect(sent().submitterType).toBe('USER')
     expect(sent().rank).toBe(1)
     expect(sent().categoryId).toBe(3)
-    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE' }])
+    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE', stage: 0 }])
     expect(sent().attachmentIds).toEqual([41])
     // 沿用空间的默认指导：不单独设置，让空间那一层生效。
     expect(sent().teachingOwn).toBe(false)
@@ -469,7 +539,34 @@ describe('发题页：发一道', () => {
     expect(sent().teachingOwn).toBe(true)
   })
 
-  it('打开了却一格没填：沿用空间设置，不带这一项', async () => {
+  it('AI 的设置不用点开「更多设置」：要求、默认队友、技能都在，「更多设置」仍收着', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    expect(await view.findByLabelText('本题补充要求')).toBeTruthy()
+    expect(view.getByTestId('default-teammate')).toBeTruthy()
+    expect(view.getByTestId('teaching-skills')).toBeTruthy()
+    expect(view.getByTestId('task-form-more').getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByTestId('task-form-real-name')).toBeNull()
+  })
+
+  it('选了技能：发出去的 AI 设置带上它们', async () => {
+    listPlatformSkills.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    const skills = await view.findByTestId('teaching-skills')
+    await fireEvent.mouseDown(within(skills).getByRole('combobox', { name: '技能' }))
+    await fireEvent.click(await view.findByRole('option', { name: /wolfram/ }))
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect((sent() as { teaching?: { skills?: string[] } }).teaching?.skills).toEqual(['wolfram'])
+    expect(sent().teachingOwn).toBe(true)
+  })
+
+  it('一格没填：沿用空间设置，不带这一项', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)

@@ -62,6 +62,7 @@ FORM_FIELDS = frozenset(
         "submissionSchema",
         "rubric",
         "rubricPublic",
+        "stages",
         "attachmentIds",
         "attachmentFiles",
         "teaching",
@@ -84,6 +85,7 @@ INTRO_CHARS = 255
 AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "name": ("name",),
     "description": ("description", "descriptionMarkdown"),
+    "stages": ("stages",),
     "submission": ("submissionSchema",),
     "rubric": ("rubric",),
     "rubric_public": ("rubricPublic",),
@@ -453,6 +455,8 @@ def from_agent(
                 )
             )
         out["topics"] = [space.tags[n] for n in names]
+    if "stages" in args:
+        out["stages"] = _stages(args["stages"], space.zone)
     if "submission" in args:
         out["submissionSchema"] = _submission(args["submission"])
     if "rubric" in args:
@@ -493,6 +497,7 @@ def from_agent(
             or teaching.get("systemPrompt")
             or teaching.get("materialIds")
             or teaching.get("documentIds")
+            or teaching.get("skills")
         )
     return out
 
@@ -594,6 +599,34 @@ def _deadline(value, zone: tzinfo) -> int | None:
     return int(moment.timestamp() * 1000)
 
 
+def _stages(items, zone: tzinfo) -> list[dict]:
+    """The stages 芝士 lists, in order: a name, what it asks for, and when it
+    is due on the person's clock. Each is the stage at its own position, as
+    the form keeps it (``app.domain.task.stages``)."""
+    out = []
+    for item in items or []:
+        item = item or {}
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "name": name,
+                "description": str(item.get("description") or "").strip(),
+                "dueAt": _deadline(item.get("due"), zone),
+            }
+        )
+    return out
+
+
+def _stage_index(item: dict) -> int:
+    """The stage 芝士 names, counted from 1, as the form keeps it: from 0."""
+    try:
+        return max(0, int(item.get("stage") or 1) - 1)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _submission(items) -> list[dict]:
     out = []
     for item in items or []:
@@ -603,7 +636,9 @@ def _submission(items) -> list[dict]:
             continue
         if kind not in KINDS:
             raise BadRequestError(say("draftSubmissionKind"))
-        out.append({"prompt": name[:255], "type": KINDS[kind]})
+        out.append(
+            {"prompt": name[:255], "type": KINDS[kind], "stage": _stage_index(item)}
+        )
     if not out:
         raise BadRequestError(say("draftSubmissionEmpty"))
     return out
@@ -622,6 +657,7 @@ def _rubric(lines) -> list[dict]:
                 "item": str(line.get("item") or "").strip(),
                 "points": points,
                 "criteria": str(line.get("criteria") or "").strip(),
+                "stage": _stage_index(line),
             }
         )
     return out
@@ -794,6 +830,13 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         moment = datetime.fromtimestamp(int(ms) / 1000, tz=UTC).astimezone(space.zone)
         return moment.strftime("%Y-%m-%d %H:%M")
 
+    stages = [s for s in fields.get("stages") or [] if isinstance(s, dict)]
+
+    def in_stage(entry: dict) -> str:
+        if not stages:
+            return ""
+        return f"｜阶段 {int(entry.get('stage') or 0) + 1}"
+
     lines = [
         open_tag,
         head,
@@ -839,14 +882,22 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),
         "ai_guidance: "
         + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
+        "stages:" + ("" if stages else " （不分阶段）"),
+        *(
+            f"  {n}. {s.get('name')}｜截止 {when(s.get('dueAt')) or '不设'}"
+            + (f"｜{s.get('description')}" if s.get("description") else "")
+            for n, s in enumerate(stages, start=1)
+        ),
         "submission:",
         *(
             f"  - {e.get('prompt')}（{kinds.get(e.get('type'), e.get('type'))}）"
+            + in_stage(e)
             for e in fields.get("submissionSchema") or []
         ),
         f"rubric（对学生{'可见' if fields.get('rubricPublic', True) else '不可见'}）:",
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
+            + in_stage(r)
             for r in fields.get("rubric") or []
         ),
         "description:",
@@ -923,12 +974,13 @@ def published_form(draft: TaskDraft) -> dict:
 
 def blank(fields: dict) -> bool:
     """Nothing of the 题目 is written yet: no name, no description, no
-    rubric — what the page starts a draft with is not writing."""
+    rubric, no stages — what the page starts a draft with is not writing."""
     return not (
         str(fields.get("name") or "").strip()
         or markdown_of(fields).strip()
         or _doc_text(fields.get("description")).strip()
         or fields.get("rubric")
+        or fields.get("stages")
     )
 
 
@@ -972,6 +1024,7 @@ def task_form(task: dict) -> dict:
         "submissionSchema": task.get("submissionSchema") or [],
         "rubric": task.get("rubric") or [],
         "rubricPublic": task.get("rubricPublic", True),
+        "stages": task.get("stages") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
     }

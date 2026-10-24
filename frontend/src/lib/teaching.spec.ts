@@ -12,6 +12,7 @@ describe('teaching 表单转换', () => {
         systemPrompt: '先写需求说明',
         materialIds: [11, 12],
         documentIds: ['0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e'],
+        skills: ['wolfram'],
       })
     ).toEqual({
       mode: 'spec',
@@ -20,6 +21,7 @@ describe('teaching 表单转换', () => {
       learningGoals: '',
       materialIds: [11, 12],
       documentIds: ['0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e'],
+      skills: ['wolfram'],
     })
     expect(draftFromConfig(null)).toEqual(emptyTeachingDraft())
   })
@@ -32,6 +34,7 @@ describe('teaching 表单转换', () => {
       learningGoals: [],
       materialIds: [],
       documentIds: [],
+      skills: [],
     })
   })
 
@@ -40,6 +43,7 @@ describe('teaching 表单转换', () => {
     expect(isTeachingBlank({ mode: null, systemPrompt: ' ', materialIds: [], documentIds: [] })).toBe(true)
     expect(isTeachingBlank({ mode: 'guide' })).toBe(false)
     expect(isTeachingBlank({ materialIds: [3] })).toBe(false)
+    expect(isTeachingBlank({ skills: ['wolfram'] })).toBe(false)
   })
 })
 

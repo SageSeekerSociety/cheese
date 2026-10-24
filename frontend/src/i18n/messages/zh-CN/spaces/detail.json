@@ -115,7 +115,6 @@
     "needsReview": "发布后需管理员审核",
     "publish": "发布",
     "teaching": {
-      "subtitle": "用于从本题创建的项目",
       "title": "AI 队友辅导"
     },
     "useTemplate": "使用模板",

@@ -58,6 +58,7 @@ from app.domain.task import drafts
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskService, ensure_task_readable
+from app.domain.task.stages import stages_to_api
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/task-drafts", tags=["Tasks"])
@@ -174,6 +175,7 @@ async def _task_as_form(db, task) -> dict:
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=True)
     model["rubric"] = rubric_to_api(await service.list_rubric(task.id))
+    model["stages"] = stages_to_api(await service.list_stages(task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     return drafts.task_form(model)
 

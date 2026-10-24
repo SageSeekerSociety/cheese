@@ -9,6 +9,7 @@ never returned; and search answers names and descriptions only, never a body
 
 import uuid
 
+from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_project,
     room_agent_headers,
@@ -92,6 +93,19 @@ def test_the_platforms_shipped_skills_are_installed_for_every_room(client):
         assert found.status_code == 200, found.text
         found_names.update(s["name"] for s in found.json()["data"]["skills"])
     assert found_names == expected
+
+
+def test_a_publisher_with_no_project_picks_from_the_same_shipped_skills(client):
+    """出题人写题时还没有项目：给题目挑技能读的是同一份发货目录，登录就能读。"""
+    project_id, _, headers = _room(client)
+    in_project = client.get(f"/projects/{project_id}/skill-catalog", headers=headers)
+    token = seed_user(client, f"skill-publisher-{uuid.uuid4().hex[:6]}")
+
+    catalog = client.get("/skill-catalog", headers={"Authorization": f"Bearer {token}"})
+
+    assert catalog.status_code == 200, catalog.text
+    assert catalog.json()["data"]["data"] == in_project.json()["data"]["data"]
+    assert client.get("/skill-catalog").status_code == 401
 
 
 def test_a_teammate_draft_is_not_installed_and_so_is_not_returned(client):

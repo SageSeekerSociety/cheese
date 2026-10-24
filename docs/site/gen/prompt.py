@@ -39,6 +39,7 @@ import re
 import sys
 import types
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -229,6 +230,21 @@ TEACHING = types.SimpleNamespace(
     documents=[{"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "推荐系统入门"}],
 )
 
+#: A stand-in for ``task.claims.StageProgress``: a task in two stages, the
+#: first passed, the second not handed in yet.
+STAGES = [
+    types.SimpleNamespace(
+        index=0,
+        name="需求分析",
+        description="交一份需求文档",
+        due_at=datetime(2026, 11, 1, 15, 59, tzinfo=timezone.utc),
+        status="PASSED",
+    ),
+    types.SimpleNamespace(
+        index=1, name="实现", description="", due_at=None, status="NOT_SUBMITTED"
+    ),
+]
+
 ROSTER = [
     {"name": "张衡", "handle": "zhangheng", "source": "owner", "agent": False, "active": True},
     {"name": "李工", "handle": "ligong", "source": "team", "agent": False, "active": True},
@@ -346,6 +362,12 @@ TOGGLES = [
         "kwargs": {"teaching": TEACHING},
         "label": "`teaching` 非空，且这一周的教学安排不是空的（`teaching_section` 说了话）",
         "params": ["teaching=…"],
+    },
+    {
+        "id": "stages",
+        "kwargs": {"stages": STAGES},
+        "label": "`stages` 非空：项目出自一道分阶段的题目",
+        "params": ["stages=…"],
     },
     {
         "id": "skills",

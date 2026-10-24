@@ -113,6 +113,39 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
     assert "可以当导师的人：王立（wangli）、陈浩（chenhao）" in view
 
 
+def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
+    """芝士 counts stages from 1; the form keeps them from 0. A due date is on
+    the person's clock, as the task's deadline is."""
+    fields = drafts.from_agent(
+        {
+            "stages": [
+                {"name": "需求分析", "description": "交需求", "due": "2026-11-01"},
+                {"name": "实现"},
+            ],
+            "submission": [
+                {"name": "需求文档", "kind": "文字", "stage": 1},
+                {"name": "代码", "kind": "文件", "stage": 2},
+            ],
+            "rubric": [{"item": "正确", "points": 60, "stage": 2}],
+        },
+        SPACE,
+        {},
+    )
+
+    assert [s["name"] for s in fields["stages"]] == ["需求分析", "实现"]
+    # The last minute of 1 November in Shanghai.
+    assert fields["stages"][0]["dueAt"] == 1793548740000
+    assert fields["stages"][1]["dueAt"] is None
+    assert [e["stage"] for e in fields["submissionSchema"]] == [0, 1]
+    assert fields["rubric"][0]["stage"] == 1
+
+    view = drafts.agent_view(
+        TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields), SPACE
+    )
+    assert "  1. 需求分析｜截止 2026-11-01 23:59｜交需求" in view
+    assert "  - 代码（文件）｜阶段 2" in view
+
+
 def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():
     row = TaskDraft(
         id=9,

@@ -160,7 +160,8 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     test: {
       method: 'POST',
       path: '/tasks/42/participants/11/submissions',
-      args: [42, 11, [{ text: '答案' }]],
+      args: [42, 11, [{ text: '答案' }], 1],
+      query: [['stage', '1']],
       body: [{ text: '答案' }],
     },
   },
