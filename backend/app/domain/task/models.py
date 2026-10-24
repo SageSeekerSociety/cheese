@@ -458,14 +458,14 @@ class TaskSubmissionReview(Base):
 
 class TaskPackageRevision(Base):
     """One version of what a 题目 hands its takers (#4767 §一): its description,
-    what to hand in, its 评分要点 and its files. The first is written when the
+    its 阶段, what to hand in, its 评分要点 and its files. The first is written when the
     题目 is published; every change to any of those writes the next, saying in
     ``changes`` what changed, so a project taken from it can say 「题目已更新到第
     N 版」 and what that version changed. A submission records the version it
     was made under (``TaskSubmission.package_revision``).
 
     ``changes`` names the parts: ``published`` on the first; ``description``,
-    ``submission``, ``rubric`` when those changed; ``files`` with the names
+    ``stages``, ``submission``, ``rubric`` when those changed; ``files`` with the names
     ``added``, ``replaced`` and ``removed``.
     """
 

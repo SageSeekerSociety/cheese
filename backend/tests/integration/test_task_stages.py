@@ -854,3 +854,96 @@ def test_a_stage_edit_is_a_new_version_of_the_task(api_client, board):
     assert "第 2 版" in content
     assert "## 阶段" in content
     assert "编码实现" in content
+
+
+def _changes_heard(api_client, user) -> list[str]:
+    resp = api_client.get(
+        "/notifications", params={"pageSize": 50}, headers=_headers(user)
+    )
+    assert resp.status_code == 200, resp.text
+    return [
+        n["contextMetadata"]["content"]
+        for n in resp.json()["data"]["notifications"]
+        if n["type"] == "TASK_NOTICE"
+        and n["contextMetadata"].get("event") == "requirementsChanged"
+    ]
+
+
+# 2030-11-15 15:59 UTC: 23:59 in Beijing, 10:59 in New York.
+DUE = int(datetime(2030, 11, 15, 15, 59, tzinfo=UTC).timestamp() * 1000)
+LATE_DEADLINE = int(datetime(2031, 1, 1, tzinfo=UTC).timestamp() * 1000)
+
+
+def test_renaming_or_reordering_stages_tells_takers_nothing(api_client, board):
+    """A new name or order asks nothing new of whoever took the 题目."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    task = _read(api_client, board, task_id)
+    first, second = task["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "stages": [{**second, "name": "编码实现"}, first],
+            "submissionSchema": task["submissionSchema"],
+            "rubric": task["rubric"],
+        },
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _changes_heard(api_client, board["student"]) == []
+
+
+def test_a_moved_stage_due_date_is_told_on_the_readers_clock(api_client, board):
+    """Takers hear which stage's due date moved and to when, on their own
+    clock: Beijing time until their browser says otherwise."""
+    task_id = _publish(api_client, board, deadline=LATE_DEADLINE)
+    _claim(api_client, board, task_id)
+
+    def move(due: int) -> None:
+        first, second = _read(api_client, board, task_id)["stages"]
+        resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"stages": [first, {**second, "dueAt": due}]},
+            headers=_headers(board["teacher"]),
+        )
+        assert resp.status_code == 200, resp.text
+
+    move(DUE)
+    [heard] = _changes_heard(api_client, board["student"])
+    assert heard.endswith("阶段「实现」的截止时间改为 2030-11-15 23:59（北京时间）")
+
+    resp = api_client.put(
+        "/users/me/timezone",
+        json={"timezone": "America/New_York"},
+        headers=_headers(board["student"]),
+    )
+    assert resp.status_code == 200, resp.text
+    move(DUE + DAY_MS)
+    latest = _changes_heard(api_client, board["student"])[0]
+    assert latest.endswith(
+        "阶段「实现」的截止时间改为 2030-11-16 10:59（America/New_York）"
+    )
+
+
+def test_several_changes_in_one_save_are_one_notice(api_client, board):
+    """A stage added and the rubric changed in the same save: one notice that
+    names both."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    first, second = _read(api_client, board, task_id)["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "stages": [
+                first,
+                second,
+                {"name": "答辩", "description": "", "dueAt": None},
+            ],
+            "rubric": [{**RUBRIC[0], "points": 50}, {**RUBRIC[1], "points": 50}],
+        },
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    [heard] = _changes_heard(api_client, board["student"])
+    assert "修改了提交内容或评分要点" in heard
+    assert "新增了阶段「答辩」" in heard

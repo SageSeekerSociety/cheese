@@ -125,6 +125,36 @@ def stages_to_api(rows: Sequence[TaskStage]) -> list[dict]:
     ]
 
 
+@dataclass(frozen=True)
+class StageNews:
+    """What a change to a task's stages means to whoever took it: the stages
+    added and removed (by name), and each kept stage whose due date moved
+    (name, new due in epoch ms or None). A rename or a reorder asks nothing new
+    of them and is not here."""
+
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    due_moved: tuple[tuple[str, int | None], ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.added or self.removed or self.due_moved)
+
+
+def stage_news(before: Sequence[dict], after: Sequence[dict]) -> StageNews:
+    """Compare two ``stages_to_api`` lists by stage id."""
+    old = {s["id"]: s for s in before}
+    new = {s["id"]: s for s in after}
+    return StageNews(
+        added=tuple(s["name"] for s in after if s["id"] not in old),
+        removed=tuple(s["name"] for s in before if s["id"] not in new),
+        due_moved=tuple(
+            (s["name"], s["dueAt"])
+            for s in after
+            if s["id"] in old and old[s["id"]]["dueAt"] != s["dueAt"]
+        ),
+    )
+
+
 async def list_stages(session: AsyncSession, task_id: int) -> list[TaskStage]:
     stmt = (
         select(TaskStage)

@@ -13,6 +13,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,7 @@ from app.domain.library import records as library
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.service import clean_upload_name
 from app.domain.library.shelf import Shelf
+from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project.models import Project
 from app.domain.task.models import (
     Task,
@@ -138,6 +140,11 @@ async def _handle(session: AsyncSession, user_id: int | None) -> str | None:
     return await session.scalar(select(User.username).where(User.id == user_id))
 
 
+#: 题目说明是全体领取者和他们的芝士读的同一份，写不了各人的钟点：阶段的截止
+#: 按北京时间写并写明（没报过时区的人也按它读，`notification.preferences`）。
+_BRIEF_ZONE = ZoneInfo(DEFAULT_TIMEZONE)
+
+
 async def brief(session: AsyncSession, task: Task, number: int) -> str:
     """第 `number` 版的题目说明：简介、说明、阶段、提交内容，和公开的评分要点。
     分了阶段时，提交内容和评分要点各写明属于哪个阶段。"""
@@ -168,7 +175,7 @@ async def brief(session: AsyncSession, task: Task, number: int) -> str:
         lines += ["## 阶段", ""]
         for i, stage in enumerate(stages, start=1):
             due = (
-                f"截止 {stage.due_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
+                f"截止 {stage.due_at.astimezone(_BRIEF_ZONE):%Y-%m-%d %H:%M}（北京时间）"
                 if stage.due_at is not None
                 else "不设截止"
             )
@@ -434,7 +441,7 @@ async def section_for_project(
         f"这个项目来自题目「{task.name}」，题目现在是第 {revision.number} 版。",
         f"题目的材料在项目资料库的 `题目/` 文件夹里，只能读，不能改：列资料库的工具"
         f"看 `题目` 这一层，读附件的工具读 `library/题目/<名字>`，要取到工作机器上"
-        f"用 `cheese library get 题目/<名字>`。说明、提交内容和公开的评分要点在 "
+        f"用 `cheese library get 题目/<名字>`。说明、阶段、提交内容和公开的评分要点在 "
         f"`library/题目/{BRIEF}`。",
     ]
     if revision.number > 1:

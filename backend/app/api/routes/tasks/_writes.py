@@ -43,7 +43,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.stages import stage_lines, with_stage_index
+from app.domain.task.stages import stage_lines, stage_news, with_stage_index
 from app.domain.task.submission_state import refresh_task_claims
 from app.domain.task_notices import notices as task_notices
 
@@ -334,18 +334,23 @@ async def update_task(
         )
         changes |= package.files_changed(added=added)
     await package.record(db, task, by=user_id, changes=changes)
-    # What a taker is told about is what to hand in, by when and how it is
-    # scored: the stages, the form and the rubric's lines. Showing or hiding the
-    # rubric is a new version of the package but changes none of them, and the
-    # editor sends it on every save.
-    requirements_changed = (
-        package_before[package.STAGES] != package_after[package.STAGES]
-        or package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
-        or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
-    )
-    if requirements_changed and task.approved == 0:
-        await task_notices.requirements_changed(
-            db, task=task, by=user_id, at=task.updated_at
+    # What a taker is told about is what asks something new of them: the form,
+    # the rubric's lines, a stage added or removed, a stage's due date. A
+    # renamed or reordered stage, or the rubric shown or hidden (the editor
+    # sends that on every save), is a new version of the package and no news.
+    if task.approved == 0:
+        await task_notices.task_changed(
+            db,
+            task=task,
+            requirements=(
+                package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
+                or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
+            ),
+            stages=stage_news(
+                package_before[package.STAGES], package_after[package.STAGES]
+            ),
+            by=user_id,
+            at=task.updated_at,
         )
     # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
     # runs after the response has gone out, so a client told a task is approved
