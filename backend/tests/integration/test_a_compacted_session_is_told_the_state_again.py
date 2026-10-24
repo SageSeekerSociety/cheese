@@ -13,6 +13,8 @@ import pytest
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.turn.store.session_inputs import forget_opening, remember_opening
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import project_service, registered
@@ -105,3 +107,43 @@ async def test_a_failed_compaction_lost_nothing_and_tells_nothing(client, tmp_pa
     assert _SNAPSHOT in first
     assert _SNAPSHOT not in second
     assert _SNAPSHOT not in third
+
+
+async def _told_after_a_compaction_mid_send(factory) -> dict | None:
+    """A turn reads what its conversation was told and sends only the changes;
+    the compaction ends before the turn records what it told."""
+    async with factory() as session:
+        await registered(session, "u")
+        project = await project_service(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="Work", created_by="u"
+        )
+        await session.commit()
+    seat = {"agent_handle": "cheese", "harness": "claude-code"}
+    told = {"roster": "a", "memory": "b"}
+    await remember_opening(factory, topic_id=topic.id, digests=told, was=None, **seat)
+
+    async with factory() as session:
+        read = await AgentSessionService(session).told(
+            topic.id, seat["agent_handle"], harness=seat["harness"]
+        )
+    await forget_opening(factory, conversation_id=topic.id, **seat)
+    await remember_opening(
+        factory, topic_id=topic.id, digests={**told, "roster": "c"}, was=read, **seat
+    )
+
+    async with factory() as session:
+        return await AgentSessionService(session).told(
+            topic.id, seat["agent_handle"], harness=seat["harness"]
+        )
+
+
+async def test_a_compaction_that_ends_mid_send_is_not_written_over(client):
+    told = client.portal.call(
+        lambda: _told_after_a_compaction_mid_send(client.test_request_factory)
+    )
+
+    # The turn told only what changed; the compaction took the rest out of the
+    # window. Nothing may say the rest is still there, so the next input tells
+    # the whole state.
+    assert told is None

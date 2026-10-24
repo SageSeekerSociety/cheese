@@ -22,6 +22,7 @@ async def remember_opening(
     agent_handle: str,
     harness: str,
     digests: dict[str, str],
+    was: dict[str, str] | None,
 ) -> None:
     async with sessions() as session:
         await AgentSessionService(session).remember_told(
@@ -29,6 +30,7 @@ async def remember_opening(
             agent_handle=agent_handle,
             harness=harness,
             told=digests,
+            was=was,
         )
         await session.commit()
 

@@ -341,6 +341,9 @@ async def send_prepared(
             agent_handle=prepared.agent_handle,
             harness=prepared.harness,
             digests=opening.digests(),
+            # A compaction that ended since `told` was read cleared it; this
+            # turn told only the changes, so the clear stands.
+            was=told,
         )
         _delivery_step("remember_told")
     except InputOutcomeUnconfirmed as exc:
