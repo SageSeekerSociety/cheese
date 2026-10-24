@@ -5,7 +5,7 @@ What an agent can observe is the schema it is handed and what a call does: a
 call the verb cannot take is refused before anything is sent, with what to
 pass instead, and a call it can take runs that verb. A call written down under
 a name the table no longer has reads as the action it became
-(`app.core.tool_keys`).
+(`session_record.tool_keys`).
 """
 
 import importlib.util
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core import tool_keys
+from app.domain.session_record import tool_keys
 
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
@@ -153,28 +153,9 @@ def folded(monkeypatch):
         tool_keys,
         "RETIRED",
         {
-            "cheese_gadget_rename": ("cheese_gadget.rename", {}),
-            "cheese_gadget": ("cheese_gadget.make", {"summary": "note"}),
+            "cheese_gadget_rename": "cheese_gadget.rename",
+            "cheese_gadget": "cheese_gadget.make",
         },
-    )
-
-
-def test_a_call_under_a_retired_name_is_made_as_the_action_it_became(folded):
-    assert tool_keys.as_called_now("cheese_gadget_rename", {"title": "新"}) == (
-        "cheese_gadget",
-        {"title": "新", "action": "rename"},
-    )
-    assert tool_keys.as_called_now(
-        "cheese_gadget", {"title": "新", "summary": "一句"}
-    ) == ("cheese_gadget", {"title": "新", "note": "一句", "action": "make"})
-
-
-def test_a_call_in_todays_shape_is_made_as_it_is(folded):
-    today = {"action": "drop"}
-    assert tool_keys.as_called_now("cheese_gadget", today) == ("cheese_gadget", today)
-    assert tool_keys.as_called_now("chat_send", {"content": "在"}) == (
-        "chat_send",
-        {"content": "在"},
     )
 
 

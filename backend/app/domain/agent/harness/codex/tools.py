@@ -13,7 +13,6 @@ import types
 from collections.abc import Callable
 from pathlib import Path
 
-from app.core.tool_keys import as_called_now
 from app.domain.agent.executor_transport import (
     DEFERRED_WORKSPACE,
     MACHINE_OUT_OF_REACH,
@@ -546,11 +545,6 @@ class RemoteTools:
     async def __call__(self, method: str, params: dict) -> dict:
         if method != "item/tool/call":
             raise ValueError(f"Unsupported Codex server request: {method}")
-        # A thread keeps the tool list it was started with (`thread/resume`
-        # takes none), so one started before a tool was folded into another
-        # still calls it by its old name: run it as the call it is today.
-        tool, arguments = as_called_now(params["tool"], params.get("arguments") or {})
-        params = {**params, "tool": tool, "arguments": arguments}
         session_call = self.main_thread in (None, params.get("threadId"))
         if session_call:
             owed = reply_owed(self.reply_file)

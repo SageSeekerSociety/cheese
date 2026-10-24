@@ -34,7 +34,7 @@ import shlex
 import uuid
 from dataclasses import dataclass
 
-from app.core.tool_keys import tool_key
+from app.domain.session_record.tool_keys import tool_key
 
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
