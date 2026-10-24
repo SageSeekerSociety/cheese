@@ -67,6 +67,9 @@ _inspect_slots = asyncio.Semaphore(int(os.environ.get("INSPECT_MAX_CONCURRENT", 
 #: A check that cannot start this soon answers busy rather than queueing past
 #: the backend's own timeout and rendering for nobody.
 INSPECT_QUEUE_SECONDS = 30.0
+#: Printing shares the browser above and gets its own slots, so a document
+#: someone exported does not fill the inspection queue agents wait on.
+_print_slots = asyncio.Semaphore(int(os.environ.get("PRINT_MAX_CONCURRENT", "2")))
 #: Chrome's proxy covers HTTP(S) and WebSocket only. WebRTC's UDP and QUIC would
 #: leave around `egress`, and a page under `/inspect` runs its own scripts.
 NO_UNPROXIED_TRAFFIC = [
@@ -257,15 +260,19 @@ class InspectIn(BaseModel):
     exercise: bool = False
 
 
-async def _print_pdf(browser, body: InspectIn) -> str:
-    parts = (body.pdf_margin or "0").split()
+async def _pdf_of(
+    browser, html: str, margin: str, settle_seconds: float, timeout_ms: int | None = None
+) -> str:
+    parts = margin.split()
     vertical, horizontal = parts[0], parts[-1]
     context = await browser.new_context(color_scheme="light")
     try:
         page = await context.new_page()
-        await page.set_content(body.html, wait_until="load", timeout=INSPECT_TIMEOUT_MS)
+        await page.set_content(
+            html, wait_until="load", timeout=timeout_ms or INSPECT_TIMEOUT_MS
+        )
         await page.emulate_media(media="print")
-        await page.wait_for_timeout(int(body.settle_seconds * 1000))
+        await page.wait_for_timeout(int(settle_seconds * 1000))
         pdf = await page.pdf(
             format="A4",
             print_background=True,
@@ -279,6 +286,10 @@ async def _print_pdf(browser, body: InspectIn) -> str:
     finally:
         await context.close()
     return base64.b64encode(pdf).decode("ascii")
+
+
+async def _print_pdf(browser, body: InspectIn) -> str:
+    return await _pdf_of(browser, body.html, body.pdf_margin or "0", body.settle_seconds)
 
 
 async def _browser():
@@ -408,3 +419,55 @@ async def inspect(body: InspectIn) -> dict:
         "views": views,
         "pdf_b64": pdf,
     }
+
+
+class PrintIn(BaseModel):
+    """One page, to be printed and nothing else.
+
+    `/inspect` answers what a page looks like; this answers what it prints as,
+    which is a different question with a different cost — a whole document is
+    laid out, and no screenshot is taken. A document exported from a room comes
+    through here, and so would anything else that already knows its layout.
+    """
+
+    html: str = Field(min_length=1, max_length=24_000_000)
+    #: CSS lengths, one for all sides or vertical then horizontal.
+    margin: str = Field(
+        default="0", pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$"
+    )
+    settle_seconds: float = Field(default=0.8, ge=0, le=10)
+
+
+#: A whole document is more than an inspection page: `INSPECT_TIMEOUT_MS` bounds
+#: a page written to be looked at, and a long report with its pictures in it can
+#: honestly take longer than that to load.
+PRINT_PAGE_TIMEOUT_MS = 60_000
+
+
+@app.post("/print")
+async def print_page(body: PrintIn) -> dict:
+    """The page as an A4 PDF, with no viewport and no screenshots.
+
+    Printing is what `/inspect`'s ``pdf_margin`` does, and it is the answer on
+    its own for a caller that has the page already: measuring it at two widths
+    and photographing it twice to throw both away cost more than the printing.
+    """
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(_print_slots.acquire(), INSPECT_QUEUE_SECONDS)
+    except TimeoutError:
+        return {"ok": False, "error": "busy: every printing slot is taken"}
+    try:
+        browser = await _browser()
+        pdf = await _pdf_of(
+            browser,
+            body.html,
+            body.margin,
+            body.settle_seconds,
+            timeout_ms=PRINT_PAGE_TIMEOUT_MS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:500]}
+    finally:
+        _print_slots.release()
+    return {"ok": True, "seconds": round(time.monotonic() - started, 2), "pdf_b64": pdf}

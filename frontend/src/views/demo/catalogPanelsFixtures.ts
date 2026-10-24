@@ -452,6 +452,8 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    imageData: view.imageSrc,
+    savePdf: refuseWrite,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
     undoAgentChanges: refuseWrite,
