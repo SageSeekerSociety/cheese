@@ -24,6 +24,21 @@ export const carryLoginRedirect: NavigationGuardWithThis<undefined> = (to, from)
   return { ...to, query: { ...to.query, redirect: from.fullPath } }
 }
 
+// The gateway can serve other pages on this origin beside the app (a static
+// portal, say). A sign-in sent back to one of them would land on the app's 404,
+// because the router owns every path it is asked for. So a navigation out of the
+// account pages to a path no route of the app claims is handed to the browser.
+// The cold open of such a path is left alone: the server already answered it
+// with the app, and loading it again would only repeat that.
+// `location.replace`, not `assign`: every sign-in completion replaces the sign-in
+// page in history, and Back must not return to a page that only sends you on.
+export const leaveAppForPagesItHasNot: NavigationGuardWithThis<undefined> = (to, from) => {
+  const fromAccount = [from, to.redirectedFrom].some((r) => r?.matched[0]?.name === 'Account')
+  if (!fromAccount || !to.matched.every((r) => r.name === 'NotFound')) return true
+  window.location.replace(to.fullPath)
+  return false
+}
+
 // 已经登录的人打开登录页（收藏的地址、浏览器后退、另一个标签页里登录过）：没有什么
 // 要他做的，直接送他去登录完本来要去的地方，`?redirect=` 或首页。`signedIn` 要等冷
 // 打开时的会话恢复完再答，否则一个令牌刚过期、正在换新的人会被当成没登录。
