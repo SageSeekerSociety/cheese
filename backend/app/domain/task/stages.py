@@ -239,6 +239,16 @@ async def replace_stages(
     await session.flush()
 
 
+def refuse_unknown_stages(count: int, *entries: Sequence[object]) -> None:
+    """Refuse items or lines (dicts as sent, or rows) that name a stage past
+    ``count``: what a create checks before it writes anything."""
+    for rows in entries:
+        for row in rows:
+            stage = stage_of(row) if isinstance(row, dict) else getattr(row, "stage", 0)
+            if stage >= count:
+                raise BadRequestError(say("stageReferenceUnknown"))
+
+
 async def check_stage_references(session: AsyncSession, task_id: int) -> None:
     """Every submission item and rubric line belongs to a stage the task has.
     Called once the task's stages, form and rubric are all written."""

@@ -35,7 +35,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.stages import stage_lines
+from app.domain.task.stages import refuse_unknown_stages, stage_count, stage_lines
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -341,6 +341,9 @@ async def _create_task_entity(
         if isinstance(stages_raw, list)
         else []
     )
+    # Every item and line belongs to a stage the task has; refused before the
+    # task is written.
+    refuse_unknown_stages(stage_count(stages), submission_schema, rubric)
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
@@ -455,7 +458,6 @@ async def _create_task_entity(
         await task_service.replace_submission_schema(task.id, submission_schema)
     if rubric:
         await task_service.replace_rubric(task.id, rubric)
-    await task_service.check_stage_references(task.id)
 
     return task
 

@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
+from pydantic import BaseModel
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
@@ -56,7 +57,28 @@ from app.domain.team.services import TeamService
 router = APIRouter(prefix="/tasks")
 
 
-@router.get("/{taskId}/progress", summary="Task Progress By Stage")
+class TaskStageOut(BaseModel):
+    name: str
+    description: str
+    dueAt: int | None
+
+
+class MyStageProgress(BaseModel):
+    participantId: int
+    stages: list[str]
+
+
+class TaskProgress(BaseModel):
+    stages: list[TaskStageOut]
+    mine: MyStageProgress | None
+    distribution: list[dict[str, int]] | None
+
+
+@router.get(
+    "/{taskId}/progress",
+    summary="Task Progress By Stage",
+    **typed_response(TaskProgress),
+)
 async def get_task_progress(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     task_service: TaskService = Depends(get_task_service),

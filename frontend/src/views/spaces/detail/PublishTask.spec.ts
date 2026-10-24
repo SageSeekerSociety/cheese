@@ -457,7 +457,7 @@ describe('发题页：发一道', () => {
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    expect(sent().stages.map((s: { name: string }) => s.name)).toEqual(['一', '三'])
+    expect((sent().stages as { name: string }[]).map((s) => s.name)).toEqual(['一', '三'])
     expect(sent().submissionSchema).toEqual([
       { prompt: '提交文件', type: 'FILE', stage: 0 },
       { prompt: '第三阶段的文件', type: 'FILE', stage: 1 },
