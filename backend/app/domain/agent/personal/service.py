@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import model_roles
@@ -226,25 +226,43 @@ class ConversationNotFound(Exception):
     answer, so an id never confirms another person's conversation exists."""
 
 
+#: How many topics the panel reads at a time, and how many of a topic's
+#: messages: the rest are read as the person scrolls up to them.
+TOPICS_PAGE = 30
+MESSAGES_PAGE = 50
+
+
 class AssistantConversations:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def list(self, user_id: int) -> list[AssistantConversation]:
-        """This person's conversations, wherever they were started, latest
-        first: the topics of their thread with 芝士. One that never got a
-        question (started, then refused for lack of credits, say) is not
-        listed: it has nothing to go back to."""
-        stmt = (
-            select(AssistantConversation)
-            .where(
-                AssistantConversation.user_id == user_id,
-                AssistantConversation.title != "",
-            )
-            .order_by(AssistantConversation.last_active_at.desc())
-            .limit(50)
+    async def list(
+        self,
+        user_id: int,
+        *,
+        before: tuple[datetime, uuid.UUID] | None = None,
+        limit: int = TOPICS_PAGE,
+    ) -> tuple[list[AssistantConversation], bool]:
+        """A page of this person's conversations, wherever they were started,
+        latest first: the topics of their thread with 芝士, from just before
+        ``before`` (the last of the page read before it), and whether there are
+        older ones. One that never got a question (started, then refused for
+        lack of credits, say) is not listed: it has nothing to go back to."""
+        stmt = select(AssistantConversation).where(
+            AssistantConversation.user_id == user_id,
+            AssistantConversation.title != "",
         )
-        return list((await self._s.execute(stmt)).scalars())
+        if before is not None:
+            stmt = stmt.where(
+                tuple_(AssistantConversation.last_active_at, AssistantConversation.id)
+                < tuple_(literal(before[0]), literal(before[1]))
+            )
+        stmt = stmt.order_by(
+            AssistantConversation.last_active_at.desc(),
+            AssistantConversation.id.desc(),
+        ).limit(limit + 1)
+        rows = list((await self._s.execute(stmt)).scalars())
+        return rows[:limit], len(rows) > limit
 
     async def start(self, user_id: int, place: Place) -> AssistantConversation:
         row = AssistantConversation(
@@ -288,6 +306,25 @@ class AssistantConversations:
             .order_by(AssistantMessage.seq)
         )
         return list((await self._s.execute(stmt)).scalars())
+
+    async def latest(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        before: int | None = None,
+        limit: int = MESSAGES_PAGE,
+    ) -> tuple[list[AssistantMessage], bool]:
+        """The last ``limit`` messages of a conversation before message
+        ``before`` (by its ``seq``; the latest when it is None), in order, and
+        whether there are earlier ones."""
+        stmt = select(AssistantMessage).where(
+            AssistantMessage.conversation_id == conversation_id
+        )
+        if before is not None:
+            stmt = stmt.where(AssistantMessage.seq < before)
+        stmt = stmt.order_by(AssistantMessage.seq.desc()).limit(limit + 1)
+        rows = list((await self._s.execute(stmt)).scalars())
+        return rows[:limit][::-1], len(rows) > limit
 
     async def append(
         self,

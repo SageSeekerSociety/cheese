@@ -129,6 +129,8 @@ export interface AssistantPublished {
 export interface AssistantMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
+  /** 在话题里的顺序号：往上翻时从最早读到的那一条往前读。这一页刚说的没有。 */
+  seq?: number
   /** 回答被人停下了；`text` 是停下时已经写出的部分。 */
   stopped?: boolean
   at: string
@@ -168,6 +170,8 @@ export interface AssistantTopic {
   title: string
   lastActiveAt: string
   messages: AssistantMessage[]
+  /** 这个话题还有更早的消息没读回来。 */
+  earlier?: boolean
 }
 
 export interface AssistantOptions {
@@ -180,8 +184,12 @@ export interface AssistantOptions {
 export function createAssistant(opts: AssistantOptions = {}) {
   const on = opts.on ?? {}
 
-  /** 这个人的话题，最近的在前。 */
+  /** 这个人的话题，最近的在前：读回来的那几页。 */
   const conversations = ref<AssistantConversation[]>([])
+  /** 下一页话题从哪里读起；null 是没有更早的了。 */
+  const nextPage = ref<string | null>(null)
+  /** 当前话题还有更早的消息没读回来。 */
+  const currentEarlier = ref(false)
   /** 当前话题上面摆着的之前几个话题，按时间从早到晚。 */
   const earlier = ref<AssistantTopic[]>([])
   const current = ref<string | null>(null)
@@ -211,30 +219,49 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 还有没摆出来的更早的话题：往上翻能读。 */
   const hasOlder = computed(() => {
     const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-    return conversations.value.some((c) => !shown.has(c.id))
+    return nextPage.value !== null || conversations.value.some((c) => !shown.has(c.id))
   })
 
+  type ConversationPage = { conversations: AssistantConversation[]; next?: string | null }
+
+  /** 读最近的一页话题，替换掉之前读的。 */
   async function listConversations() {
-    const data = await request<{ conversations: AssistantConversation[] }>('/assistant/conversations')
+    const data = await request<ConversationPage>('/assistant/conversations')
     conversations.value = data.conversations ?? []
+    nextPage.value = data.next ?? null
   }
 
+  /** 接着读下一页更早的话题。 */
+  async function morePage() {
+    if (nextPage.value === null) return
+    const data = await request<ConversationPage>(
+      `/assistant/conversations?before=${encodeURIComponent(nextPage.value)}`
+    )
+    const known = new Set(conversations.value.map((c) => c.id))
+    conversations.value = [...conversations.value, ...(data.conversations ?? []).filter((c) => !known.has(c.id))]
+    nextPage.value = data.next ?? null
+  }
+
+  type ReadMessage = AssistantMessage & { parts?: StoredParts }
   type ReadConversation = AssistantConversation & {
-    messages: (AssistantMessage & { parts?: StoredParts })[]
+    messages: ReadMessage[]
     answering?: string | null
+    /** 还有更早的消息。 */
+    earlier?: boolean
   }
 
   async function read(id: string): Promise<ReadConversation> {
     return request<ReadConversation>(`/assistant/conversations/${id}`)
   }
 
-  const shownMessages = (data: ReadConversation) =>
+  const shownMessages = (data: { messages: ReadMessage[] }) =>
     data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
 
   async function open(id: string) {
     const data = await read(id)
     current.value = id
     messages.value = shownMessages(data)
+    currentEarlier.value = data.earlier === true
     notice.value = null
     // 打开时还在答（刷新了页面、换了一台设备）：接上，看它接着写。
     const answering = data.answering
@@ -261,9 +288,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
   function reset() {
     loaded.value = false
     conversations.value = []
+    nextPage.value = null
     earlier.value = []
     current.value = null
     messages.value = []
+    currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
   }
@@ -280,11 +309,13 @@ export function createAssistant(opts: AssistantOptions = {}) {
           title: at?.title ?? '',
           lastActiveAt: at?.lastActiveAt ?? new Date().toISOString(),
           messages: messages.value,
+          earlier: currentEarlier.value,
         },
       ]
     }
     current.value = null
     messages.value = []
+    currentEarlier.value = false
     notice.value = null
   }
 
@@ -299,14 +330,51 @@ export function createAssistant(opts: AssistantOptions = {}) {
     await listConversations().catch(() => undefined)
   }
 
-  /** 往上翻：把还没摆出来的、最近的那个更早的话题读回来，摆在最上面。 */
+  /** 一个话题（`null` 是当前这个）更早的那一页消息：读回来接在它最上面。 */
+  async function earlierMessages(id: string | null) {
+    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
+    const conversation = id ?? current.value
+    const shown = topic ? topic.messages : messages.value
+    const first = shown.find((m) => typeof m.seq === 'number')?.seq
+    if (!conversation || first === undefined) return
+    const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
+      `/assistant/conversations/${conversation}/messages?before=${first}`
+    )
+    const more = shownMessages(data)
+    if (topic)
+      earlier.value = earlier.value.map((t) =>
+        t.id === id ? { ...t, messages: [...more, ...t.messages], earlier: data.earlier === true } : t
+      )
+    else {
+      messages.value = [...more, ...messages.value]
+      currentEarlier.value = data.earlier === true
+    }
+  }
+
+  /** 往上翻：最上面那个话题还有更早的消息，先读它的；读完了，再把还没摆出来的、最近的那个
+   *  更早的话题读回来，摆在最上面。读过的那几页里没有了，就接着读下一页话题。 */
   async function older() {
-    const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-    const next = conversations.value.find((c) => !shown.has(c.id))
+    const top = earlier.value[0]
+    if (top ? top.earlier : currentEarlier.value) return earlierMessages(top ? top.id : null)
+    const unshown = () => {
+      const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
+      return conversations.value.find((c) => !shown.has(c.id))
+    }
+    let next = unshown()
+    while (!next && nextPage.value !== null) {
+      await morePage()
+      next = unshown()
+    }
     if (!next) return
     const data = await read(next.id)
     earlier.value = [
-      { id: next.id, title: data.title, lastActiveAt: data.lastActiveAt, messages: shownMessages(data) },
+      {
+        id: next.id,
+        title: data.title,
+        lastActiveAt: data.lastActiveAt,
+        messages: shownMessages(data),
+        earlier: data.earlier === true,
+      },
       ...earlier.value,
     ]
   }
@@ -609,6 +677,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     current,
     earlier,
     hasOlder,
+    currentEarlier,
     messages,
     streaming,
     tool,
@@ -626,6 +695,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     startNew,
     show,
     older,
+    earlierMessages,
     ask,
     stop,
     undo,

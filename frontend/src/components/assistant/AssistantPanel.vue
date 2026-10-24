@@ -41,11 +41,19 @@
     </header>
 
     <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- only catches clicks on the links in the answers; Enter on a focused link fires the same click -->
-    <div ref="scroller" class="ap__chat" @click="followLink">
-      <button v-if="hasOlder" type="button" class="ap__older" @click="emit('older')">
+    <div ref="scroller" class="ap__chat" @click="followLink" @scroll.passive="nearTop">
+      <button v-if="hasOlder" type="button" class="ap__older" @click="readBack(() => emit('older'))">
         {{ t('tasks.assistant.olderTopics') }}
       </button>
       <section v-for="topic in earlier" :key="topic.id" class="ap__topic" :aria-label="topic.title">
+        <button
+          v-if="topic.earlier"
+          type="button"
+          class="ap__older"
+          @click="readBack(() => emit('olderMessages', topic.id))"
+        >
+          {{ t('tasks.assistant.olderMessages') }}
+        </button>
         <template v-for="(m, i) in topic.messages" :key="i">
           <div v-if="m.role === 'user'" class="ap__q">
             <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
@@ -91,6 +99,14 @@
         </div>
       </template>
 
+      <button
+        v-if="currentEarlier"
+        type="button"
+        class="ap__older"
+        @click="readBack(() => emit('olderMessages', null))"
+      >
+        {{ t('tasks.assistant.olderMessages') }}
+      </button>
       <template v-for="(m, i) in messages" :key="i">
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
         <div v-if="m.role === 'user'" class="ap__q">
@@ -240,6 +256,8 @@ export interface PanelTopic {
   title: string
   at: string
   messages: PanelMessage[]
+  /** 还有更早的消息没读回来。 */
+  earlier?: boolean
 }
 
 export interface PanelMessage {
@@ -276,6 +294,8 @@ const props = withDefaults(
     earlier?: PanelTopic[]
     /** 还有更早的话题没摆出来。 */
     hasOlder?: boolean
+    /** 当前话题还有更早的消息没读回来。 */
+    currentEarlier?: boolean
     /** 正在流进来的回答；没在答是 null，刚开始答、还没有字是空串。 */
     streaming: string | null
     /** 芝士此刻在用的工具。 */
@@ -314,6 +334,7 @@ const props = withDefaults(
   {
     earlier: () => [],
     hasOlder: false,
+    currentEarlier: false,
     dockable: false,
     docked: false,
     queued: false,
@@ -340,6 +361,8 @@ const emit = defineEmits<{
   send: [text: string]
   new: []
   older: []
+  /** 读一个话题（`null` 是当前这个）更早的那一页消息。 */
+  olderMessages: [topic: string | null]
   dock: [docked: boolean]
   stop: []
   close: []
@@ -466,11 +489,40 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+// 新的话、新的一步出现时贴着底；往上读回来的东西接在上面，不动它。
 watch(
-  () => [props.messages.length, props.streaming, props.notice, props.steps.length, props.changes.length],
+  () => [props.messages.at(-1), props.streaming, props.notice, props.steps.length, props.changes.length],
   () => nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
   { immediate: true }
 )
+
+/** 往上读回来时离底部有多远：读回来的接在上面以后，眼前还是原来那几句。 */
+let fromBottom: number | null = null
+
+function readBack(ask: () => void) {
+  const el = scroller.value
+  fromBottom = el ? el.scrollHeight - el.scrollTop : null
+  ask()
+}
+
+watch(
+  () => [props.earlier, props.messages[0]],
+  () =>
+    nextTick(() => {
+      const el = scroller.value
+      if (el && fromBottom !== null) el.scrollTop = el.scrollHeight - fromBottom
+      fromBottom = null
+    })
+)
+
+/** 翻到顶了：还有更早的就接着读，一次一页。 */
+function nearTop() {
+  const el = scroller.value
+  if (!el || el.scrollTop > 48 || fromBottom !== null) return
+  // 最上面那个话题没读完就先读它的，读完了才是上一个话题（`older`）。
+  const top = props.earlier[0]
+  if (top ? top.earlier || props.hasOlder : props.currentEarlier || props.hasOlder) readBack(() => emit('older'))
+}
 </script>
 
 <style scoped>

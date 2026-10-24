@@ -263,6 +263,7 @@ export function earlierView() {
     title: topic.title,
     at: topic.lastActiveAt,
     messages: panelMessages(topic.messages, NO_TERMS),
+    earlier: topic.earlier === true,
   }))
 }
 

@@ -445,4 +445,35 @@ describe('芝士这一轮做了什么', () => {
     expect(a.earlier.value[0].messages[0].text).toBe('实验三从哪入手')
     expect(a.hasOlder.value).toBe(false)
   })
+
+  it('reading back fills the topic at the top first, then reads older topics a page at a time', async () => {
+    const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
+    const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 3 }
+    const OLDEST = { id: 'c1', title: '最早的', lastActiveAt: '2026-10-19T08:00:00Z', questions: 1 }
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(url)
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [LATEST], next: 'p2' })
+      if (url.endsWith('/assistant/conversations?before=p2')) return envelope({ conversations: [OLDEST], next: null })
+      if (url.endsWith('/assistant/conversations/c3'))
+        return envelope({ ...LATEST, answering: null, messages: [line(3), line(4)], earlier: true })
+      if (url.endsWith('/assistant/conversations/c3/messages?before=3'))
+        return envelope({ messages: [line(1), line(2)], earlier: false })
+      if (url.endsWith('/assistant/conversations/c1'))
+        return envelope({ ...OLDEST, answering: null, messages: [line(1)], earlier: false })
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    expect(a.currentEarlier.value).toBe(true)
+
+    await a.older()
+    expect(a.messages.value.map((m) => m.text)).toEqual(['第 1 句', '第 2 句', '第 3 句', '第 4 句'])
+    expect(a.currentEarlier.value).toBe(false)
+    expect(a.hasOlder.value).toBe(true)
+
+    await a.older()
+    expect(a.earlier.value.map((topic) => topic.title)).toEqual(['最早的'])
+    expect(a.hasOlder.value).toBe(false)
+  })
 })

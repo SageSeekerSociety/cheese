@@ -1258,6 +1258,66 @@ def test_the_thread_lists_every_topic_and_a_new_one_is_the_persons(client, gatew
     asyncio.run(placed())
 
 
+def test_topics_and_what_was_said_in_one_are_read_a_page_at_a_time(client, gateway):
+    """The panel reads topics a page at a time, latest first, and a long
+    topic's latest messages first; it reads further back as the person
+    scrolls up, with nothing skipped or read twice."""
+    me = _auth(client, "pager")
+    user_id, _, _ = _ledger_user(client, "pager")
+
+    async def seed() -> str:
+        from app.domain.agent.personal import service
+
+        async with client.test_factory() as s:
+            store = service.AssistantConversations(s)
+            rows = []
+            for n in range(3):
+                row = await store.start(user_id, service.Place.personal(user_id))
+                row.title = f"话题 {n}"
+                rows.append(row)
+            for n in range(52):
+                await store.append(rows[0], "user", f"第 {n} 句")
+            for n, row in enumerate(rows):
+                row.last_active_at = datetime(2026, 10, 1 + n, tzinfo=UTC)
+            await s.commit()
+            return str(rows[0].id)
+
+    long = asyncio.run(seed())
+
+    first = client.get("/assistant/conversations?limit=2", headers=me).json()["data"]
+    assert [c["title"] for c in first["conversations"]] == ["话题 2", "话题 1"]
+    rest = client.get(
+        "/assistant/conversations",
+        params={"limit": 2, "before": first["next"]},
+        headers=me,
+    ).json()["data"]
+    assert [c["title"] for c in rest["conversations"]] == ["话题 0"]
+    assert rest["next"] is None
+
+    opened = client.get(f"/assistant/conversations/{long}", headers=me).json()["data"]
+    assert [m["text"] for m in opened["messages"]] == [
+        f"第 {n} 句" for n in range(2, 52)
+    ]
+    assert opened["earlier"] is True
+    earlier = client.get(
+        f"/assistant/conversations/{long}/messages",
+        params={"before": opened["messages"][0]["seq"]},
+        headers=me,
+    ).json()["data"]
+    assert [m["text"] for m in earlier["messages"]] == ["第 0 句", "第 1 句"]
+    assert earlier["earlier"] is False
+
+    stranger = _auth(client, "pager-stranger")
+    assert (
+        client.get(
+            f"/assistant/conversations/{long}/messages",
+            params={"before": 10},
+            headers=stranger,
+        ).status_code
+        == 404
+    )
+
+
 class _Stops:
     """The gate's model, stopping whatever it is shown."""
 

@@ -167,6 +167,14 @@ describe('AssistantPanel', () => {
     expect(view.getByText('芝士没有给出回答')).toBeTruthy()
   })
 
+  it('reads the earlier messages of a long topic on asking', async () => {
+    const view = mount({ currentEarlier: true })
+
+    await fireEvent.click(view.getByRole('button', { name: '更早的消息' }))
+
+    expect(view.emitted('olderMessages')).toEqual([[null]])
+  })
+
   it('asks a starter question in one click when the conversation is empty', async () => {
     const view = mount({ messages: [] })
     await fireEvent.click(view.getByRole('button', { name: '做这道题要先会什么？' }))

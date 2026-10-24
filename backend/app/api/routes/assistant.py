@@ -21,7 +21,8 @@ import logging
 import time
 import uuid
 from dataclasses import replace
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import StreamingResponse
@@ -101,20 +102,47 @@ class ConversationOut(BaseModel):
 
 
 class ConversationsOut(BaseModel):
-    """The person's topics, latest first."""
+    """A page of the person's topics, latest first, and where the next page
+    starts (``next``; none when there are no older topics)."""
 
     conversations: list[ConversationOut]
+    next: str | None = None
+
+
+def _topic_cursor(row) -> str:
+    return f"{row.last_active_at.isoformat()}|{row.id}"
+
+
+def _read_topic_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        at, _, of = cursor.partition("|")
+        return datetime.fromisoformat(at), uuid.UUID(of)
+    except ValueError as error:
+        raise BadRequestError("bad cursor") from error
 
 
 @router.get("/conversations", **typed_response(ConversationsOut))
-async def list_conversations(db: DbSession, auth: AuthUser) -> dict:
+async def list_conversations(
+    db: DbSession,
+    auth: AuthUser,
+    before: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = assistant.TOPICS_PAGE,
+) -> dict:
     """This person's topics with 芝士, latest first: the thread the panel shows,
-    wherever it is opened."""
+    wherever it is opened. A page at a time: ``before`` is the ``next`` of the
+    page read before."""
     store = assistant.AssistantConversations(db)
-    rows = await store.list(auth.user_id)
+    rows, more = await store.list(
+        auth.user_id,
+        before=None if before is None else _read_topic_cursor(before),
+        limit=limit,
+    )
     counts = await store.question_counts([r.id for r in rows])
     return ok(
-        {"conversations": [_conversation_out(r, counts.get(r.id, 0)) for r in rows]}
+        {
+            "conversations": [_conversation_out(r, counts.get(r.id, 0)) for r in rows],
+            "next": _topic_cursor(rows[-1]) if more and rows else None,
+        }
     )
 
 
@@ -150,27 +178,7 @@ async def read_conversation(
     started now, in the background, if it is not running: the first question
     then finds it ready."""
     row = await _owned(db, auth.user_id, conversation_id)
-    messages = await assistant.AssistantConversations(db).messages(row.id)
-    undone = await changes.undone_of(
-        db,
-        auth.user_id,
-        [
-            e["id"]
-            for m in messages
-            for e in (m.parts or {}).get("edits") or []
-            if isinstance(e.get("id"), int)
-        ],
-    )
-    drafted = await proposals.now_of(
-        db,
-        auth.user_id,
-        [
-            d["id"]
-            for m in messages
-            for d in (m.parts or {}).get("proposals") or []
-            if isinstance(d.get("id"), int)
-        ],
-    )
+    messages, earlier = await assistant.AssistantConversations(db).latest(row.id)
     if people.available():
         spawn(
             _prestart(people, conversation_session(auth.user_id, row.id)),
@@ -185,18 +193,77 @@ async def read_conversation(
         {
             **_conversation_out(row),
             "answering": None if answering is None else answering.work_id,
-            "messages": [
-                {
-                    "role": m.role,
-                    "text": m.text,
-                    "stopped": m.stopped,
-                    "at": m.created_at.isoformat(),
-                    **({"parts": _now(m.parts, undone, drafted)} if m.parts else {}),
-                }
-                for m in messages
-            ],
+            "messages": await _messages_out(db, auth.user_id, messages),
+            "earlier": earlier,
         }
     )
+
+
+class EarlierOut(BaseModel):
+    """What was said in a conversation before a message, in order, and
+    whether there is more before it."""
+
+    messages: list[dict[str, Any]]
+    earlier: bool
+
+
+@router.get("/conversations/{conversationId}/messages", **typed_response(EarlierOut))
+async def read_earlier(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    db: DbSession,
+    auth: AuthUser,
+    before: Annotated[int, Query(ge=1)],
+    limit: Annotated[int, Query(ge=1, le=100)] = assistant.MESSAGES_PAGE,
+) -> dict:
+    """What was said in a conversation before message ``before`` (its
+    ``seq``), the last ``limit`` of it in order, and whether there is more
+    before that (``earlier``): the panel reads back as the person scrolls up."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    messages, earlier = await assistant.AssistantConversations(db).latest(
+        row.id, before=before, limit=limit
+    )
+    return ok(
+        {
+            "messages": await _messages_out(db, auth.user_id, messages),
+            "earlier": earlier,
+        }
+    )
+
+
+async def _messages_out(db, user_id: int, messages) -> list[dict]:
+    """Messages as the panel shows them, each kept answer's parts as they
+    stand now."""
+    undone = await changes.undone_of(
+        db,
+        user_id,
+        [
+            e["id"]
+            for m in messages
+            for e in (m.parts or {}).get("edits") or []
+            if isinstance(e.get("id"), int)
+        ],
+    )
+    drafted = await proposals.now_of(
+        db,
+        user_id,
+        [
+            d["id"]
+            for m in messages
+            for d in (m.parts or {}).get("proposals") or []
+            if isinstance(d.get("id"), int)
+        ],
+    )
+    return [
+        {
+            "seq": m.seq,
+            "role": m.role,
+            "text": m.text,
+            "stopped": m.stopped,
+            "at": m.created_at.isoformat(),
+            **({"parts": _now(m.parts, undone, drafted)} if m.parts else {}),
+        }
+        for m in messages
+    ]
 
 
 def _now(

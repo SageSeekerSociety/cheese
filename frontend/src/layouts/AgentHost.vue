@@ -168,6 +168,7 @@ const panelProps = computed(() => {
     messages: view.messages,
     earlier: earlierView(),
     hasOlder: agentThread.hasOlder.value,
+    currentEarlier: agentThread.currentEarlier.value,
     streaming: agentThread.streaming.value,
     tool: agentThread.tool.value,
     queued: agentThread.queued.value,
@@ -198,6 +199,7 @@ const panelEvents = {
   stop: () => void agentThread.stop().catch(() => undefined),
   new: () => agentThread.startNew(),
   older: () => void agentThread.older().catch(() => undefined),
+  olderMessages: (topic: string | null) => void agentThread.earlierMessages(topic).catch(() => undefined),
   close: () => (agentOpen.value = false),
   downloadFile: (file: AssistantHanded) =>
     void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>

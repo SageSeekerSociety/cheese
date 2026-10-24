@@ -84,6 +84,7 @@
   },
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
+  "olderMessages": "Earlier messages",
   "dock": "Pin to the right",
   "undock": "Unpin",
   "anywhere": {
