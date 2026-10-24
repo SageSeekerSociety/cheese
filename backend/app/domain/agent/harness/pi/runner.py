@@ -1202,6 +1202,11 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 owes_reply=bool(params.get("owes_reply")),
             )
+        if method == "acting":
+            # A long answer's credential, renewed: the calls from now on act
+            # with it, and nothing is said to the session.
+            self.platform_token = str(params.get("platform_token") or "")
+            return {}
         if method == "steer":
             return await self.send(
                 params["input_id"],

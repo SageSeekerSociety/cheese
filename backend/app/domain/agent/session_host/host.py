@@ -362,6 +362,9 @@ class SessionHost:
     ) -> None:
         return await speaking.steer(self, ref, prompt, work_id=work_id)
 
+    async def act_as(self, ref: SessionRef, acting: str) -> None:
+        return await speaking.act_as(self, ref, acting)
+
     def answers(self, ref: SessionRef) -> bool | None:
         return speaking.answers(self, ref)
 

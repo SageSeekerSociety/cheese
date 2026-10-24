@@ -108,6 +108,9 @@ class ToolFailed:
     text: str
 
 
+#: What an answer that ran past its ceiling says failed.
+PAST_CEILING = "the answer ran past its ceiling and was stopped"
+
 #: What of an answer is handed on while it is written.
 type Said = Words | Tool | ToolArgs | ToolFailed | ToolDone | Thinking
 
@@ -362,9 +365,7 @@ async def follow(
                 return
             except TimeoutError:
                 await host.stop(ref)
-                yield await ended(
-                    Answer("", "the answer ran past its ceiling and was stopped")
-                )
+                yield await ended(Answer("", PAST_CEILING))
                 return
             if read.work_id not in (None, work):
                 continue

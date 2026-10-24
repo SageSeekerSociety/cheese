@@ -40,6 +40,7 @@
   "assistantProposalSettled": "This draft has already been handled",
   "assistantRefUnknown": "\"{ref}\" is not a reference. A project's things are its short name and a path, such as ml-course/channels/3, ml-course/tasks/12, ml-course/tasks/12/review or ml-course/docs/5; the project itself is its short name.",
   "assistantRepeating": "Cheese started repeating the same passage over and over, so it was stopped. Try asking another way.",
+  "assistantPastCeiling": "Stopped at the {hours}-hour limit",
   "assistantRuleUnknown": "There is no \"{rule}\" kind",
   "assistantSettingUnknown": "No such setting; the ones that can be changed are {keys}",
   "assistantSettingValue": "{name} takes: {choices}",

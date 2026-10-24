@@ -985,6 +985,26 @@ def test_an_answer_that_took_a_while_is_told_unless_its_panel_is_showing(
     assert len(_told(client, user_id)) == 1
 
 
+def test_an_answer_stopped_at_its_ceiling_says_why(client, gateway, monkeypatch):
+    from app.domain.agent.personal import service as personal
+
+    me = _auth(client, "ceiling")
+    conversation = _start(client, _task(client), me)
+    # The session is up already: what bounds the answer below is its ceiling.
+    gateway.script = [("text", "在。")]
+    assert _ask(client, conversation, "在吗？", me).status_code == 200
+    monkeypatch.setattr(personal, "ANSWER_S", 3.0)
+    gateway.script = [("held", "前 3 份已经打完分，", "剩下的还没看。")]
+
+    answered = _ask(client, conversation, "把报告都打分", me)
+    gateway.release.set()
+
+    errors = [d for e, d in _events(answered.text) if e == "error"]
+    assert [e["i18n"] for e in errors] == [
+        {"key": "assistantPastCeiling", "params": {"hours": 4}}
+    ]
+
+
 def test_a_stopped_answer_keeps_what_was_written(client, gateway):
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)

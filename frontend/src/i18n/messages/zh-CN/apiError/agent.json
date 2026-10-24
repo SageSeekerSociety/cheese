@@ -40,6 +40,7 @@
   "assistantProposalSettled": "这份草稿已经处理过了",
   "assistantRefUnknown": "认不出「{ref}」这个编号。项目里的东西写成项目短名加路径，如 ml-course/channels/3、ml-course/tasks/12、ml-course/tasks/12/review、ml-course/docs/5；项目本身就是短名。",
   "assistantRepeating": "芝士的回答开始反复重复同样的内容，已经停下。换个说法再问一次。",
+  "assistantPastCeiling": "运行时间达到 {hours} 小时上限，已停止",
   "assistantRuleUnknown": "没有「{rule}」这一类",
   "assistantSettingUnknown": "没有这一项设置；能改的是 {keys}",
   "assistantSettingValue": "{name}只能是：{choices}",

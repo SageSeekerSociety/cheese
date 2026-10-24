@@ -43,6 +43,7 @@ from app.domain.agent.personal.keys import person_key
 from app.domain.agent.personal.prompt import about, earlier, now_line, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
+    PAST_CEILING,
     Answer,
     Said,
     Thinking,
@@ -81,16 +82,29 @@ FAILED = say("assistantFailed")
 BUSY = say("assistantBusy")
 #: Said when an answer was stopped for writing the same thing over and over.
 REPEATING = say("assistantRepeating")
-#: How long one question may take, from when it took its conversation: not a
-#: limit an answer is meant to meet. An answer may read a dozen channels, or
-#: wait while the person decides on a card (``assistant_agent.agent_wait``),
-#: and the person can stop it at any time. A runner that went away is noticed
-#: within ``GONE_AFTER_S``, and the conversation's hold is renewed only while
-#: the answer is read; what this bounds is the question's credential, should
-#: everything else fail.
-ANSWER_S = 3600.0
-#: How much longer than that a question's credential lasts.
+#: An answer stopped at its ceiling: what it wrote stays.
+PAST_CEILING_NOTICE = say("assistantPastCeiling", hours=4)
+#: How long one question may take, from when it took its conversation: room
+#: for a long piece of work (marking forty reports, say), not a limit an answer
+#: is meant to meet. The person can stop it at any time; near it the answer is
+#: told to wrap up (``WRAP_UP_S``). A runner that went away is noticed within
+#: ``GONE_AFTER_S``, and the conversation's hold is renewed only while the
+#: answer is read.
+ANSWER_S = 4 * 3600.0
+#: How much longer than its life a question's credential lasts.
 CREDENTIAL_MARGIN_S = 60
+#: How long one credential a question's tools act with lasts. A long answer
+#: is given a new one before then (``RENEW_AFTER_S``), so one that leaked is
+#: good for an hour, not for the answer's whole four.
+ACTING_S = 3600
+RENEW_AFTER_S = 40 * 60
+#: How long before its ceiling an answer is told to wrap up, and what it is
+#: told: it writes down where it got to rather than being cut off mid-step.
+WRAP_UP_S = 5 * 60
+WRAP_UP = (
+    "<平台>\n这一轮还剩不到 5 分钟就会停下。不要再开始新的步骤：用用户提问的语言写下"
+    "已经做完的、结果在哪里、还没做的，作为这一轮的回答。\n</平台>"
+)
 
 
 def busy_key(conversation_id: uuid.UUID | str) -> str:
@@ -479,6 +493,20 @@ async def looking(redis: Redis, conversation_id: uuid.UUID) -> None:
     await redis.set(_looking_key(str(conversation_id)), "1", ex=LOOKING_S)
 
 
+def _acting(consumption: Consumption) -> str:
+    """A new credential for an answer's tools, as the one it was asked with."""
+    acting = consumption.data.get("acting") or {}
+    return mint_delegated_credential(
+        user_id=int(consumption.data["user"]),
+        handle=str(acting.get("handle") or consumption.data["user"]),
+        work=consumption.work_id,
+        project_id=acting.get("project"),
+        ttl_s=ACTING_S + CREDENTIAL_MARGIN_S,
+        read_only=False,
+        conversation=consumption.key,
+    )
+
+
 class Answers:
     """What becomes of a question's answer: shown as it is written, kept in the
     conversation, and charged to the person; and, for one a routine asked,
@@ -497,6 +525,10 @@ class Answers:
         self._redis = redis
         self._run_ended = run_ended
         self._answered = answered
+        # When the credential of each answer read here was last given, on
+        # this process's clock, and which were told to wrap up.
+        self._acting_since: dict[str, float] = {}
+        self._wrapping_up: set[str] = set()
         # What each answer read here has written, and which were stopped for
         # writing the same thing over and over (``loops``).
         self._written: dict[str, tuple[str, int]] = {}
@@ -513,6 +545,8 @@ class Answers:
         consumption: Consumption,
         item: Waiting | Said,
     ) -> None:
+        if not isinstance(item, Waiting):
+            await self._keep_going(consumption)
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
         elif isinstance(item, Words):
@@ -547,6 +581,36 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "tool_failed", {"call": item.call, "text": item.text}
             )
+
+    async def _keep_going(self, consumption: Consumption) -> None:
+        """What a long answer needs while it is read: a new credential before
+        the one it acts with runs out, and, near its ceiling, a word to wrap
+        up. Each is said once, and neither stops the answer if it fails."""
+        work, now = consumption.work_id, time.monotonic()
+        since = self._acting_since.get(work)
+        if since is None and consumption.deadline is not None:
+            # Read here first: its credential was given when it was said, at
+            # the latest a ceiling before its deadline. Counted from then.
+            said = consumption.deadline - ANSWER_S
+            since = now - max(0.0, time.time() - said)
+            self._acting_since[work] = since
+        if since is not None and now - since >= RENEW_AFTER_S:
+            self._acting_since[work] = now
+            try:
+                await self._consumptions.act_as(consumption, _acting(consumption))
+            except Exception:
+                logger.warning("renewing answer %s's credential failed", work)
+        due = consumption.deadline
+        if (
+            due is not None
+            and work not in self._wrapping_up
+            and due - time.time() <= WRAP_UP_S
+        ):
+            self._wrapping_up.add(work)
+            try:
+                await self._consumptions.steer(consumption, WRAP_UP)
+            except Exception:
+                logger.warning("telling answer %s to wrap up failed", work)
 
     async def _unseen(self, consumption: Consumption) -> bool:
         """Whether an answer ended that the person should be told of: it took
@@ -584,6 +648,8 @@ class Answers:
         text, refusal = answer.text, FAILED
         failed: str | None = answer.error
         self._written.pop(consumption.work_id, None)
+        self._acting_since.pop(consumption.work_id, None)
+        self._wrapping_up.discard(consumption.work_id)
         if consumption.work_id in self._repeating:
             self._repeating.discard(consumption.work_id)
             failed, refusal = "the answer kept saying the same thing", REPEATING
@@ -600,12 +666,16 @@ class Answers:
         if stopped:
             # What it had written when it was stopped stays, marked as such.
             text, failed = written.strip(), None
+        elif failed == PAST_CEILING:
+            # Told to wrap up before it, it wrote down where it got to: that
+            # stays, and the person is told why it ended there.
+            text, refusal = written.strip(), PAST_CEILING_NOTICE
         parts = parts_of(await self._consumptions.told(consumption.work_id))
         if parts and not failed and not stopped and not text.strip():
             # It worked and then wrote nothing: the page says so rather than
             # showing an answer with no words.
             parts = {**parts, "silent": True}
-        if (text and not failed) or stopped or parts:
+        if (text and failed in (None, PAST_CEILING)) or stopped or parts:
             if answer.usage is not None and answer.usage.calls:
                 # Each model call's prompt and how much of it the provider's
                 # cache answered: how well the conversation keeps its start.
@@ -619,7 +689,7 @@ class Answers:
                 await store.append(
                     conversation,
                     "assistant",
-                    "" if failed and not stopped else text,
+                    "" if failed and not stopped and failed != PAST_CEILING else text,
                     stopped=stopped,
                     parts=parts,
                 )
@@ -743,7 +813,7 @@ async def ask(
             handle=handle or str(user_id),
             work=str(work),
             project_id=None if project is None else str(project),
-            ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+            ttl_s=ACTING_S + CREDENTIAL_MARGIN_S,
             read_only=False,
             conversation=str(conversation_id),
         )
@@ -778,6 +848,11 @@ async def ask(
             "user": user_id,
             "billing": kind,
             "asked_at": time.time(),
+            # Who its tools act as, so whoever reads the answer can renew it.
+            "acting": {
+                "handle": handle or str(user_id),
+                "project": None if project is None else str(project),
+            },
             **({"run": str(run)} if run else {}),
         },
         work_id=work,

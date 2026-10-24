@@ -368,6 +368,29 @@ async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_r
 
 
 @pytest.mark.anyio
+async def test_a_credential_renewed_mid_answer_is_what_the_next_call_acts_with(
+    host, platform
+):
+    _hub, sessions = host
+    spoke = threading.Event()
+    fake = platform(
+        [{"say": "我先查一下。", "tool": "cheese_my_tasks"}, {"text": "好。"}],
+        rest_held_until=spoke,
+    )
+    launch = _launch(7)
+    renewed = question_credential(7)
+
+    async for event in _asking(
+        sessions, launch, "我领了哪些题？", credential=question_credential(7)
+    ):
+        if isinstance(event, Words) and not spoke.is_set():
+            await sessions.act_as(launch.ref, renewed)
+            spoke.set()
+
+    assert fake.tool_calls == [("GET /tasks/joined", renewed)]
+
+
+@pytest.mark.anyio
 async def test_with_a_computer_to_work_on_it_is_given_the_tools_to_work_it(
     host, platform, monkeypatch
 ):
