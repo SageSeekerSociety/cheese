@@ -574,8 +574,9 @@ async def _finish_pr_accept(
     if by:
         await referrals.on_accepted(self._session, by)
     else:
-        for reviewer in await self._repo.reviewer_handles(card.id):
-            await referrals.on_accepted(self._session, reviewer)
+        reviewers = await self._repo.reviewer_handles(card.id)
+        if len(reviewers) == 1:
+            await referrals.on_accepted(self._session, reviewers[0])
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (

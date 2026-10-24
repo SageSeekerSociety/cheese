@@ -30,7 +30,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Row, or_, select
+from sqlalchemy import Row, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -276,6 +276,12 @@ async def has_accepted(db: AsyncSession, handle: str) -> bool:
         )
         .exists()
     )
+    sole_reviewer = (
+        select(func.count(AcceptCardReviewer.id))
+        .where(AcceptCardReviewer.card_id == AcceptCard.id)
+        .scalar_subquery()
+        == 1
+    )
     return bool(
         await db.scalar(
             select(
@@ -284,7 +290,7 @@ async def has_accepted(db: AsyncSession, handle: str) -> bool:
                     AcceptCard.status == AcceptStatus.accepted,
                     or_(
                         AcceptCard.decided_by == handle,
-                        AcceptCard.decided_by.is_(None) & reviewed,
+                        AcceptCard.decided_by.is_(None) & reviewed & sole_reviewer,
                     ),
                 )
                 .exists()

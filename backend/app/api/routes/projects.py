@@ -258,8 +258,9 @@ async def create_project(
         project_id=body.id,
         owner_handle=who.handle,
     )
-    if who.user_id is not None:
-        await referrals.on_onboarded(db, who.user_id)
+    user_id = getattr(who, "user_id", None)
+    if user_id is not None:
+        await referrals.on_onboarded(db, user_id)
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()

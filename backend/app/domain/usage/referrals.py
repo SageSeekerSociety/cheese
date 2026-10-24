@@ -101,7 +101,6 @@ async def on_onboarded(session: AsyncSession, user_id: int) -> None:
         .where(
             InviteReferral.invitee_user_id == user_id,
             InviteReferral.onboarded_at.is_(None),
-            InviteReferral.registered_at >= now - ACTIVATION_WINDOW,
         )
         .values(onboarded_at=now)
         .returning(InviteReferral.invitee_user_id)
@@ -141,7 +140,6 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
     )
     if inviter_id is None:
         return
-    await on_onboarded(session, user.id)
     incentives = CreditIncentives(session)
     await incentives.issue(
         key=f"invite:activated:{user.id}",

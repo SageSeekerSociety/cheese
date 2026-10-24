@@ -35,7 +35,9 @@ const signupLinks = (host: Element) => targets(host).filter((url) => url.pathnam
 describe('the shared page colophon', () => {
   it('names the author and offers their invite code while it has seats left', async () => {
     const host = await shown({ handle: 'alice', nickname: '爱丽丝', code: 'K7Q2M9', seats_left: 2 })
-    expect(host.querySelector('.shared-colophon')?.textContent).toContain('爱丽丝')
+    const text = host.querySelector('.shared-colophon')?.textContent ?? ''
+    expect(text).toContain('爱丽丝')
+    expect(text).not.toMatch(/交互模型|Interactive models/)
     const links = signupLinks(host)
     expect(links).toHaveLength(1)
     expect(links[0].searchParams.get('code')).toBe('K7Q2M9')
@@ -53,7 +55,9 @@ describe('the shared page colophon', () => {
       { handle: 'alice', nickname: '爱丽丝', code: 'K7Q2M9', seats_left: 1 },
       '正文\n:::app k7q2m9@1 演示\n说明\n:::\n'
     )
-    expect(host.querySelector('.shared-colophon')?.textContent).toContain('爱丽丝')
+    const text = host.querySelector('.shared-colophon')?.textContent ?? ''
+    expect(text).toContain('爱丽丝')
+    expect(text).toMatch(/交互模型|Interactive models/)
     expect(signupLinks(host)).toHaveLength(1)
   })
 

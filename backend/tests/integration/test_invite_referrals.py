@@ -313,7 +313,8 @@ def test_an_acceptance_after_seven_days_pays_nobody(client, _portal, inviter):
 
     _accept_a_delivery(client, friend)
 
-    assert _credits(client, theirs) == 0
+    # First-project 50 has no 7-day limit; the 100/150 acceptance reward does.
+    assert _credits(client, theirs) == 50
     assert _credits(client, mine) == 0
     assert _invites(client, mine)["invitees"][0]["stage"] == "lapsed"
 
