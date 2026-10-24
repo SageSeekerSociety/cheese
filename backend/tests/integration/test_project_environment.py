@@ -370,7 +370,7 @@ def test_team_devices_form_one_sandbox_pool_regardless_of_enroller(client):
 
 def test_each_platform_spec_says_the_hourly_price_it_is_charged_at(client, monkeypatch):
     """选规格的人看到的价格，就是那种算力实际按小时扣的额度：标准沙箱一个价，
-    虚拟机按它开出来的规格（核数、内存）定价；没定价的规格照实说它起不来。"""
+    虚拟机按配置的创建规格（核数、内存）定价；没定价的规格照实说它起不来。"""
     from app.core.config import settings
     from app.domain.machine import environments
     from app.domain.project.models import Project

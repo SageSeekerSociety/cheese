@@ -135,7 +135,7 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。每一种都带一句它是什么、怎么收费（`description`），项目设置里选默认环境时就写在那一项旁边。平台的两种写的是每小时多少点，数取自计费本身用的价格（`usage.compute.hourly_price`，即 `CLOUD_SANDBOX_CREDITS_PER_HOUR`，和 `CLOUD_VM_CREDITS_PER_HOUR` 里虚拟机开出来的那个规格），虚拟机还写出它的核数和内存；没定价的规格照实说它暂时无法启动。
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。每一种都带一句它是什么、怎么收费（`description`），项目设置里选默认环境时就写在那一项旁边。平台的两种写的是每小时多少点，数取自计费本身用的价格（`usage.compute.hourly_price`，即 `CLOUD_SANDBOX_CREDITS_PER_HOUR`，和 `CLOUD_VM_CREDITS_PER_HOUR` 里配置的虚拟机创建规格 `cloud_vm_cores` / `cloud_vm_memory_mb`），虚拟机还写出它的核数和内存；没定价的规格照实说它暂时无法启动。
 
 ## 三、放不下的时候
 
