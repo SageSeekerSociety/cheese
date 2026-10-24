@@ -92,6 +92,7 @@ const {
   canPage,
   docPageHtml,
   revs,
+  comments,
   editing,
   showHistory,
   editor,
@@ -169,6 +170,7 @@ function refresh() {
     :doc-page="docPage"
     :can-page="canPage"
     :doc-page-html="docPageHtml"
+    :comments="comments"
     :revs="revs"
     :editing="editing"
     :show-history="showHistory"

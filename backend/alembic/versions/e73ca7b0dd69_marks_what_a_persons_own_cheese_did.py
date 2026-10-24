@@ -1,7 +1,7 @@
 """A person's own 芝士 acting for them is marked on what it did
 
 Revision ID: e73ca7b0dd69
-Revises: d2f7a4c8e913
+Revises: b7f3c1a90e42
 
 It acts with the person's authority, so the records name the person; each of
 these three says, beside that name, that their 芝士 did it: a task it opened
@@ -19,7 +19,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "e73ca7b0dd69"
-down_revision: str | Sequence[str] | None = "d2f7a4c8e913"
+down_revision: str | Sequence[str] | None = "b7f3c1a90e42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
