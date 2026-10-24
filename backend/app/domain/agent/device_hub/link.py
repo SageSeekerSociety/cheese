@@ -13,6 +13,7 @@ future 和它们的序号。``send`` 是这条链路唯一的写入口（一把�
 """
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -97,6 +98,9 @@ class HubDevice:
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
+    # The exec ids whose stderr lines someone hears while they run (``exec``'s
+    # ``on_stderr``), fed by ``exec.output`` frames.
+    exec_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
     executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
         default_factory=dict
     )

@@ -17,6 +17,7 @@ export type DesktopAbility =
   | 'device'
   | 'teamEnrollment'
   | 'modelCredentialLogin'
+  | 'executor'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */
@@ -53,6 +54,17 @@ export function inDesktopApp(): boolean {
 /** The window's title bar lies over the top of the page. */
 export function titleBarOverlay(): boolean {
   return app()?.titleBar === 'overlay'
+}
+
+/**
+ * Stamps `title-bar-overlay` on `<html>` when the app draws its window buttons
+ * over the page (macOS), so stylesheets can leave them room without every
+ * component asking again. `--window-buttons-inset` (style.css) reads it; only
+ * that one declaration changes, and it is 0 everywhere else.
+ */
+export function markTitleBarOverlay(): void {
+  if (typeof document === 'undefined' || !titleBarOverlay()) return
+  document.documentElement.classList.add('title-bar-overlay')
 }
 
 /** The app paints its own first page and the title bar in this theme from now on. */
@@ -153,6 +165,25 @@ export async function restartDesktopToUpdate(): Promise<void> {
 
 export function onDesktopUpdateStatus(handle: (status: DesktopUpdateStatus) => void): () => void {
   return desktopCan('updates') ? onDesktopEvent('update-status', handle) : () => {}
+}
+
+// Once this computer is connected, the app fetches the Claude Code build a
+// teammate runs here in the background (desktop/src-tauri/src/executor.rs), so
+// the first session here does not wait for it. Nothing waits on it.
+
+/** Where fetching that build stands. */
+export type DesktopExecutorStatus =
+  | { state: 'idle' | 'ready' | 'failed' }
+  | { state: 'fetching'; percent: number | null }
+
+/** Null in a browser and in an app that does not fetch it ahead. */
+export async function desktopExecutorStatus(): Promise<DesktopExecutorStatus | null> {
+  if (!desktopCan('executor')) return null
+  return ((await tauri()?.core?.invoke('executor_status')) as DesktopExecutorStatus | undefined) ?? null
+}
+
+export function onDesktopExecutorStatus(handle: (status: DesktopExecutorStatus) => void): () => void {
+  return desktopCan('executor') ? onDesktopEvent('executor-status', handle) : () => {}
 }
 
 /** The app menu's "About Cheese" or "Check for Updates…" (macOS). */

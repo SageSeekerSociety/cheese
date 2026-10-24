@@ -242,8 +242,12 @@ class _Session:
         finally:
             journal.close()
 
-    def drain(self, *, fresh_mirror: bool = False) -> None:
-        """One drain by the backend; a fresh mirror reads the runner from the start."""
+    def drain(self, *, fresh_mirror: bool = False, pages: int = 1) -> None:
+        """Drains by the backend; a fresh mirror reads the runner from the start.
+
+        One drain takes one journal page (the journal's `PAGE`); a journal with
+        more records than that needs as many drains to be taken whole.
+        """
         if fresh_mirror or not self.mirrors:
             self.mirrors += 1
         mirror = self.tmp_path / f"mirror-{self.mirrors}.sqlite"
@@ -289,7 +293,8 @@ class _Session:
 
         async def run() -> None:
             try:
-                await reading.drain()
+                for _ in range(pages):
+                    await reading.drain()
             finally:
                 await reading.release()
 

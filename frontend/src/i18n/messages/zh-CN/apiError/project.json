@@ -95,6 +95,7 @@
   "permissionUnknown": "无法识别的权限：{name}",
   "projectArchived": "项目已归档，取消归档后才能修改",
   "projectCreateSignIn": "登录后才能新建项目",
+  "projectManageForbidden": "只有项目负责人或团队管理员能改这一项",
   "projectNeedsTeam": "项目需要归属一个团队",
   "projectNumberTaken": "这个项目编号已被使用",
   "projectOwnerOnly": "只有项目所有者能做这件事",

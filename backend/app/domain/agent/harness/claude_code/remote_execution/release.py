@@ -289,6 +289,7 @@ def sources():
         name: (directory / name).read_text()
         for name in (
             "client.py",
+            "send_user_file.py",
             "shell_stop.py",
             # The parts of `client.py` it imports from beside itself: the
             # command it runs for the build's shell prefix, the namespace it

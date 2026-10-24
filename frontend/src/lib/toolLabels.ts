@@ -101,6 +101,8 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_routine: 'toolLabels.cheeseRoutine',
   cheese_notify_me: 'toolLabels.cheeseNotifyMe',
   cheese_memory: 'toolLabels.cheeseMemory',
+  cheese_file_give: 'toolLabels.cheeseFileGive',
+  cheese_file_to_computer: 'toolLabels.cheeseFileToComputer',
   cheese_web_fetch: 'toolLabels.cheeseWebFetch',
   cheese_web_search: 'toolLabels.cheeseWebSearch',
   cheese_my_tasks: 'toolLabels.cheeseMyTasks',
@@ -155,6 +157,9 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_skill_draft: 'toolLabels.cheeseSkillDraft',
   cheese_skill_update: 'toolLabels.cheeseSkillUpdate',
   platform_request: 'toolLabels.platformRequest',
+  // 技能库：按关键词检索已装技能，以及读一份技能的完整 SKILL.md。
+  skills_search: 'toolLabels.skillsSearch',
+  skills_read: 'toolLabels.skillsRead',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: 'toolLabels.bashStart',
   bash_read: 'toolLabels.bashRead',

@@ -13,6 +13,8 @@ import { lastSeenOf } from '@/types/devices'
 
 const props = defineProps<{
   devices: MyDevice[]
+  /** 自己名下的设备（个人设置里）：开头那句说的是你自己的。 */
+  personal?: boolean
   canManage: boolean
   loading: boolean
   loadFailed: boolean
@@ -66,12 +68,17 @@ watch(
 
 <template>
   <div class="settings-page">
-    <div class="compute-bar">
-      <p class="compute-bar__lede">{{ t('teams.compute.ownership') }}</p>
+    <header class="settings-page__head">
+      <div>
+        <h1 class="t-page-title">{{ t('home.nav.teamCompute') }}</h1>
+        <p class="settings-page__lede">
+          {{ personal ? t('teams.compute.ownershipPersonal') : t('teams.compute.ownership') }}
+        </p>
+      </div>
       <BaseButton v-if="canManage" kind="primary" prepend-icon="mdi-plus" @click="adding = !adding">{{
         t('teams.compute.addDevice')
       }}</BaseButton>
-    </div>
+    </header>
     <v-alert v-if="error" type="error" closable @click:close="error = null">{{ error }}</v-alert>
     <section v-if="adding && canManage" class="settings-card compute-add">
       <p class="t-body">{{ t('teams.compute.enrollHint') }}</p>
@@ -152,22 +159,6 @@ watch(
 
 <style scoped src="@/styles/settings-card.css"></style>
 <style scoped>
-.compute-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 16px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.compute-bar__lede {
-  flex: 1 1 240px;
-  margin: 0;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--muted);
-}
-
 .compute-add {
   padding: 20px 24px;
 }

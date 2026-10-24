@@ -176,6 +176,25 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             action="查看文档",
             link=link,
         )
+    if type_ == "MENTION" and _text(payload, "roomPath"):
+        # 一份房间文件上的一条评论（`api.routes.file_comments`）：是哪个文件，比
+        # 在哪个频道要紧。
+        who = _text(payload, "authorName") or _text(payload, "author") or "有人"
+        name = _text(payload, "documentTitle")
+        headline = (
+            f"{who} 在文件「{name}」里提到了你"
+            if name
+            else f"{who} 在一份文件里提到了你"
+        )
+        return Letter(
+            subject=headline,
+            eyebrow="有人提到了你",
+            headline=headline,
+            quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
+            details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
+            action="查看文件",
+            link=link,
+        )
     if type_ in ("MENTION", "THREAD_REPLY") and room:
         # 频道里的一条消息（`agent.mentions`）：讨论区的 @ 没有 `topicTitle`，走下面
         # 那一句通用的。

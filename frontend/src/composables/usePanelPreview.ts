@@ -16,6 +16,7 @@
 // 文档的字节与两种读法（`documentBytes.ts`）、在线编辑与历史（`editing.ts`）、元数据的
 // 轮询（`polling.ts`）各自成篇拆在 `panelPreview/` 下。返回的那一包和拆之前一模一样，
 // 组件、演示夹具与单测都不用动。
+import type { McpAppMessage } from '@/lib/mcpAppBridge'
 import type { ChatAttachment } from '../cx_types'
 import type { ImageUpload, PanelPreviewOptions, PanelPreviewProps } from './panelPreview/types'
 
@@ -23,6 +24,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
@@ -44,7 +46,28 @@ export type {
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
   // 帧的托管：授权表投进哪一帧、帧报到什么状态，都在它那儿。
-  const frames = usePreviewFrames(options.frameName, { onEscape: options.onEscape, onPick: options.onPick })
+  /** 第三方 View 里的表单点提交（`ui/message`）：拼成一条普通提问往上递。 */
+  function submitAppMessage(message: McpAppMessage) {
+    const url = frames.displayed.value?.url
+    const topicId = props.topicId
+    if (!url || !topicId || !message.text.trim()) return
+    options.onAppMessage?.({
+      topicId,
+      content: message.text,
+      intent: 'ask-agent',
+      quotedContext: {
+        kind: 'web-region',
+        url,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+        viewport: { w: Math.max(1, window.innerWidth), h: Math.max(1, window.innerHeight) },
+      },
+    })
+  }
+  const frames = usePreviewFrames(options.frameName, {
+    onEscape: options.onEscape,
+    onPick: options.onPick,
+    onAppMessage: submitAppMessage,
+  })
   const state = createPreviewState()
   const named = usePanelNamedFile({ props, state, frames })
   const target = useCurrentPreview({ props, options, state, frames, loadNamed: named.loadFile })
@@ -117,6 +140,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   }
 
   const doc = usePanelPreviewDocument({ props, state })
+  // 这一份文件上的评论：线程、写一条新的、回复和解决。
+  const comments = usePanelPreviewComments({ props, state })
   const edits = usePanelPreviewEditing({
     props,
     state,
@@ -171,6 +196,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docPage: doc.docPage,
     canPage: doc.canPage,
     docPageHtml: doc.docPageHtml,
+    // 这一份文件上的评论（同上，原样递下去）
+    comments,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）
     revs: edits.revs,
     editing: edits.editing,

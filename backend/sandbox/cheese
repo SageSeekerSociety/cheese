@@ -781,7 +781,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_describe",
-            "修改当前任务尚未采纳的验收卡及 PR 的标题或正文；采纳以卡为准。",
+            "修改当前任务尚未采纳的验收卡及 PR 的标题、正文或审阅重点；采纳以卡为准。",
             {
                 "subject": _text(
                     "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
@@ -791,6 +791,10 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "body": _text(
                     "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                ),
+                "focus": _text(
+                    "审阅重点：请审阅人确认的事，最多 3 条、合计 300 字，一行一条。"
+                    "后来又推了新提交、卡上原来的重点已经过期时用它更正；它不进 PR 正文"
                 ),
             },
             [],
@@ -1022,7 +1026,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_feedback_release",
             "放掉你领取的一条反馈，让别人能领。决定不修、或者修不了的时候调它；"
-            "状态不退回。",
+            "状态退回「已收录」。",
             {"feedback": _FEEDBACK_REF},
             ["feedback"],
         ),
@@ -1245,6 +1249,26 @@ PLATFORM_TOOLS = ToolTable(
             ["skill", "reason"],
         ),
         _tool(
+            "skills_search",
+            "按关键词找**已经装好的技能**：平台随会话发货的、这个项目确认保存的、"
+            "以及你这台机器上已采纳的。命中时只回**名字和说明**，不回正文——"
+            "要正文用 `skills_read`。\n"
+            "**没搜到不等于没有**：这份搜索不保证覆盖每一个技能、也不保证覆盖全文"
+            "（机器上的技能正文只在它在线时才读得到），所以空结果不是「这个技能不"
+            "存在」。换个说法再搜，或者问用户技能叫什么。",
+            {"query": _text("关键词，一两个词或一句话描述你要做的事")},
+            ["query"],
+        ),
+        _tool(
+            "skills_read",
+            "读一个已装技能的**完整 SKILL.md**（名字先用 `skills_search` 拿到，"
+            "大小写和连字符要对得上）。\n"
+            "读只是能读：**它不表示可以安装或运行这个技能**。把技能装到机器上、"
+            "或者让它跑起来，一律由人在连接器里采纳，并按它自己写的步骤来做。",
+            {"name": _text("技能名，从 skills_search 的结果里来")},
+            ["name"],
+        ),
+        _tool(
             "platform_request",
             "平台 API 的其余部分：项目成员在网页上能做、其他平台工具又没有的事"
             "（给消息加表情、拉人进频道或改角色、回答问到你的选项问题、读自己的收件箱……）"
@@ -1452,7 +1476,8 @@ DELEGATED_TOOLS = ToolTable(
             "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
-            "（列出全部）和 spaces/4/materials/9；me 是用户参加的题目和各自的截止时间，"
+            "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
+            "library/成绩.xlsx；me 是用户参加的题目和各自的截止时间，"
             "settings 是用户的通知设置。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
@@ -1629,6 +1654,30 @@ DELEGATED_TOOLS = ToolTable(
                 "text": _text("正文"),
             },
             ["action", "name"],
+        ),
+        _tool(
+            "cheese_file_give",
+            "把你电脑上的一份文件交给用户：存进用户的资料库，回答里出现一张文件卡片，用户点了"
+            "就下载。做出来的图、表格、文档、压缩包都这样交，不要只把内容贴进回答。电脑闲置"
+            "一会儿就收掉，上面的东西不留；交出去的文件留在用户的资料库里，换个话题也能用"
+            "（cheese_read library）。",
+            {
+                "path": _text("电脑上的路径，如 out/成绩分布.png"),
+                "name": _text(
+                    "在用户资料库里叫什么，可以带文件夹，如 数据结构/成绩分布.png；默认用原名"
+                ),
+            },
+            ["path"],
+        ),
+        _tool(
+            "cheese_file_to_computer",
+            "把用户资料库里的一份文件放到你的电脑上，用代码处理它（用户附给你的文件也在资料库"
+            "里）。返回它在电脑上的路径。",
+            {
+                "ref": _text("资料库里的编号，如 library/成绩.xlsx"),
+                "path": _text("放到电脑上的哪里；默认工作目录下的 files/，用原名"),
+            },
+            ["ref"],
         ),
         _tool(
             "cheese_web_fetch",
@@ -1981,6 +2030,9 @@ def _read_plan(args: dict) -> dict:
             "path": "/notifications/preferences/agent/read",
             "body": {},
         }
+    if args["ref"].strip().strip("/").split("/", 1)[0] == "library":
+        body = {"ref": args["ref"], "page": page}
+        return {"method": "POST", "path": "/assistant/agent/library", "body": body}
     found = _read_kind(args["ref"])
     if found is None:
         body = {"ref": args["ref"], "page": page}
@@ -2143,9 +2195,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             },
         }
     if tool == "cheese_describe":
-        body = _given(args, "subject:change_subject", "body:change_body")
+        body = _given(args, "subject:change_subject", "body:change_body", "focus")
         if not body:
-            raise ValueError("describe 至少要给 subject 或 body")
+            raise ValueError("describe 至少要给 subject、body 或 focus")
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_redeliver":
         body = _given(args, "deliver", "deliver_url")
@@ -2518,6 +2570,19 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "PATCH",
             "path": f"/skills/{skill}?topic={where}",
             "body": body,
+        }
+    if tool == "skills_search":
+        # 房间是必须的：已装技能按这个项目、这台机器算，不带房间就不知道是谁的。
+        return {
+            "method": "POST",
+            "path": "/agent/skills/search",
+            "body": {"query": args["query"], "topic": topic},
+        }
+    if tool == "skills_read":
+        return {
+            "method": "POST",
+            "path": "/agent/skills/read",
+            "body": {"name": args["name"], "topic": topic},
         }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
@@ -3845,13 +3910,13 @@ _CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
 _CHAT_ATTACHMENT_CHUNK_BYTES = 21000
 
 
-def _machine_stdout(host, command, request_id) -> str:
+def _machine_stdout(host, command, request_id, timeout_s: int = 60) -> str:
     invoke = getattr(host, "invoke", None)
     if invoke is None:
-        raise PlatformToolError("这个会话没有可以读文件的机器，发不了附件")
+        raise PlatformToolError("这个会话没有可以读写文件的电脑")
     receipt = invoke(
         {"id": request_id, "tool": "Bash"},
-        {"command": command, "timeout": 60000},
+        {"command": command, "timeout": timeout_s * 1000},
     )
     if "error" in receipt:
         raise PlatformToolError(str(receipt["error"]))
@@ -3894,6 +3959,76 @@ def _read_chat_attachment(host, path, request_id) -> bytes:
     if len(raw) != size:
         raise PlatformToolError(f"{path} 在读取时变了，再试一次")
     return raw
+
+
+#: 一份文件在电脑和存储之间最多传多久。地址本身十几分钟内有效。
+_FILE_TRANSFER_S = 600
+
+
+def _file_give(args: dict, host) -> str:
+    """`cheese_file_give`：先问平台要一个只收这一份的地址，电脑自己把文件传上去，
+    再登记进用户的资料库。字节不经过这一侧，电脑里也不放凭据。"""
+    path = args["path"].strip()
+    quoted = shlex.quote(path)
+    said = _machine_stdout(
+        host, f"if [ -f {quoted} ]; then wc -c < {quoted}; fi", "give-size"
+    )
+    try:
+        size = int("".join(said.split()))
+    except ValueError as exc:
+        raise PlatformToolError(f"电脑上没有这份文件：{path}") from exc
+    if not size:
+        raise PlatformToolError(f"文件是空的：{path}")
+    name = (args.get("name") or "").strip() or path.rstrip("/").rsplit("/", 1)[-1]
+    slot = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/slot",
+            "body": {"name": name.rsplit("/", 1)[-1], "size": size},
+        }
+    )["data"]
+    _machine_stdout(
+        host,
+        f"curl -sSf --max-time {_FILE_TRANSFER_S} -T {quoted} "
+        f"{shlex.quote(slot['url'])} -o /dev/null",
+        "give-put",
+        _FILE_TRANSFER_S + 30,
+    )
+    handed = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/handed",
+            "body": {"upload": slot["upload"], "name": name},
+        }
+    )["data"]
+    return (
+        f"已交给用户：library/{handed['path']}（{handed['bytes']} 字节）。回答里有它的"
+        "文件卡片，回答里不必再贴内容或链接。"
+    )
+
+
+def _file_to_computer(args: dict, host) -> str:
+    """`cheese_file_to_computer`：问平台要这一份的地址，电脑自己取下来。"""
+    link = host.request(
+        {
+            "method": "POST",
+            "path": "/assistant/agent/files/link",
+            "body": {"path": args["ref"]},
+        }
+    )["data"]
+    # 相对路径落在工作目录里，和 read、write、bash 看到的是同一个地方。
+    target = (args.get("path") or "").strip() or (
+        "files/" + link["path"].rsplit("/", 1)[-1]
+    )
+    quoted = shlex.quote(target)
+    _machine_stdout(
+        host,
+        f'mkdir -p "$(dirname {quoted})" && curl -sSf --max-time {_FILE_TRANSFER_S} '
+        f"-o {quoted} {shlex.quote(link['url'])}",
+        "fetch-get",
+        _FILE_TRANSFER_S + 30,
+    )
+    return f"已放到电脑上：{target}（{link['bytes']} 字节）。"
 
 
 def _chat_send(args: dict, host) -> str:
@@ -4010,6 +4145,8 @@ _STEPS = {
         "channel", "where", "title", "text", "members_only"
     ),
     "cheese_web_fetch": _web_fetch,
+    "cheese_file_give": _file_give,
+    "cheese_file_to_computer": _file_to_computer,
     "chat_send": _chat_send,
     "cheese_task": _task,
     "cheese_chat_get": _chat_get,
@@ -4499,6 +4636,45 @@ def _say_routine_report(args, data, env) -> str:
     return "\n".join(parts)
 
 
+def _say_skills_search(args, data, env) -> str:
+    data = data or {}
+    skills = data.get("skills") or []
+    if skills:
+        lines = "\n".join(
+            f"- {s.get('name')}（{s.get('source') or '技能'}）："
+            f"{s.get('description') or '（对方没写说明）'}"
+            for s in skills
+        )
+        head = f"找到 {len(skills)} 项已装技能（只给名字和说明）：\n{lines}"
+    else:
+        head = "这一次没有命中任何已装技能。"
+    # 「没搜到」不是「没有」：搜索覆盖面有限，得让 agent 知道这一点再决定下一步。
+    return (
+        head
+        + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
+        "这台机器已采纳的技能，未必穷尽每个名字或全文（机器上的正文只在它在线时读"
+        "得到）。所以空结果不是「这个技能不存在」——换个说法再搜，或者问用户技能"
+        "叫什么。要看正文用 skills_read(name)。"
+    )
+
+
+def _say_skills_read(args, data, env) -> str:
+    data = data or {}
+    if not data.get("found"):
+        return (
+            f"已装技能里没有叫「{args.get('name')}」的。先用 skills_search 拿到准确"
+            "名字（大小写和连字符都要对上）；它也可能在一台此刻读不到的机器上"
+            "（离线时正文读不回来），那不算它不存在。"
+        )
+    # 读 ≠ 装、读 ≠ 跑：正文给出去的同时把这条边界说清楚。
+    return (
+        f"技能 {data.get('name')}（{data.get('source') or '技能'}）的 SKILL.md：\n\n"
+        f"{data.get('markdown') or ''}\n\n"
+        "以上是它的完整说明。**读它只是能读**：不代表可以安装或运行这个技能——"
+        "装到机器上、让它跑起来，要由人在连接器里采纳，并按它自己写的步骤做。"
+    )
+
+
 _SAY = {
     "chat_send": _say_chat_send,
     "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -4593,6 +4769,8 @@ _SAY = {
         f"已提议修改「{(d or {}).get('title')}」，等人在卡上确认；确认之前大家"
         "继续用原来那一版。"
     ),
+    "skills_search": _say_skills_search,
+    "skills_read": _say_skills_read,
 }
 
 

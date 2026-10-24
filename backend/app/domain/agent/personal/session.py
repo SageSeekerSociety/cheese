@@ -113,6 +113,8 @@ TOOLS = (
     "cheese_routine",
     "cheese_notify_me",
     "cheese_memory",
+    "cheese_file_give",
+    "cheese_file_to_computer",
     "cheese_web_fetch",
     "cheese_web_search",
     "cheese_problem_write",

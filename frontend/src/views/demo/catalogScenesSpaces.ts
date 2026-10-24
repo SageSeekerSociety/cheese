@@ -22,6 +22,7 @@ import {
   topic,
   topicCandidates,
 } from './catalogScenesSpacesFixtures'
+import { AGENT_TYPES } from './catalogSharedFixtures'
 
 import TopicSelectorView from '@/components/common/TopicSelectorView.vue'
 import AuditTaskView from '@/views/spaces/detail/AuditTaskView.vue'
@@ -98,6 +99,8 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
       errorReason: null,
       forbidden: false,
       open: false,
+      agentTypes: AGENT_TYPES,
+      agentTypesFailed: false,
     },
     states: [
       {

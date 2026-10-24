@@ -252,8 +252,26 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       {
         name: '一张图',
         note: '图片没有文本差异可看，也不该拿去按文本编辑：直接把原图摆出来。',
-        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, openIsImage: true },
+        // 取数那一层交来的是带 Authorization 取回的 object URL；这里用一张内嵌的小图代替。
+        props: {
+          ...CHANGES_CONTENT_PROPS,
+          effectiveView: 'edit' as const,
+          openIsImage: true,
+          openImageSrc:
+            'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2264%22 height=%2264%22%3E%3Crect width=%2264%22 height=%2264%22 fill=%22%23f59e0b%22/%3E%3C/svg%3E',
+        },
         expectSelector: '.file-image-view img',
+      },
+      {
+        name: '一张取不到的图',
+        note: '图片要带登录取字节；取不到时说清楚、给下载原文件，而不是留一块空白。',
+        props: {
+          ...CHANGES_CONTENT_PROPS,
+          effectiveView: 'edit' as const,
+          openIsImage: true,
+          openImageError: '图片加载失败（HTTP 404）',
+        },
+        expect: '无法显示这个文件',
       },
       {
         name: '二进制文件',
@@ -478,7 +496,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读记录的时候',
-        note: '还在路上时画的是那条流的形状（一条条「圆点 + 动作 + 参数」的单行），不是一个居中的转圈。',
+        note: '还在路上时画的是现场一页的形状：一轮的组头与用时条，底下几种记录行，不是一个居中的转圈。',
         props: { site: siteBundle({ transcript: [], loading: true }) },
         expect: '加载中',
         expectSelector: '.skel--site',
@@ -657,6 +675,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这份文件多半是某件任务里新建、还没合进项目的：说清这一点，再列出改过它的任务。',
         props: projectFileProps({ path: 'README.md', missing: true, tasks: [CHANGES_TASK] }),
         expect: '在任务「整理第一周的课件」里看',
+      },
+      {
+        name: '频道自己的文件',
+        note: '项目没有代码仓库、或仓库里没有它，而它是频道里交付或存下的一份：照样打开，顶上写明读的是频道里的文件。',
+        props: projectFileProps({ path: 'gemm_bench.cu', inRoom: true }),
+        expect: '频道里的文件 · 只读',
       },
       {
         name: '文件太大',

@@ -19,6 +19,7 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -28,12 +29,13 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
-import { isTeachingBlank } from '@/lib/teaching'
+import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
@@ -47,6 +49,8 @@ const { t } = useI18n()
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
+// 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
+const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
@@ -269,7 +273,7 @@ useAgentContext(() => ({
   ],
   placeholder: t('tasks.assistant.draft.placeholder'),
   hint: t('tasks.assistant.draft.hint'),
-  canAttach: true,
+  attachAsMaterials: true,
 }))
 
 const { mdAndUp } = useDisplay()
@@ -418,6 +422,10 @@ async function publishAll() {
   else view.value?.check()
 }
 
+/** 这道题指定的默认队友（#944）。新建题没有原始值，留空 = 不指定（继承项目集 / 空间）。 */
+const defaultRole = ref('')
+const defaultRoleSubmit = computed(() => defaultRolePayload(defaultRole.value, null))
+
 // --- 发布 --------------------------------------------------------------------------
 
 const publishing = ref(false)
@@ -451,9 +459,13 @@ async function publish(form: TaskFormSubmitData) {
         attachmentIds: uploads.ids.value,
       })
     )
-    const {
-      task: { approved },
-    } = await TaskDraftsApi.publish(row.id)
+    const { task } = await TaskDraftsApi.publish(row.id)
+    if (defaultRoleSubmit.value !== undefined) {
+      // 「默认队友」不在草稿字段里（`TASK_DRAFT_FIELDS` 没有它），发布之后按题目补写
+      // 一次。`undefined` = 这一格选的是「继承」，不发这个键。
+      await TaskBoardApi.update(task.id, { defaultRole: defaultRoleSubmit.value })
+    }
+    const { approved } = task
     draft.gone()
     toast.success(
       approved
@@ -503,6 +515,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     ref="view"
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
+    v-model:default-role="defaultRole"
     v-model:agent-open="agentOpen"
     :ready="ready"
     :list-to="listTo"
@@ -520,6 +533,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
+    :agent-types="agentTypes"
+    :agent-types-failed="agentTypesFailed"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"

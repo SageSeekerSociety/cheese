@@ -134,7 +134,14 @@ async def of_conversation(
     limit: int = 500,
     seat: str | None = None,
     before: tuple[datetime, str, uuid.UUID] | None = None,
+    after: tuple[datetime, str, uuid.UUID] | None = None,
 ) -> list[RunRecord]:
     return await RunRecordRepository(session).of_conversation(
-        conversation_id, since=since, until=until, limit=limit, seat=seat, before=before
+        conversation_id,
+        since=since,
+        until=until,
+        limit=limit,
+        seat=seat,
+        before=before,
+        after=after,
     )

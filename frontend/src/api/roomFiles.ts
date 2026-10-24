@@ -6,7 +6,7 @@ import { refusalWords } from '../lib/noticeText'
 import { createPreviewPdfReader } from '../lib/previewPdf'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, request } from './http'
+import { authHeaders, BASE, ensureFreshToken, request } from './http'
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
@@ -134,8 +134,17 @@ export function attachmentRawUrl(
  * 这个端点不接受匿名请求，而 `<img src="/api/…/attachments/raw?path=…">` 恰恰
  * 是匿名的。调用方负责在不再需要时 URL.revokeObjectURL（见 AttachmentImage）。
  */
-export async function attachmentImageUrl(topicId: string, path: string): Promise<string> {
-  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+export function attachmentImageUrl(topicId: string, path: string): Promise<string> {
+  return rawImageUrl(attachmentRawUrl(topicId, path))
+}
+
+/** 任何一个只认 Authorization 的 raw 端点（房间附件、项目文件），取成 <img> 能用的
+ *  object URL。理由同上：`<img src>` 是匿名的，项目的 `/file/raw` 对它答 404。 */
+export async function rawImageUrl(rawUrl: string): Promise<string> {
+  // `request()` refreshes a token about to expire before it sends; a bare fetch has
+  // to do the same, or an image opened after the tab sat idle gets 404.
+  await ensureFreshToken()
+  const res = await fetch(rawUrl, { headers: authHeaders() })
   if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
   return URL.createObjectURL(await res.blob())
 }

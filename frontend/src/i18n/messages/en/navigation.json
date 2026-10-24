@@ -1,6 +1,7 @@
 {
   "home": "Home",
   "inbox": "Inbox",
+  "market": "Market",
   "newProject": "New {project}",
   "project": {
     "library": "Library",
@@ -28,6 +29,7 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
+    "mineUnread": "My feedback, 1 unread update | My feedback, {n} unread updates",
     "admin": "Admin console",
     "guide": "New-user guide",
     "tour": "Interface tour",

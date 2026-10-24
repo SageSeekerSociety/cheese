@@ -27,9 +27,7 @@ async def _card(db_factory, **fields):
         room = Topic(project_id=project.id, title="Review room", created_by="requester")
         session.add(room)
         await session.flush()
-        card = AcceptCard(
-            topic_id=room.id, reviewer_handle="reviewer", pr_number=1, **fields
-        )
+        card = AcceptCard(topic_id=room.id, pr_number=1, **fields)
         session.add(card)
         await session.commit()
         return card.id

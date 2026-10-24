@@ -40,6 +40,7 @@ from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
@@ -182,7 +183,7 @@ async def room_file_raw(
     clean = clean_artifact_path(path)
     name = library.library_name(clean)
     if name is not None:
-        data = await library_records.read(db, place.project_id, name)
+        data = await library_records.read(db, Shelf.of_project(place.project_id), name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, clean
@@ -266,7 +267,7 @@ async def copy_into_room(
         raise ValidationError(say("unsupportedFileType"))
     name = library.library_name(source)
     if name is not None:
-        data = await library_records.read(db, place.project_id, name)
+        data = await library_records.read(db, Shelf.of_project(place.project_id), name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, source

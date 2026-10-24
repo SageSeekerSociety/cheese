@@ -65,7 +65,8 @@ type Msg struct {
 	// recorded it ("$HOME/..."): the connector derives the runner's socket
 	// from it.
 	Path string `json:"path,omitempty"`
-	// One-shot command execution: exec (request) / exec.cancel / exec.result.
+	// One-shot command execution: exec (request) / exec.cancel / exec.result,
+	// and exec.output while it runs when the request set Stream.
 	Cwd       string `json:"cwd,omitempty"`
 	Stdin     string `json:"stdin,omitempty"`   // optional input fed to the command
 	Timeout   int    `json:"timeout,omitempty"` // caller's max seconds (0 = host default)
@@ -73,6 +74,11 @@ type Msg struct {
 	Stderr    string `json:"stderr,omitempty"`
 	Exit      int    `json:"exit,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"` // output hit the size cap and was clipped
+	// Stream asks for each line the command writes to stderr as it is written,
+	// one exec.output frame per line, ahead of the exec.result that still
+	// carries all of it. A connector built before this ignores the field and
+	// answers with exec.result alone, which is what a caller of it gets.
+	Stream bool `json:"stream,omitempty"`
 }
 
 // Ping cadence and liveness window. We ping every pingPeriod; the peer's pong
@@ -159,6 +165,12 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 	}()
 
 	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true})
+	// Say it heartbeats immediately, not at the first tick. The backend starts
+	// its silence clock only after a heartbeat has been heard
+	// (`DeviceHub.silence_allowed`), so until the first one a machine that went
+	// to sleep right after dialling in was never timed out and calls to it
+	// waited for the socket to close.
+	_ = c.Send(Heartbeat())
 
 	// Liveness: reset the read deadline on every pong (and every message below).
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))

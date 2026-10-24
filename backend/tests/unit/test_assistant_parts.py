@@ -41,3 +41,16 @@ def test_the_stream_is_kept_as_steps_edits_and_published():
 
 def test_an_answer_that_only_spoke_keeps_no_parts():
     assert parts_of([("1-0", "delta", {"text": "好。", "at": 0})]) is None
+
+
+def test_a_file_handed_over_is_kept_with_the_answer():
+    file = {"team": 9, "path": "成绩分布.png", "bytes": 84000}
+    told = [
+        ("1000-0", "tool", {"name": "cheese_file_give", "call": "g1"}),
+        ("1500-0", "handed", file),
+    ]
+
+    parts = parts_of(told)
+
+    assert parts is not None
+    assert parts["handed"] == [file]

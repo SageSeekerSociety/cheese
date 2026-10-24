@@ -82,6 +82,10 @@ An audit finding needs a way to actually happen — a crash, corruption, a secur
 
 A commit that completes a fix for a report in the dev feedback center (okcheese.com) carries `Fixes-feedback: FB-<n>` as a line of its own, flush left, in its commit message — several numbers comma-separated. Only commit messages reach main, never the PR description; a production report's number names a different report and never goes in this line.
 
+## A task's last merge posts its record
+
+When a task in this repository closes after its last delivery merged, post, before closing it, one message of its own whose first line is 【留痕记录】, then: the task name, the PR number and link, its title, its merge time in the reader's local time, and 正文： followed by the full PR body verbatim. The team copies it whole into its work-record sheet, so it repeats the PR body on purpose and is neither folded into the write-up nor split.
+
 ## Fix bugs freely; propose product and interaction changes first
 
 A bug — the product failing to do what it already sets out to do, including a message that says something untrue — is fixed without asking. Anything a user sees or does is proposed and waits for a yes: a new, moved or removed control, a new element on screen, new behaviour behind an existing action. This holds when the change is the natural fix for a bug — ship the part that restores the intended behaviour and propose the rest.

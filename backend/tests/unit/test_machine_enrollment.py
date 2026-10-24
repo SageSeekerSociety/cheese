@@ -728,9 +728,17 @@ def test_enrollment_runs_with_the_identity_it_just_wrote(tmp_path, already_runni
     connector.parent.mkdir(parents=True)
     config_path = shlex.quote(str(config))
     active_path = shlex.quote(str(active_config))
+    # `claude install` places the pinned build, as the real connector does.
+    pin = tmp_path / ".cheese/claude/versions" / enrollment.CLAUDE_PINNED_VERSION
+    pin.parent.mkdir(parents=True)
+    installs = (
+        f'if [ "$1" = claude ]; then printf \'#!/bin/sh\\necho "%s"\\n\' '
+        f"{enrollment.CLAUDE_PINNED_VERSION} > {shlex.quote(str(pin))}; "
+        f"chmod +x {shlex.quote(str(pin))}; exit 0; fi\n"
+    )
     # Starting an active systemd service leaves its process and credentials intact.
     connector.write_text(
-        f"#!/bin/sh\n[ -f {active_path} ] || cp {config_path} {active_path}\n"
+        f"#!/bin/sh\n{installs}[ -f {active_path} ] || cp {config_path} {active_path}\n"
     )
     connector.chmod(0o755)
     script = enrollment.bootstrap_script(

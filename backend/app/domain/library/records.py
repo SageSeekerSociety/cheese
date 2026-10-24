@@ -26,11 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core import blob_store
+from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
+from app.domain.library.shelf import Shelf
 from app.domain.textfile import bytes_text_payload
 
 
@@ -72,7 +74,7 @@ async def _measure(data: Incoming) -> tuple[int, str]:
 
 
 def _new_row(
-    project_id: uuid.UUID,
+    shelf: Shelf,
     name: str,
     measured: tuple[int, str],
     location: str,
@@ -85,7 +87,8 @@ def _new_row(
     size, sha256 = measured
     return LibraryFileRecord(
         id=record_id,
-        project_id=project_id,
+        project_id=shelf.project_id,
+        team_id=shelf.team_id,
         name=name,
         bytes=size,
         sha256=sha256,
@@ -93,7 +96,7 @@ def _new_row(
         room_id=room_id,
         source_path=source_path,
         location=location,
-        blob_key=f".library-blobs/{project_id}/{record_id}",
+        blob_key=f".library-blobs/{shelf.key}/{record_id}",
     )
 
 
@@ -104,9 +107,43 @@ def _location_for(data: Incoming) -> str:
     return blob_store.for_new().location
 
 
-async def _put(row: LibraryFileRecord, data: Incoming) -> None:
+def ceiling(shelf: Shelf, name: str) -> int:
+    """这个资料库里一份文件最多多大：项目的与房间文件是同一条
+    （`service.max_bytes_for`）；团队的是附件那一条，人交给芝士的文件都放得进来。"""
+    if shelf.team_id is not None:
+        return max(settings.attachment_max_bytes, service.max_bytes_for(name))
+    return service.max_bytes_for(name)
+
+
+async def used(session: AsyncSession, shelf: Shelf) -> int:
+    """这个资料库占了多少字节：被替换下来的旧版本也占着存储，一起算。"""
+    return int(
+        await session.scalar(
+            select(func.coalesce(func.sum(LibraryFileRecord.bytes), 0)).where(
+                shelf.holds()
+            )
+        )
+        or 0
+    )
+
+
+async def refuse_past_room(session: AsyncSession, shelf: Shelf, adding: int) -> None:
+    """团队的资料库放不下这么多就不放（`settings.team_library_bytes`）。项目的资料库
+    没有总量上限。"""
+    if shelf.team_id is None:
+        return
+    total = settings.team_library_bytes
+    if await used(session, shelf) + adding > total:
+        raise UnprocessableEntityError(say("libraryFull", mb=total // (1024 * 1024)))
+
+
+async def _put(
+    session: AsyncSession, shelf: Shelf, row: LibraryFileRecord, data: Incoming
+) -> None:
     # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
-    service.refuse_oversize(row.bytes, row.name)
+    service.refuse_oversize(row.bytes, row.name, ceiling(shelf, row.name))
+    # 这一行已经记进去了，算总量时它也在里面。
+    await refuse_past_room(session, shelf, 0)
     store = blob_store.store(row.location)
     if isinstance(data, Upload):
         await store.take_in(data.key, row.blob_key)
@@ -114,28 +151,28 @@ async def _put(row: LibraryFileRecord, data: Incoming) -> None:
         await store.put(row.blob_key, data)
 
 
-async def upload_slot(project_id: uuid.UUID, name: str, size: int) -> dict:
+async def upload_slot(shelf: Shelf, name: str, size: int) -> dict:
     """给浏览器的一个上传地址：恰好 ``size`` 个字节，放进新文件该去的存储。
 
-    ``upload`` 是登记时交回来的凭据，只在这个项目里认。超过这一类文件上限的，这里
+    ``upload`` 是登记时交回来的凭据，只在这个资料库里认。超过这一类文件上限的，这里
     就不给地址。"""
-    service.refuse_oversize(size, name)
+    service.refuse_oversize(size, name, ceiling(shelf, name))
     store = blob_store.for_new()
     sealed = blob_store.SealedUpload(store.location, blob_store.incoming_key(), size)
     return {
         "url": await store.upload_url(sealed.key, size),
         "upload": blob_store.seal_upload(
             sealed,
-            bound_to=str(project_id),
+            bound_to=shelf.key,
             seconds=blob_store.UPLOAD_TOKEN_SECONDS,
         ),
     }
 
 
-async def received(project_id: uuid.UUID, token: str) -> Upload:
+async def received(shelf: Shelf, token: str) -> Upload:
     """`upload_slot` 给出去的那一份，已经到了的样子：大小对得上，哈希是后端自己
     算的，不是浏览器说的。"""
-    sealed = blob_store.open_upload(token, bound_to=str(project_id))
+    sealed = blob_store.open_upload(token, bound_to=shelf.key)
     if sealed is None:
         raise UnprocessableEntityError(say("uploadExpired"))
     store = blob_store.store(sealed.location)
@@ -155,30 +192,25 @@ def _like_prefix(prefix: str) -> str:
     return f"{escaped}%"
 
 
-def _current_where(project_id: uuid.UUID) -> tuple:
+def _current_where(shelf: Shelf) -> tuple:
     """「现在这一份」的判据，给只挑几列、不取整行的查询共用。"""
-    return (
-        LibraryFileRecord.project_id == project_id,
-        LibraryFileRecord.superseded_at.is_(None),
-    )
+    return (shelf.holds(), LibraryFileRecord.superseded_at.is_(None))
 
 
-def _current(project_id: uuid.UUID):
-    return select(LibraryFileRecord).where(*_current_where(project_id))
+def _current(shelf: Shelf):
+    return select(LibraryFileRecord).where(*_current_where(shelf))
 
 
 async def _current_row(
-    session: AsyncSession, project_id: uuid.UUID, name: str
+    session: AsyncSession, shelf: Shelf, name: str
 ) -> LibraryFileRecord | None:
-    return await session.scalar(
-        _current(project_id).where(LibraryFileRecord.name == name)
-    )
+    return await session.scalar(_current(shelf).where(LibraryFileRecord.name == name))
 
 
 async def _current_or_404(
-    session: AsyncSession, project_id: uuid.UUID, name: str
+    session: AsyncSession, shelf: Shelf, name: str
 ) -> LibraryFileRecord:
-    row = await _current_row(session, project_id, name)
+    row = await _current_row(session, shelf, name)
     if row is None:
         raise NotFoundError(say("libraryFileNotFound"))
     return row
@@ -186,7 +218,7 @@ async def _current_or_404(
 
 async def _taken(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     name: str,
     ignore: frozenset[str] = frozenset(),
 ) -> bool:
@@ -199,19 +231,19 @@ async def _taken(
         LibraryFileRecord.name.like(_like_prefix(f"{name}/"), escape="\\"),
         LibraryFileRecord.name.in_(ancestors),
     )
-    query = _current(project_id).where(clash)
+    query = _current(shelf).where(clash)
     if ignore:
         query = query.where(LibraryFileRecord.name.not_in(ignore))
     return await session.scalar(query.limit(1)) is not None
 
 
-async def read(session: AsyncSession, project_id: uuid.UUID, name: str) -> bytes:
+async def read(session: AsyncSession, shelf: Shelf, name: str) -> bytes:
     """资料库里这个名字现在那一份的字节。"""
-    return await _bytes_of(await _current_or_404(session, project_id, name))
+    return await _bytes_of(await _current_or_404(session, shelf, name))
 
 
-async def exists(session: AsyncSession, project_id: uuid.UUID, name: str) -> bool:
-    return await _current_row(session, project_id, name) is not None
+async def exists(session: AsyncSession, shelf: Shelf, name: str) -> bool:
+    return await _current_row(session, shelf, name) is not None
 
 
 async def read_attachment(
@@ -220,7 +252,7 @@ async def read_attachment(
     """一个附件的字节：资料库里那一份，或者只属于这个房间的那一份。"""
     name = service.library_name(path)
     if name is not None:
-        return await read(session, project_id, name)
+        return await read(session, Shelf.of_project(project_id), name)
     return await asyncio.to_thread(service.read_room_file, project_id, room_id, path)
 
 
@@ -233,19 +265,24 @@ class Stored:
     size: int
 
 
-async def stored_file(
-    session: AsyncSession, project_id: uuid.UUID, name: str
-) -> Stored:
+async def stored_file(session: AsyncSession, shelf: Shelf, name: str) -> Stored:
     """资料库里这个名字现在那一份在哪、多大。"""
-    row = await _current_or_404(session, project_id, name)
+    row = await _current_or_404(session, shelf, name)
     return Stored(row.location, row.blob_key, row.bytes)
 
 
+async def download_url(session: AsyncSession, shelf: Shelf, name: str) -> str:
+    """一个几分钟内有效、只读得到这一份的地址（`BlobStore.download_url`）：给手上
+    没有凭据的机器去取。以 ``/`` 开头的是本后端自己的地址。"""
+    row = await _current_or_404(session, shelf, name)
+    return await blob_store.store(row.location).download_url(row.blob_key, row.bytes)
+
+
 async def stored_version(
-    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+    session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> Stored:
     """某一版在哪、多大。"""
-    row = await _version_row(session, project_id, name, version_id)
+    row = await _version_row(session, shelf, name, version_id)
     return Stored(row.location, row.blob_key, row.bytes)
 
 
@@ -256,7 +293,7 @@ async def attachment_file(
     不该为了一段整份读进内存。房间文件是磁盘上的一个文件，资料库的是存储里的一把键。"""
     name = service.library_name(path)
     if name is not None:
-        return await stored_file(session, project_id, name)
+        return await stored_file(session, Shelf.of_project(project_id), name)
     return await asyncio.to_thread(service.room_file_path, project_id, room_id, path)
 
 
@@ -297,7 +334,7 @@ async def attachments_present(
     if names:
         rows = await session.execute(
             select(LibraryFileRecord.name).where(
-                *_current_where(project_id),
+                *_current_where(Shelf.of_project(project_id)),
                 LibraryFileRecord.name.in_(list(names)),
             )
         )
@@ -329,7 +366,9 @@ async def read_attachments(
     library: list[tuple[str, str, str]] = []
     if names:
         rows = await session.execute(
-            _current(project_id).where(LibraryFileRecord.name.in_(list(names)))
+            _current(Shelf.of_project(project_id)).where(
+                LibraryFileRecord.name.in_(list(names))
+            )
         )
         for row in rows.scalars():
             library.append((names[row.name], row.location, row.blob_key))
@@ -358,7 +397,7 @@ async def read_attachment_text(
         return await asyncio.to_thread(
             service.read_room_text_file, project_id, room_id, path
         )
-    row = await _current_row(session, project_id, name)
+    row = await _current_row(session, Shelf.of_project(project_id), name)
     if row is None:
         # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
         # 地址没错，是东西不在了。
@@ -391,10 +430,10 @@ def _pdf_text(data: bytes) -> str | None:
     return text
 
 
-async def read_text(session: AsyncSession, project_id: uuid.UUID, name: str) -> dict:
+async def read_text(session: AsyncSession, shelf: Shelf, name: str) -> dict:
     """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
     只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
-    row = await _current_or_404(session, project_id, name)
+    row = await _current_or_404(session, shelf, name)
     data = await _bytes_of(row)
     payload = bytes_text_payload(data, f"library/{name}")
     if payload["binary"] and name.lower().endswith(".pdf"):
@@ -404,17 +443,15 @@ async def read_text(session: AsyncSession, project_id: uuid.UUID, name: str) -> 
     return payload
 
 
-async def stored(
-    session: AsyncSession, project_id: uuid.UUID
-) -> list[tuple[str, str, str]]:
+async def stored(session: AsyncSession, shelf: Shelf) -> list[tuple[str, str, str]]:
     """现在每一份的名字、存储和键：给要在事务结束之后才搬字节的人（项目导出）。"""
-    rows = await session.scalars(_current(project_id).order_by(LibraryFileRecord.name))
+    rows = await session.scalars(_current(shelf).order_by(LibraryFileRecord.name))
     return [(row.name, row.location, row.blob_key) for row in rows]
 
 
 async def add(
     session: AsyncSession,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     filename: str,
     data: Incoming,
     added_by: str | None,
@@ -429,10 +466,10 @@ async def add(
     measured = await _measure(data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
-        if await _taken(session, project_id, name):
+        if await _taken(session, shelf, name):
             continue
         row = _new_row(
-            project_id,
+            shelf,
             name,
             measured,
             _location_for(data),
@@ -445,7 +482,7 @@ async def add(
                 session.add(row)
         except IntegrityError:
             continue
-        await _put(row, data)
+        await _put(session, shelf, row, data)
         return name
     raise UnprocessableEntityError(say("tooManySameNameFiles", name=filename))
 
@@ -475,7 +512,7 @@ async def saved_from(session: AsyncSession, room_id: uuid.UUID) -> set[str]:
 async def replace(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     name: str,
     data: Incoming,
     by: str,
@@ -487,19 +524,19 @@ async def replace(
 
     「现在这一份」是**读出来再写回去**的一对动作（`superseded_at` 为空的那一行只有
     一行，见 `uq_library_files_current`），两个人同时替换同一份时，两边都会读到自己
-    是唯一的那一版。所以先按 project:name 取一把锁，把这个名字上的替换排成队。
+    是唯一的那一版。所以先按资料库和名字取一把锁，把这个名字上的替换排成队。
     `restore`（把旧的一版复制回来）走的也是这里，一并排上。"""
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"library-file:{project_id}:{name}"},
+        {"key": f"library-file:{shelf.key}:{name}"},
     )
-    current = await _current_or_404(session, project_id, name)
+    current = await _current_or_404(session, shelf, name)
     measured = await _measure(data)
     try:
         current.superseded_at = datetime.now(UTC)
         await session.flush()
         row = _new_row(
-            project_id, name, measured, _location_for(data), added_by=by, room_id=None
+            shelf, name, measured, _location_for(data), added_by=by, room_id=None
         )
         session.add(row)
         await session.flush()
@@ -508,18 +545,17 @@ async def replace(
         # 上「一个名字只有一份是现在这一份」。撞上就是并发冲突，不是故障：这一次没
         # 换成就直说，别把 500 摆给人看。事务到这里就作废了，由 `get_db` 回滚。
         raise ConflictError(say("libraryFileBeingReplaced", name=name)) from None
-    await _put(row, data)
+    await _put(session, shelf, row, data)
 
 
 async def _rows_under(
-    session: AsyncSession, project_id: uuid.UUID, path: str
+    session: AsyncSession, shelf: Shelf, path: str
 ) -> tuple[list[LibraryFileRecord], bool]:
     """`path` 名下的每一行（被替换下来的几版也算），以及它是不是一个文件夹。"""
     rows = list(
         await session.scalars(
             select(LibraryFileRecord).where(
-                LibraryFileRecord.project_id == project_id,
-                LibraryFileRecord.name == path,
+                shelf.holds(), LibraryFileRecord.name == path
             )
         )
     )
@@ -528,7 +564,7 @@ async def _rows_under(
     rows = list(
         await session.scalars(
             select(LibraryFileRecord).where(
-                LibraryFileRecord.project_id == project_id,
+                shelf.holds(),
                 LibraryFileRecord.name.like(_like_prefix(f"{path}/"), escape="\\"),
             )
         )
@@ -538,10 +574,10 @@ async def _rows_under(
     return rows, True
 
 
-async def remove(session: AsyncSession, *, project_id: uuid.UUID, name: str) -> None:
+async def remove(session: AsyncSession, *, shelf: Shelf, name: str) -> None:
     """扔掉一份资料，或一个文件夹和它里面的一切：现在那一份、被替换下来的几版，
     连同记录一起。"""
-    rows, _ = await _rows_under(session, project_id, name)
+    rows, _ = await _rows_under(session, shelf, name)
     await session.execute(
         delete(LibraryFileRecord).where(
             LibraryFileRecord.id.in_([row.id for row in rows])
@@ -552,25 +588,25 @@ async def remove(session: AsyncSession, *, project_id: uuid.UUID, name: str) -> 
 
 
 async def move(
-    session: AsyncSession, *, project_id: uuid.UUID, source: str, target: str
+    session: AsyncSession, *, shelf: Shelf, source: str, target: str
 ) -> dict[str, str]:
     """把一份资料或一个文件夹改名 / 挪到 `target`，返回每个旧名字变成了什么。
 
     字节不动，只改名字；被替换下来的几版跟着走。引用旧名字的消息——附件和正文里
     的 `<&library/…>`——一起改过去：消息里的那枚 chip 指的是这一份资料，它换了个
-    名字，还是它。"""
+    名字，还是它。团队的资料库没有消息引用它。"""
     if target == source:
         return {}
     if target.startswith(f"{source}/"):
         raise UnprocessableEntityError(say("libraryMoveIntoItself"))
-    rows, folder = await _rows_under(session, project_id, source)
+    rows, folder = await _rows_under(session, shelf, source)
     renamed = {
         row.name: target + row.name[len(source) :] if folder else target for row in rows
     }
     moving = frozenset(renamed)
     for row in rows:
         if row.superseded_at is None and await _taken(
-            session, project_id, renamed[row.name], ignore=moving
+            session, shelf, renamed[row.name], ignore=moving
         ):
             raise UnprocessableEntityError(
                 say("libraryNameTaken", name=renamed[row.name])
@@ -578,7 +614,8 @@ async def move(
     for row in rows:
         row.name = renamed[row.name]
     await session.flush()
-    await _follow_references(session, project_id, source, target, folder)
+    if shelf.project_id is not None:
+        await _follow_references(session, shelf.project_id, source, target, folder)
     return {old: new for old, new in renamed.items()}
 
 
@@ -620,17 +657,12 @@ async def _follow_references(
     )
 
 
-async def versions(
-    session: AsyncSession, project_id: uuid.UUID, name: str
-) -> list[dict]:
+async def versions(session: AsyncSession, shelf: Shelf, name: str) -> list[dict]:
     """一份资料的每一版，新的在前。版本号按放进来的先后从 1 数。"""
     rows = list(
         await session.scalars(
             select(LibraryFileRecord)
-            .where(
-                LibraryFileRecord.project_id == project_id,
-                LibraryFileRecord.name == name,
-            )
+            .where(shelf.holds(), LibraryFileRecord.name == name)
             .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
         )
     )
@@ -650,33 +682,72 @@ async def versions(
 
 
 async def _version_row(
-    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+    session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> LibraryFileRecord:
     row = await session.get(LibraryFileRecord, version_id)
-    if row is None or row.project_id != project_id or row.name != name:
+    if (
+        row is None
+        or (row.project_id, row.team_id) != (shelf.project_id, shelf.team_id)
+        or row.name != name
+    ):
         raise NotFoundError(say("libraryVersionNotFound"))
     return row
 
 
 async def version_bytes(
-    session: AsyncSession, project_id: uuid.UUID, name: str, version_id: uuid.UUID
+    session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> bytes:
     """某一版的字节。"""
-    return await _bytes_of(await _version_row(session, project_id, name, version_id))
+    return await _bytes_of(await _version_row(session, shelf, name, version_id))
 
 
 async def restore(
     session: AsyncSession,
     *,
-    project_id: uuid.UUID,
+    shelf: Shelf,
     name: str,
     version_id: uuid.UUID,
     by: str,
 ) -> None:
     """把旧的一版恢复成现在这一份：**复制**成新的一版，和替换走同一条路。历史只增不
     减，被恢复的那一版和它之后的几版都还在。"""
-    row = await _version_row(session, project_id, name, version_id)
+    row = await _version_row(session, shelf, name, version_id)
     if row.superseded_at is None:
         raise UnprocessableEntityError(say("libraryVersionIsCurrent"))
     data = await _bytes_of(row)
-    await replace(session, project_id=project_id, name=name, data=data, by=by)
+    await replace(session, shelf=shelf, name=name, data=data, by=by)
+
+
+class ProjectLibraries:
+    """本模块按项目说话的那一面，给 `app.domain.project.ports.LibraryFiles`：
+    项目那边只认得项目编号，资料库在这里按项目的那个书架去找。"""
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        filename: str,
+        data: bytes,
+        added_by: str | None,
+        room_id: uuid.UUID | None,
+        source_path: str | None = None,
+    ) -> str:
+        return await add(
+            session,
+            Shelf.of_project(project_id),
+            filename,
+            data,
+            added_by,
+            room_id,
+            source_path,
+        )
+
+    @staticmethod
+    async def stored(
+        session: AsyncSession, project_id: uuid.UUID
+    ) -> list[tuple[str, str, str]]:
+        return await stored(session, Shelf.of_project(project_id))
+
+    @staticmethod
+    async def read_blob(location: str, key: str) -> bytes:
+        return await read_blob(location, key)

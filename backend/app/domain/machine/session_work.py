@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import contextlib
 import errno
 import hashlib
 import json
@@ -49,6 +50,7 @@ from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
 from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
@@ -388,6 +390,7 @@ async def _start_executor(
     setup,
     sandbox,
     platform_machine,
+    on_stderr=None,
 ):
     """Bring a session's executor up on ``device_id`` and answer what it
     reports: a running one on this release, in a sandbox exactly when asked,
@@ -398,7 +401,8 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox.
+    sandbox. ``on_stderr`` hears what the install writes to stderr while it
+    runs (`install_progress`).
 
     Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
     a machine that stopped answering — its connector gone silent, its executor
@@ -461,6 +465,7 @@ async def _start_executor(
             platform_machine=platform_machine,
         ),
         timeout=lease_claim.INSTALL_MOST_S,
+        on_stderr=on_stderr,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
@@ -491,7 +496,13 @@ class ExecutorSetupFailed(RuntimeError):
     def reason(self) -> str:
         if f"[Errno {errno.ENOSPC}]" in str(self):
             return DISK_FULL
-        lines = [line.strip() for line in str(self).splitlines() if line.strip()]
+        # The download's progress lines are for the room's line
+        # (`install_progress`), not an account of why it stopped.
+        lines = [
+            line.strip()
+            for line in str(self).splitlines()
+            if line.strip() and downloaded(line.strip()) is None
+        ]
         return lines[-1] if lines else "Executor setup failed"
 
 
@@ -941,6 +952,12 @@ async def _attempt(
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
     location = row.runtime_location or {}
+    # ponytail: 本地只有一台机器，会话主机与工作电脑必然是同一台；生产护栏
+    # 「项目文件别和执行会话挤在一台机器上」在这里只能挡下整个演示（agent 的
+    # Bash/文件工具全被 403，wolfram 技能脚本跑不起来），所以 development 下放行。
+    # 上限：会话与项目工具共用一个连接器，资源不再隔离。
+    # 升级路径：注册第二台机器当工作电脑后，或部署在非 development，这条不再触发。
+    single_machine = settings.environment == "development"
     if (
         # A member's own agent may work on the machine its session runs on,
         # its owner's, when that is where its environment is: the session then
@@ -948,6 +965,7 @@ async def _attempt(
         location.get("channel") != OWNER_CHANNEL
         and ready
         and (lease or {}).get("device_id") == location.get("device_id")
+        and not single_machine
     ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     now = datetime.now(UTC)
@@ -1077,7 +1095,11 @@ async def _attempt(
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
     host = row.runtime_location["device_id"]
-    if device_id == host and row.runtime_location.get("channel") != OWNER_CHANNEL:
+    if (
+        device_id == host
+        and row.runtime_location.get("channel") != OWNER_CHANNEL
+        and not single_machine
+    ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
@@ -1247,18 +1269,28 @@ async def _install(
             work_resource=work_resource,
         )
         disk_full_mb = None
+        # On a person's own computer the room sees the runtime download
+        # (`install_progress`); a Cloud machine's getting ready is the
+        # platform's own, kept out of the conversation (`progress`).
+        shown = (
+            InstallProgress(bind, session_id=session_id, device_id=device_id)
+            if owner_device
+            else contextlib.nullcontext()
+        )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                info = await _start_executor(
-                    hub,
-                    lease,
-                    device_id=device_id,
-                    namespace=namespace,
-                    work_resource=work_resource,
-                    setup=setup,
-                    sandbox=sandbox,
-                    platform_machine=platform_machine,
-                )
+                async with shown as heard:
+                    info = await _start_executor(
+                        hub,
+                        lease,
+                        device_id=device_id,
+                        namespace=namespace,
+                        work_resource=work_resource,
+                        setup=setup,
+                        sandbox=sandbox,
+                        platform_machine=platform_machine,
+                        on_stderr=heard,
+                    )
                 target = {
                     **reservation,
                     "status": "ready",
