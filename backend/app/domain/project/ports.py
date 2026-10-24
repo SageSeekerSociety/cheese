@@ -24,6 +24,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.models import Project
+from app.domain.project.starter import Starter
 
 
 class Announce(Protocol):
@@ -312,6 +313,11 @@ class TaskTerms(Protocol):
 
     async def terms(self, task_id: int) -> AcceptedTerms:
         """这道赛题审过之后要落的条款。"""
+        ...
+
+    async def starter(self, task_id: int, into: Path) -> Starter | None:
+        """这道题现在的起始代码（#4767 第二节）：压缩包的字节写到 ``into``，答它来自
+        第几版、第一个提交怎么写。没有起始代码、题已经没了给 ``None``。"""
         ...
 
 

@@ -33,6 +33,7 @@ from app.domain.project.forge import (
 )
 from app.domain.project.forgejo_tokens import ForgejoTokens, purge_expired_tokens
 from app.domain.project.models import ForgeToken, Project
+from app.domain.project.starter import Starter
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
@@ -361,6 +362,63 @@ async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):
         assert repaired["active"]
         assert repaired["id"] != old.json()["id"]
         assert set(hook["events"]) <= set(repaired["events"])
+
+
+async def test_a_repository_with_starter_code_begins_with_that_code(
+    db_factory, monkeypatch, tmp_path
+):
+    """#4767: with starter code the repository's main is the unpacked archive as
+    one commit by the platform; without it Forgejo initialises main as before."""
+    import zipfile
+
+    url = "http://127.0.0.1:33086"
+    admin = Path(os.environ["FORGEJO_TEST_TOKEN_FILE"]).read_text().strip()
+    monkeypatch.setattr(settings, "forgejo_url", url)
+    monkeypatch.setattr(settings, "forgejo_api_url", url + "/api/v1")
+    monkeypatch.setattr(settings, "forgejo_admin_token", admin)
+    monkeypatch.setattr(settings, "forge_webhook_url", "")
+    archive = tmp_path / "starter.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("lab1/README.md", "# Lab 1\n")
+        bundle.writestr("lab1/src/main.py", "print('hi')\n")
+        bundle.writestr("__MACOSX/lab1/._README.md", "")
+    starter = Starter(archive=archive, revision=3, message="Starter code (version 3)")
+    async with db_factory() as session:
+        team = await a_team(session)
+        seeded, plain = (
+            Project(name="Starter", team_id=team),
+            Project(name="No starter", team_id=team),
+        )
+        session.add_all([seeded, plain])
+        await session.flush()
+        with_code = await provision_repository(seeded.id, session, starter=starter)
+        without = await provision_repository(plain.id, session)
+        await session.commit()
+    headers = {"Authorization": "token " + admin}
+    async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
+        tree = await client.get(
+            f"/repos/{with_code.repo}/git/trees/main", params={"recursive": "true"}
+        )
+        tree.raise_for_status()
+        assert sorted(
+            entry["path"] for entry in tree.json()["tree"] if entry["type"] == "blob"
+        ) == ["README.md", "src/main.py"]
+        # Read through git refs: the commit list answers 409 ("empty") until
+        # Forgejo has processed the push, which it does after the push returns.
+        ref = await client.get(f"/repos/{with_code.repo}/git/refs/heads/main")
+        ref.raise_for_status()
+        (head,) = ref.json()
+        commit = await client.get(
+            f"/repos/{with_code.repo}/git/commits/{head['object']['sha']}"
+        )
+        commit.raise_for_status()
+        assert commit.json()["parents"] == []
+        assert commit.json()["commit"]["message"].strip() == "Starter code (version 3)"
+        assert commit.json()["commit"]["author"]["email"] == "starter@users.invalid"
+        readme = await client.get(f"/repos/{without.repo}/contents/README.md")
+        assert readme.status_code == 200, readme.text
+    assert with_code.starter_revision == 3
+    assert without.starter_revision is None
 
 
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):

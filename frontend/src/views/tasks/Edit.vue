@@ -18,12 +18,21 @@ import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
+import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import { useTaskData } from './composables'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import {
+  addTaskFile,
+  listTaskFiles,
+  removeTaskFile,
+  removeTaskStarter,
+  replaceTaskFile,
+  setTaskStarter,
+} from '@/api/taskFiles'
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -32,6 +41,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { mentorOptions } from '@/lib/taskMentors'
@@ -67,11 +77,26 @@ const editCategories = computed(() =>
 
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
-/** 附件直接传到这道题上、从这道题上摘：改题页上的增删当场生效，不等保存。 */
-const uploads = useAttachmentUploads({
-  upload: async (file) => (await TaskBoardApi.uploadAttachment(taskId, file)).attachment.id,
-  remove: async (id) => {
-    await TaskBoardApi.removeAttachment(taskId, id)
+/** 附件直接放进这道题的资料库、在那里替换和删掉：改题页上的增删换当场生效，不等保存，
+ *  每一次都让题目记一版。认的是它在资料库里的名字。 */
+const uploads = useAttachmentUploads<string>({
+  upload: async (file) => (await addTaskFile(taskId, file)).name,
+  remove: async (name) => {
+    await removeTaskFile(taskId, name)
+  },
+  replace: async (name, file) => {
+    await replaceTaskFile(taskId, name, file)
+  },
+})
+
+/** 起始代码同样当场生效：换一份、删掉都让题目记一版，之后领题的人拿到新的那份。 */
+const starter = useStarterUpload<string>({
+  upload: async (file) => {
+    const placed = await setTaskStarter(taskId, file)
+    return { id: placed.name, name: placed.name, size: placed.size }
+  },
+  remove: async () => {
+    await removeTaskStarter(taskId)
   },
 })
 
@@ -273,8 +298,9 @@ onMounted(async () => {
   }
   void assistant.load()
   try {
-    const data = await TaskBoardApi.listAttachments(taskId)
-    uploads.reset(data.attachments.map(({ id, name, size }) => ({ id, name, size })))
+    const data = await listTaskFiles(taskId)
+    uploads.reset(data.files.map(({ name, size }) => ({ id: name, name, size })))
+    starter.reset(data.starter ? { id: data.starter.name, name: data.starter.name, size: data.starter.size } : null)
   } catch {
     // 读不出来就当没有：增删仍然走得通，只是这一页不列已有的那几份。
   }
@@ -349,13 +375,23 @@ onBeforeUnmount(() => void draft.flush())
       @ready="draft.baseline"
     >
       <template #attachments>
-        <TaskAttachmentPicker
-          :files="uploads.files.value"
-          :uploading="uploads.uploading.value"
-          :max-file-bytes="uploads.maxFileBytes.value"
-          @add="uploads.add"
-          @remove="uploads.remove"
-        />
+        <div class="te__files">
+          <TaskAttachmentPicker
+            :files="uploads.files.value"
+            :uploading="uploads.uploading.value"
+            :max-file-bytes="uploads.maxFileBytes.value"
+            replaceable
+            @add="uploads.add"
+            @remove="uploads.remove(String($event))"
+            @replace="(id, file) => uploads.replace(String(id), file)"
+          />
+          <TaskStarterPicker
+            :file="starter.file.value"
+            :uploading="starter.uploading.value"
+            @pick="starter.pick"
+            @remove="starter.remove"
+          />
+        </div>
       </template>
       <template #teaching>
         <div data-agent-field="ai_guidance">
@@ -425,6 +461,12 @@ onBeforeUnmount(() => void draft.flush())
   color: var(--danger-ink);
   font-size: 12px;
   line-height: var(--lh-12);
+}
+
+.te__files {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .te__label {

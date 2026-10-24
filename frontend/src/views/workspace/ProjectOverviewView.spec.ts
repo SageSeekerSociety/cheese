@@ -129,6 +129,26 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
+it('题目更新了：写到了第几版、改了什么，点开去看题目的材料', async () => {
+  const item: ProgressItem = {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version: 3,
+    changes: { rubric: true, files: { replaced: ['数据.csv'] } },
+  }
+  const view = mount({ progress: [item] })
+  const line = view.getByText('第 3 版：改了评分要点、替换 数据.csv')
+  await fireEvent.click(line)
+  expect(view.emitted('open-task-folder')).toEqual([[]])
+})
+
 it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
   const item: ProgressItem = {
     kind: 'accepted',
@@ -185,6 +205,15 @@ it('领题开的项目：写着这份报名自己截到哪一刻，按看的人�
 it('不是领题开的项目：不写截止', () => {
   const view = mount({ overviewText: '## 现在到哪了' })
   expect(view.queryByTestId('overview-deadline')).toBeNull()
+})
+
+it('仓库从题目的起始代码开始的：写着来自第几版；不是的不写', () => {
+  const view = mount({ overviewText: '## 赛题要求', starterRevision: 3 })
+  expect(view.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库的起始代码来自题目第 3 版')
+
+  cleanup()
+  const plain = mount({ overviewText: '## 赛题要求', starterRevision: null })
+  expect(plain.queryByTestId('overview-starter')).toBeNull()
 })
 
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {

@@ -30,7 +30,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
-from app.domain.library import service
+from app.domain.library import mount, service
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.shelf import Shelf
 from app.domain.textfile import bytes_text_payload
@@ -89,6 +89,7 @@ def _new_row(
         id=record_id,
         project_id=shelf.project_id,
         team_id=shelf.team_id,
+        task_id=shelf.task_id,
         name=name,
         bytes=size,
         sha256=sha256,
@@ -109,7 +110,10 @@ def _location_for(data: Incoming) -> str:
 
 def ceiling(shelf: Shelf, name: str) -> int:
     """这个资料库里一份文件最多多大：项目的与房间文件是同一条
-    （`service.max_bytes_for`）；团队的是附件那一条，人交给芝士的文件都放得进来。"""
+    （`service.max_bytes_for`）；团队的是附件那一条，人交给芝士的文件都放得进来；
+    题目的就是附件那一条：出题时先传成附件的材料，进来时是同一条线。"""
+    if shelf.task_id is not None:
+        return settings.attachment_max_bytes
     if shelf.team_id is not None:
         return max(settings.attachment_max_bytes, service.max_bytes_for(name))
     return service.max_bytes_for(name)
@@ -239,10 +243,12 @@ async def _taken(
 
 async def read(session: AsyncSession, shelf: Shelf, name: str) -> bytes:
     """资料库里这个名字现在那一份的字节。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     return await _bytes_of(await _current_or_404(session, shelf, name))
 
 
 async def exists(session: AsyncSession, shelf: Shelf, name: str) -> bool:
+    shelf, name = await mount.resolve(session, shelf, name)
     return await _current_row(session, shelf, name) is not None
 
 
@@ -267,6 +273,7 @@ class Stored:
 
 async def stored_file(session: AsyncSession, shelf: Shelf, name: str) -> Stored:
     """资料库里这个名字现在那一份在哪、多大。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     row = await _current_or_404(session, shelf, name)
     return Stored(row.location, row.blob_key, row.bytes)
 
@@ -274,6 +281,7 @@ async def stored_file(session: AsyncSession, shelf: Shelf, name: str) -> Stored:
 async def download_url(session: AsyncSession, shelf: Shelf, name: str) -> str:
     """一个几分钟内有效、只读得到这一份的地址（`BlobStore.download_url`）：给手上
     没有凭据的机器去取。以 ``/`` 开头的是本后端自己的地址。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     row = await _current_or_404(session, shelf, name)
     return await blob_store.store(row.location).download_url(row.blob_key, row.bytes)
 
@@ -282,6 +290,7 @@ async def stored_version(
     session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> Stored:
     """某一版在哪、多大。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     row = await _version_row(session, shelf, name, version_id)
     return Stored(row.location, row.blob_key, row.bytes)
 
@@ -310,6 +319,29 @@ def _split_attachment_paths(paths: list[str]) -> tuple[dict[str, str], list[str]
     return names, room
 
 
+async def _on_shelves(
+    session: AsyncSession, project_id: uuid.UUID, names: dict[str, str]
+) -> list[tuple[Shelf, dict[str, str]]]:
+    """一批资料库名字（名字 -> 地址）按它们实际所在的资料库分开：`题目/` 底下的在题目
+    那一边（`mount`），名字去掉前缀。"""
+    own = Shelf.of_project(project_id)
+    task_names = {n: p for n, p in names.items() if n.startswith(mount.PREFIX)}
+    task_id = await mount.task_of(session, own) if task_names else None
+    if task_id is None:
+        return [(own, names)] if names else []
+    groups: list[tuple[Shelf, dict[str, str]]] = []
+    rest = {n: p for n, p in names.items() if n not in task_names}
+    if rest:
+        groups.append((own, rest))
+    groups.append(
+        (
+            Shelf.of_task(task_id),
+            {n[len(mount.PREFIX) :]: p for n, p in task_names.items()},
+        )
+    )
+    return groups
+
+
 def _room_files_present(
     project_id: uuid.UUID, room_id: uuid.UUID, paths: list[str]
 ) -> set[str]:
@@ -331,14 +363,14 @@ async def attachments_present(
     """
     names, room = _split_attachment_paths(paths)
     present: set[str] = set()
-    if names:
+    for shelf, named in await _on_shelves(session, project_id, names):
         rows = await session.execute(
             select(LibraryFileRecord.name).where(
-                *_current_where(Shelf.of_project(project_id)),
-                LibraryFileRecord.name.in_(list(names)),
+                *_current_where(shelf),
+                LibraryFileRecord.name.in_(list(named)),
             )
         )
-        present.update(names[name] for name in rows.scalars())
+        present.update(named[name] for name in rows.scalars())
     if room:
         present.update(
             await asyncio.to_thread(_room_files_present, project_id, room_id, room)
@@ -364,17 +396,15 @@ async def read_attachments(
     线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
     names, room = _split_attachment_paths(paths)
     library: list[tuple[str, str, str]] = []
-    if names:
+    for shelf, named in await _on_shelves(session, project_id, names):
         rows = await session.execute(
-            _current(Shelf.of_project(project_id)).where(
-                LibraryFileRecord.name.in_(list(names))
-            )
+            _current(shelf).where(LibraryFileRecord.name.in_(list(named)))
         )
         for row in rows.scalars():
-            library.append((names[row.name], row.location, row.blob_key))
-        if len(library) != len(names):
-            # 和单条读一样：这个地址没错，是东西不在了。
-            raise NotFoundError(say("libraryFileNotFound"))
+            library.append((named[row.name], row.location, row.blob_key))
+    if len(library) != len(names):
+        # 和单条读一样：这个地址没错，是东西不在了。
+        raise NotFoundError(say("libraryFileNotFound"))
     if not library and not room:
         return {}
     blobs = await asyncio.gather(
@@ -397,7 +427,8 @@ async def read_attachment_text(
         return await asyncio.to_thread(
             service.read_room_text_file, project_id, room_id, path
         )
-    row = await _current_row(session, Shelf.of_project(project_id), name)
+    shelf, name = await mount.resolve(session, Shelf.of_project(project_id), name)
+    row = await _current_row(session, shelf, name)
     if row is None:
         # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
         # 地址没错，是东西不在了。
@@ -433,9 +464,11 @@ def _pdf_text(data: bytes) -> str | None:
 async def read_text(session: AsyncSession, shelf: Shelf, name: str) -> dict:
     """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
     只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
+    shown = name
+    shelf, name = await mount.resolve(session, shelf, name)
     row = await _current_or_404(session, shelf, name)
     data = await _bytes_of(row)
-    payload = bytes_text_payload(data, f"library/{name}")
+    payload = bytes_text_payload(data, f"library/{shown}")
     if payload["binary"] and name.lower().endswith(".pdf"):
         text = await asyncio.to_thread(_pdf_text, data)
         if text is not None:
@@ -463,6 +496,7 @@ async def add(
     `filename` 可以带文件夹（`合同/报价.xlsx`），编号加在最后一层上。占名字就是插
     入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。
     `source_path` 是从房间文件区里哪一份存过来的（`saved_from`）。"""
+    await mount.refuse_write(session, shelf, filename)
     measured = await _measure(data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
@@ -526,6 +560,7 @@ async def replace(
     一行，见 `uq_library_files_current`），两个人同时替换同一份时，两边都会读到自己
     是唯一的那一版。所以先按资料库和名字取一把锁，把这个名字上的替换排成队。
     `restore`（把旧的一版复制回来）走的也是这里，一并排上。"""
+    await mount.refuse_write(session, shelf, name)
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
         {"key": f"library-file:{shelf.key}:{name}"},
@@ -577,6 +612,7 @@ async def _rows_under(
 async def remove(session: AsyncSession, *, shelf: Shelf, name: str) -> None:
     """扔掉一份资料，或一个文件夹和它里面的一切：现在那一份、被替换下来的几版，
     连同记录一起。"""
+    await mount.refuse_write(session, shelf, name)
     rows, _ = await _rows_under(session, shelf, name)
     await session.execute(
         delete(LibraryFileRecord).where(
@@ -597,6 +633,7 @@ async def move(
     名字，还是它。团队的资料库没有消息引用它。"""
     if target == source:
         return {}
+    await mount.refuse_write(session, shelf, source, target)
     if target.startswith(f"{source}/"):
         raise UnprocessableEntityError(say("libraryMoveIntoItself"))
     rows, folder = await _rows_under(session, shelf, source)
@@ -659,6 +696,7 @@ async def _follow_references(
 
 async def versions(session: AsyncSession, shelf: Shelf, name: str) -> list[dict]:
     """一份资料的每一版，新的在前。版本号按放进来的先后从 1 数。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     rows = list(
         await session.scalars(
             select(LibraryFileRecord)
@@ -685,11 +723,7 @@ async def _version_row(
     session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> LibraryFileRecord:
     row = await session.get(LibraryFileRecord, version_id)
-    if (
-        row is None
-        or (row.project_id, row.team_id) != (shelf.project_id, shelf.team_id)
-        or row.name != name
-    ):
+    if row is None or not shelf.owns(row) or row.name != name:
         raise NotFoundError(say("libraryVersionNotFound"))
     return row
 
@@ -698,6 +732,7 @@ async def version_bytes(
     session: AsyncSession, shelf: Shelf, name: str, version_id: uuid.UUID
 ) -> bytes:
     """某一版的字节。"""
+    shelf, name = await mount.resolve(session, shelf, name)
     return await _bytes_of(await _version_row(session, shelf, name, version_id))
 
 
@@ -711,6 +746,7 @@ async def restore(
 ) -> None:
     """把旧的一版恢复成现在这一份：**复制**成新的一版，和替换走同一条路。历史只增不
     减，被恢复的那一版和它之后的几版都还在。"""
+    await mount.refuse_write(session, shelf, name)
     row = await _version_row(session, shelf, name, version_id)
     if row.superseded_at is None:
         raise UnprocessableEntityError(say("libraryVersionIsCurrent"))

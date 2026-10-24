@@ -20,6 +20,7 @@
   "libraryNotARevision": "不是一个修订",
   "libraryPathRelative": "path 必须是资料库里的相对路径",
   "libraryPrefixReserved": "{prefix}/ 留给资料库，频道文件不能写在这里",
+  "libraryTaskFolderReadOnly": "{folder}/ 里是题目的材料，只能读，不能放进、替换、改名或删除",
   "libraryTeamMembersOnly": "只有团队成员可以查看这个资料库",
   "libraryUploadTooLarge": "文件太大（上限 10 MB）",
   "libraryVersionIsCurrent": "这一版已经是现在这一份",

@@ -29,6 +29,7 @@ import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { revisionSummary } from '@/lib/taskRevision'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
@@ -48,6 +49,8 @@ const props = defineProps<{
   /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
    *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
   challengeDeadline?: ChallengeDeadline | null
+  /** 代码仓库的第一个提交是题目第几版的起始代码；没有起始代码、或读不到，是 null。 */
+  starterRevision?: number | null
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -83,6 +86,8 @@ const emit = defineEmits<{
   'open-artifact': [artifactId: string]
   'all-tasks': []
   'retry-progress': []
+  /** 看题目的材料：项目资料库的 `题目/`。 */
+  'open-task-folder': []
 }>()
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
@@ -136,10 +141,13 @@ const progressDays = computed(() => {
 function progressTitle(item: ProgressItem): string {
   if (item.kind === 'version')
     return t('work.overview.versionOf', { name: item.artifactName, version: item.version ?? 0 })
+  if (item.kind === 'revised')
+    return t('work.overview.revisedOf', { version: item.version ?? 0, changes: revisionSummary(item.changes) })
   return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
+  else if (item.kind === 'revised') emit('open-task-folder')
   else if (item.taskId && item.roomId) emit('open-task', { taskId: item.taskId, roomId: item.roomId })
 }
 
@@ -202,6 +210,9 @@ function stateOf(task: RoomTask): TaskState {
             </button>
           </div>
           <p v-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">{{ deadlineText }}</p>
+          <p v-if="starterRevision" class="ov-deadline t-body" data-testid="overview-starter">
+            {{ t('work.overview.starterFrom', { n: starterRevision }) }}
+          </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />

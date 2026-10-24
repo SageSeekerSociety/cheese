@@ -24,6 +24,7 @@ import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
+import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import PublishTaskView from './PublishTaskView.vue'
@@ -137,6 +138,14 @@ const teachingOwn = ref(false)
 const uploads = useAttachmentUploads({
   upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
 })
+/** 起始代码同理：先传成附件，发布时服务端查它能不能解开、拷进题目资料库。 */
+const starter = useStarterUpload<number>({
+  upload: async (file) => ({
+    id: (await AttachmentsApi.upload({ type: 'file', file })).id,
+    name: file.name,
+    size: file.size,
+  }),
+})
 
 function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
@@ -144,12 +153,15 @@ function fill(fields: TaskDraftFields) {
   teachingOwn.value = !!fields.teachingOwn
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
+  starter.reset(fields.starterFile ?? null)
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
     teachingOwn: teachingOwn.value,
     attachmentIds: files.map((f) => f.id),
     attachmentFiles: files,
+    starterAttachmentId: fields.starterFile?.id ?? null,
+    starterFile: fields.starterFile ?? null,
   })
   formKey.value++
 }
@@ -221,6 +233,15 @@ watch(
   { deep: true }
 )
 
+watch(
+  () => starter.file.value,
+  (file) =>
+    draft.changed({
+      starterAttachmentId: file?.id ?? null,
+      starterFile: file ? { id: file.id, name: file.name, size: file.size } : null,
+    })
+)
+
 // --- 芝士 --------------------------------------------------------------------------
 
 const view = ref<InstanceType<typeof PublishTaskView> | null>(null)
@@ -245,6 +266,11 @@ function pageApply(fields: TaskDraftFields): TaskDraftFields {
     uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
     shown.attachmentFiles = files
     shown.attachmentIds = files.map((f) => f.id)
+  }
+  if ('starterFile' in fields) {
+    starter.reset(fields.starterFile ?? null)
+    shown.starterFile = fields.starterFile ?? null
+    shown.starterAttachmentId = fields.starterFile?.id ?? null
   }
   return shown
 }
@@ -371,7 +397,7 @@ async function removeDraft(id: number) {
 /** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
 async function publishAll() {
   if (publishingAll.value || publishing.value) return
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -440,7 +466,7 @@ const mentorChoices = computed(() => {
 async function publish(form: TaskFormSubmitData) {
   if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -457,6 +483,8 @@ async function publish(form: TaskFormSubmitData) {
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
         attachmentIds: uploads.ids.value,
+        starterAttachmentId: starter.file.value?.id ?? null,
+        starterFile: starter.file.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
@@ -529,6 +557,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
     :max-file-bytes="uploads.maxFileBytes.value"
+    :starter="starter.file.value"
+    :starter-uploading="starter.uploading.value"
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
@@ -550,6 +580,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
+    @pick-starter="starter.pick"
+    @remove-starter="starter.remove"
     @submit="publish"
     @change="onFormChange"
     @form-ready="onFormReady"

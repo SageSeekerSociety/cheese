@@ -9,8 +9,8 @@ import type {
 } from './tasks'
 
 /** 草稿里存的那张表单，和 `POST /tasks` 收的形状一样；`descriptionMarkdown`、
- *  `teachingOwn` 和 `attachmentFiles` 只属于页面（芝士读写详情用 Markdown；「这道题
- *  单独写 AI 队友辅导」那一勾；附件列表上的名字）。 */
+ *  `teachingOwn`、`attachmentFiles` 和 `starterFile` 只属于页面（芝士读写详情用
+ *  Markdown；「这道题单独写 AI 队友辅导」那一勾；附件和起始代码一栏上的名字）。 */
 export interface TaskDraftFields {
   name?: string
   description?: string
@@ -36,6 +36,10 @@ export interface TaskDraftFields {
   attachmentIds?: number[]
   /** 附件的名字和大小，页面列附件用；发布时不带。 */
   attachmentFiles?: { id: number; name: string; size: number }[]
+  /** 起始代码：先传成附件的一份 .zip 的 id；null 是没有。 */
+  starterAttachmentId?: number | null
+  /** 起始代码的名字和大小，页面列它用；发布时不带。 */
+  starterFile?: { id: number; name: string; size: number } | null
   teaching?: SpaceTeaching
   teachingOwn?: boolean
 }
@@ -89,6 +93,8 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'rubricPublic',
   'attachmentIds',
   'attachmentFiles',
+  'starterAttachmentId',
+  'starterFile',
   'teaching',
   'teachingOwn',
 ]

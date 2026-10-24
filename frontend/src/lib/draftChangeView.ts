@@ -36,6 +36,7 @@ const LABEL_KEYS: Record<string, string> = {
   mentors: 'tasks.form.mentor.label',
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
+  starter: 'tasks.starterPicker.title',
   ai_guidance: 'spaces.detail.publishTask.teaching.title',
   ai_mode: 'spaces.teaching.fields.mode',
 }
@@ -77,6 +78,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
             .map((id) => terms.domainGroups?.find((g) => g.id === id)?.name ?? String(id))
             .join('、') || t('tasks.form.more.accessDomains')
         : t('tasks.form.more.accessAll')
+    case 'starter':
+      return (value as { name: string }).name
     case 'attachments':
       return (value as { name: string }[]).map((f) => f.name).join('、') || t('tasks.assistant.changes.none')
     case 'ai_guidance': {
@@ -151,6 +154,7 @@ function rowValue(key: string, edit: AssistantEdit) {
     return { after: on ? pick('accessDomainGroupIds')?.after ?? [] : false }
   }
   if (key === 'attachments') return { after: pick('attachmentFiles')?.after ?? [] }
+  if (key === 'starter') return { after: pick('starterFile')?.after ?? null }
   if (key === 'ai_guidance') {
     const own = pick('teachingOwn')?.after ?? true
     return { after: own ? pick('teaching')?.after ?? {} : {} }
