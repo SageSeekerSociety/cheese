@@ -321,8 +321,9 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelMarkdown.s2.note')
         },
         // 一份有人评过的文件：那两处画着标记，画重一点的是正在看的那一条。
+        // 标记不是文字（是巢在那几个字外面的 `<mark>`），所以这一格看的是形状，不是某一句话。
         props: { source: MARKDOWN_SAMPLE, anchors: MARKDOWN_ANCHORS, activeId: 'c2' },
-        expect: '评过的那几处标了出来',
+        expectSelector: 'mark.file-comment-mark.is-active[data-file-comment="c2"]',
       },
     ],
   },
