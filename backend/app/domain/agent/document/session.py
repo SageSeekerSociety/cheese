@@ -78,13 +78,18 @@ def session_for(
     where: str,
 ) -> tuple[SessionRef, SessionSpec, Access]:
     """Conversation ``key``'s session, on the agent's model, with a credential
-    for that conversation; its tools act on the document."""
-    env = {
-        "CHEESE_PROJECT": str(asked.project_id),
-        "CHEESE_DOCUMENT": str(asked.document_id),
-    }
+    for that conversation; its tools act on the document or the room file.
+
+    A file's question names its room in ``CHEESE_TOPIC``: that is what the
+    tools reading a room's file — `cheese_attachment_read` — address it by
+    (`document` names the document instead, and a file's question has none)."""
+    env = {"CHEESE_PROJECT": str(asked.project_id)}
+    if asked.document_id is not None:
+        env["CHEESE_DOCUMENT"] = str(asked.document_id)
     if asked.task_id is not None:
         env["CHEESE_TOPIC"] = str(asked.task_id)
+    elif asked.room_id is not None:
+        env["CHEESE_TOPIC"] = str(asked.room_id)
     spec = SessionSpec(
         system_prompt=system_prompt(
             bound.agent_name,
@@ -105,10 +110,10 @@ def session_for(
     access = Access(
         mint_scoped_token(
             project_id=str(asked.project_id),
-            topic_id=str(asked.task_id) if asked.task_id is not None else None,
+            topic_id=str(asked.task_id or asked.room_id or "") or None,
             agent_handle=bound.agent_handle,
             resource_id=str(key),
-            document_id=str(asked.document_id),
+            document_id=str(asked.document_id) if asked.document_id else None,
             ttl_s=TOKEN_TTL_S,
         ),
         around.machine,

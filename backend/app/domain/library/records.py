@@ -430,6 +430,23 @@ def _pdf_text(data: bytes) -> str | None:
     return text
 
 
+async def room_file_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
+    """这个房间的一份文件读成文本，给芝士读：文本文件照原样，PDF 取它的文字层；别的
+    二进制文件只回大小和版本。
+
+    和 `read_text`（资料库那一份）同一把尺子，只是落在房间的目录上：交付出来的报告
+    多半是 PDF，而一份 PDF 读不出文字时，指着「第 3 页这里」问它的人就白问了。"""
+    payload = await asyncio.to_thread(
+        service.read_room_text_file, project_id, room_id, path
+    )
+    if payload["binary"] and path.lower().endswith(".pdf"):
+        raw = await asyncio.to_thread(service.read_room_file, project_id, room_id, path)
+        text = await asyncio.to_thread(_pdf_text, raw)
+        if text is not None:
+            payload = {**payload, "binary": False, "content": text}
+    return payload
+
+
 async def read_text(session: AsyncSession, shelf: Shelf, name: str) -> dict:
     """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
     只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
