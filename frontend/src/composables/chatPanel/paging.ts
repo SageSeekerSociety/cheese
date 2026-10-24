@@ -40,7 +40,7 @@ export function usePanelPaging(deps: {
   unseen: Ref<string[]>
   errorMsg: Ref<string | null>
   /** 落库的那条读回来了：发件箱据此收尾。 */
-  settleOutbox: (block: Block) => boolean
+  settleOutbox: (block: Block) => unknown
   /** 连线那边（usePanelSocket）：对账要把连接摆回正轨。 */
   connectSocket: (topicId: string) => void
   closeSocket: () => void

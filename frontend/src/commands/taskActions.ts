@@ -4,8 +4,10 @@
 // 一件能做的事，两处同时有。各处的差别只有「露出哪几件」——`taskActions` 是全部，
 // `taskRowActions` 是侧栏那一份（只留扫列表时敢点的两件）。
 //
-// 权限也在这里判：改名归参加这件活的人（负责人或协作者，和后端 `topics_title.py` 同
-// 一条），转交、关闭、重新打开只归负责人。
+// 权限也在这里判，和后端同一条：改名、关闭归参加这件活的人（负责人或协作者，
+// `topics_title.py`、`topics_tasks.conclude_task`），转交只归负责人；重新打开归角色有
+// 「新建任务和审阅」的人（`Permission.tasks`，`topics_tasks.reopen_task`）——关闭会作废
+// 卡、关掉 PR，重开不还原这些；重开能再关回去，房间里也写着是谁重开的，所以放得宽。
 import type { MenuCommand } from '.'
 
 import { t } from '@/i18n'
@@ -33,6 +35,8 @@ export interface TaskViewer {
   me: string
   /** 这件活里还有别人可以接（负责人不能转给自己）。 */
   canHandOver: boolean
+  /** 我的角色有「新建任务和审阅」（项目的 `my_permissions` 里有 `tasks`）：关了的任务我能重新打开。 */
+  worksTasks?: boolean
   /** 复制这件任务的链接。没有 router 的宿主（单测、组件预览）给 null，那一件就不画：
    *  算链接要 router，而这一份不许自己去读路由（组件那一层不认路由）。 */
   copyLink?: (() => void) | null
@@ -59,19 +63,20 @@ export function taskActions(task: TaskActionTask, on: TaskActionHandlers, viewer
       icon: 'mdi-link-variant',
       run: viewer.copyLink,
     })
-  if (task.owner_handle !== viewer.me) return actions
-  if (task.status === 'open') {
-    if (viewer.canHandOver)
-      actions.push({
-        id: 'task.handOver',
-        title: t('work.task.handOver'),
-        icon: 'mdi-account-switch-outline',
-        run: on.handOver,
-      })
-    actions.push({ id: 'task.close', title: t('work.task.close'), icon: 'mdi-check-circle-outline', run: on.close })
+  if (task.status !== 'open') {
+    if (viewer.worksTasks)
+      actions.push({ id: 'task.reopen', title: t('work.task.reopen'), icon: 'mdi-undo-variant', run: on.reopen })
     return actions
   }
-  actions.push({ id: 'task.reopen', title: t('work.task.reopen'), icon: 'mdi-undo-variant', run: on.reopen })
+  if (task.owner_handle === viewer.me && viewer.canHandOver)
+    actions.push({
+      id: 'task.handOver',
+      title: t('work.task.handOver'),
+      icon: 'mdi-account-switch-outline',
+      run: on.handOver,
+    })
+  if (takesPartInTask(task, viewer.me))
+    actions.push({ id: 'task.close', title: t('work.task.close'), icon: 'mdi-check-circle-outline', run: on.close })
   return actions
 }
 

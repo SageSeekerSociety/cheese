@@ -194,7 +194,9 @@ async def send_chat_message(
         # The writer opens its own session; what this request already read of
         # the project goes with the message instead of being read there again.
         handoff=HumanHandoff(
-            project=await load_project(db, place.project_id), roster=members
+            project=await load_project(db, place.project_id),
+            roster=members,
+            place=place,
         ),
     )
     stored = await BlockRepository(db).get(anchor_id)
