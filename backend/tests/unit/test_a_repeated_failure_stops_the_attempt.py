@@ -34,8 +34,11 @@ def test_it_is_there_for_a_room_that_has_nothing_else_in_its_prompt():
 
 def test_the_rule_keeps_the_attempts_that_are_still_worth_making():
     """「换了做法再试」和「间歇性的失败」要留在句子里。删掉它们，这条就退化成
-    负责人否掉的「别重试」——而那会把正常的尝试一起禁掉。"""
-    text = REPEATED_FAILURE
+    负责人否掉的「别重试」——而那会把正常的尝试一起禁掉。
+
+    读的是组装出来的那段字，不是常量：这条规矩要到得了 agent 手里才成立，而只断言
+    常量会让「定义了却没接进提示词」照绿。"""
+    text = _assembled()
     assert "换了做法" in text
     assert "换了依赖" in text
     assert "间歇" in text
@@ -44,13 +47,15 @@ def test_the_rule_keeps_the_attempts_that_are_still_worth_making():
 def test_the_rule_names_what_stopping_looks_like():
     """停下不是什么都不做，是两个具体的出口之一：换个做法，或者把东西交出去、
     说明哪一步没验。只写「该停了」的话，它读到的只有「别做了」。"""
-    text = REPEATED_FAILURE
-    assert "换" in text and "交出去" in text
+    text = _assembled()
+    assert "交出去" in text
     assert "没验" in text
 
 
 def test_the_rule_keeps_the_failure_from_swallowing_the_delivery():
     """尝试不能挡住交付：卡在哪、打算怎么办，要先说出去。这一条和第一条平台规矩
-    连着——房间里看不见一个闷头重试的会话，和它已经死了分不出来。"""
-    text = REPEATED_FAILURE
-    assert "说出来" in text
+    连着——房间里看不见一个闷头重试的会话，和它已经死了分不出来。
+
+    断的是这句独有的措辞：`说出来` 在提示词里别处也有一处，拿它断的话，这条规矩
+    整段删掉测试照样绿。"""
+    assert "别闷头试" in _assembled()
