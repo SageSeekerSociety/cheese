@@ -400,7 +400,10 @@ async def test_a_credential_renewed_mid_answer_is_what_the_next_call_acts_with(
     _hub, sessions = host
     spoke = threading.Event()
     fake = platform(
-        [{"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}}, {"text": "好。"}],
+        [
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "好。"},
+        ],
         rest_held_until=spoke,
     )
     launch = _launch(7)
