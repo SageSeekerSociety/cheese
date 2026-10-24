@@ -59,7 +59,17 @@ function comment(event: MouseEvent) {
       />
       <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
            没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
-      <BaseButton v-if="canComment" kind="secondary" size="sm" :disabled="!note.trim() || busy" @click="comment">
+      <!-- 栏上的字是「评论」，但同一条面板上还有一颗开评论栏的「评论」：无障碍名说清
+           这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
+      <BaseButton
+        v-if="canComment"
+        kind="secondary"
+        size="sm"
+        :aria-label="t('work.room.comments.commentHere')"
+        :title="t('work.room.comments.commentHere')"
+        :disabled="!note.trim() || busy"
+        @click="comment"
+      >
         {{ t('work.room.comments.comment') }}
       </BaseButton>
       <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
@@ -136,7 +146,9 @@ function comment(event: MouseEvent) {
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--danger);
+  /* 文字用 ink 那一档：`--danger` 是标记（点、边框、图标）的颜色，压在浅底上做正文
+     对比度不够（`.claude/rules/frontend.md` 里那条）。 */
+  color: var(--danger-ink);
 }
 @container (max-width: 440px) {
   .locator {

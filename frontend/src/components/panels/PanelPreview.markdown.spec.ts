@@ -167,6 +167,14 @@ it('选中一段之后「评论」这条出口把它交给评论，而不是发�
   expect(ui.emitted().locate ?? []).toHaveLength(0)
   // 这一处的原文跟着进去，评论才落在选中的那几个字上。
   expect(posted[0].quote).toContain('重试 3 次')
+  // 锚点也一起进去，而且是带这一版文件身份的那个：评论栏靠 `anchor.version` 判这一串
+  // 评论「还在原处」还是「原文已改动」。丢了它，这条评论就再也说不清挂在哪一版上。
+  expect(posted[0].anchor).toMatchObject({
+    kind: 'text-range',
+    path: 'output/说明.md',
+    version: 'v1',
+    text: '重试 3 次',
+  })
 })
 
 it('评论还没回来时再点一次，不会挂出第二条一样的评论', async () => {
@@ -202,6 +210,32 @@ it('评论还没回来时再点一次，不会挂出第二条一样的评论', a
   await fireEvent.click(commentBtn)
   expect(posted).toHaveLength(1)
   release()
+})
+
+it('资料库原件挂不了评论：条上不露「评论」那一条出口', async () => {
+  // `comments.target` 对 `library/` 和 `uploads/` 是 null（那不是这个房间的文件），
+  // 接线要把这件事传到条上。接错了读者会看到「评论」，按下去评论那一包悄悄返回、
+  // 一条线程都不挂，还不报错。
+  const bundle = {
+    target: computed(() => null),
+    open: ref(false),
+    toggle: () => {},
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async () => {},
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  const bar = ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!
+  const labels = [...bar.querySelectorAll('button')].map((b) => b.textContent?.trim())
+  expect(labels).toContain('发送')
+  expect(labels).not.toContain('评论')
 })
 
 it('评论挂不上去时，条上说出来，不是点了没反应', async () => {
@@ -240,6 +274,42 @@ it('评论挂不上去时，条上说出来，不是点了没反应', async () =
   expect(alert.textContent).toContain('评论失败')
   // 指认和那句话都还在：读者能就地再试，不用重新选一次、重打一遍。
   expect((ui.getByPlaceholderText('就这一处说点什么') as HTMLInputElement).value).toBe('这里数字不对')
+})
+
+it('换了另一处指认，上一次那句「评论失败」不跟着过来', async () => {
+  // 读者发失败之后，多半会去选另一段再来一次。上一处那句话说的是上一处，留着会让人
+  // 以为新指的这处也失败了；而撤掉指认的路不止一条（条上的取消、Escape、换文件），
+  // 所以清它挂在「指认变了」这一件事上，而不是挂在某一个按钮上。
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async () => {
+      throw new Error('评论失败')
+    },
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  const input = ui.getByPlaceholderText('就这一处说点什么')
+  await fireEvent.update(input, '这里数字不对')
+  const bar = input.closest('.locator')!
+  const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
+  await fireEvent.click(commentBtn)
+  await waitFor(() => expect(bar.querySelector('[role="alert"]')).toBeTruthy())
+
+  // 换一处：选中另一段正文。
+  await fireEvent.keyDown(input, { key: 'Escape' })
+  await selectPassage(ui)
+  expect(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('[role="alert"]')).toBeNull()
 })
 
 it('选中一段发出去时带的是带文件身份的 text-range 引用', async () => {
