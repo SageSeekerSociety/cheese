@@ -1447,11 +1447,11 @@ TASK_WRITE_DESCRIPTION = (
     "rubric 评分要点；rubric_public 评分要点是否对学生可见；form 个人或团队；"
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
     "人数上限（0 是不限）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
-    "days_to_submit 领取后几天内提交；category 分类名称；tags 标签名称；"
+    "days_to_submit 限时几天，从开始做那天算起；category 分类名称；tags 标签名称；"
     "real_name 是否要求实名；registration_start 报名开始时间，格式同 deadline；"
-    "team_locking 队伍成员在报名通过后能否变更；mentors 导师，把他们加入每个领取者的"
-    "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人领取，"
-    "空列表是空间全部成员都能领；attachments 题目附件，写用户交给你的文件 id，"
+    "team_locking 队伍成员在申请通过后能否变更；mentors 导师，把他们加入每个参与者的"
+    "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人做这道题，"
+    "空列表是空间全部成员都能做；attachments 题目附件，写用户交给你的文件 id，"
     "新题目整组替换，已发布的题目保存时追加上去；"
     "ai_mode AI 队友怎么帮学生（引导为主、讲解与示例、先明确需求再实现、不加限制，"
     "或沿用空间设置）；ai_guidance 这道题的 AI 队友补充要求，和空间的要求同时生效，"
@@ -1583,7 +1583,7 @@ DELEGATED_TOOLS = ToolTable(
             {
                 "list": _verb(
                     "等用户处理的事，和用户「待办」页上的一样：待用户审阅的改动、要用户回答的问题、"
-                    "要用户决定的提醒、邀请和申请、出的题目上待批准的领取和待评审的提交。每件写"
+                    "要用户决定的提醒、邀请和申请、出的题目上待通过的申请和待评审的提交。每件写"
                     "明是什么、在哪、什么时候，以及读它或答复它用的编号。最近的在前。",
                     {"project": _text("只看这个项目的（项目短名）；省略看全部")},
                 ),

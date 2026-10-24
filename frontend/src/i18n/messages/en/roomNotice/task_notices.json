@@ -1,6 +1,6 @@
 {
-  "spaceTaskClaimApproved": "Your claim on “{task}” was approved",
-  "spaceTaskClaimRejected": "Your claim on “{task}” was not approved",
+  "spaceTaskClaimApproved": "Your application to “{task}” was approved",
+  "spaceTaskClaimRejected": "Your application to “{task}” was not approved",
   "spaceTaskDeadlineMoved": "The submission deadline for “{task}” changed",
   "spaceTaskDueInDays": "“{task}” is due in 3 days and nothing is submitted yet",
   "spaceTaskDueTomorrow": "“{task}” is due within 24 hours and nothing is submitted yet",

@@ -91,7 +91,10 @@ export interface Task {
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
   participants: {
+    /** 没删的申请份数，等批准的和被拒的都算；名额满没满按它判。 */
     total: number
+    /** 申请通过的份数：页面上「参与人数」写的是它。 */
+    approved: number
     examples: TaskParticipantSummary[]
   }
   submittable: boolean

@@ -278,7 +278,7 @@ export const TASK_DEMO: Task = {
   editable: true,
   description: '## 题目说明\n\n实现一个**优先级调度器**，跑通给定的三组样例。',
   submissionSchema: [{ prompt: '代码仓库地址', type: 'TEXT' }],
-  participants: { total: 5, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
+  participants: { total: 5, approved: 4, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
   submittable: true,
   createdAt: NOW - 20 * DAY,
   updatedAt: NOW - 3 * DAY,

@@ -12,7 +12,7 @@ function task(overrides: Partial<Task> = {}) {
     deadline: null,
     registrationStartAt: undefined,
     participantLimit: 0,
-    participants: { total: 0, examples: [] },
+    participants: { total: 0, approved: 0, examples: [] },
     ...overrides,
   } as Task
 }
@@ -25,14 +25,14 @@ describe('题目此刻的状态', () => {
     [{ deadline: 500 }, 'closed'],
     [{ deadline: 2000 }, 'open'],
     [{ registrationStartAt: 2000 }, 'notStarted'],
-    [{ participantLimit: 3, participants: { total: 3, examples: [] } }, 'full'],
-    [{ participantLimit: 3, participants: { total: 2, examples: [] } }, 'open'],
+    [{ participantLimit: 3, participants: { total: 3, approved: 3, examples: [] } }, 'full'],
+    [{ participantLimit: 3, participants: { total: 2, approved: 2, examples: [] } }, 'open'],
   ])('%o → %s', (overrides, key) => {
     expect(taskState(task(overrides), NOW).key).toBe(key)
   })
 
   it('人数上限 0 是不限，不是满员', () => {
-    expect(taskState(task({ participantLimit: 0, participants: { total: 50, examples: [] } }), NOW).key).toBe('open')
+    expect(taskState(task({ participantLimit: 0, participants: { total: 50, approved: 50, examples: [] } }), NOW).key).toBe('open')
   })
 })
 

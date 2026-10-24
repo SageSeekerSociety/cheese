@@ -1,9 +1,9 @@
 {
   "claim": {
-    "claim": "领取这道题",
-    "notApproved": "审核通过后才能领取",
-    "pending": "领取申请待批准",
-    "rejected": "领取申请被拒绝"
+    "claim": "申请做这道题",
+    "notApproved": "审核通过后才能申请",
+    "pending": "已申请，等待通过",
+    "rejected": "申请未通过"
   },
   "dateFormat": "M月D日",
   "delete": "删除",
@@ -28,6 +28,6 @@
     "data": "数据",
     "label": "题目页签",
     "mine": "我的提交",
-    "roster": "领取者"
+    "roster": "参与者"
   }
 }

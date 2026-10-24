@@ -1,6 +1,6 @@
 {
-  "claimFailed": "Couldn't claim the challenge",
-  "joined": "Registration submitted — your project is ready",
+  "claimFailed": "Couldn't apply to this task",
+  "joined": "Application sent — your project is ready",
   "leaveConfirm": "Leave this challenge?",
   "leaveConfirmTitle": "Confirm withdrawal",
   "leaveFailed": "Couldn't leave the challenge",
@@ -11,6 +11,6 @@
   "noTeamJoined": "You haven't joined this challenge on behalf of a team",
   "signInFirst": "Sign in first",
   "submitInfoFailed": "Couldn't submit your details",
-  "teamClaimFailed": "Couldn't claim the challenge for your team",
+  "teamClaimFailed": "Couldn't apply for your team",
   "teamLeft": "Your team left the challenge"
 }

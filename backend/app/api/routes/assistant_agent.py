@@ -198,7 +198,7 @@ def _teaching_line(item: TaskAsk, tz: str | None) -> str:
     waiting = "，".join(
         part
         for part in (
-            f"{item.claims} 份领取待批准" if item.claims else "",
+            f"{item.claims} 份申请待通过" if item.claims else "",
             f"{item.reviews} 份提交待评审" if item.reviews else "",
         )
         if part
