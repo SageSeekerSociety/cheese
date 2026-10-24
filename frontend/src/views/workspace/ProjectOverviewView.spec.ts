@@ -149,6 +149,24 @@ it('题目更新了：写到了第几版、改了什么，点开去看题目的�
   expect(view.emitted('open-task-folder')).toEqual([[]])
 })
 
+it('题目的阶段改了：这一版写明改了阶段', () => {
+  const item: ProgressItem = {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version: 2,
+    changes: { stages: true },
+  }
+  const view = mount({ progress: [item] })
+  expect(view.getByText('第 2 版：改了阶段')).toBeTruthy()
+})
+
 it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
   const item: ProgressItem = {
     kind: 'accepted',

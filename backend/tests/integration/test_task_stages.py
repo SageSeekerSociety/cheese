@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 
+from app.domain.task import package
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import TaskMembership
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
@@ -811,3 +812,45 @@ def test_the_edit_page_cannot_save_away_every_submission_item(api_client, board)
     saved = api_client.post(f"/task-drafts/{draft_id}/publish", headers=teacher)
     assert saved.status_code == 400, saved.text
     assert len(_read(api_client, board, task_id)["submissionSchema"]) == 3
+
+
+def test_a_stage_edit_is_a_new_version_of_the_task(api_client, board):
+    """Changing a stage changes what a taker is asked for: the 题目 records a new
+    version that says its stages changed, and the brief shows the new stage."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    student = _headers(board["student"])
+    resp = api_client.post(
+        "/projects",
+        json={"name": "staged project", "external_task_id": task_id},
+        headers=student,
+    )
+    assert resp.status_code == 200, resp.text
+    project_id = resp.json()["data"]["id"]
+
+    first, second = _read(api_client, board, task_id)["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [first, {**second, "name": "编码实现", "dueAt": _ms(7)}]},
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+
+    progress = api_client.get(f"/projects/{project_id}/progress", headers=student)
+    assert progress.status_code == 200, progress.text
+    revised = [
+        (item["version"], item["changes"])
+        for item in progress.json()["data"]["data"]
+        if item["kind"] == "revised"
+    ]
+    assert revised == [(2, {"stages": True})]
+    brief = api_client.get(
+        f"/projects/{project_id}/library/text",
+        params={"path": f"题目/{package.BRIEF}"},
+        headers=student,
+    )
+    assert brief.status_code == 200, brief.text
+    content = brief.json()["data"]["content"]
+    assert "第 2 版" in content
+    assert "## 阶段" in content
+    assert "编码实现" in content
