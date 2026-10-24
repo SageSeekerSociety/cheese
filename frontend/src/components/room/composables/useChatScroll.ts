@@ -146,7 +146,16 @@ export function useChatScroll(
   // in the element that holds both; without one, the parent is still the best guess.
   useMutationObserver(
     () => [contentRef.value, options.column?.() ?? scrollRef.value?.parentElement],
-    () => (rewrittenAt = performance.now()),
+    (mutations) => {
+      if (
+        mutations.some((m) => {
+          const el = m.target instanceof Element ? m.target : m.target.parentElement
+          return !el?.closest('.composer-editor')
+        })
+      ) {
+        rewrittenAt = performance.now()
+      }
+    },
     { childList: true, subtree: true, characterData: true }
   )
   function layoutMoved(now: number): boolean {

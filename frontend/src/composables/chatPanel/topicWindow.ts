@@ -63,7 +63,7 @@ export function usePanelTopicWindow(deps: {
   retryLater: (topicId: string) => void
   /** 发件箱（usePanelOutgoing）。 */
   outbox: Ref<Outgoing[]>
-  settleOutbox: (block: Block) => boolean
+  settleOutbox: (block: Block) => unknown
   flushOutbox: () => void
   pauseOutbox: () => void
   /** 下面这几块这时还没建出来（它们反过来依赖这一窗），用取值函数晚一步拿。 */

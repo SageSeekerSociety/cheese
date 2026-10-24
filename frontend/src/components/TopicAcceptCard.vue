@@ -122,6 +122,13 @@ watch([loaded, phase], () => {
 const rejecting = () => !!pendingCard.value && showRejectInput.value
 watch(rejecting, (on) => emit('rejecting', on), { immediate: true })
 
+// 横条上真的画出了「退回 / 采纳」没有：导览的「采纳」那一站等的是这一刻，不是卡一出
+// 现就算到。卡刚递来、合并态还在「状态更新中」的那一拍，`decisionOpen` 还是假，横条
+// 上只有状态词，人照着浮窗找那两颗按钮会找不到（#3519 的这一处，它其余部分已随引导
+// 重写而过时）。判断和横条画按钮读同一条：`!gateCard && decisionOpen`；手机上这一条
+// 只放「审阅」（决定在「改动」页底部），那也不算。
+const decideShown = computed(() => !gateCard.value && decisionOpen.value && !props.reviewButton)
+
 function cancelReject() {
   showRejectInput.value = false
 }
@@ -133,7 +140,8 @@ defineExpose({ reload: card.reload })
   <!-- 卡出现 / 收走是房间里真发生的一件事，要看得出是这里多了一块（折叠）。
        打开房间时读到的那一张本来就在，不演：`animate` 只在第一次读完之后才打开。 -->
   <Transition name="accept-fold" :css="animate">
-    <div v-if="hasBox" v-guide-anchor="'accept-card'" class="accept-fold">
+    <!-- The tour's accept stop rings this only once 退回 / 采纳 are on the bar. -->
+    <div v-if="hasBox" v-guide-anchor="decideShown ? 'accept-card' : ''" class="accept-fold">
       <div class="accept-fold__inner">
         <div class="accept-dock">
           <!-- 历史卡（闸门那两张、交付中那张）点横条才在它上面展开当年那张卡。 -->
@@ -176,7 +184,7 @@ defineExpose({ reload: card.reload })
             :icon="bar.icon"
             :color="bar.color"
             :column="gateCard ? null : barColumn"
-            :decide="!gateCard && decisionOpen"
+            :decide="decideShown"
             :accept-label="acceptLabel"
             :blocked-title="acceptBlockedTitle"
             :busy="acceptBusy"

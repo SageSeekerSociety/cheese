@@ -91,6 +91,7 @@ CALLS = {
         f"/topics/{TOPIC}/teammate-tasks",
     ),
     "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
+    "cheese_reopen_task": ({}, "POST", f"/topics/{TOPIC}/reopen"),
     "cheese_task_state": (
         {"state": "waiting", "note": "等 CI"},
         "PUT",
