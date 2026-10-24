@@ -134,7 +134,9 @@ def test_the_download_goes_through_the_proxy_system_settings_name(tmp_path):
     assert (loaded.home / ".local/bin/cheesehost").read_bytes() == BINARY
     # curl names the request in absolute form to the proxy; the platform itself
     # must not have been asked at all.
-    assert loaded.answered_by(loaded.proxy), "the proxy System Settings named was never used"
+    assert loaded.answered_by(loaded.proxy), (
+        "the proxy System Settings named was never used"
+    )
     assert not loaded.answered_by(loaded.origin), "the platform was asked directly"
 
 
