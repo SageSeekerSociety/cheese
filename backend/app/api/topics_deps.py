@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
 from app.api.doc_access import require_role
+from app.auth.project_roles import standing
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.adapters import project_team
@@ -47,7 +48,7 @@ from app.domain.block.schemas import BlockOut, reply_preview
 from app.domain.identity.actor import Actor
 from app.domain.membership.roster import Member
 from app.domain.project.repositories import ProjectRepository
-from app.domain.project_permissions import Permission
+from app.domain.project_permissions import Permission, Seat
 from app.domain.room_task.place import Place
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
@@ -99,7 +100,24 @@ async def require_person_speaks(
     ):
         raise ForbiddenError(say("channelJoinToPost"))
     await require_role(db, actor, place.project_id, Permission.speak)
+    await _require_channel_speaker(db, actor, place)
     return members.roster_read
+
+
+async def _require_channel_speaker(
+    db: AsyncSession, actor: Actor, place: Place
+) -> None:
+    """A channel may let only some roles speak in its main line (#4795): the
+    owner always may, and with 支线 left open anyone answers under a message,
+    and in a task, there."""
+    limited = place.room.speaker_roles
+    if limited is None or (
+        place.inner_id is not None and place.room.thread_replies_open
+    ):
+        return
+    held = await standing(db, place.project_id, actor.handle)
+    if held is None or (held.seat is not Seat.owner and held.role not in limited):
+        raise ForbiddenError(say("channelSpeakersOnly"))
 
 
 def _parse_moment(raw: object) -> datetime | None:

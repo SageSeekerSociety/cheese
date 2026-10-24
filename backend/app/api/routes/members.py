@@ -19,13 +19,12 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.project_roles import seats, standing
+from app.auth.project_roles import RoleDef, seats, standing
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
-    GrantsIn,
     InvitationCreate,
     InvitationOut,
     InvitationRespond,
@@ -33,9 +32,12 @@ from app.domain.membership.schemas import (
     MemberOut,
     MovedOut,
     MoveIn,
-    RoleGrantsOut,
+    ProjectRoleOut,
+    ProjectRolesOut,
+    RoleCreate,
     RoleOut,
     RoleSet,
+    RoleUpdate,
     TransferCreate,
     TransferOut,
 )
@@ -45,7 +47,7 @@ from app.domain.membership.services import (
     OwnershipService,
     RoleService,
 )
-from app.domain.project_permissions import PERMISSION_ORDER, Role
+from app.domain.project_permissions import DEFAULT_GRANTS, PERMISSION_ORDER, Template
 from app.domain.user.services import remarks_by_handles
 
 router = APIRouter(prefix="", tags=["members"])
@@ -109,8 +111,10 @@ async def list_members(
         if not member.agent:
             held = seated.get(member.handle)
             if held is not None:
-                # Where they sit, and whether that rank is the team's to change.
-                d["role"] = held.seat.value
+                # The role they hold, how high that sits, and whether it is
+                # the team's to change.
+                d["role"] = held.role
+                d["seat"] = held.seat.value
                 d["role_from_team"] = held.from_team
         if row is not None:
             d["created_at"] = row.created_at.isoformat()
@@ -170,7 +174,7 @@ async def invite_member(
         project_id=project_id,
         invitee_handle=body.user_handle,
         actor=who,
-        role=Role(body.role),
+        role=body.role,
     )
     await db.commit()
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
@@ -254,71 +258,120 @@ async def set_member_role(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Make someone below the caller an admin, a member or a mentor."""
+    """Give someone below the caller another role."""
     who = await resolver.resolve(project_id=project_id)
     await RoleService(db).set_role(
-        project_id=project_id, handle=user_handle, role=Role(body.role), actor=who
+        project_id=project_id, handle=user_handle, role=body.role, actor=who
     )
     await db.commit()
     held = await standing(db, project_id, user_handle)
-    return ok({"role": held.seat.value if held is not None else None})
+    return ok({"role": held.role if held is not None else None})
 
 
-async def _grants_payload(db: DbSession, project_id: uuid.UUID) -> dict:
-    grants = await RoleService(db).grants(project_id)
+def _ordered(names) -> list[str]:
+    return [p.value for p in PERMISSION_ORDER if p in names]
+
+
+def _role_out(role: RoleDef, holders: dict[str, int]) -> dict:
+    return ProjectRoleOut(
+        key=role.key,
+        name=role.name,
+        builtin=role.builtin.value if role.builtin is not None else None,
+        template=role.template.value if role.template is not None else None,
+        permissions=_ordered(role.permissions),
+        defaults=_ordered(DEFAULT_GRANTS[role.builtin])
+        if role.builtin is not None
+        else None,
+        holders=holders.get(role.key, 0),
+    ).model_dump(mode="json")
+
+
+async def _roles_payload(db: DbSession, project_id: uuid.UUID) -> dict:
+    service = RoleService(db)
+    holders = await service.holders(project_id)
     return {
-        "grants": {
-            role.value: [p.value for p in PERMISSION_ORDER if p in grants[role]]
-            for role in Role
-        },
-        "changed": await RoleService(db).changed(project_id),
+        "roles": [
+            _role_out(role, holders)
+            for role in (await service.roles(project_id)).values()
+        ]
     }
 
 
-@router.get("/projects/{project_id}/roles", **typed_response(RoleGrantsOut))
-async def get_role_grants(
+@router.get("/projects/{project_id}/roles", **typed_response(ProjectRolesOut))
+async def list_roles(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """What each role may do in this project. Everyone in it may read it."""
+    """The project's roles and what each may do. Everyone in it may read them."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    return ok(await _grants_payload(db, project_id))
+    return ok(await _roles_payload(db, project_id))
 
 
-@router.put(
+@router.post(
     "/projects/{project_id}/roles",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(RoleGrantsOut),
+    **typed_response(ProjectRoleOut),
 )
-async def set_role_grants(
+async def create_role(
     project_id: uuid.UUID,
-    body: GrantsIn,
+    body: RoleCreate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.resolve(project_id=project_id)
-    await RoleService(db).set_grants(
+    service = RoleService(db)
+    role = await service.create(
         project_id=project_id,
-        changed={Role(role): names for role, names in body.grants.items()},
+        name=body.name,
+        copy_from=body.copy_from,
+        template=Template(body.template) if body.template else None,
         actor=who,
     )
     await db.commit()
-    return ok(await _grants_payload(db, project_id))
+    return ok(_role_out(role, {}))
 
 
-@router.delete(
-    "/projects/{project_id}/roles",
+@router.patch(
+    "/projects/{project_id}/roles/{key}",
     dependencies=[ROUTE_DECIDES],
-    **typed_response(RoleGrantsOut),
+    **typed_response(ProjectRoleOut),
 )
-async def reset_role_grants(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+async def update_role(
+    project_id: uuid.UUID,
+    key: str,
+    body: RoleUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """Every role back to its defaults."""
     who = await resolver.resolve(project_id=project_id)
-    await RoleService(db).reset_grants(project_id=project_id, actor=who)
+    service = RoleService(db)
+    role = await service.update(
+        project_id=project_id,
+        key=key,
+        name=body.name,
+        permissions=body.permissions,
+        actor=who,
+    )
     await db.commit()
-    return ok(await _grants_payload(db, project_id))
+    return ok(_role_out(role, await service.holders(project_id)))
+
+
+@router.delete("/projects/{project_id}/roles/{key}", dependencies=[ROUTE_DECIDES])
+async def delete_role(
+    project_id: uuid.UUID,
+    key: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    move_to: str | None = None,
+) -> dict:
+    """Delete one of the project's own roles. Whoever holds it moves to the
+    role ``move_to`` names, which is needed only while someone does."""
+    who = await resolver.resolve(project_id=project_id)
+    await RoleService(db).delete(
+        project_id=project_id, key=key, move_to=move_to, actor=who
+    )
+    await db.commit()
+    return ok({"deleted": True})
 
 
 # ---- 转让与移到团队：只有所有者 -----------------------------------------------

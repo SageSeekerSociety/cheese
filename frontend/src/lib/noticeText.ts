@@ -43,7 +43,7 @@ function isListing(value: unknown): value is NoticeListing {
 
 // Joined the way the reader's language joins a list. Chinese takes the narrow
 // style: the long one ends in 「和」, which the stored sentence never had.
-function joined(items: string[]): string {
+export function joined(items: string[]): string {
   const locale = String(i18n.global.locale.value)
   return new Intl.ListFormat(locale, {
     type: 'conjunction',

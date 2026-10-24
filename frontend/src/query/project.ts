@@ -2,7 +2,7 @@
 //
 // 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
 // 和推送通过下面这几个函数改缓存，不各存副本。
-import type { TopicNotifySetting, TopicUnread } from '@/api'
+import type { ProjectRoleRow, TopicNotifySetting, TopicUnread } from '@/api'
 import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
@@ -18,6 +18,7 @@ import {
   getTopicUnread,
   listProjectAgents,
   listProjectMembers,
+  listProjectRoles,
   listTopics,
 } from '@/api'
 import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
@@ -42,6 +43,14 @@ export function projectQuery(projectId: string) {
       rememberProjects([project])
       return project
     },
+  })
+}
+
+/** 项目的角色（#4795）：频道设置里选「谁能发言」读它。 */
+export function projectRolesQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectRoles(projectId),
+    queryFn: async (): Promise<ProjectRoleRow[]> => (await listProjectRoles(projectId)).roles,
   })
 }
 

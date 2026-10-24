@@ -1,12 +1,14 @@
-"""What each role in a project may do (#3830).
+"""What each role in a project may do (#3830, #4795).
 
-A project has one owner, and everyone else in it holds one of three roles:
-admin, member, mentor. The owner holds every permission and is not in the
-table below; each role is a set of the permissions listed here, defaulting to
-:data:`DEFAULT_GRANTS`, and a project may change a role's set (its
-``project_role_grants`` row). The two locked permissions cannot be changed: an
-admin always manages people and roles and nobody else ever does, so a project
-can never lose everyone able to manage it.
+A project has one owner, and everyone else in it holds one role. Two roles are
+built in, admin and member, with their names fixed everywhere and their
+permissions defaulting to :data:`DEFAULT_GRANTS`; a project may change those
+permissions (a ``project_role_defs`` row for the built-in role). Any other role
+is the project's own: a name and a set of permissions, made by copying another
+role or from a template (:class:`Template`) the platform knows by its mark
+rather than its name. The two locked permissions cannot be changed: an admin
+always manages people and roles and nobody else ever does, so a project can
+never lose everyone able to manage it.
 
 The keys and their defaults are the frontend's ``lib/projectPermissions.ts``,
 name for name.
@@ -18,19 +20,27 @@ moving a personal project into a team, archiving it.
 import enum
 
 
-class Role(enum.StrEnum):
+class Builtin(enum.StrEnum):
+    """The two roles every project has. Their key is their name."""
+
     admin = "admin"
     member = "member"
+
+
+class Template(enum.StrEnum):
+    """A role the platform makes on demand and recognises by this mark: a
+    project may rename it and change what it may do."""
+
     mentor = "mentor"
 
 
 class Seat(enum.StrEnum):
-    """Where a person sits in a project: a role, or above them all."""
+    """How high someone sits in a project: the owner, an admin, or anyone
+    holding another role. A person manages only those strictly below."""
 
     owner = "owner"
     admin = "admin"
     member = "member"
-    mentor = "mentor"
 
 
 class Permission(enum.StrEnum):
@@ -82,9 +92,9 @@ LOCKED: frozenset[Permission] = frozenset(
     {Permission.manage_members, Permission.change_roles}
 )
 
-DEFAULT_GRANTS: dict[Role, frozenset[Permission]] = {
-    Role.admin: frozenset(Permission),
-    Role.member: frozenset(
+DEFAULT_GRANTS: dict[Builtin, frozenset[Permission]] = {
+    Builtin.admin: frozenset(Permission),
+    Builtin.member: frozenset(
         {
             Permission.export_project,
             Permission.create_channels,
@@ -97,18 +107,22 @@ DEFAULT_GRANTS: dict[Role, frozenset[Permission]] = {
             Permission.configure_agents,
         }
     ),
-    Role.mentor: frozenset(
+}
+
+#: What a role made from a template may do when it is made.
+TEMPLATE_GRANTS: dict[Template, frozenset[Permission]] = {
+    Template.mentor: frozenset(
         {Permission.speak, Permission.ask_agent, Permission.comment}
     ),
 }
 
 
-def with_locks(role: Role, granted: frozenset[Permission]) -> frozenset[Permission]:
+def with_locks(admin: bool, granted: frozenset[Permission]) -> frozenset[Permission]:
     """A role's set with the locked permissions where they always are."""
-    if role is Role.admin:
+    if admin:
         return granted | LOCKED
     return granted - LOCKED
 
 
 #: Higher first. A person manages only those strictly below their own seat.
-RANK: dict[Seat, int] = {Seat.owner: 3, Seat.admin: 2, Seat.member: 1, Seat.mentor: 1}
+RANK: dict[Seat, int] = {Seat.owner: 3, Seat.admin: 2, Seat.member: 1}

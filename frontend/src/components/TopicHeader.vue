@@ -35,11 +35,11 @@ import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { mayIn } from '@/lib/projectPermissions'
+import { mayIn, roleName } from '@/lib/projectPermissions'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { queryClient } from '@/query/client'
-import { projectQuery } from '@/query/project'
+import { projectQuery, projectRolesQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -131,6 +131,12 @@ const projectRead = useQuery(
   queryClient
 )
 const managesProject = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
+// 项目的角色：详情里选「谁能发言」用，打开详情时才问（#4795）。
+const rolesRead = useQuery(
+  computed(() => ({ ...projectRolesQuery(props.topic.project_id), enabled: detailsOpen.value })),
+  queryClient
+)
+const channelRoles = computed(() => (rolesRead.data.value ?? []).map((r) => ({ key: r.key, name: roleName(r) })))
 // 不管频道也能拉人：人在这个频道里，角色又允许拉人进自己所在的频道。
 // 项目还没读到时先按在不在频道里给，后端加人时再判一次。
 const bringsPeopleIn = computed(
@@ -230,6 +236,7 @@ useCommands(roomCommands)
       :manager-name="managerName"
       :level="store.levelOf(topic.id)"
       :muted-until="store.mutedUntil(topic.id)"
+      :roles="channelRoles"
       @rename="(next) => emit('rename', next)"
       @describe="(text) => store.describe(topic.id, text)"
       @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
@@ -239,6 +246,7 @@ useCommands(roomCommands)
       @delete="removeChannel"
       @open-members="openMembersFromDetails"
       @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
+      @speakers="(roles, open) => store.setSpeakers(topic.id, roles, open)"
     />
 
     <ChannelNotifyMenu

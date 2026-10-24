@@ -12,6 +12,8 @@
   "channelManagerOnly": "Only the channel's manager and the project's managers can manage this channel",
   "channelManagerPersonOnly": "A channel's manager must be a person in the project",
   "channelPublicProjectManagerOnly": "Only the project's managers can make a private channel public",
+  "channelSpeakersNone": "Choose at least one role",
+  "channelSpeakersOnly": "Only some roles can post in this channel's main line",
   "contributorMustBeUser": "A contribution credit must name a real user: {handle}",
   "cursorEventNotFound": "That event doesn't exist",
   "cursorMessageNotFound": "That message doesn't exist",

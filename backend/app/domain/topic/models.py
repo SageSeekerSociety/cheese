@@ -137,6 +137,19 @@ class Topic(UuidPk, Timestamps, Base):
     # messages. Nobody joins it; its people bring others in. 综合 is never one.
     # Unlike a private chat it is an ordinary channel in every other way.
     members_only: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Who may speak in the channel's main line (#4795): the keys of the project
+    # roles that may, or None for everyone whose role may speak at all. The
+    # owner always may, and so does every AI teammate and routine. Deleting a
+    # role takes its key out of every channel in the same transaction
+    # (`RoleService.delete`); a key no role has matches nobody.
+    speaker_roles: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    # With the main line limited, whether everyone may still answer in a 支线
+    # (and in a task) under it.
+    thread_replies_open: Mapped[bool] = mapped_column(
+        default=True, server_default="true"
+    )
     # If this topic was upgraded from a block (讨论升级 / 拆解), link it back.
     # use_alter: topics↔blocks is a circular FK; add this one via ALTER.
     upgraded_from_block_id: Mapped[uuid.UUID | None] = mapped_column(
