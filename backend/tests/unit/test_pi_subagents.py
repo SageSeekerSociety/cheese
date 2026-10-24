@@ -351,7 +351,12 @@ async def test_a_subagent_is_told_the_rules_every_agent_of_the_session_keeps(
 
         (first, *_) = session.requests("child-default")
         request = json.dumps(first, ensure_ascii=False)
-        for rule in (SUBAGENT_TODO_WRITE, SHARED_CHECKOUT, STEP_TITLES, REPEATED_FAILURE):
+        for rule in (
+            SUBAGENT_TODO_WRITE,
+            SHARED_CHECKOUT,
+            STEP_TITLES,
+            REPEATED_FAILURE,
+        ):
             assert json.dumps(rule, ensure_ascii=False)[1:-1] in request, rule
 
 
