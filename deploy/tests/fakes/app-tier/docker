@@ -186,7 +186,8 @@ fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
 # `docker pull` and `docker compose pull`. Lets a test drive the retry path — and
-# the failure path's disk reclaim — without a registry.
+# the failure path's disk reclaim — without a registry. A failed compose pull
+# prints APP_TIER_PULL_FAIL_MESSAGE, so a test can make it a full disk.
 pull_should_fail() {
   local counter="${APP_TIER_PULL_COUNTER:-}" seen=0
   [ -n "${APP_TIER_PULL_FAIL_COUNT:-}" ] && [ -n "$counter" ] || return 1
@@ -319,7 +320,7 @@ if [ "${1:-}" = "compose" ]; then
       ;;
     pull)
       if pull_should_fail; then
-        echo "fake: compose pull failed" >&2
+        echo "${APP_TIER_PULL_FAIL_MESSAGE:-fake: compose pull failed: read: connection reset by peer}" >&2
         exit 1
       fi
       ;;

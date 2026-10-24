@@ -54,11 +54,11 @@ export const TOOL_LABELS: Record<string, string> = {
   grep: 'toolLabels.piGrep',
   // 文档里的芝士读房间仓库的 git 记录（remote_execution/machine_git.py）。
   git: 'toolLabels.piGit',
-  // 平台工具表（backend/sandbox/cheese 的 PLATFORM_TOOLS）里的每一样，以及
-  // pi 房间里由机器上的 CLI 命令变成的工具（`cheese_<命令>`）。一条都不能少：
-  // 少一条，现场那一行显示的就是 `cheese_card`，而这是房间里最该看懂
-  // 的那一类动作。少了哪条由 backend/tests/unit/test_tool_labels.py 对着工具表
-  // 和 CLI 的命令树说出来。
+  // 平台工具表（backend/sandbox/cheese 的 PLATFORM_TOOLS）里的每一样和它的每个
+  // 动词。一条都不能少：少一条，现场那一行显示的就是 `cheese_card`，而这是房间里
+  // 最该看懂的那一类动作。少了哪条由 backend/tests/unit/test_tool_labels.py 对着
+  // 工具表说出来。`cheese_<命令>` 那几条（`cheese_worktree` 等）给旧记录用：pi
+  // 房间曾把 CLI 的命令当工具，现在和别的骨架一样在 bash 里跑 `cheese …`。
   chat_send: 'toolLabels.chatSend',
   'cheese_chat.edit': 'toolLabels.chatEdit',
   todo_write: 'toolLabels.todoWrite',

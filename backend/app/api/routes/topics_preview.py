@@ -43,6 +43,7 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.preview_host import preview_origin
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import BlockRepository, _actor_in_place
@@ -162,11 +163,17 @@ async def preview_file(
     what 芝士 writes once it has read something the project was given.
     """
     place = await place_or_404(db, topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     if path:
         return ok(
             await library_records.read_attachment_text(
-                db, place.project_id, place.room_id, clean_artifact_path(path)
+                db,
+                place.project_id,
+                place.room_id,
+                clean_artifact_path(path),
+                with_task=await may_read_path(
+                    db, place.project_id, actor, clean_artifact_path(path)
+                ),
             )
         )
     art = await BlockRepository(db).latest_artifact(place.conversation_id)

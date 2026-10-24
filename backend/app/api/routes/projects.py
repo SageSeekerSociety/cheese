@@ -90,7 +90,7 @@ from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
 from app.domain.task.adapters import TaskTerms
-from app.domain.task.claims import deadline_for_project
+from app.domain.task.claims import deadline_for_project, stages_for_project
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
@@ -407,6 +407,24 @@ async def get_project(
     payload["challenge_deadline"] = (
         {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
     )
+    # A staged challenge shows its stages instead: each with its due date and
+    # where this project's claim stands on it.
+    payload["challenge_stages"] = [
+        {
+            "index": stage.index,
+            "name": stage.name,
+            "description": stage.description,
+            "due_at": stage.due_at.isoformat() if stage.due_at else None,
+            "status": stage.status,
+        }
+        for stage in (
+            await stages_for_project(
+                db, task_id=project.external_task_id, team_id=project.team_id
+            )
+            if project.external_task_id is not None
+            else []
+        )
+    ]
     _with_standing(
         payload,
         await standing(db, project_id, actor.handle) if actor.authenticated else None,

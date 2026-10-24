@@ -65,6 +65,9 @@ type Manifest = {
   workspace: string;
   jobs: string;
   tools: ToolSpec[];
+  // The CLI's commands, by the tool name a model may remember one by
+  // (`cheese_worktree`), each with what a call to it as a tool is told.
+  commands?: Record<string, string>;
   unavailable: string;
   // The project's MCP servers, each an `mcpServers` entry at the session's
   // gateway, for pi's own MCP client.
@@ -134,9 +137,9 @@ function text(body: string) {
 // --- the platform's own tools ------------------------------------------------
 //
 // These arrive as extension tools. The catalog is the runner's, read from the
-// platform's own file: the platform's tool table (the same one the other
-// harnesses serve) plus the CLI commands that run on the room's machine as a
-// process.
+// platform's own file: the platform's tool table, the same one the other
+// harnesses serve. The CLI's own commands are no tools here: a room runs them
+// with its bash, `cheese …`, as every other harness does.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {
@@ -168,6 +171,23 @@ function registerPlatformTools(pi: any, spec: Manifest) {
       },
     });
   }
+}
+
+// A room runs the CLI's commands with its bash (`cheese worktree …`), as on
+// every other harness; none is a tool. A model that remembers one as a tool
+// gets pi's own "Tool cheese_worktree not found", which pi writes before any
+// `tool_call` or `tool_result` handler runs, and which says nothing of where the
+// command went. So the finished result is replaced, where pi lets an extension
+// replace it, with the runner's sentence saying to run it in bash.
+
+function pointCommandsToBash(pi: any, spec: Manifest) {
+  const commands = spec.commands ?? {};
+  pi.on("message_end", (event: any) => {
+    const message = event.message;
+    const said = message?.role === "toolResult" && message.isError ? commands[message.toolName] : undefined;
+    if (said === undefined) return;
+    return { message: { ...message, content: [{ type: "text", text: said }] } };
+  });
 }
 
 // --- the project's MCP servers ----------------------------------------------
@@ -1806,7 +1826,8 @@ export default function (pi: any) {
   placeTheSession(pi, spec);
   holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
-  else if (spec.unavailable) {
+  if (Object.keys(spec.commands ?? {}).length) pointCommandsToBash(pi, spec);
+  if (!spec.tools.length && spec.unavailable) {
     // Said where a launch failure is read, not swallowed: a room whose platform
     // tools are all missing looks from the inside exactly like a room that was
     // never given any, and the agent will conclude it must shell out.

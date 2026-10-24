@@ -1009,6 +1009,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (the bucket below). A file's record says where its own bytes are, so
     # changing this moves nothing that is already stored.
     files_store: Literal["local", "bucket"] = "local"
+    # How large one file kept in the files bucket may be: a library file, and
+    # a task's material. A dataset can be several GB, and its bytes never pass
+    # through this server (they go to the bucket in parts, straight from the
+    # browser or machine, and come back the same way). Files kept on this
+    # server's disk keep the smaller ceilings in `app.domain.library.service`.
+    files_bucket_file_max_bytes: int = 20 * 1024**3
     # A bucket of its own, with a key that reaches only it: these are private
     # files, and the key is not the one the public and transcript buckets use.
     # A browser puts an upload straight into it, so its CORS rules must let the

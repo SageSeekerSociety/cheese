@@ -16,10 +16,12 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import memory_block
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 
 # How a roster row is in the project, in the words the agent reads. An external
@@ -78,6 +80,45 @@ DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
 能演示就别写长文：讲一条执行过程或一个概念的运转方式时，
 用 cheese show 把可交互的图示、变量追踪做出来让他自己拨着看，
 胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
+
+
+#: How a stage stands, in the words the task page shows it by
+#: (`submission_state` STAGE_*).
+_STAGE_SAYS = {
+    "NOT_SUBMITTED": "未提交",
+    "PENDING_REVIEW": "待批改",
+    "PASSED": "已通过",
+    "REJECTED": "被退回",
+}
+
+
+def stages_section(stages: Sequence[StageProgress]) -> str | None:
+    """这个项目所出自的题目分成的阶段：每个阶段的名称、截止时间、要求，以及这个
+    项目在每个阶段上走到哪一步。题目不分阶段时是 None，一个字都不加。
+
+    它会变（交了一版、批改了、出题人改了截止），所以是一段跟踪着再说一次的现状
+    （``TRACKED_SECTIONS``）。"""
+    if not stages:
+        return None
+    lines = []
+    for stage in stages:
+        due = (
+            f"截止 {stage.due_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
+            if stage.due_at is not None
+            else "不设截止"
+        )
+        lines.append(
+            f"{stage.index + 1}. {stage.name}（{due}）："
+            + _STAGE_SAYS.get(stage.status, stage.status)
+        )
+        if stage.description:
+            lines.append("   " + stage.description.replace("\n", "\n   "))
+    return (
+        "## 这道题的阶段\n"
+        "这个项目来自一道分阶段的题目：按阶段提交，每个阶段单独批改，一个阶段有一版"
+        "被采纳，这个阶段就完成；过了截止的阶段不再收提交。各阶段现在的状态：\n"
+        + "\n".join(lines)
+    )
 
 
 def teaching_section(context: TeachingContext) -> str | None:
@@ -211,7 +252,8 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
-#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。题目
+#: 那一段在里面：出题人改了题目，正在做的会话下一轮就要知道到了第几版、改了什么。
 TRACKED_SECTIONS = (
     "tasks",
     "topics",
@@ -220,6 +262,8 @@ TRACKED_SECTIONS = (
     "overview",
     "memory",
     "task",
+    "stages",
+    "package",
 )
 
 
@@ -331,12 +375,16 @@ def build_session_opening(
     overview_doc_id: uuid.UUID | None = None,
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
+    stages: Sequence[StageProgress] = (),
     keeps_memory: bool = False,
     task: str | None = None,
+    package: str | None = None,
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
+    ``package``：从题目来的项目里「题目」那一段（``task.package.section_for_project``）：
+    第几版、材料在资料库的 `题目/`、这一版改了什么；别的项目是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
     变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
@@ -348,6 +396,10 @@ def build_session_opening(
         sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
+    if section := stages_section(stages):
+        sections["stages"] = section
+    if package:
+        sections["package"] = package
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (

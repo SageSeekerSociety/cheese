@@ -29,5 +29,6 @@
   "trendEmptyTitle": "No participants yet",
   "trendSeries": "Total participants",
   "trendSubtitle": "Total participants over the last 12 days",
-  "trendTitle": "Participants over time"
+  "trendTitle": "Participants over time",
+  "stagesTitle": "Progress by stage"
 }

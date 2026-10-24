@@ -19,6 +19,7 @@ from app.domain.task.models import (
     TaskTagRelation,
 )
 from app.domain.task.rubric import RubricLine
+from app.domain.task.stages import stage_of
 from app.domain.task.submission_repositories import (
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
@@ -810,6 +811,7 @@ class TaskSubmissionSchemaRepository:
                 index=idx,
                 description=prompt,
                 type=type_int,
+                stage=stage_of(entry),
             )
             self._session.add(row)
             new_entries.append(row)
@@ -843,6 +845,7 @@ class TaskRubricRepository:
                     item=line.item,
                     points=line.points,
                     criteria=line.criteria,
+                    stage=line.stage,
                 )
             )
         await self._session.flush()

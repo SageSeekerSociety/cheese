@@ -6,16 +6,7 @@ import TaskAttachmentList from '../TaskAttachmentList.vue'
 
 import i18n from '@/i18n'
 
-const file = (overrides: Record<string, unknown> = {}) => ({
-  id: 3,
-  name: '讲义.pdf',
-  size: 2048,
-  contentType: 'application/pdf',
-  uploaderId: 1,
-  downloadCount: 0,
-  createdAt: 0,
-  ...overrides,
-})
+const file = () => ({ name: '讲义.pdf', size: 2048, addedAt: 0 })
 
 const mount = (canDownload: boolean) =>
   render(TaskAttachmentList, {
@@ -29,7 +20,7 @@ describe('题目材料清单', () => {
 
     expect(view.container.textContent).toContain('讲义.pdf')
     await fireEvent.click(view.getByRole('button'))
-    expect(view.emitted('download')).toEqual([[expect.objectContaining({ id: 3, name: '讲义.pdf' })]])
+    expect(view.emitted('download')).toEqual([[expect.objectContaining({ name: '讲义.pdf' })]])
   })
 
   it('拿不到文件的人看得到清单，但没有下载按钮', () => {

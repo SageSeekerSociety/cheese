@@ -325,7 +325,7 @@ describe('题目详情', () => {
     await fireEvent.update(getByRole('textbox', { name: '成果说明' }), '旋转了三次')
     await fireEvent.submit(container.querySelector('form')!)
 
-    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }]))
+    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }], null))
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
     const mineTab = Array.from(container.querySelectorAll('a')).find((a) =>
       a.getAttribute('href')?.endsWith('/submissions')

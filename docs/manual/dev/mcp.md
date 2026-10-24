@@ -55,7 +55,7 @@ covers:
 
 同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。`chat_send` 也是这样：房间里发在这里，个人芝士手里的那一样以用户的名义发到 `where`，经过授权判断。
 
-一个会话也可以只拿一个对象的几个动词：会话的名单里写键（文档芝士写 `cheese_doc.get`、`cheese_doc.edit`、`cheese_doc.set`），`schemas_of` 给它的 `cheese_doc` 就只有这几个动词，runner 也只放行这几个（`pi/runner.py` 的 `_platform_tool`）。
+一个会话也可以只拿一个对象的几个动词：会话的名单里写键（文档芝士写 `cheese_doc.get`、`cheese_doc.edit`、`cheese_doc.set`），`schemas_of` 给它的 `cheese_doc` 就只有这几个动词，runner 也只放行这几个（`pi/runner.py` 的 `_platform_tool`）。工具的说明是对象的名字加上每个动词一行，由 `ToolTable.narrowed` 按留下的动词重新写，所以没给的动词在说明里一个字也不出现：没开压缩开关的房间读不到「压缩上下文」，文档芝士的 `cheese_memory` 只说读项目记忆。调了没给的动词，回的是这个会话有的那几个（`cheese_memory 要 action：project`），和没写 `action` 时一样（`ask_for_action`）；房间里没开开关时调 compact，三种骨架都经 `run_platform_tool` 拿到同一句，后面跟着它有的那几个动词。
 
 ### 退役的名字 {#retired}
 
@@ -84,7 +84,7 @@ covers:
 
 Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/list`，只留 `NATIVE_TOOLS` 那九个，再把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，执行器自己的工具走 `invoke`。项目的 MCP 服务器不在这张表里，由 Codex 自己的 MCP 客户端连会话的网关。
 
-平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
+平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` 就是 `offered_tools()`，和另外两种骨架拿到的是同一份表。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机。CLI 自己的命令（`cheese worktree`、`cheese sync`……）不是工具：pi 房间和另外两种骨架一样，用机器上的 `bash` 跑 `cheese …`，靠 `cheese --help` 发现。把调用名当成工具名调（`cheese_worktree`）会拿到「没有这个工具」。
 
 项目的 MCP 服务器由 pi 自己的 MCP 客户端（`builtin:mcp`）连会话的网关，扩展只负责把它们一个个注册给 pi（`registerMcpServers`）；pi 开着 codemode，模型可以写一段脚本一次调好几个工具，脚本调过哪些工具记在那一步上（`meta.calls`）。见[项目的 MCP 服务器](/dev/remote-mcp#gateway)。
 
@@ -95,7 +95,7 @@ Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/
 - **会话侧**把它当模块读：`PLATFORM_TOOLS` 是工具表，`run_platform_tool(tool, args, host)` 执行其中一样。`host` 提供四样东西——房间的 `CHEESE_*` 环境变量、一次后端请求、读一个文件、以及推一次任务的提交。
 - **机器上**它是 `cheese` 这条命令：只剩必须在这台机器上作为进程跑的动作。
 
-`cli_worker.py` 是「CLI 的 argparse 树」这件事本身，和任何骨架无关：`_tools(parser)` 把叶子命令翻成工具 schema（`cheese_<命令>`），`_command(parser, tool, arguments)` 把一次调用翻回 argv，**并让那个 parser 自己复核一遍**（`leaf.parse_args`）——缺必填字段或值不在枚举里，报的是 argparse 自己的话，而不是一条格式不对的命令行。机器上它还带一个预加载进程：一次 `fork` 跑一次调用，省掉每次调用的解释器启动。
+CLI 的命令在哪种骨架里都不是工具：会话在 bash 里跑 `cheese …`，靠 `cheese --help` 发现。`cli_worker.py` 是机器上的预加载进程：Claude Code 的执行器先把 CLI 加载好，一次 `fork` 跑一次 `cheese …`，省掉每次调用的解释器启动。
 
 ## 机器够不着时 {#unreachable}
 

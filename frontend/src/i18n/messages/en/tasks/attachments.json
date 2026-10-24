@@ -1,5 +1,4 @@
 {
   "download": "Download",
-  "locked": "Start this task to download",
-  "meta": "{size} · downloaded {n} times"
+  "locked": "Start this task to download"
 }

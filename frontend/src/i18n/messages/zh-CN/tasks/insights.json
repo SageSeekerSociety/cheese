@@ -29,5 +29,6 @@
   "trendEmptyTitle": "还没有参与数据",
   "trendSeries": "累计参与",
   "trendSubtitle": "最近 12 天，累计参与人数",
-  "trendTitle": "参与走势"
+  "trendTitle": "参与走势",
+  "stagesTitle": "各阶段进度"
 }

@@ -59,7 +59,7 @@ covers:
 | 阶段 | 依据 | 做什么 |
 |---|---|---|
 | 记下现状 | `service_container`/`service_image`（`:529-542`） | 存 `PREV_BACKEND_IMAGE`、`PREV_FRONTEND_IMAGE`、`PREV_SHA`；回滚只靠这三样 |
-| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
+| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 一次部署的 pull 共用 600 秒预算，重试到预算用完，退避封顶 30 秒，磁盘满时才在重试前清理；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
 | 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起；事件中继只在它跑的代码变了时才换镜像（`pin_relay_by_code`） |
 | 迁移 | `:649-651` | `dc run --rm backend sh -c "alembic upgrade head"`，失败直接停 |
 | 归属 | `OWNERSHIP_MIGRATED`（`:685`） | 跑 `fix-workspace-ownership.sh`，报告留给回滚用 |

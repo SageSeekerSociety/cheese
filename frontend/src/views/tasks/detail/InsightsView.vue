@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「数据」页签的画面：这一道题有多少人领、他们走到哪一步、卡在哪儿、什么时候动的。
 // 数字全部从 props 里的名单和提交算出来，取数在 `Insights.vue`。
-import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
+import type { Task, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -13,6 +13,7 @@ import MetricCard from '@/components/spaces/MetricCard.vue'
 import PanelCard from '@/components/spaces/PanelCard.vue'
 import SplitBar from '@/components/spaces/SplitBar.vue'
 import TrendChart from '@/components/spaces/TrendChart.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 
 const { t } = useI18n()
 
@@ -33,6 +34,8 @@ const props = defineProps<{
   failureReason: string | null
   /** 401/403：不是「这次没读到」，是「不给你看」，不给重试。 */
   forbidden: boolean
+  /** 每个阶段上的进度；分了阶段的题，按阶段画全体的分布。 */
+  progress?: TaskProgress | null
 }>()
 
 const emit = defineEmits<{ retry: [] }>()
@@ -161,6 +164,15 @@ const claimTrend = computed(() => {
       </div>
 
       <div class="ins__grid">
+        <PanelCard
+          v-if="task.stages?.length && progress?.distribution"
+          class="ins__span2"
+          :title="t('tasks.insights.stagesTitle')"
+          data-testid="insights-stages"
+        >
+          <TaskStageTimeline :stages="task.stages" :counts="progress.distribution" />
+        </PanelCard>
+
         <PanelCard
           class="ins__span2"
           :title="t('tasks.insights.trendTitle')"
