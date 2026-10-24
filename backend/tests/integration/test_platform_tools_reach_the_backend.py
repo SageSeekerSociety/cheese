@@ -295,8 +295,8 @@ def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, ro
     ("tool", "arguments"),
     [
         ("cheese_room", {"action": "members"}),
-        ("cheese_status", {}),
-        ("cheese_library_ls", {}),
+        ("cheese_session", {"action": "status"}),
+        ("cheese_library", {"action": "list"}),
     ],
 )
 def test_each_room_tool_is_accepted_by_the_backend(client, room, tool, arguments):

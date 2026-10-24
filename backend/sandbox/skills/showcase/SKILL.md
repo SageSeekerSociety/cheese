@@ -21,7 +21,7 @@ description: 要做摆给人看的东西时先加载：网页、看板、报告�
 | 报告页 / 看板 / 对比 / 计划 / 说明 / 数据表 / 一页纸 | 单文件 `.html`，八套模板见 `## 模板` |
 | 汇报、演示、路演 | 单文件 `.html` 幻灯片（默认）；点名要 `.pptx` 文件本身才用 `scripts/build_deck.py`（`references/pptx.md`） |
 | 一页纸 / 多页报告要 PDF | `templates/one-pager.html` / `report.html`（`references/pdf.md`） |
-| 线上已经部署的页面长什么样 | `cheese_fetch` 读回正文；要图请用户截一张 |
+| 线上已经部署的页面长什么样 | `cheese_web(action=fetch)` 读回正文；要图请用户截一张 |
 | 运行中的页面（在跑的前端、登录后的界面） | `scripts/shot_live.mjs`（Node，零下载）或 `shot_live.py` 截真图，读 `references/observe-live.md` |
 | 必须点着试的应用 | 最后才选 `cheese serve` |
 
@@ -46,7 +46,7 @@ description: 要做摆给人看的东西时先加载：网页、看板、报告�
 
 ## 手上的素材
 
-- **线上已经部署的页面长什么样**：用 `cheese_fetch` 工具把那一页读回正文（平台先找站点发布的 markdown，再依次抓取、换浏览器指纹、上浏览器），不要自己装浏览器，也不要只看网址就猜。要看的是**版面**（配色、栅格）就请用户截一张图——这个工具读的是正文，不出图。
+- **线上已经部署的页面长什么样**：用 `cheese_web(action=fetch)` 工具把那一页读回正文（平台先找站点发布的 markdown，再依次抓取、换浏览器指纹、上浏览器），不要自己装浏览器，也不要只看网址就猜。要看的是**版面**（配色、栅格）就请用户截一张图——这个工具读的是正文，不出图。
 - **用户给的是 Figma 稿**：读 `references/figma.md`，用 `scripts/figma.py` 把稿读成结构和画板图，再照着做页面。稿子是需求，不是成品。
 
 ## 页面约定

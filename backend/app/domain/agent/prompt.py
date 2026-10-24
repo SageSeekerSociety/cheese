@@ -122,7 +122,7 @@ def _session_opening_lines(
     complaint was 29 turns timing out against a 900s ceiling nobody had been
     told about. Two things happened to it. The ceiling went away (there is no
     countdown; saying there was one made the agent rush — dev, 2026-08-08), and
-    `cheese_status` — added in that same commit, for that same complaint — took
+    `cheese_session(action=status)` — added in that same commit, for that same complaint — took
     over the rest: cards, gate output and disk are all one call away, and the
     header was restating them every turn, from a snapshot that stopped being
     true after the first one. What is left is the part no call and no turn can

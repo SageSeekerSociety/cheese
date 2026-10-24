@@ -329,7 +329,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
-    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 每个会话多一样工具 `cheese_session(action=compact)`：agent 可以请平台压缩自己这个会话的
     # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
     # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
     # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
@@ -548,7 +548,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a

@@ -17,22 +17,21 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，38 样 {#table}
+## 一张表，20 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 38 样；对话、文档、小程序、画布、任务、验收卡、房间各是一样对象工具，括号里是它的动词（见[一个对象一样工具](#objects)）：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 20 样，一个对象一样，括号里是它的动词（见[一个对象一样工具](#objects)）：
 
 | 类别 | 工具 |
 | --- | --- |
-| 对话 | `chat_send`、`todo_write`、`cheese_chat`（list / search / get / replies / edit） |
+| 对话 | `chat_send`、`todo_write`、`cheese_ask`、`cheese_chat`（list / search / get / replies / edit） |
 | 文档 | `cheese_doc`（get / set / edit / new / list）、`cheese_app`（save / get）、`cheese_canvas`（get / edit） |
 | 任务与验收 | `cheese_task`（open / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
-| 通知与拍板 | `cheese_notify`、`cheese_ask` |
-| 资料 | `cheese_fetch`、`cheese_web_search`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
-| 房间 | `cheese_room`（members / rename）、`cheese_status` |
-| 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at`、`cheese_compact`（部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
-| 例行事务 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
-| 项目技能 | `cheese_skill_draft`、`cheese_skill_update`、`skills_search`、`skills_read` |
-| 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
+| 房间 | `cheese_room`（members / rename）、`cheese_notify` |
+| 会话 | `cheese_session`（status / environment / wait / compact / note / deliver_at；compact 要部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
+| 资料 | `cheese_web`（fetch / search）、`cheese_help`、`cheese_library`（list） |
+| 例行事务 | `cheese_routine`（create / list / update / pause / report） |
+| 技能 | `cheese_skill`（search / read / propose / update） |
+| 反馈 | `cheese_feedback`（propose / list / get / claim / release） |
 | 运行记录 | `cheese_run_records`（只在平台自己的项目里读得到，见[运行记录](/dev/run-records#retention)） |
 | 其余的平台接口 | `platform_request` |
 

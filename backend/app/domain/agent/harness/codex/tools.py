@@ -135,7 +135,7 @@ class RemoteTools:
         # they print exists (`entry.py`).
         self.monitors: monitor.Monitors | None = None
         # How to ask the session's own thread to compact itself, for the one
-        # tool that does (`cheese_compact`): the runner's, set beside
+        # tool that does (`cheese_session(action=compact)`): the runner's, set beside
         # `monitors` (`entry.py`). A session without one refuses the call.
         self.compact: Callable[[], str] | None = None
         # The project's MCP servers the session opened with (`discover`).

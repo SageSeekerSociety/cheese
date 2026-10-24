@@ -394,7 +394,7 @@ async def _settle(
         logger.warning("settling a docs question failed", exc_info=True)
 
 
-# ---------- the docs, for AI teammates: cheese_docs_search / cheese_docs_read ----
+# ---------- the docs, for AI teammates: cheese_help / cheese_help ----
 
 
 class AgentDocsIn(BaseModel):
@@ -430,7 +430,7 @@ async def _agent_scope(
 async def agent_search_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_search: the best sections of the manual for a query."""
+    """cheese_help: the best sections of the manual for a query."""
     if not body.query or not body.query.strip():
         raise ValidationError(say("queryRequired"))
     dev = await _agent_scope(body, db, actor)
@@ -459,7 +459,7 @@ async def agent_search_docs(
 async def agent_read_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_read: one page's Markdown, as readers fetch it."""
+    """cheese_help: one page's Markdown, as readers fetch it."""
     if not body.page or not body.page.strip():
         raise ValidationError(say("pageRequired"))
     dev = await _agent_scope(body, db, actor)

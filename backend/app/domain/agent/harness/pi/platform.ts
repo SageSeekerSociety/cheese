@@ -1358,9 +1358,10 @@ const BRANCH_TOOLS = new Set([
   "cheese_read",
   "cheese_find",
   "cheese_help",
-  "cheese_inbox",
-  "cheese_web_fetch",
-  "cheese_web_search",
+  // One of an object's verbs by its key: a branch reads the inbox but answers
+  // nothing in it, which is done as the person.
+  "cheese_inbox.list",
+  "cheese_web",
   "read",
   "write",
   "edit",
@@ -1678,12 +1679,17 @@ async function branchSession(
       return text("已发给芝士。");
     },
   };
+  const mayCall = (name: string, action?: unknown) =>
+    BRANCH_TOOLS.has(name) || (typeof action === "string" && BRANCH_TOOLS.has(`${name}.${action}`));
   const given = [...tools.values()]
-    .filter((tool) => BRANCH_TOOLS.has(tool.name))
+    .filter((tool) => BRANCH_TOOLS.has(tool.name) || [...BRANCH_TOOLS].some((k) => k.startsWith(`${tool.name}.`)))
     .map((tool) => ({
       ...tool,
       label: tool.label ?? tool.name,
       async execute(...args: any[]) {
+        const action = args[1]?.action;
+        if (!mayCall(tool.name, action))
+          return { ...text(`分身不做 ${tool.name}(action=${action})：这是以用户的名义做的事，留给芝士。`), isError: true };
         calls += 1;
         if (calls > BRANCH_CALLS)
           return {

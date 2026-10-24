@@ -109,7 +109,7 @@ _TOOL_ARG = {
     "grep": "pattern",
     # 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。这张表是判断题不是
     # 覆盖题 —— 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。
-    # `cheese_status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
+    # `cheese_session.status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
     # 一个参数填进去反而不如留空。
     "chat_send": "content",
     "cheese_chat.edit": "content",
@@ -126,8 +126,8 @@ _TOOL_ARG = {
     "cheese_task.close": "conclusion",
     # 报任务状态时说的是那一句：状态本身是个码。
     "cheese_task.state": "note",
-    "cheese_fetch": "url",
-    "cheese_web_search": "query",
+    "cheese_web.fetch": "url",
+    "cheese_web.search": "query",
     "cheese_decision": "text",
     "cheese_room.rename": "text",
     "cheese_notify": "title",

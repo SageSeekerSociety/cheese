@@ -776,7 +776,7 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
 
 @pytest.mark.anyio
 async def test_an_idle_session_compacts_itself_through_pi(tmp_path):
-    """`cheese_compact` reaches this runner as `request_compact`, and the ask
+    """`cheese_session(action=compact)` reaches this runner as `request_compact`, and the ask
     goes to pi as its own `compact` command. Nothing is running, so it goes at
     once, and what the room reads is the compaction pi reported."""
     runner, _ = await running(tmp_path)

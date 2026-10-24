@@ -59,8 +59,8 @@ TOOLS = (
     "cheese_doc.set",
     "cheese_app",
     "cheese_project_search",
-    "cheese_memory_read",
-    "cheese_attachment_read",
+    "cheese_memory.project",
+    "cheese_library.read",
 )
 
 
@@ -82,7 +82,7 @@ def session_for(
     for that conversation; its tools act on the document or the room file.
 
     A file's question names its room in ``CHEESE_TOPIC``: that is what the
-    tools reading a room's file — `cheese_attachment_read` — address it by
+    tools reading a room's file — `cheese_library(action=read)` — address it by
     (`document` names the document instead, and a file's question has none)."""
     env = {"CHEESE_PROJECT": str(asked.project_id)}
     if asked.document_id is not None:
