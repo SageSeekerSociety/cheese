@@ -113,6 +113,11 @@ class Precompute(unittest.TestCase):
         mod = load()
         with self.assertRaises(mod.ScanFailed):
             mod.count_refs(self.repo, "no-such-rev", ["helper"])
+        # `refs()` is what the orphan confirmation and the per-symbol rows read,
+        # so the same rule has to hold there: an empty list from a failed scan
+        # drops the orphan (len(now) != 1) and prints "0 处命中" as a fact.
+        with self.assertRaises(mod.ScanFailed):
+            mod.refs(self.repo, "no-such-rev", "helper")
         # The deliberate violation: turn the exit-status check back off and the
         # same call returns zeros instead of raising. The anchor names the git
         # grep branch, so it stays unique whichever branch runs here.

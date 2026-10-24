@@ -27,10 +27,12 @@ first line (`独立 review：head <sha8> 结论 ...｜档位 A..G`) is what the 
 
 - The "Review tier" section at the end says how deep this change is to be
   reviewed (A–G), why, and what that spends: the `- 子代理拓扑：` line under
-  it gives the effort and the concurrency this review runs OCR with. It changes
-  how much of step 2 runs, not the steps themselves. It is decided from the
-  files the PR touches, so a delta review still reports the tier of the whole
-  change.
+  it gives the concurrency this review runs OCR with and the judging effort
+  this tier is worth. That judging effort is yours — how hard you look at what
+  OCR reports — and is not the `--effort` OCR itself runs with, which is fixed
+  in step 2. The section changes how much of step 2 runs, not the steps
+  themselves. It is decided from the files the PR touches, so a delta review
+  still reports the tier of the whole change.
 - "This review" also names the rules injected into this review — the ones the
   changed paths load, read from the default branch — and, when the PR came
   with one, the requirement contract it is supposed to satisfy. Step 5b uses

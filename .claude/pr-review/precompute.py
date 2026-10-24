@@ -101,8 +101,18 @@ def symbols(path, src):
 
 
 def refs(repo, rev, name):
+    """Every whole-word hit of `name` at `rev`, each as `path:line:text`.
+
+    Raises `ScanFailed` on a failed scan, like `count_refs`: an empty list is the
+    answer the orphan scan reads as "this name has no other user", so a failure
+    that returned one would report the orphan as not-an-orphan. This is the
+    function the orphan confirmation and the per-symbol rows read, so the check
+    has to be here too, not only in `count_refs`."""
     p = subprocess.run(["git", "-C", str(repo), "grep", "-n", "-I", "-w", "-F", "-e", name, rev],
                        capture_output=True, text=True)
+    # git grep exits 1 when there is no match; that is a real empty answer.
+    if p.returncode not in (0, 1):
+        raise ScanFailed(f"git grep exited {p.returncode} at {rev}: {p.stderr.strip()[:200]}")
     pre = rev + ":"
     return [(l[len(pre):] if l.startswith(pre) else l) for l in p.stdout.splitlines()]
 

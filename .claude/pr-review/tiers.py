@@ -591,8 +591,11 @@ def topology_line(top):
     parts = [f"跑一次 OCR，它按包分组、每组一路主审查（最多 {top['finders']} 路并行）"]
     if top["claim"]:
         parts.append(f"{top['claim']} 路单查需求契约")
+    # 「本档的判读投入」, not 「审查 effort」: OCR's own --effort is a different knob
+    # (rounds per file) and the method pins it at low, so a seat that read this as
+    # "pass effort=<this> to OCR" would triple every file's rounds.
     return (f"单轮最多 {max_in_flight(top)} 路并发："
-            + "，".join(parts) + f"；审查 effort 用 {top['effort']}")
+            + "，".join(parts) + f"；本档判读投入 {top['effort']}（OCR 的 --effort 固定 low）")
 
 
 def block(letter, detail, top=None):
