@@ -19,6 +19,7 @@ GITHUB_API_URL from the job's environment.
 from __future__ import annotations
 
 import fnmatch
+import http.client
 import io
 import json
 import os
@@ -30,6 +31,10 @@ import zipfile
 from pathlib import Path
 
 ATTEMPTS = 5
+# All retrying stops here, inside the job's `timeout-minutes: 5`, so a stalled link
+# fails the step with its own message instead of the runner killing the job.
+DEADLINE_S = 200
+_started = time.monotonic()
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -46,12 +51,13 @@ def _with_retries(what: str, fetch):
     for attempt in range(1, ATTEMPTS + 1):
         try:
             return fetch()
-        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as error:
+        # A cut-short body raises http.client.IncompleteRead, which is not an OSError.
+        except (OSError, http.client.HTTPException) as error:
             if isinstance(error, urllib.error.HTTPError) and error.code < 500 and error.code != 429:
                 raise
-            if attempt == ATTEMPTS:
-                raise
             delay = 2**attempt
+            if attempt == ATTEMPTS or time.monotonic() - _started + delay > DEADLINE_S:
+                raise
             print(f"{what}: {error}; retrying in {delay}s ({attempt}/{ATTEMPTS})", flush=True)
             time.sleep(delay)
     raise AssertionError("unreachable")
@@ -93,7 +99,7 @@ def _zip_bytes(repo: str, artifact_id: int) -> bytes:
         location = redirect.headers["Location"]
     else:
         raise RuntimeError(f"artifact {artifact_id}: expected a redirect to the blob")
-    with urllib.request.urlopen(location, timeout=120) as response:
+    with urllib.request.urlopen(location, timeout=60) as response:
         return response.read()
 
 
