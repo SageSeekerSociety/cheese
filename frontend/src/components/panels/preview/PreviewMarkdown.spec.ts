@@ -122,3 +122,24 @@ it('换了一份正文，上一份的标记不留在新的正文上', async () =
   await waitFor(() => expect(md.textContent).toContain('另一句话'))
   expect(md.querySelector('mark[data-file-comment]')).toBeNull()
 })
+
+it('从标记里拖选了一段：那是「指着这处」，不是「打开这串」', async () => {
+  // 拖选的起点和落点都可能在这颗标记里，浏览器照样会来一次 `click`。这时读者要的是
+  // 选中的那一段（`mouseup` 那条路已经把它发出去了），不能再把评论栏打开——两个动作
+  // 同时发生，读者会以为自己的选区把一栏评论顶了出来。
+  const ui = render(PreviewMarkdown, {
+    props: { source: '# 配置\n\n失败以后重试 3 次。\n', anchors: [{ id: 'c1', quote: ANCHOR }] },
+  })
+  const found = await mark(ui.getByTestId('markdown'), 'c1')
+  const node = found.firstChild as Text
+  const range = document.createRange()
+  range.setStart(node, 0)
+  range.setEnd(node, 4)
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+
+  await fireEvent.click(found)
+
+  expect(ui.emitted().anchor).toBeUndefined()
+})

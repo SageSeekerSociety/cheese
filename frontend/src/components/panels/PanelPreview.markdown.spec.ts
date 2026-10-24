@@ -458,7 +458,11 @@ const TEXT_RANGE = {
 }
 
 /** 评论那一包：几条线程各挂一个锚点，栏本身关着（读者点标记才该把它打开）。 */
-function commentsWithOpen(anchors: (Record<string, unknown> | null)[], open: Ref<boolean>) {
+function commentsWithOpen(
+  anchors: (Record<string, unknown> | null)[],
+  open: Ref<boolean>,
+  resolved: readonly number[] = []
+) {
   return {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
     open,
@@ -476,7 +480,7 @@ function commentsWithOpen(anchors: (Record<string, unknown> | null)[], open: Ref
             created_at: '2026-10-24T00:00:00Z',
           },
           revision: 1,
-          state: 'open',
+          state: resolved.includes(at) ? 'resolved' : 'open',
           replies: [],
         })),
         activity: {},
@@ -559,4 +563,18 @@ it('在栏里换了另一条在看，正文上画重的那一处跟着换', asyn
   )
   expect(md.querySelector('mark[data-file-comment="c1"]')?.classList.contains('is-active')).toBe(false)
   expect(column.querySelector('[data-thread="c2"].is-active')).toBeTruthy()
+})
+
+it('已经解决的评论不画在正文上：那一条说完了，不该还压着正文', async () => {
+  // 和概览文档一致：那边也只标 open 的那几条。一条说完的评论还亮着，读者会以为它还等着
+  // 人回；栏里仍然能在「已解决」里找到它，只是不再压着正文。
+  //
+  // 同一个文件上还留着一条没解决的：等它那颗标记画出来，才说明这一轮画过了——只等
+  // 正文 <p> 出现就断言「没有标记」，一个根本还没画的机会也会让这条绿。
+  const open = ref(false)
+  const stillOpen = { ...TEXT_RANGE, text: '失败以后', prefix: '', suffix: '重试 3 次' }
+  const ui = mount({ comments: commentsWithOpen([TEXT_RANGE, stillOpen], open, [0]) })
+  const md = ui.getByTestId('markdown')
+  await markIn(md, 'c2')
+  expect(md.querySelector('mark[data-file-comment="c1"]')).toBeNull()
 })

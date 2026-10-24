@@ -226,12 +226,16 @@ const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? 
 
 // ---- 把已有的评论画在文件上 ----
 //
+// 只画没解决的那几种，和概览文档一致（那边 `openThreads` 也是只看 open 的）：一条已经
+// 说完的评论还压在正文上，读者会以为它还等着人回。
+//
 // 只画正文里真能找回位置的那一种（`text-range`），而且只画**这一版**上记的：评论记的
 // 是哪一版 + 哪一处，换了一版那段话可能已经挪走或改过，照旧位置画会指到另一句话上。
 // 找不回来的（正文改了）就不画——比画错强。
 const focusedThread = ref<string | null>(null)
 const threadAnchors = computed(() =>
   (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
+    if (thread.state !== 'open') return []
     const anchor = thread.comment.anchor as
       | {
           kind?: string

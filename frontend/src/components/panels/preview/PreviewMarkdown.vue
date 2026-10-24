@@ -64,9 +64,14 @@ function paint() {
       // 点它开那一串评论：和文档里点标记是同一条路，都由外面接。
       //
       // 用 `click` 不用 `mousedown`：标记盖住的那几个字仍然要能选中、能拖（读者可能正是
-      // 想指出那一段）。`click` 只在下和上落在同一颗标记上时才来，从标记里开始拖选不会
-      // 误开评论栏；`mousedown` 还得 `preventDefault` 挡掉选字，那等于把这几个字锁住了。
-      mark?.addEventListener('click', () => emit('anchor', anchor.id))
+      // 想指出那一段）。`mousedown` 还得 `preventDefault` 挡掉选字，那等于把这几个字锁住了。
+      //
+      // 拖选落在同一颗标记里也会来一次 `click`：那时读者要的是「指着这一段」，不是「打开
+      // 这一串」。有选中就别开栏——选中的那条路是 `mouseup` 上的 `quote`。
+      mark?.addEventListener('click', () => {
+        if (window.getSelection()?.isCollapsed === false) return
+        emit('anchor', anchor.id)
+      })
     }
   } finally {
     observer?.observe(root, { childList: true, subtree: true })
