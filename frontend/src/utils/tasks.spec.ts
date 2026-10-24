@@ -32,7 +32,9 @@ describe('题目此刻的状态', () => {
   })
 
   it('人数上限 0 是不限，不是满员', () => {
-    expect(taskState(task({ participantLimit: 0, participants: { total: 50, approved: 50, examples: [] } }), NOW).key).toBe('open')
+    expect(
+      taskState(task({ participantLimit: 0, participants: { total: 50, approved: 50, examples: [] } }), NOW).key
+    ).toBe('open')
   })
 })
 

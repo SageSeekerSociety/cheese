@@ -124,7 +124,7 @@ describe('task pages in English', () => {
       },
       global: { plugins: plugins() },
     })
-    expect(document.body.textContent).toContain('No activity since claiming')
+    expect(document.body.textContent).toContain('No activity since starting')
     expect(cjkIn(pageText())).toEqual([])
   })
 
