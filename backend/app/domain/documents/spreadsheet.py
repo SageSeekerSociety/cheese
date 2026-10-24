@@ -23,6 +23,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
+from xml.etree import ElementTree as ET
 
 import httpx
 
@@ -49,10 +50,9 @@ FORMULA_ERRORS = (
     "#VALUE!",
 )
 
-_CELL = re.compile(r'<c\b[^>]*\br="([A-Z]+\d+)"[^>]*\bt="e"[^>]*>(.*?)</c>', re.S)
-_VALUE = re.compile(r"<v>(.*?)</v>", re.S)
-_SHEET_ENTRY = re.compile(r'<sheet\b[^>]*\bname="([^"]*)"[^>]*r:id="([^"]*)"', re.S)
-_REL = re.compile(r'<Relationship\b[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"', re.S)
+_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 class SpreadsheetRecalcUnavailable(RuntimeError):
@@ -92,20 +92,23 @@ def _sheet_names(book: zipfile.ZipFile) -> dict[str, str]:
     workbook's own list is read to translate.
     """
     try:
-        workbook = book.read("xl/workbook.xml").decode("utf8", "replace")
-        rels = book.read("xl/_rels/workbook.xml.rels").decode("utf8", "replace")
+        workbook = ET.fromstring(book.read("xl/workbook.xml"))
+        rels = ET.fromstring(book.read("xl/_rels/workbook.xml.rels"))
     except KeyError:
         return {}
-    targets = {rel_id: target for rel_id, target in _REL.findall(rels)}
+    targets = {
+        rel.get("Id"): rel.get("Target")
+        for rel in rels.iter(f"{{{_PKG_REL}}}Relationship")
+    }
     names: dict[str, str] = {}
-    for name, rel_id in _SHEET_ENTRY.findall(workbook):
-        target = targets.get(rel_id)
+    for sheet in workbook.iter(f"{{{_MAIN}}}sheet"):
+        target = targets.get(sheet.get(f"{{{_REL}}}id"))
         if not target:
             continue
         part = target.lstrip("/")
         if not part.startswith("xl/"):
             part = "xl/" + part
-        names[part] = name
+        names[part] = sheet.get("name", "")
     return names
 
 
@@ -118,12 +121,15 @@ def cells_that_did_not_compute(raw: bytes) -> list[BadCell]:
             if not re.fullmatch(r"xl/worksheets/sheet\d+\.xml", part):
                 continue
             sheet = names.get(part, part.rsplit("/", 1)[-1])
-            body = book.read(part).decode("utf8", "replace")
-            for cell, inner in _CELL.findall(body):
-                value = _VALUE.search(inner)
-                text = (value.group(1) if value else "").strip()
+            body = ET.fromstring(book.read(part))
+            for cell in body.iter(f"{{{_MAIN}}}c"):
+                if cell.get("t") != "e" or not cell.get("r"):
+                    continue
+                text = cell.findtext(f"{{{_MAIN}}}v", "").strip()
                 if text in FORMULA_ERRORS:
-                    found.append(BadCell(sheet=sheet, cell=cell, value=text))
+                    found.append(
+                        BadCell(sheet=sheet, cell=cell.attrib["r"], value=text)
+                    )
     return found
 
 
@@ -175,6 +181,6 @@ async def recalculate(
         raise SpreadsheetRecalcFailed(say("recalcNotXlsx"))
     try:
         bad = cells_that_did_not_compute(book)
-    except zipfile.BadZipFile as exc:
+    except (zipfile.BadZipFile, ET.ParseError) as exc:
         raise SpreadsheetRecalcFailed(say("recalcUnreadable")) from exc
     return book, bad
