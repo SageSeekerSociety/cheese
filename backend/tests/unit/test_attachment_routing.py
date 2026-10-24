@@ -18,8 +18,10 @@ def _library(monkeypatch, data: bytes) -> None:
     async def present(_session, _project_id, _room_id, paths):
         return set(paths)
 
-    async def stored(_session, _project_id, _room_id, paths):
-        return {path: data for path in paths}
+    async def stored(_session, _project_id, _room_id, paths, *, max_bytes):
+        if len(data) > max_bytes:
+            return {}, set(paths)
+        return {path: data for path in paths}, set()
 
     monkeypatch.setattr(
         "app.domain.agent.prompt.library_records.attachments_present", present

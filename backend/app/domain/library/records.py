@@ -69,19 +69,18 @@ Incoming = service.Content | Upload | Copied
 READ_WHOLE_MAX_BYTES = service.MAX_VIDEO_BYTES
 
 
-def _refuse_reading_whole(size: int) -> None:
+async def _read_whole(location: str, key: str, size: int) -> bytes:
+    """``(存储, 键)`` 底下那 ``size`` 个字节，整份读进内存；不在了是「资料库里没有
+    这份文件」。
+
+    本模块整份读字节只走这一处，大小的关也只在这里：超过 `READ_WHOLE_MAX_BYTES`
+    的不读（`libraryFileTooLargeToOpen`），不管是谁、为了什么来读。「存储 + 键」这
+    双地址怎么读回字节是本包自己的事，不该让读的人去认字节存放在哪儿。
+    """
     if size > READ_WHOLE_MAX_BYTES:
         raise UnprocessableEntityError(
             say("libraryFileTooLargeToOpen", mb=READ_WHOLE_MAX_BYTES // (1024 * 1024))
         )
-
-
-async def read_blob(location: str, key: str) -> bytes:
-    """``(存储, 键)`` 底下的字节；不在了是「资料库里没有这份文件」。
-
-    「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让读的人去认字节存放在
-    哪儿。调用方先看过大小（`_refuse_reading_whole`）。
-    """
     try:
         return await blob_store.store(location).get(key)
     except blob_store.BlobMissingError:
@@ -89,9 +88,8 @@ async def read_blob(location: str, key: str) -> bytes:
 
 
 async def read_stored(stored: "Stored") -> bytes:
-    """一份 `Stored` 的字节，整份；太大的不读（`READ_WHOLE_MAX_BYTES`）。"""
-    _refuse_reading_whole(stored.size)
-    return await read_blob(stored.location, stored.key)
+    """一份 `Stored` 的字节，整份；太大的不读（`_read_whole`）。"""
+    return await _read_whole(stored.location, stored.key, stored.size)
 
 
 async def save_blob(location: str, key: str, target: Path) -> None:
@@ -111,8 +109,7 @@ async def save_blob(location: str, key: str, target: Path) -> None:
 
 
 async def _bytes_of(row: LibraryFileRecord) -> bytes:
-    _refuse_reading_whole(row.bytes)
-    return await read_blob(row.location, row.blob_key)
+    return await _read_whole(row.location, row.blob_key, row.bytes)
 
 
 async def _measure(data: Incoming) -> tuple[int, str]:
@@ -472,33 +469,46 @@ async def read_attachments(
     project_id: uuid.UUID,
     room_id: uuid.UUID,
     paths: list[str],
-) -> dict[str, bytes]:
-    """一批地址的字节：资料库一条查询拿所有行，各份字节一起去取，房间文件放同一个
-    线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
+    *,
+    max_bytes: int,
+) -> tuple[dict[str, bytes], set[str]]:
+    """一批地址的字节，每份最多 ``max_bytes``：读到的那些，和比这更大、没有读的那些
+    地址。资料库一条查询拿所有行，大小看行上记的，不读字节就知道；各份字节一起去取，
+    房间文件放同一个线程池调用里。缺一个就照单条读那样拒——调用方应当先问
+    `attachments_present`。"""
     names, room = _split_attachment_paths(paths)
-    library: list[tuple[str, str, str]] = []
+    library: list[tuple[str, LibraryFileRecord]] = []
+    too_large: set[str] = set()
     if names:
         rows = await session.execute(
             _current(Shelf.of_project(project_id)).where(
                 LibraryFileRecord.name.in_(list(names))
             )
         )
+        listed = 0
         for row in rows.scalars():
-            library.append((names[row.name], row.location, row.blob_key))
-        if len(library) != len(names):
+            listed += 1
+            if row.bytes > max_bytes:
+                too_large.add(names[row.name])
+            else:
+                library.append((names[row.name], row))
+        if listed != len(names):
             # 和单条读一样：这个地址没错，是东西不在了。
             raise NotFoundError(say("libraryFileNotFound"))
     if not library and not room:
-        return {}
-    blobs = await asyncio.gather(
-        *(read_blob(location, key) for _, location, key in library)
-    )
-    found = dict(zip((path for path, _, _ in library), blobs, strict=True))
+        return {}, too_large
+    blobs = await asyncio.gather(*(_bytes_of(row) for _, row in library))
+    found = dict(zip((path for path, _ in library), blobs, strict=True))
     if room:
-        found.update(
+        # 房间文件落地时就有上限（`service.max_bytes_for`），读了再量。
+        for path, data in (
             await asyncio.to_thread(_read_room_files, project_id, room_id, room)
-        )
-    return found
+        ).items():
+            if len(data) > max_bytes:
+                too_large.add(path)
+            else:
+                found[path] = data
+    return found, too_large
 
 
 async def read_attachment_text(

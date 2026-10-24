@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import raster_images
+from app.core.model_images import MAX_BYTES as MODEL_IMAGE_MAX_BYTES
 from app.core.model_images import model_media_type
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import (
@@ -266,7 +267,9 @@ async def model_images(
     files: list[tuple[str, str]],
 ) -> tuple[dict[str, Image], set[str]]:
     """Which of ``files`` (path, media type the message gave) go to the model as
-    pictures, read now, and which look like pictures but do not decode.
+    pictures, read now, and which look like pictures but cannot go as one: their
+    bytes do not decode, or there are more of them than a model takes in one
+    picture (`MODEL_IMAGE_MAX_BYTES`, never read).
 
     A file goes as a picture only when its message calls it one AND its bytes
     decode (`model_media_type`), under the type they decode as: the message's
@@ -288,11 +291,20 @@ async def model_images(
     if not wanted:
         return images, undecodable
     # One read for the whole message: a path the message does not call a picture
-    # and whose name does not say one needs no bytes at all (`wanted`).
-    stored = await library_records.read_attachments(
-        session, project_id, room_id, [path for path, _ in wanted]
+    # and whose name does not say one needs no bytes at all (`wanted`), and one
+    # larger than a model takes as a picture is not read either: it is a file of
+    # its own, however it was sent, and goes to the session as one.
+    stored, too_large = await library_records.read_attachments(
+        session,
+        project_id,
+        room_id,
+        [path for path, _ in wanted],
+        max_bytes=MODEL_IMAGE_MAX_BYTES,
     )
+    undecodable.update(too_large)
     for path, claimed in wanted:
+        if path in too_large:
+            continue
         data = stored[path]
         decoded = await asyncio.to_thread(model_media_type, data)
         if decoded is None:
