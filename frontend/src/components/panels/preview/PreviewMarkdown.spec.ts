@@ -4,8 +4,8 @@
  * （PanelPreview.media.spec.ts）；这里盯手势：mouseup 拿到的选区要变成一句话出去、没选中的
  * 点击不该出去、点标记要开那一串；以及标记本身：哪几处画、画重的在哪、什么时候拆掉。
  *
- * 正文的读法是第一次用到才加载的，等它画出来的断言都走 `mark()`／`firstLine()` 这两个助手，
- * 它们给足 5 秒：默认的 1 秒单独跑够，整目录 80 来个文件并发跑不够。
+ * 正文的读法是第一次用到才加载的，所以这个文件里凡是等它画出来的 `waitFor` 都给足 5 秒：
+ * 默认的 1 秒单独跑够，整目录 80 来个文件并发跑时不够。
  */
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, expect, it } from 'vitest'
@@ -133,8 +133,9 @@ it('换了在看的那一条，正文上重的那一处跟着换', async () => {
 
   await ui.rerender({ source: '# 配置\n\n失败以后重试 3 次。\n', anchors, activeId: 'c1' })
 
-  await waitFor(() =>
-    expect(md.querySelector('mark[data-file-comment="c1"]')?.classList.contains('is-active')).toBe(true)
+  await waitFor(
+    () => expect(md.querySelector('mark[data-file-comment="c1"]')?.classList.contains('is-active')).toBe(true),
+    { timeout: 5000 }
   )
   // 重画是「先拆再画」，不是又包一层：正文上还只有这一颗。
   expect(md.querySelectorAll('mark[data-file-comment]')).toHaveLength(1)
