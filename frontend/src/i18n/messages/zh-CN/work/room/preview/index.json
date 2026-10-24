@@ -29,7 +29,7 @@
   "locateContextAfter": "下文「{suffix}」",
   "locateContextBefore": "上文「{prefix}」",
   "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
-  "locatorPlaceholder": "说明要改什么",
+  "locatorPlaceholder": "就这一处说点什么",
   "mdHeading": "标题「{heading}」",
   "mdTop": "文件开头",
   "mutableFile": "文件依赖可变，非完整快照",

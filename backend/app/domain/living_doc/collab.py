@@ -6,7 +6,7 @@ Every document is a Yjs document held by the collaboration service
 module signs. The service stores the document back here — the Yjs state and
 the Markdown it exports — and that store is the only path that records a new
 version (see ``store.py``). So a write that does not come from an editor (芝士's
-``cheese_doc_set`` and ``cheese_doc_edit``, a restore) cannot go to the
+``cheese_doc(action=set)`` and ``cheese_doc(action=edit)``, a restore) cannot go to the
 database either: the live document would overwrite it at its next store. It
 goes to the service, which applies it to the live document and stores it:
 ``replace`` for the whole document, ``edit`` for passages of it.

@@ -173,6 +173,29 @@ def test_scoped_token_is_swapped_for_the_project_key(client, _pool, _project_key
     assert sent["content"] == b'{"model":"m","messages":[]}'
 
 
+def test_a_room_session_names_its_room_so_the_gateway_keeps_its_cache(
+    client, _pool, _project_key
+):
+    """The gateway keeps a conversation on the upstream node whose prompt cache
+    holds it, by the session a request names. pi names none: a room's call is
+    named by its room. Claude Code names its own, which is kept."""
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    room = project["root_topic_id"]
+    token = mint_scoped_token(project_id=project["id"], topic_id=room)
+
+    for named, expected in ((None, room), ("cc-session-1", "cc-session-1")):
+        headers = {"Authorization": f"Bearer {token}"}
+        if named:
+            headers["x-litellm-session-id"] = named
+        r = client.post(
+            "/llm/v1/chat/completions",
+            headers=headers,
+            content=b'{"model":"m","messages":[]}',
+        )
+        assert r.status_code == 200, r.text
+        assert _FakeClient.seen["headers"]["x-litellm-session-id"] == expected
+
+
 def test_x_api_key_presentation_also_works(client, _pool, _project_key):
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)

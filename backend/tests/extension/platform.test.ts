@@ -549,7 +549,7 @@ describe("有人发来消息的时候", () => {
       JSON.stringify({
         id,
         answers: ["chat_send", "cheese_ask"],
-        reads: ["cheese_chat_list"],
+        reads: ["cheese_chat.list"],
         reason: "REPLY_FIRST",
         answered: `${file}.answered`,
       }),
@@ -593,7 +593,11 @@ describe("有人发来消息的时候", () => {
     const { pi } = await load();
     owe("m1");
 
-    assert.equal(await pi.emit("tool_call", { toolName: "cheese_chat_list", input: {} }), undefined);
+    const read = { toolName: "cheese_chat", input: { action: "list" } };
+    assert.equal(await pi.emit("tool_call", read), undefined);
+    // Editing one's own message is in the same tool and is no read.
+    const edit = { toolName: "cheese_chat", input: { action: "edit", message_id: "m0", content: "x" } };
+    assert.deepEqual(await pi.emit("tool_call", edit), { block: true, reason: "REPLY_FIRST" });
     const refused = await pi.emit("tool_call", { toolName: "bash", input: {} });
     assert.deepEqual(refused, { block: true, reason: "REPLY_FIRST" });
     assert.ok(!fs.existsSync(`${process.env.CHEESE_REPLY_OWED}.answered`));

@@ -624,7 +624,7 @@ async def test_the_room_is_given_the_platforms_tools_and_the_clis_commands(tmp_p
         published = {tool["name"] for tool in spec["tools"]}
         # The platform's table, under the names every harness uses, and the
         # commands that run on the machine as a process.
-        assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
+        assert {"chat_send", "cheese_doc", "cheese_notify"} <= published
         assert {"cheese_worktree", "cheese_sync"} <= published
         assert "cheese_chat_send" not in published
         worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")
@@ -776,7 +776,7 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
 
 @pytest.mark.anyio
 async def test_an_idle_session_compacts_itself_through_pi(tmp_path):
-    """`cheese_compact` reaches this runner as `request_compact`, and the ask
+    """`cheese_session(action=compact)` reaches this runner as `request_compact`, and the ask
     goes to pi as its own `compact` command. Nothing is running, so it goes at
     once, and what the room reads is the compaction pi reported."""
     runner, _ = await running(tmp_path)

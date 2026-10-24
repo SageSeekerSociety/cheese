@@ -144,7 +144,7 @@ def render_skill(
         "## 用的时候",
         "",
         "照这份做时被用户纠正了、或者发现它哪里不对，就用 "
-        f'`cheese_skill_update(skill="{skill_id}", …)` 提议修改这一份，'
+        f'`cheese_skill(action=update, skill="{skill_id}", …)` 提议修改这一份，'
         "`reason` 写用户纠正的原话或者哪里不对。确认之前大家继续用这一版。",
     ]
     return "\n".join(lines) + "\n"
@@ -180,8 +180,9 @@ class ProjectSkillService:
         """The bounds on a teammate proposing a new method.
 
         It may not propose a method a person already declined, may not have two
-        proposals waiting in one room (a person answers one before the next),
-        and stops at ``PROPOSAL_LIMIT``, where merging or editing is the move.
+        proposals waiting in one conversation (a person answers one before the
+        next), and stops at ``PROPOSAL_LIMIT``, where merging or editing is the
+        move.
         """
         rows = await self.list(project_id)
         declined = await self._session.scalar(

@@ -587,6 +587,10 @@ async def proxy(
         # its own; pi names none, so each call of a person's 芝士 landed on any
         # node and its cache hit only the system prompt.
         headers[SESSION_HEADER] = person.conversation_id
+    elif claims is not None and claims.get("t"):
+        # A teammate's session in a room: its conversation is the room's. Claude
+        # Code names its own session, which stays as it is.
+        headers.setdefault(SESSION_HEADER, str(claims["t"]))
     body = await request.body()
 
     client = httpx.AsyncClient(timeout=_TIMEOUT)

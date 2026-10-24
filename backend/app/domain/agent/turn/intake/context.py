@@ -55,7 +55,9 @@ async def living_doc_text(
     # document's note takes is left, so that second fit has nothing to cut.
     room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
     return (
-        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
+        fit_doc_to_budget(
+            text, room, full_read_hint="用 `cheese_doc(action=get)` 读全文"
+        )
         + canvases
     )
 

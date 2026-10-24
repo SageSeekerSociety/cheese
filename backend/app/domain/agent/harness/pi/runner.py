@@ -153,7 +153,7 @@ class Runner(runner.Runner[Journal]):
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
@@ -710,7 +710,13 @@ class Runner(runner.Runner[Journal]):
         }
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
-        if tool not in (self.tools.get("names") or []):
+        # A session may be named only some of an object's verbs
+        # (`catalog.schemas_of`): one it was not named is no tool of its.
+        names = self.tools.get("names") or []
+        key = (
+            f"{tool}.{arguments.get('action')}" if isinstance(arguments, dict) else tool
+        )
+        if tool not in names and key not in names:
             return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
         if not self.platform_token:
             # Never the credential the session started with: that one is the
@@ -723,7 +729,7 @@ class Runner(runner.Runner[Journal]):
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
             # A person's 芝士 works on a computer of its own and moves files
-            # between it and their library (`cheese_file_give`): the commands
+            # between it and their library (`cheese_library(action=give)`): the commands
             # run there, the requests go out under the question's credential.
             # One that only reads a room's machine (a document's 芝士) runs
             # nothing on it.
@@ -738,7 +744,7 @@ class Runner(runner.Runner[Journal]):
         for name, value in _scope_of(self.platform_token).items():
             host.environ.setdefault(name, value)
         try:
-            text = catalog.run_platform_tool(tool, arguments, host)
+            text = catalog.run_platform_tool(tool, arguments, host, delegated=True)
         except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return _said(text)
@@ -1187,7 +1193,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

@@ -262,7 +262,7 @@ async def library_file(
 async def library_file_text(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
+    """一份资料读成文本，给芝士读（`cheese_library(action=read)` 读 `library/` 开头的地址）：
     文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
     actor = await _reader(project_id, db, resolver)

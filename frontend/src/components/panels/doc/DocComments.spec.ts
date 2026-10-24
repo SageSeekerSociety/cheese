@@ -239,7 +239,7 @@ describe('a thread’s card', () => {
     const view = mount({ threads: [thread('a')] })
     view.state.activity.a = { state: 'queued' }
     expect(await screen.findByText('芝士正忙，空闲后自动回复')).toBeTruthy()
-    view.state.activity.a = { state: 'working', tool: 'cheese_doc_edit' }
+    view.state.activity.a = { state: 'working', tool: 'cheese_doc.edit' }
     expect(await screen.findByText('芝士正在修改文档…')).toBeTruthy()
     delete view.state.activity.a
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull())

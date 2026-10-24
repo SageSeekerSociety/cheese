@@ -86,7 +86,8 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
       </details>
       <details v-else-if="part.kind === 'tool'" class="record-row__tool" :class="{ 'record-row--failed': part.failed }">
         <summary>
-          <strong>{{ toolLabel(part.action || part.name || '') }}</strong> <span>{{ part.preview }}</span>
+          <strong>{{ part.action ? toolLabel(part.action) : toolLabel(part.name || '', part.input) }}</strong>
+          <span>{{ part.preview }}</span>
           <span v-if="part.failed">{{ t('work.room.site.failed') }}</span>
         </summary>
         <pre>{{

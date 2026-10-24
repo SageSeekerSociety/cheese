@@ -374,7 +374,7 @@ class SearchIn(BaseModel):
 async def agent_search(
     body: SearchIn, resolver: ActorResolverDep, db=Depends(get_db)
 ) -> dict:
-    """cheese_task_search: the space's 题目 whose name or intro has every word
+    """`cheese_find` in a space (`where=spaces/<id>`): the space's 题目 whose name or intro has every word
     of the query, and the person's drafts there."""
     user_id = await _person(resolver)
     await _publishable_space(db, body.space, user_id)
@@ -420,7 +420,7 @@ class ReadIn(BaseModel):
 async def agent_read(
     body: ReadIn, resolver: ActorResolverDep, spaces: Spaces, db=Depends(get_db)
 ) -> dict:
-    """cheese_task_get: a draft, or a published 题目, in 芝士's words."""
+    """`cheese_read` of `drafts/<id>` or `spaces/<id>/tasks/<id>`: a draft, or a published 题目, in 芝士's words."""
     user_id = await _person(resolver)
     if body.draft is not None:
         row = await drafts.mine(db, user_id, body.draft)
@@ -460,7 +460,7 @@ async def agent_write(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_write: write fields of a draft — a new one in a space, the
+    """cheese_problem(action=write): write fields of a draft — a new one in a space, the
     one named, or the person's changes to a published 题目 — and tell the
     page."""
     user_id = await _person(resolver)
@@ -580,7 +580,7 @@ async def agent_publish(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_publish: publish a draft as the person would."""
+    """cheese_problem(action=publish): publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
     missing = drafts.missing(row)
@@ -630,9 +630,9 @@ class FileIn(BaseModel):
 
 @router.post("/agent/file", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_file(body: FileIn, resolver: ActorResolverDep, db=Depends(get_db)):
-    """cheese_file_read: a file the person handed over, or one of the
-    materials of a 题目 they may download, as text, a range of pages at a
-    time."""
+    """`cheese_read` of `files/<id>` (a file the person handed over) or of
+    `spaces/<s>/tasks/<t>/files/<name>` (one of the materials of a 题目 they
+    may download), as text, a range of pages at a time."""
     user_id = await _person(resolver)
     if body.task is not None and body.name:
         task = await TaskService.of(db).get_task(body.task)
@@ -664,7 +664,7 @@ class MaterialsIn(BaseModel):
 async def agent_materials(
     body: MaterialsIn, resolver: ActorResolverDep, db=Depends(get_db)
 ):
-    """cheese_space_materials: the space's materials the person can read, or
+    """`cheese_read` of `spaces/<id>` or `spaces/<id>/materials/<id>`: the space's materials the person can read, or
     one of them as text."""
     user_id = await _person(resolver)
     materials = SpaceMaterialService(session=db, storage=get_storage_backend())

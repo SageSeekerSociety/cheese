@@ -55,7 +55,9 @@ def _done(events: list) -> dict:
 def _edit_to(old: str, new: str):
     async def edit(credential, question):
         await _tool(
-            credential, "cheese_doc_edit", {"edits": [{"old": old, "new": new}]}
+            credential,
+            "cheese_doc.edit",
+            {"edits": [{"old": old, "new": new}]},
         )
         return "改好了。", None
 

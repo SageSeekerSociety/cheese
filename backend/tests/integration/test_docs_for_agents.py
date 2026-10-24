@@ -1,4 +1,4 @@
-"""AI teammates search and read the docs (cheese_docs_search / cheese_docs_read),
+"""AI teammates search and read the docs (cheese_help),
 over the real HTTP stack and database; the frontend that serves the docs is a
 MockTransport that, like nginx, refuses dev/ without a valid pass.
 

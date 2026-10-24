@@ -2,7 +2,7 @@
 
 The last step landing tells the task's AI teammate to bring the task document
 up to date, say what came of the task, and close it. The task closes when the
-teammate closes it (`cheese_close_task`): the instruction being handed over is
+teammate closes it (`cheese_task(action=close)`): the instruction being handed over is
 not that, and nor is the session stopping afterwards, since neither says the
 write-up was done. A close that came with the instruction stopped the write-up
 it was waiting for, which the room then read as work that did not finish (dev,
