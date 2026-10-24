@@ -376,7 +376,7 @@ class AskIn(BaseModel):
     #: The page it is asked from; the conversation's own place when left out.
     page: PageIn | None = None
     #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
-    #: reads them with ``cheese_file_read``, as the asker may.
+    #: reads them with ``cheese_read`` (``files/<id>``), as the asker may.
     files: list[FileIn] = Field(default_factory=list, max_length=10)
 
     @field_validator("question")
