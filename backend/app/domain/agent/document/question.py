@@ -225,9 +225,11 @@ class Asked:
                 else OnRoomFile(uuid.UUID(room), data["path"])
             ),
             task_id=uuid.UUID(task) if task else None,
-            # Absent from questions stored before it was kept: ``credential``
-            # then falls back to the task or the file's room, which is where
-            # those answers were read anyway.
+            # Absent from questions stored before it was kept. ``credential``
+            # then falls back to the task or the file's room; a stored comment
+            # thread reaches neither — one of a document kept in a room names no
+            # task and no room file — so its answer reaches the project's own
+            # people, as every such answer did until this field existed.
             conversation_id=uuid.UUID(conversation) if conversation else None,
         )
 
