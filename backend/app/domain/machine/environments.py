@@ -91,23 +91,31 @@ async def environment_of(
 
 async def offered_specs(db: AsyncSession, project) -> list[dict]:
     """The sandbox specs this project may choose, each with the words a
-    reader sees for it: the platform's machines where this deployment has
-    them, and the project's team devices that can make a sandbox."""
+    reader sees for it — its name, and what it is and what it costs: the
+    platform's machines where this deployment has them, and the project's team
+    devices that can make a sandbox."""
     out = []
     if cloud_provisionable(settings):
-        out.append(_spec(STANDARD, say("specStandard")))
+        out.append(_spec(STANDARD, say("specStandard"), say("specStandardAbout")))
     if cloud_vm_provisionable(settings):
-        out.append(_spec(VM, say("specVm")))
+        out.append(_spec(VM, say("specVm"), say("specVmAbout")))
     devices = sql_device_service(db)
     mine = await devices.list_devices_for_project(project.id)
     refusing = await devices.refusing_sandboxes([d.device_id for d in mine])
     if any(d.device_id not in refusing for d in mine):
-        out.append(_spec(TEAM_DEVICES, say("specTeamDevices")))
+        out.append(
+            _spec(TEAM_DEVICES, say("specTeamDevices"), say("specTeamDevicesAbout"))
+        )
     return out
 
 
-def _spec(spec: str, label) -> dict:
-    return {"spec": spec, "label": str(label), **notice_keys(label=label)}
+def _spec(spec: str, label, description) -> dict:
+    return {
+        "spec": spec,
+        "label": str(label),
+        "description": str(description),
+        **notice_keys(label=label, description=description),
+    }
 
 
 async def environment_words(db: AsyncSession, environment: Sandbox | SelfHosted):

@@ -130,8 +130,6 @@
     "GET /legal/documents",
     "GET /legal/documents/{document}",
     "GET /legal/documents/{document}/versions/{version}",
-    "GET /market/nodes",
-    "GET /market/pools",
     "GET /material-bundles",
     "GET /material-bundles/{bundle_id}",
     "GET /materials/{material_id}",
