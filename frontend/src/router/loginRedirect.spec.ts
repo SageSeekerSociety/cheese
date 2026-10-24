@@ -88,6 +88,8 @@ describe('登录完落在哪', () => {
   it('站外地址不认，登录页不能当开放跳转用', () => {
     expect(postLoginTarget({ redirect: 'https://evil.example/x' })).toBe('/')
     expect(postLoginTarget({ redirect: '//evil.example/x' })).toBe('/')
+    expect(postLoginTarget({ redirect: '/\\evil.example/x' })).toBe('/')
+    expect(postLoginTarget({ redirect: '/\t/evil.example/x' })).toBe('/')
   })
 })
 
@@ -186,7 +188,7 @@ describe('登录完要去的页不是应用里的页', () => {
   })
 
   it('站外地址仍然只回首页', async () => {
-    for (const evil of ['//evil.example/x', 'https://evil.example/x']) {
+    for (const evil of ['//evil.example/x', 'https://evil.example/x', '/\\evil.example/x', '/\t/evil.example/x']) {
       const r = await signInFrom(`?redirect=${encodeURIComponent(evil)}`)
       expect(r.currentRoute.value.name).toBe('Home')
     }

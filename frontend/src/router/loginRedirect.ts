@@ -9,11 +9,18 @@ import type { LocationQuery, NavigationGuardWithThis } from 'vue-router'
 
 import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 
-// 只认站内路径：`https://…` 和 `//evil.com` 都不要，否则登录页就是一个开放跳转。
+// 只认站内路径：`https://…`、`//evil.com` 都不要，否则登录页就是一个开放跳转。
+// 按浏览器的解析规则判，不按字面：浏览器把 `\` 当 `/`、丢掉制表符和换行，
+// `/\evil.com` 字面上是站内路径，交给 `location.replace` 却会出站。
+// 拿一个占位的源来解析，解析完源变了就是出站；不读 `location`，没有浏览器也能判。
+const SAME_ORIGIN = 'https://same-origin.invalid'
+
 export function postLoginTarget(query: LocationQuery): string {
   const r = query.redirect
   const path = Array.isArray(r) ? r[0] : r
-  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//') ? path : '/'
+  if (typeof path !== 'string' || !path.startsWith('/')) return '/'
+  const url = new URL(path, SAME_ORIGIN)
+  return url.origin === SAME_ORIGIN ? url.pathname + url.search + url.hash : '/'
 }
 
 export const carryLoginRedirect: NavigationGuardWithThis<undefined> = (to, from) => {
