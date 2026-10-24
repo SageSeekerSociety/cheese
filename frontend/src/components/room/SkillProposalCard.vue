@@ -7,7 +7,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-// 房间里请人保存技能的那张卡：芝士把一套做法整理成技能（或者提议改一份），
+// 对话里请人保存技能的那张卡：芝士把一套做法整理成技能（或者提议改一份），
 // 人就在说话的地方决定存不存，不用跳去技能页。
 //
 // 卡上最显眼的是**依据**，不是技能本身：用户教过它哪几处、这次怎么算做成的、和已有

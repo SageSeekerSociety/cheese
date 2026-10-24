@@ -180,8 +180,9 @@ class ProjectSkillService:
         """The bounds on a teammate proposing a new method.
 
         It may not propose a method a person already declined, may not have two
-        proposals waiting in one room (a person answers one before the next),
-        and stops at ``PROPOSAL_LIMIT``, where merging or editing is the move.
+        proposals waiting in one conversation (a person answers one before the
+        next), and stops at ``PROPOSAL_LIMIT``, where merging or editing is the
+        move.
         """
         rows = await self.list(project_id)
         declined = await self._session.scalar(
