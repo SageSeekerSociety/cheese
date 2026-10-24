@@ -231,6 +231,7 @@
         <CiteMenu
           v-if="cite.open.value"
           ref="citeMenu"
+          class="ap__cite-menu"
           :picker="cite"
           :project="project"
           :most="MOST_CITED"
@@ -281,7 +282,7 @@
               :aria-label="t('tasks.assistant.cite.button')"
               :title="t('tasks.assistant.cite.button')"
               @mousedown.prevent
-              @click="startCite"
+              @click="cite.start(), editor?.focus?.()"
             />
           </template>
           <!-- The recording bar grows out of the microphone, as in the channel composer. -->
@@ -427,10 +428,9 @@ const props = withDefaults(
     /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
     dockable?: boolean
     docked?: boolean
-    /** 「当前页面」那一枚：这一页叫什么（没有就不画）、人关掉了没有。 */
+    /** 输入框上方那一排：这一页叫什么（没有就不画）、人关掉了没有，和选中交给芝士的那段字。 */
     pageLabel?: string | null
     pageOff?: boolean
-    /** 人在页面上选中、交给芝士的那段字。 */
     selection?: string | null
     /** `@` 能引用的东西（还没读回来是 null）、最近去过的 id、眼前这个项目的名字。 */
     citable?: Citable[] | null
@@ -644,15 +644,7 @@ const cite = useCitePicker({
   searchProblems: props.searchProblems,
   scrollActiveIntoView: () => citeMenu.value?.scrollActiveIntoView(),
 })
-/** 输入框里的标签照用 @ 挑过的东西写名字。 */
-const names = computed<RefNames>(() => ({ ...NO_NAMES, cited: props.cited }))
-
-/** 底下那颗 @：在光标处打一个 `@`，菜单随之打开。 */
-function startCite() {
-  draft.value = draft.value.slice(0, caret.value) + '@' + draft.value.slice(caret.value)
-  caret.value += 1
-  editor.value?.focus?.()
-}
+const names = computed<RefNames>(() => ({ ...NO_NAMES, cited: { ...props.cited, ...cite.picks.value } }))
 
 function onKeydown(e: KeyboardEvent) {
   if (cite.onKeydown(e)) return
@@ -911,6 +903,14 @@ function nearTop() {
     border-color var(--dur-quick) var(--ease-standard),
     box-shadow var(--dur-quick) var(--ease-standard),
     background-color var(--dur-quick) var(--ease-standard);
+}
+
+.ap__cite-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 3;
 }
 
 .ap__box:focus-within {

@@ -147,8 +147,9 @@ async def _draft(reader: Reader, page_id: str) -> Shown:
 #: What 芝士 is told of a question asked from no page: whatever page it read
 #: before is not where the person is now.
 NO_PAGE = (
-    "<这一页>\n这一问没有附上页面：用户说「这里」「这个」时，不要当作之前读到的那一页；"
-    "不清楚指什么就问。\n</这一页>"
+    "<这一页>\n这一问用户没有附上页面（他把当前页面关掉了，或在一个你读不到的页面上）。"
+    "他说「这里」「这个」「这页」时，你不知道指哪：先问他指哪里，"
+    "不要拿之前读到的页面或你猜的地方来答。\n</这一页>"
 )
 
 #: How much of a text 芝士 has no tool to read goes with it.

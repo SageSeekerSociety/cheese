@@ -1673,7 +1673,7 @@ def test_a_question_asked_with_the_page_taken_off_is_told_of_no_page(client, gat
     assert r.status_code == 200, r.text
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "图像分类基线复现" not in told
-    assert "这一问没有附上页面" in told
+    assert "没有附上页面" in told
 
 
 def test_selected_text_goes_with_the_question_as_material(client, gateway):

@@ -4,7 +4,7 @@
 import type { CitePicker } from '@/composables/useCitePicker'
 import type { CitableKind } from '@/types/citable'
 
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { t } from '@/i18n'
 
@@ -74,6 +74,20 @@ function split(title: string, range: [number, number] | null): [string, string, 
 }
 
 const list = ref<HTMLElement | null>(null)
+const root = ref<HTMLElement | null>(null)
+/** 菜单往上长，最高到外面那个会裁掉它的框（面板）的顶上：矮的面板里不顶出去。 */
+const room = ref<number | null>(null)
+
+function measure() {
+  const el = root.value
+  if (!el) return
+  let clip: HTMLElement | null = el.parentElement
+  while (clip && getComputedStyle(clip).overflowY === 'visible') clip = clip.parentElement
+  const top = clip ? clip.getBoundingClientRect().top : 0
+  room.value = Math.max(160, el.getBoundingClientRect().bottom - top - 8)
+}
+
+onMounted(measure)
 
 async function scrollActiveIntoView() {
   await nextTick()
@@ -84,7 +98,13 @@ defineExpose({ scrollActiveIntoView })
 </script>
 
 <template>
-  <div class="cite" role="listbox" :aria-label="t('tasks.assistant.cite.title')">
+  <div
+    ref="root"
+    class="cite"
+    role="listbox"
+    :aria-label="t('tasks.assistant.cite.title')"
+    :style="room ? { maxHeight: `min(360px, ${room}px)` } : undefined"
+  >
     <div class="cite__head">
       <button
         v-if="kind"
@@ -145,11 +165,6 @@ defineExpose({ scrollActiveIntoView })
 
 <style scoped>
 .cite {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  left: 0;
-  z-index: 3;
   display: flex;
   flex-direction: column;
   max-height: 360px;
@@ -199,6 +214,7 @@ defineExpose({ scrollActiveIntoView })
 }
 
 .cite__list {
+  min-height: 0;
   padding: 4px;
   overflow-y: auto;
 }

@@ -60,6 +60,8 @@ export function useCitePicker(deps: CitePickerDeps) {
   const kind = ref<CitableKind | null>(null)
   const active = ref(0)
   const problems = ref<Citable[]>([])
+  /** 这里挑中过的，按 id：输入框里的标签当场照它写名字，不等外面传回来。 */
+  const picks = ref<Record<string, { kind: CitableKind; title: string }>>({})
 
   const open = computed(() => !!partial.value && partial.value.index !== dismissed.value)
   const query = computed(() => partial.value?.[1] ?? '')
@@ -146,6 +148,7 @@ export function useCitePicker(deps: CitePickerDeps) {
     const rest = deps.draft.value.slice(deps.caret.value)
     // 标签后面空一格好接着打字；后面本来就是空白就不再添。
     const token = `<#${row.item.id}>${/^\s/.test(rest) ? '' : ' '}`
+    picks.value = { ...picks.value, [row.item.id]: { kind: row.item.kind, title: row.item.title } }
     deps.picked(row.item)
     deps.draft.value = deps.draft.value.slice(0, start) + token + rest
     deps.caret.value = start + token.length
@@ -153,6 +156,12 @@ export function useCitePicker(deps: CitePickerDeps) {
 
   function back() {
     kind.value = null
+  }
+
+  /** 输入框底下那颗 @：在光标处打一个 `@`，菜单随之打开。 */
+  function start() {
+    deps.draft.value = deps.draft.value.slice(0, deps.caret.value) + '@' + deps.draft.value.slice(deps.caret.value)
+    deps.caret.value += 1
   }
 
   /** 鼠标指着第几行能挑的：高亮跟过去，和键盘改的是同一个值。 */
@@ -204,6 +213,8 @@ export function useCitePicker(deps: CitePickerDeps) {
     choose,
     back,
     point,
+    start,
+    picks,
     close,
     onKeydown,
   }
