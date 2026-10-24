@@ -6,7 +6,7 @@ Principles that no tool will enforce, so they hold by being read. Two limits kee
 
 Cheese hosts other people's repositories, and a hosted repository must never have to change to be hosted: no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. The rule governs a repository's contents, not a machine's: a machine enrolled to run agents was enrolled for exactly that. When you build a platform feature here, that is the constraint it must meet.
 
-So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md`, a rule true only for platform-run agents on this repo in the description of the platform tool it concerns — not into this file. When unsure: a rule that is false outside a session the platform runs is platform knowledge.
+So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md` — not into this file. A rule true only of this repo goes here, even when only sessions the platform runs ever meet it: a platform tool's description and the platform's prompts are read by the agents of every hosted repo. When unsure: a rule that is false outside a session the platform runs, and true of every hosted repo, is platform knowledge.
 
 ## Production changes go through CI/CD
 
