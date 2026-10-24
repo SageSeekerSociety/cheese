@@ -16,7 +16,7 @@ until the next write (there are none: every skill route has always written a
 room id, and every room since `f7985445d2bf` is registered in `conversations`).
 
 Revision ID: b7d41e9c05af
-Revises: e73ca7b0dd69
+Revises: a3c9e15f7b20
 """
 
 from collections.abc import Sequence
@@ -26,7 +26,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "b7d41e9c05af"
-down_revision: str | Sequence[str] | None = "e73ca7b0dd69"
+down_revision: str | Sequence[str] | None = "a3c9e15f7b20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
