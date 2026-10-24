@@ -66,6 +66,7 @@ from app.domain.library import service as library
 from app.domain.living_doc.comment_schemas import (
     CommentCreatedOut,
     ReplyIn,
+    ThreadAgentStoppedOut,
     ThreadListOut,
     ThreadMutation,
     ThreadOut,
@@ -427,6 +428,7 @@ async def reopen_file_thread(
 @router.post(
     "/{topic_id}/files/comments/{comment_id}/agent/stop",
     dependencies=[ROUTE_DECIDES],
+    **typed_response(ThreadAgentStoppedOut),
 )
 async def stop_file_thread_agent(
     topic_id: uuid.UUID,

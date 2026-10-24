@@ -94,3 +94,8 @@ class ThreadOut(BaseModel):
 class ThreadListOut(BaseModel):
     data: list[ThreadOut]
     total: int
+
+
+class ThreadAgentStoppedOut(BaseModel):
+    """Nothing: the agent was told to stop, and its reply keeps what was
+    written, marked as stopped."""
