@@ -623,6 +623,9 @@ async def test_the_room_is_given_the_platforms_tools_and_no_cli_command(tmp_path
         assert {"chat_send", "cheese_doc", "cheese_notify"} <= published
         assert not {"cheese_worktree", "cheese_sync"} & published
         assert "cheese_chat_send" not in published
+        # And what a call to one as a tool is told instead of pi's "not found".
+        assert "`cheese push-fix …`" in spec["commands"]["cheese_push_fix"]
+        assert not set(spec["commands"]) & published
     finally:
         await runner.close()
 
@@ -654,15 +657,21 @@ async def test_a_cli_command_called_as_a_tool_is_refused_and_the_session_goes_on
     tmp_path,
 ):
     """A model that remembers the commands as tools (`cheese_worktree`) is told
-    there is no such tool, and the session is still answering afterwards; the
-    command itself is `cheese worktree` in its bash."""
+    to run `cheese worktree` in its bash, and the session is still answering
+    afterwards; a name that is no command either is no such tool."""
     runner = await with_tools(tmp_path)
     try:
         result = await call(
             runner.state, "cli", {"tool": "cheese_worktree", "arguments": {}}
         )
         assert result["status"] == 1
-        assert "no such tool" in result["stderr"]
+        assert result["stderr"].startswith(
+            "cheese_worktree 不是工具：CLI 的命令在 bash 里跑，`cheese worktree …`"
+        )
+        invented = await call(
+            runner.state, "cli", {"tool": "cheese_frobnicate", "arguments": {}}
+        )
+        assert invented["stderr"] == "cheese_frobnicate: no such tool"
         assert (await call(runner.state, "ping"))["alive"] is True
     finally:
         await runner.close()

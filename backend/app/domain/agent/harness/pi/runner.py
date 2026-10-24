@@ -567,9 +567,16 @@ class Runner(runner.Runner[Journal]):
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
         reason = ""
+        # What a room that calls one of the CLI's commands as a tool is told
+        # instead of pi's own "not found": it runs them with its bash. A
+        # session without hands has no bash to send it to.
+        commands: dict[str, str] = {}
         if tools is None:
             try:
                 tools = catalog.tools()
+                commands = {
+                    name: catalog.not_a_tool(name) for name in catalog.cli_commands()
+                }
             except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
         (home / "platform.json").write_text(
@@ -600,6 +607,7 @@ class Runner(runner.Runner[Journal]):
                     # monitor prints is told to the session, never a subagent.
                     "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
+                    "commands": commands,
                     "unavailable": reason,
                     # The project's MCP servers, each at the session's gateway
                     # (`open_servers`), for pi's own MCP client.
@@ -695,7 +703,12 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
+        said = (
+            catalog.not_a_tool(tool)
+            if tool in catalog.cli_commands()
+            else f"{tool}: no such tool"
+        )
+        return {"status": 1, "stdout": "", "stderr": said}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
         # A session may be named only some of an object's verbs

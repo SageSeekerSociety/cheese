@@ -37,6 +37,41 @@ def tools() -> list[dict]:
     return _module().offered_tools()
 
 
+@cache
+def cli_commands() -> dict[str, str]:
+    """What each of the CLI's commands is called when a model remembers it as a
+    tool (`cheese_push_fix`), and the command it is (`cheese push-fix`).
+
+    pi rooms once had them as tools; they are commands run in bash now, and a
+    session that calls one as a tool is told so (`not_a_tool`)."""
+    parser = _module().build_parser()
+    commands: dict[str, str] = {}
+
+    def walk(node, words: tuple[str, ...]) -> None:
+        subparsers = node._subparsers._group_actions[0] if node._subparsers else None
+        if subparsers is None:
+            name = "cheese_" + "_".join(w.replace("-", "_") for w in words)
+            commands[name] = " ".join(("cheese", *words))
+            return
+        seen: set[int] = set()
+        for word, child in subparsers.choices.items():
+            if id(child) not in seen:  # an alias is the same parser again
+                seen.add(id(child))
+                walk(child, (*words, word))
+
+    walk(parser, ())
+    return commands
+
+
+def not_a_tool(tool: str) -> str:
+    """What a session that calls the CLI command ``tool`` as a tool is told."""
+    command = cli_commands()[tool]
+    return (
+        f"{tool} 不是工具：CLI 的命令在 bash 里跑，`{command} …`"
+        f"（`{command} --help` 看它的写法，`cheese --help` 列出全部命令）。"
+    )
+
+
 def schemas_of(names: list[str]) -> list[dict]:
     """The table entries ``names`` name, from the room's table or the one for a
     芝士 answering someone (`DELEGATED_TOOLS`), in the order given. An object

@@ -49,6 +49,9 @@ def test_a_documents_memory_and_library_say_only_what_it_may_do():
     assert "项目共享记忆" in memory
     assert "记下" not in memory and "删掉" not in memory
     assert "删掉" in _described(person, "cheese_memory")
+    # The person's own memory is said to be theirs where it is handed out.
+    assert "只有用户自己的面板里用" in _described(person, "cheese_memory")
+    assert "只有用户自己的面板里用" not in memory
 
     library = _described(document, "cheese_library")
     assert "交给用户" not in library and "放到你的电脑上" not in library
