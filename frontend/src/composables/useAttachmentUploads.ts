@@ -2,37 +2,40 @@
  * 发题 / 改题时这道题带的材料：选中即上传，名单在这里。
  *
  * 往哪传由调用方给：发题时先传成游离的附件（`POST /attachments`），建题那条请求再带上
- * 它们的 id —— 文件要先在服务端有个 id，建题才挂得上（见后端
- * `TaskAttachmentService.attach_uploaded`）；改题时直接传到这道题上、从这道题上摘。
+ * 它们的 id —— 题目建好之前还没有题目资料库可放，建题时后端把它们拷进去（后端
+ * `package.add_uploads`）；改题时直接放进这道题的资料库、在那里替换和删掉，认的是名字。
  *
  * 选中即传的代价是用户中途放弃会留下一个没人引用的对象；换来的是大文件的上传早于提交
  * 发生，用户在表单上就看得见它失败了，而不是点了发布才发现。正在上传时 `uploading`
  * 举着，页面据此挡一下提交：宁可让人等一秒，也不能把「已经选好的材料」静默丢掉。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { AttachmentsApi } from '@/api/attachments'
 
-/** 这道题带着的一份材料。 */
-export interface PickedAttachment {
-  id: number
+/** 这道题带着的一份材料：发题时认附件 id，改题时认它在题目资料库里的名字。 */
+export interface PickedAttachment<Id extends number | string = number | string> {
+  id: Id
   name: string
   size: number
 }
 
-export interface AttachmentTarget {
+export interface AttachmentTarget<Id extends number | string> {
   /** 传一份，拿回它的 id。 */
-  upload: (file: File) => Promise<number>
+  upload: (file: File) => Promise<Id>
   /** 从这道题上摘下一份；不给就只是不再带上它。 */
-  remove?: (id: number) => Promise<void>
+  remove?: (id: Id) => Promise<void>
+  /** 把一份换成新的一版，名字不变；不给就不能替换。 */
+  replace?: (id: Id, file: File) => Promise<void>
 }
 
-export function useAttachmentUploads(target: AttachmentTarget) {
+export function useAttachmentUploads<Id extends number | string>(target: AttachmentTarget<Id>) {
   const { t } = useI18n()
 
-  const files = ref<PickedAttachment[]>([])
+  // shallowRef: the list is always replaced whole, and a deep ref would unwrap the generic id.
+  const files = shallowRef<PickedAttachment<Id>[]>([])
   const uploading = ref(false)
   /** 单份文件的上限，`null` = 还没问到（问不到就不写这句话，不猜一个数出来）。 */
   const maxFileBytes = ref<number | null>(null)
@@ -53,7 +56,9 @@ export function useAttachmentUploads(target: AttachmentTarget) {
       for (const file of picked) {
         try {
           const id = await target.upload(file)
-          files.value = [...files.value, { id, name: file.name, size: file.size }]
+          // 认名字的那一边，撞名时服务端拿了下一个 `(n)`：列它最后叫什么。
+          const name = typeof id === 'string' ? id : file.name
+          files.value = [...files.value, { id, name, size: file.size }]
         } catch (error) {
           toast.error(
             t('tasks.attachmentPicker.uploadFailed', {
@@ -68,7 +73,7 @@ export function useAttachmentUploads(target: AttachmentTarget) {
     }
   }
 
-  async function remove(id: number) {
+  async function remove(id: Id) {
     if (target.remove) {
       try {
         await target.remove(id)
@@ -86,12 +91,31 @@ export function useAttachmentUploads(target: AttachmentTarget) {
     files.value = files.value.filter((file) => file.id !== id)
   }
 
+  async function replace(id: Id, file: File) {
+    if (!target.replace) return
+    uploading.value = true
+    try {
+      await target.replace(id, file)
+      files.value = files.value.map((picked) => (picked.id === id ? { ...picked, size: file.size } : picked))
+    } catch (error) {
+      const name = files.value.find((picked) => picked.id === id)?.name ?? ''
+      toast.error(
+        t('tasks.attachmentPicker.replaceFailed', {
+          name,
+          error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
+        })
+      )
+    } finally {
+      uploading.value = false
+    }
+  }
+
   /** 已经挂在这道题上的那几份（改题时读进来）。 */
-  function reset(list: PickedAttachment[]) {
+  function reset(list: PickedAttachment<Id>[]) {
     files.value = list
   }
 
   const ids = computed(() => files.value.map((file) => file.id))
 
-  return { files, uploading, maxFileBytes, ids, add, remove, reset }
+  return { files, uploading, maxFileBytes, ids, add, remove, replace, reset }
 }

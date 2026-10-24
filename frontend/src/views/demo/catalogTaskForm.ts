@@ -248,16 +248,16 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '提交项和评分要点按阶段分组，每组下面加的那一项属于这个阶段，各阶段分别合计。',
         props: {
           stages: [
-            { name: '需求分析', description: '', dueAt: null },
-            { name: '实现', description: '', dueAt: null },
+            { id: 'need', name: '需求分析', description: '', dueAt: null },
+            { id: 'impl', name: '实现', description: '', dueAt: null },
           ],
           submissionSchema: [
-            { prompt: '需求文档', type: 'TEXT', stage: 0 },
-            { prompt: 'csim.c 源文件', type: 'FILE', stage: 1 },
+            { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+            { prompt: 'csim.c 源文件', type: 'FILE', stage: 'impl' },
           ],
           rubric: [
-            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 0 },
-            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 1 },
+            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 'need' },
+            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 'impl' },
           ],
         },
         expect: '阶段 2：实现',
@@ -435,6 +435,20 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '上限是接口报的那个数，页面问来给它；问不到就不写那句话。',
         props: { files: [], uploading: false, maxFileBytes: 100 * 1024 * 1024 },
         expect: '添加文件',
+      },
+      {
+        name: '改题时：每一份都能换成新的一版',
+        note: '换上去的是新的一版，旧的一版留在题目资料库的历史里，题目跟着记一版。',
+        props: {
+          files: [
+            { id: '实验指导书.pdf', name: '实验指导书.pdf', size: 2_400_000 },
+            { id: 'starter.zip', name: 'starter.zip', size: 12_400_000 },
+          ],
+          uploading: false,
+          maxFileBytes: 100 * 1024 * 1024,
+          replaceable: true,
+        },
+        expect: 'starter.zip',
       },
       {
         name: '挂了两份、正在传第三份',

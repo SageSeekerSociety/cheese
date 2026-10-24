@@ -57,6 +57,7 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
           {{ t('work.library.download') }}
         </BaseButton>
         <BaseButton
+          v-if="!props.file.readonly"
           kind="secondary"
           size="sm"
           prepend-icon="mdi-file-replace-outline"

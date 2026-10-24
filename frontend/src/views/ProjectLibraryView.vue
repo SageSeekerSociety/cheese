@@ -101,6 +101,10 @@ const pages = useLibraryPages(
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
 const inFolder = computed(() => browsing.value && !!dir.value)
+// 这一层是只读的（项目资料库里的 `题目/`）：服务端在每一行上说，这里只看它。
+const readonlyHere = computed(
+  () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
+)
 
 function goTo(path: string) {
   const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
@@ -259,6 +263,18 @@ const sharer = useDocumentShare()
 useCommands(() => {
   const open = selected.value
   // 手机上看着一份文件时，顶栏的 ⋯ 是这一份的操作；否则页头上是「上传文件」。
+  if (!mdAndUp.value && open?.readonly) {
+    return [
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
+      },
+    ]
+  }
   if (!mdAndUp.value && open) {
     return [
       {
@@ -290,6 +306,7 @@ useCommands(() => {
   }
   // 一份文档开着时，它的操作在文档自己的顶栏上。
   if (selectedDocId.value) return []
+  if (readonlyHere.value) return []
   return [
     {
       id: 'library.newFolder',
@@ -349,7 +366,7 @@ function read(file: LibraryFile) {
       :class="{ 'library--dragging': dragging }"
       @dragover.prevent="dragging = true"
       @dragleave.self="dragging = false"
-      @drop.prevent="onDrop"
+      @drop.prevent="readonlyHere ? (dragging = false) : onDrop($event)"
     >
       <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
       <input

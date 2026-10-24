@@ -295,7 +295,7 @@ async def _waiting_one(db, me: Person, ref) -> str:
         if kind == "alert" and isinstance(item, WaitingItem):
             if str(item.alert_id) == wanted:
                 line = await _work_line(item, _Names(db), me.timezone)
-                return line + "\n答复用 cheese_inbox_respond。"
+                return line + "\n答复用 cheese_inbox(action=respond)。"
         elif kind == "run" and isinstance(item, RunAsk):
             if str(item.id) == wanted:
                 return _run_line(item, me.timezone)
@@ -964,7 +964,7 @@ class NotifyIn(BaseModel):
 async def agent_notify(
     body: NotifyIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
 ) -> dict:
-    """cheese_settings_set on a channel: how much of it reaches the person,
+    """cheese_settings on a channel: how much of it reaches the person,
     changed for them and kept as a change they can undo."""
     claims = resolver.delegation()
     if claims is None or claims.user_id is None or not claims.work:
@@ -1275,7 +1275,7 @@ async def agent_todo(body: TodoIn, resolver: ActorResolverDep) -> dict:
 async def agent_notify_me(
     body: NotifyMeIn, resolver: ActorResolverDep, db: DbSession
 ) -> dict:
-    """cheese_notify_me: a notification to the person, from their 芝士, that
+    """cheese_notify: a notification to the person, from their 芝士, that
     opens this conversation."""
     claims = resolver.delegation()
     if claims is None or claims.user_id is None or not claims.work:
@@ -1299,7 +1299,7 @@ async def agent_notify_me(
 # 一个人的资料库是他名下那个团队的（`library.shelf.Shelf`）。文件在芝士的电脑和存储
 # 之间直接走：这里给一个只管一份文件、几分钟就失效的地址，电脑自己去传、去取，
 # 字节不经过芝士那一侧，电脑里也没有任何凭据（`sandbox/cheese` 的
-# `cheese_file_give`、`cheese_file_to_computer`）。
+# `cheese_library(action=give)`、`cheese_library(action=take)`）。
 
 
 async def _my_library(resolver, db) -> tuple[Person, Shelf]:
@@ -1328,17 +1328,36 @@ class FileSlotIn(BaseModel):
 async def agent_file_slot(
     body: FileSlotIn, resolver: ActorResolverDep, db: DbSession
 ) -> dict:
-    """cheese_file_give 的第一步：一个放 ``size`` 个字节进用户资料库的地址。放不下
-    （总量、单个文件的上限）就在这里说。"""
+    """cheese_library(action=give) 的第一步：一次放 ``size`` 个字节进用户资料库的
+    上传，和它怎么切成段。放不下（总量、单个文件的上限）就在这里说。"""
     _, shelf = await _my_library(resolver, db)
     name = library_service.clean_upload_name(body.name)
     await library_records.refuse_past_room(db, shelf, body.size)
-    slot = await library_records.upload_slot(shelf, name, body.size)
-    return ok({**slot, "url": _reachable(slot["url"])})
+    return ok(await library_records.upload_slot(shelf, name, body.size))
+
+
+class FilePartIn(BaseModel):
+    upload: str
+    part: int = Field(ge=1)
+    md5: str
+
+
+@router.post("/files/part", include_in_schema=False)
+async def agent_file_part(
+    body: FilePartIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_library(action=give) 的第二步：一段的地址，电脑把这一段原样 PUT 过去，带上给的
+    请求头；字节的 MD5 对不上的存储不收。"""
+    _, shelf = await _my_library(resolver, db)
+    part = await library_records.upload_part(shelf, body.upload, body.part, body.md5)
+    return ok({**part, "url": _reachable(part["url"])})
 
 
 class FileHandedIn(BaseModel):
     upload: str
+    #: 整份的 SHA-256，和每一段（按顺序）的 MD5，十六进制。
+    sha256: str
+    parts: list[str]
     name: str = Field(min_length=1, max_length=512)
 
 
@@ -1346,10 +1365,10 @@ class FileHandedIn(BaseModel):
 async def agent_file_handed(
     body: FileHandedIn, resolver: ActorResolverDep, db: DbSession, questions: Questions
 ) -> dict:
-    """cheese_file_give 的最后一步：传上来的那一份登记进用户的资料库，回答里出现
+    """cheese_library(action=give) 的最后一步：传上来的那一份登记进用户的资料库，回答里出现
     一张文件卡片。撞名不覆盖，拿下一个 ``(n)``。"""
     me, shelf = await _my_library(resolver, db)
-    upload = await library_records.received(shelf, body.upload)
+    upload = library_records.received(shelf, body.upload, body.sha256, body.parts)
     name = await library_records.add(
         db,
         shelf,
@@ -1375,7 +1394,7 @@ class FileLinkIn(BaseModel):
 async def agent_file_link(
     body: FileLinkIn, resolver: ActorResolverDep, db: DbSession
 ) -> dict:
-    """cheese_file_to_computer：用户资料库里一份文件的地址，几分钟内有效，电脑拿它
+    """cheese_library(action=take)：用户资料库里一份文件的地址，几分钟内有效，电脑拿它
     把文件取下来。"""
     _, shelf = await _my_library(resolver, db)
     name = body.path.strip().removeprefix("library/")
@@ -1421,7 +1440,7 @@ async def agent_library(
         return ok(
             {
                 "text": f"library/{name} 是二进制文件（{_size(found['bytes'])}），"
-                "读不成文字；要处理就用 cheese_file_to_computer 放进电脑。"
+                "读不成文字；要处理就用 cheese_library(action=take) 放进电脑。"
             }
         )
     return ok({"text": str(found["content"])})

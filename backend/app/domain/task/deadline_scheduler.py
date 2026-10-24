@@ -40,9 +40,11 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
         TaskMembership.deadline < now,
         SWEEPABLE_ROWS,
     ]
-    # On a task with a stage already due.
+    # An approved claim on a task with a stage already due. A pending or
+    # rejected application hands nothing in, so no stage can run out on it.
     past_stage = [
         SWEEPABLE_ROWS,
+        TaskMembership.approved == 0,
         TaskMembership.task_id.in_(
             select(TaskStage.task_id).where(
                 TaskStage.due_at.isnot(None), TaskStage.due_at < now

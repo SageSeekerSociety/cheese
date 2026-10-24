@@ -456,14 +456,18 @@ def test_agent_history_tools_read_search_and_page_complete_raw_records(
 
     host = Host()
     found = tools.run_platform_tool(
-        "cheese_chat_search", {"kind": "event", "query": "HEAD OF THE OUTPUT"}, host
+        "cheese_chat",
+        {"action": "search", "kind": "event", "query": "HEAD OF THE OUTPUT"},
+        host,
     )
     record_id = re.search(r"id=(record:[A-Za-z0-9_-]+)", found)[1]
     result = ""
     offset = 0
     while True:
         text = tools.run_platform_tool(
-            "cheese_chat_get", {"message_id": record_id, "offset": offset}, host
+            "cheese_chat",
+            {"action": "get", "message_id": record_id, "offset": offset},
+            host,
         )
         result += text
         more = re.search(r"offset=(\d+)", text)
@@ -539,8 +543,13 @@ def test_channel_record_search_crosses_task_conversations_without_paging_gaps(
             return response.json()
 
     result = tools.run_platform_tool(
-        "cheese_chat_search",
-        {"kind": "event", "query": "channel-evidence child-two", "channel": True},
+        "cheese_chat",
+        {
+            "action": "search",
+            "kind": "event",
+            "query": "channel-evidence child-two",
+            "channel": True,
+        },
         Host(),
     )
     assert "channel-evidence child-two" in result
@@ -818,10 +827,10 @@ def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
     ).json()["data"]["items"]
     said = [part["text"] for row in rows for part in row["parts"]]
     assert "照我说的做" in said
-    assert not any("没听到你说话" in text for text in said)
+    assert not any("分钟了还没回" in text for text in said)
     # The journal still holds every word: this is the file's projection only.
     whole = json.dumps(session.read(turn_id=work), ensure_ascii=False)
-    assert "没听到你说话" in whole
+    assert "分钟了还没回" in whole
 
 
 def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):

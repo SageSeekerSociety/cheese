@@ -329,7 +329,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
-    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 每个会话多一样工具 `cheese_session(action=compact)`：agent 可以请平台压缩自己这个会话的
     # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
     # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
     # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
@@ -459,7 +459,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
-    # session is reminded to name it with `cheese_title`.
+    # session is reminded to name it with `cheese_room(action=rename)`.
     # Fallback of the platform model role of the same name: read only while
     # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
@@ -548,7 +548,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a
@@ -632,6 +632,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a session at work may produce nothing at all — no output, no
+    # tool call, nothing running on it — before the runner calls it stuck and
+    # reports its ending itself. The other two clocks both need something to
+    # go on (something said recently, an input still unread); a process that
+    # is alive but whose build stopped answering has neither, and without this
+    # clock nothing ever reports that it stopped. A tool in flight does not
+    # count as silence: that is a long command working, not a build dying.
+    agent_stuck_silence_s: float = 1800.0
     # How long a Claude Code runner another release started may go on with the
     # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
     # counted from when the drain began (`agent_sessions.drain_started_at`). It
@@ -1001,6 +1009,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (the bucket below). A file's record says where its own bytes are, so
     # changing this moves nothing that is already stored.
     files_store: Literal["local", "bucket"] = "local"
+    # How large one file kept in the files bucket may be: a library file, and
+    # a task's material. A dataset can be several GB, and its bytes never pass
+    # through this server (they go to the bucket in parts, straight from the
+    # browser or machine, and come back the same way). Files kept on this
+    # server's disk keep the smaller ceilings in `app.domain.library.service`.
+    files_bucket_file_max_bytes: int = 20 * 1024**3
     # A bucket of its own, with a key that reaches only it: these are private
     # files, and the key is not the one the public and transcript buckets use.
     # A browser puts an upload straight into it, so its CORS rules must let the

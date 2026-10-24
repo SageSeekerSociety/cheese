@@ -403,17 +403,27 @@ function summonOff() {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
+// 输入法（IME）那一下按键的判定：认的是**这一次按键本身**是不是上屏/选字那一下，
+// 不是「离上屏近不近」。
+//
+// 上屏那一下按的键，Chromium 报 isComposing，Safari 在 compositionend 之后补的尾巴
+// keydown 报 keyCode 229（它甚至比 compositionend 还晚，所以自己记的那份 `composing`
+// 那时已经是 false）；普通的发送回车两个都不带。所以这三条就够。
+//
+// 曾经这里多一条「compositionend 之后 100 毫秒内的按键都算输入法」的时间窗。它把上屏
+// 之后紧接着按的、真要发送的那个回车也吃掉——打字快的人每次上屏后的回车都变成换行
+// （2026-10-24 反馈）。窗口按毫秒算就必然如此：同一次输入法里「上屏」和「发送」是两次
+// 相邻的按键，快的只隔几十毫秒，没有时间窗能分开它们，能分开它们的是事件本身的属性。
+// 仓库里其余同类判断（`MessageEditor.vue` 等二十来处）也都是只看事件属性，没有时间窗。
 let composing = false
-let compositionEndedAt = -1e9
 function onCompositionStart() {
   composing = true
 }
-function onCompositionEnd(e: CompositionEvent) {
+function onCompositionEnd() {
   composing = false
-  compositionEndedAt = e.timeStamp
 }
 function isImeKey(e: KeyboardEvent) {
-  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
+  return composing || e.isComposing || e.keyCode === 229
 }
 
 // 触摸屏上回车是换行。软键盘没有 Shift 这一层，所以「Enter 发送 / Shift+Enter

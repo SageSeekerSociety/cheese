@@ -413,10 +413,10 @@ describe('发题页：发一道', () => {
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
     expect(sent().submissionSchema).toEqual([
-      { prompt: 'csim.c 源文件', type: 'FILE', stage: 0 },
-      { prompt: '合作与参考说明', type: 'TEXT', stage: 0 },
+      { prompt: 'csim.c 源文件', type: 'FILE', stage: null },
+      { prompt: '合作与参考说明', type: 'TEXT', stage: null },
     ])
-    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对', stage: 0 }])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对', stage: null }])
     expect(sent().rubricPublic).toBe(false)
   })
 
@@ -438,18 +438,21 @@ describe('发题页：发一道', () => {
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
+    const [need, impl] = sent().stages as { id: string }[]
     expect(sent().stages).toEqual([
-      { name: '需求分析', description: '交一份需求文档', dueAt: null, previousIndex: null },
-      { name: '实现', description: '', dueAt: null, previousIndex: null },
+      { id: expect.any(String), name: '需求分析', description: '交一份需求文档', dueAt: null },
+      { id: expect.any(String), name: '实现', description: '', dueAt: null },
     ])
+    expect(need.id).not.toBe(impl.id)
+    // Items and lines name their stage by its id, so a later reorder cannot split them.
     expect(sent().submissionSchema).toEqual([
-      { prompt: '提交文件', type: 'FILE', stage: 0 },
-      { prompt: '代码', type: 'FILE', stage: 1 },
+      { prompt: '提交文件', type: 'FILE', stage: need.id },
+      { prompt: '代码', type: 'FILE', stage: impl.id },
     ])
-    expect(sent().rubric).toEqual([{ item: '正确性', points: 0, criteria: '', stage: 1 }])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 0, criteria: '', stage: impl.id }])
   })
 
-  it('删掉一个阶段：它的提交项一起去掉，后面阶段的往前挪', async () => {
+  it('删掉一个阶段：它的提交项一起去掉，别的阶段的提交项留在原来的阶段下', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
@@ -464,10 +467,11 @@ describe('发题页：发一道', () => {
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
-    expect((sent().stages as { name: string }[]).map((s) => s.name)).toEqual(['一', '三'])
+    const [one, three] = sent().stages as { id: string; name: string }[]
+    expect([one.name, three.name]).toEqual(['一', '三'])
     expect(sent().submissionSchema).toEqual([
-      { prompt: '提交文件', type: 'FILE', stage: 0 },
-      { prompt: '第三阶段的文件', type: 'FILE', stage: 1 },
+      { prompt: '提交文件', type: 'FILE', stage: one.id },
+      { prompt: '第三阶段的文件', type: 'FILE', stage: three.id },
     ])
   })
 
@@ -513,7 +517,7 @@ describe('发题页：发一道', () => {
     expect(sent().submitterType).toBe('USER')
     expect(sent().rank).toBe(1)
     expect(sent().categoryId).toBe(3)
-    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE', stage: 0 }])
+    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE', stage: null }])
     expect(sent().attachmentIds).toEqual([41])
     // 沿用空间的默认指导：不单独设置，让空间那一层生效。
     expect(sent().teachingOwn).toBe(false)
@@ -654,9 +658,9 @@ describe('发题页：和芝士一起写', () => {
   it('芝士写的几格填进表单，改动卡上能撤销；撤销由服务端以人的名义写回，表单照着填', async () => {
     await boardAs(MEMBER)
     script = [
-      ['tool', { name: 'cheese_problem_write', call: 'c1' }],
-      ['tool_args', { call: 'c1', text: '{"draft":61,"name":"Lab 3 缓', at: 0 }],
-      ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 26 }],
+      ['tool', { name: 'cheese_problem', call: 'c1' }],
+      ['tool_args', { call: 'c1', text: '{"action":"write","draft":61,"name":"Lab 3 缓', at: 0 }],
+      ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 44 }],
       [
         'change',
         {

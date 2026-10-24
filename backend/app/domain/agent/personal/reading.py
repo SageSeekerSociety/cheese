@@ -25,6 +25,7 @@ from app.core.errors import NotFoundError
 from app.domain.agent.personal import people
 from app.domain.assistant import refs
 from app.domain.assistant.refs import Ref
+from app.domain.block.authorship import speaker
 from app.domain.block.queries import messages_page
 from app.domain.living_doc.services import Documents
 from app.domain.notification.preferences import local_time
@@ -138,7 +139,8 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
         if len(text) > MESSAGE_CHARS:
             text = text[:MESSAGE_CHARS] + "……"
         lines.append(
-            f"[{_when(reader, block.created_at)}] {named.of(block.author)}：{text}"
+            f"[{_when(reader, block.created_at)}] "
+            f"{speaker(block, named.of(block.author))}：{text}"
         )
     shown_from = total - (page - 1) * MESSAGES - len(rows) + 1
     head = (
@@ -255,7 +257,7 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(
-        "采纳或退回用 cheese_review_decide；要看具体改了哪些文件，到任务页的「改动」。"
+        "采纳或退回用 cheese_card(action=decide)；要看具体改了哪些文件，到任务页的「改动」。"
     )
     return _paged("\n".join(lines), refs.review(project.slug, found.number), page)
 

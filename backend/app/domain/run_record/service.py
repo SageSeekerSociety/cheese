@@ -21,6 +21,7 @@ from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
 from app.domain.run_record.models import RETENTION, RunRecord
 from app.domain.run_record.repository import RunRecordRepository
+from app.domain.session_record.service import encode_cursor
 
 #: Every appended platform status transition uses this frame type.
 FRAME = "run_record"
@@ -33,6 +34,12 @@ def as_payload(record: RunRecord) -> dict:
     meta = dict(record.meta or {})
     if record.seat:
         meta.setdefault("seat", record.seat)
+    # 每条都带着自己的游标：推下来的这一帧和读回来的那一页是同一种行。现场那一窗涨过
+    # 上限时裁的是离读者最远的那一头，裁掉最旧的一截之后，得能从手上最早的一条接着
+    # 往回读——socket 送来的行没有游标的话，那只手就没有落点。
+    meta["cursor"] = encode_cursor(
+        (record.created_at, "platform", record.seat or "system", record.id.int)
+    )
     return {
         "id": str(record.id),
         "conversation_id": (

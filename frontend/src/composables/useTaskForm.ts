@@ -30,6 +30,7 @@ import { z } from 'zod'
 import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
+import { settledStage } from '@/lib/taskStages'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
 export interface TaskFormProps {
@@ -226,11 +227,9 @@ export function useTaskForm(
   const rubricMissingName = ref(false)
   watch(rubric, () => (rubricMissingName.value = false), { deep: true })
 
-  // 阶段：改题时每个阶段记着它原来是第几个（`previousIndex`），挪了位置，已交的提交
-  // 跟着它走（`app/domain/task/stages.py`）。
-  const stages = ref<TaskStage[]>(
-    (props.initialData?.stages ?? []).map((stage, index) => ({ previousIndex: index, ...stage }))
-  )
+  // 阶段：每个已保存的阶段带着题目给它的 id，挪了位置也带着，已交的提交跟着它走
+  // （`app/domain/task/stages.py`）。
+  const stages = ref<TaskStage[]>((props.initialData?.stages ?? []).map((stage) => ({ ...stage })))
   /** 点过发布后，有没写名称的阶段。 */
   const stageMissingName = ref(false)
   watch(stages, () => (stageMissingName.value = false), { deep: true })
@@ -264,13 +263,16 @@ export function useTaskForm(
       return
     }
     const written = submissionSchema.value
-      .map((entry) => ({ ...entry, stage: entry.stage ?? 0, prompt: entry.prompt.trim() }))
+      .map((entry) => ({ ...entry, stage: settledStage(stages.value, entry.stage), prompt: entry.prompt.trim() }))
       .filter((entry) => entry.prompt)
     // 每个阶段都至少交一样东西：一样都没写的阶段交一个文件。
-    const items = Array.from({ length: Math.max(1, stages.value.length) }, (_, stage) => {
-      const own = written.filter((entry) => entry.stage === stage)
-      return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
-    }).flat()
+    const stageIds = stages.value.length ? stages.value.map((stage) => stage.id ?? null) : [null]
+    const items = stageIds
+      .map((stage) => {
+        const own = written.filter((entry) => entry.stage === stage)
+        return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
+      })
+      .flat()
     const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
@@ -300,14 +302,14 @@ export function useTaskForm(
         item: line.item.trim(),
         points: Number(line.points) || 0,
         criteria: line.criteria.trim(),
-        stage: line.stage ?? 0,
+        stage: settledStage(stages.value, line.stage),
       })),
       rubricPublic: rubricPublic.value,
       stages: stages.value.map((stage) => ({
         name: stage.name.trim(),
         description: stage.description.trim(),
         dueAt: stage.dueAt,
-        previousIndex: stage.previousIndex ?? null,
+        id: stage.id ?? null,
       })),
     }
     emit('submit', submissionData)

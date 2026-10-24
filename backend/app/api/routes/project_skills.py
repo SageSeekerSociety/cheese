@@ -3,12 +3,12 @@
 An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
 
-The row shape every skill route answers with (`_skill`) and the room's slice of
-it (`proposals_in_room`) are in `app.api.project_skill_rows`: a room's snapshot
-embeds the second and is not a route, so both live under `app.api` where the
-route and the snapshot may ask for the same one (C4 `routes-independent`). This
-module imports the two back — the rows it returns have to be that shape, not a
-second copy of it.
+The row shape every skill route answers with (`_skill`) and one conversation's
+slice of it (`proposals_in_conversation`) are in `app.api.project_skill_rows`: a
+conversation's snapshot embeds the second and is not a route, so both live under
+`app.api` where the route and the snapshot may ask for the same one (C4
+`routes-independent`). This module imports the two back — the rows it returns
+have to be that shape, not a second copy of it.
 """
 
 import asyncio
@@ -131,7 +131,7 @@ def _by_title(text: str, skills: list[ProjectSkill]) -> str:
     skill's title.
 
     A teammate knows the project's skills by the id at the end of each one
-    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    (it is what it passes to `cheese_skill(action=update)`), so the closest skill it
     names on a proposal card arrives as an id; the person deciding reads
     titles.
     """
@@ -210,19 +210,19 @@ async def list_skills(
 def _post_line(
     db: AsyncSession,
     row: ProjectSkill,
-    room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     line: str,
     detail: str,
     *,
     edit: bool = False,
 ) -> None:
-    """The room's line about a teammate's proposal: what it is, and a way to
-    the card a person saves it from."""
+    """The conversation's line about a teammate's proposal: what it is, and a
+    way to the card a person saves it from."""
     db.add(
         Block(
             id=uuid.uuid4(),
             project_id=row.project_id,
-            conversation_id=room_id,
+            conversation_id=conversation_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -249,12 +249,13 @@ def _post_line(
 
 
 async def _has_open_line(
-    db: AsyncSession, room_id: uuid.UUID, skill_id: uuid.UUID
+    db: AsyncSession, conversation_id: uuid.UUID, skill_id: uuid.UUID
 ) -> bool:
-    """Whether the room already has a line about this skill nobody decided on."""
+    """Whether the conversation already has a line about this skill nobody
+    decided on."""
     rows = await db.scalars(
         select(Block.meta).where(
-            Block.conversation_id == room_id,
+            Block.conversation_id == conversation_id,
             Block.kind == BlockKind.event,
             Block.meta["event_type"].as_string() == EVENT_SKILL_PROPOSED,
             Block.meta["skill_id"].as_string() == str(skill_id),
@@ -286,7 +287,10 @@ async def create_skill(
         }
     row = await service.create(
         project_id=place.project_id,
-        topic_id=place.room_id,
+        # The conversation the teammate proposed from, not the room it hangs
+        # in: the card and the line below are drawn there, as the other cards a
+        # teammate raises are.
+        topic_id=place.conversation_id,
         by=by,
         by_agent=by_agent,
         name=body.name,
@@ -297,13 +301,13 @@ async def create_skill(
         _post_line(
             db,
             row,
-            place.room_id,
+            place.conversation_id,
             say("skillProposedBy", who=f"<@{by}>", title=row.title),
             say("skillProposedDetail", description=row.description, body=row.body),
         )
     await db.commit()
     await service.publish(place.project_id)
-    await announce_stale(place.room_id, "skills")
+    await announce_stale(place.conversation_id, "skills")
     return ok(_skill(row))
 
 
@@ -395,7 +399,8 @@ async def preview_import(
 
 
 async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
-    """A person decided on a teammate's proposal: its line in the room says so."""
+    """A person decided on a teammate's proposal: its line in that conversation
+    says so."""
     if row.source_topic_id is None:
         return
     await settle_proposal(
@@ -415,7 +420,7 @@ async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
 
 
 async def _changed(row: ProjectSkill) -> None:
-    """Tell the room a method came from that its cards changed."""
+    """Tell the conversation a method came from that its cards changed."""
     if row.source_topic_id is not None:
         await announce_stale(row.source_topic_id, "skills")
 
@@ -480,14 +485,14 @@ async def update_skill(
     if by_agent and topic is not None:
         # The card goes where the teammate was corrected: the person who just
         # corrected it decides there, as with a new skill.
-        room_id = (await place_or_404(db, topic)).room_id
-        row.source_topic_id = room_id
-        if not await _has_open_line(db, room_id, row.id):
+        conversation_id = (await place_or_404(db, topic)).conversation_id
+        row.source_topic_id = conversation_id
+        if not await _has_open_line(db, conversation_id, row.id):
             edit = row.shipped_revision > 0
             _post_line(
                 db,
                 row,
-                room_id,
+                conversation_id,
                 say(
                     "skillEditProposedBy" if edit else "skillProposedBy",
                     who=f"<@{row.proposed_by}>",

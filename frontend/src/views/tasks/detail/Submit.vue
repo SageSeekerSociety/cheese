@@ -247,6 +247,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { settledStage } from '@/lib/taskStages'
 import { fmtFileSize } from '@/lib/usageFormat'
 import { useEvents } from '@/views/tasks/events'
 
@@ -320,7 +321,9 @@ const canSubmit = computed(() => {
 
 // 提交数据：这个阶段的那几项（不分阶段时就是全部）。换了阶段，填的内容重新开始。
 const submissionSchema = computed(() =>
-  (props.taskData?.submissionSchema || []).filter((entry) => (entry.stage ?? 0) === stage.value)
+  (props.taskData?.submissionSchema || []).filter(
+    (entry) => settledStage(stages.value, entry.stage) === (stages.value[stage.value]?.id ?? null)
+  )
 )
 const submissionContent = ref<{ contentText?: string; contentAttachment?: File }[]>([])
 watch(
@@ -342,8 +345,14 @@ const reachedSubmissionLimit = computed(() =>
 )
 
 watch(
-  () => [props.taskData?.id, props.taskData?.resubmittable, currentIdentity.value?.id, stage.value] as const,
-  async ([taskId, resubmittable, identityId, stageIndex]) => {
+  () =>
+    [
+      props.taskData?.id,
+      props.taskData?.resubmittable,
+      currentIdentity.value?.id,
+      stages.value[stage.value]?.id ?? undefined,
+    ] as const,
+  async ([taskId, resubmittable, identityId, stageId]) => {
     alreadySubmitted.value = false
     if (!taskId || resubmittable || !identityId) return
     try {
@@ -351,7 +360,7 @@ watch(
         pageSize: 1,
         sort_by: 'createdAt',
         sort_order: 'desc',
-        stage: stageIndex,
+        stage: stageId,
       })
       alreadySubmitted.value = data.submissions.length > 0
     } catch {
@@ -525,7 +534,7 @@ const submitTask = async () => {
       props.taskData.id,
       currentIdentity.value.id,
       finalSubmissionContent,
-      stage.value
+      stages.value[stage.value]?.id ?? null
     )
     toast.success(t('tasks.submit.submitted'))
     // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。

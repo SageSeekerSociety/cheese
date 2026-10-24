@@ -380,6 +380,7 @@ class AcceptService:
         decided_by: str,
         head_sha: str | None = None,
         deliverable_revision: str | None = None,
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await _accept.accept(
             self,
@@ -387,6 +388,7 @@ class AcceptService:
             decided_by=decided_by,
             head_sha=head_sha,
             deliverable_revision=deliverable_revision,
+            by_assistant=by_assistant,
         )
 
     async def _accept_github(
@@ -899,10 +901,19 @@ class AcceptService:
         return await merge_queue._cancel_queued_accept(self, card=card)
 
     async def reject(
-        self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        note: str = "",
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await decisions.reject(
-            self, card_id=card_id, decided_by=decided_by, note=note
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            note=note,
+            by_assistant=by_assistant,
         )
 
     async def revoke(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:

@@ -1,20 +1,8 @@
-import type { MarketNodes, MarketPools, ProjectCredits } from '../cx_types'
+import type { ProjectCredits } from '../cx_types'
 import type { Environment, ProjectComputeConfigs, TopicEnvironment } from '../types/compute'
 import type { CreditBudgetUpdate, ProjectCreditBudget } from '../types/creditBudgets'
 
 import { request } from './http'
-
-// ---- 资源池市场 + 项目设置 (design v3) ----
-
-// The full 市场 catalog: every AI pool + compute pool on offer.
-export function getMarketPools(): Promise<MarketPools> {
-  return request<MarketPools>('/market/pools')
-}
-
-// 节点看板: configured compute nodes with liveness + current load.
-export function getMarketNodes(): Promise<MarketNodes> {
-  return request<MarketNodes>('/market/nodes')
-}
 
 // 算力额度: the project's grant balance (unlimited when no grants).
 export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
@@ -31,8 +19,6 @@ export function saveProjectCreditBudget(projectId: string, update: CreditBudgetU
     body: JSON.stringify(update),
   })
 }
-
-// ---- 题目匹配市场 (spec §13 阶段 6) ----
 
 // Creation defaults, available before a project exists.
 export interface ResourceLimits {

@@ -1,4 +1,4 @@
-"""`cheese_compact` 默认关着：部署在会话的环境里写下那句话，它才在清单上、才调得动。
+"""`cheese_session(action=compact)` 默认关着：部署在会话的环境里写下那句话，它才在清单上、才调得动。
 
 v1 的验收就是这两条：开了开关的座位调一次，会话真的压缩；没开的座位连工具都看不
 到。开关只有一处——部署写进会话环境的那一句（``CHEESE_COMPACT_TOOL``），三个骨架都
@@ -59,21 +59,31 @@ class Host:
         raise AssertionError("压缩不该碰那台机器")
 
 
+def _keys(rows) -> set[str]:
+    """Each tool by name, and each verb of an object by its key
+    (`cheese_session.compact`): the switch is on one verb, not a whole tool."""
+    keys = set()
+    for row in rows:
+        verbs = row["inputSchema"]["properties"].get("action", {}).get("enum")
+        keys |= {f"{row['name']}.{verb}" for verb in verbs} if verbs else {row["name"]}
+    return keys
+
+
 def offered(environ=None) -> set[str]:
-    return {row["name"] for row in cheese.offered_tools(environ)}
+    return _keys(cheese.offered_tools(environ))
 
 
 def test_the_table_holds_the_row_whether_or_not_a_deployment_offers_it():
     """名单是挑出来的，表不是：`platform_request` 的代理、三个骨架的成员判断、现场
     的中文动词都读整张表。"""
-    assert cheese.COMPACT_TOOL in set(cheese.PLATFORM_TOOLS.names())
+    assert cheese.COMPACT_TOOL in _keys(cheese.PLATFORM_TOOLS.schemas())
     assert cheese.COMPACT_TOOL not in offered({})
 
 
 def test_a_deployment_that_has_not_asked_is_offered_everything_else():
     asked = offered({"CHEESE_COMPACT_TOOL": "1"})
     assert cheese.COMPACT_TOOL in asked
-    assert asked == set(cheese.PLATFORM_TOOLS.names())
+    assert asked == _keys(cheese.PLATFORM_TOOLS.schemas())
     assert offered({}) == asked - {cheese.COMPACT_TOOL}
 
 
@@ -100,7 +110,7 @@ def test_a_session_without_the_switch_is_refused_and_nothing_is_asked():
     """没开开关的座位看不到它，调它也调不动——两处都由这一句话决定。"""
     host = Host(environ={}, harness=Harness())
     with pytest.raises(cheese.PlatformToolError) as refused:
-        cheese.run_platform_tool("cheese_compact", {}, host)
+        cheese.run_platform_tool("cheese_session", {"action": "compact"}, host)
     assert "主动压缩" in str(refused.value)
     assert host.requests == []
 
@@ -108,7 +118,7 @@ def test_a_session_without_the_switch_is_refused_and_nothing_is_asked():
 def test_a_session_with_the_switch_asks_its_harness_once_and_says_what_happens():
     harness = Harness()
     host = Host(environ={"CHEESE_COMPACT_TOOL": "1"}, harness=harness)
-    said = cheese.run_platform_tool("cheese_compact", {}, host)
+    said = cheese.run_platform_tool("cheese_session", {"action": "compact"}, host)
     assert harness.asked == 1
     assert "这次回复结束" in said
     assert host.requests == []
@@ -117,13 +127,15 @@ def test_a_session_with_the_switch_asks_its_harness_once_and_says_what_happens()
 def test_a_second_request_in_the_same_turn_says_it_is_already_asked():
     """骨架说「已经请求过了」，工具照原话说给 agent 听，不再请求一次。"""
     host = Host(environ={"CHEESE_COMPACT_TOOL": "1"}, harness=Harness("already"))
-    assert "已经请求过" in cheese.run_platform_tool("cheese_compact", {}, host)
+    assert "已经请求过" in cheese.run_platform_tool(
+        "cheese_session", {"action": "compact"}, host
+    )
 
 
 def test_a_harness_that_cannot_compact_refuses_rather_than_pretending():
     host = Host(environ={"CHEESE_COMPACT_TOOL": "1"})
     with pytest.raises(cheese.PlatformToolError) as refused:
-        cheese.run_platform_tool("cheese_compact", {}, host)
+        cheese.run_platform_tool("cheese_session", {"action": "compact"}, host)
     assert "骨架" in str(refused.value)
 
 

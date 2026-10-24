@@ -468,7 +468,7 @@ def case(folder, options):
         if options.mode == "normal":
             # The spawn that asked for isolation is no longer refused: the
             # proxy drops the parameter and the subagent runs like any other.
-            # `cheese_task` is still what a caller should use when the work is
+            # `cheese_task(action=open)` is still what a caller should use when the work is
             # itself a deliverable to track and review, but nothing blocks the
             # spawn on it any more.
             isolated = results[-2]

@@ -76,9 +76,9 @@ description: 一句说清做什么、什么时候用；相似请求不该触发�
 
 用户给的是一个地址、要的是那份现成的技能时，别照着网址重写一遍。只认 GitHub 的仓库或子目录，以及 `raw.githubusercontent.com` 上 `SKILL.md` 的直链；别的地址就照实说读不了，不要凭网址猜里面的内容。
 
-- 用 `cheese_fetch` 去读：目录地址先读它下面的 `SKILL.md`，再逐份读它引用的 `scripts`、`references` 里的文件；直链读回来的就是 `SKILL.md` 本身。
+- 用 `cheese_web(action=fetch)` 去读：目录地址先读它下面的 `SKILL.md`，再逐份读它引用的 `scripts`、`references` 里的文件；直链读回来的就是 `SKILL.md` 本身。
 - 按那份自己的 `name` 和 `description` 存（它已经调过触发），正文和配套文件照搬；只有名字对不上目录、`description` 缺失、或正文超过 500 行时才按前面几条改。
-- 落法仍是 `cheese_skill_draft`（配套文件走 `files`），由人确认；不要自己写进工作区。
+- 落法仍是 `cheese_skill(action=propose)`（配套文件走 `files`），由人确认；不要自己写进工作区。
 - 读不到就说读不到，那个主机不是每个网络都通；不要拿记忆里的版本来凑。
 
 ## 自检（唯一一步）

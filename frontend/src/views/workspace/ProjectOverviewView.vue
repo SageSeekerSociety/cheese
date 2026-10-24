@@ -17,7 +17,7 @@ import type { TaskState } from '@/lib/taskState'
 import type { TaskStage, TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import dayjs from 'dayjs'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
@@ -28,9 +28,9 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
-import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { revisionSummary } from '@/lib/taskRevision'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
@@ -93,7 +93,13 @@ const emit = defineEmits<{
   'open-artifact': [artifactId: string]
   'all-tasks': []
   'retry-progress': []
+  /** 看题目的材料：项目资料库的 `题目/`。 */
+  'open-task-folder': []
 }>()
+
+// Only a project from a staged task shows the timeline, so the overview loads it
+// only then: every other project's first paint does not wait on it.
+const TaskStageTimeline = defineAsyncComponent(() => import('@/components/tasks/TaskStageTimeline.vue'))
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
 
@@ -146,10 +152,13 @@ const progressDays = computed(() => {
 function progressTitle(item: ProgressItem): string {
   if (item.kind === 'version')
     return t('work.overview.versionOf', { name: item.artifactName, version: item.version ?? 0 })
+  if (item.kind === 'revised')
+    return t('work.overview.revisedOf', { version: item.version ?? 0, changes: revisionSummary(item.changes) })
   return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
+  else if (item.kind === 'revised') emit('open-task-folder')
   else if (item.taskId && item.roomId) emit('open-task', { taskId: item.taskId, roomId: item.roomId })
 }
 

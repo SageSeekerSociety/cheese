@@ -1,6 +1,8 @@
 {
   "cancel": "Cancel",
+  "close": "Close the comments",
   "comment": "Comment",
+  "commentHere": "Comment on this spot",
   "editing": "{agent} is editing the document…",
   "emptyOpen": "No comments yet",
   "emptyResolved": "No resolved comments",

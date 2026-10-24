@@ -7,15 +7,17 @@ on its own (``submission_state``). A task with no stage rows is one implicit
 stage, index 0, due by the claim's own deadline: everything about it behaves as
 it did before stages existed.
 
-Stages are replaced as a whole, like the submission form. What a submission
-already handed in under a stage must keep pointing at that stage when the
-publisher reorders the list, so each stage sent may say where it was
-(``previousIndex``); a stage that leaves the list while it holds submissions is
-refused, since those submissions would then belong to nothing.
+Stages are replaced as a whole, like the submission form. Each stage has an
+id (``TaskStage.key``) that stays with it however the list is reordered, and a
+writer sends it back with the stage; what a submission already handed in under
+a stage follows the stage by that id. A stage that leaves the list while it
+holds submissions is refused, since those submissions would then belong to
+nothing.
 """
 
+import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import case, delete, select, update
@@ -29,6 +31,7 @@ from app.domain.task.models import (
     TaskStage,
     TaskSubmission,
     TaskSubmissionSchemaEntry,
+    new_stage_key,
 )
 
 #: Stages a task may have. A course splits one piece of work into a handful of
@@ -36,6 +39,8 @@ from app.domain.task.models import (
 MAX_STAGES = 12
 MAX_NAME_CHARS = 64
 MAX_DESCRIPTION_CHARS = 2000
+#: What a stage id looks like: short, lowercase, URL-safe.
+_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,15}")
 
 
 @dataclass(frozen=True)
@@ -43,8 +48,9 @@ class StageLine:
     name: str
     description: str
     due_at: datetime | None
-    #: The index this stage had before this write; None for a new stage.
-    previous: int | None
+    #: The stage's id (``TaskStage.key``) when it is one the task already has;
+    #: None for a new stage.
+    key: str | None
 
 
 def stage_count(stages: Sequence[object]) -> int:
@@ -53,18 +59,19 @@ def stage_count(stages: Sequence[object]) -> int:
 
 
 def stage_lines(raw: list[dict]) -> list[StageLine]:
-    """The stages as sent (``{name, description, dueAt, previousIndex}``),
-    checked and trimmed.
+    """The stages as sent (``{id, name, description, dueAt}``), checked and
+    trimmed.
 
-    ``dueAt`` is milliseconds or empty. ``previousIndex`` names the stage's
-    index before this write; a stage sent without the key is taken to be the
-    one at its own position, so a writer that never reorders need not say it,
-    and ``null`` is a new stage. A row with neither a name nor a description is
-    a stage the publisher added and left empty, so it is dropped.
+    ``id`` is the stage's id: the one the task gave it (``stages_to_api``),
+    or, for a new stage, one the writer chose so that the items and rubric
+    lines it sends with it can name it. A new stage sent without one gets one,
+    and nothing in the same write can name it. ``dueAt`` is milliseconds or empty. A row with neither
+    a name nor a description is a stage the publisher added and left empty, so
+    it is dropped.
     """
     lines: list[StageLine] = []
-    claimed: set[int] = set()
-    for position, entry in enumerate(raw):
+    claimed: set[str] = set()
+    for entry in raw:
         name = str(entry.get("name") or "").strip()
         description = str(entry.get("description") or "").strip()
         if not name and not description:
@@ -86,22 +93,16 @@ def stage_lines(raw: list[dict]) -> list[StageLine]:
                 due_at = datetime.fromtimestamp(int(due_raw) / 1000.0, tz=UTC)
             except (TypeError, ValueError, OverflowError, OSError) as exc:
                 raise BadRequestError(say("taskTimeInvalid", field="dueAt")) from exc
-        previous_raw = entry.get("previousIndex", position)
-        previous: int | None = None
-        if previous_raw is not None:
-            try:
-                previous = int(previous_raw)
-            except (TypeError, ValueError):
-                previous = None
-        # Two stages cannot both have been the same one; the second is new.
-        if previous is not None and (previous < 0 or previous in claimed):
-            previous = None
-        if previous is not None:
-            claimed.add(previous)
+        key = str(entry.get("id") or "").strip() or None
+        if key is not None and not _KEY.fullmatch(key):
+            raise BadRequestError(say("stageIdInvalid", id=key))
+        # Two stages cannot both be the same one.
+        if key in claimed:
+            raise BadRequestError(say("stageIdDuplicate", id=key))
+        if key is not None:
+            claimed.add(key)
         lines.append(
-            StageLine(
-                name=name, description=description, due_at=due_at, previous=previous
-            )
+            StageLine(name=name, description=description, due_at=due_at, key=key)
         )
     if len(lines) > MAX_STAGES:
         raise BadRequestError(say("stageTooMany", max=MAX_STAGES))
@@ -115,12 +116,43 @@ def ms(moment: datetime | None) -> int | None:
 def stages_to_api(rows: Sequence[TaskStage]) -> list[dict]:
     return [
         {
+            "id": r.key,
             "name": r.name,
             "description": r.description,
             "dueAt": ms(r.due_at),
         }
         for r in rows
     ]
+
+
+@dataclass(frozen=True)
+class StageNews:
+    """What a change to a task's stages means to whoever took it: the stages
+    added and removed (by name), and each kept stage whose due date moved
+    (name, new due in epoch ms or None). A rename or a reorder asks nothing new
+    of them and is not here."""
+
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    due_moved: tuple[tuple[str, int | None], ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.added or self.removed or self.due_moved)
+
+
+def stage_news(before: Sequence[dict], after: Sequence[dict]) -> StageNews:
+    """Compare two ``stages_to_api`` lists by stage id."""
+    old = {s["id"]: s for s in before}
+    new = {s["id"]: s for s in after}
+    return StageNews(
+        added=tuple(s["name"] for s in after if s["id"] not in old),
+        removed=tuple(s["name"] for s in before if s["id"] not in new),
+        due_moved=tuple(
+            (s["name"], s["dueAt"])
+            for s in after
+            if s["id"] in old and old[s["id"]]["dueAt"] != s["dueAt"]
+        ),
+    )
 
 
 async def list_stages(session: AsyncSession, task_id: int) -> list[TaskStage]:
@@ -163,35 +195,31 @@ async def replace_stages(
     refused, before anything is written."""
     old = await list_stages(session, task_id)
     old_count = stage_count(old)
-    # Where each old stage went. Without stages, the one implicit stage is the
-    # first stage of whatever replaces it, and the reverse.
-    moved: dict[int, int] = {}
-    for new_index, line in enumerate(lines):
-        if line.previous is not None and line.previous < old_count:
-            moved[line.previous] = new_index
-    if not lines:
-        moved = {0: 0}
-    gone = [i for i in range(old_count) if i not in moved]
-    if gone:
-        held = set(
-            (
-                await session.execute(
-                    select(TaskSubmission.stage)
-                    .where(
-                        _task_submissions(task_id),
-                        TaskSubmission.deleted_at.is_(None),
-                        TaskSubmission.stage.in_(gone),
-                    )
-                    .distinct()
+    lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
+    old_ids = [stage.key for stage in old]
+    new_ids = [line.key for line in lines]
+    moved = stage_moves(old_ids, new_ids)
+    rows_moved = row_moves(old_ids, new_ids)
+    held = set(
+        (
+            await session.execute(
+                select(TaskSubmission.stage)
+                .where(
+                    _task_submissions(task_id),
+                    TaskSubmission.deleted_at.is_(None),
                 )
+                .distinct()
             )
-            .scalars()
-            .all()
         )
-        if held:
-            first = min(held)
-            name = old[first].name if first < len(old) else ""
-            raise BadRequestError(say("stageHasSubmissions", name=name))
+        .scalars()
+        .all()
+    )
+    refused = refused_stage_change(old_ids, new_ids, held)
+    if refused is not None:
+        name = old[refused].name if refused < len(old) else ""
+        raise BadRequestError(say("stageHasSubmissions", name=name))
+    gone = [i for i in range(old_count) if i not in rows_moved]
+    if gone:
         await session.execute(
             delete(TaskSubmissionSchemaEntry).where(
                 TaskSubmissionSchemaEntry.task_id == task_id,
@@ -204,16 +232,17 @@ async def replace_stages(
                 TaskRubricItem.stage.in_(gone),
             )
         )
-    shifts = {old_i: new_i for old_i, new_i in moved.items() if old_i != new_i}
-    if shifts:
-        for model, where in (
-            (TaskSubmission, _task_submissions(task_id)),
-            (
-                TaskSubmissionSchemaEntry,
-                TaskSubmissionSchemaEntry.task_id == task_id,
-            ),
-            (TaskRubricItem, TaskRubricItem.task_id == task_id),
-        ):
+    for model, where, moves in (
+        (TaskSubmission, _task_submissions(task_id), moved),
+        (
+            TaskSubmissionSchemaEntry,
+            TaskSubmissionSchemaEntry.task_id == task_id,
+            rows_moved,
+        ),
+        (TaskRubricItem, TaskRubricItem.task_id == task_id, rows_moved),
+    ):
+        shifts = {o: n for o, n in moves.items() if o != n}
+        if shifts:
             await session.execute(
                 update(model)
                 .where(where, model.stage.in_(list(shifts)))
@@ -231,36 +260,13 @@ async def replace_stages(
             TaskStage(
                 task_id=task_id,
                 index=index,
+                key=line.key or new_stage_key(),
                 name=line.name,
                 description=line.description,
                 due_at=line.due_at,
             )
         )
     await session.flush()
-
-
-def refuse_unknown_stages(count: int, *entries: Sequence[object]) -> None:
-    """Refuse items or lines (dicts as sent, or rows) that name a stage past
-    ``count``: what a create checks before it writes anything."""
-    for rows in entries:
-        for row in rows:
-            stage = stage_of(row) if isinstance(row, dict) else getattr(row, "stage", 0)
-            if stage >= count:
-                raise BadRequestError(say("stageReferenceUnknown"))
-
-
-async def check_stage_references(session: AsyncSession, task_id: int) -> None:
-    """Every submission item and rubric line belongs to a stage the task has.
-    Called once the task's stages, form and rubric are all written."""
-    count = stage_count(await list_stages(session, task_id))
-    for model in (TaskSubmissionSchemaEntry, TaskRubricItem):
-        stray = await session.scalar(
-            select(model.stage)
-            .where(model.task_id == task_id, model.stage >= count)
-            .limit(1)
-        )
-        if stray is not None:
-            raise BadRequestError(say("stageReferenceUnknown"))
 
 
 async def open_stage(
@@ -283,9 +289,147 @@ async def open_stage(
 
 
 def stage_of(entry: dict) -> int:
-    """The stage a submission item or rubric line, as sent, names: 0 when it
-    names none, as on a task without stages."""
-    try:
-        return max(0, int(entry.get("stage") or 0))
-    except (TypeError, ValueError):
+    """The stage index of an item or line once its reference was resolved
+    (``with_stage_index``)."""
+    return int(entry.get("stage") or 0)
+
+
+def stage_ref(index: int, keys: Sequence[str]) -> str | None:
+    """How an item or line names its stage to a reader: the stage's id, or
+    None on a task without stages."""
+    return keys[index] if 0 <= index < len(keys) else None
+
+
+def keyed_by_name(
+    lines: Sequence[StageLine], known: Sequence[tuple[str, str]]
+) -> list[StageLine]:
+    """A stage written without an id is the stage the task already has under
+    that name, when exactly one has it and no other line claims it; otherwise
+    it is new. ``known`` is the existing stages as ``(id, name)``."""
+    taken = {line.key for line in lines if line.key}
+    out = []
+    for line in lines:
+        if line.key is None:
+            same = [key for key, name in known if name == line.name]
+            if len(same) == 1 and same[0] not in taken:
+                line = replace(line, key=same[0])
+                taken.add(same[0])
+        out.append(line)
+    return out
+
+
+def stage_moves(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None]
+) -> dict[int, int]:
+    """Where each of the old stages went when the stage list changed, by
+    position — what the hand-ins follow; a stage missing from the result was
+    removed. Hand-ins never move from one stage to another and are never
+    merged. The rules (``lib/taskStages.ts`` keeps the same ones for the page):
+
+    - a task that had no stages had one: it is the first of the new stages;
+    - when the last stages go, the first old stage becomes the one stage a
+      task without stages has, and every other old stage is removed;
+    - otherwise a stage is the same stage when its id is.
+    """
+    if not old_ids or not new_ids:
+        return {0: 0}
+    return {
+        index: list(new_ids).index(key)
+        for index, key in enumerate(old_ids)
+        if key is not None and key in new_ids
+    }
+
+
+def row_moves(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None]
+) -> dict[int, int]:
+    """Where submission items and rubric lines go: as ``stage_moves``, except
+    that when the last stages go every item and line stays, on the one stage a
+    task without stages has — as on the page, nothing to hand in is lost."""
+    if old_ids and not new_ids:
+        return {index: 0 for index in range(len(old_ids))}
+    return stage_moves(old_ids, new_ids)
+
+
+def refused_stage_change(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None], held: set[int]
+) -> int | None:
+    """The first old stage (by position) that would be removed while it holds
+    a live hand-in — the change is refused — or None when none would."""
+    moved = stage_moves(old_ids, new_ids)
+    return min((index for index in held if index not in moved), default=None)
+
+
+@dataclass(frozen=True)
+class SettledRows:
+    """Items or rubric lines after the stage list changed: what is kept, each
+    naming its stage by the new ids, and what was removed with its stage."""
+
+    kept: list[dict]
+    removed: list[dict]
+
+
+def rows_after_stage_change(
+    rows: Sequence[object],
+    old_ids: Sequence[str],
+    new_ids: Sequence[str],
+) -> SettledRows:
+    """Items or lines (as written, naming their stage by id) once the stages
+    went from ``old_ids`` to ``new_ids``: by ``row_moves``, then settled by
+    ``settled_stage``. One that names a stage this write added stays with it."""
+    moved = row_moves(old_ids, new_ids)
+    kept: list[dict] = []
+    removed: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref = row.get("stage")
+        if ref in new_ids:
+            kept.append({**row, "stage": ref})
+            continue
+        # The old stage it belonged to; a stale id is the first one's.
+        was = settled_stage(ref, old_ids)
+        position = list(old_ids).index(was) if was is not None and was in old_ids else 0
+        if position not in moved:
+            removed.append(row)
+            continue
+        kept.append({**row, "stage": new_ids[moved[position]] if new_ids else None})
+    return SettledRows(kept=kept, removed=removed)
+
+
+def settled_stage(ref: object, keys: Sequence[str]) -> str | None:
+    """The one rule for which stage an item or rubric line belongs to, on every
+    path — the form, a draft, 芝士, the API: on a task without stages it has
+    none; on a task with stages, one that names none belongs to the first
+    stage. An id it names is kept as it is, to be checked against ``keys``."""
+    if not keys:
+        return None
+    if ref in (None, ""):
+        return keys[0]
+    return str(ref)
+
+
+def stage_index(ref: object, keys: Sequence[str]) -> int:
+    """The position of the stage an item, line or hand-in names by id (after
+    ``settled_stage``). Refused when it names a stage the task does not have."""
+    settled = settled_stage(ref, keys)
+    if settled is None:
         return 0
+    if settled in keys:
+        return list(keys).index(settled)
+    raise BadRequestError(say("stageReferenceUnknown"))
+
+
+def with_stage_index(entries: Sequence[object], keys: Sequence[str]) -> list[dict]:
+    """Items or lines as sent, each with its stage id replaced by the stage's
+    position, which is what the rows store."""
+    return [
+        {**entry, "stage": stage_index(entry.get("stage"), keys)}
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+async def stage_keys(session: AsyncSession, task_id: int) -> list[str]:
+    """The task's stage ids, in order; empty for a task without stages."""
+    return [stage.key for stage in await list_stages(session, task_id)]

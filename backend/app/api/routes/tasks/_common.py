@@ -4,6 +4,7 @@
 搬去了 ``app/api/task_deps.py`` —— 那道装配不只题目路由在用（见那个模块的说明）。
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,7 +36,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.stages import refuse_unknown_stages, stage_count, stage_lines
+from app.domain.task.stages import new_stage_key, stage_lines, with_stage_index
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -75,8 +76,8 @@ class CreateTaskRequest(BaseModel):
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
     )
-    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
-    # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
+    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时拷进题目
+    # 资料库（``package.add_uploads``）：题目还没建好时没有资料库可放。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
@@ -161,7 +162,7 @@ class PatchTaskRequest(BaseModel):
     # 评分要点：给了就整份替换，省略不动。
     rubric: list[dict] | None = None
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
-    # 阶段：给了就整份替换，省略不动；每个阶段可带 ``previousIndex`` 说它原来是第几个。
+    # 阶段：给了就整份替换，省略不动；已有的阶段带回它的 ``id``，提交跟着它走。
     stages: list[dict] | None = None
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
@@ -181,6 +182,10 @@ class PatchTaskRequest(BaseModel):
     default_role: str | None = Field(default=None, alias="defaultRole")
     # The whole list of mentors; omitted leaves it as it is.
     mentors: list[str] | None = None
+    # Files the person uploaded (``POST /attachments``) to add to the 题目's
+    # materials with this change: the ones 芝士 put into the changes it wrote.
+    # A published 题目's own files page adds them one at a time instead.
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -331,19 +336,22 @@ async def _create_task_entity(
         rubric_public = bool(payload.get("rubricPublic", True))
         stages_raw = payload.get("stages") or []
 
+    # Every stage gets its id now, so the items and lines sent with it can name
+    # it; one naming a stage the task will not have is refused before anything
+    # is written.
+    stages = [
+        replace(line, key=line.key or new_stage_key())
+        for line in stage_lines(
+            [e for e in stages_raw if isinstance(e, dict)]
+            if isinstance(stages_raw, list)
+            else []
+        )
+    ]
+    keys = [line.key for line in stages if line.key]
+    submission_schema = with_stage_index(submission_schema, keys)
     rubric = rubric_lines(
-        [e for e in rubric_raw if isinstance(e, dict)]
-        if isinstance(rubric_raw, list)
-        else []
+        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys)
     )
-    stages = stage_lines(
-        [e for e in stages_raw if isinstance(e, dict)]
-        if isinstance(stages_raw, list)
-        else []
-    )
-    # Every item and line belongs to a stage the task has; refused before the
-    # task is written.
-    refuse_unknown_stages(stage_count(stages), submission_schema, rubric)
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")

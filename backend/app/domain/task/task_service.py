@@ -226,6 +226,13 @@ class TaskService:
             session=self._require_session()
         ).replace_schema(task_id, entries)
 
+    async def list_submission_schemas(
+        self, task_ids: Sequence[int]
+    ) -> dict[int, list[TaskSubmissionSchemaEntry]]:
+        return await TaskSubmissionSchemaRepository(
+            session=self._require_session()
+        ).list_by_task_ids(task_ids)
+
     async def list_rubric(self, task_id: int) -> list[TaskRubricItem]:
         return await TaskRubricRepository(
             session=self._require_session()
@@ -244,8 +251,8 @@ class TaskService:
     ) -> None:
         await stages.replace_stages(self._require_session(), task_id, lines)
 
-    async def check_stage_references(self, task_id: int) -> None:
-        await stages.check_stage_references(self._require_session(), task_id)
+    async def stage_keys(self, task_id: int) -> list[str]:
+        return await stages.stage_keys(self._require_session(), task_id)
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]

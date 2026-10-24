@@ -267,6 +267,7 @@ const agent = useDraftAgent({
 // 芝士读到的是这份草稿；面板在发布页给出题的问候和开场问题，能交文件（从文件导入）。
 useAgentContext(() => ({
   page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
+  label: t('tasks.assistant.page.publish'),
   greeting: t('tasks.assistant.draft.greeting'),
   starters: [
     t('tasks.assistant.draft.starters.rubric'),
