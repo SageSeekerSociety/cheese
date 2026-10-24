@@ -59,6 +59,7 @@ from app.domain.task.services import (
     count_distinct_participants,
     ensure_task_readable,
 )
+from app.domain.task.stages import stages_to_api
 from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
@@ -319,6 +320,7 @@ async def get_task(
     )
     if task.rubric_public or may_grade:
         task_dict["rubric"] = rubric_to_api(await service.list_rubric(task_id))
+    task_dict["stages"] = stages_to_api(await service.list_stages(task_id))
 
     # Fetch topics if queryTopics is true
     if queryTopics:

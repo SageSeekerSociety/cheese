@@ -119,7 +119,9 @@ def test_a_draft_is_saved_as_written_and_published_as_a_task(
     assert task["name"] == "Lab 3 缓存模拟器"
     assert task["intro"].startswith("用 C 写一个缓存模拟器")
     read = api_client.get(f"/tasks/{task['id']}", headers=_headers(teacher))
-    assert read.json()["data"]["task"]["rubric"] == FORM["rubric"]
+    assert read.json()["data"]["task"]["rubric"] == [
+        {**line, "stage": 0} for line in FORM["rubric"]
+    ]
 
     gone = api_client.get(f"/task-drafts/{draft['id']}", headers=_headers(teacher))
     assert gone.status_code == 404
@@ -198,7 +200,9 @@ def test_cheese_writes_a_new_draft_in_its_own_words(
     fields = draft["fields"]
     assert fields["rank"] == 2
     assert fields["submitterType"] == "USER"
-    assert fields["submissionSchema"] == [{"prompt": "csim.c", "type": "FILE"}]
+    assert fields["submissionSchema"] == [
+        {"prompt": "csim.c", "type": "FILE", "stage": 0}
+    ]
     # On the asker's clock: they never said theirs, so Beijing time.
     assert fields["deadline"] == int(
         datetime(2026, 11, 8, 15, 59, tzinfo=UTC).timestamp() * 1000

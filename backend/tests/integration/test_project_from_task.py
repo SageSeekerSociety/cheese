@@ -4,6 +4,10 @@
 came from — otherwise it is indistinguishable from one made anywhere else.
 """
 
+import asyncio
+from datetime import UTC, datetime, timedelta
+
+from app.domain.task.models import TaskStage
 from tests.conftest import seed_claim, seed_task_with_protocol
 from tests.integration.conftest import post_project
 
@@ -54,3 +58,38 @@ def test_an_unclaimed_task_cannot_seed_a_project(client):
     r = _create(client, external_task_id=task_id)
     assert r.status_code == 403
     assert client.get(f"/projects/by-task/{task_id}").json()["data"]["total"] == 0
+
+
+def _add_stages(client, task_id: int, names: list[str]) -> None:
+    async def _seed() -> None:
+        async with client.test_factory() as session:
+            due = datetime.now(UTC) + timedelta(days=7)
+            for index, name in enumerate(names):
+                session.add(
+                    TaskStage(task_id=task_id, index=index, name=name, due_at=due)
+                )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+
+def test_a_project_from_a_staged_task_shows_its_stages(client):
+    """The overview's timeline: each stage with its due date and where the
+    project's claim stands on it."""
+    task_id = seed_task_with_protocol(client)
+    _add_stages(client, task_id, ["需求分析", "实现"])
+    seed_claim(client, task_id, handle=OWNER, approved=0)
+    project_id = _create(client, external_task_id=task_id).json()["data"]["id"]
+
+    stages = client.get(f"/projects/{project_id}").json()["data"]["challenge_stages"]
+    assert [s["name"] for s in stages] == ["需求分析", "实现"]
+    assert all(s["due_at"] for s in stages)
+    assert {s["status"] for s in stages} == {"NOT_SUBMITTED"}
+
+
+def test_a_project_from_an_unstaged_task_shows_no_stages(client):
+    task_id = _claimed_task(client)
+    project_id = _create(client, external_task_id=task_id).json()["data"]["id"]
+
+    body = client.get(f"/projects/{project_id}").json()["data"]
+    assert body["challenge_stages"] == []

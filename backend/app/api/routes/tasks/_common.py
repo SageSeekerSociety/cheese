@@ -35,6 +35,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+from app.domain.task.stages import stage_lines
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -67,6 +68,9 @@ class CreateTaskRequest(BaseModel):
     # 评分要点：每行 ``{item, points, criteria}``，见 app.domain.task.rubric。
     rubric: list[dict] = Field(default_factory=list)
     rubric_public: bool = Field(default=True, alias="rubricPublic")
+    # 阶段：每个 ``{name, description, dueAt}``，见 app.domain.task.stages。提交项与
+    # 评分要点各用 ``stage`` 指它属于第几个；不给就是一个阶段。
+    stages: list[dict] = Field(default_factory=list)
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
@@ -157,6 +161,8 @@ class PatchTaskRequest(BaseModel):
     # 评分要点：给了就整份替换，省略不动。
     rubric: list[dict] | None = None
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
+    # 阶段：给了就整份替换，省略不动；每个阶段可带 ``previousIndex`` 说它原来是第几个。
+    stages: list[dict] | None = None
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
@@ -224,6 +230,7 @@ async def _create_task_entity(
         submission_schema = payload.submission_schema or []
         rubric_raw = payload.rubric
         rubric_public = payload.rubric_public
+        stages_raw = payload.stages
         teaching = coerce_teaching(payload.teaching)
         default_role = payload.default_role
     else:
@@ -322,10 +329,16 @@ async def _create_task_entity(
 
         rubric_raw = payload.get("rubric") or []
         rubric_public = bool(payload.get("rubricPublic", True))
+        stages_raw = payload.get("stages") or []
 
     rubric = rubric_lines(
         [e for e in rubric_raw if isinstance(e, dict)]
         if isinstance(rubric_raw, list)
+        else []
+    )
+    stages = stage_lines(
+        [e for e in stages_raw if isinstance(e, dict)]
+        if isinstance(stages_raw, list)
         else []
     )
 
@@ -436,10 +449,13 @@ async def _create_task_entity(
 
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
+    if stages:
+        await task_service.replace_stages(task.id, stages)
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
     if rubric:
         await task_service.replace_rubric(task.id, rubric)
+    await task_service.check_stage_references(task.id)
 
     return task
 

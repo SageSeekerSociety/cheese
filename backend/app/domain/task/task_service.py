@@ -11,7 +11,13 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.tag.models import Tag
-from app.domain.task.models import Task, TaskRubricItem, TaskSubmissionSchemaEntry
+from app.domain.task import stages
+from app.domain.task.models import (
+    Task,
+    TaskRubricItem,
+    TaskStage,
+    TaskSubmissionSchemaEntry,
+)
 from app.domain.task.repositories import (
     TaskAccessDomainRepository,
     TaskRepository,
@@ -229,6 +235,17 @@ class TaskService:
         await TaskRubricRepository(session=self._require_session()).replace(
             task_id, lines
         )
+
+    async def list_stages(self, task_id: int) -> list[TaskStage]:
+        return await stages.list_stages(self._require_session(), task_id)
+
+    async def replace_stages(
+        self, task_id: int, lines: Sequence[stages.StageLine]
+    ) -> None:
+        await stages.replace_stages(self._require_session(), task_id, lines)
+
+    async def check_stage_references(self, task_id: int) -> None:
+        await stages.check_stage_references(self._require_session(), task_id)
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]

@@ -36,17 +36,66 @@ from app.domain.task.access import (
     bind_review_path,
     ensure_can_read_participation,
 )
+from app.domain.task.claims import claim_of
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
     TaskSubmissionReviewService,
     TaskSubmissionService,
+    ensure_task_readable,
 )
-from app.domain.task.submission_state import past_deadline
+from app.domain.task.stages import open_stage, stages_to_api
+from app.domain.task.submission_state import (
+    past_deadline,
+    stage_distribution,
+    stage_states_of,
+)
 from app.domain.task_notices import notices as task_notices
 from app.domain.team.services import TeamService
 
 router = APIRouter(prefix="/tasks")
+
+
+@router.get("/{taskId}/progress", summary="Task Progress By Stage")
+async def get_task_progress(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    task_service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """Where things stand on each of the task's stages.
+
+    ``mine``: the caller's own claim (approved), one status per stage
+    (``submission_state`` STAGE_*), or null without one. ``distribution``: for
+    whoever grades the task, how many approved claims are at each status on
+    each stage; null for everyone else. A task without stages has one stage.
+    """
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
+
+    claim = await claim_of(db, task=task, user_id=auth_user.user_id)
+    mine = (
+        {
+            "participantId": claim.id,
+            "stages": await stage_states_of(db, claim),
+        }
+        if claim is not None and claim.approved == 0
+        else None
+    )
+    distribution = (
+        await stage_distribution(db, task.id)
+        if await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+        else None
+    )
+    return ok(
+        {
+            "stages": stages_to_api(await task_service.list_stages(task.id)),
+            "mine": mine,
+            "distribution": distribution,
+        }
+    )
 
 
 @router.get(
@@ -56,6 +105,7 @@ router = APIRouter(prefix="/tasks")
 async def get_task_submissions(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    stage: int | None = Query(default=None, ge=0),
     allVersions: bool = Query(default=False),
     queryReview: bool = Query(default=False),
     reviewed: bool | None = Query(default=None),
@@ -102,6 +152,7 @@ async def get_task_submissions(
     items, total = await submission_service.list_submissions(
         task_id=task_id,
         participant_id=participant_id,
+        stage=stage,
         all_versions=allVersions,
         query_review=queryReview,
         reviewed=reviewed,
@@ -134,6 +185,7 @@ async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
+    stage: int = Query(default=0, ge=0),
     db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
@@ -161,6 +213,8 @@ async def post_task_submission(
     # late hand-in is let through.
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
+    # Each stage is handed in on its own, and closes at its own due date.
+    await open_stage(db, task_id, stage, datetime.now(UTC))
 
     if membership.is_team:
         is_member = await team_service.is_team_member(
@@ -176,6 +230,7 @@ async def post_task_submission(
         existing, _ = await submission_service.list_submissions(
             task_id=task_id,
             participant_id=participant_id,
+            stage=stage,
             all_versions=False,
             query_review=False,
             limit=1,
@@ -188,6 +243,7 @@ async def post_task_submission(
         participant_id=participant_id,
         submitter_id=auth_user.user_id,
         contents=contents,
+        stage=stage,
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in
@@ -211,6 +267,7 @@ async def patch_task_submission(
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -232,6 +289,9 @@ async def patch_task_submission(
         raise BadRequestError(say("submissionChallengeEnded"))
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
+    stage = await submission_service.stage_of_version(participant_id, version)
+    if stage is not None:
+        await open_stage(db, task_id, stage, datetime.now(UTC))
 
     if membership.is_team:
         is_member = await team_service.is_team_member(

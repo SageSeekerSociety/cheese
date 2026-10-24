@@ -1307,7 +1307,10 @@ TASK_WRITE_DESCRIPTION = (
     "字段：name 名称；description 题目详情（Markdown，整篇写入）；"
     "description_edits 只改详情里的几处（每项 find 是原文里恰好出现一次的一段，"
     "replace 是换成的文字），不要为了改一句重写整篇；submission 学生要交的东西；"
-    "rubric 评分要点；rubric_public 评分要点是否对学生可见；form 个人或团队；"
+    "rubric 评分要点；rubric_public 评分要点是否对学生可见；stages 阶段，按顺序列出"
+    "每个阶段的名称、要求和截止时间（due，格式同 deadline），不分阶段就不给；"
+    "分了阶段时 submission 和 rubric 的每一项用 stage 写它属于第几个阶段（从 1 数）；"
+    "form 个人或团队；"
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
     "人数上限（0 是不限）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
     "days_to_submit 领取后几天内提交；category 分类名称；tags 标签名称；"
@@ -1366,6 +1369,7 @@ TASK_WRITE_FIELDS = {
             "properties": {
                 "name": {"type": "string", "description": "要交的东西"},
                 "kind": {"type": "string", "enum": ["文件", "文字"]},
+                "stage": {"type": "integer", "description": "第几个阶段，从 1 数"},
             },
             "required": ["name", "kind"],
         },
@@ -1378,11 +1382,24 @@ TASK_WRITE_FIELDS = {
                 "item": {"type": "string", "description": "评什么，不超过 64 字"},
                 "points": {"type": "integer"},
                 "criteria": {"type": "string", "description": "怎样算做到"},
+                "stage": {"type": "integer", "description": "第几个阶段，从 1 数"},
             },
             "required": ["item", "points"],
         },
     },
     "rubric_public": {"type": "boolean"},
+    "stages": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "阶段名称，不超过 64 字"},
+                "description": {"type": "string", "description": "这个阶段要做到什么"},
+                "due": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是不设截止"),
+            },
+            "required": ["name"],
+        },
+    },
     "form": {"type": "string", "enum": ["个人", "团队"]},
     "team_min": {"type": "integer"},
     "team_max": {"type": "integer"},
@@ -4284,6 +4301,7 @@ def _said_by_platform(exc: Exception) -> str | None:
 _TASK_FIELD_WORDS = {
     "name": "name",
     "description": "description",
+    "stages": "stages",
     "submissionSchema": "submission",
     "rubric": "rubric",
     "rubricPublic": "rubric_public",
@@ -4650,8 +4668,7 @@ def _say_skills_search(args, data, env) -> str:
         head = "这一次没有命中任何已装技能。"
     # 「没搜到」不是「没有」：搜索覆盖面有限，得让 agent 知道这一点再决定下一步。
     return (
-        head
-        + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
+        head + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
         "这台机器已采纳的技能，未必穷尽每个名字或全文（机器上的正文只在它在线时读"
         "得到）。所以空结果不是「这个技能不存在」——换个说法再搜，或者问用户技能"
         "叫什么。要看正文用 skills_read(name)。"
