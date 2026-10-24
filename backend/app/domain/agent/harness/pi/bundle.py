@@ -14,8 +14,6 @@ def build() -> bytes:
     return bundle.build(
         "app.domain.agent.harness.pi.entry",
         (
-            # The CLI's argparse tree, turned into tool schemas and back.
-            "domain/agent/cli_worker.py",
             # `RemoteClient`: every file, command, hook and MCP call of the
             # session goes to the room's machine, or the platform, through it.
             "domain/agent/executor_transport.py",

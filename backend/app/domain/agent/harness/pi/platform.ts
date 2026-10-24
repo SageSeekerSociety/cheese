@@ -134,9 +134,9 @@ function text(body: string) {
 // --- the platform's own tools ------------------------------------------------
 //
 // These arrive as extension tools. The catalog is the runner's, read from the
-// platform's own file: the platform's tool table (the same one the other
-// harnesses serve) plus the CLI commands that run on the room's machine as a
-// process.
+// platform's own file: the platform's tool table, the same one the other
+// harnesses serve. The CLI's own commands are no tools here: a room runs them
+// with its bash, `cheese …`, as every other harness does.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {

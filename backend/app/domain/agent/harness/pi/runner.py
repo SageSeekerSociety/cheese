@@ -668,12 +668,8 @@ class Runner(runner.Runner[Journal]):
         """One platform tool call.
 
         A tool from the platform's table runs here against the backend, reaching
-        the machine only for what it needs from it. Anything else is a CLI
-        command, run on the machine as the CLI would have been typed there:
-        argparse is the authority twice over — it says what the arguments mean,
-        and ``catalog.argv`` re-parses what it built, so a call that could not
-        have been typed fails here rather than reaching the CLI as a malformed
-        command line.
+        the machine only for what it needs from it. The CLI's own commands are
+        no tools: the session runs them with its `bash`, as `cheese …`.
 
         A session with no hands, or one that only reads the machine, has
         neither: each of its tools is one request to the platform, under the
@@ -699,15 +695,7 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
-        code, output = await asyncio.to_thread(
-            self.machine.run, f"exec {command} </dev/null", cwd=cwd
-        )
-        return {
-            "status": code,
-            "stdout": output.decode("utf-8", "replace"),
-            "stderr": "",
-        }
+        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
         # A session may be named only some of an object's verbs

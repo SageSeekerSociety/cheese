@@ -100,7 +100,7 @@ covers:
 
 Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/list`，只留 `NATIVE_TOOLS` 那九个，再把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，执行器自己的工具走 `invoke`。项目的 MCP 服务器不在这张表里，由 Codex 自己的 MCP 客户端连会话的网关。
 
-平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
+平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` 就是 `offered_tools()`，和另外两种骨架拿到的是同一份表。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机。CLI 自己的命令（`cheese worktree`、`cheese sync`……）不是工具：pi 房间和另外两种骨架一样，用机器上的 `bash` 跑 `cheese …`，靠 `cheese --help` 发现。把调用名当成工具名调（`cheese_worktree`）会拿到「没有这个工具」。
 
 项目的 MCP 服务器由 pi 自己的 MCP 客户端（`builtin:mcp`）连会话的网关，扩展只负责把它们一个个注册给 pi（`registerMcpServers`）；pi 开着 codemode，模型可以写一段脚本一次调好几个工具，脚本调过哪些工具记在那一步上（`meta.calls`）。见[项目的 MCP 服务器](/dev/remote-mcp#gateway)。
 
