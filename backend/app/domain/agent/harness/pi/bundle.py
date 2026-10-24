@@ -4,9 +4,10 @@ from pathlib import Path
 
 from app.domain.agent.harness.driven import bundle
 
-#: The platform's CLI (`catalog.py`): its tool table and its argparse tree, one
+#: The platform's CLI (`catalog.py`): the file its tool table lives in, one
 #: stdlib-only file that lives outside `app/`, shipped as it is rather than as a
-#: second copy of either.
+#: second copy of the table. Its commands are no tools here: a room runs them
+#: as `cheese …` in its bash.
 PLATFORM_TOOLS = Path(__file__).resolve().parents[5] / "sandbox" / "cheese"
 
 

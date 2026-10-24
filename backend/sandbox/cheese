@@ -1822,8 +1822,9 @@ DELEGATED_TOOLS = ToolTable(
             "记忆",
             {
                 "save": _verb(
-                    "记下或改写一条你关于用户的记忆（同名就改写原来那条）。name 是英文短名（小写"
-                    "字母、数字、连字符，如 formal-writing-to-teachers），description 是一句话说这条"
+                    "记下或改写一条你关于用户的记忆（只有用户自己的面板里用；同名就改写原来那条）。"
+                    "name 是英文短名（小写字母、数字、连字符，如 formal-writing-to-teachers），"
+                    "description 是一句话说这条"
                     "是什么、什么时候用得上（会列在每段对话开头），type 是 user（用户是谁、在做"
                     "什么）、feedback（做事的要求，纠正过你的和认可过的做法）、project（进行中的"
                     "安排）或 reference（外部资料在哪），text 是正文：结论和它为什么成立，不写经过。"
@@ -1841,12 +1842,12 @@ DELEGATED_TOOLS = ToolTable(
                     ["name"],
                 ),
                 "read": _verb(
-                    "读一条你关于用户的记忆的正文。",
+                    "读一条你关于用户的记忆（只有用户自己的面板里用）的正文。",
                     {"name": _text("英文短名，如 formal-writing-to-teachers")},
                     ["name"],
                 ),
                 "forget": _verb(
-                    "删掉一条你关于用户的记忆。",
+                    "删掉一条你关于用户的记忆（只有用户自己的面板里用）。",
                     {"name": _text("英文短名，如 formal-writing-to-teachers")},
                     ["name"],
                 ),

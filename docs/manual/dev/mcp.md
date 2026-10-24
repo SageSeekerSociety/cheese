@@ -95,7 +95,7 @@ Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/
 - **会话侧**把它当模块读：`PLATFORM_TOOLS` 是工具表，`run_platform_tool(tool, args, host)` 执行其中一样。`host` 提供四样东西——房间的 `CHEESE_*` 环境变量、一次后端请求、读一个文件、以及推一次任务的提交。
 - **机器上**它是 `cheese` 这条命令：只剩必须在这台机器上作为进程跑的动作。
 
-`cli_worker.py` 是「CLI 的 argparse 树」这件事本身，和任何骨架无关：`_tools(parser)` 把叶子命令翻成工具 schema（`cheese_<命令>`），`_command(parser, tool, arguments)` 把一次调用翻回 argv，**并让那个 parser 自己复核一遍**（`leaf.parse_args`）——缺必填字段或值不在枚举里，报的是 argparse 自己的话，而不是一条格式不对的命令行。机器上它还带一个预加载进程：一次 `fork` 跑一次调用，省掉每次调用的解释器启动。
+CLI 的命令在哪种骨架里都不是工具：会话在 bash 里跑 `cheese …`，靠 `cheese --help` 发现。`cli_worker.py` 是机器上的预加载进程：Claude Code 的执行器先把 CLI 加载好，一次 `fork` 跑一次 `cheese …`，省掉每次调用的解释器启动。
 
 ## 机器够不着时 {#unreachable}
 

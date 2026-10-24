@@ -341,7 +341,7 @@ _BASELINE: dict[str, int] = {
     # 2026-10: the checkout sweep left `room_task/checkouts.py` for
     # `agent/checkout_sweep.py`, carrying its one English sentence.
     "app/domain/agent/checkout_sweep.py": 1,
-    "app/domain/agent/cli_worker.py": 6,
+    "app/domain/agent/cli_worker.py": 2,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
     # 2026-10: device_hub.py 按职责拆分，五句话跟着抛它的函数走——四句到 sessions、

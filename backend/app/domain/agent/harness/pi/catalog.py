@@ -8,6 +8,7 @@ commands, which a pi room runs with its `bash` as the other harnesses do
 (`cheese --help`), so the CLI's argparse tree is no tool here.
 """
 
+import argparse
 import importlib.resources
 import types
 from functools import cache
@@ -35,6 +36,44 @@ def tools() -> list[dict]:
     """The platform's tool table: the same constant the other harnesses serve
     (结论 63)."""
     return _module().offered_tools()
+
+
+@cache
+def cli_commands() -> dict[str, str]:
+    """What each of the CLI's commands is called when a model remembers it as a
+    tool (`cheese_push_fix`), and the command it is (`cheese push-fix`).
+
+    pi rooms once had them as tools; they are commands run in bash now, and a
+    session that calls one as a tool is told so (`not_a_tool`)."""
+    parser = _module().build_parser()
+    commands: dict[str, str] = {}
+
+    def walk(node, words: tuple[str, ...]) -> None:
+        subparsers = next(
+            (a for a in node._actions if isinstance(a, argparse._SubParsersAction)),
+            None,
+        )
+        if subparsers is None:
+            name = "cheese_" + "_".join(w.replace("-", "_") for w in words)
+            commands[name] = " ".join(("cheese", *words))
+            return
+        seen: set[int] = set()
+        for word, child in subparsers.choices.items():
+            if id(child) not in seen:  # an alias is the same parser again
+                seen.add(id(child))
+                walk(child, (*words, word))
+
+    walk(parser, ())
+    return commands
+
+
+def not_a_tool(tool: str) -> str:
+    """What a session that calls the CLI command ``tool`` as a tool is told."""
+    command = cli_commands()[tool]
+    return (
+        f"{tool} 不是工具：CLI 的命令在 bash 里跑，`{command} …`"
+        f"（`{command} --help` 看它的写法，`cheese --help` 列出全部命令）。"
+    )
 
 
 def schemas_of(names: list[str]) -> list[dict]:
