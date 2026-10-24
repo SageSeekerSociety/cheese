@@ -33,13 +33,14 @@ def test_it_is_there_for_a_room_that_has_nothing_else_in_its_prompt():
 
 
 def test_the_rule_keeps_the_attempts_that_are_still_worth_making():
-    """「换了做法再试」和「间歇性的失败」要留在句子里。删掉它们，这条就退化成
-    负责人否掉的「别重试」——而那会把正常的尝试一起禁掉。
+    """「换做法、换依赖、换条路试」和「间歇性的失败」要留在句子里。删掉它们，这条
+    就退化成负责人否掉的「别重试」——而那会把正常的尝试一起禁掉。
 
     读的是组装出来的那段字，不是常量：这条规矩要到得了 agent 手里才成立，而只断言
     常量会让「定义了却没接进提示词」照绿。"""
     text = _assembled()
-    assert "换了做法" in text
+    assert "换做法" in text
+    assert "换依赖" in text
     assert "间歇" in text
 
 
