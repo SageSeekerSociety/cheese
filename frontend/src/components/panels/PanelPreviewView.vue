@@ -173,6 +173,11 @@ async function postFileComment(payload: { content: string; quote: string | null;
  *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
  *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
 const commentError = ref('')
+/** 这条出口正发着：发一条要等一会儿，这期间再点一次会挂出两条一样的评论。
+ *
+ *  指认条那个 `busy` 只反映页上钉一处那条路（`pageLocator.sending`），评论这条路
+ *  它照不到，所以在自己这里挡一道。 */
+const commenting = ref(false)
 // 撤掉指认就把它一起撤掉：那句话说的是上一处，收起来之后再弹出来不该还挂着。
 const locatorCancel = () => {
   commentError.value = ''
@@ -180,16 +185,19 @@ const locatorCancel = () => {
 }
 async function commentHere() {
   const body = locatorNote.value.trim()
-  if (!body || !props.comments) return
+  if (!body || !props.comments || commenting.value) return
   // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
   const target = commentPick.value
   commentError.value = ''
+  commenting.value = true
   try {
     await postFileComment({ content: body, quote: target?.quote ?? null, anchor: target?.anchor ?? null })
   } catch (cause) {
     // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
     commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
     return
+  } finally {
+    commenting.value = false
   }
   if (!props.comments.open.value) props.comments.toggle()
 }
@@ -401,7 +409,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :busy="pageLocator.sending.value"
+      :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :comment-error="commentError"
       @send="sendLocator"

@@ -169,6 +169,41 @@ it('选中一段之后「评论」这条出口把它交给评论，而不是发�
   expect(posted[0].quote).toContain('重试 3 次')
 })
 
+it('评论还没回来时再点一次，不会挂出第二条一样的评论', async () => {
+  // 指认条那个 busy 只反映页上钉一处那条路（`pageLocator.sending`），评论这条它照不到；
+  // 所以这条路自己挡一道。发一条要等一会儿，这期间连点两下是很正常的动作。
+  let release: () => void = () => {}
+  const posted: unknown[] = []
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: (payload: unknown) =>
+      new Promise<void>((resolve) => {
+        posted.push(payload)
+        release = resolve
+      }),
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里数字不对')
+  const bar = ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!
+  const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
+  await fireEvent.click(commentBtn)
+  await fireEvent.click(commentBtn)
+  expect(posted).toHaveLength(1)
+  release()
+})
+
 it('选中一段发出去时带的是带文件身份的 text-range 引用', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount({ submitQuestion: submit })
