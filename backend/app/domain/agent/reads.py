@@ -23,6 +23,14 @@ class Writing:
     #: Who is writing it, when that is not the session's own name: a room's
     #: seat may act under the handle of the teammate it was addressed as.
     author: str | None = None
+    #: The calls of the work under way that have come back so far. It only
+    #: grows while the work goes on, so a reader that missed a moment still
+    #: learns every call that returned.
+    returned: tuple[str, ...] = ()
+    #: A person's 芝士's branches the work under way started or moved, as
+    #: they stand: each one's id, the call that started it, what it does, how
+    #: it is going and its latest steps.
+    branches: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)

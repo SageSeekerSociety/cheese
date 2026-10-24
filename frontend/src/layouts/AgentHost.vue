@@ -60,11 +60,12 @@ import { toast } from 'vuetify-sonner'
 
 import { useAgentPointer } from '@/composables/useAgentPointer'
 
-import { downloadFile, libraryFileRawUrl } from '@/api'
+import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { onAssistantChange } from '@/lib/inboxLive'
 import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
@@ -112,6 +113,32 @@ watch(
   },
   { immediate: true }
 )
+
+// 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
+onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+
+// 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
+// 服务端只记几十秒，看着的时候隔一会儿说一次。
+const LOOKING_EVERY_MS = 15_000
+let lookingTimer: ReturnType<typeof setInterval> | null = null
+function sayLooking() {
+  if (agentOpen.value && agentThread.busy.value && document.visibilityState === 'visible')
+    void agentThread.looking().catch(() => undefined)
+}
+watch(
+  () => [agentOpen.value, agentThread.busy.value, agentThread.current.value] as const,
+  ([open, busy]) => {
+    if (lookingTimer) clearInterval(lookingTimer)
+    lookingTimer = null
+    if (!open || !busy) return
+    sayLooking()
+    lookingTimer = setInterval(sayLooking, LOOKING_EVERY_MS)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (lookingTimer) clearInterval(lookingTimer)
+})
 
 // `?assistant=<对话>`：通知、推送和设置页「查看对话」把人带到这里，打开面板里的那段对话，
 // 再把这个参数从地址栏拿掉，刷新不会再开一次。
@@ -168,6 +195,7 @@ const panelProps = computed(() => {
     messages: view.messages,
     earlier: earlierView(),
     hasOlder: agentThread.hasOlder.value,
+    currentEarlier: agentThread.currentEarlier.value,
     streaming: agentThread.streaming.value,
     tool: agentThread.tool.value,
     queued: agentThread.queued.value,
@@ -187,6 +215,7 @@ const panelProps = computed(() => {
     placeholder: context.placeholder ?? t('tasks.assistant.anywhere.placeholder'),
     hint: context.hint ?? t('tasks.assistant.anywhere.hint'),
     canAttach: true,
+    hearVoice: hearAssistantVoice,
     closable: true,
     dockable: mdAndUp.value,
     docked: docked.value,
@@ -198,6 +227,7 @@ const panelEvents = {
   stop: () => void agentThread.stop().catch(() => undefined),
   new: () => agentThread.startNew(),
   older: () => void agentThread.older().catch(() => undefined),
+  olderMessages: (topic: string | null) => void agentThread.earlierMessages(topic).catch(() => undefined),
   close: () => (agentOpen.value = false),
   downloadFile: (file: AssistantHanded) =>
     void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>
@@ -223,6 +253,7 @@ const panelEvents = {
     if (projectId) void router.push({ name: 'workspace-task', params: { projectId, taskId: task } })
   },
   removeFile: (index: number) => removeAgentFile(index),
+  openLink: (path: string) => void router.push(path),
 }
 </script>
 

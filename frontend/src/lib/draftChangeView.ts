@@ -11,7 +11,7 @@ import type { TaskRubricLine, TaskStage, TaskSubmissionSchemaEntry } from '@/typ
 import dayjs from 'dayjs'
 
 import { t } from '@/i18n'
-import { proposalView, stepView } from '@/lib/assistantView'
+import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 
 /** 每个字段在表单上叫什么。 */
@@ -344,10 +344,11 @@ export function panelMessages(
     at: m.at,
     files: m.files,
     shown: m.shown,
-    steps: (m.steps ?? []).map(stepView),
+    steps: withSubagents((m.steps ?? []).map(stepView), m.subagents),
     ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),
     proposals: (m.proposals ?? []).map(proposalView),
     handed: m.handed ?? [],
+    ...(m.silent ? { silent: true } : {}),
   }))
 }
