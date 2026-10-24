@@ -29,7 +29,7 @@
   "locateContextAfter": "Followed by “{suffix}”",
   "locateContextBefore": "Preceded by “{prefix}”",
   "locateMessage": "In {path} at {address} (“{quote}”): {note}",
-  "locatorPlaceholder": "Describe what to change",
+  "locatorPlaceholder": "Say something about this spot",
   "mdHeading": "heading “{heading}”",
   "mdTop": "the top of the file",
   "mutableFile": "Dependencies can change; not a complete snapshot",

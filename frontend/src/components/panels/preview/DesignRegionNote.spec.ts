@@ -28,11 +28,11 @@ it('Escape bubbles through the compact entry and input to exactly one cancel; IM
       geometry: { viewport: { left: 0, top: 0, width: 240, height: 48 }, region: null },
     },
   })
-  const entry = await ui.findByRole('button', { name: '说明要改什么' })
+  const entry = await ui.findByRole('button', { name: '就这一处说点什么' })
   await fireEvent.keyDown(entry, { key: 'Escape' })
   expect(ui.emitted().cancel).toHaveLength(1)
   await fireEvent.click(entry)
-  const input = ui.getByRole('textbox', { name: '说明要改什么' })
+  const input = ui.getByRole('textbox', { name: '就这一处说点什么' })
   expect(input.style.display).not.toBe('none')
   await fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
   expect(ui.emitted().send).toBeUndefined()
