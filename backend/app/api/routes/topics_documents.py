@@ -52,6 +52,7 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.doc_access import require_role
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
@@ -192,7 +193,15 @@ async def list_document_revisions(
     clean = clean_artifact_path(path)
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    raw = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    raw = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, actor, clean),
+    )
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:

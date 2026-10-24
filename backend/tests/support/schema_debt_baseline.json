@@ -297,6 +297,7 @@
     "remove_table quiz_question",
     "remove_table ratchet_snapshots",
     "remove_table task_attachment",
+    "remove_table task_material_attachments_1f0ec6a6894e",
     "remove_table teaching_unit",
     "remove_table topic_memberships_unseated_f1a9c3e07b42",
     "remove_table topics_private_parties_b8e3f2a10c64",

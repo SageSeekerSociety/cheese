@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from app.api.auth import ActorResolverDep
 from app.api.byte_response import blob_response
 from app.api.place import readable_rooms
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
@@ -117,7 +118,12 @@ async def library_file_raw(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return await _raw(
-        db, _shelf(project_id), _library_path(path), version, preview_pdf, request
+        db,
+        await shelf_for(db, project_id, actor),
+        _library_path(path),
+        version,
+        preview_pdf,
+        request,
     )
 
 
@@ -180,7 +186,7 @@ async def list_library_versions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     versions = await library_records.versions(
-        db, _shelf(project_id), _library_path(path)
+        db, await shelf_for(db, project_id, actor), _library_path(path)
     )
     return ok({"versions": versions})
 
@@ -227,7 +233,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        _shelf(project_id),
+        await shelf_for(db, project_id, actor),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -246,9 +252,8 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    return ok(
-        await library_listing.one(db, _shelf(project_id), rooms, _library_path(path))
-    )
+    shelf = await shelf_for(db, project_id, actor)
+    return ok(await library_listing.one(db, shelf, rooms, _library_path(path)))
 
 
 @router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
@@ -258,9 +263,11 @@ async def library_file_text(
     """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
     文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
-    await _reader(project_id, db, resolver)
+    actor = await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(db, _shelf(project_id), name)
+    found = await library_records.read_text(
+        db, await shelf_for(db, project_id, actor), name
+    )
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 

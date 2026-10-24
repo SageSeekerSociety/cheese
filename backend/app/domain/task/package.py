@@ -229,6 +229,37 @@ async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
     )
 
 
+async def _project_task(session: AsyncSession, project_id) -> Task | None:
+    project = await session.get(Project, project_id)
+    if project is None or project.external_task_id is None:
+        return None
+    task = await session.get(Task, project.external_task_id)
+    if task is None or task.deleted_at is not None:
+        return None
+    return task
+
+
+async def mount_for(session: AsyncSession, project_id, user_id: int | None) -> bool:
+    """这个人在这个项目的资料库里看不看得到 `题目/`：按题目自己的下载判据，不按项目
+    的成员名单（同一个团队里没领题的人、被出题人撤掉的人，项目都还进得去）。"""
+    if user_id is None:
+        return False
+    task = await _project_task(session, project_id)
+    return task is not None and await may_download(session, task, user_id)
+
+
+async def mount_for_agents(session: AsyncSession, project_id) -> bool:
+    """项目里的 agent 看不看得到 `题目/`：它们替这个项目干活，项目是领了这道题的那个人
+    开的，所以按项目所有者的判据——他还拿得到材料，项目里的 agent 就读得到。"""
+    project = await session.get(Project, project_id)
+    if project is None or not project.owner_handle:
+        return False
+    owner = await session.scalar(
+        select(User.id).where(User.username == project.owner_handle)
+    )
+    return await mount_for(session, project_id, owner)
+
+
 async def refuse_unless_downloader(
     session: AsyncSession, task: Task, user_id: int
 ) -> None:
@@ -363,7 +394,7 @@ async def section_for_project(
     if task is None or task.deleted_at is not None:
         return None
     revision = await current(session, task.id)
-    if revision is None:
+    if revision is None or not await mount_for_agents(session, project.id):
         return None
     lines = [
         "## 题目",

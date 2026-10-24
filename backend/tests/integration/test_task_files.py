@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,7 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.task import package
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
@@ -579,3 +581,151 @@ def test_the_projects_agents_are_told_the_version_and_what_changed(
     second = section()
     assert "第 2 版" in second
     assert "新增文件 数据.csv" in second
+
+
+# --- 谁在项目里读得到 `题目/`：题目的判据，不是项目的名册 ------------------------------
+
+
+def _raw_in_project(api_client: TestClient, project_id: str, token: str, name: str):
+    return api_client.get(
+        f"/projects/{project_id}/library/raw",
+        params={"path": f"题目/{name}"},
+        headers=_auth(token),
+    )
+
+
+def _top_paths(api_client: TestClient, project_id: str, token: str) -> list[str]:
+    resp = api_client.get(f"/projects/{project_id}/library", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return [row["path"] for row in resp.json()["data"]["data"]]
+
+
+def test_a_board_manager_who_did_not_publish_may_download_without_claiming(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """管理员是替出题人管这块板的人，不该为了看一眼材料先把自己报名上去。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="管理员要看材料的题")
+    _add(api_client, task_id, board["creator_token"], "讲义.pdf", MATERIAL)
+
+    manager = user_client.create_user()
+    manager_token = _login(user_client, api_client, manager)
+    resp = api_client.post(
+        f"/spaces/{board['space_id']}/managers",
+        json={"userId": manager.user_id, "role": "ADMIN"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 201, resp.text
+
+    assert _files(api_client, task_id, manager_token).json()["data"]["canDownload"]
+    resp = _download(api_client, task_id, manager_token, "讲义.pdf")
+    assert resp.status_code == 200
+    assert resp.content == MATERIAL
+
+
+def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,
+    db_session,
+    _portal,
+):
+    """个人题的项目挂在一个团队下：团队里没领这道题的人进得了项目，题目的材料他照样
+    拿不到——和在题目页上一样。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="个人题进团队")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"secret\n")
+    _, a_token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, task_id, a_token)
+    resp = api_client.post(
+        "/teams",
+        json={
+            "name": f"队 {unique_int(10000000, 99999999)}",
+            "intro": "x",
+            "description": "x",
+            "avatarId": 1,
+        },
+        headers=_auth(a_token),
+    )
+    assert resp.status_code == 201, resp.text
+    team_id = resp.json()["data"]["team"]["id"]
+    b_user, b_token = _member_of(user_client, api_client, board)
+
+    async def join() -> None:
+        now = datetime.now(UTC)
+        db_session.add(
+            TeamUserRelation(
+                team_id=team_id,
+                user_id=b_user.user_id,
+                role=TeamMemberRole.MEMBER,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(join)
+    resp = api_client.post(
+        "/projects",
+        json={"name": "个人题挂团队", "external_task_id": task_id, "team_id": team_id},
+        headers=_auth(a_token),
+    )
+    assert resp.status_code == 200, resp.text
+    project_id = resp.json()["data"]["id"]
+
+    assert _download(api_client, task_id, b_token, "数据.csv").status_code == 403
+    assert (
+        _raw_in_project(api_client, project_id, b_token, "数据.csv").status_code == 403
+    )
+    assert "题目" not in _top_paths(api_client, project_id, b_token)
+    found = api_client.get(
+        f"/projects/{project_id}/library", params={"q": "数据"}, headers=_auth(b_token)
+    ).json()["data"]["data"]
+    assert found == []
+    text = api_client.get(
+        f"/projects/{project_id}/library/text",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(b_token),
+    )
+    assert text.status_code == 403
+
+    # 领了题的那个人照旧读得到。
+    resp = _raw_in_project(api_client, project_id, a_token, "数据.csv")
+    assert resp.status_code == 200
+    assert resp.content == b"secret\n"
+    assert "题目" in _top_paths(api_client, project_id, a_token)
+
+
+def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,
+    db_session,
+    _portal,
+):
+    """出题人撤掉了一个领取：他的项目还在，题目的材料（现在的和以后改的）他读不到了，
+    项目里的 agent 也不再被告知题目。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="撤掉的人")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"v1\n")
+    _, token = _member_of(user_client, api_client, board)
+    participant = _claim(api_client, board, task_id, token)
+    project_id = _project_from(api_client, task_id, token)
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 200
+
+    resp = api_client.delete(
+        f"/tasks/{task_id}/participants/{participant}",
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 204, resp.text
+    _replace(api_client, task_id, board["creator_token"], "数据.csv", b"v2\n")
+
+    assert _download(api_client, task_id, token, "数据.csv").status_code == 403
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 403
+    assert "题目" not in _top_paths(api_client, project_id, token)
+
+    async def section() -> str | None:
+        project = await db_session.get(Project, uuid.UUID(project_id))
+        return await package.section_for_project(db_session, project)
+
+    assert _portal.call(section) is None

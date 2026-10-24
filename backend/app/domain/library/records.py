@@ -253,12 +253,20 @@ async def exists(session: AsyncSession, shelf: Shelf, name: str) -> bool:
 
 
 async def read_attachment(
-    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    *,
+    with_task: bool = False,
 ) -> bytes:
-    """一个附件的字节：资料库里那一份，或者只属于这个房间的那一份。"""
+    """一个附件的字节：资料库里那一份，或者只属于这个房间的那一份。`with_task`：读的人
+    看得到 `题目/`（`Shelf.with_task`）。"""
     name = service.library_name(path)
     if name is not None:
-        return await read(session, Shelf.of_project(project_id), name)
+        return await read(
+            session, Shelf.of_project(project_id, with_task=with_task), name
+        )
     return await asyncio.to_thread(service.read_room_file, project_id, room_id, path)
 
 
@@ -296,13 +304,20 @@ async def stored_version(
 
 
 async def attachment_file(
-    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    *,
+    with_task: bool = False,
 ) -> Path | Stored:
     """一个附件的字节在哪，给按段读它的人：播放器拖进度条只要那一段，两百兆的录屏
     不该为了一段整份读进内存。房间文件是磁盘上的一个文件，资料库的是存储里的一把键。"""
     name = service.library_name(path)
     if name is not None:
-        return await stored_file(session, Shelf.of_project(project_id), name)
+        return await stored_file(
+            session, Shelf.of_project(project_id, with_task=with_task), name
+        )
     return await asyncio.to_thread(service.room_file_path, project_id, room_id, path)
 
 
@@ -320,25 +335,25 @@ def _split_attachment_paths(paths: list[str]) -> tuple[dict[str, str], list[str]
 
 
 async def _on_shelves(
-    session: AsyncSession, project_id: uuid.UUID, names: dict[str, str]
+    session: AsyncSession, own: Shelf, names: dict[str, str]
 ) -> list[tuple[Shelf, dict[str, str]]]:
     """一批资料库名字（名字 -> 地址）按它们实际所在的资料库分开：`题目/` 底下的在题目
-    那一边（`mount`），名字去掉前缀。"""
-    own = Shelf.of_project(project_id)
+    那一边（`mount`），名字去掉前缀。读的人看不到 `题目/` 时，那几个名字哪儿都不在。"""
     task_names = {n: p for n, p in names.items() if n.startswith(mount.PREFIX)}
-    task_id = await mount.task_of(session, own) if task_names else None
-    if task_id is None:
+    mounted = await mount.mounted(session, own) if task_names else None
+    if mounted is None:
         return [(own, names)] if names else []
     groups: list[tuple[Shelf, dict[str, str]]] = []
     rest = {n: p for n, p in names.items() if n not in task_names}
     if rest:
         groups.append((own, rest))
-    groups.append(
-        (
-            Shelf.of_task(task_id),
-            {n[len(mount.PREFIX) :]: p for n, p in task_names.items()},
+    if own.with_task:
+        groups.append(
+            (
+                Shelf.of_task(mounted),
+                {n[len(mount.PREFIX) :]: p for n, p in task_names.items()},
+            )
         )
-    )
     return groups
 
 
@@ -355,6 +370,8 @@ async def attachments_present(
     project_id: uuid.UUID,
     room_id: uuid.UUID,
     paths: list[str],
+    *,
+    with_task: bool = False,
 ) -> set[str]:
     """这批地址里今天还读得到的那些。
 
@@ -363,7 +380,8 @@ async def attachments_present(
     """
     names, room = _split_attachment_paths(paths)
     present: set[str] = set()
-    for shelf, named in await _on_shelves(session, project_id, names):
+    own = Shelf.of_project(project_id, with_task=with_task)
+    for shelf, named in await _on_shelves(session, own, names):
         rows = await session.execute(
             select(LibraryFileRecord.name).where(
                 *_current_where(shelf),
@@ -391,12 +409,15 @@ async def read_attachments(
     project_id: uuid.UUID,
     room_id: uuid.UUID,
     paths: list[str],
+    *,
+    with_task: bool = False,
 ) -> dict[str, bytes]:
     """一批地址的字节：资料库一条查询拿所有行，各份字节一起去取，房间文件放同一个
     线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
     names, room = _split_attachment_paths(paths)
     library: list[tuple[str, str, str]] = []
-    for shelf, named in await _on_shelves(session, project_id, names):
+    own = Shelf.of_project(project_id, with_task=with_task)
+    for shelf, named in await _on_shelves(session, own, names):
         rows = await session.execute(
             _current(shelf).where(LibraryFileRecord.name.in_(list(named)))
         )
@@ -419,7 +440,12 @@ async def read_attachments(
 
 
 async def read_attachment_text(
-    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    *,
+    with_task: bool = False,
 ) -> dict:
     """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
     name = service.library_name(path)
@@ -427,7 +453,9 @@ async def read_attachment_text(
         return await asyncio.to_thread(
             service.read_room_text_file, project_id, room_id, path
         )
-    shelf, name = await mount.resolve(session, Shelf.of_project(project_id), name)
+    shelf, name = await mount.resolve(
+        session, Shelf.of_project(project_id, with_task=with_task), name
+    )
     row = await _current_row(session, shelf, name)
     if row is None:
         # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个

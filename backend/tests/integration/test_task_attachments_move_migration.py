@@ -9,7 +9,10 @@ The rules, as stated before the migration was written:
   by whoever uploaded it; one taken off the 题目 is not copied;
 - a name already taken (by the 题目说明, or by an earlier attachment of the
   same name) takes the next ``(n)``;
-- a deleted 题目 gets nothing.
+- a deleted 题目 gets nothing;
+- the ``attachment`` rows a 题目 still had are no longer there to be served by
+  the generic attachment route (which lets any signed-in person read an image),
+  kept in a record instead; one taken off a 题目 before is left as it was.
 """
 
 import hashlib
@@ -61,16 +64,18 @@ def _attach(
     filename: str,
     data: bytes,
     removed: bool = False,
+    kind: str = "file",
 ) -> None:
     key = f"files/{attachment_id}.bin"
     (uploads / "files").mkdir(parents=True, exist_ok=True)
     (uploads / key).write_bytes(data)
     meta = {"filename": filename, "storageKey": key, "uploaderId": 502}
     db.execute(
-        "INSERT INTO attachment (id, type, url, meta) VALUES ($1, 'file', $2, $3)",
+        "INSERT INTO attachment (id, type, url, meta) VALUES ($1, $4, $2, $3)",
         attachment_id,
         f"/uploads/{key}",
         json.dumps(meta),
+        kind,
     )
     db.execute(
         "INSERT INTO task_attachment (id, task_id, attachment_id, download_count,"
@@ -168,3 +173,70 @@ def test_a_tasks_attachments_become_files_of_its_library(tmp_path: Path):
         assert "第 1 版" in brief
         assert "实现快速排序" in brief
         assert "实验报告" in brief
+
+
+def test_a_tasks_attachment_rows_stop_being_served_by_the_generic_route(
+    tmp_path: Path,
+):
+    """An image material uploaded the old way was an ``attachment`` row of type
+    image, which ``GET /attachments/{id}`` hands any signed-in person. After the
+    move it is the 题目's file, under the 题目's rule, and that row is gone."""
+    uploads = tmp_path / "uploads"
+    with database_at(BEFORE) as db:
+        _user(db, 501, "teacher")
+        _user(db, 502, "assistant")
+        _task(db, 7101)
+        _task(db, 7102, deleted=True)
+        _attach(
+            db,
+            uploads,
+            attachment_id=191,
+            task_id=7101,
+            filename="答案示意.png",
+            data=b"\x89PNG",
+            kind="image",
+        )
+        _attach(
+            db,
+            uploads,
+            attachment_id=192,
+            task_id=7102,
+            filename="删掉的题.png",
+            data=b"\x89PNG",
+            kind="image",
+        )
+        _attach(
+            db,
+            uploads,
+            attachment_id=193,
+            task_id=7101,
+            filename="早就拿下来的.png",
+            data=b"\x89PNG",
+            kind="image",
+            removed=True,
+        )
+
+        db.upgrade(
+            AFTER,
+            env={
+                "STORAGE_TYPE": "local",
+                "STORAGE_LOCAL_PATH": str(uploads),
+                "WORKSPACE_ROOT": str(tmp_path / "workspace"),
+                "FILES_STORE": "local",
+            },
+        )
+
+        left = {
+            r["id"]
+            for r in db.fetch("SELECT id FROM attachment WHERE id IN (191, 192, 193)")
+        }
+        assert left == {193}
+        kept = db.fetch(
+            "SELECT attachment_id, type, task_id FROM task_material_attachments_1f0ec6a6894e"
+            " WHERE attachment_id IN (191, 192) ORDER BY attachment_id"
+        )
+        assert [(r["attachment_id"], r["type"], r["task_id"]) for r in kept] == [
+            (191, "image", 7101),
+            (192, "image", 7102),
+        ]
+        assert (uploads / "files" / "191.bin").read_bytes() == b"\x89PNG"

@@ -318,7 +318,14 @@ async def update_task(
         )
         changes |= package.files_changed(added=added)
     await package.record(db, task, by=user_id, changes=changes)
-    if changes.keys() & {package.SUBMISSION, package.RUBRIC} and task.approved == 0:
+    # What a taker is told about is what to hand in and how it is scored: the
+    # form and the rubric's lines. Showing or hiding the rubric is a new version
+    # of the package but changes neither, and the editor sends it on every save.
+    requirements_changed = (
+        package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
+        or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
+    )
+    if requirements_changed and task.approved == 0:
         await task_notices.requirements_changed(
             db, task=task, by=user_id, at=task.updated_at
         )
