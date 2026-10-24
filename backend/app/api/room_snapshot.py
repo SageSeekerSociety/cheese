@@ -13,8 +13,8 @@ between a read and a subscription. A resubscription after a dropped link gets
 a fresh one.
 
 Each piece is exactly what its own route returns (`GET /topics/{id}/members`,
-`…/tasks`, `…/pins`, `…/threads`, `…/feedback-proposals`, the room's skill
-proposals; for a task `GET /topics/{task}/task`, `…/related`,
+`…/tasks`, `…/pins`, `…/threads`, `…/feedback-proposals`, the conversation's
+skill proposals; for a task `GET /topics/{task}/task`, `…/related`,
 `…/review-comments`), built by the same function the route calls — each of those
 builders lives under `app/api`, in the module named for the rows it makes, so
 this module is no route's importer (C4 `routes-independent`) — so a client files

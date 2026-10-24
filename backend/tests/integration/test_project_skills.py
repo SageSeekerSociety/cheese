@@ -15,6 +15,7 @@ from tests.integration.conftest import (
     open_task,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_project_roles import _invite
@@ -524,11 +525,22 @@ def test_a_proposal_raised_in_a_task_lands_in_the_task(client):
     )
 
     [line] = _proposal_lines(client, task, skill["id"])
-    assert line["conversation_id"] == task
     assert line["meta"]["who"] == "human"
     assert _proposal_lines(client, room, skill["id"]) == [], (
         "the task's proposal also went to the channel"
     )
+
+    # The card itself, not only the line: it is drawn from the room snapshot a
+    # subscription opens with, so that is the reading that has to carry it.
+    # Without this, a snapshot still slicing by the room passes everything above.
+    with room_socket(client, task, OWNER) as ws:
+        in_task = ws.subscribed["room"]["skill_proposals"]
+    with room_socket(client, room, OWNER) as ws:
+        in_channel = ws.subscribed["room"]["skill_proposals"]
+    assert [s["id"] for s in in_task] == [skill["id"]], (
+        "the task's snapshot does not carry its own proposal"
+    )
+    assert in_channel == [], "the channel's snapshot carries the task's proposal"
 
 
 def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
