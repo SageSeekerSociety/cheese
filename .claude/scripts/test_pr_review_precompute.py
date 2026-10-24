@@ -102,20 +102,36 @@ class Precompute(unittest.TestCase):
         out = "\n".join(broken.section_symbols(self.repo, base, head, tree=self.repo))
         self.assertNotIn("⚠ `NotificationUpdate`", out)
 
-    def test_a_failed_scan_is_not_a_section_of_zeros(self):
+    def test_a_failed_git_grep_is_not_a_section_of_zeros(self):
         # A scan that fails must not come back as all-zero counts: zero is the
         # answer the orphan scan reads as "no other user", so a failure would
-        # report every orphan as not-an-orphan. rg exits 2 on an unreadable tree.
+        # report every orphan as not-an-orphan. No `tree` here on purpose — it
+        # takes the git grep branch, which is the one CI runs, where ripgrep is
+        # not installed. An unknown revision makes git grep exit 128.
         # One load: each call makes a fresh module, so the exception class in a
         # second load is a different object and assertRaises would not match it.
+        mod = load()
+        with self.assertRaises(mod.ScanFailed):
+            mod.count_refs(self.repo, "no-such-rev", ["helper"])
+        # The deliberate violation: turn the exit-status check back off and the
+        # same call returns zeros instead of raising. The anchor names the git
+        # grep branch, so it stays unique whichever branch runs here.
+        broken = mutant('if p.returncode not in (0, 1):\n            raise ScanFailed(f"git grep',
+                        'if False:\n            raise ScanFailed(f"git grep')
+        self.assertEqual(broken.count_refs(self.repo, "no-such-rev", ["helper"]), {"helper": 0})
+
+    @unittest.skipUnless(shutil.which("rg"), "ripgrep is not installed here")
+    def test_a_failed_ripgrep_is_not_a_section_of_zeros(self):
+        # The same rule on the ripgrep branch: exit 2 (an unreadable tree) must
+        # raise, not read as "no matches". Skipped where rg is absent, because
+        # then this branch is not the one taken.
         mod = load()
         with tempfile.TemporaryDirectory() as d:
             missing = Path(d) / "not-a-tree"
             with self.assertRaises(mod.ScanFailed):
                 mod.count_refs(self.repo, "HEAD", ["helper"], tree=missing)
-        # The deliberate violation: turn the exit-status check back off and the
-        # same call returns zeros instead of raising.
-        broken = mutant("if p.returncode not in (0, 1):", "if False:")
+        broken = mutant('raise ScanFailed(f"rg exited {p.returncode}',
+                        'return _match_counts(p.stdout, names)  # raise ScanFailed(f"rg exited {p.returncode}')
         with tempfile.TemporaryDirectory() as d:
             missing = Path(d) / "not-a-tree"
             self.assertEqual(broken.count_refs(self.repo, "HEAD", ["helper"], tree=missing),
