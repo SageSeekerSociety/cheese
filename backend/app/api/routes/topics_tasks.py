@@ -258,6 +258,11 @@ async def conclude_task(
             raise ForbiddenError(say("taskOwnSessionCloses"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
+    # Who reported it and who works it is the owner's to change (`update_task`);
+    # a contributor closing the task does not get to rewrite that.
+    if credits and actor.via != "cheese" and actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -272,7 +277,7 @@ async def conclude_task(
         if text
         else None
     )
-    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
+    if credits:
         await tasks.set_credits(
             task,
             reporter_handle=(

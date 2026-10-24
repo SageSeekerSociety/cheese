@@ -179,3 +179,27 @@ def test_the_rooms_session_does_not(client, closed, act, stays, key):
     assert refused.status_code == 403, refused.text
     assert refused.json()["error"]["i18n"]["key"] == key
     assert _status(client, task) == stays
+
+
+def test_a_contributor_closing_it_does_not_change_who_is_credited(client):
+    """Who reported and who works the task is the owner's to change
+    (`update_task`), and closing is no way around that."""
+    task, _room = _task(client, closed=False, contributors=("bob",))
+
+    refused = client.post(
+        f"/topics/{task['id']}/close",
+        json={
+            "conclusion": "先到这里",
+            "reporter_handle": "bob",
+            "contributor_handles": [],
+        },
+        headers=session_auth_headers("bob"),
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskOwnerOnly"
+    after = client.get(
+        f"/topics/{task['id']}/task", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert after["status"] == "open"
+    assert after["contributor_handles"] == ["bob"]
