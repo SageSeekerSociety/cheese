@@ -473,6 +473,33 @@ def _stream(questions: Consumptions, work: str, after: str = "0") -> StreamingRe
     )
 
 
+class LookingOut(BaseModel):
+    """How long the word holds before the panel says it again."""
+
+    seconds: int
+
+
+@router.post(
+    "/conversations/{conversationId}/looking",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LookingOut),
+)
+async def look(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    db: DbSession,
+    auth: AuthUser,
+) -> dict:
+    """The panel is showing this conversation to its person now: an answer
+    that ends while it does is not also told as a notification. Said again
+    every few seconds while it is (``LOOKING_S``)."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    await db.commit()
+    redis = get_redis_client()
+    if redis is not None:
+        await assistant.looking(redis, row.id)
+    return ok({"seconds": assistant.LOOKING_S})
+
+
 @router.post("/conversations/{conversationId}/stop", dependencies=[ROUTE_DECIDES])
 async def stop(
     conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],

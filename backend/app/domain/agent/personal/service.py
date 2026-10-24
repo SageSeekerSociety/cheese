@@ -66,6 +66,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import gate, proposals
 from app.domain.assistant import memory as assistant_memory
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.notification.live import wake_after_commit
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
@@ -326,6 +327,23 @@ class AssistantConversations:
         rows = list((await self._s.execute(stmt)).scalars())
         return rows[:limit][::-1], len(rows) > limit
 
+    async def newest(self, user_id: int) -> tuple[uuid.UUID, uuid.UUID] | None:
+        """The newest message in any of this person's conversations, and its
+        conversation: a panel that last saw another one has something to read."""
+        found = (
+            await self._s.execute(
+                select(AssistantMessage.id, AssistantMessage.conversation_id)
+                .join(
+                    AssistantConversation,
+                    AssistantConversation.id == AssistantMessage.conversation_id,
+                )
+                .where(AssistantConversation.user_id == user_id)
+                .order_by(AssistantMessage.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+        return None if found is None else (found[0], found[1])
+
     async def append(
         self,
         conversation: AssistantConversation,
@@ -351,6 +369,8 @@ class AssistantConversations:
             parts=parts,
         )
         self._s.add(row)
+        # A panel open elsewhere (another tab, another device) reads it again.
+        wake_after_commit(self._s, inbox={conversation.user_id}, pushable=set())
         conversation.last_active_at = datetime.now(UTC)
         if role == "user" and not conversation.title:
             words = text.strip() or "、".join((parts or {}).get("files") or [])
@@ -436,6 +456,27 @@ KIND = "personal"
 #: ended (``routine.personal.ended``): given the run, the answer, and whether
 #: it failed or was stopped.
 RunEnded = Callable[[uuid.UUID, Answer, bool, bool], Awaitable[None]]
+#: What is done when a person's own question that took a while was answered
+#: while they were not looking (``routine.personal.answered``): given the
+#: person, the conversation, the answer's words, how many things it left for
+#: them to confirm, and the question's id.
+Answered = Callable[[int, uuid.UUID, str, int, str], Awaitable[None]]
+
+#: An answer that took at least this long is told to a person not looking at
+#: it when it ends; a quick one they are waiting for.
+TELL_AFTER_S = 120
+#: How long a panel's word that it is showing a conversation holds: it says so
+#: again sooner than this while it does (``looking``).
+LOOKING_S = 30
+
+
+def _looking_key(conversation_id: str) -> str:
+    return f"assistant:looking:{conversation_id}"
+
+
+async def looking(redis: Redis, conversation_id: uuid.UUID) -> None:
+    """A panel is showing this conversation to its person right now."""
+    await redis.set(_looking_key(str(conversation_id)), "1", ex=LOOKING_S)
 
 
 class Answers:
@@ -449,11 +490,13 @@ class Answers:
         consumptions: Consumptions,
         redis: Callable[[], Redis | None],
         run_ended: RunEnded | None = None,
+        answered: Answered | None = None,
     ) -> None:
         self._sessions = sessions
         self._consumptions = consumptions
         self._redis = redis
         self._run_ended = run_ended
+        self._answered = answered
         # What each answer read here has written, and which were stopped for
         # writing the same thing over and over (``loops``).
         self._written: dict[str, tuple[str, int]] = {}
@@ -504,6 +547,17 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "tool_failed", {"call": item.call, "text": item.text}
             )
+
+    async def _unseen(self, consumption: Consumption) -> bool:
+        """Whether an answer ended that the person should be told of: it took
+        a while, and no panel is showing its conversation now."""
+        asked_at = consumption.data.get("asked_at")
+        if self._answered is None or not isinstance(asked_at, (int, float)):
+            return False
+        if time.time() - asked_at < TELL_AFTER_S:
+            return False
+        redis = self._redis()
+        return redis is None or not await redis.exists(_looking_key(consumption.key))
 
     async def _look_for_loops(self, consumption: Consumption, more: str) -> None:
         work = consumption.work_id
@@ -586,6 +640,19 @@ class Answers:
                 )
             except Exception:  # the answer is kept either way
                 logger.exception("ending routine run %s failed", run)
+        elif not failed and not stopped and await self._unseen(consumption):
+            try:
+                assert self._answered is not None
+                asks = sum(
+                    1
+                    for p in (parts or {}).get("proposals") or []
+                    if p.get("state", "pending") == "pending"
+                )
+                await self._answered(
+                    user_id, conversation_id, text, asks, consumption.work_id
+                )
+            except Exception:  # the answer is kept either way
+                logger.exception("telling of answer %s failed", consumption.work_id)
         closing = [("error", error_frame(refusal))] if failed else []
         return [*closing, ("done", {"stopped": stopped})]
 
@@ -710,6 +777,7 @@ async def ask(
         data={
             "user": user_id,
             "billing": kind,
+            "asked_at": time.time(),
             **({"run": str(run)} if run else {}),
         },
         work_id=work,

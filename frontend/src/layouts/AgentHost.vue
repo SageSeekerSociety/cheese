@@ -65,6 +65,7 @@ import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { onAssistantChange } from '@/lib/inboxLive'
 import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
@@ -112,6 +113,32 @@ watch(
   },
   { immediate: true }
 )
+
+// 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
+onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+
+// 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
+// 服务端只记几十秒，看着的时候隔一会儿说一次。
+const LOOKING_EVERY_MS = 15_000
+let lookingTimer: ReturnType<typeof setInterval> | null = null
+function sayLooking() {
+  if (agentOpen.value && agentThread.busy.value && document.visibilityState === 'visible')
+    void agentThread.looking().catch(() => undefined)
+}
+watch(
+  () => [agentOpen.value, agentThread.busy.value, agentThread.current.value] as const,
+  ([open, busy]) => {
+    if (lookingTimer) clearInterval(lookingTimer)
+    lookingTimer = null
+    if (!open || !busy) return
+    sayLooking()
+    lookingTimer = setInterval(sayLooking, LOOKING_EVERY_MS)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (lookingTimer) clearInterval(lookingTimer)
+})
 
 // `?assistant=<对话>`：通知、推送和设置页「查看对话」把人带到这里，打开面板里的那段对话，
 // 再把这个参数从地址栏拿掉，刷新不会再开一次。

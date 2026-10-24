@@ -665,6 +665,33 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return done
   }
 
+  /** 这段对话在别处说了新的话（别的标签页、别的设备、例行事务）：话题列表重读；正开着它、
+   *  这里又没在答，就把它最近的那一页重读一遍，往上翻读回来的更早的照旧留着。 */
+  async function heard(conversation: string) {
+    await listConversations().catch(() => undefined)
+    if (conversation !== current.value || busy.value) return
+    const data = await read(conversation)
+    if (conversation !== current.value || busy.value) return
+    const page = shownMessages(data)
+    const first = page.find((m) => typeof m.seq === 'number')?.seq
+    const before = first === undefined ? [] : messages.value.filter((m) => typeof m.seq === 'number' && m.seq < first)
+    messages.value = [...before, ...page]
+    if (!before.length) currentEarlier.value = data.earlier === true
+    if (data.answering)
+      void follow(
+        conversation,
+        (onEvent) => getEventStream(`/assistant/conversations/${conversation}/answers/${data.answering}`, onEvent),
+        t('tasks.assistant.failed'),
+        data.answering
+      )
+  }
+
+  /** 面板正给人看着这段对话：这时答完的不再另发通知。看着的时候每隔一会儿说一次。 */
+  async function looking() {
+    const id = current.value
+    if (id) await request(`/assistant/conversations/${id}/looking`, { method: 'POST' })
+  }
+
   /** 停下正在答的这一个：等候中的直接不答了，写了一半的留下这一半。 */
   async function stop() {
     const id = current.value
@@ -696,6 +723,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
     show,
     older,
     earlierMessages,
+    heard,
+    looking,
     ask,
     stop,
     undo,

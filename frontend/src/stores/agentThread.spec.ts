@@ -446,6 +446,29 @@ describe('芝士这一轮做了什么', () => {
     expect(a.hasOlder.value).toBe(false)
   })
 
+  it('a topic that said more elsewhere is read again, keeping what was read back above it', async () => {
+    const line = (seq: number, text = `第 ${seq} 句`) => ({ seq, role: 'user', text, at: '2026-10-19T08:00:00Z' })
+    const TOPIC = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 3 }
+    let latest = [line(3), line(4)]
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.endsWith('/assistant/conversations')) return envelope({ conversations: [TOPIC], next: null })
+      if (url.endsWith('/assistant/conversations/c3'))
+        return envelope({ ...TOPIC, answering: null, messages: latest, earlier: true })
+      if (url.endsWith('/assistant/conversations/c3/messages?before=3'))
+        return envelope({ messages: [line(1), line(2)], earlier: false })
+      return new Response('not found', { status: 404 })
+    })
+    const a = createAssistant()
+    await a.load()
+    await a.older()
+
+    latest = [line(4), line(5, '例行事务的结果')]
+    await a.heard('c3')
+
+    expect(a.messages.value.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(a.messages.value.at(-1)?.text).toBe('例行事务的结果')
+  })
+
   it('reading back fills the topic at the top first, then reads older topics a page at a time', async () => {
     const line = (seq: number) => ({ seq, role: 'user', text: `第 ${seq} 句`, at: '2026-10-19T08:00:00Z' })
     const LATEST = { id: 'c3', title: '最近的', lastActiveAt: '2026-10-21T08:00:00Z', questions: 3 }

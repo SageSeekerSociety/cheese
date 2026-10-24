@@ -937,6 +937,54 @@ def test_a_question_stopped_while_waiting_is_not_answered(client, gateway):
     ]
 
 
+def _told(client, user_id: int) -> list[dict]:
+    """The notices about 芝士 the person was sent."""
+    from app.domain.notification.models import Notification, NotificationType
+
+    async def read():
+        async with client.test_factory() as s:
+            rows = await s.scalars(
+                select(Notification)
+                .where(
+                    Notification.receiver_id == user_id,
+                    Notification.type == NotificationType.ASSISTANT_NOTICE.value,
+                )
+                .order_by(Notification.id)
+            )
+            return [dict(r.metadata_payload or {}) for r in rows]
+
+    return asyncio.run(read())
+
+
+def test_an_answer_that_took_a_while_is_told_unless_its_panel_is_showing(
+    client, gateway, monkeypatch
+):
+    """A question that took a while is told as a notification when it is
+    answered, naming its topic; not when a panel is showing it."""
+    from app.domain.agent.personal import service as personal
+
+    monkeypatch.setattr(personal, "TELL_AFTER_S", 0)
+    me = _auth(client, "teller")
+    user_id, _, _ = _ledger_user(client, "teller")
+    task = _task(client)
+
+    unseen = _start(client, task, me)
+    gateway.script = [("text", "要先会 PyTorch。")]
+    assert _ask(client, unseen, "先会什么？", me).status_code == 200
+    [told] = _told(client, user_id)
+    assert told["event"] == "answered"
+    assert told["assistantConversation"] == unseen
+    assert "先会什么？" in told["content"] and "已完成" in told["content"]
+    assert told["quote"] == "要先会 PyTorch。"
+
+    seen = _start(client, task, me)
+    showing = client.post(f"/assistant/conversations/{seen}/looking", headers=me)
+    assert showing.status_code == 200, showing.text
+    gateway.script = [("text", "从 0.1 起步。")]
+    assert _ask(client, seen, "学习率设多少？", me).status_code == 200
+    assert len(_told(client, user_id)) == 1
+
+
 def test_a_stopped_answer_keeps_what_was_written(client, gateway):
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)
