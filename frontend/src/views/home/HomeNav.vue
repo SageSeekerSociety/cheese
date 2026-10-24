@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 首页那一格的目录：待办、我所在的团队、我加入的空间。
+// 首页那一格的目录：待办、我所在的团队、我加入的空间，和挨着空间的市场。
 //
 // 桌面上它是首页侧栏的正文（HomeSidebar），手机上是底栏「首页」那一格的整页
 // （HomeHub）——同一份目录，两端不各写一份。
@@ -226,13 +226,6 @@ const transferModel = computed({
       </template>
     </v-list-item>
 
-    <v-list-item
-      rounded="lg"
-      prepend-icon="mdi-storefront-outline"
-      :to="{ name: 'market' }"
-      :title="t('navigation.market')"
-    />
-
     <!-- 自己名下的项目在「团队」之上单独一行：底下是只有自己的那个团队，界面上不当团队说。 -->
     <template v-for="group in groups" :key="group.key">
       <v-list-subheader v-if="group.heading">{{ t('navigation.teams') }}</v-list-subheader>
@@ -343,6 +336,16 @@ const transferModel = computed({
       prepend-icon="mdi-plus"
       :title="t('spaces.create.open')"
       @click="emit('update:createOpen', true)"
+    />
+
+    <!-- 市场：技能、插件、MCP、Agent 模板，全站一份、不属于哪个团队或空间。入口只在这份目录
+         里（桌面侧栏和手机「首页」整页都是它），挨着空间那一段，不占 rail 的格子。 -->
+    <v-divider class="my-2" />
+    <v-list-item
+      rounded="lg"
+      prepend-icon="mdi-storefront-outline"
+      :to="{ name: 'market' }"
+      :title="t('navigation.market')"
     />
   </v-list>
 

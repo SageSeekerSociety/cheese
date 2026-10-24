@@ -11,7 +11,7 @@ import type { DocThread, DocThreadActions, DocThreadState, DocThreadWrite } from
 import { onBeforeUnmount, reactive, watch } from 'vue'
 
 import { ApiError } from '../api'
-import { listFileThreads, writeFileThread } from '../api/fileThreads'
+import { listFileThreads, stopFileThreadAgent, writeFileThread } from '../api/fileThreads'
 import { storageGetJson, storageRemove, storageSetJson } from '../lib/browserStorage'
 import { myId } from '../me'
 
@@ -54,9 +54,26 @@ export function useFileThreads(
       const { data } = await listFileThreads(tid, file)
       if (!active(generation) || sequence !== reads) return
       state.threads = data
+      // 有谁在答，就接着看：文件上的评论没有协同连接可听，进度只写在列表里
+      // （`answering`）。答完、停下、或者谁也答不上来的时候它变空，循环就停。
+      if (data.some((thread) => thread.answering)) armWatch()
+      else disarmWatch()
     } catch {
       // 屏上这一份留着；下次刷新再读。
     }
+  }
+
+  /** 还有人在答时每隔这么久重读一次列表。 */
+  const WATCH_MS = 2000
+  let watchTimer: ReturnType<typeof setInterval> | null = null
+  function armWatch() {
+    if (watchTimer !== null) return
+    watchTimer = setInterval(() => void refresh(), WATCH_MS)
+  }
+  function disarmWatch() {
+    if (watchTimer === null) return
+    clearInterval(watchTimer)
+    watchTimer = null
   }
 
   function persist(value: Operation | null) {
@@ -131,12 +148,17 @@ export function useFileThreads(
       await refresh()
       return undefined
     },
-    // 文件上的线程还没有交给 AI 队友来答（设计稿第三步），所以没有「停下它」。
-    stopAgent: async () => {},
+    stopAgent: async (id) => {
+      const tid = topic()
+      const file = path()
+      if (tid && file) await stopFileThreadAgent(tid, file, id)
+      await refresh()
+    },
   }
 
   function reset() {
     epoch++
+    disarmWatch()
     where = [topic(), path()]
     actor = myId()
     state.threads = []
@@ -161,6 +183,7 @@ export function useFileThreads(
     disposed = true
     epoch++
     clearInterval(timer)
+    disarmWatch()
   })
   return { state, actions, refresh }
 }

@@ -53,7 +53,7 @@ class Nav:
     a page out of `nav.project` moves it there and never hides it.
     """
 
-    #: App rail (desktop): "home" | "projects" | "market" | "add".
+    #: App rail (desktop): "home" | "projects" | "add".
     rail: tuple[str, ...]
     #: App bottom bar (mobile): "home" | "workspace" | "inbox".
     tabs: tuple[str, ...]
@@ -89,7 +89,7 @@ _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-overview",
     nav=Nav(
-        rail=("home", "projects", "market", "add"),
+        rail=("home", "projects", "add"),
         tabs=("home", "workspace", "inbox"),
         project=(
             "project-library",
@@ -105,7 +105,7 @@ _WORKBENCH = Shell(
     name="workbench",
     home="workspace-overview",
     nav=Nav(
-        rail=("home", "projects", "market", "add"),
+        rail=("home", "projects", "add"),
         tabs=("workspace", "home", "inbox"),
         project=(
             "project-library",
@@ -127,7 +127,7 @@ _COURSE_STUDENT = Shell(
     name="course-student",
     home="workspace-overview",
     nav=Nav(
-        rail=("home", "projects", "market", "add"),
+        rail=("home", "projects", "add"),
         tabs=("workspace", "inbox", "home"),
         project=(
             "project-library",
@@ -145,7 +145,7 @@ _COURSE_TEACHER = Shell(
     name="course-teacher",
     home="workspace-overview",
     nav=Nav(
-        rail=("home", "projects", "market", "add"),
+        rail=("home", "projects", "add"),
         tabs=("workspace", "inbox", "home"),
         project=(
             "project-tasks",

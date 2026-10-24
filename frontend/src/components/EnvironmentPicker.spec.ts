@@ -65,6 +65,24 @@ describe('环境选择', () => {
     expect(emitted().select).toEqual([[{ kind: 'sandbox', spec: 'team_devices' }]])
   })
 
+  // 选规格的地方就是读到它是什么、怎么收费的地方：市场里不再有「模型与环境」那一页。
+  it('每种规格旁边写着它是什么、怎么收费', async () => {
+    render(Picker, {
+      props: {
+        current: { kind: 'sandbox', spec: 'standard' },
+        devices: DEVICES,
+        specs: [
+          { spec: 'standard', label: '标准沙箱', description: '每位 AI 队友一个沙箱；按时长计费。' },
+          { spec: 'vm', label: '虚拟机沙箱', description: '一整台虚拟机给一位 AI 队友；按规格和时长计费。' },
+        ],
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    const row = (spec: string) => document.querySelector(`[data-testid="env-spec-${spec}"]`)?.textContent ?? ''
+    expect(row('standard')).toContain('按时长计费')
+    expect(row('vm')).toContain('按规格和时长计费')
+  })
+
   it('取消：只说取消，不发选择', async () => {
     const { emitted } = mount()
     await fireEvent.update(radio('env-spec-vm'))

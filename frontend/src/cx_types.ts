@@ -677,8 +677,6 @@ export interface Notification {
   created_at: string
 }
 
-// ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
-
 export interface EnvironmentConfig {
   setup_script: string
   startup_script: string
