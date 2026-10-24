@@ -206,6 +206,38 @@ describe('正文被就地改写', () => {
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(1300)
   })
+
+  // 翻页键不一样：光标挪不了页，浏览器把它交给最近的可滚祖先。所以焦点在时间线里的
+  // 就地编辑器（改自己刚发的一条消息）里时，PageUp 挪的就是这一栏，得算——不算的话
+  // 人往回翻页会被当成「没人动、位置却往上挪」而拽回底部。
+  it('在面板里的就地编辑器里按 PageUp：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    box.el.append(editor)
+    // 这个夹具里的滚动框平时挂在文档外，事件冒不到 window——先挂上去。
+    document.body.append(box.el)
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }))
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-pageup')
+    box.el.remove()
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
+
+  // 焦点在发消息的输入框里（它在面板外）时，PageUp 挪的是输入框自己，不是这一栏。
+  it('在发消息的输入框里按 PageUp：不算人在滚，仍回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    document.body.append(editor)
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }))
+    editor.remove()
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-pageup-composer')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
 })
 
 // 滚动框底下那一块（输入框、「谁在忙」那一行）在同一个任务里没了又回来：这一下滚动框
