@@ -2,7 +2,7 @@
 //
 // 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
 // 读字节、版本列表、按版本下载、恢复旧版。
-import { authToken, BASE, libraryBase, libraryFileRawUrl, type LibraryShelf, request } from '../api'
+import { authToken, libraryBase, libraryFileRawUrl, type LibraryShelf, request, sendInParts } from '../api'
 import { t } from '../i18n'
 
 import { libraryParams, type LibraryQuery } from './libraryQuery'
@@ -82,41 +82,23 @@ export async function listLibraryFolders(shelf: LibraryShelf): Promise<string[]>
   return (await request<{ folders: string[] }>(`${libraryBase(shelf)}/folders`)).folders
 }
 
-/** 把一份文件的字节传上去，交回登记要用的凭据。
- *
- *  字节不经过后端：先领一个地址，再把文件原样 PUT 过去——对象存储的预签名地址，或者
- *  文件存在服务器本地盘时后端自己的一个地址（以 `/` 开头）。地址只收领的时候说的那么
- *  多字节。 */
-async function sendLibraryBytes(shelf: LibraryShelf, file: File): Promise<string> {
-  const slot = await request<{ url: string; upload: string }>(`${libraryBase(shelf)}/uploads`, {
-    method: 'POST',
-    body: JSON.stringify({ name: file.name, size: file.size }),
-  })
-  const put = await fetch(slot.url.startsWith('/') ? `${BASE}${slot.url}` : slot.url, {
-    method: 'PUT',
-    body: file,
-  })
-  if (!put.ok) throw new Error(t('files.library.uploadFailed', { status: put.status }))
-  return slot.upload
-}
-
 async function libraryUpload(
   shelf: LibraryShelf,
   file: File,
   replacing?: string,
   folder?: string
 ): Promise<{ path: string; bytes: number }> {
-  const upload = await sendLibraryBytes(shelf, file)
   const base = libraryBase(shelf)
+  const uploaded = await sendInParts(base, file)
   if (replacing) {
     return request(`${base}?path=${encodeURIComponent(replacing)}`, {
       method: 'PUT',
-      body: JSON.stringify({ upload }),
+      body: JSON.stringify(uploaded),
     })
   }
   return request(base, {
     method: 'POST',
-    body: JSON.stringify({ upload, filename: file.name, ...(folder ? { folder } : {}) }),
+    body: JSON.stringify({ ...uploaded, filename: file.name, ...(folder ? { folder } : {}) }),
   })
 }
 

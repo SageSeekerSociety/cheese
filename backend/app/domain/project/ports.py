@@ -186,7 +186,7 @@ class LibraryFiles(Protocol):
 
     ``stored`` 交回的是一串 ``(名字, 存储, 键)``，不是 ``LibraryFileRecord``：搬字节
     发生在事务结束之后、别人的域里（导出），本包只拿这三样，键读回字节再叫
-    ``read_blob``。
+    ``save_blob``。
     """
 
     async def add(
@@ -209,8 +209,9 @@ class LibraryFiles(Protocol):
         """这个项目库里每一份的名字、存储和键。"""
         ...
 
-    async def read_blob(self, location: str, key: str) -> bytes:
-        """那双 ``(存储, 键)`` 底下的字节。"""
+    async def save_blob(self, location: str, key: str, target: Path) -> None:
+        """那双 ``(存储, 键)`` 底下的字节写进 ``target``，一段一段地写，不整份进
+        内存。"""
         ...
 
 

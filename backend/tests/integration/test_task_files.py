@@ -18,7 +18,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -33,6 +32,7 @@ from tests.integration.conftest import (
     create_approved_space,
     unique_int,
 )
+from tests.support import library_uploads
 
 MATERIAL = b"%PDF-1.4 fake subject material"
 
@@ -164,43 +164,41 @@ def _upload_loose(api_client: TestClient, token: str, name: str, data: bytes) ->
 
 
 def _put(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    """领一个上传地址、把字节放上去，交回凭据：材料那一页的上传。"""
+    """领一次上传、把字节一段一段放上去，交回登记要带的凭据和哈希：材料那一页的上传。"""
+    base = f"/tasks/{task_id}/files"
     slot = api_client.post(
-        f"/tasks/{task_id}/files/uploads",
+        f"{base}/uploads",
         json={"name": name, "size": len(data)},
         headers=_auth(token),
     )
     if slot.status_code != 200:
         return slot, None
-    url = slot.json()["data"]["url"]
-    put = (
-        api_client.put(url, content=data)
-        if url.startswith("/")
-        else httpx.put(url, content=data)
+    refused, uploaded = library_uploads.send_parts(
+        api_client, base, slot.json()["data"], data, _auth(token)
     )
-    assert put.status_code == 200, put.text
-    return None, slot.json()["data"]["upload"]
+    assert refused is None, refused.text
+    return None, uploaded
 
 
 def _add(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    refused, upload = _put(api_client, task_id, token, name, data)
+    refused, uploaded = _put(api_client, task_id, token, name, data)
     if refused is not None:
         return refused
     return api_client.post(
         f"/tasks/{task_id}/files",
-        json={"upload": upload, "filename": name},
+        json={**uploaded, "filename": name},
         headers=_auth(token),
     )
 
 
 def _replace(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    refused, upload = _put(api_client, task_id, token, name, data)
+    refused, uploaded = _put(api_client, task_id, token, name, data)
     if refused is not None:
         return refused
     return api_client.put(
         f"/tasks/{task_id}/files",
         params={"name": name},
-        json={"upload": upload},
+        json=uploaded,
         headers=_auth(token),
     )
 
@@ -507,15 +505,9 @@ def test_nothing_in_the_project_writes_under_the_task_folder(
     base = f"/projects/{project_id}/library"
 
     def put(name: str, folder: str | None = None):
-        slot = api_client.post(
-            f"{base}/uploads", json={"name": name, "size": 3}, headers=headers
+        return library_uploads.put_into(
+            api_client, base, name, b"abc", folder=folder, headers=headers
         )
-        assert slot.status_code == 200, slot.text
-        api_client.put(slot.json()["data"]["url"], content=b"abc")
-        body = {"upload": slot.json()["data"]["upload"], "filename": name}
-        if folder is not None:
-            body["folder"] = folder
-        return api_client.post(base, json=body, headers=headers)
 
     assert put("我的.csv", folder="题目").status_code == 422
     assert (
@@ -688,11 +680,25 @@ def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
         headers=_auth(b_token),
     )
     assert text.status_code == 403
+    # `cheese library get` 先要的下载地址也一样不给。
+    link = api_client.get(
+        f"/projects/{project_id}/library/link",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(b_token),
+    )
+    assert link.status_code == 403
 
-    # 领了题的那个人照旧读得到。
+    # 领了题的那个人照旧读得到，下载地址取到的也是那份字节。
     resp = _raw_in_project(api_client, project_id, a_token, "数据.csv")
     assert resp.status_code == 200
     assert resp.content == b"secret\n"
+    link = api_client.get(
+        f"/projects/{project_id}/library/link",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(a_token),
+    )
+    assert link.status_code == 200, link.text
+    assert api_client.get(link.json()["data"]["url"]).content == b"secret\n"
     assert "题目" in _top_paths(api_client, project_id, a_token)
 
 

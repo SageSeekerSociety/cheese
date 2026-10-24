@@ -209,7 +209,7 @@ covers:
 
 清单绝不比题目本身更保密——看不见材料就无法判断要不要领；下载比「看得见」窄一格、比「管得了」宽一格——领取者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/files`）先过题目详情那三道闸（`ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload`，前端据此显示「下载」还是「领取这道题之后才能下载」。
 
-改题页直接上传：领上传地址（`POST /tasks/{id}/files/uploads`），浏览器把字节放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
+改题页直接上传，和资料库是同一条分段上传的路（`library.md` 的「资料库的记录表」一节）：领一次上传的凭据（`POST /tasks/{id}/files/uploads`），按段领地址（`…/uploads/part`），浏览器把每一段连同它的 MD5 放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
 
 ### 版本 {#task-package-revisions}
 

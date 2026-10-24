@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.byte_response import blob_response
@@ -40,11 +40,6 @@ from app.domain.team.services import team_service
 from app.domain.user.services import user_by_handle
 
 router = APIRouter(prefix="/projects", tags=["library"])
-
-
-#: 资料库页上一次放进来的文件多大为止，视频也一样；和对话里上传附件是同一条线，数在
-#: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。
-MAX_LIBRARY_UPLOAD_BYTES = library.MAX_FILE_BYTES
 
 
 class LibraryRoom(BaseModel):
@@ -89,6 +84,14 @@ class LibraryFoldersOut(BaseModel):
     folders: list[str]
 
 
+class LibraryLinkOut(BaseModel):
+    """一份资料的下载地址，几分钟内开始取都有效；以 ``/`` 开头的是本后端的地址。"""
+
+    url: str
+    path: str
+    bytes: int
+
+
 class LibraryMoved(BaseModel):
     """每个旧名字变成了什么（`library_records.move`）；名字没变时是空的。"""
 
@@ -105,8 +108,8 @@ async def library_file_raw(
     preview_pdf: bool = False,
     version: uuid.UUID | None = None,
 ) -> Response:
-    """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
-    消息带上的资料时，只能自己来取。
+    """一份资料的字节，给下载。机器取一份资料走 ``/library/link``：它从存储直接取，
+    不经过这里。
 
     `preview_pdf`：Office 文档转成 PDF，给资料库页预览。
 
@@ -148,7 +151,7 @@ async def _raw(
         "Cache-Control": "private, no-cache",
     }
     if preview_pdf:
-        data = await library_records.read_blob(stored.location, stored.key)
+        data = await library_records.read_stored(stored)
         pdf = await office.preview_pdf(data, name)
         return Response(content=pdf, media_type="application/pdf", headers=headers)
     return blob_response(
@@ -174,6 +177,22 @@ def _library_path(raw: str) -> str:
     if not name or name.startswith("/") or ".." in name.split("/"):
         raise ValidationError(say("libraryPathRelative"))
     return name
+
+
+@router.get("/{project_id}/library/link", **typed_response(LibraryLinkOut))
+async def library_file_link(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """一份资料的下载地址，几分钟内开始取都有效：给 `cheese library get`，字节从
+    存储直接到机器上，不经过这里，也不整份读进谁的内存。文件存在本服务器盘上时，
+    地址是本后端自己的一条（``/files/outgoing/…``），照样按段给。`题目/` 底下的
+    那几份按读的人取（`shelf_for`），和下载那一条一样。"""
+    actor = await _reader(project_id, db, resolver)
+    shelf = await shelf_for(db, project_id, actor)
+    name = _library_path(path.strip().removeprefix("library/"))
+    stored = await library_records.stored_file(db, shelf, name)
+    url = await library_records.download_url(db, shelf, name)
+    return ok({"url": url, "path": name, "bytes": stored.size})
 
 
 @router.get("/{project_id}/library/versions")
@@ -305,30 +324,59 @@ async def _library_keeper(
 
 
 class LibraryUploadSlotIn(BaseModel):
-    """要放进来的那一份叫什么、多大：大小定下了地址收多少字节。"""
+    """要放进来的那一份叫什么、多大：大小定下了一共收多少字节、切成几段。"""
 
     name: str
     size: int
 
 
 class LibraryUploadSlot(BaseModel):
-    """一份上传的去处：把字节原样 PUT 到 ``url``（以 ``/`` 开头的是本后端的地址），
-    再拿 ``upload`` 来登记。"""
+    """一次上传的凭据（``upload``）和它怎么切：每段 ``part_bytes`` 个字节，一共
+    ``parts`` 段，最后一段可以短。每一段的地址另领（``…/uploads/part``）。"""
+
+    upload: str
+    part_bytes: int
+    parts: int
+
+
+class LibraryUploadPartIn(BaseModel):
+    """第 ``part`` 段（从 1 数）的字节的 MD5，十六进制。"""
+
+    upload: str
+    part: int = Field(ge=1)
+    md5: str
+
+
+class LibraryUploadPart(BaseModel):
+    """把这一段的字节原样 PUT 到 ``url``（以 ``/`` 开头的是本后端的地址），带上
+    ``headers``。"""
 
     url: str
+    headers: dict[str, str]
+
+
+class LibraryUploaded(BaseModel):
+    """一次传完的上传：领凭据时拿到的 ``upload``，整份的 SHA-256，和每一段的
+    MD5（按段的顺序），都是十六进制。"""
+
     upload: str
+    sha256: str
+    parts: list[str]
 
 
-class LibraryAddIn(BaseModel):
-    """登记一份已经传上来的文件：``upload`` 是领地址时拿到的凭据。"""
+class LibraryAddIn(LibraryUploaded):
+    """登记一份已经传上来的文件，``folder`` 给了就放进那个文件夹。"""
 
-    upload: str
     filename: str
     folder: str | None = None
 
 
-class LibraryReplaceIn(BaseModel):
-    upload: str
+class LibraryReplaceIn(LibraryUploaded):
+    pass
+
+
+def _received(shelf: Shelf, body: LibraryUploaded) -> library_records.Upload:
+    return library_records.received(shelf, body.upload, body.sha256, body.parts)
 
 
 @router.post(
@@ -342,15 +390,34 @@ async def library_upload_slot(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """领一个上传地址。字节不经过这里：浏览器直接放进存储，再来登记（放进新的一份
-    是 ``POST /library``，换成新版本是 ``PUT /library``）。超过上限的不给地址。"""
+    """领一次上传的凭据。字节不经过这里：浏览器按段领地址，直接放进存储，再来登记
+    （放进新的一份是 ``POST /library``，换成新版本是 ``PUT /library``）。超过上限的
+    不给。"""
     await _library_keeper(project_id, db, resolver)
     if body.size <= 0:
         raise ValidationError(say("emptyFile"))
-    if body.size > MAX_LIBRARY_UPLOAD_BYTES:
-        raise ValidationError(say("libraryUploadTooLarge"))
     name = library.clean_upload_name(body.name)
     return ok(await library_records.upload_slot(_shelf(project_id), name, body.size))
+
+
+@router.post(
+    "/{project_id}/library/uploads/part",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryUploadPart),
+)
+async def library_upload_part(
+    project_id: uuid.UUID,
+    body: LibraryUploadPartIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """一次上传里一段的地址：只收这一段，字节的 MD5 对不上的存储不收。"""
+    await _library_keeper(project_id, db, resolver)
+    return ok(
+        await library_records.upload_part(
+            _shelf(project_id), body.upload, body.part, body.md5
+        )
+    )
 
 
 @router.post("/{project_id}/library", dependencies=[ROUTE_DECIDES])
@@ -363,7 +430,7 @@ async def upload_library_file(
     """把传上来的一份登记进资料库，`folder` 给了就放进那个文件夹（没有就新建）。
     撞名不覆盖：拿下一个 `(n)`。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(_shelf(project_id), body.upload)
+    upload = _received(_shelf(project_id), body)
     filename = library.clean_upload_name(body.filename)
     if body.folder and body.folder.strip("/ "):
         filename = f"{library.clean_library_path(body.folder)}/{filename}"
@@ -389,7 +456,7 @@ async def replace_library_file(
 ) -> dict:
     """把一份资料换成传上来的新版本。旧的那一份留着；引用这个名字的消息读到的是新的。"""
     actor = await _library_keeper(project_id, db, resolver)
-    upload = await library_records.received(_shelf(project_id), body.upload)
+    upload = _received(_shelf(project_id), body)
     name = _library_path(path)
     await library_records.replace(
         db, shelf=_shelf(project_id), name=name, data=upload, by=actor.handle
@@ -670,6 +737,25 @@ async def team_library_upload_slot(
 
 
 @teams.post(
+    "/{team_id}/library/uploads/part",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryUploadPart),
+)
+async def team_library_upload_part(
+    team_id: int,
+    body: LibraryUploadPartIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    await _team_member(team_id, db, resolver)
+    return ok(
+        await library_records.upload_part(
+            _team_shelf(team_id), body.upload, body.part, body.md5
+        )
+    )
+
+
+@teams.post(
     "/{team_id}/library",
     dependencies=[ROUTE_DECIDES],
     **typed_response(LibraryPlacedOut),
@@ -679,7 +765,7 @@ async def upload_team_library_file(
 ) -> dict:
     actor = await _team_member(team_id, db, resolver)
     shelf = _team_shelf(team_id)
-    upload = await library_records.received(shelf, body.upload)
+    upload = _received(shelf, body)
     filename = library.clean_upload_name(body.filename)
     if body.folder and body.folder.strip("/ "):
         filename = f"{library.clean_library_path(body.folder)}/{filename}"
@@ -704,7 +790,7 @@ async def replace_team_library_file(
 ) -> dict:
     actor = await _team_member(team_id, db, resolver)
     shelf = _team_shelf(team_id)
-    upload = await library_records.received(shelf, body.upload)
+    upload = _received(shelf, body)
     name = _library_path(path)
     await library_records.replace(
         db, shelf=shelf, name=name, data=upload, by=actor.handle

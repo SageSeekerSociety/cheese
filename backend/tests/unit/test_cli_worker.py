@@ -102,8 +102,14 @@ def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
 
     class API(BaseHTTPRequestHandler):
         def do_GET(self):
-            received.append((self.path, self.headers["X-Cheese-Token"]))
             body = "café".encode()
+            if self.path.startswith("/projects/project/library/link"):
+                # The platform call carries the credential; the bytes are
+                # fetched from the address it hands back, with none.
+                received.append((self.path, self.headers["X-Cheese-Token"]))
+                body = json.dumps(
+                    {"data": {"url": "/blob", "path": "notes.txt", "bytes": len(body)}}
+                ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -141,7 +147,7 @@ def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
             "rotated-test-token",
         ]
         assert all(
-            row[0].startswith("/projects/project/library/raw") for row in received
+            row[0].startswith("/projects/project/library/link") for row in received
         )
     finally:
         server.shutdown()
