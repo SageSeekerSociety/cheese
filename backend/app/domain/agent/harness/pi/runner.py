@@ -24,6 +24,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -75,6 +76,22 @@ WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
 #: The extension's tools a person's 芝士 hands parts of its work to branches
 #: with (`platform.ts`).
 BRANCH_TOOLS = ("cheese_subagent_start", "cheese_subagent_send", "cheese_subagent_stop")
+
+
+#: How what a reading tool read opens: the thing by its name, then its
+#: reference in brackets (``personal/reading.py``) — 「任务「报名说明」（…）」.
+_NAMED = re.compile(r"^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)")
+
+
+def named(result: object) -> str | None:
+    """The name of what a call read, as what came back opens with it: shown
+    in place of the reference the call was given. None for anything else."""
+    content = result.get("content") if isinstance(result, dict) else None
+    for block in content if isinstance(content, list) else ():
+        if isinstance(block, dict) and block.get("type") == "text":
+            found = _NAMED.match(str(block.get("text") or "").lstrip())
+            return found.group(1) if found else None
+    return None
 
 
 def _said(text: str) -> dict:
@@ -211,10 +228,22 @@ class Runner(runner.Runner[Journal]):
         kind = event.get("type")
         if kind == "message_update":
             self.write(event.get("assistantMessageEvent") or {})
+        elif kind == "tool_execution_start" and not event.get("parentToolCallId"):
+            # Its arguments whole: what was shown of them as they were written
+            # may have stopped short when the message ended.
+            call = str(event.get("toolCallId") or "")
+            self.live_made[call] = {
+                "call": call,
+                "args": json.dumps(event.get("args") or {}, ensure_ascii=False),
+            }
+            self.shown()
         elif kind == "tool_execution_end" and not event.get("parentToolCallId"):
             # A call came back: a reader shows it ended now, not when the
             # model next writes, which may be a long stretch of reasoning.
-            self.live_returned.append(str(event.get("toolCallId") or ""))
+            call = str(event.get("toolCallId") or "")
+            self.live_returned.append(call)
+            if shown := named(event.get("result")):
+                self.live_made.setdefault(call, {"call": call})["shown"] = shown
             self.shown()
         elif kind == "message_start":
             if (event.get("message") or {}).get("role") == "assistant":
@@ -233,6 +262,7 @@ class Runner(runner.Runner[Journal]):
         if kind == "agent_start":
             self.working = True
             self.live_returned = []
+            self.live_made = {}
         elif kind == "agent_settled":
             self.working = False
             # pi delivers a steered message before its next model call and

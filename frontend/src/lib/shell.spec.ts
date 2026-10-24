@@ -68,12 +68,7 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   })
 
   it('default 壳下三个面逐格就是今天的样子', () => {
-    expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'market', 'add'])).toEqual([
-      'home',
-      'projects',
-      'market',
-      'add',
-    ])
+    expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
     expect(orderedNav(DEFAULT_SHELL, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['home', 'workspace', 'inbox'])
     // 项目页的顺序：总览和资料库摆在项目名下，成员排在菜单第一个（「退出项目」在那一页）。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual([

@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from app.domain.block.authorship import speaker
 from app.domain.room_task.models import TaskStatus
 from app.domain.thread.reads import routine_runs_of, said_before
 from app.domain.topic.models import Topic
@@ -25,7 +26,7 @@ async def thread_context(
     run = (await routine_runs_of(session, [root.id])).get(root.id)
 
     def line(block) -> str:
-        return f"[{block.author}] {block.content}"
+        return f"[{speaker(block)}] {block.content}"
 
     earlier = await said_before(session, root, limit=THREAD_CONTEXT_MESSAGES)
     if run:

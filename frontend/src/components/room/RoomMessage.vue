@@ -15,7 +15,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
-import { isAgentHandle } from '../../lib/authorship'
+import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
@@ -47,6 +47,8 @@ const props = defineProps<{
   block: Block
   /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
   askClosed?: boolean
+  /** 这一行上的那道题，我有一条答复还在路上：选项先不给点（`AskQuickReplies` 的 answering）。 */
+  askAnswering?: boolean
   /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
   parent: Block | ReplyPreview | null
   parentName: string | null
@@ -112,6 +114,9 @@ const props = defineProps<{
    */
   foldPlain?: boolean
 }>()
+
+// 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
+const writtenByAssistant = computed(() => byAssistant(props.block))
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
 const personLabel = computed(() =>
@@ -266,6 +271,13 @@ const told = computed(() => toldByMessage(props.refs))
             {{ authorName }}
           </button>
           <ExternalTag v-if="external && !isAgent" />
+          <span
+            v-if="writtenByAssistant"
+            class="chip-neutral im-on-behalf"
+            data-testid="on-behalf-tag"
+            :title="t('work.onBehalf.tagHint', { name: authorName })"
+            >{{ t('work.onBehalf.tag') }}</span
+          >
           <span class="im-time">{{ time }}</span>
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
@@ -367,6 +379,7 @@ const told = computed(() => toldByMessage(props.refs))
         :asker="runStart ? undefined : authorName"
         :names="refs.mentionNames"
         :closed="askClosed"
+        :answering="askAnswering"
         :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
         @withdraw="emit('ask-withdraw', block)"
@@ -578,6 +591,9 @@ const told = computed(() => toldByMessage(props.refs))
 .im-pin-mark {
   flex: none;
   color: var(--accent-ink);
+}
+.im-on-behalf {
+  flex: none;
 }
 .im-file-link {
   max-width: 100%;
