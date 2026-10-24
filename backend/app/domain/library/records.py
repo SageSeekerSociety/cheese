@@ -460,6 +460,24 @@ async def read_text(session: AsyncSession, shelf: Shelf, name: str) -> dict:
     return payload
 
 
+async def newest(
+    session: AsyncSession, shelf: Shelf, limit: int
+) -> list[LibraryFileRecord]:
+    """现在这一份里最新的几份，新的在前：给芝士看一个资料库里有什么。"""
+    rows = await session.scalars(
+        _current(shelf).order_by(LibraryFileRecord.created_at.desc()).limit(limit)
+    )
+    return list(rows)
+
+
+async def current_by_id(
+    session: AsyncSession, file_id: uuid.UUID
+) -> LibraryFileRecord | None:
+    """按编号找一份，只认现在这一份（被新版本替下的不算）。"""
+    row = await session.get(LibraryFileRecord, file_id)
+    return row if row is not None and row.superseded_at is None else None
+
+
 async def stored(session: AsyncSession, shelf: Shelf) -> list[tuple[str, str, str]]:
     """现在每一份的名字、存储和键：给要在事务结束之后才搬字节的人（项目导出）。"""
     rows = await session.scalars(_current(shelf).order_by(LibraryFileRecord.name))

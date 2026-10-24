@@ -11,10 +11,12 @@ from __future__ import annotations
 import uuid
 
 from app.api.auth import ActorResolver
-from app.api.doc_access import reach
+from app.api.doc_access import is_team_member, reach
+from app.core.errors import NotFoundError
 from app.domain.agent.personal import service as personal
 from app.domain.assistant import proposals
 from app.domain.room_task.place import place_or_404
+from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
 
 
@@ -43,6 +45,15 @@ class ProjectPages:
     async def project(self, project_id: uuid.UUID) -> None:
         actor = await self._resolver.resolve(project_id=project_id)
         await self._resolver.authorize_project(actor, project_id=project_id)
+
+    async def team(self, team_id: int):
+        """A team the person is a member of, as its library and its own
+        documents are opened."""
+        actor = await self._resolver.resolve()
+        team = await team_service(self._db).get_team(team_id)
+        if team is None or not await is_team_member(self._db, team_id, actor.handle):
+            raise NotFoundError.for_resource("team", team_id)
+        return team
 
     async def channels(self, project_id: uuid.UUID) -> list:
         actor = await self._resolver.resolve(project_id=project_id)

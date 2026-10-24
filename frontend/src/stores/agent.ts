@@ -12,7 +12,8 @@
 // 应用之间会重新挂载，芝士答到一半不该跟着丢。换页时芝士照样答完。
 import type { AgentFormField } from '@/composables/useAgentPointer'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
-import type { AssistantPage, AssistantProposal } from '@/stores/agentThread'
+import type { AssistantCited, AssistantPage, AssistantProposal } from '@/stores/agentThread'
+import type { Citable } from '@/types/citable'
 
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -33,6 +34,10 @@ import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
 export interface AgentContext {
   /** 芝士读到的「当前页面」；没有就只送问题。 */
   page?: AssistantPage | null
+  /** 这一页叫什么（「频道「后端」」），写在输入框上方「当前页面」那枚标签上。 */
+  label?: string
+  /** 这一页在哪个项目里：@ 菜单先列它的东西，也列它资料库里的文件。 */
+  project?: { id: string; name: string } | null
   /** 话题空着时问候上面那一行：芝士在这一页读了什么。 */
   intro?: string
   greeting?: string
@@ -128,9 +133,58 @@ export const agentSurface = surfaces.top
 
 const surfaceHooks = (): AssistantHooks => agentSurface.value?.on ?? {}
 
+// ---- 这一句带什么 -------------------------------------------------------------------
+
+/** 人把「当前页面」关掉了：只管这一页，换一页又带上。 */
+export const agentPageOff = ref(false)
+const pageKey = computed(() => {
+  const page = agentContext.value?.page
+  return page ? `${page.kind}:${page.id}` : ''
+})
+watch(pageKey, () => (agentPageOff.value = false))
+
+/** 人在页面上选中、交给芝士的那段字：跟下一句走，发出就清掉。 */
+export const agentSelection = ref<string | null>(null)
+
+/** 用 @ 挑过的东西，按 `<#id>` 里的 id：输入框里的标签和这一句记下的引用都照它写名字。 */
+export const agentPicked = shallowRef<Record<string, Citable>>({})
+
+export function pickForAgent(item: Citable) {
+  agentPicked.value = { ...agentPicked.value, [item.id]: item }
+}
+
+/** 这一页芝士读不读：登记了页面、人又没关掉。 */
+export const agentPageOn = computed(() => !!agentContext.value?.page && !agentPageOff.value)
+
+const TOKEN = /<#([\w-]+)>/g
+
+/** 问题里 `<#id>` 引用的、用 @ 挑过的那几样。 */
+function citedIn(question: string): AssistantCited[] {
+  const ids = [...new Set([...question.matchAll(TOKEN)].map((m) => m[1]))]
+  return ids.flatMap((id) => {
+    const item = agentPicked.value[id]
+    return item ? [{ id, kind: item.kind, title: item.title }] : []
+  })
+}
+
 /** 全站那一条对话。事件交给此刻登记的可写面。 */
 export const agentThread = createAssistant({
-  page: () => agentContext.value?.page ?? null,
+  page: () => (agentPageOn.value ? agentContext.value?.page ?? null : null),
+  asking: (question) => {
+    const selection = agentSelection.value
+    const cited = citedIn(question)
+    return {
+      body: {
+        ...(agentPageOn.value ? {} : { no_page: true }),
+        ...(selection ? { selection } : {}),
+      },
+      shown: {
+        ...(agentPageOn.value && agentContext.value?.label ? { askedOn: agentContext.value.label } : {}),
+        ...(selection ? { selection } : {}),
+        ...(cited.length ? { cited } : {}),
+      },
+    }
+  },
   prepare: async () => {
     await agentSurface.value?.prepare?.()
   },
@@ -227,6 +281,8 @@ export function removeAgentFile(index: number) {
 export function resetAgent() {
   agentOpen.value = false
   agentFiles.value = []
+  agentSelection.value = null
+  agentPicked.value = {}
   agentThread.reset()
 }
 
@@ -237,9 +293,22 @@ export async function askAgent(text: string) {
     .map((f) => (f.path !== null ? { path: f.path, name: f.name } : { id: f.id as number, name: f.name }))
   agentFiles.value = []
   // 芝士还在答：这一句连同附件插进正在答的这一轮（`say`），不另问一个问题。
-  if (agentThread.busy.value) return agentThread.say(text, t('tasks.assistant.failed'), handed)
-  await agentThread.ask(text, t('tasks.assistant.failed'), handed)
+  const asked = agentThread.busy.value
+    ? agentThread.say(text, t('tasks.assistant.failed'), handed)
+    : agentThread.ask(text, t('tasks.assistant.failed'), handed)
+  // 选中的那段字在问的那一刻已经读走（`asking`），跟的是这一句，不跟下一句。
+  agentSelection.value = null
+  await asked
 }
+
+/** 把页面上选中的一段交给芝士：打开面板，这段字跟着下一句走。 */
+export function selectForAgent(text: string) {
+  agentSelection.value = text.slice(0, SELECTION_CHARS)
+  openAgent()
+}
+
+/** 一句最多带这么多选中的字（和后端 `citing.SELECTION_CHARS` 一样）。 */
+export const SELECTION_CHARS = 2000
 
 // ---- 面板上画什么 -------------------------------------------------------------------
 
