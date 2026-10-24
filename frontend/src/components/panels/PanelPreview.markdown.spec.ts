@@ -276,6 +276,41 @@ it('评论挂不上去时，条上说出来，不是点了没反应', async () =
   expect((ui.getByPlaceholderText('就这一处说点什么') as HTMLInputElement).value).toBe('这里数字不对')
 })
 
+it('评论发着的时候读者按了取消：回来时不再替他打开评论栏', async () => {
+  // 他刚按了取消，明确表示不想留在这儿；这时把评论栏弹出来会盖住他正在做的事。
+  // 评论本身已经挂上去了（那条请求没有中断），所以只是别动他的界面。
+  let release: () => void = () => {}
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: () => new Promise<void>((resolve) => (release = resolve)),
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  const input = ui.getByPlaceholderText('就这一处说点什么')
+  await fireEvent.update(input, '这里数字不对')
+  const bar = input.closest('.locator')!
+  const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
+  await fireEvent.click(commentBtn)
+  // 还没回来，读者按了条上的取消。
+  const closeBtn = [...bar.querySelectorAll('button')].at(-1)!
+  await fireEvent.click(closeBtn)
+  release()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(open.value).toBe(false)
+})
+
 it('换了另一处指认，上一次那句「评论失败」不跟着过来', async () => {
   // 读者发失败之后，多半会去选另一段再来一次。上一处那句话说的是上一处，留着会让人
   // 以为新指的这处也失败了；而撤掉指认的路不止一条（条上的取消、Escape、换文件），
@@ -306,9 +341,45 @@ it('换了另一处指认，上一次那句「评论失败」不跟着过来', a
   await fireEvent.click(commentBtn)
   await waitFor(() => expect(bar.querySelector('[role="alert"]')).toBeTruthy())
 
-  // 换一处：选中另一段正文。
-  await fireEvent.keyDown(input, { key: 'Escape' })
+  // 直接另选一处（不按取消）：条上那颗取消本来就清这句话，所以只有「指认自己变了就清」
+  // 才盖得住这条路——上一版正是只清了取消那条，这里会留着上一处的失败。
   await selectPassage(ui)
+  expect(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('[role="alert"]')).toBeNull()
+})
+
+it('发失败时读者已经换了一处：那句失败不落在新的一处上', async () => {
+  // 失败是发生在 await 之后的，这期间读者完全可能已经去指别处了。这句话说的是上一处，
+  // 落在新的这一处下面，会让人以为新指的这处也发失败了。
+  let reject: (e: Error) => void = () => {}
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: () => new Promise<void>((_resolve, rej) => (reject = rej)),
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  const input = ui.getByPlaceholderText('就这一处说点什么')
+  await fireEvent.update(input, '这里数字不对')
+  const commentBtn = [...input.closest('.locator')!.querySelectorAll('button')].find(
+    (b) => b.textContent?.trim() === '评论'
+  )!
+  await fireEvent.click(commentBtn)
+
+  // 还没回来，读者就换了一处。
+  await selectPassage(ui)
+  reject(new Error('评论失败'))
+  await Promise.resolve()
+  await Promise.resolve()
   expect(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('[role="alert"]')).toBeNull()
 })
 

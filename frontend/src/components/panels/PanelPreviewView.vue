@@ -203,7 +203,10 @@ async function commentHere() {
     await props.comments.post({ content: body, quote: pick, anchor: target?.anchor ?? null })
   } catch (cause) {
     // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
-    commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    // 中途换过那一处就不写了：这句话说的是上一处，落在新的这一处下面会让人以为它也失败了。
+    if (pickGeneration.value === before) {
+      commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    }
     return
   } finally {
     commenting.value = false
