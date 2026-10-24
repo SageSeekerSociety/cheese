@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
 from app.domain.agent.document import session as doc_session
 from app.domain.agent.document.question import Asked, Bound, Surroundings
+from app.domain.living_doc.comments import OnDocument
 from app.domain.agent.session_host.answer import Answer, Tool, ask
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
@@ -70,7 +71,9 @@ def _session(thread: uuid.UUID | None = None, *, machine: dict | None = None):
     """A thread's session as the document's 芝士 starts it, with the room's
     machine lent to it when there is one."""
     return doc_session.session_for(
-        asked=Asked(project_id=PROJECT, document_id=DOCUMENT, task_id=ROOM),
+        asked=Asked(
+            project_id=PROJECT, subject=OnDocument(DOCUMENT), task_id=ROOM
+        ),
         key=thread or uuid.uuid4(),
         bound=AGENT,
         around=dataclasses.replace(AROUND, machine=machine),
