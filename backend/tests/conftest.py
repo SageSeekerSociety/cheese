@@ -1256,6 +1256,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     merge tests supply their own PR state; tests/forgejo exercises the real API.
     """
     from app.domain.project import forge
+    from app.domain.project import starter as starter_code
     from app.domain.project.models import Project, ProjectForge
     from app.domain.repository import forge_files
     from app.domain.review import forge_clients
@@ -1270,14 +1271,14 @@ def stub_project_forge(monkeypatch, tmp_path):
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
-    async def provision_repository(project_id, session, **kwargs):
+    async def provision_repository(project_id, session, *, starter=None, **kwargs):
         existing = await forge.binding_for_project(project_id, session)
         project = await session.get(Project, project_id)
         if (
             existing is not None
             or (project.settings or {}).get("forge_kind") == "github_app"
         ):
-            return await provision(project_id, session, **kwargs)
+            return await provision(project_id, session, starter=starter, **kwargs)
         binding = ProjectForge(
             project_id=project_id,
             kind="forgejo",
@@ -1285,9 +1286,18 @@ def stub_project_forge(monkeypatch, tmp_path):
             url=f"https://forge.test/project-{project_id.hex}/code.git",
             api_url="https://forge.test/api/v1",
             default_branch="main",
+            starter_revision=starter.revision if starter is not None else None,
         )
         session.add(binding)
         await session.flush()
+        if starter is not None:
+            # Like the real forge: an empty repository, and the starter code
+            # pushed to it as the first commit by the code that pushes for real.
+            repo = git_store.path(project_id)
+            repo.mkdir(parents=True, exist_ok=True)
+            git_store.git(repo, "init", "-q", "-b", "main")
+            git_store.git(repo, "config", "receive.denyCurrentBranch", "updateInstead")
+            starter_code.push(starter, str(repo), username="test", password="test")
         git_store.ensure_repo(project_id)
         return binding
 

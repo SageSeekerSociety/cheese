@@ -399,6 +399,9 @@ class ProjectForge(UuidPk, Timestamps, Base):
     default_branch: Mapped[str] = mapped_column(String(255), default="main")
     # Only the backend can mint credentials; the account password never leaves it.
     account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The task version (`task_package_revisions.number`) whose starter code is
+    # the repository's first commit (#4767); NULL when it began without one.
+    starter_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ForgeToken(UuidPk, Timestamps, Base):

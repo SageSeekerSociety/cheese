@@ -12,10 +12,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.ports import AcceptedTerms, Claim, TaskBrief
+from app.domain.project.starter import Starter
+from app.domain.task import package
 from app.domain.task.inputs import APPROVE_APPROVED, SUBMITTER_TEAM
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
@@ -93,4 +97,18 @@ class TaskTerms:
             compute_credits=protocol.compute_credits,
             prompt=protocol.prompt,
             skills=tuple(protocol.skills),
+        )
+
+    async def starter(self, task_id: int, into: Path) -> Starter | None:
+        """这道题现在的起始代码，写到 ``into``；没有、或者题已经删了是 ``None``。"""
+        task = await self._session.get(Task, task_id)
+        if task is None or task.deleted_at is not None:
+            return None
+        revision = await package.fetch_starter(self._session, task, into)
+        if revision is None:
+            return None
+        return Starter(
+            archive=into,
+            revision=revision,
+            message=f"Starter code from task {task.name} (version {revision})",
         )

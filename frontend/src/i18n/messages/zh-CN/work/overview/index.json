@@ -40,5 +40,6 @@
   "today": "今天",
   "versionOf": "{name} 第 {version} 版",
   "write": "写项目目标",
-  "yesterday": "昨天"
+  "yesterday": "昨天",
+  "starterFrom": "代码仓库的起始代码来自题目第 {n} 版"
 }

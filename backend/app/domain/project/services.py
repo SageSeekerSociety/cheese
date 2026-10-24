@@ -1,9 +1,11 @@
 """Project business logic."""
 
 import logging
+import tempfile
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -297,7 +299,19 @@ class ProjectService:
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
-            await provision_repository(project.id, self._session)
+            # A 题目's starter code is the repository's first commit (#4767): the
+            # archive as it is at this moment, so a later replacement reaches
+            # only later claims. The bytes live in a temporary directory just
+            # for the push.
+            with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
+                starter = (
+                    await self._terms().starter(
+                        external_task_id, Path(temporary) / "starter.zip"
+                    )
+                    if external_task_id is not None
+                    else None
+                )
+                await provision_repository(project.id, self._session, starter=starter)
         # What the person said they wanted to do, carried into the project's
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)

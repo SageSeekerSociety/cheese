@@ -77,6 +77,15 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
             attachment_ids=payload.attachment_ids,
             uploads=_attachment_service(db),
         )
+    if payload.starter_attachment_id is not None:
+        # 起始代码同理，也是第 1 版的一部分；解不开的这里就拒绝，整道题不建。
+        await package.set_starter_upload(
+            db,
+            task,
+            by=user_id,
+            attachment_id=payload.starter_attachment_id,
+            uploads=_attachment_service(db),
+        )
 
     # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
     # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应
@@ -317,6 +326,14 @@ async def update_task(
             uploads=_attachment_service(db),
         )
         changes |= package.files_changed(added=added)
+    if payload.starter_attachment_id is not None:
+        changes[package.STARTER_CHANGE] = await package.set_starter_upload(
+            db,
+            task,
+            by=user_id,
+            attachment_id=payload.starter_attachment_id,
+            uploads=_attachment_service(db),
+        )
     await package.record(db, task, by=user_id, changes=changes)
     if changes.keys() & {package.SUBMISSION, package.RUBRIC} and task.approved == 0:
         await task_notices.requirements_changed(

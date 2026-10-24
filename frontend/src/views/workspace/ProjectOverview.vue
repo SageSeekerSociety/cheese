@@ -179,6 +179,7 @@ function allTasks() {
     :project-name="projectName"
     :overview-text="overviewText"
     :challenge-deadline="challengeDeadline"
+    :starter-revision="(project.data.value?.starter_revision as number | null | undefined) ?? null"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"

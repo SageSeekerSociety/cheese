@@ -22,6 +22,7 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   name: ['name'],
   description: ['description', 'descriptionMarkdown'],
   attachments: ['attachmentIds', 'attachmentFiles'],
+  starter: ['starterAttachmentId', 'starterFile'],
   submission: ['submissionSchema'],
   rubric: ['rubric'],
   rubric_public: ['rubricPublic'],

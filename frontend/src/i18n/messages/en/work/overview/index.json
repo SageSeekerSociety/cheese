@@ -40,5 +40,6 @@
   "today": "Today",
   "versionOf": "{name} version {version}",
   "write": "Write project goals",
-  "yesterday": "Yesterday"
+  "yesterday": "Yesterday",
+  "starterFrom": "The code repository started from the task's starter code, version {n}"
 }

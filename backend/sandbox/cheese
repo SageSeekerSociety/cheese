@@ -1318,6 +1318,8 @@ TASK_WRITE_DESCRIPTION = (
     "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人领取，"
     "空列表是空间全部成员都能领；attachments 题目附件，写用户交给你的文件 id，"
     "新题目整组替换，已发布的题目保存时追加上去；"
+    "starter 起始代码，写用户交给你的一个 .zip 文件 id：领题时解开作为项目代码仓库的"
+    "第一个提交，已发布的题目保存时换上这一份；"
     "ai_mode AI 队友怎么帮学生（引导为主、讲解与示例、先明确需求再实现、不加限制，"
     "或沿用空间设置）；ai_guidance 这道题的 AI 队友补充要求，和空间的要求同时生效，"
     "空字符串是没有补充。分类、标签、导师、邮箱域名组只能用当前页面里列着的。\n"
@@ -1411,6 +1413,10 @@ TASK_WRITE_FIELDS = {
         "type": "array",
         "items": {"type": "integer"},
         "description": "用户交给你的文件 id，作为题目附件",
+    },
+    "starter": {
+        "type": "integer",
+        "description": "用户交给你的一个 .zip 文件 id，作为起始代码；0 是不要起始代码",
     },
     "ai_mode": {
         "type": "string",
@@ -4350,6 +4356,7 @@ _TASK_FIELD_WORDS = {
     "accessControlEnabled": "access",
     "accessDomainGroupIds": "access",
     "attachmentIds": "attachments",
+    "starterAttachmentId": "starter",
     "teaching": "ai_guidance",
 }
 

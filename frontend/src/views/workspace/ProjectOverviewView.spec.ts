@@ -207,6 +207,15 @@ it('不是领题开的项目：不写截止', () => {
   expect(view.queryByTestId('overview-deadline')).toBeNull()
 })
 
+it('仓库从题目的起始代码开始的：写着来自第几版；不是的不写', () => {
+  const view = mount({ overviewText: '## 赛题要求', starterRevision: 3 })
+  expect(view.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库的起始代码来自题目第 3 版')
+
+  cleanup()
+  const plain = mount({ overviewText: '## 赛题要求', starterRevision: null })
+  expect(plain.queryByTestId('overview-starter')).toBeNull()
+})
+
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {
   const view = mount({ overviewText: '', agentName: '芝士' })
   await fireEvent.click(view.getByRole('button', { name: t('work.overview.draft', { agent: '芝士' }) }))

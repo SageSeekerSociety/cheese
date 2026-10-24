@@ -49,6 +49,8 @@ const props = defineProps<{
   /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
    *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
   challengeDeadline?: ChallengeDeadline | null
+  /** 代码仓库的第一个提交是题目第几版的起始代码；没有起始代码、或读不到，是 null。 */
+  starterRevision?: number | null
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -208,6 +210,9 @@ function stateOf(task: RoomTask): TaskState {
             </button>
           </div>
           <p v-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">{{ deadlineText }}</p>
+          <p v-if="starterRevision" class="ov-deadline t-body" data-testid="overview-starter">
+            {{ t('work.overview.starterFrom', { n: starterRevision }) }}
+          </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />

@@ -130,5 +130,14 @@
   "transferNotYours": "无法处理：这次转让的接收人不是你",
   "transferToMember": "只能转让给项目里的管理员或成员",
   "transferToSelf": "无法转让给自己",
-  "versionNotFound": "没有这一版"
+  "versionNotFound": "没有这一版",
+  "starterNotZip": "起始代码要是一个 .zip 压缩包，这一份解不开",
+  "starterUnsafeEntry": "压缩包里的 {path} 指向压缩包以外的位置，或者不是普通文件（例如符号链接），不能作为起始代码",
+  "starterEncrypted": "压缩包设了密码，解不开",
+  "starterTooManyFiles": "压缩包里的文件超过 {max} 个",
+  "starterTooLarge": "压缩包解开后超过 {mb} MB",
+  "starterCompressionRatio": "压缩包解开后比它本身大得太多，不能作为起始代码",
+  "starterEmpty": "压缩包里没有文件",
+  "starterPathClash": "压缩包里的 {path} 出现了两次，或者和一个文件夹同名",
+  "forgejoStarterPushFailed": "起始代码没能放进项目的代码仓库，稍后重试"
 }

@@ -13,6 +13,7 @@ covers:
   - backend/app/domain/addressing.py
   - backend/app/domain/task/package.py
   - backend/app/domain/library/mount.py
+  - backend/app/domain/project/starter.py
   - backend/app/domain/task/visibility_service.py
   - backend/app/api/routes/tasks/
   - backend/sandbox/cheese
@@ -220,6 +221,16 @@ covers:
 从题目派生的项目（`Project.external_task_id`），资料库多一个只读的 `题目/`：`library/mount.py` 把这个前缀下的名字解析到题目资料库（读的是那一边现在的行，不是拷贝），清单、读文本、取字节、版本、项目搜索都经过它；放进、替换、移动、删除、恢复碰到这个前缀一律 422。题目删了（`task.deleted_at`），文件夹跟着不见；项目自己在挂上之前放在 `题目/` 下的文件被盖住。
 
 题目更新之后，项目总览「最近进展」里每一版一条（`project_progress/feed.py` 的 `revised`，只算项目建好之后的版本）；项目里的 agent 开场带一段「题目」（`package.section_for_project`），是 `TRACKED_SECTIONS` 之一，版本一变，跑着的会话下一轮就读到新的版本号和改动。
+
+### 起始代码 {#starter-code}
+
+起始代码是题目资料库里名为 `起始代码.zip`（`package.STARTER`）的那一份：它有自己的接口（`PUT` / `DELETE /tasks/{id}/starter`，上传地址和材料共用 `POST /tasks/{id}/files/uploads`），材料清单不列它，材料接口碰到这个名字一律 422；替换照样留历史行，设上、换掉、删掉各记一版（`changes.starter` 是 `added` / `replaced` / `removed`）。发题页和芝士写的草稿带 `starterAttachmentId`（先传成通用附件，同样只认本人传的）。
+
+压缩包在登记时就查一遍（`project/starter.py` 的 `check`），领题时解开再查一遍（`unpack`），规矩是同一套：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git` 的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原。登记时只读目录、不解压，内容损坏要到领题时才发现。
+
+领题建项目时（`ProjectService.create` 带着题目 id，`for_participation` 也走这里），`TaskTerms.starter` 把那一刻的压缩包写进临时目录，`provision_repository` 不让 Forgejo `auto_init`，解开后以平台身份（`Cheese <starter@users.invalid>`）提交成 `main` 上唯一的提交，凭据放在请求头里推上去（同 `forge_migration.push`），`project_forges.starter_revision` 记下题目当时是第几版；项目总览和 agent 的「题目」一段据此说起始代码来自第几版。之后换压缩包只影响之后领题的人。仓库里自带的 `.gitignore` 照常生效。
+
+推送失败和建仓库失败一样：抛出，整个建项目（连同领题那次请求）回滚，没有半个项目。账号和仓库按项目 id 命名，重试时接着用；仓库还空着才推，已经推过的（上一次回滚前推成了）直接接着用。没有起始代码的题，建仓库和从前一样由 Forgejo 初始化 `main`。GitHub 仓库的项目不建 Forgejo 仓库，也就没有起始代码。
 
 ## 边界与坑 {#traps}
 

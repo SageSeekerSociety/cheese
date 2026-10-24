@@ -190,6 +190,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # large one file in it may be. A file's ceiling is the attachment one, so
     # what a person attaches to 芝士 can always land in their library.
     team_library_bytes: int = 1024 * 1024 * 1024
+    # A task's starter code (`app/domain/project/starter.py`): how many files
+    # and how many bytes it may unpack to, and how many times larger than the
+    # zip itself it may unpack (past 64 MiB); more is refused as a zip bomb.
+    starter_max_files: int = 20_000
+    starter_max_bytes: int = 2 * 1024 * 1024 * 1024
+    starter_max_ratio: int = 200
     redis_url: str = "redis://localhost:6379/0"
     # Per-client request limits (`app/core/request_limits.py`). Measured on the
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s

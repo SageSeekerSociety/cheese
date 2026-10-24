@@ -344,8 +344,9 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
         answer = await create_task_from(creating, db=db, user_id=user_id)
     else:
         assert task_id is not None and changing is not None
-        # The files 芝士 added to the changes (``attachmentIds``) go into the
-        # 题目's materials with them, as one version.
+        # The files 芝士 added to the changes (``attachmentIds``, and the
+        # starter code in ``starterAttachmentId``) go into the 题目's library
+        # with them, as one version.
         answer = await update_task(
             task_id, changing, db=db, service=service, user_id=user_id
         )
@@ -494,7 +495,13 @@ async def agent_write(
         if "attachments" in args
         else None
     )
-    fields = drafts.from_agent(args, terms, row.fields or {}, files)
+    starter = (
+        (await _own_files(db, [args["starter"]], user_id))[0]
+        # 0 (or nothing) is "no starter code" (the tool's own wording).
+        if args.get("starter")
+        else None
+    )
+    fields = drafts.from_agent(args, terms, row.fields or {}, files, starter)
     written = drafts.cheese_writes(
         row, fields, read_at=None if created else body.version
     )

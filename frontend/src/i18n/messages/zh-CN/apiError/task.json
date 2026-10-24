@@ -52,5 +52,6 @@
   "taskTitleTooLong": "标题在侧栏一行里放不下：一行约 {limit} 个半角字符宽（一个汉字算 2 个），这个标题是 {now} 个。写短一些再试一次。",
   "teammateTaskByTeammate": "这里只供 AI 队友创建任务",
   "teammateTaskHereOnlyInThread": "只有支线可以原地转为任务",
-  "teammateTaskSummaryRequired": "另开任务时要写明它要做什么"
+  "teammateTaskSummaryRequired": "另开任务时要写明它要做什么",
+  "taskStarterHasItsOwnPlace": "{name} 是这道题的起始代码，在「起始代码」一栏里替换或删除"
 }

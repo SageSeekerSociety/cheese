@@ -11,13 +11,19 @@
 和项目里的 agent 都从这里知道题目到了第几版、这一版改了什么。
 """
 
+import asyncio
+import shutil
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import BinaryIO
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.space_access import may_teach_task
+from app.core import blob_store
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.attachment.services import AttachmentService
@@ -25,7 +31,8 @@ from app.domain.library import records as library
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.service import clean_upload_name
 from app.domain.library.shelf import Shelf
-from app.domain.project.models import Project
+from app.domain.project import starter as starter_archive
+from app.domain.project.models import Project, ProjectForge
 from app.domain.task.models import (
     Task,
     TaskPackageRevision,
@@ -38,16 +45,24 @@ from app.domain.user.models import User
 #: 题目资料库里每一版生成的那份题目说明。它不是出题人传的材料：材料清单里不列它，
 #: 出题人也不能替换、删掉它。
 BRIEF = "题目说明.md"
+#: 起始代码（#4767 第二节）：题目资料库里叫这个名字的那一份 .zip。它有自己的一栏，
+#: 不在材料清单里；换一份和换材料一样留下旧的一份，领题时取的是那一刻的这一份。
+STARTER = "起始代码.zip"
+#: 题目资料库里不算材料的那两份：生成的说明，和有自己一栏的起始代码。
+_NOT_MATERIALS = (BRIEF, STARTER)
 
 #: `changes` 里的几样，和它们在摘要里叫什么。
 DESCRIPTION = "description"
 SUBMISSION = "submission"
 RUBRIC = "rubric"
 FILES = "files"
+STARTER_CHANGE = "starter"
 PUBLISHED = "published"
 
 _PART_NAMES = {DESCRIPTION: "说明", SUBMISSION: "提交内容", RUBRIC: "评分要点"}
 _FILE_VERBS = {"added": "新增", "replaced": "替换", "removed": "删除"}
+#: 起始代码那一格的值（`changes["starter"]`）就是这三个动词之一。
+ADDED, REPLACED, REMOVED = "added", "replaced", "removed"
 
 #: 提交内容一项是什么（`task_submission_schema.type`）。
 _ENTRY_KINDS = {0: "文字", 1: "文件"}
@@ -88,6 +103,9 @@ def summary(changes: dict) -> str:
         names = (changes.get(FILES) or {}).get(verb) or []
         if names:
             parts.append(f"{word}文件 " + "、".join(names))
+    starter = changes.get(STARTER_CHANGE)
+    if starter in _FILE_VERBS:
+        parts.append(f"{_FILE_VERBS[starter]}起始代码")
     return "；".join(parts)
 
 
@@ -237,14 +255,15 @@ async def refuse_unless_downloader(
 
 
 async def files(session: AsyncSession, task_id: int) -> list[LibraryFileRecord]:
-    """出题人放进题目资料库、现在的每一份材料（不含题目说明），按放进来的先后。"""
+    """出题人放进题目资料库、现在的每一份材料（不含题目说明和起始代码），按放进来的
+    先后。"""
     return list(
         await session.scalars(
             select(LibraryFileRecord)
             .where(
                 shelf(task_id).holds(),
                 LibraryFileRecord.superseded_at.is_(None),
-                LibraryFileRecord.name != BRIEF,
+                LibraryFileRecord.name.not_in(_NOT_MATERIALS),
             )
             .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
         )
@@ -260,11 +279,32 @@ async def file_counts(session: AsyncSession, task_ids: list[int]) -> dict[int, i
         .where(
             LibraryFileRecord.task_id.in_(task_ids),
             LibraryFileRecord.superseded_at.is_(None),
-            LibraryFileRecord.name != BRIEF,
+            LibraryFileRecord.name.not_in(_NOT_MATERIALS),
         )
         .group_by(LibraryFileRecord.task_id)
     )
     return {int(task_id): int(count) for task_id, count in rows}
+
+
+async def _own_uploads(
+    uploads: AttachmentService, attachment_ids: Sequence[int], by: int
+) -> list[tuple[bytes, str]]:
+    """这个人自己先传成附件的几份文件：字节和文件名。
+
+    只认他自己传的：附件 id 是可猜的连续整数，不认的话，谁都能把别人交作业附的
+    文件拷进自己的题目、借这块板公开出去。"""
+    ids = list(dict.fromkeys(attachment_ids))
+    found = {a.id: a for a in await uploads.get_many(ids)}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise BadRequestError(say("draftFileNotYours"), data={"attachmentIds": missing})
+    if any(not uploads.is_uploader(found[i], by) for i in ids):
+        raise ForbiddenError(say("draftFileNotYours"))
+    out: list[tuple[bytes, str]] = []
+    for attachment_id in ids:
+        content, filename, _ = await uploads.download(attachment_id)
+        out.append((content, filename))
+    return out
 
 
 async def add_uploads(
@@ -276,36 +316,22 @@ async def add_uploads(
     uploads: AttachmentService,
 ) -> list[str]:
     """把这个人先传成附件的几份文件（发题页上选的、交给芝士的）拷进题目资料库，
-    不另记一版（调用方把它们算进自己那一版）。返回它们在这里的名字。
-
-    只认他自己传的：附件 id 是可猜的连续整数，不认的话，谁都能把别人交作业附的
-    文件拷进自己的题目、借这块板公开出去。"""
-    ids = list(dict.fromkeys(attachment_ids))
-    found = {a.id: a for a in await uploads.get_many(ids)}
-    missing = [i for i in ids if i not in found]
-    if missing:
-        raise BadRequestError(say("draftFileNotYours"), data={"attachmentIds": missing})
-    if any(not uploads.is_uploader(found[i], by) for i in ids):
-        raise ForbiddenError(say("draftFileNotYours"))
-    names: list[str] = []
-    for attachment_id in ids:
-        content, filename, _ = await uploads.download(attachment_id)
-        names.append(
-            await add_file(
-                session,
-                task,
-                by=by,
-                filename=clean_upload_name(filename),
-                data=content,
-            )
+    不另记一版（调用方把它们算进自己那一版）。返回它们在这里的名字。"""
+    return [
+        await add_file(
+            session, task, by=by, filename=clean_upload_name(filename), data=content
         )
-    return names
+        for content, filename in await _own_uploads(uploads, attachment_ids, by)
+    ]
 
 
 def _material(name: str) -> str:
-    """出题人点名的一份材料：题目说明不是材料，不能换、不能删。"""
+    """出题人点名的一份材料：题目说明不是材料，不能换、不能删；起始代码走自己那一栏，
+    那里会先查它是不是一份能解开的压缩包。"""
     if name == BRIEF:
         raise UnprocessableEntityError(say("taskBriefIsGenerated", name=BRIEF))
+    if name == STARTER:
+        raise UnprocessableEntityError(say("taskStarterHasItsOwnPlace", name=STARTER))
     return name
 
 
@@ -320,7 +346,12 @@ async def add_file(
     """放进一份材料，不另记一版（调用方把它算进自己那一版）。撞名拿下一个 `(n)`，
     返回它的名字。"""
     return await library.add(
-        session, shelf(task.id), filename, data, await _handle(session, by), None
+        session,
+        shelf(task.id),
+        _material(filename),
+        data,
+        await _handle(session, by),
+        None,
     )
 
 
@@ -349,6 +380,88 @@ async def remove_file(session: AsyncSession, task: Task, *, by: int, name: str) 
     await record(session, task, by=by, changes=files_changed(removed=[name]))
 
 
+# --- 起始代码 ---------------------------------------------------------------------
+
+
+async def starter_file(session: AsyncSession, task_id: int) -> LibraryFileRecord | None:
+    """这道题现在的起始代码；没有是 None。"""
+    return await session.scalar(
+        select(LibraryFileRecord).where(
+            shelf(task_id).holds(),
+            LibraryFileRecord.superseded_at.is_(None),
+            LibraryFileRecord.name == STARTER,
+        )
+    )
+
+
+async def _spooled(location: str, key: str, size: int, into: BinaryIO) -> None:
+    """存储里 ``(location, key)`` 那一份字节，一段一段写进 ``into``。"""
+    if size:
+        async for piece in blob_store.store(location).chunks(key, 0, size - 1):
+            into.write(piece)
+    into.seek(0)
+
+
+async def _refuse_unless_starter(data: library.Incoming) -> None:
+    """出题人上传的这一份能不能作为起始代码，当场就说，不等到有人领题。"""
+    with tempfile.TemporaryFile() as spool:
+        if isinstance(data, library.Upload):
+            await _spooled(data.location, data.key, data.size, spool)
+        elif isinstance(data, bytes):
+            spool.write(data)
+            spool.seek(0)
+        else:
+            shutil.copyfileobj(data, spool)
+            data.seek(0)
+            spool.seek(0)
+        await asyncio.to_thread(starter_archive.check, spool)
+
+
+async def set_starter(
+    session: AsyncSession, task: Task, *, by: int, data: library.Incoming
+) -> str:
+    """把起始代码设成这一份（查过能解开），不另记一版（调用方把它算进自己那一版）。
+    已经有一份的，旧的留作历史。返回 `ADDED` 或 `REPLACED`。"""
+    await _refuse_unless_starter(data)
+    handle = await _handle(session, by)
+    if await library.exists(session, shelf(task.id), STARTER):
+        await library.replace(
+            session, shelf=shelf(task.id), name=STARTER, data=data, by=handle or ""
+        )
+        return REPLACED
+    await library.add(session, shelf(task.id), STARTER, data, handle, None)
+    return ADDED
+
+
+async def set_starter_upload(
+    session: AsyncSession,
+    task: Task,
+    *,
+    by: int,
+    attachment_id: int,
+    uploads: AttachmentService,
+) -> str:
+    """发题页、芝士写的修改里带的起始代码：这个人自己先传成附件的那一份。"""
+    [(content, _)] = await _own_uploads(uploads, [attachment_id], by)
+    return await set_starter(session, task, by=by, data=content)
+
+
+async def remove_starter(session: AsyncSession, task: Task, *, by: int) -> None:
+    """不要起始代码了（连同换下来的几版），记一版。之后领题的人拿到的是空仓库。"""
+    await library.remove(session, shelf=shelf(task.id), name=STARTER)
+    await record(session, task, by=by, changes={STARTER_CHANGE: REMOVED})
+
+
+async def fetch_starter(session: AsyncSession, task: Task, into: Path) -> int | None:
+    """领题这一刻的起始代码写到 ``into``，答题目现在是第几版；没有起始代码是 None。"""
+    row = await starter_file(session, task.id)
+    if row is None:
+        return None
+    with into.open("wb") as out:
+        await _spooled(row.location, row.blob_key, row.bytes, out)
+    return await current_number(session, task.id) or 1
+
+
 # --- 项目里的 agent ----------------------------------------------------------------
 
 
@@ -373,6 +486,16 @@ async def section_for_project(
         f"用 `cheese library get 题目/<名字>`。说明、提交内容和公开的评分要点在 "
         f"`library/题目/{BRIEF}`。",
     ]
+    started = await session.scalar(
+        select(ProjectForge.starter_revision).where(
+            ProjectForge.project_id == project.id
+        )
+    )
+    if started is not None:
+        lines.append(
+            f"代码仓库 main 上的第一个提交是题目第 {started} 版的起始代码，"
+            f"由平台提交；题目现在的那一份在 `library/题目/{STARTER}`。"
+        )
     if revision.number > 1:
         lines.append(
             f"第 {revision.number} 版改了：{summary(revision.changes or {})}。"

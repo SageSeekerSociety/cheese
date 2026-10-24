@@ -49,6 +49,17 @@ export function removeTaskFile(taskId: number, name: string): Promise<{ removed:
   return axiosRequest({ url: base(taskId), method: 'DELETE', params: { name } }, true)
 }
 
+/** 把一份 .zip 设成起始代码（已有的那份留作历史）。压缩包不合格时服务端说为什么。 */
+export async function setTaskStarter(taskId: number, file: File): Promise<{ name: string; size: number }> {
+  const upload = await sendBytes(taskId, file)
+  return axiosRequest({ url: `/tasks/${taskId}/starter`, method: 'PUT', data: { upload } }, true)
+}
+
+/** 不要起始代码了：之后领题的人拿到的是平台初始化的仓库。 */
+export function removeTaskStarter(taskId: number): Promise<{ removed: boolean }> {
+  return axiosRequest({ url: `/tasks/${taskId}/starter`, method: 'DELETE' }, true)
+}
+
 /** 一份材料的字节。门在服务端：带的是这次请求自己的 Authorization。`downloadFile`
  *  补在末尾的 `download=true` 这里没有对应的参数，后端不看它。 */
 export function taskFileRawUrl(taskId: number, name: string): string {

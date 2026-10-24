@@ -57,7 +57,7 @@ from app.domain.membership.services import (
     OwnershipService,
 )
 from app.domain.onboarding.start import start_steps
-from app.domain.project.forge import follow_github_rename
+from app.domain.project.forge import follow_github_rename, starter_revision
 from app.domain.project.github_app import (
     github_app_read_token_for_project,
     parse_github_repo,
@@ -407,6 +407,9 @@ async def get_project(
     payload["challenge_deadline"] = (
         {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
     )
+    # Which version of the 题目 the repository's starter code came from
+    # (#4767); null when the repository began without starter code.
+    payload["starter_revision"] = await starter_revision(project_id, db)
     _with_standing(
         payload,
         await standing(db, project_id, actor.handle) if actor.authenticated else None,
