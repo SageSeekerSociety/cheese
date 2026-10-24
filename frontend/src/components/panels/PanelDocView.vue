@@ -445,7 +445,7 @@ async function exportPdf() {
     const html = await documentPrintHtml({
       title: docTitle.value || 'document',
       markdown: exportMarkdown(props.session.doc),
-      names: { mentionNames: props.mentionNames, topicTitles: {} },
+      names: { mentionNames: props.mentionNames ?? {}, topicTitles: {} },
       image: props.imageData,
     })
     await props.savePdf(html, `${fileName(docTitle.value || 'document')}.pdf`)

@@ -84,7 +84,10 @@ async def document_pdf(
     return Response(
         content=made,
         media_type="application/pdf",
-        headers={**INERT_HEADERS, "Content-Disposition": 'attachment; filename="document.pdf"'},
+        headers={
+            **INERT_HEADERS,
+            "Content-Disposition": 'attachment; filename="document.pdf"',
+        },
     )
 
 

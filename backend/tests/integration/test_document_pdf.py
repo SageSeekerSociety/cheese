@@ -46,7 +46,9 @@ class Renderer:
         )
 
 
-def _through(monkeypatch, renderer: Renderer, endpoint: str | None = "http://render.test"):
+def _through(
+    monkeypatch, renderer: Renderer, endpoint: str | None = "http://render.test"
+):
     """The route talks to ``renderer`` instead of a printing browser."""
     monkeypatch.setattr(settings, "fetch_browser_endpoint", endpoint)
 
@@ -129,7 +131,9 @@ def test_a_deployment_without_a_printer_says_so(client, monkeypatch):
     assert printer.calls == []
 
 
-def test_a_renderer_that_answers_something_other_than_a_pdf_is_refused(client, monkeypatch):
+def test_a_renderer_that_answers_something_other_than_a_pdf_is_refused(
+    client, monkeypatch
+):
     _, document = _document(client)
     _through(monkeypatch, Renderer(made=SOMETHING_ELSE))
 
