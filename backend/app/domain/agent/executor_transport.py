@@ -701,6 +701,30 @@ class RemoteClient:
             else os.environ.get("CHEESE_TOKEN", "")
         )
 
+    def transcript_chunk(self, params):
+        """One chunk of this session's transcript, from the platform.
+
+        The transcript itself is on the session host, which this machine does
+        not reach; the platform relays the read to the session's runner and
+        hands back the bytes (`topic_transcript_chunks`). ``params`` is an
+        offset and a size — never a path — so only this session's own file is
+        reachable through it.
+        """
+        topic = os.environ.get("CHEESE_TOPIC")
+        if not topic:
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session cannot read its transcript: it names no room"
+            )
+        query = f"offset={int(params['offset'])}&size={int(params['size'])}"
+        answer = self.platform_request(
+            {"method": "GET", "path": f"/topics/{topic}/session-transcript?{query}"}
+        )
+        payload = json.loads(answer["value"]["stdout"])
+        chunk = payload.get("data")
+        if not isinstance(chunk, dict):
+            raise RuntimeError("The platform answered no transcript chunk")
+        return chunk
+
     def platform_request(self, args):
         method = args.get("method", "GET").upper()
         path = args.get("path", "")
