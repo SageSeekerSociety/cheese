@@ -311,7 +311,7 @@ async def update_task(
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
     package_after = await _package_parts(service, task)
-    changes = {
+    changes: dict = {
         part: True
         for part, value in package_after.items()
         if package_before[part] != value
