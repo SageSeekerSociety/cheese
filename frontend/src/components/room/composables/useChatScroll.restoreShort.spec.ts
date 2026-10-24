@@ -132,7 +132,17 @@ describe('回到一段对话时内容还没长够', () => {
       row.getBoundingClientRect = () => {
         const above = heights.slice(0, i).reduce((a, b) => a + b, 0)
         const top = -scrollTop + above
-        return { top, bottom: top + heights[i], height: heights[i], left: 0, right: 300, width: 300, x: 0, y: top }
+        return {
+          top,
+          bottom: top + heights[i],
+          height: heights[i],
+          left: 0,
+          right: 300,
+          width: 300,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        }
       }
       el.appendChild(row)
       return row
@@ -146,6 +156,7 @@ describe('回到一段对话时内容还没长够', () => {
       width: 300,
       x: 0,
       y: 0,
+      toJSON: () => ({}),
     })
     Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => paneHeight })
     Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => heights.reduce((a, b) => a + b, 0) })
