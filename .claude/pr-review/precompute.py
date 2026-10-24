@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -103,17 +104,46 @@ def refs(repo, rev, name):
 DEFINITION = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|const|let|type|interface|enum)\s|^\s*[A-Za-z_]\w*\s*(?::[^=]+)?=")
 
 
-def count_refs(repo, rev, names):
-    """Matches per name in one git grep: -o prints every whole-word hit on its own line."""
+#: git's multi-pattern matcher is quadratic in the number of patterns: one grep with 313
+#: of them took 341 s on #4070, and 40 took 12.6 s. Ten at a time costs ~1.5 s each, so
+#: the same list in batches is seconds. ripgrep does it with one Aho-Corasick scan, and
+#: is preferred when the caller can give us a checked-out tree to scan.
+REF_CHUNK = 10
+
+
+def _match_counts(text, names):
+    counts = dict.fromkeys(names, 0)
+    for w in text.split():
+        if w in counts:
+            counts[w] += 1
+    return counts
+
+
+def count_refs(repo, rev, names, tree=None):
+    """Whole-word matches per name at `rev` (`-o` prints every hit on a line of its own).
+
+    With `tree` (a checked-out revision the caller vouches equals `rev`) ripgrep does
+    the scan in one pass. Otherwise the names go to `git grep` in batches of REF_CHUNK,
+    because git's own matcher slows down with the size of the pattern list."""
     if not names:
         return {}
     pat = "\n".join(names) + "\n"
-    p = subprocess.run(["git", "-C", str(repo), "grep", "-o", "-h", "-I", "-w", "-F", "-f", "/dev/stdin", rev],
-                       input=pat, capture_output=True, text=True)
+    if tree and shutil.which("rg"):
+        p = subprocess.run(
+            ["rg", "-o", "-w", "-F", "-f", "/dev/stdin", "--no-messages", "--no-ignore",
+             "--hidden", "-g", "!.git", str(tree)],
+            input=pat, capture_output=True, text=True,
+        )
+        return _match_counts(p.stdout, names)
     counts = dict.fromkeys(names, 0)
-    for w in p.stdout.split():
-        if w in counts:
-            counts[w] += 1
+    for i in range(0, len(names), REF_CHUNK):
+        batch = names[i:i + REF_CHUNK]
+        p = subprocess.run(
+            ["git", "-C", str(repo), "grep", "-o", "-h", "-I", "-w", "-F", "-f", "/dev/stdin", rev],
+            input="\n".join(batch) + "\n", capture_output=True, text=True,
+        )
+        for name, n in _match_counts(p.stdout, batch).items():
+            counts[name] += n
     return counts
 
 
@@ -130,7 +160,7 @@ def removed_identifiers(repo, base, head):
     return list(names)
 
 
-def section_symbols(repo, base, head):
+def section_symbols(repo, base, head, tree=None):
     out = ["## 1. 公开符号与引用"]
     try:
         names = git(repo, "diff", "--name-status", "--no-renames", base, head).splitlines()
@@ -174,10 +204,15 @@ def section_symbols(repo, base, head):
     cands = [(path, n) for path, n in kept + list(changed_set) if (path, n) not in added_set][:MAX_SYMBOLS]
     cands += [(None, n) for n in removed_identifiers(repo, base, head)][:MAX_REMOVED]
     names = list(dict.fromkeys(n for _, n in cands))
-    now_counts = count_refs(repo, head, names)
+    # The review tree is a clean checkout of `head` (prepare pins it), so ripgrep can scan
+    # it directly; the base side has no tree here and goes through batched `git grep`.
+    now_counts = count_refs(repo, head, names, tree=tree)
     # -o counts matches, not lines: a definition line that repeats its name counts twice, so the
-    # pre-filter is loose (<= 2) and the line counts below are the exact test.
-    single = {n for n in names if now_counts.get(n, 0) <= 2}
+    # pre-filter is loose (<= 2) and the line counts below are the exact test. A name with no
+    # hit at all is not a candidate either — the loop would reject it, but only after a whole
+    # `git grep` of its own. Most identifiers on a deleted line land here, and grepping each
+    # one cost minutes on a real PR (#4070: 6 of them).
+    single = {n for n in names if 0 < now_counts.get(n, 0) <= 2}
     before_counts = count_refs(repo, base, [n for n in names if n in single])
     done = set()
     for path, n in cands:
@@ -235,7 +270,7 @@ def main(argv=None):
     tree = a.tree or a.repo
     body = Path(a.pr_body).read_text(errors="replace") if a.pr_body and Path(a.pr_body).is_file() else ""
     secs = []
-    for fn in (lambda: section_symbols(a.repo, a.base, a.head),
+    for fn in (lambda: section_symbols(a.repo, a.base, a.head, a.tree),
                lambda: section_claims(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_claims)):
         try:
             secs.append("\n".join(fn()))

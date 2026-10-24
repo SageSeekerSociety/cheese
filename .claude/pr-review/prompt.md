@@ -64,10 +64,13 @@ you pass it. Say how many, at which effort — never a seat or a model name:
 which ones a session has changes between sessions, and this method has to run
 on whatever it was handed.
 
-Every subagent in this method is read-only. It reads files with the read-only
-tools its harness has (Read, Grep, Glob, or the equivalents) and nothing else:
-no Bash, no command, no edit. Whoever runs this review runs the commands, in
-step 4b, and says afterwards which candidates it could not bring to evidence.
+Every subagent in this method is read-only. It reads files, and it searches
+them — `Read`, `Grep`, `Glob`, or, where the harness offers no search tool, a
+read-only shell command such as `grep`, `rg`, `find`, `ls`, `sed -n` or
+`git grep`. Nothing that builds, runs a test, installs, writes or changes
+state: no edit, no suite, no script that has side effects. Whoever runs this
+review runs those, in step 4b, and says afterwards which candidates it could
+not bring to evidence.
 
 A stage runs to its end before the next one starts, so the largest count on
 the topology line is the most subagents ever running at once. Groups are
@@ -166,6 +169,10 @@ the merge base, its own files as `review_files`, the injected rules, the
 precomputed facts (`PRECOMPUTED.md`) and bundle sections below, and the text of
 this step. A group never sees another group's files or its candidates.
 
+A reviewer that has not returned in 15 minutes will not return in this round:
+stop waiting, record its files under Not covered with that reason, and say in
+the summary that the group did not finish. Do not start a second copy of it.
+
 Write the group's diff to a file first (`git -C <tree> diff <base> HEAD --
 <its files>`), so the reviewer reads it instead of building one.
 
@@ -193,8 +200,9 @@ The text to give it is:
 - 需要更多上下文，读对应的文件。
 - 审完了，把候选一并返回。
 
-我们的追加：你没有跑命令的权限——判断只能来自代码本身。读下来仍然说不准、而且这条判断会改变结论的，
-不要写进评论，单独标出来交给协调者，写清「要跑哪条命令、预期什么结果」。
+我们的追加：你只读——可以读文件、可以 grep / rg / find 这类搜索，但不跑测试、不构建、不写文件。
+判断只能来自代码本身。读下来仍然说不准、而且这条判断会改变结论的，不要写进评论，单独标出来交给协调者，
+写清「要跑哪条命令、预期什么结果」。
 ```
 
 What the reviewer must also know:
