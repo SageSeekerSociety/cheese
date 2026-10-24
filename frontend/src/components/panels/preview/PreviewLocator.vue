@@ -7,8 +7,18 @@ const props = defineProps<{
   note: string
   /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
   busy?: boolean
+  /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
+  canComment?: boolean
+  /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
+  commentError?: string
 }>()
-const emit = defineEmits<{ 'update:note': [note: string]; send: []; cancel: [] }>()
+const emit = defineEmits<{
+  'update:note': [note: string]
+  send: []
+  /** 把这句话连同这一处挂成一条评论，而不是发进对话。 */
+  comment: []
+  cancel: []
+}>()
 /** 不在弹出时抢焦点。这个框是读者选中一段原文之后出来的，而页面上的选中只在窗口里
  *  焦点还留在正文上时才画——把光标交给输入框，橙色就跟着灭了，读者看不到自己选的是
  *  哪一段。要打字，点一下就进来。 */
@@ -17,6 +27,16 @@ function send(event: KeyboardEvent | MouseEvent) {
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
   event.preventDefault()
   emit('send')
+}
+
+/** 同一句话，另一条出口：挂成这一处的评论，别人能回、能解决。
+ *
+ *  指认本身不是指令——读者可能想让队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定（和概览文档那一栏同一套）。 */
+function comment(event: MouseEvent) {
+  if (props.busy || !props.canComment) return
+  event.preventDefault()
+  emit('comment')
 }
 </script>
 
@@ -37,10 +57,16 @@ function send(event: KeyboardEvent | MouseEvent) {
         @keydown.enter="send"
         @keydown.esc.prevent="emit('cancel')"
       />
+      <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
+           没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
+      <BaseButton v-if="canComment" kind="secondary" size="sm" :disabled="!note.trim() || busy" @click="comment">
+        {{ t('work.room.comments.comment') }}
+      </BaseButton>
       <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
         {{ t('work.room.preview.send') }}
       </BaseButton>
       <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
+      <p v-if="commentError" class="locator__error" role="alert">{{ commentError }}</p>
     </div>
   </Transition>
 </template>
@@ -56,6 +82,7 @@ function send(event: KeyboardEvent | MouseEvent) {
   flex: none;
   margin: 0 12px 12px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 12px;
@@ -102,6 +129,14 @@ function send(event: KeyboardEvent | MouseEvent) {
 }
 .locator__input:focus {
   border-color: var(--accent);
+}
+/* 挂评论失败的那一句：撑满一行，跟着下面两条按钮排。 */
+.locator__error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger);
 }
 @container (max-width: 440px) {
   .locator {

@@ -167,6 +167,32 @@ async function postFileComment(payload: { content: string; quote: string | null;
   await props.comments?.post(payload)
   clearLocator()
 }
+
+/** 指认条上的「评论」出口：这句话挂成这一处的评论，不走对话。
+ *
+ *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
+const commentError = ref('')
+// 撤掉指认就把它一起撤掉：那句话说的是上一处，收起来之后再弹出来不该还挂着。
+const locatorCancel = () => {
+  commentError.value = ''
+  clearLocator()
+}
+async function commentHere() {
+  const body = locatorNote.value.trim()
+  if (!body || !props.comments) return
+  // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
+  const target = commentPick.value
+  commentError.value = ''
+  try {
+    await postFileComment({ content: body, quote: target?.quote ?? null, anchor: target?.anchor ?? null })
+  } catch (cause) {
+    // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
+    commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    return
+  }
+  if (!props.comments.open.value) props.comments.toggle()
+}
 // 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
 // `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
 // 样子，所以 `nameOf`/`avatarOf` 在这一栏是必填的 prop，不接就编译不过。
@@ -376,8 +402,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
       :busy="pageLocator.sending.value"
+      :can-comment="!!commentTarget"
+      :comment-error="commentError"
       @send="sendLocator"
-      @cancel="clearLocator"
+      @comment="commentHere"
+      @cancel="locatorCancel"
     />
 
     <v-dialog

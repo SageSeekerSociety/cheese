@@ -392,10 +392,14 @@
     }
   },
   "previewPanelLocator": {
-    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+    },
+    "s2": {
+      "name": "This file takes no comments",
+      "note": "A library original or a message attachment takes no comments, so only 'send' is offered."
     }
   },
   "previewPanelPickToggle": {

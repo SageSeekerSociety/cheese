@@ -6,6 +6,7 @@
  * 三分支走的是同一套事件（`PanelPreview.document.spec.ts` 里另有端到端的一条），
  * 这里只盯这两条规则，所以直接挂 `PanelPreviewView`、把 props 递进去。
  */
+import { computed, reactive, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -109,11 +110,11 @@ it('屏幕上换成另一份文件时，这条指认自己撤掉', async () => {
   selection.removeAllRanges()
   selection.addRange(range)
   await fireEvent.mouseUp(md)
-  expect(ui.queryByPlaceholderText('说明要改什么')).toBeTruthy()
+  expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeTruthy()
 
   await ui.rerender(props('output/另一份.md', '# 配置\n\n另一句话。\n'))
 
-  expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
 })
 
@@ -130,11 +131,49 @@ async function selectPassage(ui: ReturnType<typeof mount>) {
   await fireEvent.mouseUp(md)
 }
 
+it('选中一段之后「评论」这条出口把它交给评论，而不是发进对话', async () => {
+  // 这一处指认不该被当成「叫队友改」：同一句话，读者点「评论」就是留一条挂在这儿的评论。
+  // 挂在面板这一层，因为出事的就是这里——指认条把位置和原文递给评论栏那一段接线。
+  const posted: { content: string; quote: string | null; anchor: unknown }[] = []
+  const submit = vi.fn().mockReturnValue(true)
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async (payload: { content: string; quote: string | null; anchor: unknown }) => void posted.push(payload),
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ submitQuestion: submit, comments: bundle })
+  await selectPassage(ui)
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里数字不对')
+  // 两条出口都在指认条上；页面另有一颗开评论栏的按钮，也叫「评论」，所以按条找。
+  const bar = ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!
+  const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')
+  expect(commentBtn).toBeTruthy()
+  await fireEvent.click(commentBtn!)
+
+  await waitFor(() => expect(posted).toHaveLength(1))
+  expect(posted[0].content).toBe('这里数字不对')
+  // 发的是评论，不是对话里那句「在 X 的 Y：…」。
+  expect(submit).not.toHaveBeenCalled()
+  expect(ui.emitted().locate ?? []).toHaveLength(0)
+  // 这一处的原文跟着进去，评论才落在选中的那几个字上。
+  expect(posted[0].quote).toContain('重试 3 次')
+})
+
 it('选中一段发出去时带的是带文件身份的 text-range 引用', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount({ submitQuestion: submit })
   await selectPassage(ui)
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '改这句')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '改这句')
   await fireEvent.click(ui.getByText('发送'))
 
   const request = submit.mock.calls[0]?.[0]
@@ -159,7 +198,7 @@ it('拿不到文件身份时退回拼一句话那条老路', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount({ submitQuestion: submit, docIdentity: null })
   await selectPassage(ui)
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '改这句')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '改这句')
   await fireEvent.click(ui.getByText('发送'))
 
   expect(submit).not.toHaveBeenCalled()
