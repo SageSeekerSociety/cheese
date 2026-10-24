@@ -482,6 +482,10 @@ def judge(http_gateway, key: str, task, outcome: Outcome) -> dict:
         f"改了设置：{json.dumps(c, ensure_ascii=False, default=str)[:200]}"
         for c in outcome.changes
     ]
+    # Its own routines are hers alone and pass no authorization check, so
+    # they are in no list above: without them a routine it did set up reads
+    # to the judge as one it only claims to have.
+    did += [f"建了例行事务（{trigger}）：{words}" for trigger, words in outcome.routines]
     prompt = (
         f"<对话>\n{said}\n</对话>\n<芝士的操作>\n"
         + ("\n".join(did) or "无")
