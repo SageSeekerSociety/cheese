@@ -26,6 +26,7 @@ from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.scopes import MemoryScope
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.place import Place, doc_text_of
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic.models import Topic
 from app.domain.topic.reads import open_rooms
@@ -138,6 +139,9 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 项目所出自的题目的阶段，和这个项目在每个阶段上的状态
+    # (`task.claims.stages_for_project`)。题目不分阶段、或项目不出自题目时是空的。
+    stages: list[StageProgress]
     # 从题目来的项目里「题目」那一段（`task.package.section_for_project`）：第几版、
     # 材料在哪、这一版改了什么。别的项目是 None，开场里没有这一段。
     task_package: str | None

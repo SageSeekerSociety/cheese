@@ -29,6 +29,7 @@
   "revisedOf": "Version {version}: {changes}",
   "revisedPartDescription": "description",
   "revisedPartRubric": "scoring points",
+  "revisedPartStages": "stages",
   "revisedPartSubmission": "submission items",
   "revisedPublished": "published",
   "revisedRemoved": "removed {names}",

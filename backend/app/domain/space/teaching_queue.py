@@ -72,13 +72,16 @@ async def teaching_queue(session: AsyncSession, user_id: int) -> Sequence[Waitin
         .group_by(TaskMembership.task_id)
     )
 
+    # Each stage is graded on its own, so "the latest version" is per stage:
+    # a later stage reviewed first leaves the earlier one still waiting.
     latest = (
         select(
             TaskSubmission.membership_id,
+            TaskSubmission.stage,
             func.max(TaskSubmission.version).label("version"),
         )
         .where(TaskSubmission.deleted_at.is_(None))
-        .group_by(TaskSubmission.membership_id)
+        .group_by(TaskSubmission.membership_id, TaskSubmission.stage)
         .subquery()
     )
     reviewed = (
@@ -101,6 +104,7 @@ async def teaching_queue(session: AsyncSession, user_id: int) -> Sequence[Waitin
             latest,
             and_(
                 latest.c.membership_id == TaskSubmission.membership_id,
+                latest.c.stage == TaskSubmission.stage,
                 latest.c.version == TaskSubmission.version,
             ),
         )

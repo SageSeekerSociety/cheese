@@ -13,7 +13,7 @@ from app.api.routes.tasks._common import (
 from app.api.task_deps import _attachment_service
 from app.api.task_serialization import (
     _enrich_task_models,
-    _submission_schema_to_api,
+    _task_requirements,
     _task_to_api_model,
 )
 from app.api.task_teaching import (
@@ -37,12 +37,14 @@ from app.domain.space.repositories import (
 )
 from app.domain.task import package
 from app.domain.task.inputs import map_approve_type
-from app.domain.task.rubric import rubric_lines, rubric_to_api
+from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+from app.domain.task.stages import stage_lines, stage_news, with_stage_index
+from app.domain.task.submission_state import refresh_task_claims
 from app.domain.task_notices import notices as task_notices
 
 
@@ -275,13 +277,23 @@ async def update_task(
         )
         task.category_id = effective_category_id
 
+    # 阶段先写：已交的提交、提交项和评分要点按阶段的 id 跟着它们的阶段挪到新位置，
+    # 再由下面两份（若给了）整份替换 —— 那两份也按 id 指阶段，所以不会和阶段错开。
+    if payload.stages is not None:
+        await service.replace_stages(task.id, stage_lines(payload.stages))
+    keys = await service.stage_keys(task.id)
+
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
-        await service.replace_submission_schema(task.id, payload.submission_schema)
+        await service.replace_submission_schema(
+            task.id, with_stage_index(payload.submission_schema, keys)
+        )
 
     # 评分要点：同样整份替换。
     if payload.rubric is not None:
-        await service.replace_rubric(task.id, rubric_lines(payload.rubric))
+        await service.replace_rubric(
+            task.id, rubric_lines(with_stage_index(payload.rubric, keys))
+        )
     if payload.rubric_public is not None:
         task.rubric_public = payload.rubric_public
 
@@ -302,6 +314,10 @@ async def update_task(
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
     package_after = await _package_parts(service, task)
+    # A stage added, dropped, moved or given another due date changes what every
+    # claim derives to; re-derive them in this same transaction.
+    if package_before[package.STAGES] != package_after[package.STAGES]:
+        await refresh_task_claims(db, task.id)
     changes = {
         part: True
         for part, value in package_after.items()
@@ -318,16 +334,23 @@ async def update_task(
         )
         changes |= package.files_changed(added=added)
     await package.record(db, task, by=user_id, changes=changes)
-    # What a taker is told about is what to hand in and how it is scored: the
-    # form and the rubric's lines. Showing or hiding the rubric is a new version
-    # of the package but changes neither, and the editor sends it on every save.
-    requirements_changed = (
-        package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
-        or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
-    )
-    if requirements_changed and task.approved == 0:
-        await task_notices.requirements_changed(
-            db, task=task, by=user_id, at=task.updated_at
+    # What a taker is told about is what asks something new of them: the form,
+    # the rubric's lines, a stage added or removed, a stage's due date. A
+    # renamed or reordered stage, or the rubric shown or hidden (the editor
+    # sends that on every save), is a new version of the package and no news.
+    if task.approved == 0:
+        await task_notices.task_changed(
+            db,
+            task=task,
+            requirements=(
+                package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
+                or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
+            ),
+            stages=stage_news(
+                package_before[package.STAGES], package_after[package.STAGES]
+            ),
+            by=user_id,
+            at=task.updated_at,
         )
     # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
     # runs after the response has gone out, so a client told a task is approved
@@ -335,11 +358,8 @@ async def update_task(
     # Same reason as the commit in ``create_task``.
     await db.commit()
 
-    # Fetch submissionSchema for response
-    schema_entries = await service.list_submission_schema(task.id)
     task_response = _task_to_api_model(task, include_private_teaching=True)
-    task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
-    task_response["rubric"] = rubric_to_api(await service.list_rubric(task.id))
+    task_response.update(await _task_requirements(service, task.id))
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
@@ -348,14 +368,12 @@ async def update_task(
 
 
 async def _package_parts(service: TaskService, task) -> dict:
-    """题目内容里会记版的那几样现在的样子（`package` 的 `changes` 那几格）。"""
+    """题目内容里会记版的那几样现在的样子（`package` 的 `changes` 那几格）。阶段、
+    提交内容和评分要点按读者看到的样子比（提交项和评分要点用阶段的 id 指阶段）。"""
+    requirements = await _task_requirements(service, task.id)
     return {
         package.DESCRIPTION: (task.name, task.intro, task.description),
-        package.SUBMISSION: _submission_schema_to_api(
-            await service.list_submission_schema(task.id)
-        ),
-        package.RUBRIC: (
-            rubric_to_api(await service.list_rubric(task.id)),
-            task.rubric_public,
-        ),
+        package.STAGES: requirements["stages"],
+        package.SUBMISSION: requirements["submissionSchema"],
+        package.RUBRIC: (requirements["rubric"], task.rubric_public),
     }

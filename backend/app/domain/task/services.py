@@ -42,6 +42,7 @@ from app.domain.task.repositories import (
     TaskSubmissionReviewRepository,
     TaskSubmissionSchemaRepository,
 )
+from app.domain.task.stages import list_stages_for_tasks, stage_keys, stage_ref
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
     refresh_completion_status,
@@ -742,6 +743,12 @@ class TaskSubmissionService:
             session=session,
         )
 
+    async def _stage_keys(self, task_id: int) -> list[str]:
+        """The task's stage ids in order; none without a session to read them."""
+        if self._session is None:
+            return []
+        return await stage_keys(self._session, task_id)
+
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
         return {
@@ -786,6 +793,7 @@ class TaskSubmissionService:
         membership: TaskMembership,
         entries: list[TaskSubmissionEntry],
         review: TaskSubmissionReview | None,
+        keys: Sequence[str],
     ) -> dict:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
@@ -831,6 +839,8 @@ class TaskSubmissionService:
             "member": member_summary,
             "submitter": submitter_summary,
             "version": submission.version,
+            # The stage it hands in, by the stage's id (None without stages).
+            "stage": stage_ref(submission.stage, keys),
             # 交的是题目的第几版；有版本之前交的是 None。
             "packageRevision": submission.package_revision,
             "createdAt": created_ms,
@@ -840,22 +850,26 @@ class TaskSubmissionService:
         }
 
     async def _entries_from(
-        self, contents: list[dict], *, task_id: int, submitter_id: int
+        self, contents: list[dict], *, task_id: int, stage: int, submitter_id: int
     ) -> list[tuple[int, str | None, int | None, str | None]]:
         """Turn the request's entries into ``(index, text, attachment_id, prompt)``.
 
-        ``prompt`` is the name of the form item at the entry's position, read
-        now, so the entry keeps it however the form changes afterwards.
+        ``prompt`` is the name of the form item at the entry's position among
+        the items of the entry's stage, read now, so the entry keeps it however
+        the form changes afterwards.
 
         A file entry may only name a file the submitter uploaded. The submission
         view hands out the file's storage link and name, so accepting any id here
         would let a participant read someone else's upload by guessing its id.
         Checked before anything is written, so a refused request changes nothing.
         """
-        prompts = {
-            item.index: item.description
-            for item in await self._schema_repo.list_by_task_id(task_id)
-        }
+        prompts = dict(
+            enumerate(
+                item.description
+                for item in await self._schema_repo.list_by_task_id(task_id)
+                if item.stage == stage
+            )
+        )
         rows: list[tuple[int, str | None, int | None, str | None]] = []
         for idx, item in enumerate(contents):
             attachment_id_raw = item.get("attachmentId")
@@ -888,8 +902,10 @@ class TaskSubmissionService:
         participant_id: int,
         submitter_id: int,
         contents: list[dict],
+        stage: int = 0,
     ) -> dict:
-        """Create a new submission for a participant, bumping its version."""
+        """Create a new submission for a participant in one stage, bumping its
+        version (versions count across the membership's stages)."""
         membership = await self._membership_repo.list_memberships_for_task(
             task_id=task_id,
             approved=None,
@@ -905,13 +921,17 @@ class TaskSubmissionService:
         new_version = latest_version + 1
 
         entry_tuples = await self._entries_from(
-            contents, task_id=participant.task_id, submitter_id=submitter_id
+            contents,
+            task_id=participant.task_id,
+            stage=stage,
+            submitter_id=submitter_id,
         )
 
         submission = await self._submission_repo.create_submission(
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
+            stage=stage,
             # 交的是题目的哪一版：题目之后再改，这一份按它交的那一版看。
             package_revision=(
                 await package.current_number(self._session, participant.task_id)
@@ -940,7 +960,16 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
+
+    async def stage_of_version(self, participant_id: int, version: int) -> int | None:
+        """The stage a live version of this membership hands in; None when there
+        is no such version."""
+        submission = await self._submission_repo.get_by_membership_and_version(
+            membership_id=participant_id, version=version
+        )
+        return submission.stage if submission is not None else None
 
     async def modify_submission(
         self,
@@ -970,7 +999,10 @@ class TaskSubmissionService:
             raise NotFoundError.for_resource("submission", version)
 
         entry_tuples = await self._entries_from(
-            contents, task_id=participant.task_id, submitter_id=submitter_id
+            contents,
+            task_id=participant.task_id,
+            stage=submission.stage,
+            submitter_id=submitter_id,
         )
 
         # Soft-delete existing entries for this submission.
@@ -1003,6 +1035,7 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
 
     async def list_submissions(
@@ -1010,6 +1043,7 @@ class TaskSubmissionService:
         *,
         task_id: int,
         participant_id: int | None = None,
+        stage: int | None = None,
         all_versions: bool = False,
         query_review: bool = False,
         reviewed: bool | None = None,
@@ -1021,6 +1055,7 @@ class TaskSubmissionService:
         submissions = await self._submission_repo.list_submissions(
             task_id=task_id,
             participant_id=participant_id,
+            stage=stage,
             all_versions=all_versions,
             reviewed=reviewed,
             limit=limit,
@@ -1031,6 +1066,7 @@ class TaskSubmissionService:
         total = await self._submission_repo.count_submissions(
             task_id=task_id,
             participant_id=participant_id,
+            stage=stage,
             all_versions=all_versions,
             reviewed=reviewed,
         )
@@ -1055,6 +1091,7 @@ class TaskSubmissionService:
             else {}
         )
 
+        keys = await self._stage_keys(task_id)
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
@@ -1069,6 +1106,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=keys,
             )
             items.append(dto)
 
@@ -1114,6 +1152,11 @@ class TaskSubmissionService:
             submission_ids
         )
 
+        stages_by_task = (
+            await list_stages_for_tasks(self._session, list({t.id for _, _, t in rows}))
+            if self._session is not None
+            else {}
+        )
         items: list[dict] = []
         for submission, membership, task in rows:
             entries = entries_by_submission.get(submission.id, [])
@@ -1123,6 +1166,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=[stage.key for stage in stages_by_task.get(task.id, [])],
             )
             dto["taskId"] = task.id
             dto["taskTitle"] = task.name
@@ -1139,12 +1183,12 @@ class TaskSubmissionService:
     ) -> dict:
         """课程那一屏的三个数字：交了多少、还等多少人、多少份等着看。
 
-        **没交的人数 = 报名人数 − 交过东西的人数**（交过东西的人数就是
-        ``count_for_space``，因为那条查询每人只算最新一版）。``None`` 表示那个
-        数字这次拿不到 —— 前端对此的处理是整块不显示，而不是画一个 0。
+        **没交的人数 = 报名人数 − 交过东西的人数**；等着看的是每人每个阶段最新那
+        一版里还没评审的份数。``None`` 表示那个数字这次拿不到 —— 前端对此的处理是
+        整块不显示，而不是画一个 0。
         """
-        submissions = await self._submission_repo.count_for_space(
-            space_id=space_id, task_id=task_id, reviewed=None
+        submissions = await self._submission_repo.count_members_handed_in_for_space(
+            space_id=space_id, task_id=task_id
         )
         pending = await self._submission_repo.count_for_space(
             space_id=space_id, task_id=task_id, reviewed=False

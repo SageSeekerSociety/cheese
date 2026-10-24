@@ -1,11 +1,11 @@
-"""一道题目交给领取者的那一份：说明、提交内容、评分要点和材料，以及它的每一版
+"""一道题目交给领取者的那一份：说明、阶段、提交内容、评分要点和材料，以及它的每一版
 (#4767 第一节)。
 
 材料是题目资料库（`Shelf.of_task`）里现在的每一份文件，字节走 `app.core.blob_store`，
 替换时旧的一份留作历史（`superseded_at`），和项目的资料库是同一套记录。
 
 题目内容每变一次，就记一版（`TaskPackageRevision`），写明改了哪几样：发布时是第 1 版，
-之后改说明、提交内容、评分要点，放进、替换、删掉一份材料，各记下一版。每记一版，题目
+之后改说明、阶段、提交内容、评分要点，放进、替换、删掉一份材料，各记下一版。每记一版，题目
 资料库里那份题目说明（`BRIEF`）跟着换成这一版的样子，所以它的历史就是每一版的说明。
 从这道题派生的项目在资料库的 `题目/` 下读到这些（`app.domain.library.mount`），项目总览
 和项目里的 agent 都从这里知道题目到了第几版、这一版改了什么。
@@ -13,6 +13,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,11 +26,13 @@ from app.domain.library import records as library
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.service import clean_upload_name
 from app.domain.library.shelf import Shelf
+from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project.models import Project
 from app.domain.task.models import (
     Task,
     TaskPackageRevision,
     TaskRubricItem,
+    TaskStage,
     TaskSubmissionSchemaEntry,
 )
 from app.domain.task.visibility_service import TaskVisibilityService
@@ -43,10 +46,16 @@ BRIEF = "题目说明.md"
 DESCRIPTION = "description"
 SUBMISSION = "submission"
 RUBRIC = "rubric"
+STAGES = "stages"
 FILES = "files"
 PUBLISHED = "published"
 
-_PART_NAMES = {DESCRIPTION: "说明", SUBMISSION: "提交内容", RUBRIC: "评分要点"}
+_PART_NAMES = {
+    DESCRIPTION: "说明",
+    STAGES: "阶段",
+    SUBMISSION: "提交内容",
+    RUBRIC: "评分要点",
+}
 _FILE_VERBS = {"added": "新增", "replaced": "替换", "removed": "删除"}
 
 #: 提交内容一项是什么（`task_submission_schema.type`）。
@@ -131,8 +140,25 @@ async def _handle(session: AsyncSession, user_id: int | None) -> str | None:
     return await session.scalar(select(User.username).where(User.id == user_id))
 
 
+#: 题目说明是全体领取者和他们的芝士读的同一份，写不了各人的钟点：阶段的截止
+#: 按北京时间写并写明（没报过时区的人也按它读，`notification.preferences`）。
+_BRIEF_ZONE = ZoneInfo(DEFAULT_TIMEZONE)
+
+
 async def brief(session: AsyncSession, task: Task, number: int) -> str:
-    """第 `number` 版的题目说明：简介、说明、提交内容，和公开的评分要点。"""
+    """第 `number` 版的题目说明：简介、说明、阶段、提交内容，和公开的评分要点。
+    分了阶段时，提交内容和评分要点各写明属于哪个阶段。"""
+    stages = list(
+        await session.scalars(
+            select(TaskStage)
+            .where(TaskStage.task_id == task.id)
+            .order_by(TaskStage.index)
+        )
+    )
+
+    def in_stage(index: int) -> str:
+        return f"｜{stages[index].name}" if 0 <= index < len(stages) else ""
+
     entries = list(
         await session.scalars(
             select(TaskSubmissionSchemaEntry)
@@ -145,10 +171,24 @@ async def brief(session: AsyncSession, task: Task, number: int) -> str:
         lines += ["## 简介", "", task.intro, ""]
     if task.description:
         lines += ["## 说明", "", task.description, ""]
+    if stages:
+        lines += ["## 阶段", ""]
+        for i, stage in enumerate(stages, start=1):
+            due = (
+                f"截止 {stage.due_at.astimezone(_BRIEF_ZONE):%Y-%m-%d %H:%M}（北京时间）"
+                if stage.due_at is not None
+                else "不设截止"
+            )
+            lines.append(
+                f"{i}. {stage.name}（{due}）"
+                + (f"：{stage.description}" if stage.description else "")
+            )
+        lines.append("")
     if entries:
         lines += ["## 提交内容", ""]
         lines += [
-            f"{i}. {entry.description}（{_ENTRY_KINDS.get(entry.type, '文字')}）"
+            f"{i}. {entry.description}"
+            f"（{_ENTRY_KINDS.get(entry.type, '文字')}{in_stage(entry.stage)}）"
             for i, entry in enumerate(entries, start=1)
         ]
         lines.append("")
@@ -163,7 +203,7 @@ async def brief(session: AsyncSession, task: Task, number: int) -> str:
         if rubric:
             lines += ["## 评分要点", ""]
             lines += [
-                f"- {row.item}（{row.points} 分）"
+                f"- {row.item}（{row.points} 分{in_stage(row.stage)}）"
                 + (f"：{row.criteria}" if row.criteria else "")
                 for row in rubric
             ]
@@ -401,7 +441,7 @@ async def section_for_project(
         f"这个项目来自题目「{task.name}」，题目现在是第 {revision.number} 版。",
         f"题目的材料在项目资料库的 `题目/` 文件夹里，只能读，不能改：列资料库的工具"
         f"看 `题目` 这一层，读附件的工具读 `library/题目/<名字>`，要取到工作机器上"
-        f"用 `cheese library get 题目/<名字>`。说明、提交内容和公开的评分要点在 "
+        f"用 `cheese library get 题目/<名字>`。说明、阶段、提交内容和公开的评分要点在 "
         f"`library/题目/{BRIEF}`。",
     ]
     if revision.number > 1:

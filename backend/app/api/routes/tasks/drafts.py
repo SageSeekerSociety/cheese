@@ -33,7 +33,12 @@ from app.api.task_deps import (
     _attachment_service,
     get_task_service,
 )
-from app.api.task_serialization import _enrich_task_models, _task_to_api_model
+from app.api.task_serialization import (
+    _enrich_task_models,
+    _enrich_task_topics,
+    _task_requirements,
+    _task_to_api_model,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.space_access import may_publish_in_space, may_teach_task
 from app.core import model_roles
@@ -56,7 +61,6 @@ from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
 from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
-from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.user.services import timezones_by_ids
 
@@ -127,7 +131,7 @@ async def _person(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-def _summary(row, task_names: dict[int, str]) -> dict:
+def _summary(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
     fields = row.fields or {}
     return {
         "id": row.id,
@@ -139,12 +143,12 @@ def _summary(row, task_names: dict[int, str]) -> dict:
         "conversationId": str(row.conversation_id) if row.conversation_id else None,
         "version": row.version,
         "updatedAt": row.updated_at.isoformat(),
-        "missing": drafts.missing(row),
+        "missing": drafts.missing(row, items.get(row.task_id or 0, 0)),
     }
 
 
-def _full(row, task_names: dict[int, str]) -> dict:
-    return {**_summary(row, task_names), "fields": row.fields or {}}
+def _full(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
+    return {**_summary(row, task_names, items), "fields": row.fields or {}}
 
 
 async def _task_names(db, rows: list) -> dict[int, str]:
@@ -170,11 +174,14 @@ async def _editable_task(db, task_id: int, user_id: int):
 
 
 async def _task_as_form(db, task) -> dict:
-    """The published 题目 as its edit form starts out."""
+    """The published 题目 as its edit form starts out: every field the form
+    saves back, so a change draft saved with one field changed leaves the rest
+    as they are — its stages, submission items, rubric and tags included."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=True)
-    model["rubric"] = rubric_to_api(await service.list_rubric(task.id))
+    model.update(await _task_requirements(service, task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
+    await _enrich_task_topics(db, [model])
     return drafts.task_form(model)
 
 
@@ -207,7 +214,8 @@ async def list_drafts(
     user_id = await _person(resolver)
     rows = await drafts.list_mine(db, user_id, space)
     names = await _task_names(db, rows)
-    return ok({"drafts": [_summary(r, names) for r in rows]})
+    items = await drafts.published_items(db, rows)
+    return ok({"drafts": [_summary(r, names, items) for r in rows]})
 
 
 class StartIn(BaseModel):
@@ -246,7 +254,7 @@ async def start_draft(
         )
         names = {}
     await db.commit()
-    return ok(_full(row, names))
+    return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
 @router.get("/{draftId:int}", **typed_response(TaskDraftOut))
@@ -257,7 +265,13 @@ async def read_draft(
 ) -> dict:
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
-    return ok(_full(row, await _task_names(db, [row])))
+    return ok(
+        _full(
+            row,
+            await _task_names(db, [row]),
+            await drafts.published_items(db, [row]),
+        )
+    )
 
 
 class SaveIn(BaseModel):
@@ -311,6 +325,11 @@ async def publish_draft(
     one. The draft is gone after."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
+    # The same loss 芝士's publish refuses: every submission item the
+    # published 题目 has, gone.
+    published = (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    if "submission" in drafts.missing(row, published):
+        raise BadRequestError(say("draftKeepsASubmissionItem"))
     return ok(await _publish(db, service, row, user_id))
 
 
@@ -494,7 +513,8 @@ async def agent_write(
         if "attachments" in args
         else None
     )
-    fields = drafts.from_agent(args, terms, row.fields or {}, files)
+    removed: list[str] = []
+    fields = drafts.from_agent(args, terms, row.fields or {}, files, removed)
     written = drafts.cheese_writes(
         row, fields, read_at=None if created else body.version
     )
@@ -505,6 +525,15 @@ async def agent_write(
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
+    if removed:
+        # Never silently: the person reads on the change card what went with
+        # the stages 芝士 removed, before anything is saved to the 题目.
+        notes.append(
+            {
+                "field": "stages",
+                "text": str(say("draftStageRemovedRows", names="、".join(removed))),
+            }
+        )
     told = await _report(
         db,
         resolver,
@@ -532,7 +561,11 @@ async def agent_write(
             "version": row.version,
             "changed": sorted(written.changed),
             "kept": written.kept,
-            "missing": drafts.missing(row),
+            "missing": drafts.missing(
+                row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+            ),
+            # Submission items and rubric lines that left with a removed stage.
+            "removed": removed,
             # A template's skeleton, for 芝士 to fill under its headings.
             **(
                 {"description": drafts.markdown_of(row.fields or {})}
@@ -583,7 +616,9 @@ async def agent_publish(
     """cheese_problem(action=publish): publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
-    missing = drafts.missing(row)
+    missing = drafts.missing(
+        row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    )
     if missing:
         raise BadRequestError(say("draftIncomplete", fields=", ".join(missing)))
     editing = row.task_id is not None
