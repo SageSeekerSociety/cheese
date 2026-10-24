@@ -77,6 +77,11 @@ jobs:
       - name: go vet (windows)
         run: GOOS=windows GOARCH=amd64 go vet ./...
 
+      # The same for a file that only a Mac compiles: sysproxy's
+      # system_darwin.go is the first, and everything on this box is Linux.
+      - name: go vet (darwin)
+        run: GOOS=darwin GOARCH=arm64 go vet ./...
+
       # -race because this binary's whole job is concurrent: it supervises tmux
       # sessions and multiplexes screens over a bus.
       - name: go test
