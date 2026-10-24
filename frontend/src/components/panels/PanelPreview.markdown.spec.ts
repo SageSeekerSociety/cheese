@@ -204,6 +204,44 @@ it('评论还没回来时再点一次，不会挂出第二条一样的评论', a
   release()
 })
 
+it('评论挂不上去时，条上说出来，不是点了没反应', async () => {
+  // 这条出口不经过评论栏，栏自己那句错误提示收不到；不说的话读者按了「评论」看起来
+  // 什么都没发生，而输入框里的字还在，他多半会再按一次。
+  const open = ref(false)
+  const bundle = {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({ threads: [], activity: {}, errors: {}, busy: false, unknown: null }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async () => {
+      throw new Error('评论失败')
+    },
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+  const ui = mount({ comments: bundle })
+  await selectPassage(ui)
+  const input = ui.getByPlaceholderText('就这一处说点什么')
+  await fireEvent.update(input, '这里数字不对')
+  const bar = input.closest('.locator')!
+  const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
+  await fireEvent.click(commentBtn)
+
+  const alert = await waitFor(() => {
+    const found = bar.querySelector('[role="alert"]')
+    expect(found).toBeTruthy()
+    return found as HTMLElement
+  })
+  expect(alert.textContent).toContain('评论失败')
+  // 指认和那句话都还在：读者能就地再试，不用重新选一次、重打一遍。
+  expect((ui.getByPlaceholderText('就这一处说点什么') as HTMLInputElement).value).toBe('这里数字不对')
+})
+
 it('选中一段发出去时带的是带文件身份的 text-range 引用', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount({ submitQuestion: submit })
