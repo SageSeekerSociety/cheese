@@ -26,8 +26,8 @@ export type Environment = SandboxEnvironment | SelfHostedEnvironment
 export interface SandboxSpec {
   spec: string
   label: string
-  /** What it is and what it costs, in the reader's language via `i18n.description`.
-   *  The project's settings send it (`compute-configs`); a room's menu does not. */
+  /** What it is and what it costs, in the reader's language via `i18n.description`
+   *  (`offered_specs`, so both the project's settings and a room's menu have it). */
   description?: string
   i18n?: Record<string, unknown>
 }
