@@ -61,20 +61,21 @@ OWNER_HEALTH_SECONDS="${DEPLOY_OWNER_HEALTH_SECONDS:-60}"
 APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
 # The pulls are retried until 600s after the first one started, waiting 5s,
 # 10s, 20s and then 30s between attempts. A pull dies here for transient reasons
-# far more often than for real ones. The boxes reach ghcr through a link that
-# resets connections in bursts lasting minutes (2026-10-24: five dev deploy
-# attempts gave up on the old three attempts 31-57s after their first pull, each
+# far more often than for real ones. The dev box reaches ghcr through a link
+# that resets connections in bursts lasting minutes (2026-10-24: six dev deploy
+# attempts gave up on the old three attempts 37-57s after their first pull, each
 # on `read: connection reset by peer`), and containerd sometimes fails to commit
 # a downloaded layer because its ingest file vanished mid-pull (Deploy run #174,
 # 2026-08-09) — a fresh pull opens a NEW ingest record, so a retry clears that
 # too. The 30s cap means a pull resumes at most half a minute after a burst
 # ends. The budget is shared by every pull of one deploy and sized against the
 # tighter of the two jobs that run this script: prod's 30-minute limit
-# (deploy-prod.yml; dev's is 180). Its steps before this script take under a
-# minute and this script has taken 6-10 minutes there, one full pull included,
-# so 10 minutes of retrying plus a last attempt still ends in this script's own
-# error and its reclaim, not in the runner killing the job. An image that does
-# not exist at all is not what this waits out: both workflows refuse a release
+# (deploy-prod.yml; dev's is 180). No prod release has run this script yet; on
+# dev it took 4-7.5 minutes on 2026-10-24 (nine successful runs, every pull
+# included) after about a minute of earlier steps, so 10 minutes of retrying
+# plus a last attempt still ends in this script's own error and its reclaim,
+# not in the runner killing the job. An image that does not exist at all is
+# not what this waits out: both workflows refuse a release
 # whose image build did not succeed before this script runs
 # (deploy/check-auto-deploy.py), so the full budget is spent only on a manual
 # release of a commit that has no images, holding the box's runner 10 minutes.
