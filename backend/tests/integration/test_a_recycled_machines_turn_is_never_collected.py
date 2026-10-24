@@ -250,7 +250,6 @@ def test_a_recycled_machines_turn_is_never_collected(client):
     opened_at = datetime.now(UTC) - timedelta(hours=21, minutes=24)
     _backdate(client, task_id, opened_at)
     (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
-    seat = next(agent for (topic, agent) in channel.sessions if topic == task_id)
 
     # 1. 行开着、已送达、带着自己那条会话的名字 —— 这是「一轮还开着」的定义。
     assert turn.delivered_at is not None, "the prompt never got through"
@@ -278,9 +277,8 @@ def test_a_recycled_machines_turn_is_never_collected(client):
     #    返回，连一次调用都没有发出去，所以这里也断言它确实什么都没问。）
     assert client.portal.call(replaced.recover_sessions) == 0
     assert recycled.asked, "the platform never even tried the machine"
-    # 不管拿哪一方的名字去问，都收不到「已死」：席位的名字按会话那一行对，
-    # 行自己的名字也一起断言 —— 不可达之下没有任何一条会有证据。
-    assert replaced.row_is_dead(task_id, seat, turn.session_id) is False
+    # 死亡证据问的是「行自己那张票有没有被权威作废」，所以这里就用行自己的
+    # 席位去问 —— 答案是没有，因为那台机器根本没能说出一句话。
     assert replaced.row_is_dead(task_id, turn.agent_handle, turn.session_id) is False
 
     # 5. 清扫一轮又一轮，每一次都收掉 0 轮。年龄已经远远过了平台「开着的轮次
