@@ -6,6 +6,7 @@
 // 发一条新评论时，锚点是读者此刻指着的那一处（预览里已有的一套指认）；没指就是
 // 整份文件。发完把线程读回来，别的就交给服务端。
 import type { QuotedContext } from '../../lib/quotedContext'
+import type { DocPeopleBundle } from '../useDocPeople'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
@@ -18,11 +19,13 @@ import { useFileThreads } from '../useFileThreads'
 export interface CommentsDeps {
   props: PanelPreviewProps
   state: PreviewState
+  /** 名册那一包（`useDocPeople`）：卡上的名字和头像从它来，和文档那一栏同一处。 */
+  people: DocPeopleBundle
 }
 
 /** 一份文件上的评论串，和写一条新的那条路。 */
 export function usePanelPreviewComments(deps: CommentsDeps) {
-  const { props, state } = deps
+  const { props, state, people } = deps
   // 资料库原件和消息附件都不是这个房间的文件，评论不挂在它们上面。
   const commentable = computed(() => {
     const file = state.previewFile.value
@@ -71,6 +74,11 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     author: myHandle(),
     threads,
     post,
+    /** 卡上写作者名字：名册上他是谁。不在名册上（已注销）时说一声，不显示 handle。 */
+    nameOf: (handle: string) => people.names.value[handle] ?? handle,
+    /** 卡上画作者头像：他挑过的那个；没挑过、或不在名册上时给空串，由 UserAvatar
+     *  画彩色首字母——和文档评论栏同一条规矩，不退回全站默认脸。 */
+    avatarOf: (handle: string) => people.avatars.value[handle] ?? '',
   }
 }
 
