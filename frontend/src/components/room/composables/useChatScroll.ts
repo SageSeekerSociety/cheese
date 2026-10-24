@@ -143,9 +143,14 @@ export function useChatScroll(
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
     pointerHeld = false
   })
-  // 键盘同理：只有会挪滚动位置的那几个键算。打字、Esc、落在消息行上的方向键都不挪。
+  // 键盘同理：只有真会挪这一栏的那几个键算，而且得是落在输入框外面的那一下——输入框
+  // 里的空格是上屏/打空格、方向键是挪光标，它们挪的不是这一栏。只看键名不够：同一串
+  // 按键在输入框里和落在面板上做的事不同，而输入框里的 keydown 一路冒到 window
+  // （输入法每打一个词就按一次空格，这一下要是不排掉，停下来读的人的兜底就一直是废的）。
   const MOVES_THE_PANE = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'])
   useEventListener(window, 'keydown', (e) => {
+    const target = e.target instanceof Element ? e.target : null
+    if (target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) return
     if (MOVES_THE_PANE.has(e.key)) touched()
   })
   // The pane's column too: the composer zone under the pane leaving and coming back in

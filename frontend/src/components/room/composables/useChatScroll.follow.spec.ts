@@ -162,7 +162,8 @@ describe('正文被就地改写', () => {
     expect(box.el.scrollTop).toBe(1600)
   })
 
-  // 拖滚动条（按住并真的挪动了位置）仍算人在滚：位置一直变，那一下不该被拽回底部。
+  // 按住指针把这一栏挪动了位置（浏览器发的一整套指针事件里位置真的变了）仍算人在滚：
+  // 那一下不该被拽回底部。
   it('按住拖动了位置：算他翻走了，不拽回去', async () => {
     const { box, scroll } = await mounted(2000)
     box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
@@ -171,6 +172,37 @@ describe('正文被就地改写', () => {
     window.dispatchEvent(new PointerEvent('pointerup'))
     await rewrite(box, scroll.contentRef.value!, 1300)
     scroll.rememberScroll('t-drag')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
+
+  // 输入框里打字用的是同一批键：空格（输入法上屏就是它）、方向键（挪光标），它们的
+  // keydown 一路冒到 window。那不是人在滚这一栏——按它记「人在滚」，打字的人就一路
+  // 把下面那条改写兜底关掉了。
+  it('在输入框里打空格：不算人在滚，仍回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    const caret = document.createElement('span')
+    editor.append(caret)
+    document.body.append(editor)
+    for (const key of [' ', 'ArrowUp']) caret.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    editor.remove()
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-typing')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
+
+  // 焦点不在输入框里时，空格和方向键确实滚这一栏：那一下仍算他翻走了。
+  it('焦点在面板上按空格：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    const row = document.createElement('div')
+    document.body.append(row)
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    row.remove()
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-space')
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(1300)
   })
