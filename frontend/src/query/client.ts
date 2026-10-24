@@ -51,10 +51,11 @@ if (import.meta.env.DEV) window.__queryClient = queryClient
  * 停在骨架屏上，只有推送连上时的重读才救得回来）。
  */
 export async function patchQuery<T>(queryKey: readonly unknown[], change: (current: T) => T): Promise<void> {
-  const held = queryClient.getQueryData<T>(queryKey)
-  if (held === undefined) return
+  // 上面那条早返回管的是「这份还没读过」；这里的判断管的是「刚被清掉」——中间那一下
+  // 取消会让在途读当场失败，`setQueryData` 的入参因此仍然可能是空。
+  if (queryClient.getQueryData<T>(queryKey) === undefined) return
   await queryClient.cancelQueries({ queryKey, exact: true })
-  queryClient.setQueryData<T>(queryKey, change)
+  queryClient.setQueryData<T>(queryKey, (current) => (current === undefined ? current : change(current)))
 }
 
 /** 这一份此刻没有在读了（读完、失败、被作废）。 */
