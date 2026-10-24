@@ -160,6 +160,14 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         expect: '先记一下：这个项目以后放课程资料',
       },
       {
+        name: '他的芝士替他发的',
+        note: '署名照旧是他；名字旁边标「芝士代发」（meta.by_assistant），悬停说是谁的芝士。',
+        props: roomMessageProps(WANG_LINES[0], {
+          block: { ...WANG_LINES[0].block, meta: { ...WANG_LINES[0].block.meta, by_assistant: true } },
+        }),
+        expect: '芝士代发',
+      },
+      {
         name: '点了名交给芝士',
         note: '<@handle> 渲染成可点的 chip，靠 refs 那张 handle→昵称的表。',
         props: roomMessageProps(WANG_LINES[1]),

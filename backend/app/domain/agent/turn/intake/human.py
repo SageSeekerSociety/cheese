@@ -226,6 +226,7 @@ class HumanMessages:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         stored = await persist_human_message(
             self.sessions,
@@ -240,6 +241,7 @@ class HumanMessages:
             attachments=attachments,
             client_id=client_id,
             quoted_context=quoted_context,
+            by_assistant=by_assistant,
             handoff=handoff,
         )
         if not stored.duplicate:
