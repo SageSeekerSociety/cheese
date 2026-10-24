@@ -94,13 +94,14 @@ async def record_referral(
 
 
 async def on_onboarded(session: AsyncSession, user_id: int) -> None:
-    """An invitee finished the new-user guide: their 50 credits."""
+    """An invitee's first project: their 50 credits."""
     now = datetime.now(UTC)
     marked = await session.scalar(
         update(InviteReferral)
         .where(
             InviteReferral.invitee_user_id == user_id,
             InviteReferral.onboarded_at.is_(None),
+            InviteReferral.registered_at >= now - ACTIVATION_WINDOW,
         )
         .values(onboarded_at=now)
         .returning(InviteReferral.invitee_user_id)
@@ -140,6 +141,7 @@ async def on_accepted(session: AsyncSession, handle: str | None) -> None:
     )
     if inviter_id is None:
         return
+    await on_onboarded(session, user.id)
     incentives = CreditIncentives(session)
     await incentives.issue(
         key=f"invite:activated:{user.id}",
