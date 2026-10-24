@@ -232,14 +232,22 @@ async def credential(
     document of no task), for no longer than the answer may take; edits authored
     by ``agent`` at the asker's request, and only when the question may change
     the document. An answer every reader of the document sees reads only what
-    all of them may (``shown_to_readers``)."""
+    all of them may (``shown_to_readers``).
+
+    The credential names where the answer is read — the task, or for a room
+    file the room itself — and that is what ``shown_to_readers`` narrows the
+    tools' reading by (``api.auth.resolver``: the room of the conversation
+    named, and ``auth.audience``). A credential naming no room reads as an
+    answer reaching the project's own people, which is right only where that
+    is who reads it: a private room with somebody from outside the project in
+    it would otherwise let the answer carry the project's public rooms out."""
     person = await user_by_handle(db, asker)
     return mint_delegated_credential(
         user_id=person.id if person is not None else None,
         handle=asker,
         agent=agent,
         project_id=str(asked.project_id),
-        topic_id=str(asked.task_id) if asked.task_id is not None else None,
+        topic_id=str(asked.task_id or asked.room_id or "") or None,
         work=str(work),
         read_only=not may_edit,
         shown_to_readers=shown_to_readers,

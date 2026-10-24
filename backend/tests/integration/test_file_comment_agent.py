@@ -7,12 +7,14 @@ thread by the thread's own session, the way a document's comment is.
   file's thread has no collaboration connection to hear it on.
 - A comment that names nobody, or only a person, asks nothing.
 - A file the room does not hold is not a thread at all.
+- The answer's tools read only what everyone who reads the room may.
 
 The session host is faked at its boundary (``SessionHost``), the same stand-in
 `test_doc_agent.py` uses; the collaboration service is
 tests/support/collab.py.
 """
 
+import asyncio
 import time
 import uuid
 
@@ -24,9 +26,17 @@ from app.api.deps import (
     get_consumptions,
     get_session_host,
 )
+from app.auth.project_access import may_read_project, outsiders_reading
 from app.domain.library import service as library
+from app.domain.project.models import Project
+from app.domain.team.repositories import TeamRepository
+from app.domain.team.services import TeamService
+from app.domain.user.repositories import UserRepository
 from app.main import app
+from tests.conftest import seed_user
 from tests.integration.conftest import (
+    join_project_team,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -130,6 +140,103 @@ def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
     # The file is read as text, and the place the comment points at is named.
     assert "本季度完成率 42%" in question
     assert "第 2 页" in question
+
+
+def test_the_answer_reads_only_what_every_reader_of_the_room_may(client, sessions):
+    """A file's answer is read by everyone who reads the room, so its tools read
+    only what all of them may: the project's public channels are not carried
+    into a room somebody outside the project reads.
+
+    Somebody outside gets onto a private channel's roster like this: on the
+    team, seated on the channel, then removed from the team. Removing somebody
+    from the team soft-deletes that relation and nothing else, so the channel
+    seat stays while the project goes — ``outsiders_reading`` then names them,
+    and they still read the file's threads."""
+    for who in ("dave", "bob"):
+        seed_user(client, who)
+    project = post_project(client, json={"name": "文件受众"}, owner="alice").json()[
+        "data"
+    ]["id"]
+    join_project_team(client, project, "bob")
+    public = client.post(
+        "/topics",
+        json={"project_id": project, "title": "公开"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    post_message(client, public, "alice", {"content": "紫色长颈鹿的预算"})
+
+    room = client.post(
+        "/topics",
+        json={"project_id": project, "title": "机密", "members_only": True},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    seated = client.post(
+        f"/topics/{room}/members",
+        json={"handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+    assert seated.status_code == 200, seated.text
+    library.write_room_file(uuid.UUID(project), uuid.UUID(room), PATH, REPORT.encode())
+    seat = room_agent_seat(client, room)
+
+    # Off the team, seat kept: what DELETE /teams/{id}/members/{uid} does.
+    async def off_the_team():
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            p = await db.get(Project, uuid.UUID(project))
+            bob = await UserRepository(db).get_by_handle("bob")
+            await TeamService(TeamRepository(db)).remove_team_member(
+                team_id=p.team_id, target_user_id=bob.id, actor_user_id=bob.id
+            )
+            await db.commit()
+
+    asyncio.run(off_the_team())
+
+    async def reading():
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            return (
+                await may_read_project(db, project_id=uuid.UUID(project), handle="bob"),
+                await outsiders_reading(
+                    db, project_id=uuid.UUID(project), room_id=uuid.UUID(room)
+                ),
+            )
+
+    reads_project, outside = asyncio.run(reading())
+    assert not reads_project and outside == ["bob"], "the outsider shape was not built"
+    # He is still read: the thread is what his answer reaches.
+    assert (
+        client.get(
+            f"{_comments(room)}/threads",
+            params={"path": PATH},
+            headers=session_auth_headers("bob"),
+        ).status_code
+        == 200
+    )
+
+    seen: dict = {}
+
+    async def look(credential, question):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://platform"
+        ) as page:
+            found = await page.get(
+                f"/projects/{project}/context/search",
+                params={"q": "紫色长颈鹿的预算"},
+                headers={"X-Cheese-Token": credential},
+            )
+        seen["status"] = found.status_code
+        seen["rooms"] = (
+            {hit["room_id"] for hit in found.json()["data"]["hits"]["records"]}
+            if found.status_code == 200
+            else set()
+        )
+        return "好的。", None
+
+    sessions.script = look
+    root = _comment(client, room, f"<@{seat}> 这里的预算按谁的算？")
+
+    assert _answers(client, room, root, seat) == ["好的。"]
+    assert seen["status"] == 200, seen
+    assert public not in seen["rooms"], "the public channel was read into that answer"
 
 
 def test_the_thread_list_says_while_the_agent_is_answering(client, sessions):
