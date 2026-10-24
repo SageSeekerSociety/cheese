@@ -87,7 +87,7 @@
   "olderMessages": "Earlier messages",
   "subagent": {
     "running": "Working",
-    "done": "Reported back",
+    "done": "Done",
     "failed": "Failed",
     "stopped": "Stopped"
   },

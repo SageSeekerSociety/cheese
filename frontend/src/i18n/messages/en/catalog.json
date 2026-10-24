@@ -1631,11 +1631,11 @@
     },
     "s9": {
       "name": "A long piece of work under way",
-      "note": "The checklist sits on top, ticked as it goes; words and steps appear in the order they happened; of two subagents one is working and one has reported back, and opening one lists its steps."
+      "note": "The checklist sits on top, ticked as it goes; words and steps appear in the order they happened; of two subagents one is working and one is done, and opening one lists its steps."
     },
     "s10": {
       "name": "A long piece of work done",
-      "note": "The checklist folds to one line, both subagents have reported back, and words and steps keep the order they happened in."
+      "note": "The checklist folds to one line, both subagents are done, and words and steps keep the order they happened in."
     },
     "s11": {
       "name": "Saying more while Cheese works",

@@ -87,7 +87,7 @@
   "olderMessages": "更早的消息",
   "subagent": {
     "running": "进行中",
-    "done": "已交回",
+    "done": "已完成",
     "failed": "失败",
     "stopped": "已停下"
   },
