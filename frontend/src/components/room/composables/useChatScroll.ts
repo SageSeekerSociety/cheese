@@ -140,28 +140,58 @@ export function useChatScroll(
   let lastHeight = 0
   let readerInputAt = -Infinity
   let pointerHeld = false
+  let pointerTop = 0
   let rewrittenAt = -Infinity
   const touched = () => (readerInputAt = performance.now())
-  // 读的人自己动手，就是他说了算：回填还没落到位的话，目标作废。只认这一栏上的输入 —
-  // 别的页签里、输入框里敲的字不是「他在这一栏里翻了」。
+  // 读的人自己动手，就是他说了算：回填还没落到位的话，目标作废。只认**真的挪了位置**
+  // 的那几种手势（见下面 pointermove 与 keydown 的判据）：点一下消息不算，别的页签、
+  // 输入框里敲的字也不算。
   const readerTookOver = () => {
     touched()
     settlePending()
   }
   for (const type of ['wheel', 'touchmove'] as const)
     useEventListener(scrollRef, type, readerTookOver, { passive: true })
+  // 「人在滚」= 位置真的动了。按一下不是滚：单击一条消息、点住又松手、手指在消息上
+  // 点一下，位置一个像素都没动，可按住期间这一份却被当成读者在滚，于是下面那条「刚被
+  // 改写、没人动却往上挪」的兜底失效，停住的人被留在半路（「回到最新」冒出来，真机
+  // 2026-10-24 反馈）。所以按住之后要位置变了才算——回填的目标也照这一条作废，不然点
+  // 一下消息就把「回到原来那条」取消了。
   useEventListener(scrollRef, 'pointerdown', () => {
     pointerHeld = true
+    pointerTop = scrollRef.value?.scrollTop ?? 0
+  })
+  useEventListener(window, 'pointermove', () => {
+    const el = scrollRef.value
+    if (!pointerHeld || !el || el.scrollTop === pointerTop) return
+    pointerTop = el.scrollTop
     readerTookOver()
   })
-  // 键盘也在这栏里翻（PageUp / 方向键、带焦点的消息行）。
-  useEventListener(scrollRef, 'keydown', readerTookOver)
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
-    if (!pointerHeld) return
     pointerHeld = false
+  })
+  // 键盘同理：只有会挪这一栏的那几个键算，而且得是**这一栏会跟着动**的那一下。
+  // 键名定不了这件事——同一个键在输入框里和落在面板上做的不是一件事，而输入框里的
+  // keydown 一路冒到 window：
+  // - 发消息的输入框在面板**外面**，它里面的按键（打字的空格、挪光标的箭头、翻它自己
+  //   的 PageUp）挪的都是它自己，这一栏一动不动。中文输入法每打一个词按一次空格，这
+  //   一下要是不排掉，停下来读的人的改写兜底就一直是废的（2026-10-24 真机反馈）。所以
+  //   落在输入框里、又不在面板里的按键，一个都不算。
+  // - 其余的都算：落在面板里的（包括时间线里的就地编辑器——改自己的消息时，光标走出
+  //   可视范围、翻页键，挪的都是这一栏），以及压根不在输入框里的。合并基线上每个键都
+  //   算，这里只把上面那一类摘出去，别的一律照旧。
+  const MOVES_THE_PANE = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', ' ', 'Spacebar', 'PageUp', 'PageDown'])
+  useEventListener(window, 'keydown', (e) => {
+    if (!MOVES_THE_PANE.has(e.key)) return
+    const el = scrollRef.value
+    const target = e.target instanceof Element ? e.target : null
+    const inPane = !!(el && target && el.contains(target))
+    const inEditable = !!target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')
+    if (inEditable && !inPane) return
+    // 这个键在这一栏里算读者在滚；他真挪了位置的话，随后的滚动事件会让回填的目标作废
+    // （见 rememberScroll），不用在这里再判一次。
     touched()
   })
-  useEventListener(window, 'keydown', touched)
   // The pane's column too: the composer zone under the pane leaving and coming back in
   // one task clamps it the same way, with the timeline untouched. The pane's direct
   // parent is not that column: the timeline sits in its own wrapper (the floating
@@ -397,11 +427,17 @@ export function useChatScroll(
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
     // 回填还没落到位：这期间的「位置」都是它自己一次次试着放的结果（而且没放进去），
-    // 读它只会把「还没到」记成「就在这里」。目标还等着，先不记。
+    // 读它只会把「还没到」记成「就在这里」。目标还等着，先不记——除非这一下滚动是读的
+    // 人自己弄的（刚刚在这一栏里滚过轮/触过屏/按过会翻页的键）。他的手才是准的，目标作废。
     if (pending !== null) {
-      lastTop = el.scrollTop
-      lastHeight = el.scrollHeight
-      return
+      // pointerdown 本身不算（见上面那条：按一下不是滚），readerInputAt 只有真的挪了
+      // 位置的手势才会刷新。
+      if (performance.now() - readerInputAt >= READER_INPUT_MS) {
+        lastTop = el.scrollTop
+        lastHeight = el.scrollHeight
+        return
+      }
+      settlePending()
     }
     const movedUp = el.scrollTop < lastTop
     const relaid = el.scrollHeight !== lastHeight

@@ -198,4 +198,39 @@ describe('回到一段对话时内容还没长够', () => {
     fire()
     expect(box.el.scrollTop).toBe(200)
   })
+
+  // 回填在等下一帧的时候，人常常就在这一栏里点来点去（点开一条消息、点一支线）。
+  // 「按一下」不是「他自己挑了位置」——真把回填取消掉的只有**位置真的动了**的手势
+  // （主干 #4780 定的那条，2026-10-24）。这两条钉住这个接缝。
+  it('回填期间点一下：不算他自己挑位置，照旧回原来那条', async () => {
+    const { box, scroll } = await mounted(2000)
+    readerScrolledUp(box, scroll, 700)
+
+    box.grow(900)
+    scroll.restoreScroll('room')
+    await nextTick()
+
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) // 按住
+    box.el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })) // 又松手，位置没动
+    box.grow(2000)
+    fire()
+    expect(box.el.scrollTop).toBe(700)
+  })
+
+  it('回填期间真的拖动位置：听他的', async () => {
+    const { box, scroll } = await mounted(2000)
+    readerScrolledUp(box, scroll, 700)
+
+    box.grow(900)
+    scroll.restoreScroll('room')
+    await nextTick()
+
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    box.el.scrollTop = 300 // 按住期间位置动了
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }))
+    box.el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    box.grow(2000)
+    fire()
+    expect(box.el.scrollTop).toBe(300)
+  })
 })

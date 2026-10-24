@@ -26,6 +26,7 @@ from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.event_author import AuthorType
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import TopicProgress
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import post_project, room_agent_seat
@@ -413,5 +414,85 @@ async def _quiet_after_an_answer(client, room):
 
         assert await quiet.silence(again_at + timedelta(seconds=THRESHOLD + 1)) == 1
         assert len(told) == 1 and "chat_send" in told[0]
+    finally:
+        await _put_down(channel, session)
+
+
+def test_a_conversation_whose_card_is_open_is_not_reminded(client, room, monkeypatch):
+    """A card has been filed and waits for the reviewer. Where the work stands
+    is the card's to say, and the platform must not knock on the session that
+    filed it — that window is exactly when a reminder wakes a session that has
+    nothing left to do."""
+    monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
+    client.portal.call(_card_speaks, client, room)
+
+
+async def _card_speaks(client, room):
+    project, topic, _seat = room
+    channel = _KeepsWorking()
+    service, session, work, acting = await _at_work(client, room, channel)
+    told: list[str] = []
+
+    async def notice(topic_id, text, **_kwargs):
+        told.append(text)
+        return True
+
+    service.notify_running_session = notice  # type: ignore[method-assign]
+    quiet = QuietSessionReminders(service, service.compute)
+    try:
+        now = datetime.now(UTC)
+        async with client.test_factory() as db:
+            asked = Block(
+                project_id=project,
+                conversation_id=topic,
+                author="alice",
+                author_type=AuthorType.participant,
+                kind=BlockKind.message,
+                content="首页为什么这么慢？",
+                created_at=now,
+            )
+            db.add(asked)
+            await db.flush()
+            db.add(
+                NativeInput(
+                    project_id=project,
+                    conversation_id=topic,
+                    recipient_handle=acting,
+                    harness=CLAUDE_CODE,
+                    native_session_id="sess-quiet",
+                    input_id=uuid.uuid4(),
+                    work_id=work,
+                    block_ids=[str(asked.id)],
+                    registered_at=now,
+                    accepted_at=now,
+                    echoed_at=now,
+                )
+            )
+            db.add(
+                TopicProgress(
+                    conversation_id=topic,
+                    items=[
+                        {"id": "1", "subject": "改慢的几处", "status": "in_progress"}
+                    ],
+                    turn_id=work,
+                    updated_at=now,
+                )
+            )
+            # The room's own card: no task under it, the topic is what it speaks for.
+            db.add(
+                AcceptCard(
+                    topic_id=topic,
+                    task_id=None,
+                    reviewer_handle="alice",
+                    focus="",
+                    status=AcceptStatus.pending,
+                )
+            )
+            await db.commit()
+
+        later = now + timedelta(seconds=THRESHOLD * 6)
+        assert await quiet.silence(later) == 0
+        assert await quiet.checklist(later) == 0
+        assert told == []
     finally:
         await _put_down(channel, session)
