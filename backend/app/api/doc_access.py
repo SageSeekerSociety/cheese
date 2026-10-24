@@ -36,6 +36,7 @@ from app.core.sentences import say
 from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.living_doc.comments import OnDocument
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
@@ -232,7 +233,7 @@ def asked_of(reached: Reached) -> Asked | None:
         return None
     return Asked(
         project_id=doc.project_id,
-        document_id=doc.id,
+        subject=OnDocument(doc.id),
         task_id=reached.task.id if reached.task is not None else None,
     )
 
