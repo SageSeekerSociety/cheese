@@ -154,7 +154,10 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         name: '这一份文件上的评论',
         note: '点那颗「评论」开出来的那一栏：盖在右边，每张卡写作者的名字和头像（名册那一包给的，和文档那一栏同一处），右上角那颗 × 收起它 —— 开它的按钮就在栏底下，没有这一颗就没有出口。',
         props: previewPanelProps({ comments: previewCommentsBundle({ open: true }) }),
-        expect: '这里的用时要不要一起写进去',
+        // 这一格断的是「接名册」那一段：名字写的是名册上的名字，接线退回占位值时卡上
+        // 会变成 handle（`li`、`wang`），这里当场红。头像那一路由
+        // `preview/PreviewComments.spec.ts` 单测盯着（同样做过变异验证）。
+        expect: '李甘',
         expectSelector: '.file-comments__close',
       },
     ],
