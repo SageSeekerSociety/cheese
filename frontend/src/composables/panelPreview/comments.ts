@@ -74,7 +74,7 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     author: myHandle(),
     threads,
     post,
-    /** 卡上写作者名字：名册上他是谁。不在名册上（已注销）时说一声，不显示 handle。 */
+    /** 卡上写作者名字：名册上他是谁，名册上没有他的名字就写 handle。 */
     nameOf: (handle: string) => people.names.value[handle] ?? handle,
     /** 卡上画作者头像：他挑过的那个；没挑过、或不在名册上时给空串，由 UserAvatar
      *  画彩色首字母——和文档评论栏同一条规矩，不退回全站默认脸。 */
