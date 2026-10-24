@@ -1826,7 +1826,7 @@ export default function (pi: any) {
   placeTheSession(pi, spec);
   holdToAnswering(pi);
   if (spec.tools.length) registerPlatformTools(pi, spec);
-  if (spec.commands) pointCommandsToBash(pi, spec);
+  if (Object.keys(spec.commands ?? {}).length) pointCommandsToBash(pi, spec);
   if (!spec.tools.length && spec.unavailable) {
     // Said where a launch failure is read, not swallowed: a room whose platform
     // tools are all missing looks from the inside exactly like a room that was
