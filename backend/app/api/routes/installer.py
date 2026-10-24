@@ -122,8 +122,10 @@ sha256_of() {{
 #
 # The list is curl's, not Go's: curl ignores uppercase HTTP_PROXY (the httpoxy
 # fix) and honours ALL_PROXY, so checking the variables the connector reads
-# would both preserve a proxy curl never uses and overwrite one it does.
-if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY:-}}${{all_proxy:-}}${{ALL_PROXY:-}}${{no_proxy:-}}${{NO_PROXY:-}}" ] && command -v scutil >/dev/null 2>&1; then
+# would both preserve a proxy curl never uses and overwrite one it does. A
+# bypass list is deliberately not in it: naming what goes direct does not name
+# a proxy, and the inherited list is merged into the system's below instead.
+if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY:-}}${{all_proxy:-}}${{ALL_PROXY:-}}" ] && command -v scutil >/dev/null 2>&1; then
   settings=$(scutil --proxy 2>/dev/null || true)
   field() {{
     printf '%s\\n' "$settings" | awk -v k="$1" '
@@ -141,21 +143,26 @@ if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY
     port=$(field "$3")
     if [ -n "$port" ]; then printf '%s://%s:%s' "$1" "$host" "$port"; else printf '%s://%s' "$1" "$host"; fi
   }}
+  # Locals, not the HTTP_PROXY / HTTPS_PROXY names: an inherited uppercase
+  # HTTP_PROXY is not a proxy curl reads, and using that name as the working
+  # variable would leak it out as a lowercase one below.
+  found_http=
+  found_https=
   if [ "$(field HTTPEnable)" = 1 ]; then
-    HTTP_PROXY=$(proxy_url http HTTPProxy HTTPPort)
+    found_http=$(proxy_url http HTTPProxy HTTPPort)
   fi
   if [ "$(field HTTPSEnable)" = 1 ]; then
-    HTTPS_PROXY=$(proxy_url http HTTPSProxy HTTPSPort)
+    found_https=$(proxy_url http HTTPSProxy HTTPSPort)
   fi
   # The same fallbacks the connector makes: one web proxy carries both schemes,
   # and a Mac set up with only a SOCKS proxy still expects its web traffic to go
   # through it.
-  if [ -z "${{HTTPS_PROXY:-}}" ]; then
-    HTTPS_PROXY="${{HTTP_PROXY:-}}"
+  if [ -z "$found_https" ]; then
+    found_https="$found_http"
   fi
-  if [ -z "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}" ] && [ "$(field SOCKSEnable)" = 1 ]; then
-    HTTP_PROXY=$(proxy_url socks5 SOCKSProxy SOCKSPort)
-    HTTPS_PROXY="$HTTP_PROXY"
+  if [ -z "$found_http$found_https" ] && [ "$(field SOCKSEnable)" = 1 ]; then
+    found_http=$(proxy_url socks5 SOCKSProxy SOCKSPort)
+    found_https="$found_http"
   fi
   # The bypass list is what the pane shows as "Bypass proxy settings for these
   # hosts"; without it a bypassed host would be forced through the proxy. The
@@ -166,6 +173,8 @@ if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY
   # neither the wildcard form nor bare names' subdomains), and macOS's CIDR
   # shorthand `169.254/16` is curl's `169.254.0.0/16` (curl reads only the
   # full form). The default exception list has both.
+  # Taken before NO_PROXY is overwritten below, so an inherited list survives.
+  inherited_no_proxy="${{no_proxy:-${{NO_PROXY:-}}}}"
   NO_PROXY=$(printf '%s\\n' "$settings" | awk '
     /ExceptionsList/ {{ inside = 1; next }}
     inside && /^[ \\t]*}}/ {{ exit }}
@@ -181,10 +190,17 @@ if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY
       }}
       if ($0 != "") printf "%s%s", (n++ ? "," : ""), $0
     }}')
-  if [ -n "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}" ]; then
-    http_proxy="${{HTTP_PROXY:-}}"
-    https_proxy="${{HTTPS_PROXY:-}}"
-    no_proxy="${{NO_PROXY:-}}"
+  # An inherited bypass list is merged rather than replaced: naming what goes
+  # direct does not name a proxy, so it must not keep the system proxy out.
+  if [ -n "$inherited_no_proxy" ]; then
+    if [ -n "$NO_PROXY" ]; then NO_PROXY="$NO_PROXY,$inherited_no_proxy"; else NO_PROXY="$inherited_no_proxy"; fi
+  fi
+  if [ -n "$found_http$found_https" ]; then
+    HTTP_PROXY="$found_http"
+    HTTPS_PROXY="$found_https"
+    http_proxy="$found_http"
+    https_proxy="$found_https"
+    no_proxy="$NO_PROXY"
     export HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy
     echo "using the proxy from System Settings"
   fi

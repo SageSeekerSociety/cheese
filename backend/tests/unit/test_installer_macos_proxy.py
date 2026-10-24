@@ -285,6 +285,40 @@ def test_an_environment_proxy_keeps_the_last_word(tmp_path, variable):
     assert live_answers, "the proxy from the environment was not used"
 
 
+@pytest.mark.parametrize("variable", ["no_proxy", "NO_PROXY"])
+def test_a_bypass_list_alone_does_not_hide_the_system_proxy(tmp_path, variable):
+    """Naming what goes direct does not name a proxy: a stray bypass list in the
+    environment must not send this download past the System Settings proxy."""
+    loaded = _install(
+        tmp_path,
+        _scutil_reporting,
+        {variable: "internal.corp"},
+    )
+
+    assert loaded.run.returncode == 0, loaded.run.stdout + loaded.run.stderr
+    assert (loaded.home / ".local/bin/cheesehost").read_bytes() == BINARY
+    assert any(
+        path.startswith("CONNECT ") for path in loaded.answered_by(loaded.proxy)
+    ), "a bypass list in the environment suppressed the System Settings proxy"
+
+
+def test_an_inherited_bypass_list_is_kept(tmp_path):
+    """The system's list is merged with the environment's, not substituted for
+    it: localhost is in the environment's list, so the download goes direct."""
+    loaded = _install(
+        tmp_path,
+        _scutil_reporting,
+        {"no_proxy": "localhost"},
+    )
+
+    assert loaded.run.returncode == 0, loaded.run.stdout + loaded.run.stderr
+    assert (loaded.home / ".local/bin/cheesehost").read_bytes() == BINARY
+    assert not loaded.answered_by(loaded.proxy), (
+        "the environment's bypass list was replaced by the system's"
+    )
+    assert loaded.answered_by(loaded.origin), "the bypassed host was not fetched"
+
+
 def test_uppercase_http_proxy_does_not_hide_the_system_proxy(tmp_path):
     """curl ignores uppercase HTTP_PROXY (the httpoxy fix), so it is not a proxy
     this download can use: the System Settings entry must still be taken."""
@@ -302,3 +336,37 @@ def test_uppercase_http_proxy_does_not_hide_the_system_proxy(tmp_path):
     assert any(
         path.startswith("CONNECT ") for path in loaded.answered_by(loaded.proxy)
     ), "uppercase HTTP_PROXY stood in for the System Settings proxy"
+
+
+def test_an_inherited_uppercase_http_proxy_is_not_exported(tmp_path):
+    """With no proxy enabled in System Settings, an uppercase HTTP_PROXY in the
+    environment is not a proxy curl reads — so it must not be handed out as a
+    lowercase one either. (It was, while the block used that name as its own
+    working variable.)"""
+    # System Settings enables nothing, so the block finds no proxy of its own.
+    no_proxy_setting = (
+        '#!/bin/sh\n[ "$1" = "--proxy" ] || exit 1\n'
+        "echo '<dictionary> {'\n"
+        "echo '  HTTPEnable : 0'\n"
+        "echo '  HTTPSEnable : 0'\n"
+        "echo '  SOCKSEnable : 0'\n"
+        "echo '}'\n"
+    )
+    live = _serve(_Tunnels)
+    try:
+        loaded = _install(
+            tmp_path,
+            no_proxy_setting,
+            {"HTTP_PROXY": f"http://127.0.0.1:{live.server_address[1]}"},
+        )
+        live_answers = loaded.answered_by(live)
+    finally:
+        live.shutdown()
+
+    # The download goes direct and succeeds; the environment's uppercase value
+    # never became a proxy curl uses.
+    assert loaded.run.returncode == 0, loaded.run.stdout + loaded.run.stderr
+    assert (loaded.home / ".local/bin/cheesehost").read_bytes() == BINARY
+    assert not live_answers, (
+        "the inherited uppercase HTTP_PROXY was exported as a proxy"
+    )
