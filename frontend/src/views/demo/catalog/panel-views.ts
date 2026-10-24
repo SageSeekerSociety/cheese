@@ -19,6 +19,7 @@ import {
   PREVIEW_EMPTY,
   previewPanelProps,
 } from '../catalogFixtures'
+import { previewCommentsBundle } from '../catalogPanelsPreviewFixtures'
 
 import { UI } from './needs'
 
@@ -148,6 +149,13 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
           previewError: '接口返回 502',
         }),
         expect: '预览加载失败',
+      },
+      {
+        name: '这一份文件上的评论',
+        note: '点那颗「评论」开出来的那一栏：盖在右边，每张卡写作者的名字和头像（名册那一包给的，和文档那一栏同一处），右上角那颗 × 收起它 —— 开它的按钮就在栏底下，没有这一颗就没有出口。',
+        props: previewPanelProps({ comments: previewCommentsBundle({ open: true }) }),
+        expect: '这里的用时要不要一起写进去',
+        expectSelector: '.file-comments__close',
       },
     ],
   },
