@@ -113,12 +113,13 @@ def task_brief(
     *,
     claim: TaskMembership | None = None,
     timezone: str | None = None,
-    materials: list[tuple[int, str]] | None = None,
+    materials: list[str] | None = None,
     materials_readable: bool = False,
 ) -> str:
     """The task as 芝士 is shown it: what anyone who can open the task page
     reads there, and its materials by name (``materials``: what
-    ``cheese_read`` reads as ``files/<id>``, when the asker may) — plus the asker's own claim
+    ``cheese_read`` reads as ``spaces/<s>/tasks/<t>/files/<name>``, when the
+    asker may download them) — plus the asker's own claim
     (``app.domain.task.claims.own_claim``) when they have one. Times are on the
     asker's clock (``timezone``, the one their browser reported). Wrapped so
     the rules can call it material rather than instructions."""
@@ -148,7 +149,10 @@ def task_brief(
             if materials_readable
             else "材料（领取获批后才能读取，现在读不到）："
         )
-        lines += [f"- {name}（files/{file_id}）" for file_id, name in materials]
+        lines += [
+            f"- {name}（spaces/{task.space_id}/tasks/{task.id}/files/{name}）"
+            for name in materials
+        ]
     return (
         TASK_SCENE
         + "\n"

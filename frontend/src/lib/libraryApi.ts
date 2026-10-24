@@ -29,6 +29,8 @@ export interface LibraryFile {
   replaced: number
   /** 你读得到的房间里有几条消息带着它。 */
   references: number
+  /** 从题目来的那一份（项目资料库的 `题目/` 底下）：只能读，不能替换、改名、删除。 */
+  readonly?: boolean
 }
 
 /** 一层里的一个文件夹：名字里 `/` 前面那一段，后端从记录表里聚出来。 */
@@ -43,6 +45,8 @@ export interface LibraryFolder {
   count: number
   /** 里面最近放进来的那一份的时间（Unix 秒）。 */
   modified: number
+  /** `题目` 那个文件夹和它底下的：只能读，什么也放不进去。 */
+  readonly?: boolean
 }
 
 export type LibraryEntry = LibraryFile | LibraryFolder

@@ -1067,8 +1067,10 @@ PLATFORM_TOOLS = ToolTable(
             "项目资料库",
             {
                 "list": _verb(
-                    "列出项目资料库里的文件（用户给这个项目的，最近的在前）。"
-                    "取一份用 Bash 跑 `cheese library get <名字>`。",
+                    "列出项目资料库里的文件（用户给这个项目的，最近的在前），一次一层："
+                    "文件夹在前。从题目来的项目有一个只读的「题目」文件夹，里面是题目的"
+                    "材料和题目说明。取一份用 Bash 跑 `cheese library get <名字>`。",
+                    {"dir": _text("看哪个文件夹，如 题目；不填是最上面一层")},
                 ),
             },
         ),
@@ -1630,7 +1632,8 @@ DELEGATED_TOOLS = ToolTable(
             "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
             "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它待审阅的改动 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
-            "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
+            "spaces/4/tasks/87，题目的材料 spaces/4/tasks/87/files/<名字>，"
+            "草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
             "library/成绩.xlsx；me 是用户参加的题目和各自的截止时间，"
             "settings 是用户的通知设置。"
@@ -2148,6 +2151,8 @@ def _canvas_change(change) -> dict:
     return out
 
 
+#: A 题目's material, by its name in the 题目's library.
+_TASK_FILE = re.compile(r"spaces/(\d+)/tasks/(\d+)/files/(.+)")
 #: What lives outside projects, read where the publish page's tools read it.
 _READ_ELSEWHERE = (
     (re.compile(r"spaces/(\d+)/tasks/(\d+)"), "problem"),
@@ -2190,6 +2195,14 @@ def _read_plan(args: dict) -> dict:
     if args["ref"].strip().strip("/").split("/", 1)[0] == "library":
         body = {"ref": args["ref"], "page": page}
         return {"method": "POST", "path": "/assistant/agent/library", "body": body}
+    material = _TASK_FILE.fullmatch(args["ref"].strip().strip("/"))
+    if material:
+        body = {
+            "task": int(material.group(2)),
+            "name": material.group(3),
+            "pages": _pdf_pages(page),
+        }
+        return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
     found = _read_kind(args["ref"])
     if found is None:
         body = {"ref": args["ref"], "page": page}
@@ -2215,7 +2228,7 @@ def _say_read(args: dict, data, environ) -> str:
         return _say_joined_problems(args, data, environ)
     found = _read_kind(args["ref"])
     kind = found[0] if found else None
-    if kind == "file":
+    if kind == "file" or _TASK_FILE.fullmatch(args["ref"].strip().strip("/")):
         return _say_document(args, data, environ)
     if kind in ("material", "materials"):
         return _say_materials(args, data, environ)
@@ -2387,7 +2400,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "body": {"changes": [_canvas_change(c) for c in args["changes"]]},
         }
     if tool == "cheese_library.list":
-        return {"method": "GET", "path": f"/projects/{project}/library"}
+        folder = str(args.get("dir") or "").strip().strip("/")
+        query = f"?{urllib.parse.urlencode({'dir': folder})}" if folder else ""
+        return {"method": "GET", "path": f"/projects/{project}/library{query}"}
     if tool == "cheese_room.rename":
         body = {"title": args["text"]}
         return {"method": "POST", "path": here + "/title", "body": body}
@@ -4742,9 +4757,14 @@ def _say_library(args, data, env) -> str:
         return "资料库里还没有文件。"
     lines = []
     for row in rows:
+        readonly = "\t只读" if row.get("readonly") else ""
+        if row.get("type") == "folder":
+            lines.append(f"{row['path']}/\t{row.get('count') or 0} 份{readonly}")
+            continue
         size = row.get("bytes") or 0
         lines.append(
             f"{row['path']}\t{f'{size / 1024:.0f}K' if size >= 1024 else f'{size}B'}"
+            + readonly
         )
     return "\n".join(lines)
 

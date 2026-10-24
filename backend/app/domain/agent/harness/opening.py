@@ -211,7 +211,8 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
-#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。题目
+#: 那一段在里面：出题人改了题目，正在做的会话下一轮就要知道到了第几版、改了什么。
 TRACKED_SECTIONS = (
     "tasks",
     "topics",
@@ -220,6 +221,7 @@ TRACKED_SECTIONS = (
     "overview",
     "memory",
     "task",
+    "package",
 )
 
 
@@ -333,10 +335,13 @@ def build_session_opening(
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
     task: str | None = None,
+    package: str | None = None,
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
+    ``package``：从题目来的项目里「题目」那一段（``task.package.section_for_project``）：
+    第几版、材料在资料库的 `题目/`、这一版改了什么；别的项目是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
     变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
@@ -348,6 +353,8 @@ def build_session_opening(
         sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
+    if package:
+        sections["package"] = package
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (

@@ -50,7 +50,7 @@ const props = withDefaults(
     selectedCategoryId?: number
     domainGroups: DomainGroup[]
     templates: { index: number; name: string; description: string }[]
-    attachments: PickedAttachment[]
+    attachments: PickedAttachment<number>[]
     uploading: boolean
     maxFileBytes: number | null
     materials: SpaceMaterial[]
@@ -304,7 +304,7 @@ defineExpose({
                 :uploading="uploading"
                 :max-file-bytes="maxFileBytes"
                 @add="emit('add-attachments', $event)"
-                @remove="emit('remove-attachment', $event)"
+                @remove="emit('remove-attachment', Number($event))"
               />
             </template>
 

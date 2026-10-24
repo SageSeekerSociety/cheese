@@ -759,8 +759,7 @@ async def release_feedback(
 # 两条路，一条上传、一条读，`POST /feedback` 用 id 把它们挂上去。为什么不是附件
 # 跟着报告那条请求一起传（multipart）：表单在选文件那一刻就上传，用户在屏幕上先
 # 看见它失败，而不是写完几百字按提交才发现；发题目那条路也是这么做的
-# （`TaskAttachmentService.attach_uploaded` 的说明）。代价是中途放弃会留下一个没人
-# 引用的对象，同一个代价。
+# （`package.add_uploads`）。代价是中途放弃会留下一个没人引用的对象，同一个代价。
 
 
 @router.post(

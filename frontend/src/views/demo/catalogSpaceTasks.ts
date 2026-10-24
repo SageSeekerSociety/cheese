@@ -1055,7 +1055,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     file: 'src/views/tasks/detail/BriefView.vue',
     component: BriefView,
     needs: UI_T,
-    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloadingId: null },
+    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloading: null },
     states: [
       {
         get name() {

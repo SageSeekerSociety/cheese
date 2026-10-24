@@ -158,13 +158,16 @@ async def _file(reader: pages.Reader, file_id: uuid.UUID | None):
     if file_id is None:
         return None
     row = await library_records.current_by_id(reader.session, file_id)
-    if row is None:
+    # A 题目's own files are cited as the 题目 (`problem-<id>`), under its rule.
+    if row is None or row.task_id is not None:
         return None
     if row.project_id is not None:
         await pages.judge(reader).project(row.project_id)
         project = await ProjectService(reader.session).get(row.project_id)
         shelf, where = (
-            Shelf.of_project(row.project_id),
+            # The project's own row, by its id: the task's files under `题目/`
+            # are not rows of the project, so nothing here reads through it.
+            Shelf.of_project(row.project_id, with_task=False),
             (f"项目「{project.name}」的资料库" if project else "项目资料库"),
         )
     else:
@@ -259,7 +262,10 @@ async def citable(
             out.append(_item(doc.id, "doc", doc.title or "", where))
     shelves = [(Shelf.of_team(own_team_id), "我的资料库")]
     if here is not None and here in project_names:
-        shelves.insert(0, (Shelf.of_project(here), project_names[here]))
+        # The project's own newest files (`newest` lists the shelf's own rows).
+        shelves.insert(
+            0, (Shelf.of_project(here, with_task=False), project_names[here])
+        )
     for shelf, where in shelves:
         for row in await library_records.newest(session, shelf, LISTED):
             out.append(_item(f"{FILE}{row.id}", "file", row.name, where))

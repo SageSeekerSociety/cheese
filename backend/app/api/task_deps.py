@@ -32,9 +32,6 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.task.attachment_service import (
-    TaskAttachmentService,
-)
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
@@ -88,12 +85,9 @@ async def get_team_service(db=Depends(get_db)) -> TeamService:
     return TeamService(repo)
 
 
-def _task_attachment_service(db) -> TaskAttachmentService:
-    return TaskAttachmentService(session=db, storage=get_storage_backend())
-
-
 def _attachment_service(db) -> AttachmentService:
-    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。
+    """人先传上来的文件那一层（``POST /attachments`` 用的同一个服务）：发题时选的
+    材料先传成这里的附件，建题时再拷进题目资料库。
 
     ``from_session`` 而不是自己造它的 repository：这里在题目这一域的地盘上，
     摸附件那一域的 repository 正是 ``test_domain_import_guard.py`` 拦的那一条。
