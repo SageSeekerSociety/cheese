@@ -625,7 +625,13 @@ class SessionHost:
             running.answering = heard.get("alive") is not False
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 if (seat := running.seat) is not None:
@@ -742,7 +748,13 @@ class SessionHost:
             heard = subscription.heard
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 # The runner answered. It may have had nothing to answer with:

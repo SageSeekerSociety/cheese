@@ -204,6 +204,11 @@ class Runner(runner.Runner[Journal]):
         kind = event.get("type")
         if kind == "message_update":
             self.write(event.get("assistantMessageEvent") or {})
+        elif kind == "tool_execution_end" and not event.get("parentToolCallId"):
+            # A call came back: a reader shows it ended now, not when the
+            # model next writes, which may be a long stretch of reasoning.
+            self.live_returned.append(str(event.get("toolCallId") or ""))
+            self.shown()
         elif kind == "message_start":
             if (event.get("message") or {}).get("role") == "assistant":
                 self.writing = {}
@@ -220,6 +225,7 @@ class Runner(runner.Runner[Journal]):
             self.messages_ended += 1
         if kind == "agent_start":
             self.working = True
+            self.live_returned = []
         elif kind == "agent_settled":
             self.working = False
             # pi delivers a steered message before its next model call and

@@ -64,16 +64,29 @@ class Words:
 @dataclass(frozen=True)
 class Tool:
     """The session is calling a tool: ``call`` is the harness's own id for the
-    call, when it gives one."""
+    call, when it gives one. ``at`` is how much of the answer's text was
+    written before it: a reader shows the call between what was said before
+    and after it."""
 
     name: str
     call: str | None = None
+    at: int = 0
 
 
 @dataclass(frozen=True)
 class Thinking:
     """The model started reasoning: what it reasons is never handed on, only
-    that it is."""
+    that it is. ``at`` places it in the answer's text, as ``Tool.at`` does."""
+
+    at: int = 0
+
+
+@dataclass(frozen=True)
+class ToolDone:
+    """A call came back without an error: a reader shows it ended now rather
+    than when the model next does something."""
+
+    call: str
 
 
 @dataclass(frozen=True)
@@ -93,6 +106,10 @@ class ToolFailed:
 
     call: str
     text: str
+
+
+#: What of an answer is handed on while it is written.
+type Said = Words | Tool | ToolArgs | ToolFailed | ToolDone | Thinking
 
 
 @dataclass(frozen=True)
@@ -121,7 +138,7 @@ async def ask(
     work_id: uuid.UUID,
     ceiling_s: float,
     stopped: Callable[[], Awaitable[bool]] | None = None,
-) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Waiting | Answer]:
+) -> AsyncIterator[Said | Waiting | Answer]:
     """Say ``prompt`` and hand on the answer as it is written; ends with one
     ``Answer``. ``prompt`` may be what makes it once the session has started,
     for a prompt whose credential should count from then rather than from
@@ -203,6 +220,8 @@ class Progress:
     #: The records of the messages already folded in, so one read again is
     #: not said twice.
     taken: set[str] = field(default_factory=set)
+    #: The calls told as come back.
+    returned: set[str] = field(default_factory=set)
     result: Answer | None = None
 
     def whole(self) -> str:
@@ -221,7 +240,7 @@ class Progress:
             return []
         if call:
             self.announced.add(call)
-        return [Tool(name, call)]
+        return [Tool(name, call, len(self.shown))]
 
     def arguments(self, call: str | None, raw: str) -> list[ToolArgs]:
         """What more of a call's arguments was written since last handed on."""
@@ -234,21 +253,32 @@ class Progress:
         return [ToolArgs(call, raw[seen:], seen)]
 
     def writing(
-        self, blocks: tuple[dict, ...]
-    ) -> list[Words | Tool | ToolArgs | Thinking]:
-        said: list[Words | Tool | ToolArgs | Thinking] = []
+        self, blocks: tuple[dict, ...], returned: tuple[str, ...] = ()
+    ) -> list[Said]:
+        """What the message being written says more, block by block in the
+        order it is written: words said before a call are handed on before
+        it, so the call is placed after them."""
+        said: list[Said] = []
+        # A call that came back was made before anything this message says.
+        for call in returned:
+            if call in self.announced and call not in self.returned:
+                self.returned.add(call)
+                said.append(ToolDone(call))
+        written: list[str] = []
         for index, block in enumerate(blocks):
-            if block.get("type") == "thinking":
+            kind = block.get("type")
+            if kind == "text":
+                written.append(str(block.get("text") or ""))
+                said += self._extend([*self.parts, *written])
+            elif kind == "thinking":
                 key = f"{len(self.parts)}:{index}"
                 if key not in self.thought:
                     self.thought.add(key)
-                    said.append(Thinking())
-            if block.get("type") == "tool":
+                    said.append(Thinking(len(self.shown)))
+            elif kind == "tool":
                 call = block.get("id")
                 said += self.tool(call, str(block.get("name") or ""))
                 said += self.arguments(call, str(block.get("arguments") or ""))
-        written = [str(b.get("text") or "") for b in blocks if b.get("type") == "text"]
-        said += self._extend([*self.parts, *written])
         return said
 
     def message(self, text: str, record: str | None = None) -> list[Words]:
@@ -267,6 +297,7 @@ class Progress:
             "argued": self.argued,
             "thought": sorted(self.thought),
             "taken": sorted(self.taken),
+            "returned": sorted(self.returned),
             "result": (
                 None
                 if self.result is None
@@ -284,6 +315,7 @@ class Progress:
             argued={str(k): int(v) for k, v in (data.get("argued") or {}).items()},
             thought=set(data.get("thought") or []),
             taken=set(data.get("taken") or []),
+            returned=set(data.get("returned") or []),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
 
@@ -296,7 +328,7 @@ async def follow(
     deadline: float,
     progress: Progress,
     keep: Callable[[Progress], Awaitable[None]] | None = None,
-) -> AsyncIterator[Words | Tool | ToolArgs | ToolFailed | Thinking | Answer]:
+) -> AsyncIterator[Said | Answer]:
     """Read the answer to work ``work_id`` on from ``progress``, handing on
     what more of it is written; ends with one ``Answer``. Past ``deadline``
     (on the monotonic clock) the work is stopped and the answer is what failed
@@ -337,7 +369,7 @@ async def follow(
             if read.work_id not in (None, work):
                 continue
             event = read.event
-            said: list[Words | Tool | ToolArgs | ToolFailed | Thinking] = []
+            said: list[Said] = []
             if isinstance(event, Report):
                 # What a runner reported: of all of it, only the ending of the
                 # work, or of the session, ends an answer.
@@ -352,7 +384,7 @@ async def follow(
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return
             if isinstance(event, Writing):
-                said = [*progress.writing(event.blocks)]
+                said = [*progress.writing(event.blocks, event.returned)]
             elif read.work_id != work:
                 continue
             elif isinstance(event, AgentMessage):

@@ -44,9 +44,11 @@ from app.domain.agent.personal.prompt import about, earlier, now_line, page
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
     Answer,
+    Said,
     Thinking,
     Tool,
     ToolArgs,
+    ToolDone,
     ToolFailed,
     Waiting,
     Words,
@@ -338,7 +340,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
         return int(position.split("-", 1)[0])
 
     for position, event, data in told:
-        if reasoning is not None and event not in ("tool_args",):
+        if reasoning is not None and event not in ("tool_args", "tool_done"):
             # Reasoning lasts until the next thing it does.
             reasoning["ms"] = ms(position) - reasoning.pop("from")
             reasoning = None
@@ -348,6 +350,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
                 "name": "thinking",
                 "args": "",
                 "from": ms(position),
+                **({"at": data["at"]} if isinstance(data.get("at"), int) else {}),
             }
             steps.append(reasoning)
         elif event == "tool":
@@ -355,6 +358,8 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             if call in by_call:
                 continue
             step = {"call": call, "name": data.get("name") or "", "args": ""}
+            if isinstance(data.get("at"), int):
+                step["at"] = data["at"]
             by_call[call] = step
             steps.append(step)
         elif event == "tool_args" and data.get("call") in by_call:
@@ -426,7 +431,7 @@ class Answers:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -436,12 +441,20 @@ class Answers:
             )
             await self._look_for_loops(consumption, item.text)
         elif isinstance(item, Tool):
+            # ``at``: how much of the answer's text came before it, so the
+            # page shows the call between what was said before and after.
             await self._consumptions.publish(
-                consumption, "tool", {"name": item.name, "call": item.call}
+                consumption,
+                "tool",
+                {"name": item.name, "call": item.call, "at": item.at},
+            )
+        elif isinstance(item, ToolDone):
+            await self._consumptions.publish(
+                consumption, "tool_done", {"call": item.call}
             )
         elif isinstance(item, Thinking):
             # That it reasons, never what: the page shows 思考中.
-            await self._consumptions.publish(consumption, "thinking", {})
+            await self._consumptions.publish(consumption, "thinking", {"at": item.at})
         elif isinstance(item, ToolArgs):
             # A call's arguments as they are written: the page shows a form
             # field filling with the value before the call writes it.
@@ -497,6 +510,10 @@ class Answers:
             # What it had written when it was stopped stays, marked as such.
             text, failed = written.strip(), None
         parts = parts_of(await self._consumptions.told(consumption.work_id))
+        if parts and not failed and not stopped and not text.strip():
+            # It worked and then wrote nothing: the page says so rather than
+            # showing an answer with no words.
+            parts = {**parts, "silent": True}
         if (text and not failed) or stopped or parts:
             if answer.usage is not None and answer.usage.calls:
                 # Each model call's prompt and how much of it the provider's

@@ -32,7 +32,14 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
 from app.domain.agent.personal import session as personal
-from app.domain.agent.session_host.answer import Answer, Thinking, Tool, Words, ask
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Thinking,
+    Tool,
+    ToolDone,
+    Words,
+    ask,
+)
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
@@ -177,8 +184,12 @@ def _chunks(index: int, step: dict) -> list[dict]:
                 "arguments": json.dumps(step.get("arguments", {})),
             },
         }
+        # What it says before the call, in the same message.
+        said = [chunk({"content": step["say"]})] if step.get("say") else []
         return [
-            chunk({"role": "assistant", "content": None, "tool_calls": [call]}),
+            chunk({"role": "assistant", "content": None if not said else ""}),
+            *said,
+            chunk({"tool_calls": [call]}),
             chunk({}, "tool_calls", usage=usage),
         ]
     text = step["text"]
@@ -324,6 +335,36 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     # Nothing but the launch ran on the host: no machine, no container.
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
     assert ran and all(argv == ["python3", "-"] for argv in ran)
+
+
+@pytest.mark.anyio
+async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_returns(
+    host, platform
+):
+    _hub, sessions = host
+    platform(
+        [
+            {"say": "我先查一下。", "tool": "cheese_my_tasks"},
+            {"text": "你领了一道题。"},
+        ]
+    )
+    launch = _launch(7)
+
+    events = [
+        e
+        async for e in _asking(
+            sessions, launch, "我领了哪些题？", credential=question_credential(7)
+        )
+    ]
+
+    call = next(e for e in events if isinstance(e, Tool))
+    returned = next(e for e in events if isinstance(e, ToolDone))
+    later = next(e for e in events if isinstance(e, Words) and "你领了" in e.text)
+    assert call.at == len("我先查一下。")
+    assert returned.call == call.call
+    assert events.index(call) < events.index(returned) < events.index(later)
+    assert len([e for e in events if isinstance(e, ToolDone)]) == 1
+    assert events[-1] == Answer("我先查一下。\n\n你领了一道题。")
 
 
 @pytest.mark.anyio

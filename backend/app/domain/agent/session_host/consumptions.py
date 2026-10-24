@@ -40,12 +40,8 @@ from app.domain.agent.admission import Held, Slot, adopt
 from app.domain.agent.session_host.answer import (
     Answer,
     Progress,
-    Thinking,
-    Tool,
-    ToolArgs,
-    ToolFailed,
+    Said,
     Waiting,
-    Words,
     follow,
     say,
     starting,
@@ -172,7 +168,7 @@ class Consumer(Protocol):
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         """One step of the answer, as it comes."""
         ...

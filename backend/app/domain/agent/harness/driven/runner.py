@@ -266,6 +266,9 @@ class Runner(Generic[J]):  # noqa: UP046
         # mark changes with every change of it, and from one runner to the next.
         self.live_blocks: list[dict] = []
         self.live_work: str | None = None
+        #: The calls of the work under way that came back, for a harness that
+        #: says so (``Writing.returned``).
+        self.live_returned: list[str] = []
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
@@ -524,6 +527,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 "work_id": self.live_work,
                 # As they stand now: the harness goes on changing them in place.
                 "blocks": [dict(block) for block in self.live_blocks],
+                "returned": list(self.live_returned),
             }
         return answer
 
