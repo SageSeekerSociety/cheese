@@ -54,7 +54,16 @@ describe('在正文里找回评论指着的那一处', () => {
     expect(range!.startContainer.parentElement?.closest('p')?.previousElementSibling?.textContent).toBe('部署')
   })
 
-  it('标题一样像、前后文也一样像的时候，宁可不画', () => {
+  it('两处一样像的时候宁可不画，哪怕它们都「很像」', () => {
+    // 这一条要的是**分数不为零**的平手：同一个标题下两次一样的出现，前后文也一样，两边
+    // 都拿满分。分不清就别画——把标记钉到另一句话上比没有标记更坏。
+    const twice = doc('<h1>配置</h1><p>甲说重试 3 次。</p><p>甲说重试 3 次。</p>')
+    expect(locateQuote(twice, { text: '重试 3 次', heading: '配置', prefix: '甲说', suffix: '。' })).toBeNull()
+  })
+
+  it('两处都没得可分辨（一分不给）的时候也不画', () => {
+    // 这一条走的是另一条判据：两处都是 0 分，横竖都认不出是哪一处。和上面那条是两道
+    // 各自会坏的坎，所以要各有一条——只留一条的话，另一道坎被拆掉时没人拦。
     const twice = doc('<p>重试 3 次。</p><p>重试 3 次。</p>')
     expect(locateQuote(twice, { text: '重试 3 次', heading: null, prefix: '', suffix: '' })).toBeNull()
   })

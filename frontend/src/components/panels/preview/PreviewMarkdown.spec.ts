@@ -94,17 +94,44 @@ it('正看着的那一串画得重一些', async () => {
   expect((await mark(md, 'c1')).classList.contains('is-active')).toBe(false)
 })
 
+it('换了在看的那一条，正文上重的那一处跟着换', async () => {
+  // 正文和指的那几处都没变——连那个数组都还是同一个（不然重画是「指的那几处变了」那条
+  // 路带来的，测不到「在看哪一条」那一条路）。这条路上要是没重画，读者在栏里换了另一条
+  // 看，正文还亮着上一条。
+  const anchors = [{ id: 'c1', quote: ANCHOR }]
+  const ui = render(PreviewMarkdown, {
+    props: { source: '# 配置\n\n失败以后重试 3 次。\n', anchors, activeId: null },
+  })
+  const md = ui.getByTestId('markdown')
+  expect((await mark(md, 'c1')).classList.contains('is-active')).toBe(false)
+
+  await ui.rerender({ source: '# 配置\n\n失败以后重试 3 次。\n', anchors, activeId: 'c1' })
+
+  await waitFor(() =>
+    expect(md.querySelector('mark[data-file-comment="c1"]')?.classList.contains('is-active')).toBe(true)
+  )
+  // 重画是「先拆再画」，不是又包一层：正文上还只有这一颗。
+  expect(md.querySelectorAll('mark[data-file-comment]')).toHaveLength(1)
+})
+
 it('正文里已经找不到的那一处不画：那一段话被删了或改了', async () => {
   // 评论记的是「哪一版 + 那段原文」。换了一版那一段话就没了，照旧位置画会指到另一句话上，
   // 比不画更坏。
+  //
+  // 同一次里还挂着一条找得回来的：等它画出来，才说明这一轮画过了。只等正文的 <p> 出现
+  // 就断言「没有标记」，一个根本还没画的时刻也满足它——实测过，把「找不到就别画」那段
+  // 代码改坏，这条照样绿。
   const ui = render(PreviewMarkdown, {
     props: {
       source: '# 配置\n\n失败以后重试 3 次。\n',
-      anchors: [{ id: 'c1', quote: { text: '这一段话已经不在这一版里了', heading: '配置', prefix: '', suffix: '' } }],
+      anchors: [
+        { id: 'c1', quote: { text: '这一段话已经不在这一版里了', heading: '配置', prefix: '', suffix: '' } },
+        { id: 'c2', quote: ANCHOR },
+      ],
     },
   })
-  await waitFor(() => expect(ui.getByTestId('markdown').querySelector('p')).toBeTruthy())
-  expect(ui.getByTestId('markdown').querySelector('mark[data-file-comment]')).toBeNull()
+  await mark(ui.getByTestId('markdown'), 'c2')
+  expect(ui.getByTestId('markdown').querySelector('mark[data-file-comment="c1"]')).toBeNull()
 })
 
 it('换了一份正文，上一份的标记不留在新的正文上', async () => {
@@ -113,14 +140,17 @@ it('换了一份正文，上一份的标记不留在新的正文上', async () =
   })
   await mark(ui.getByTestId('markdown'), 'c1')
 
-  await ui.rerender({
-    source: '# 配置\n\n另一句话。\n',
-    anchors: [{ id: 'c1', quote: ANCHOR }],
-  })
+  // 新的这一份里也留一条指得上的：不然「新正文上有没有旧标记」这件事在一个还没画过的
+  // 时刻也成立。换正文这一路上标记是跟着正文一起没的（阅读视图整块重画），所以这条主要
+  // 拦的是「新正文上顺手把旧标记又画了一遍」；「画之前先拆掉上一轮那一层」那件事由
+  // 「换了在看的那一条」那条盯着——那一次正文没变，只有标记本身要重画。
+  const next = { text: '另一句话', heading: '配置', prefix: '', suffix: '。' }
+  await ui.rerender({ source: '# 配置\n\n另一句话。\n', anchors: [{ id: 'c2', quote: next }] })
 
   const md = ui.getByTestId('markdown')
-  await waitFor(() => expect(md.textContent).toContain('另一句话'))
-  expect(md.querySelector('mark[data-file-comment]')).toBeNull()
+  await mark(md, 'c2')
+  expect(md.querySelector('mark[data-file-comment="c1"]')).toBeNull()
+  expect(md.textContent).not.toContain('重试 3 次')
 })
 
 it('从标记里拖选了一段：那是「指着这处」，不是「打开这串」', async () => {

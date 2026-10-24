@@ -133,7 +133,10 @@ export function locateQuote(root: HTMLElement | null, quote: AnchorQuote): Range
 
   const scored = hits.map((at) => ({ at, score: likeness(root, slots, text, at, quote, wanted.length) }))
   const best = Math.max(...scored.map((entry) => entry.score))
-  if (best <= 0) return null
+  // 一道判据管到底：一处都没得分时，所有候选并列最高分，于是也走下面那一句返回 null。
+  // 曾经在它前面另写一句「最高分是 0 就别画」，那一句永远轮不到自己生效（每处的得分只
+  // 加不减，0 分必然是全体并列），却让「一处都没得分」那条用例拦在它这里、拦不到真正
+  // 做判断的那一句。
   const top = scored.filter((entry) => entry.score === best)
   if (top.length !== 1) return null
   return rangeOf(slots, top[0].at, top[0].at + wanted.length)
