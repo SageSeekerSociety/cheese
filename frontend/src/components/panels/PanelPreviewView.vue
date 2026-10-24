@@ -392,9 +392,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
-    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。 -->
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。图上圈着一块、标注条开着时
+         先收起来：矮的面板里它正落在标注条上，会盖住「取消」。 -->
     <BaseButton
-      v-if="commentTarget"
+      v-if="commentTarget && !imageRegion.target.value"
       class="panel-preview__comments-toggle"
       kind="secondary"
       size="sm"
