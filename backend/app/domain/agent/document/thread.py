@@ -44,12 +44,9 @@ from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.document.session import ref, session_for
 from app.domain.agent.session_host.answer import (
     Answer,
-    Thinking,
+    Said,
     Tool,
-    ToolArgs,
-    ToolFailed,
     Waiting,
-    Words,
 )
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
@@ -259,7 +256,7 @@ class Replies:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         document_id = Asked.of(consumption.data).document_id
         thread_id = uuid.UUID(consumption.key)
