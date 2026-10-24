@@ -117,7 +117,22 @@ async def list_task_files(
     )
 
 
-@router.get("/{taskId}/files/raw", summary="Download Task File")
+#: 一份材料的字节，原样给出。
+BYTES = {
+    "response_class": Response,
+    "responses": {
+        200: {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            }
+        }
+    },
+}
+
+
+@router.get("/{taskId}/files/raw", summary="Download Task File", **BYTES)
 async def download_task_file(
     task_id: TaskId,
     name: str,
