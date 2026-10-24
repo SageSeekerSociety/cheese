@@ -185,7 +185,7 @@ describe('task pages in English', () => {
 
   it('market page', async () => {
     render(MarketView, { global: { plugins: plugins() } })
-    expect(document.body.textContent).toContain('Challenge matching')
+    expect(document.body.textContent).toContain('Market')
     expect(cjkIn(pageText())).toEqual([])
   })
 })

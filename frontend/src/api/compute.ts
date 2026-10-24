@@ -20,8 +20,6 @@ export function saveProjectCreditBudget(projectId: string, update: CreditBudgetU
   })
 }
 
-// ---- 题目匹配市场 (spec §13 阶段 6) ----
-
 // Creation defaults, available before a project exists.
 export interface ResourceLimits {
   max_concurrent_turns: number

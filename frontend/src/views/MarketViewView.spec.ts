@@ -1,5 +1,5 @@
 // 市场（视图）：只吃 props。市场是找东西、装东西的地方——技能、插件、MCP、Agent 模板；
-// 模型和环境是项目的配置，在项目设置里选（`ProjectComputeSettings`、默认模型），不在这里。
+// 模型和环境是项目的配置，在项目设置里选（`ProjectComputeSettings`、默认模型）；题目在空间里。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -48,11 +48,12 @@ describe('MarketViewView', () => {
     expect(await screen.findByText('pdf')).toBeTruthy()
   })
 
-  it('has no tab for models and environments: those are chosen in project settings', () => {
+  // 只放能装的：模型和环境在项目设置里选，题目在空间里发布和应征。
+  it('offers only installables: no models and environments, no challenge matching', () => {
     render(MarketViewView, { props: { market: MARKET, marketLoaded: true }, global: { plugins: plugins() } })
-    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent?.trim())
-    expect(tabs).toContain(t('market.tabs.skills'))
-    expect(tabs).not.toContain('模型与环境')
+    expect(screen.queryByText('模型与环境')).toBeNull()
     expect(screen.queryByText('环境状态')).toBeNull()
+    expect(screen.queryByText('题目匹配')).toBeNull()
+    expect(document.body.textContent).not.toContain('机构把')
   })
 })

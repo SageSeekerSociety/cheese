@@ -19,7 +19,7 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
     id: 'market-view',
     title: 'MarketViewView',
     about:
-      '「市场」页的画面：技能与插件（技能 / 插件 / MCP / Agent 模板）、题目匹配两张页签，开页停在前一张。模型和环境不在这里：那是项目的配置，在项目设置里选。',
+      '「市场」页的画面：只放能装的——技能 / 插件 / MCP / Agent 模板的目录。模型和环境是项目的配置，在项目设置里选；题目在空间里发布和应征。',
     file: 'src/views/MarketViewView.vue',
     component: MarketViewView,
     // 页头是 `AppPage`（它的返回链接要路由）；正文的字走 `useI18n`。
@@ -43,12 +43,6 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
         note: '目录还没回来：技能那一格先说一句在读，「先连接一台机器」那句等读完再说。',
         props: { market: null, marketLoaded: false, marketLoading: true },
         expect: '正在读市场…',
-      },
-      {
-        name: '题目匹配页签',
-        note: '页签由页面持有（v-model:tab）：停在题目匹配时只有一段说明。',
-        props: { tab: 'tasks' },
-        expect: '机构把',
       },
     ],
   },

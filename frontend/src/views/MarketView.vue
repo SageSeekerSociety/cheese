@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 市场（容器）：读技能市场的目录和「我的一台机器」，画面全在同目录的 MarketViewView。
-// 「技能与插件」是开页落下的那一张，所以一开页就读；页签状态放在这里。
+// 市场（容器）：开页就读技能市场的目录和「我的一台机器」，画面全在同目录的 MarketViewView。
 import type { SkillMarket as SkillMarketData } from '@/api/machineSkills'
 
 import { onMounted, ref } from 'vue'
@@ -11,8 +10,6 @@ import { fetchMachineSkill, fetchSkillMarket } from '@/api/machineSkills'
 import { t } from '@/i18n'
 import { pickMyDevice } from '@/lib/myDevice'
 import MarketViewView from '@/views/MarketViewView.vue'
-
-const tab = ref<'skills' | 'tasks'>('skills')
 
 // 技能市场：公开目录，和哪台机器无关；但「装」要有个落点，所以连「我的一台机器」一起
 // 读（复用 lib/myDevice 那套猜法，和队友技能面板同一份）。读完了才知道有没有机器。
@@ -63,7 +60,6 @@ async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' })
 
 <template>
   <MarketViewView
-    v-model:tab="tab"
     :market="market"
     :market-loading="marketLoading"
     :market-loaded="marketLoaded"
