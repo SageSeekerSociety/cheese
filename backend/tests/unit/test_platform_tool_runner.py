@@ -409,8 +409,9 @@ def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
     out = run(
         "cheese_task",
         {
+            "action": "open",
             "title": "查一下分页",
-            "summary": "干这个",
+            "brief": "干这个",
             "owner": "lisi",
             "source_message_id": _DOC,
         },
@@ -419,6 +420,7 @@ def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
     assert plan["body"]["here"] is False
+    assert plan["body"]["summary"] == "干这个"
     assert plan["body"]["owner_handle"] == "lisi"
     assert plan["body"]["source_message_id"] == _DOC
     assert host.synced == []
@@ -436,7 +438,9 @@ def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_proj
             }
         }
     )
-    out = run("cheese_task", {"title": "登录验证码", "here": True}, host)
+    out = run(
+        "cheese_task", {"action": "open", "title": "登录验证码", "here": True}, host
+    )
     [plan] = host.requests
     assert plan["body"]["here"] is True
     assert "cheese worktree" in out
@@ -1067,12 +1071,16 @@ def test_filing_a_card_says_what_it_did_to_the_task():
     )
 
     said = run(
-        "cheese_accept_request",
-        {"subject": "feat: add the report", "completes_task": True},
+        "cheese_card",
+        {
+            "action": "request",
+            "subject": "feat: add the report",
+            "completes_task": True,
+        },
         host,
     )
 
     assert "等审" in said
     assert "清掉" in said
-    assert "cheese_task_state" in said
+    assert "cheese_task 的 state" in said
     assert "退回或作废" in said

@@ -1368,11 +1368,12 @@ def test_a_task_is_drafted_with_its_brief_for_the_channel_it_is_asked_in(
     gateway.script = [
         (
             "tool",
-            "cheese_task_open",
+            "cheese_task",
             {
+                "action": "open",
                 "where": f"{slug}/channels/{number}",
                 "title": "排查路线规划超时",
-                "text": "复现超时，修好并补测试。",
+                "brief": "复现超时，修好并补测试。",
                 "confirm": True,
             },
         ),

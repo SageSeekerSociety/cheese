@@ -57,14 +57,13 @@ def tools() -> list[dict]:
 
 def schemas_of(names: list[str]) -> list[dict]:
     """The table entries ``names`` name, from the room's table or the one for a
-    芝士 answering someone (`DELEGATED_TOOLS`), in the order given."""
+    芝士 answering someone (`DELEGATED_TOOLS`), in the order given. An object
+    both tables have (`cheese_task`) is the delegated one: these sessions act
+    under the question's credential, and `run_platform_tool` runs it so."""
     module = _module()
     known = {
-        tool["name"]: tool
-        for tool in (
-            *module.PLATFORM_TOOLS.schemas(),
-            *module.DELEGATED_TOOLS.schemas(),
-        )
+        **{tool["name"]: tool for tool in module.PLATFORM_TOOLS.schemas()},
+        **{tool["name"]: tool for tool in module.DELEGATED_TOOLS.schemas()},
     }
     return [known[name] for name in names if name in known]
 
@@ -73,10 +72,13 @@ def is_platform_tool(tool: str) -> bool:
     return tool in _module().PLATFORM_TOOLS
 
 
-def run_platform_tool(tool: str, arguments: dict, host: Any) -> str:
+def run_platform_tool(
+    tool: str, arguments: dict, host: Any, *, delegated: bool = False
+) -> str:
     """One table tool, run here against the backend; ``host`` reaches the
-    room's machine for what a tool needs from it."""
-    return _module().run_platform_tool(tool, arguments, host)
+    room's machine for what a tool needs from it. ``delegated``: the call is
+    made under a question's credential (`schemas_of`)."""
+    return _module().run_platform_tool(tool, arguments, host, delegated=delegated)
 
 
 def argv(tool: str, arguments: dict) -> list[str]:

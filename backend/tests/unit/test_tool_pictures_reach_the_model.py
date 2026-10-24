@@ -31,7 +31,7 @@ cheese = platform_tools()
 PICTURE = {"data": "d2lkZQ==", "mimeType": "image/png"}
 
 
-def _saying_with_a_picture(tool, arguments, host):
+def _saying_with_a_picture(tool, arguments, host, *, delegated=False):
     return cheese.Said("已保存小程序 k1 的第 1 版。", [PICTURE])
 
 

@@ -95,8 +95,8 @@ covers:
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `cheese_message_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
-| `cheese_task_open` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
-| `cheese_review_decide` | 采纳或退回审阅卡 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
+| `cheese_task(action=open)` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
+| `cheese_card(action=decide)` | 采纳或退回审阅卡 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
 | `cheese_member_set` | 项目里邀请、改角色、移出；频道里加入、移出 | 经授权判断，成员接口 |
 | `cheese_channel_create` | 新建频道 | 经授权判断，`POST /topics` |
 | `cheese_settings_set` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |

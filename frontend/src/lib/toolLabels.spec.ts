@@ -32,6 +32,25 @@ describe('toolLabel', () => {
     expect(toolLabel('cheese_worktree')).toBe('准备工作目录')
   })
 
+  it('names each verb of an object tool by the action the call carries', () => {
+    expect(toolLabel('cheese_task', { action: 'close', conclusion: '不做了' })).toBe('关闭任务')
+    expect(toolLabel('cheese_task', { action: 'reopen' })).toBe('重新打开任务')
+    expect(toolLabel('mcp__native__cheese_card', { action: 'request', subject: 'fix: x' })).toBe('提交审阅')
+    expect(toolLabel('cheese_card', { action: 'decide', ref: 'p/tasks/1/review' })).toBe('处理审阅')
+  })
+
+  it('reads a call recorded under a retired name as the action it became', () => {
+    expect(toolLabel('cheese_close_task', { conclusion: '不做了' })).toBe('关闭任务')
+    expect(toolLabel('cheese_task_state', { state: 'waiting' })).toBe('报任务状态')
+    expect(toolLabel('cheese_task', { title: '数据清洗', summary: '口径' })).toBe('创建任务')
+    expect(toolLabel('cheese_task_open', { title: '排查' })).toBe('创建任务')
+    expect(toolLabel('mcp__native__cheese_describe')).toBe('修改审阅说明')
+  })
+
+  it('reads the action of a call still being written only once it is written', () => {
+    expect(toolLabel('cheese_task', '{"action": "close", "conclu')).toBe('关闭任务')
+  })
+
   it('translates the background jobs, which pi has none of on its own', () => {
     expect(toolLabel('bash_start')).toBe('启动后台任务')
     expect(toolLabel('bash_kill')).toBe('终止后台任务')

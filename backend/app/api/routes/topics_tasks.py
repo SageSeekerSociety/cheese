@@ -248,7 +248,7 @@ async def conclude_task(
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     tasks = TaskService(db)
-    # The owner closes the task, or its own session (`cheese_close_task`).
+    # The owner closes the task, or its own session (`cheese_task(action=close)`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
@@ -338,7 +338,7 @@ async def report_progress(
     resolver: ActorResolverDep,
     run: str | None = Header(default=None, alias=RUN_HEADER),
 ) -> dict:
-    """The task's AI teammate says where its work stands (`cheese_task_state`):
+    """The task's AI teammate says where its work stands (`cheese_task(action=state)`):
     what the board shows for it until it says again, or until its session
     runs again in a run it has not reported in (`presentation.task_presentation`).
     Only the task's own session reports; a person reads it, and says what they
@@ -600,7 +600,7 @@ async def create_teammate_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """An AI teammate makes a task (`cheese_task`) on someone's word, from the
+    """An AI teammate makes a task (`cheese_task(action=open)`) on someone's word, from the
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
     under the message the 支线 is under. A teammate whose own idea it is asks
     first (`cheese_ask`), and the person who answers is who it does it for."""

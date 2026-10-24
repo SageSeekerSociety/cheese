@@ -110,9 +110,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 |---|---|---|
 | 新建任务 | `POST /api/topics/{room}/tasks` | ✅ 只有人能建，建的人是负责人；房间 ⋯ 菜单里的「新建任务」 |
 | 讨论转为任务（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 转的人是负责人。主线消息：它的支线原地转成任务，沿用支线的 id，对话和会话接着用（`api/thread_task.turn_into_task`），转两次是同一件；支线里的回复、主线上的文件：另开一件，任务的会话收到一段开场提示（那条消息和它前面的讨论）；私聊里不能转 |
-| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task`） | ✅ 只在有人说要做时调，负责人是要这件事的人；`here` 原地转这条支线，否则另开一件。自己看出来的先用 `cheese_ask` 问一句 |
+| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task(action=open)`） | ✅ 只在有人说要做时调，负责人是要这件事的人；`here` 原地转这条支线，否则另开一件。自己看出来的先用 `cheese_ask` 问一句 |
 | 转交 | `PATCH /api/topics/{task}/task` | ✅ 负责人交给房间里另一个人，或换一位 AI 队友 |
-| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
+| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_task(action=close)`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 项目里的人都能说，AI 队友里只收任务自己的会话；负责人和协作者的话叫醒任务的队友，别人的话 `@` 了它才叫醒 |
 
 任务建出来就在做，没有「开始」这一步；审阅人在建任务时定下（`TaskService.default_reviewer`）。

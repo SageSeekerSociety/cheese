@@ -716,7 +716,7 @@ async def _stop_accept_title_disagrees(
     卡片仍是落地的唯一源头，绕过它等于让一个外部可改的字段对永久历史有发言权。
 
     `_notify_merge_result` 走自己的会话（模块级的 factory）且点名任务，所以回滚
-    不会带走它，执行者照样被叫起来改卡片。它是唯一该醒的人：`cheese_describe`
+    不会带走它，执行者照样被叫起来改卡片。它是唯一该醒的人：`cheese_card(action=describe)`
     会同时把 GitHub 上的 PR 标题改成新的一行，仓库的检查按新标题重跑。
 
     Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is

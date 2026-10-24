@@ -227,7 +227,7 @@ cheese show output/报告.docx --note "改了第三节的结论，其余未动"
 - 每次保存平台都留一版，用户能自己恢复到任何一版，所以不用为「留底」另存副本。
 - 保存不等于交付。这份文件要**正式交出去**时，把房间里最新的那一版取进任务目录再递卡：
   `cheese pull output/报告.docx -o <任务目录>/output/报告.docx`，然后
-  `cheese_accept_request(deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
+  `cheese_card(action="request", deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
   之后房间里再怎么改、恢复到哪一版，都不影响已经交出去的那份。
 
 ## 交付前自己看一眼

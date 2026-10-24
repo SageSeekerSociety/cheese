@@ -47,7 +47,7 @@ class TaskStatus(enum.StrEnum):
 
 class TaskProgress(enum.StrEnum):
     """Where an open task's work stands between the facts the platform can
-    check: its AI teammate says it (`cheese_task_state`), and two of the
+    check: its AI teammate says it (`cheese_task(action=state)`), and two of the
     platform's own actions set it (a card returned or voided puts the task back
     to ``working``; a card filed clears it).
 

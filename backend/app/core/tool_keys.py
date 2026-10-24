@@ -6,8 +6,9 @@ a call back — the line 现场 shows for it, the argument that line quotes — 
 it by key: ``<tool>.<action>`` for one of an object's verbs, the bare name for
 a tool that does one thing.
 
-``RETIRED`` is the names the platform's tool table no longer has, and the
-action each became. It describes calls that already exist, so it is permanent:
+``RETIRED`` is the names that were folded into one of an object's verbs, and
+the action each became (a tool removed outright, with nothing it became, is
+not here: its old records keep their own label). It describes calls that already exist, so it is permanent:
 a session record keeps every call as it was made, and a Codex thread keeps the
 tool list it was started with for good — ``thread/resume`` takes none, and
 Codex refuses a name that is not on its list before the call reaches the
@@ -23,7 +24,20 @@ this one by ``tests/unit/test_tool_labels.py``.
 
 #: Retired name → (the key it became, its parameters that were renamed, old →
 #: new).
-RETIRED: dict[str, tuple[str, dict[str, str]]] = {}
+RETIRED: dict[str, tuple[str, dict[str, str]]] = {
+    # The task itself: the room's four verbs, and a person's 芝士 opening one.
+    "cheese_task": ("cheese_task.open", {"summary": "brief"}),
+    "cheese_task_state": ("cheese_task.state", {}),
+    "cheese_close_task": ("cheese_task.close", {}),
+    "cheese_task_open": ("cheese_task.open", {"text": "brief"}),
+    # Its review card: filed and kept up by the task's agent, decided by a
+    # person's 芝士 as the reviewer.
+    "cheese_accept_request": ("cheese_card.request", {}),
+    "cheese_describe": ("cheese_card.describe", {}),
+    "cheese_redeliver": ("cheese_card.redeliver", {}),
+    "cheese_ready": ("cheese_card.ready", {}),
+    "cheese_review_decide": ("cheese_card.decide", {}),
+}
 
 
 def _action(args: object) -> str | None:

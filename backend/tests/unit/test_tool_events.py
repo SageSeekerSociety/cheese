@@ -47,7 +47,7 @@ def test_a_platform_command_called_as_a_tool_is_platform():
     backwards, in the rooms where it mattered.
     """
     assert _is_platform_tool("cheese_doc_set", {"content": "# 实况"})
-    assert _is_platform_tool("cheese_accept_request", {"subject": "fix: x"})
+    assert _is_platform_tool("cheese_card", {"action": "request", "subject": "fix: x"})
     # The alias the room's own system prompt names on every turn.
     assert _is_platform_tool("chat_send", {"content": "第一版好了"})
 

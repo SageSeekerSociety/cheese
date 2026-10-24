@@ -134,6 +134,54 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     assert "run" not in requests[0]
 
 
+@pytest.mark.anyio
+async def test_a_thread_started_before_a_tool_was_folded_in_still_calls_it(
+    monkeypatch,
+):
+    """A Codex thread keeps the tool list it was started with: resuming it
+    hands Codex no new one. So a thread that was handed `cheese_close_task`
+    and `cheese_task` without verbs goes on calling them, and each still does
+    what it did: close the task, open one with its brief."""
+    requests = []
+
+    def platform_request(plan):
+        requests.append(plan)
+        return {"value": {"stdout": json.dumps({"data": {"title": "数据清洗"}})}}
+
+    monkeypatch.setenv("CHEESE_TOPIC", "room")
+    monkeypatch.setenv("CHEESE_PROJECT", "project")
+    tools = RemoteTools({})
+    monkeypatch.setattr(tools.client, "call", lambda *a, **k: {"tools": []})
+    monkeypatch.setattr(tools.client, "platform_request", platform_request)
+    await tools.discover()
+
+    closed = await tools(
+        "item/tool/call",
+        {
+            "tool": "cheese_close_task",
+            "callId": "c-1",
+            "arguments": {"conclusion": "改用新口径"},
+        },
+    )
+    opened = await tools(
+        "item/tool/call",
+        {
+            "tool": "cheese_task",
+            "callId": "c-2",
+            "arguments": {"title": "数据清洗", "summary": "按新口径重算"},
+        },
+    )
+
+    assert closed["success"] is True, closed
+    assert opened["success"] is True, opened
+    assert [(r["method"], r["path"]) for r in requests] == [
+        ("POST", "/topics/room/close"),
+        ("POST", "/topics/room/teammate-tasks"),
+    ]
+    assert requests[0]["body"]["conclusion"] == "改用新口径"
+    assert requests[1]["body"]["summary"] == "按新口径重算"
+
+
 def test_runner_archive_launches_without_the_backend_environment(tmp_path):
     archive = tmp_path / "runner.pyz"
     archive.write_bytes(build())

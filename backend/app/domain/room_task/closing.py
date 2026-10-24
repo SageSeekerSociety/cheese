@@ -3,7 +3,7 @@
 Accepting the last step does not close the task on the spot. The task stays
 open, with `closing_since` set, while its AI teammate is told to bring the task
 document up to date, say what came of the task, and close it with the close a
-task's own session has (`cheese_close_task`); to everyone looking it already
+task's own session has (`cheese_task(action=close)`); to everyone looking it already
 reads 已采纳 (`presentation`). It closes when that close is called — the one
 fact here that says the write-up was done — or, without it, when the instruction
 for it was given up on (`delivery.timer.give_up_stale`), or, whatever

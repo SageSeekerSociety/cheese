@@ -674,7 +674,7 @@ class Runner(runner.Runner[Journal]):
         for name, value in _scope_of(self.platform_token).items():
             host.environ.setdefault(name, value)
         try:
-            text = catalog.run_platform_tool(tool, arguments, host)
+            text = catalog.run_platform_tool(tool, arguments, host, delegated=True)
         except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return _said(text)
