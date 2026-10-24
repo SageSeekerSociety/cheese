@@ -414,6 +414,10 @@ async def follow(
         assert pending is not None
         return Answer(progress.whole(), pending.error, usage=pending.usage)
 
+    # The next item being read. A look that times out leaves it reading:
+    # cancelling it would close the reading itself, and the next look would
+    # find it ended — an answer cut off while 芝士 waits for its branches.
+    reading_next: asyncio.Future | None = None
     try:
         while True:
             left = deadline - time.monotonic()
@@ -423,9 +427,15 @@ async def follow(
                 # Each read is timed, never the whole loop: a deadline that
                 # fell while the caller was handling what was handed on would
                 # land in the caller's code.
-                read = await asyncio.wait_for(
-                    anext(reading), left if pending is None else min(left, LOOK_AGAIN_S)
+                if reading_next is None:
+                    reading_next = asyncio.ensure_future(anext(reading))
+                done, _ = await asyncio.wait(
+                    {reading_next},
+                    timeout=left if pending is None else min(left, LOOK_AGAIN_S),
                 )
+                if not done:
+                    raise TimeoutError
+                read, reading_next = reading_next.result(), None
             except StopAsyncIteration:
                 yield await ended(
                     last() if pending else Answer("", "the session ended mid-answer")
@@ -504,6 +514,9 @@ async def follow(
             if keep is not None:
                 await keep(progress)
     finally:
+        if reading_next is not None and not reading_next.done():
+            reading_next.cancel()
+            await asyncio.gather(reading_next, return_exceptions=True)
         await reading.aclose()
 
 
