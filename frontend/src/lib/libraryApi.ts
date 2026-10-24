@@ -2,6 +2,8 @@
 //
 // 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
 // 读字节、版本列表、按版本下载、恢复旧版。
+import { createSHA256, sha256 } from 'hash-wasm'
+
 import { authToken, BASE, libraryBase, libraryFileRawUrl, type LibraryShelf, request } from '../api'
 import { t } from '../i18n'
 
@@ -78,22 +80,79 @@ export async function listLibraryFolders(shelf: LibraryShelf): Promise<string[]>
   return (await request<{ folders: string[] }>(`${libraryBase(shelf)}/folders`)).folders
 }
 
-/** 把一份文件的字节传上去，交回登记要用的凭据。
+/** 领到的一次上传：凭据，和文件怎么切成段（最后一段可以短）。 */
+interface UploadSlot {
+  upload: string
+  part_bytes: number
+  parts: number
+}
+
+/** 登记一次传完的上传要交回的：凭据，整份和每一段的 SHA-256（十六进制）。 */
+interface Uploaded {
+  upload: string
+  sha256: string
+  parts: string[]
+}
+
+/** 同时在路上的段数：每一段都整段放在内存里（几十 MB），几段并行就够把带宽用满。 */
+const PARALLEL_PARTS = 3
+/** 一段传失败了再试几次：几 GB 的文件切成几百段，一段碰上网络抖动不该让整份重来。
+ *  只重试网络错误和服务器那边的 5xx；4xx 是这一段本身不被收（过期、哈希对不上）。 */
+const PART_ATTEMPTS = 3
+
+async function putPart(base: string, upload: string, part: number, sha256: string, bytes: Uint8Array): Promise<void> {
+  const address = await request<{ url: string; headers: Record<string, string> }>(`${base}/uploads/part`, {
+    method: 'POST',
+    body: JSON.stringify({ upload, part, sha256 }),
+  })
+  const url = address.url.startsWith('/') ? `${BASE}${address.url}` : address.url
+  for (let attempt = 1; ; attempt++) {
+    let status = 0
+    try {
+      const put = await fetch(url, { method: 'PUT', body: bytes, headers: address.headers })
+      if (put.ok) return
+      status = put.status
+    } catch (error) {
+      if (attempt >= PART_ATTEMPTS) throw error
+      continue
+    }
+    if (status < 500 || attempt >= PART_ATTEMPTS) throw new Error(t('files.library.uploadFailed', { status }))
+  }
+}
+
+/** 把一份文件的字节传上去，交回登记要用的凭据和哈希。
  *
- *  字节不经过后端：先领一个地址，再把文件原样 PUT 过去——对象存储的预签名地址，或者
- *  文件存在服务器本地盘时后端自己的一个地址（以 `/` 开头）。地址只收领的时候说的那么
- *  多字节。 */
-async function sendLibraryBytes(shelf: LibraryShelf, file: File): Promise<string> {
-  const slot = await request<{ url: string; upload: string }>(`${libraryBase(shelf)}/uploads`, {
+ *  字节不经过后端：先领一次上传的凭据，再按它说的段长一段一段读出来，每段算出 SHA-256、
+ *  领一个只收这一段的地址，原样 PUT 过去——对象存储的预签名地址，或者文件存在服务器本地
+ *  盘时后端自己的一个地址（以 `/` 开头）。存储收每一段时自己对哈希；整份的 SHA-256 在
+ *  读的同一遍里算出来，几 GB 的文件也只读一遍，不整份进内存。 */
+async function sendLibraryBytes(shelf: LibraryShelf, file: File): Promise<Uploaded> {
+  const base = libraryBase(shelf)
+  const slot = await request<UploadSlot>(`${base}/uploads`, {
     method: 'POST',
     body: JSON.stringify({ name: file.name, size: file.size }),
   })
-  const put = await fetch(slot.url.startsWith('/') ? `${BASE}${slot.url}` : slot.url, {
-    method: 'PUT',
-    body: file,
-  })
-  if (!put.ok) throw new Error(t('files.library.uploadFailed', { status: put.status }))
-  return slot.upload
+  const whole = await createSHA256()
+  const parts: string[] = []
+  const inFlight = new Set<Promise<void>>()
+  let failure: unknown = null
+  for (let part = 1; part <= slot.parts && failure === null; part++) {
+    const start = (part - 1) * slot.part_bytes
+    const bytes = new Uint8Array(await file.slice(start, start + slot.part_bytes).arrayBuffer())
+    whole.update(bytes)
+    const digest = await sha256(bytes)
+    parts.push(digest)
+    const sending: Promise<void> = putPart(base, slot.upload, part, digest, bytes)
+      .catch((error: unknown) => {
+        failure ??= error
+      })
+      .finally(() => inFlight.delete(sending))
+    inFlight.add(sending)
+    if (inFlight.size >= PARALLEL_PARTS) await Promise.race(inFlight)
+  }
+  await Promise.all(inFlight)
+  if (failure !== null) throw failure
+  return { upload: slot.upload, sha256: whole.digest('hex'), parts }
 }
 
 async function libraryUpload(
@@ -102,17 +161,17 @@ async function libraryUpload(
   replacing?: string,
   folder?: string
 ): Promise<{ path: string; bytes: number }> {
-  const upload = await sendLibraryBytes(shelf, file)
+  const uploaded = await sendLibraryBytes(shelf, file)
   const base = libraryBase(shelf)
   if (replacing) {
     return request(`${base}?path=${encodeURIComponent(replacing)}`, {
       method: 'PUT',
-      body: JSON.stringify({ upload }),
+      body: JSON.stringify(uploaded),
     })
   }
   return request(base, {
     method: 'POST',
-    body: JSON.stringify({ upload, filename: file.name, ...(folder ? { folder } : {}) }),
+    body: JSON.stringify({ ...uploaded, filename: file.name, ...(folder ? { folder } : {}) }),
   })
 }
 

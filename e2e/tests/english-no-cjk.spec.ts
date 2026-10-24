@@ -331,21 +331,30 @@ async function seed(page: Page): Promise<Seed> {
     reviewer_handle: "alice",
     change_subject: "docs: add the release notes",
   });
-  // A library file goes in the way the page puts it in: take an address, PUT
-  // the bytes there, register the upload.
+  // A library file goes in the way the page puts it in: take an upload, PUT
+  // its one part at the address handed out for it, and register the upload
+  // with the bytes' SHA-256.
   const brief = Buffer.from("The brief.\n");
+  const digest = createHash("sha256").update(brief).digest("hex");
   const slot = (await api(page, "post", `/projects/${projectId}/library/uploads`, {
     name: "brief.txt",
     size: brief.length,
-  })) as { url: string; upload: string };
+  })) as { upload: string };
+  const part = (await api(page, "post", `/projects/${projectId}/library/uploads/part`, {
+    upload: slot.upload,
+    part: 1,
+    sha256: digest,
+  })) as { url: string; headers: Record<string, string> };
   const put = await page.request.put(
-    slot.url.startsWith("/") ? `/api${slot.url}` : slot.url,
-    { data: brief },
+    part.url.startsWith("/") ? `/api${part.url}` : part.url,
+    { data: brief, headers: part.headers },
   );
   if (!put.ok())
     throw new Error(`library upload → ${put.status()} ${await put.text()}`);
   await api(page, "post", `/projects/${projectId}/library`, {
     upload: slot.upload,
+    sha256: digest,
+    parts: [digest],
     filename: "brief.txt",
   });
   const feedback = (await api(page, "post", "/feedback", {

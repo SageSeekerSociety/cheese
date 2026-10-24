@@ -5,9 +5,10 @@
 不扫目录。写字节和记一行在同一次请求里做：先记，再写字节，请求结束时一起提交——
 字节写失败了，这一行随事务回滚，不会留下一行说着一份不存在的文件。
 
-资料库页上传的文件不经过后端：浏览器先领一个上传地址（`upload_slot`），把字节直接
-放进存储的 `.incoming/` 下，再拿领到的凭据来登记（`received`）。登记时后端自己量
-一遍到了多少字节、算一遍哈希，再把它挪到这一行自己的键下。
+资料库页上传的文件不经过后端：浏览器先领一次上传的凭据（`upload_slot`），按段领
+地址（`upload_part`），把每一段连同它的 SHA-256 直接放进存储，再拿凭据和每段的哈希
+来登记（`received`）。存储收每一段时就对过哈希，登记时把这几段拼成那一行的字节，
+拼在领凭据时就定下的键下：几 GB 的文件既不整份读回来算哈希，也不在存储里挪动。
 
 名字里的 `/` 是文件夹。一个名字不能同时是一份文件和一个文件夹：`报告` 是文件时，
 `报告/附录.md` 放不进来，反过来也一样。
@@ -33,12 +34,25 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.library import service
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.shelf import Shelf
-from app.domain.textfile import bytes_text_payload
+from app.domain.textfile import MAX_TEXT_BYTES, bytes_text_payload
 
 
 @dataclass(frozen=True)
 class Upload:
-    """一份已经由浏览器放进存储的字节（`received` 量过、算过哈希的那一份）。"""
+    """一份由浏览器或电脑分段放进存储的字节（`received` 认过的那一份）：它最后落在
+    哪把键下，存储那边这次上传的编号，以及每一段应当是什么（大小、SHA-256）。"""
+
+    location: str
+    key: str
+    upload_id: str
+    size: int
+    sha256: str
+    parts: tuple[blob_store.PartReceipt, ...]
+
+
+@dataclass(frozen=True)
+class Copied:
+    """存储里已经有的一份字节，复制成新的一份（`restore`）：不读进内存。"""
 
     location: str
     key: str
@@ -46,16 +60,27 @@ class Upload:
     sha256: str
 
 
-#: 落地的字节：手上的一份，或者已经在存储里等着登记的一份。
-Incoming = service.Content | Upload
+#: 落地的字节：手上的一份，已经在存储里等着登记的一份，或者存储里另一份的复制。
+Incoming = service.Content | Upload | Copied
+
+#: 整份读进内存的字节最多多大：和服务器本地盘上一份文件的上限（视频那一条）一样，
+#: 所以文件存在本地盘时读得了的，现在照样读得了；存进文件桶的几 GB 的数据集不整份
+#: 读——下载、`cheese library get` 都是按段从存储里直接取。
+READ_WHOLE_MAX_BYTES = service.MAX_VIDEO_BYTES
+
+
+def _refuse_reading_whole(size: int) -> None:
+    if size > READ_WHOLE_MAX_BYTES:
+        raise UnprocessableEntityError(
+            say("libraryFileTooLargeToOpen", mb=READ_WHOLE_MAX_BYTES // (1024 * 1024))
+        )
 
 
 async def read_blob(location: str, key: str) -> bytes:
     """``(存储, 键)`` 底下的字节；不在了是「资料库里没有这份文件」。
 
-    和 ``stored`` 是一对：行和字节分开给，是因为搬字节的时机在事务结束之后（见它
-    的说明）。「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让搬的人去认
-    字节存放在哪儿。
+    「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让读的人去认字节存放在
+    哪儿。调用方先看过大小（`_refuse_reading_whole`）。
     """
     try:
         return await blob_store.store(location).get(key)
@@ -63,12 +88,35 @@ async def read_blob(location: str, key: str) -> bytes:
         raise NotFoundError(say("libraryFileNotFound")) from None
 
 
+async def read_stored(stored: "Stored") -> bytes:
+    """一份 `Stored` 的字节，整份；太大的不读（`READ_WHOLE_MAX_BYTES`）。"""
+    _refuse_reading_whole(stored.size)
+    return await read_blob(stored.location, stored.key)
+
+
+async def save_blob(location: str, key: str, target: Path) -> None:
+    """``(存储, 键)`` 底下的字节一段一段写进 ``target``，不整份进内存：项目导出把
+    资料库搬进压缩包时，一份几 GB 的数据集也是这样搬。"""
+    store = blob_store.store(location)
+    size = await store.size(key)
+    if size is None:
+        raise NotFoundError(say("libraryFileNotFound"))
+    handle = await asyncio.to_thread(target.open, "wb")
+    try:
+        if size:
+            async for piece in store.chunks(key, 0, size - 1):
+                await asyncio.to_thread(handle.write, piece)
+    finally:
+        await asyncio.to_thread(handle.close)
+
+
 async def _bytes_of(row: LibraryFileRecord) -> bytes:
+    _refuse_reading_whole(row.bytes)
     return await read_blob(row.location, row.blob_key)
 
 
 async def _measure(data: Incoming) -> tuple[int, str]:
-    if isinstance(data, Upload):
+    if isinstance(data, Upload | Copied):
         return data.size, data.sha256
     return await asyncio.to_thread(service.measure, data)
 
@@ -77,7 +125,7 @@ def _new_row(
     shelf: Shelf,
     name: str,
     measured: tuple[int, str],
-    location: str,
+    data: Incoming,
     *,
     added_by: str | None,
     room_id: uuid.UUID | None,
@@ -95,21 +143,31 @@ def _new_row(
         added_by=added_by,
         room_id=room_id,
         source_path=source_path,
-        location=location,
-        blob_key=f".library-blobs/{shelf.key}/{record_id}",
+        location=_location_for(data),
+        # 分段传上来的那一份，字节从一开始就落在领地址时定下的那把键下，不再挪动。
+        blob_key=data.key if isinstance(data, Upload) else _blob_key(shelf),
     )
 
 
+def _blob_key(shelf: Shelf) -> str:
+    return f".library-blobs/{shelf.key}/{uuid.uuid4()}"
+
+
 def _location_for(data: Incoming) -> str:
-    """新的一行的字节存在哪：已经放进存储的就在那儿，手上的写进新文件该去的存储。"""
-    if isinstance(data, Upload):
+    """新的一行的字节存在哪：已经放进存储的、从存储里复制的就在那个存储里，手上的
+    写进新文件该去的存储。"""
+    if isinstance(data, Upload | Copied):
         return data.location
     return blob_store.for_new().location
 
 
-def ceiling(shelf: Shelf, name: str) -> int:
-    """这个资料库里一份文件最多多大：项目的与房间文件是同一条
-    （`service.max_bytes_for`）；团队的是附件那一条，人交给芝士的文件都放得进来。"""
+def ceiling(shelf: Shelf, name: str, location: str) -> int:
+    """这个资料库里一份文件最多多大。存进文件桶的是一条设置
+    （`settings.files_bucket_file_max_bytes`，几 GB 的数据集放得进来）；存在服务器
+    本地盘上的，项目的与房间文件是同一条（`service.max_bytes_for`），团队的是附件
+    那一条，人交给芝士的文件都放得进来。"""
+    if location == blob_store.BUCKET:
+        return settings.files_bucket_file_max_bytes
     if shelf.team_id is not None:
         return max(settings.attachment_max_bytes, service.max_bytes_for(name))
     return service.max_bytes_for(name)
@@ -141,48 +199,103 @@ async def _put(
     session: AsyncSession, shelf: Shelf, row: LibraryFileRecord, data: Incoming
 ) -> None:
     # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
-    service.refuse_oversize(row.bytes, row.name, ceiling(shelf, row.name))
+    service.refuse_oversize(row.bytes, row.name, ceiling(shelf, row.name, row.location))
     # 这一行已经记进去了，算总量时它也在里面。
     await refuse_past_room(session, shelf, 0)
     store = blob_store.store(row.location)
     if isinstance(data, Upload):
-        await store.take_in(data.key, row.blob_key)
+        try:
+            await store.finish_upload(data.key, data.upload_id, data.parts)
+        except blob_store.BlobMissingError:
+            # 这次上传已经登记过、或者过了存储留它的时间。
+            raise UnprocessableEntityError(say("uploadExpired")) from None
+        except UnprocessableEntityError:
+            # 传上来的几段和说好的对不上：这次上传成不了，放掉它占着的那几段。
+            await store.abort_upload(data.key, data.upload_id)
+            raise
+    elif isinstance(data, Copied):
+        await store.copy(data.key, row.blob_key)
     else:
         await store.put(row.blob_key, data)
 
 
 async def upload_slot(shelf: Shelf, name: str, size: int) -> dict:
-    """给浏览器的一个上传地址：恰好 ``size`` 个字节，放进新文件该去的存储。
+    """一次上传的凭据：恰好 ``size`` 个字节，放进新文件该去的存储，切成每段
+    ``part_bytes`` 的 ``parts`` 段（最后一段可以短）。每一段的地址另领
+    （`upload_part`），传完拿这份凭据来登记（`received`）。
 
-    ``upload`` 是登记时交回来的凭据，只在这个资料库里认。超过这一类文件上限的，这里
-    就不给地址。"""
-    service.refuse_oversize(size, name, ceiling(shelf, name))
+    凭据只在这个资料库里认。超过这一类文件上限的，这里就不给。"""
     store = blob_store.for_new()
-    sealed = blob_store.SealedUpload(store.location, blob_store.incoming_key(), size)
+    service.refuse_oversize(size, name, ceiling(shelf, name, store.location))
+    key = _blob_key(shelf)
+    part_bytes = blob_store.part_bytes_for(size)
+    sealed = blob_store.SealedUpload(
+        location=store.location,
+        key=key,
+        upload_id=await store.begin_upload(key),
+        size=size,
+        part_bytes=part_bytes,
+    )
     return {
-        "url": await store.upload_url(sealed.key, size),
-        "upload": blob_store.seal_upload(
-            sealed,
-            bound_to=shelf.key,
-            seconds=blob_store.UPLOAD_TOKEN_SECONDS,
-        ),
+        "upload": blob_store.seal_upload(sealed, bound_to=shelf.key),
+        "part_bytes": part_bytes,
+        "parts": len(blob_store.part_sizes(size, part_bytes)),
     }
 
 
-async def received(shelf: Shelf, token: str) -> Upload:
-    """`upload_slot` 给出去的那一份，已经到了的样子：大小对得上，哈希是后端自己
-    算的，不是浏览器说的。"""
+def _sealed(shelf: Shelf, token: str) -> blob_store.SealedUpload:
     sealed = blob_store.open_upload(token, bound_to=shelf.key)
     if sealed is None:
         raise UnprocessableEntityError(say("uploadExpired"))
-    store = blob_store.store(sealed.location)
-    if await store.size(sealed.key) != sealed.size:
+    return sealed
+
+
+def _digest(value: str) -> str:
+    """一个十六进制写的 SHA-256，原样；不是的就拒。"""
+    digest = value.strip().lower()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise UnprocessableEntityError(say("uploadIncomplete"))
+    return digest
+
+
+async def upload_part(shelf: Shelf, token: str, number: int, sha256: str) -> dict:
+    """第 ``number`` 段（从 1 数）的地址：``url`` 收这一段恰好那么多字节，PUT 时
+    带上 ``headers``；字节的 SHA-256 不是 ``sha256`` 的，存储不收。"""
+    sealed = _sealed(shelf, token)
+    sizes = blob_store.part_sizes(sealed.size, sealed.part_bytes)
+    if not 1 <= number <= len(sizes):
+        raise UnprocessableEntityError(say("uploadIncomplete"))
+    address = await blob_store.store(sealed.location).part_address(
+        sealed.key,
+        sealed.upload_id,
+        number,
+        blob_store.PartReceipt(sizes[number - 1], _digest(sha256)),
+    )
+    return {"url": address.url, "headers": address.headers}
+
+
+def received(shelf: Shelf, token: str, sha256: str, parts: list[str]) -> Upload:
+    """`upload_slot` 给出去的那一次上传，拿来登记的样子：整份的 SHA-256，和每一段的。
+
+    每一段的字节存储在收的时候就对过它的 SHA-256，登记时（`_put`）再对一遍这里说的
+    每一段确实是收下的那些，所以不必把整份读回来算哈希。只有一段的，整份就是那一段，
+    整份的哈希也就是存储对过的那一个；切成几段的，整份的哈希是传的那一方算的。"""
+    sealed = _sealed(shelf, token)
+    sizes = blob_store.part_sizes(sealed.size, sealed.part_bytes)
+    digests = [_digest(part) for part in parts]
+    whole = _digest(sha256)
+    if len(digests) != len(sizes) or (len(sizes) == 1 and digests[0] != whole):
         raise UnprocessableEntityError(say("uploadIncomplete"))
     return Upload(
         location=sealed.location,
         key=sealed.key,
+        upload_id=sealed.upload_id,
         size=sealed.size,
-        sha256=await store.sha256(sealed.key),
+        sha256=whole,
+        parts=tuple(
+            blob_store.PartReceipt(size, digest)
+            for size, digest in zip(sizes, digests, strict=True)
+        ),
     )
 
 
@@ -402,7 +515,22 @@ async def read_attachment_text(
         # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
         # 地址没错，是东西不在了。
         raise UnprocessableEntityError(say("libraryFileGone"))
+    if row.bytes > MAX_TEXT_BYTES:
+        return _too_large_text(row, path)
     return bytes_text_payload(await _bytes_of(row), path)
+
+
+def _too_large_text(row: LibraryFileRecord, path: str) -> dict:
+    """`bytes_text_payload` 对一份太大的文件的那种回答，不读它的字节：版本就是
+    这一行记着的哈希（`content_version` 取的也是 SHA-256 的前 16 位）。"""
+    return {
+        "path": path,
+        "bytes": row.bytes,
+        "binary": False,
+        "too_large": True,
+        "content": None,
+        "version": row.sha256[:16],
+    }
 
 
 #: 一份 PDF 读成文字时最多读多少页、留多少字：读的是芝士，它要的是要求和要点，
@@ -434,9 +562,12 @@ async def read_text(session: AsyncSession, shelf: Shelf, name: str) -> dict:
     """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
     只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
     row = await _current_or_404(session, shelf, name)
+    pdf = name.lower().endswith(".pdf")
+    if row.bytes > (READ_WHOLE_MAX_BYTES if pdf else MAX_TEXT_BYTES):
+        return _too_large_text(row, f"library/{name}")
     data = await _bytes_of(row)
     payload = bytes_text_payload(data, f"library/{name}")
-    if payload["binary"] and name.lower().endswith(".pdf"):
+    if payload["binary"] and pdf:
         text = await asyncio.to_thread(_pdf_text, data)
         if text is not None:
             payload = {**payload, "binary": False, "content": text}
@@ -472,7 +603,7 @@ async def add(
             shelf,
             name,
             measured,
-            _location_for(data),
+            data,
             added_by=added_by,
             room_id=room_id,
             source_path=source_path,
@@ -535,9 +666,7 @@ async def replace(
     try:
         current.superseded_at = datetime.now(UTC)
         await session.flush()
-        row = _new_row(
-            shelf, name, measured, _location_for(data), added_by=by, room_id=None
-        )
+        row = _new_row(shelf, name, measured, data, added_by=by, room_id=None)
         session.add(row)
         await session.flush()
     except IntegrityError:
@@ -714,7 +843,7 @@ async def restore(
     row = await _version_row(session, shelf, name, version_id)
     if row.superseded_at is None:
         raise UnprocessableEntityError(say("libraryVersionIsCurrent"))
-    data = await _bytes_of(row)
+    data = Copied(row.location, row.blob_key, row.bytes, row.sha256)
     await replace(session, shelf=shelf, name=name, data=data, by=by)
 
 
@@ -749,5 +878,5 @@ class ProjectLibraries:
         return await stored(session, Shelf.of_project(project_id))
 
     @staticmethod
-    async def read_blob(location: str, key: str) -> bytes:
-        return await read_blob(location, key)
+    async def save_blob(location: str, key: str, target: Path) -> None:
+        await save_blob(location, key, target)

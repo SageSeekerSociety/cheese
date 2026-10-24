@@ -9,7 +9,10 @@ storage is a small HTTP server that keeps what is PUT to it and serves it
 back: what lands on either side is what is checked.
 """
 
+import hashlib
 import importlib.util
+import json
+import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,12 +38,19 @@ cheese = _load()
 
 @pytest.fixture
 def storage():
-    """Keeps what is PUT at a path; answers a GET with it."""
+    """Keeps what is PUT at a path, refusing bytes that are not the SHA-256 the
+    PUT names, as the bucket does; answers a GET with it."""
     kept: dict[str, bytes] = {}
 
     class Handler(BaseHTTPRequestHandler):
         def do_PUT(self):
-            kept[self.path] = self.rfile.read(int(self.headers["Content-Length"]))
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            named = self.headers.get("x-amz-checksum-sha256")
+            if named is not None and named != hashlib.sha256(body).hexdigest():
+                self.send_response(400)
+                self.end_headers()
+                return
+            kept[self.path] = body
             self.send_response(200)
             self.end_headers()
 
@@ -98,19 +108,28 @@ class Computer:
 def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
     tmp_path, storage
 ):
+    """The computer cuts the file into the parts the platform asks for, puts
+    each at its own address with its SHA-256, and hands the file over with
+    the SHA-256 of the whole and of each part."""
     origin, kept = storage
+    content = bytes(range(256)) * 10 + b"tail"
     (tmp_path / "out").mkdir()
-    (tmp_path / "out" / "成绩分布.png").write_bytes(b"PNG" * 1000)
+    (tmp_path / "out" / "成绩分布.png").write_bytes(content)
     computer = Computer(
         tmp_path,
         {
             "/assistant/agent/files/slot": lambda body: {
-                "url": f"{origin}/slot-1",
                 "upload": "sealed-1",
+                "part_bytes": 1024,
+                "parts": 3,
+            },
+            "/assistant/agent/files/part": lambda body: {
+                "url": f"{origin}/slot-1/{body['part']}",
+                "headers": {"x-amz-checksum-sha256": body["sha256"]},
             },
             "/assistant/agent/files/handed": lambda body: {
                 "path": body["name"],
-                "bytes": 3000,
+                "bytes": len(content),
             },
         },
     )
@@ -121,10 +140,13 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
         computer,
     )
 
-    assert kept["/slot-1"] == b"PNG" * 1000
-    slot, handed = computer.asked
-    assert slot["body"] == {"name": "成绩分布.png", "size": 3000}
-    assert handed["body"] == {"upload": "sealed-1", "name": "数据结构/成绩分布.png"}
+    assert b"".join(kept[f"/slot-1/{n}"] for n in (1, 2, 3)) == content
+    handed = computer.asked[-1]["body"]
+    assert handed["upload"] == "sealed-1"
+    assert handed["sha256"] == hashlib.sha256(content).hexdigest()
+    assert handed["parts"] == [
+        hashlib.sha256(content[i : i + 1024]).hexdigest() for i in (0, 1024, 2048)
+    ]
     assert "library/数据结构/成绩分布.png" in said
 
 
@@ -176,3 +198,74 @@ def test_a_failed_transfer_is_an_error_not_a_file(tmp_path, storage):
             computer,
         )
     assert not (tmp_path / "a.txt").exists()
+
+
+@pytest.fixture
+def platform_with_a_flaky_bucket():
+    """The platform hands out the bucket address of one file; the bucket's
+    first answer is cut off halfway, and it serves ranges after that."""
+    content = bytes(range(256)) * 4000
+    links: list[str] = []
+    cut_off = [True]
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/projects/p1/library/link"):
+                links.append(self.path)
+                body = json.dumps(
+                    {
+                        "data": {
+                            "url": f"http://127.0.0.1:{self.server.server_port}/blob",
+                            "path": "数据/表.csv",
+                            "bytes": len(content),
+                        }
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            start = 0
+            wanted = self.headers.get("Range")
+            if wanted:
+                start = int(wanted.removeprefix("bytes=").split("-")[0])
+                self.send_response(206)
+                self.send_header(
+                    "Content-Range", f"bytes {start}-{len(content) - 1}/{len(content)}"
+                )
+            else:
+                self.send_response(200)
+            self.send_header("Content-Length", str(len(content) - start))
+            self.end_headers()
+            if cut_off[0]:
+                cut_off[0] = False
+                self.wfile.write(content[start : len(content) // 2])
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            self.wfile.write(content[start:])
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}", content, links
+    server.shutdown()
+
+
+def test_library_get_carries_on_a_cut_off_fetch_and_lands_the_whole_file(
+    tmp_path, monkeypatch, platform_with_a_flaky_bucket
+):
+    """`cheese library get` fetches straight from the address it is handed; a
+    fetch cut off halfway carries on from where it stopped, and only the whole
+    file lands at the destination."""
+    origin, content, _ = platform_with_a_flaky_bucket
+    monkeypatch.setattr(cheese, "API", origin)
+    out = tmp_path / "表.csv"
+
+    cheese._library_get("p1", "数据/表.csv", str(out))
+
+    assert out.read_bytes() == content
+    assert not (tmp_path / "表.csv.part").exists()

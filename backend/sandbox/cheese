@@ -3961,13 +3961,19 @@ def _read_chat_attachment(host, path, request_id) -> bytes:
     return raw
 
 
-#: 一份文件在电脑和存储之间最多传多久。地址本身十几分钟内有效。
+#: 一份文件（上传时是一段）在电脑和存储之间最多传多久。地址本身几分钟内开始传都有效。
 _FILE_TRANSFER_S = 600
+
+#: 电脑上算 SHA-256：Linux 有 sha256sum，macOS 有 shasum。只留十六进制那一列。
+_SHA256_ON_MACHINE = (
+    "_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; "
+    "else shasum -a 256; fi | cut -c1-64; }; "
+)
 
 
 def _file_give(args: dict, host) -> str:
-    """`cheese_file_give`：先问平台要一个只收这一份的地址，电脑自己把文件传上去，
-    再登记进用户的资料库。字节不经过这一侧，电脑里也不放凭据。"""
+    """`cheese_file_give`：先问平台要一次只收这一份的上传，电脑自己把文件按段算好
+    SHA-256、按段传上去，再登记进用户的资料库。字节不经过这一侧，电脑里也不放凭据。"""
     path = args["path"].strip()
     quoted = shlex.quote(path)
     said = _machine_stdout(
@@ -3987,18 +3993,52 @@ def _file_give(args: dict, host) -> str:
             "body": {"name": name.rsplit("/", 1)[-1], "size": size},
         }
     )["data"]
-    _machine_stdout(
+    step, count = int(slot["part_bytes"]), int(slot["parts"])
+    # 整份一行，然后每段一行。
+    digests = _machine_stdout(
         host,
-        f"curl -sSf --max-time {_FILE_TRANSFER_S} -T {quoted} "
-        f"{shlex.quote(slot['url'])} -o /dev/null",
-        "give-put",
+        _SHA256_ON_MACHINE + f"_sha < {quoted}; i=0; while [ $i -lt {count} ]; do "
+        f"dd if={quoted} bs={step} skip=$i count=1 status=none | _sha; "
+        "i=$((i+1)); done",
+        "give-digest",
         _FILE_TRANSFER_S + 30,
-    )
+    ).split()
+    if len(digests) != count + 1:
+        raise PlatformToolError(f"算不出 {path} 的 SHA-256")
+    whole, parts = digests[0], digests[1:]
+    for number, digest in enumerate(parts, start=1):
+        address = host.request(
+            {
+                "method": "POST",
+                "path": "/assistant/agent/files/part",
+                "body": {"upload": slot["upload"], "part": number, "sha256": digest},
+            }
+        )["data"]
+        # `--data-binary @-` 读完这一段再发，带着 Content-Length（预签名地址只收
+        # 那么多字节），curl 自己的重试也重发得了这一段。
+        headers = "".join(
+            f" -H {shlex.quote(f'{key}: {value}')}"
+            for key, value in address["headers"].items()
+        )
+        _machine_stdout(
+            host,
+            f"dd if={quoted} bs={step} skip={number - 1} count=1 status=none | "
+            f"curl -sSf --retry 3 --max-time {_FILE_TRANSFER_S} -X PUT "
+            f"--data-binary @- -H 'Content-Type:'{headers} "
+            f"{shlex.quote(address['url'])} -o /dev/null",
+            f"give-put-{number}",
+            _FILE_TRANSFER_S + 30,
+        )
     handed = host.request(
         {
             "method": "POST",
             "path": "/assistant/agent/files/handed",
-            "body": {"upload": slot["upload"], "name": name},
+            "body": {
+                "upload": slot["upload"],
+                "sha256": whole,
+                "parts": parts,
+                "name": name,
+            },
         }
     )["data"]
     return (
@@ -4650,8 +4690,7 @@ def _say_skills_search(args, data, env) -> str:
         head = "这一次没有命中任何已装技能。"
     # 「没搜到」不是「没有」：搜索覆盖面有限，得让 agent 知道这一点再决定下一步。
     return (
-        head
-        + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
+        head + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
         "这台机器已采纳的技能，未必穷尽每个名字或全文（机器上的正文只在它在线时读"
         "得到）。所以空结果不是「这个技能不存在」——换个说法再搜，或者问用户技能"
         "叫什么。要看正文用 skills_read(name)。"
@@ -7129,6 +7168,51 @@ def _raw_request(
         print(payload.decode(errors="replace"))
 
 
+#: 一次 `cheese library get` 在取不完时最多从头要几回地址：每一回都接着已经取到的
+#: 那里往下取，几 GB 的数据集断一次线不必重来。
+_LIBRARY_GET_ATTEMPTS = 5
+
+
+def _library_get(project: str, name: str, out: str) -> None:
+    """`cheese library get`：先问平台要这一份的下载地址，再用 curl 把字节直接从存储
+    取到 `out`——不经过平台，不整份进内存，也没有总时长的上限。
+
+    地址几分钟内开始取都有效；取到一半断了，再要一个新地址，从已经取到的地方接着取
+    （`-C -`）。取的过程写在旁边的 `.part` 里，取完、大小对上了才换成 `out`，所以
+    `out` 要么是整份，要么不在。文件存在平台自己盘上时，地址是平台的一条路由
+    （以 `/` 开头），照样这么取。"""
+    query = urllib.parse.quote(name)
+    partial = f"{out}.part"
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(partial)
+    size, failure = None, ""
+    for _ in range(_LIBRARY_GET_ATTEMPTS):
+        link = _call("GET", f"/projects/{project}/library/link?path={query}")["data"]
+        size = int(link["bytes"])
+        url = link["url"]
+        if url.startswith("/"):
+            url = f"{API}{url}"
+        done = subprocess.run(
+            ["curl", "-sSf", "--retry", "3", "-C", "-", "-o", partial, url],
+            capture_output=True,
+            text=True,
+        )
+        got = os.path.getsize(partial) if os.path.exists(partial) else 0
+        if done.returncode == 0 and got == size:
+            os.replace(partial, out)
+            print(f"已写入 {out}（{size} 字节）")
+            return
+        failure = (
+            done.stderr.strip() or f"取到 {got} 字节，curl 退出码 {done.returncode}"
+        )
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(partial)
+    print(
+        f"[cheese] 没能取下 library/{name}（{size} 字节）：{failure}", file=sys.stderr
+    )
+    sys.exit(1)
+
+
 def _format_status(d: dict) -> str:
     """Human/agent-readable rendering of /topics/{id}/status (盲飞防护): the
     turn's state, every accept card with its gate tail, and the platform
@@ -7691,12 +7775,7 @@ def main() -> None:
             parent = os.path.dirname(out)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            _raw_request(
-                "GET",
-                f"/projects/{project}/library/raw?path={urllib.parse.quote(a.name)}",
-                None,
-                out=out,
-            )
+            _library_get(project, a.name, out)
     elif a.cmd == "mail":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if a.mailcmd == "attachment":
