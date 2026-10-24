@@ -63,6 +63,7 @@ from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
+from app.domain.task import package
 from app.domain.task import teaching as teaching_context
 from app.domain.thread.services import thread_opening
 from app.domain.topic.models import TopicStatus
@@ -238,6 +239,7 @@ async def prepare(
         # 赛题, or no `teaching` on the 项目集, is no query and no prompt
         # text — not a section that renders empty.
         teaching = await teaching_context.for_project(session=session, project=project)
+        task_package = await package.section_for_project(session, project)
         # 人和 agent 共同看的那一份（结论 7）：项目目标。它不是记忆，所以不走
         # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
         # 这正是共享记忆池做不到的两件事。
@@ -447,6 +449,7 @@ async def prepare(
         topic_refs_for_prompt=topic_refs_for_prompt,
         artifacts=artifact_refs,
         teaching=teaching,
+        task_package=task_package,
         skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
         turn_images=turn_images,
         untitled=untitled,

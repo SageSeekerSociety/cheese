@@ -46,12 +46,14 @@ class TaskSubmissionRepository:
         membership_id: int,
         submitter_id: int,
         version: int,
+        package_revision: int | None = None,
     ) -> TaskSubmission:
         now = datetime.now(UTC)
         submission = TaskSubmission(
             membership_id=membership_id,
             submitter_id=submitter_id,
             version=version,
+            package_revision=package_revision,
             created_at=now,
             updated_at=now,
             deleted_at=None,

@@ -1,7 +1,9 @@
 """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
 
 清单、名字和来源在记录表里，字节按每一行的键存放（`app.domain.library.records`）。
-名字里的 `/` 是文件夹。读的是人和芝士；放进、替换、挪动、扔掉的只有人。
+名字里的 `/` 是文件夹。读的是人和芝士；放进、替换、挪动、扔掉的只有人。从题目来的
+项目还有一个只读的 `题目/`：题目的材料和题目说明（`app.domain.library.mount`），这里
+每一条读的路都读得到它，写的路都拒绝它。
 """
 
 import uuid
@@ -63,6 +65,8 @@ class LibraryFileOut(BaseModel):
     room: LibraryRoom | None
     replaced: int
     references: int
+    #: 从题目来的那一份（`题目/` 底下）：只能读。
+    readonly: bool
     rank: str
 
 
@@ -443,6 +447,8 @@ class LibraryFolderOut(BaseModel):
     name: str
     count: int
     modified: float
+    #: `题目` 那个文件夹和它底下的：只能读。
+    readonly: bool
     rank: str
 
 

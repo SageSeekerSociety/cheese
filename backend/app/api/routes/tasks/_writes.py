@@ -10,7 +10,7 @@ from app.api.routes.tasks._common import (
     _create_task_entity,
     set_task_mentors,
 )
-from app.api.task_deps import _task_attachment_service
+from app.api.task_deps import _attachment_service
 from app.api.task_serialization import (
     _enrich_task_models,
     _submission_schema_to_api,
@@ -35,6 +35,7 @@ from app.domain.space.repositories import (
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
+from app.domain.task import package
 from app.domain.task.inputs import map_approve_type
 from app.domain.task.rubric import rubric_lines, rubric_to_api
 from app.domain.task.services import (
@@ -62,14 +63,19 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
             creator_user_id=user_id,
         )
 
+    # 发布就是第 1 版，题目说明跟着写进题目资料库。
+    await package.record(db, task, by=user_id, changes={package.PUBLISHED: True})
     if payload.attachment_ids:
-        # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``
-        # 里 flush 过），权限那道门也已经在同一个请求里过了一次。文件先由调用者经
-        # ``POST /attachments`` 传上来，这里只认 id。
-        await _task_attachment_service(db).attach_uploaded(
-            task=task,
-            user_id=user_id,
+        # 材料是随题一起发出去的，所以在这里拷进题目资料库：题目已经建好
+        # （``_create_task_entity`` 里 flush 过），权限那道门也已经在同一个请求里过了
+        # 一次。文件先由调用者经 ``POST /attachments`` 传上来，这里只认 id。它们是
+        # 第 1 版的一部分，不另记一版。
+        await package.add_uploads(
+            db,
+            task,
+            by=user_id,
             attachment_ids=payload.attachment_ids,
+            uploads=_attachment_service(db),
         )
 
     # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
@@ -112,6 +118,11 @@ async def update_task(
             teaching=coerce_teaching(payload.teaching),
             actor_user_id=user_id,
         )
+
+    # 题目内容变没变：先记下改之前的样子，和改之后比。变了的那几样记成新的一版
+    # （`package.record`），提交内容或评分要点变了，领过这道题的人还会收到一条通知。
+    # 发布页保存时整份带上这些，没改也一样，所以比的是内容，不是带没带。
+    package_before = await _package_parts(service, task)
 
     # 基本字符串字段
     if payload.name is not None:
@@ -264,13 +275,6 @@ async def update_task(
         )
         task.category_id = effective_category_id
 
-    # 领过这道题的人要知道提交内容或评分要点变了：先记下改之前的样子，和改之后比。
-    # 发布页保存时整份带上这两样，没改也一样，所以比的是内容，不是带没带。
-    requirements_before = (
-        _submission_schema_to_api(await service.list_submission_schema(task.id)),
-        rubric_to_api(await service.list_rubric(task.id)),
-    )
-
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
         await service.replace_submission_schema(task.id, payload.submission_schema)
@@ -297,11 +301,24 @@ async def update_task(
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
-    requirements_after = (
-        _submission_schema_to_api(await service.list_submission_schema(task.id)),
-        rubric_to_api(await service.list_rubric(task.id)),
-    )
-    if requirements_after != requirements_before and task.approved == 0:
+    package_after = await _package_parts(service, task)
+    changes = {
+        part: True
+        for part, value in package_after.items()
+        if package_before[part] != value
+    }
+    if payload.attachment_ids:
+        # 芝士替人加进修改里的那几份文件（发布草稿时带着）：和这次的改动算一版。
+        added = await package.add_uploads(
+            db,
+            task,
+            by=user_id,
+            attachment_ids=payload.attachment_ids,
+            uploads=_attachment_service(db),
+        )
+        changes |= package.files_changed(added=added)
+    await package.record(db, task, by=user_id, changes=changes)
+    if changes.keys() & {package.SUBMISSION, package.RUBRIC} and task.approved == 0:
         await task_notices.requirements_changed(
             db, task=task, by=user_id, at=task.updated_at
         )
@@ -321,3 +338,17 @@ async def update_task(
     )[0]
 
     return {"task": task_response}
+
+
+async def _package_parts(service: TaskService, task) -> dict:
+    """题目内容里会记版的那几样现在的样子（`package` 的 `changes` 那几格）。"""
+    return {
+        package.DESCRIPTION: (task.name, task.intro, task.description),
+        package.SUBMISSION: _submission_schema_to_api(
+            await service.list_submission_schema(task.id)
+        ),
+        package.RUBRIC: (
+            rubric_to_api(await service.list_rubric(task.id)),
+            task.rubric_public,
+        ),
+    }

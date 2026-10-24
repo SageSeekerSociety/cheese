@@ -1,0 +1,381 @@
+"""一道题目交给领取者的那一份：说明、提交内容、评分要点和材料，以及它的每一版
+(#4767 第一节)。
+
+材料是题目资料库（`Shelf.of_task`）里现在的每一份文件，字节走 `app.core.blob_store`，
+替换时旧的一份留作历史（`superseded_at`），和项目的资料库是同一套记录。
+
+题目内容每变一次，就记一版（`TaskPackageRevision`），写明改了哪几样：发布时是第 1 版，
+之后改说明、提交内容、评分要点，放进、替换、删掉一份材料，各记下一版。每记一版，题目
+资料库里那份题目说明（`BRIEF`）跟着换成这一版的样子，所以它的历史就是每一版的说明。
+从这道题派生的项目在资料库的 `题目/` 下读到这些（`app.domain.library.mount`），项目总览
+和项目里的 agent 都从这里知道题目到了第几版、这一版改了什么。
+"""
+
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.space_access import may_teach_task
+from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
+from app.core.sentences import say
+from app.domain.attachment.services import AttachmentService
+from app.domain.library import records as library
+from app.domain.library.models import LibraryFileRecord
+from app.domain.library.service import clean_upload_name
+from app.domain.library.shelf import Shelf
+from app.domain.project.models import Project
+from app.domain.task.models import (
+    Task,
+    TaskPackageRevision,
+    TaskRubricItem,
+    TaskSubmissionSchemaEntry,
+)
+from app.domain.task.visibility_service import TaskVisibilityService
+from app.domain.user.models import User
+
+#: 题目资料库里每一版生成的那份题目说明。它不是出题人传的材料：材料清单里不列它，
+#: 出题人也不能替换、删掉它。
+BRIEF = "题目说明.md"
+
+#: `changes` 里的几样，和它们在摘要里叫什么。
+DESCRIPTION = "description"
+SUBMISSION = "submission"
+RUBRIC = "rubric"
+FILES = "files"
+PUBLISHED = "published"
+
+_PART_NAMES = {DESCRIPTION: "说明", SUBMISSION: "提交内容", RUBRIC: "评分要点"}
+_FILE_VERBS = {"added": "新增", "replaced": "替换", "removed": "删除"}
+
+#: 提交内容一项是什么（`task_submission_schema.type`）。
+_ENTRY_KINDS = {0: "文字", 1: "文件"}
+
+
+def shelf(task_id: int) -> Shelf:
+    return Shelf.of_task(task_id)
+
+
+def files_changed(
+    *,
+    added: Sequence[str] = (),
+    replaced: Sequence[str] = (),
+    removed: Sequence[str] = (),
+) -> dict:
+    """`changes` 里材料那一格；什么都没变是空的。"""
+    found = {
+        verb: list(names)
+        for verb, names in (
+            ("added", added),
+            ("replaced", replaced),
+            ("removed", removed),
+        )
+        if names
+    }
+    return {FILES: found} if found else {}
+
+
+def summary(changes: dict) -> str:
+    """一版改了什么，一句话：「改了说明、评分要点；新增文件 数据.csv」。"""
+    if changes.get(PUBLISHED):
+        return "题目发布"
+    parts: list[str] = []
+    edited = [name for key, name in _PART_NAMES.items() if changes.get(key)]
+    if edited:
+        parts.append("改了" + "、".join(edited))
+    for verb, word in _FILE_VERBS.items():
+        names = (changes.get(FILES) or {}).get(verb) or []
+        if names:
+            parts.append(f"{word}文件 " + "、".join(names))
+    return "；".join(parts)
+
+
+async def current(session: AsyncSession, task_id: int) -> TaskPackageRevision | None:
+    """这道题现在是哪一版；一版都没记过（发布于有版本之前、又没改过）是 None。"""
+    return await session.scalar(
+        select(TaskPackageRevision)
+        .where(TaskPackageRevision.task_id == task_id)
+        .order_by(TaskPackageRevision.number.desc())
+        .limit(1)
+    )
+
+
+async def current_number(session: AsyncSession, task_id: int) -> int | None:
+    return await session.scalar(
+        select(func.max(TaskPackageRevision.number)).where(
+            TaskPackageRevision.task_id == task_id
+        )
+    )
+
+
+async def since(
+    session: AsyncSession, task_id: int, after: datetime
+) -> list[TaskPackageRevision]:
+    """`after` 之后记的每一版，新的在前：一个项目建好之后题目又更新过几次。"""
+    return list(
+        await session.scalars(
+            select(TaskPackageRevision)
+            .where(
+                TaskPackageRevision.task_id == task_id,
+                TaskPackageRevision.created_at > after,
+            )
+            .order_by(TaskPackageRevision.number.desc())
+        )
+    )
+
+
+async def _handle(session: AsyncSession, user_id: int | None) -> str | None:
+    if user_id is None:
+        return None
+    return await session.scalar(select(User.username).where(User.id == user_id))
+
+
+async def brief(session: AsyncSession, task: Task, number: int) -> str:
+    """第 `number` 版的题目说明：简介、说明、提交内容，和公开的评分要点。"""
+    entries = list(
+        await session.scalars(
+            select(TaskSubmissionSchemaEntry)
+            .where(TaskSubmissionSchemaEntry.task_id == task.id)
+            .order_by(TaskSubmissionSchemaEntry.index)
+        )
+    )
+    lines = [f"# {task.name}", "", f"第 {number} 版", ""]
+    if task.intro:
+        lines += ["## 简介", "", task.intro, ""]
+    if task.description:
+        lines += ["## 说明", "", task.description, ""]
+    if entries:
+        lines += ["## 提交内容", ""]
+        lines += [
+            f"{i}. {entry.description}（{_ENTRY_KINDS.get(entry.type, '文字')}）"
+            for i, entry in enumerate(entries, start=1)
+        ]
+        lines.append("")
+    if task.rubric_public:
+        rubric = list(
+            await session.scalars(
+                select(TaskRubricItem)
+                .where(TaskRubricItem.task_id == task.id)
+                .order_by(TaskRubricItem.index)
+            )
+        )
+        if rubric:
+            lines += ["## 评分要点", ""]
+            lines += [
+                f"- {row.item}（{row.points} 分）"
+                + (f"：{row.criteria}" if row.criteria else "")
+                for row in rubric
+            ]
+            lines.append("")
+    return "\n".join(lines)
+
+
+async def record(
+    session: AsyncSession, task: Task, *, by: int | None, changes: dict
+) -> TaskPackageRevision | None:
+    """记下一版：`changes` 说改了哪几样，什么都没改就不记。题目说明跟着换成这一版。
+
+    版本号是读出来再加一，两个人同时改同一道题时两边会读到同一个数，所以先按题目
+    取一把锁，把这道题上的记版排成队。"""
+    if not changes:
+        return None
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"task-package:{task.id}"},
+    )
+    number = (await current_number(session, task.id) or 0) + 1
+    revision = TaskPackageRevision(
+        task_id=task.id,
+        number=number,
+        author_id=by,
+        changes=changes,
+        created_at=datetime.now(UTC),
+    )
+    session.add(revision)
+    await session.flush()
+    content = (await brief(session, task, number)).encode()
+    handle = await _handle(session, by)
+    if await library.exists(session, shelf(task.id), BRIEF):
+        await library.replace(
+            session, shelf=shelf(task.id), name=BRIEF, data=content, by=handle or ""
+        )
+    else:
+        await library.add(session, shelf(task.id), BRIEF, content, handle, None)
+    return revision
+
+
+# --- 材料 -------------------------------------------------------------------------
+#
+# 三条判据，各自一句话（和题目附件时一样）：
+#
+# - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`may_teach_task`）。
+# - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要领。
+# - 谁能下载：出题人 / 板管理员 / 已经领取的人。领取者拿不到材料就没法做题。
+
+
+async def refuse_unless_teacher(
+    session: AsyncSession, task: Task, user_id: int
+) -> None:
+    if not await may_teach_task(session, task=task, user_id=user_id):
+        raise ForbiddenError(say("draftTaskNotYours"))
+
+
+async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
+    if await may_teach_task(session, task=task, user_id=user_id):
+        return True
+    return await TaskVisibilityService(session=session).is_participant(
+        task_id=task.id, user_id=user_id
+    )
+
+
+async def refuse_unless_downloader(
+    session: AsyncSession, task: Task, user_id: int
+) -> None:
+    if not await may_download(session, task, user_id):
+        raise ForbiddenError(say("taskFilesForTakers"))
+
+
+async def files(session: AsyncSession, task_id: int) -> list[LibraryFileRecord]:
+    """出题人放进题目资料库、现在的每一份材料（不含题目说明），按放进来的先后。"""
+    return list(
+        await session.scalars(
+            select(LibraryFileRecord)
+            .where(
+                shelf(task_id).holds(),
+                LibraryFileRecord.superseded_at.is_(None),
+                LibraryFileRecord.name != BRIEF,
+            )
+            .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
+        )
+    )
+
+
+async def file_counts(session: AsyncSession, task_ids: list[int]) -> dict[int, int]:
+    """每道题现在有几份材料；一份都没有的题不在结果里。"""
+    if not task_ids:
+        return {}
+    rows = await session.execute(
+        select(LibraryFileRecord.task_id, func.count())
+        .where(
+            LibraryFileRecord.task_id.in_(task_ids),
+            LibraryFileRecord.superseded_at.is_(None),
+            LibraryFileRecord.name != BRIEF,
+        )
+        .group_by(LibraryFileRecord.task_id)
+    )
+    return {int(task_id): int(count) for task_id, count in rows}
+
+
+async def add_uploads(
+    session: AsyncSession,
+    task: Task,
+    *,
+    by: int,
+    attachment_ids: Sequence[int],
+    uploads: AttachmentService,
+) -> list[str]:
+    """把这个人先传成附件的几份文件（发题页上选的、交给芝士的）拷进题目资料库，
+    不另记一版（调用方把它们算进自己那一版）。返回它们在这里的名字。
+
+    只认他自己传的：附件 id 是可猜的连续整数，不认的话，谁都能把别人交作业附的
+    文件拷进自己的题目、借这块板公开出去。"""
+    ids = list(dict.fromkeys(attachment_ids))
+    found = {a.id: a for a in await uploads.get_many(ids)}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise BadRequestError(say("draftFileNotYours"), data={"attachmentIds": missing})
+    if any(not uploads.is_uploader(found[i], by) for i in ids):
+        raise ForbiddenError(say("draftFileNotYours"))
+    names: list[str] = []
+    for attachment_id in ids:
+        content, filename, _ = await uploads.download(attachment_id)
+        names.append(
+            await add_file(
+                session,
+                task,
+                by=by,
+                filename=clean_upload_name(filename),
+                data=content,
+            )
+        )
+    return names
+
+
+def _material(name: str) -> str:
+    """出题人点名的一份材料：题目说明不是材料，不能换、不能删。"""
+    if name == BRIEF:
+        raise UnprocessableEntityError(say("taskBriefIsGenerated", name=BRIEF))
+    return name
+
+
+async def add_file(
+    session: AsyncSession,
+    task: Task,
+    *,
+    by: int,
+    filename: str,
+    data: library.Incoming,
+) -> str:
+    """放进一份材料，不另记一版（调用方把它算进自己那一版）。撞名拿下一个 `(n)`，
+    返回它的名字。"""
+    return await library.add(
+        session, shelf(task.id), filename, data, await _handle(session, by), None
+    )
+
+
+async def replace_file(
+    session: AsyncSession,
+    task: Task,
+    *,
+    by: int,
+    name: str,
+    data: library.Incoming,
+) -> None:
+    """把一份材料换成新的字节，旧的留作历史，记一版。"""
+    await library.replace(
+        session,
+        shelf=shelf(task.id),
+        name=_material(name),
+        data=data,
+        by=await _handle(session, by) or "",
+    )
+    await record(session, task, by=by, changes=files_changed(replaced=[name]))
+
+
+async def remove_file(session: AsyncSession, task: Task, *, by: int, name: str) -> None:
+    """扔掉一份材料（连同它被替换下来的几版），记一版。"""
+    await library.remove(session, shelf=shelf(task.id), name=_material(name))
+    await record(session, task, by=by, changes=files_changed(removed=[name]))
+
+
+# --- 项目里的 agent ----------------------------------------------------------------
+
+
+async def section_for_project(
+    session: AsyncSession, project: Project | None
+) -> str | None:
+    """从题目派生的项目里，agent 每一轮读到的「题目」那一段：现在第几版、材料在哪、
+    这一版改了什么。不是从题目来的项目，或者那道题已经删了，是 None。"""
+    if project is None or project.external_task_id is None:
+        return None
+    task = await session.get(Task, project.external_task_id)
+    if task is None or task.deleted_at is not None:
+        return None
+    revision = await current(session, task.id)
+    if revision is None:
+        return None
+    lines = [
+        "## 题目",
+        f"这个项目来自题目「{task.name}」，题目现在是第 {revision.number} 版。",
+        f"题目的材料在项目资料库的 `题目/` 文件夹里，只能读，不能改：列资料库的工具"
+        f"看 `题目` 这一层，读附件的工具读 `library/题目/<名字>`，要取到工作机器上"
+        f"用 `cheese library get 题目/<名字>`。说明、提交内容和公开的评分要点在 "
+        f"`library/题目/{BRIEF}`。",
+    ]
+    if revision.number > 1:
+        lines.append(
+            f"第 {revision.number} 版改了：{summary(revision.changes or {})}。"
+            "出题人改过题目，按新的这一版做。"
+        )
+    return "\n".join(lines)
