@@ -67,7 +67,7 @@ covers:
 | 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，负责人第一句话时会话才起 |
 | 主线上一条消息「转为任务」（支线页头那颗也是它） | `POST /blocks/{id}/upgrade` | 这条消息的支线**原地**转成任务，见下 |
 | 支线里的一条回复、任务里的一条消息、主线上的文件「转为任务」 | `POST /blocks/{id}/upgrade` | 另开一件，任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论 |
-| AI 队友的 `cheese_task(action=open)` | `POST /topics/{支线}/teammate-tasks` | `here` 为真时这条支线原地转成任务；否则另开一件，同上，再加上它写的 `summary` |
+| AI 队友的 `cheese_task(action=open)` | `POST /topics/{支线}/teammate-tasks` | `here` 为真时这条支线原地转成任务；否则另开一件，同上，再加上它写的 `brief`（请求里的 `summary`） |
 
 任务建出来就在做，没有「开始」这一步：芝士从第一轮起就能改动项目。审阅人在建任务时定下（`TaskService.default_reviewer`）：负责人审阅得了就是负责人，审阅不了（协作模式里的 AI 队友）用项目默认审阅人，都没有时留空，第一次交付时再要（`review/services/reviewers.py`）。
 
