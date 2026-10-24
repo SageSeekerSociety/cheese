@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知是文档 · 设计预览</title>
+<link rel="icon" href="__IMG_LOGO_SVG__">
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="ambient" aria-hidden="true"><i class="glow"></i><i class="grid"></i><i class="stars"></i><i class="grain"></i></div>
+
+<header class="hdr" id="hdr">
+  <div class="hdr-row">
+    <button class="icon-btn menu-btn" id="menuBtn" aria-label="打开导航"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <a class="brand" href="#/" aria-label="知是文档首页">
+      <span class="brand-mark"><img src="__IMG_LOGO_SVG__" alt=""></span>
+      <span class="brand-word">知是</span><span class="sep"></span><span class="sub">文档</span>
+    </a>
+    <nav class="tabs" id="tabs"><span class="tab-ind" id="tabInd"></span></nav>
+    <div class="hdr-actions">
+      <button class="search-btn" data-open-search><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>搜索</span><kbd>⌘K</kbd></button>
+      <button class="ghost-btn" data-open-ask><svg class="ico" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20l1.1-4.6A8 8 0 1 1 21 12Z"/></svg><span>问芝士</span></button>
+      <button class="icon-btn" id="themeBtn" aria-label="切换深浅色"><span class="theme-ico"><svg class="ico sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ico moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span></button>
+      <a class="pill magnetic hide-sm" href="#" data-toast="会打开 okcheese.com"><span>进入知是</span><svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M7 17 17 7M8 7h9v9"/></svg></a>
+    </div>
+  </div>
+</header>
+
+<div id="app"></div>
+
+<div class="scrim" id="scrim"></div>
+<div class="palette" id="palette" role="dialog" aria-label="搜索文档">
+  <div class="pin"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" placeholder="搜索文档，比如「采纳」「仓库」「设备」" autocomplete="off"><kbd>esc</kbd></div>
+  <div class="res" id="res"></div>
+  <div class="askrow" id="askRow"><span class="spark-ico"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20l1.1-4.6A8 8 0 1 1 21 12Z"/></svg></span><span id="askTxt">没找到？直接问芝士</span><kbd>⌘ ↵</kbd></div>
+  <div class="foot-k"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span><span><kbd>esc</kbd> 关闭</span></div>
+</div>
+<aside class="drawer" id="drawer" aria-label="问芝士">
+  <div class="dock-resize" id="dockResize" title="拖动调整宽度"></div>
+  <div class="drawer-h">
+    <span class="brand-mark sm"><img src="__IMG_LOGO_SVG__" alt=""></span>
+    <div style="flex:1;line-height:1.3"><b>问芝士</b><br><small>只根据这份文档回答，每条答案都附出处</small></div>
+    <button class="icon-btn" data-new-chat aria-label="新对话" title="新对话"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button class="icon-btn" data-close-ask aria-label="收起" title="收起（⌘I）"><svg class="ico" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+  </div>
+  <div class="ctx" id="ctx"><svg class="ico" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M14 3v5h5"/></svg><span>正在看</span><b id="ctxPage">首页</b><label><input type="checkbox" id="ctxUse" checked>带上这一页</label></div>
+  <div class="drawer-b" id="chat"></div>
+  <div class="suggest" id="suggest"></div>
+  <div class="drawer-f"><div class="box"><input id="askInput" placeholder="问一个关于知是的问题…"><button class="send" id="askSend" aria-label="发送"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div><small>预览：答案从文档里检索拼出，接上模型后换成真回答</small></div>
+</aside>
+<template id="logoTpl"><!--__LOGO_INLINE__--></template>
+<div class="toast" id="toast"></div>
+<div class="proto-note">设计预览 · 非线上站点</div>
+<script>
+/*__JS__*/
+</script>
+</body>
+</html>
