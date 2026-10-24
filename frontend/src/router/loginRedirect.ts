@@ -12,15 +12,23 @@ import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 // 只认站内路径：`https://…`、`//evil.com` 都不要，否则登录页就是一个开放跳转。
 // 按浏览器的解析规则判，不按字面：浏览器把 `\` 当 `/`、丢掉制表符和换行，
 // `/\evil.com` 字面上是站内路径，交给 `location.replace` 却会出站。
-// 拿一个占位的源来解析，解析完源变了就是出站；不读 `location`，没有浏览器也能判。
+// 拿一个占位的源来解析，解析完源没变才算站内。放行的是原串，不是解析后的
+// pathname：解析会折叠 `.` 段，`/.//evil.com` 折叠完是 `//evil.com`，判过的和交出去
+// 的必须是同一个值。
 const SAME_ORIGIN = 'https://same-origin.invalid'
+
+function staysOnSite(path: string): boolean {
+  try {
+    return new URL(path, SAME_ORIGIN).origin === SAME_ORIGIN
+  } catch {
+    return false // 浏览器也解析不了的地址（主机名不合法），不是一个能回去的页
+  }
+}
 
 export function postLoginTarget(query: LocationQuery): string {
   const r = query.redirect
   const path = Array.isArray(r) ? r[0] : r
-  if (typeof path !== 'string' || !path.startsWith('/')) return '/'
-  const url = new URL(path, SAME_ORIGIN)
-  return url.origin === SAME_ORIGIN ? url.pathname + url.search + url.hash : '/'
+  return typeof path === 'string' && path.startsWith('/') && staysOnSite(path) ? path : '/'
 }
 
 export const carryLoginRedirect: NavigationGuardWithThis<undefined> = (to, from) => {

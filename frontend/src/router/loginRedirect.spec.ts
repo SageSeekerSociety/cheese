@@ -90,6 +90,7 @@ describe('登录完落在哪', () => {
     expect(postLoginTarget({ redirect: '//evil.example/x' })).toBe('/')
     expect(postLoginTarget({ redirect: '/\\evil.example/x' })).toBe('/')
     expect(postLoginTarget({ redirect: '/\t/evil.example/x' })).toBe('/')
+    expect(postLoginTarget({ redirect: '/\\evil.example%40okcheese.com' })).toBe('/')
   })
 })
 
@@ -193,6 +194,16 @@ describe('登录完要去的页不是应用里的页', () => {
       expect(r.currentRoute.value.name).toBe('Home')
     }
     expect(pageLoad).not.toHaveBeenCalled()
+  })
+
+  it('带点段的地址整页打开时也落在本站', async () => {
+    for (const odd of ['/.//evil.example', '/..//evil.example', '/x/..//evil.example']) {
+      pageLoad.mockClear()
+      await signInFrom(`?redirect=${encodeURIComponent(odd)}`)
+      expect(pageLoad).toHaveBeenCalledOnce()
+      const [sent] = pageLoad.mock.calls[0]
+      expect(new URL(sent, 'https://okcheese.com/account/signin').origin).toBe('https://okcheese.com')
+    }
   })
 
   it('OAuth 回来取出存下的那一页，也整页打开', async () => {
