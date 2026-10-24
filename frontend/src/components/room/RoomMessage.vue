@@ -15,7 +15,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
-import { isAgentHandle } from '../../lib/authorship'
+import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
@@ -88,7 +88,7 @@ const props = defineProps<{
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
    * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
    */
-  outgoing?: { error?: string; failed: boolean } | null
+  outgoing?: { error?: string; failed: boolean; slow?: boolean } | null
   /**
    * 正在改这条自己发过的消息：正文换成输入框，里面先放着原文。
    * `saving` 是保存请求还在路上。
@@ -112,6 +112,9 @@ const props = defineProps<{
    */
   foldPlain?: boolean
 }>()
+
+// 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
+const writtenByAssistant = computed(() => byAssistant(props.block))
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
 const personLabel = computed(() =>
@@ -217,6 +220,7 @@ const told = computed(() => toldByMessage(props.refs))
       'im-row--regroup': runStart && regroup,
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
+      'im-row--dim': !!outgoing && (outgoing.slow !== false || outgoing.failed),
       'im-row--active': active,
       'im-row--editing': editing,
     }"
@@ -265,6 +269,13 @@ const told = computed(() => toldByMessage(props.refs))
             {{ authorName }}
           </button>
           <ExternalTag v-if="external && !isAgent" />
+          <span
+            v-if="writtenByAssistant"
+            class="chip-neutral im-on-behalf"
+            data-testid="on-behalf-tag"
+            :title="t('work.onBehalf.tagHint', { name: authorName })"
+            >{{ t('work.onBehalf.tag') }}</span
+          >
           <span class="im-time">{{ time }}</span>
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
@@ -473,9 +484,9 @@ const told = computed(() => toldByMessage(props.refs))
   line-height: var(--lh-14-loose);
   color: var(--faint);
 }
-/* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
-.im-row--pending .im-text,
-.im-row--pending .im-name {
+/* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
+.im-row--dim .im-text,
+.im-row--dim .im-name {
   opacity: 0.62;
 }
 /* 没送出去：一句为什么，后面两颗和事件行同一种中性小按钮。 */
@@ -577,6 +588,9 @@ const told = computed(() => toldByMessage(props.refs))
 .im-pin-mark {
   flex: none;
   color: var(--accent-ink);
+}
+.im-on-behalf {
+  flex: none;
 }
 .im-file-link {
   max-width: 100%;

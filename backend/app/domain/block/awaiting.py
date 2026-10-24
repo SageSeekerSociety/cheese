@@ -219,6 +219,39 @@ class AwaitingQueries:
             if settled(parent.meta) or not may_answer(parent.meta, reply.author):
                 return []
             return [parent]
+        asked_filter = (
+            *place,
+            QUESTION_ROWS,
+            # `meta` is json, not jsonb: cast to ask "does it name him". `@>` of
+            # a string holds for a list containing it and for the bare handle a
+            # backend from before the list wrote (blue/green deploys keep one
+            # running past the migration); json_array_length would raise on it.
+            or_(
+                cast(Block.meta, JSONB)["asked"].op("@>")(
+                    func.to_jsonb(cast(reply.author, Text))
+                ),
+                cast(Block.meta, JSONB)["asked"] == func.jsonb_build_array(),
+                cast(Block.meta, JSONB)["asked_all"].as_boolean().is_(True),
+            ),
+            Block.meta["answered"].as_string().is_(None),
+            Block.id != reply.id,
+            Block.created_at <= reply.created_at,
+        )
+        candidates = [
+            block.id
+            for block in (
+                await self._session.scalars(
+                    select(Block)
+                    .where(*asked_filter)
+                    .order_by(Block.created_at, Block.id)
+                )
+            ).all()
+            if may_answer(block.meta, reply.author)
+            and not settled(block.meta)
+            and reply.author not in skipped_by(block.meta)
+        ]
+        if not candidates:
+            return []
         spoke_before = (
             select(func.max(Block.created_at))
             .where(
@@ -233,22 +266,8 @@ class AwaitingQueries:
         stmt = (
             select(Block)
             .where(
-                *place,
-                QUESTION_ROWS,
-                # `meta` is json, not jsonb: cast to ask "does it name him". `@>` of
-                # a string holds for a list containing it and for the bare handle a
-                # backend from before the list wrote (blue/green deploys keep one
-                # running past the migration); json_array_length would raise on it.
-                or_(
-                    cast(Block.meta, JSONB)["asked"].op("@>")(
-                        func.to_jsonb(cast(reply.author, Text))
-                    ),
-                    cast(Block.meta, JSONB)["asked"] == func.jsonb_build_array(),
-                    cast(Block.meta, JSONB)["asked_all"].as_boolean().is_(True),
-                ),
-                Block.meta["answered"].as_string().is_(None),
-                Block.id != reply.id,
-                Block.created_at <= reply.created_at,
+                Block.id.in_(candidates),
+                *asked_filter,
                 or_(spoke_before.is_(None), Block.created_at > spoke_before)
                 if first_word_only
                 else true(),

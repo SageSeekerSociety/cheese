@@ -376,8 +376,16 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "chat_send",
             "Publish a message to the current Cheese room. "
-            "Use for user-visible updates and replies; "
-            "ordinary model output is not published. "
+            "Use it to answer people, and for what they need to know: you need "
+            "a person or are blocked, filed a card, changed plan, found "
+            "something that changes the task, have an important result (one "
+            "that changes what people think of the work or expect from it: a "
+            "root cause confirmed, a key check came back, passed or failed, the "
+            "work turning "
+            "out bigger or smaller than expected), or are done. Starting, "
+            "checking or finishing one step is not announced; people watch "
+            "the work live. "
+            "Ordinary model output is not published. "
             "Pictures go out with the message through `attachments`, shown in the "
             "conversation itself — no page to open.",
             {
@@ -692,6 +700,12 @@ PLATFORM_TOOLS = ToolTable(
                 "reported_by": _text("需求提出者的 handle"),
                 "contributor": _CONTRIBUTOR,
             },
+            [],
+        ),
+        _tool(
+            "cheese_reopen_task",
+            "重新打开这件已关闭的任务。有人要接着做这件事时用它，打开后接着做。",
+            {},
             [],
         ),
         _tool(
@@ -2185,6 +2199,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": here + "/task/progress",
             "body": {"state": args["state"], **_given(args, "note")},
         }
+    if tool == "cheese_reopen_task":
+        return {"method": "POST", "path": here + "/reopen"}
     if tool == "cheese_close_task":
         return {
             "method": "POST",
@@ -4716,6 +4732,7 @@ _SAY = {
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
+    "cheese_reopen_task": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task_state": lambda a, d, e: (
         "看板上这件任务现在显示你说的状态，直到你再设一次；Claude Code 的会话停下后"
         "又被叫醒时，它先显示在做。"

@@ -223,6 +223,11 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
+    # task is theirs, and its page says their 芝士 made it.
+    created_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     # Recorded when an authenticated agent opens the task's worktree. Dispatch
     # and room membership do not establish who performs the work.
     author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -101,11 +101,11 @@ export function usePanelOutgoing(deps: {
         throw error
       })
     },
-    onDelivered: (block) => {
+    onDelivered: (block, dimmed) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
       if (block.conversation_id !== deps.place()?.id) return
       deps.onPosted?.(block)
-      deps.delivered().add(block.id)
+      if (dimmed) deps.delivered().add(block.id)
       deps.pushBlock(block)
       deps.autoScroll()
     },

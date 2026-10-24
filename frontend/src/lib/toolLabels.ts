@@ -81,6 +81,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_transcript: 'toolLabels.cheeseTranscript',
   cheese_recover: 'toolLabels.cheeseRecover',
   cheese_close_task: 'toolLabels.cheeseCloseTask',
+  cheese_reopen_task: 'toolLabels.cheeseReopenTask',
   cheese_task_state: 'toolLabels.cheeseTaskState',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   cheese_fetch: 'toolLabels.cheeseFetch',

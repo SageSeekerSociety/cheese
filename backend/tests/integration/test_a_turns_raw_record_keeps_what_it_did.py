@@ -818,10 +818,10 @@ def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
     ).json()["data"]["items"]
     said = [part["text"] for row in rows for part in row["parts"]]
     assert "照我说的做" in said
-    assert not any("没听到你说话" in text for text in said)
+    assert not any("分钟了还没回" in text for text in said)
     # The journal still holds every word: this is the file's projection only.
     whole = json.dumps(session.read(turn_id=work), ensure_ascii=False)
-    assert "没听到你说话" in whole
+    assert "分钟了还没回" in whole
 
 
 def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):

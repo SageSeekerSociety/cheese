@@ -236,7 +236,8 @@ def task_section(
             "## 这个任务\n"
             "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
             "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
-            "告诉他重新打开任务；说的是另一件事，建议他回到频道主线说，或者另开任务。"
+            "用 cheese_reopen_task 重新打开再接着做；"
+            "说的是另一件事，建议他回到频道主线说，或者另开任务。"
         )
     people = [f"@{h}" for h in (owner, *contributors) if h]
     who = (
@@ -280,7 +281,7 @@ class SessionOpening:
             return ""
         return platform_prompt(
             "## 现在的情况\n"
-            "下面是这个会话开始时你所在的地方和项目的情况，是平台给的，不是谁说的话。"
+            "下面是你所在的地方和项目现在的情况，是平台给的，不是谁说的话。"
             "之后变了的部分，平台会在后面的消息里再告诉你。\n\n"
             + "\n\n".join(self.sections.values())
         )
@@ -298,8 +299,10 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 
     ``told`` 是上次告诉它时每一段的摘要（:meth:`SessionOpening.digests`），只补
     和它不一样的那几段。没有记录（``None``）时整份都说：那是一条在系统提示词还
-    带着现状时开的老对话，或者记录丢了，它手上的现状不知道是哪一刻的。一条新开的
-    对话用不上这一段，它的第一条消息带着整份快照（``Opening.session_opening``）。"""
+    带着现状时开的老对话，或者记录丢了，或者这条对话刚压缩过上下文（压缩把开场
+    快照所在的那段历史换成了摘要，平台听到压缩完成就把记录清掉，
+    `room/reads.py`），它手上的现状不知道是哪一刻的。一条新开的对话用不上这一段，
+    它的第一条消息带着整份快照（``Opening.session_opening``）。"""
     if told is None:
         return opening.text
     changed = [
