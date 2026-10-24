@@ -1048,6 +1048,41 @@ def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step_wit
     assert ("user", "只看第 3 份") in texts
 
 
+def test_words_said_mid_answer_and_asked_again_unheard_are_in_the_conversation_once(
+    client, gateway
+):
+    me = _auth(client, "unheard")
+    conversation = _start(client, _task(client), me)
+    gateway.script = [("held", "我先读一遍，", "然后再打分。"), ("text", "好的。")]
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "把报告打分", me))
+    )
+    asking.start()
+    assert gateway.holding.wait(60)
+    said = client.post(
+        f"/assistant/conversations/{conversation}/say",
+        json={"text": "只看第 3 份"},
+        headers=me,
+    )
+    assert said.status_code == 200, said.text
+    gateway.release.set()
+    asking.join(60)
+
+    # The answer ended before 芝士 heard it: the panel asks it on its own.
+    gateway.script = [("text", "好，只看第 3 份。")]
+    again = client.post(
+        f"/assistant/conversations/{conversation}/ask",
+        json={"question": "只看第 3 份", "kept": True},
+        headers=me,
+    )
+    assert again.status_code == 200, again.text
+    assert "只看第 3 份" in json.dumps(gateway.requests[-1], ensure_ascii=False)
+    got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    texts = [(m["role"], m["text"]) for m in got["data"]["messages"]]
+    assert texts.count(("user", "只看第 3 份")) == 1
+
+
 def test_a_stopped_answer_keeps_what_was_written(client, gateway):
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)

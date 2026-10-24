@@ -767,6 +767,7 @@ async def ask(
     project: uuid.UUID | None = None,
     run: uuid.UUID | None = None,
     shown: dict | None = None,
+    kept: bool = False,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -787,7 +788,9 @@ async def ask(
     it says is the platform's, not the person's (``role`` ``platform``), and
     the run is told when the answer ends. Its id is the answer's ``work``, so
     the cards the run puts up are found by it. ``shown`` is how the panel
-    names the routine, in place of what the platform told 芝士."""
+    names the routine, in place of what the platform told 芝士. ``kept``:
+    the question is in the conversation already (said mid-answer, and the
+    answer ended before 芝士 heard it), so it is not written down again."""
     work = run or uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -795,14 +798,15 @@ async def ask(
         before = await store.messages(conversation_id)
         # Files handed over alone are the whole question: they are kept
         # with it, so the conversation shows them when it is read again.
-        await store.append(
-            conversation,
-            "platform" if run else "user",
-            question,
-            parts={"files": [name for _, name in files]}
-            if files
-            else ({"shown": shown} if shown else None),
-        )
+        if not kept:
+            await store.append(
+                conversation,
+                "platform" if run else "user",
+                question,
+                parts={"files": [name for _, name in files]}
+                if files
+                else ({"shown": shown} if shown else None),
+            )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
         # What it remembers of them goes with the start of a conversation, never
