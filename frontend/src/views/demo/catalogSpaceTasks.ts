@@ -304,6 +304,176 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         expect: '已记住',
       },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s9.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s9.note')
+        },
+        // 一件长的事正在做：最上面是清单；先说了一句，派出两个分身，一个还在做，一个交回了；
+        // 最后一组都回来了，芝士在想下一步。
+        props: {
+          messages: [
+            {
+              role: 'user',
+              text: '把这 40 份实验报告按评分标准各给一个分，写一句理由，汇总成一张表给我。',
+              at: '2026-10-24T08:00:00Z',
+            },
+          ],
+          busy: true,
+          streaming: '我先读评分标准，再把报告分成两批，派两个分身同时打分。',
+          steps: [
+            {
+              key: 't1',
+              verb: '更新进度清单',
+              arg: '',
+              state: 'done',
+              at: 0,
+              hidden: true,
+              checklist: [
+                { content: '读评分标准，整理出评分项', status: 'completed' },
+                { content: '给第 1–20 份报告打分', status: 'in_progress' },
+                { content: '给第 21–40 份报告打分', status: 'in_progress' },
+                { content: '汇总成表，标出分数异常的几份', status: 'pending' },
+              ],
+            },
+            { key: 'r1', verb: '读取', arg: '评分标准.pdf', state: 'done', at: 0 },
+            {
+              key: 'a1',
+              verb: '派出分身',
+              arg: '给第 1–20 份报告打分',
+              state: 'run',
+              at: 27,
+              subagent: {
+                status: 'running',
+                steps: [
+                  { key: 'a1-1', verb: '读取', arg: '报告 01.pdf', state: 'done' },
+                  { key: 'a1-2', verb: '读取', arg: '报告 02.pdf', state: 'done' },
+                ],
+              },
+            },
+            {
+              key: 'a2',
+              verb: '派出分身',
+              arg: '给第 21–40 份报告打分',
+              state: 'done',
+              at: 27,
+              subagent: {
+                status: 'done',
+                steps: [{ key: 'a2-1', verb: '读取', arg: '报告 21.pdf', state: 'done' }],
+              },
+            },
+          ],
+        },
+        expect: '进行中',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s10.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s10.note')
+        },
+        // 做完了：清单收成一行，两个分身都交回了，话和步骤按发生的顺序排开。
+        props: {
+          messages: [
+            {
+              role: 'user',
+              text: '把这 40 份实验报告按评分标准各给一个分，写一句理由，汇总成一张表给我。',
+              at: '2026-10-24T08:00:00Z',
+            },
+            {
+              role: 'assistant',
+              text: '我先读评分标准，再把报告分成两批，派两个分身同时打分。\n\n40 份都打完了，平均 78 分。第 7、19、33 份分数明显偏低，理由写在表里。成绩表已经发给你。',
+              at: '2026-10-24T08:31:00Z',
+              steps: [
+                {
+                  key: 't1',
+                  verb: '更新进度清单',
+                  arg: '',
+                  state: 'done',
+                  at: 0,
+                  hidden: true,
+                  checklist: [
+                    { content: '读评分标准，整理出评分项', status: 'completed' },
+                    { content: '给第 1–20 份报告打分', status: 'completed' },
+                    { content: '给第 21–40 份报告打分', status: 'completed' },
+                    { content: '汇总成表，标出分数异常的几份', status: 'completed' },
+                  ],
+                },
+                { key: 'r1', verb: '读取', arg: '评分标准.pdf', state: 'done', at: 0 },
+                {
+                  key: 'a1',
+                  verb: '派出分身',
+                  arg: '给第 1–20 份报告打分',
+                  state: 'done',
+                  at: 27,
+                  subagent: {
+                    status: 'done',
+                    steps: [{ key: 'a1-1', verb: '读取', arg: '报告 01.pdf', state: 'done' }],
+                  },
+                },
+                {
+                  key: 'a2',
+                  verb: '派出分身',
+                  arg: '给第 21–40 份报告打分',
+                  state: 'done',
+                  at: 27,
+                  subagent: {
+                    status: 'done',
+                    steps: [{ key: 'a2-1', verb: '读取', arg: '报告 21.pdf', state: 'done' }],
+                  },
+                },
+                { key: 'g1', verb: '发送文件', arg: '成绩表.xlsx', state: 'done', at: 27 },
+              ],
+            },
+          ],
+        },
+        expect: '4/4 项已完成',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s11.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s11.note')
+        },
+        // 芝士在做，人在输入框里又说了一句：按钮是「发送」，这句话插进正在做的这一轮。
+        props: {
+          messages: [
+            { role: 'user', text: '把这 40 份实验报告各给一个分，汇总成表。', at: '2026-10-24T08:00:00Z' },
+            { role: 'user', text: '第 30 份以后的不用打了。', at: '2026-10-24T08:12:00Z' },
+          ],
+          busy: true,
+          streaming: '好，第 30 份以后的不打了。',
+          steps: [{ key: 'r1', verb: '读取', arg: '报告 12.pdf', state: 'done', at: 0 }],
+        },
+        expect: '第 30 份以后的不用打了',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s12.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s12.note')
+        },
+        // 做了事却一个字没写；上面还有更早的消息没读回来。
+        props: {
+          currentEarlier: true,
+          messages: [
+            { role: 'user', text: '我现在有哪些事等着我处理？', at: '2026-10-24T09:00:00Z' },
+            {
+              role: 'assistant',
+              text: '',
+              silent: true,
+              at: '2026-10-24T09:00:20Z',
+              steps: [{ key: 'i1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+            },
+          ],
+        },
+        expect: '芝士没有给出回答',
+      },
     ],
   },
   {

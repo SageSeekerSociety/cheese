@@ -316,9 +316,12 @@ function undoable(change: PanelChange): number {
   color: var(--muted);
 }
 
-.at__sub-steps {
+/* 分身做过的几步：缩在它那一行下面，左边一条细线连着。 */
+.at__steps.at__sub-steps {
   flex-basis: 100%;
-  padding-left: 20px;
+  padding-left: 12px;
+  margin: 2px 0 2px 6px;
+  border-left: 1px solid var(--line);
 }
 
 .at__todo {
