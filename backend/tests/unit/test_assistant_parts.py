@@ -54,3 +54,21 @@ def test_a_file_handed_over_is_kept_with_the_answer():
 
     assert parts is not None
     assert parts["handed"] == [file]
+
+
+def test_each_step_keeps_where_it_fell_in_the_answers_words():
+    told = [
+        ("1000-0", "delta", {"text": "我先查一下。", "at": 0}),
+        ("1100-0", "tool", {"name": "cheese_inbox", "call": "c1", "at": 6}),
+        ("1200-0", "tool_done", {"call": "c1"}),
+        ("1300-0", "thinking", {"at": 6}),
+        ("2300-0", "delta", {"text": "\n\n没有待办。", "at": 6}),
+    ]
+
+    steps = parts_of(told)["steps"]
+
+    assert [(s["name"], s["at"]) for s in steps] == [
+        ("cheese_inbox", 6),
+        ("thinking", 6),
+    ]
+    assert steps[1]["ms"] == 1000
