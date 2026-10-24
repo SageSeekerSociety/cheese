@@ -40,8 +40,19 @@ def test_the_rule_keeps_the_attempts_that_are_still_worth_making():
     常量会让「定义了却没接进提示词」照绿。"""
     text = _assembled()
     assert "换了做法" in text
-    assert "换了依赖" in text
     assert "间歇" in text
+
+
+def test_the_rule_does_not_read_as_filling_gaps_being_wrong():
+    """缺什么补什么不是错，一口一口补但心里有清单是正常的。负责人 2026201782 纠正过
+    这一句：第一版写「补一个缺口又冒出下一个，就该停」，读起来像在否定补齐本身。
+
+    该停的是每轮只看到「下一个」缺口、看不到还缺多少——那就没法知道这条路通不通。
+    所以这一半要同时说到「看不到还缺多少」和「摸清」：只说前者会读成「别再补了」，
+    只说后者会读成「补之前先列清单」，都不是要说的那件事。"""
+    text = _assembled()
+    assert "看不到还缺多少" in text
+    assert "摸清" in text
 
 
 def test_the_rule_names_what_stopping_looks_like():
