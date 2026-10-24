@@ -346,5 +346,6 @@ export function panelMessages(
     results: (m.published ?? []).map(resultView),
     proposals: (m.proposals ?? []).map(proposalView),
     handed: m.handed ?? [],
+    ...(m.silent ? { silent: true } : {}),
   }))
 }

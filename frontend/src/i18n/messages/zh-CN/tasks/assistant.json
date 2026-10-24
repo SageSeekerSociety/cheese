@@ -14,6 +14,7 @@
     "start": "从哪里入手比较好？"
   },
   "stopped": "已停止",
+  "silent": "芝士没有给出回答",
   "today": "今天",
   "steps": {
     "folded": "{first}等 {n} 步",

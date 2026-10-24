@@ -58,16 +58,19 @@
             <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
             <AssistantTurn
               class="ap__text"
-              :steps="m.steps ?? []"
+              :pieces="interleave(m.text, m.steps ?? [])"
               :changes="m.changes ?? []"
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
               :files="m.handed ?? []"
               @download-file="(file) => emit('downloadFile', file)"
             >
-              <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-              <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
+              <template #text="{ text }">
+                <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+                <div class="ap__md" v-html="render(text)" />
+              </template>
               <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
+              <p v-else-if="m.silent && !m.text" class="ap__stopped">{{ t('tasks.assistant.silent') }}</p>
             </AssistantTurn>
           </div>
         </template>
@@ -101,7 +104,7 @@
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
           <AssistantTurn
             class="ap__text"
-            :steps="m.steps ?? []"
+            :pieces="interleave(m.text, m.steps ?? [])"
             :changes="m.changes ?? []"
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
@@ -117,9 +120,12 @@
             @open-task="(id) => emit('openTask', id)"
             @download-file="(file) => emit('downloadFile', file)"
           >
-            <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-            <div v-if="m.text" class="ap__md" v-html="render(m.text)" />
+            <template #text="{ text }">
+              <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+              <div class="ap__md" v-html="render(text)" />
+            </template>
             <p v-if="m.stopped" class="ap__stopped">{{ t('tasks.assistant.stopped') }}</p>
+            <p v-else-if="m.silent && !m.text" class="ap__stopped">{{ t('tasks.assistant.silent') }}</p>
           </AssistantTurn>
         </div>
       </template>
@@ -131,7 +137,7 @@
         <AssistantTurn
           class="ap__text"
           live
-          :steps="steps"
+          :pieces="livePieces"
           :changes="changes"
           :results="results"
           :proposals="proposals"
@@ -147,9 +153,11 @@
           @open-task="(id) => emit('openTask', id)"
           @download-file="(file) => emit('downloadFile', file)"
         >
+          <template #text="{ text }">
+            <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
+            <div class="ap__md" v-html="render(text)" />
+          </template>
           <p v-if="!streaming && queued" class="ap__looking">{{ t('tasks.assistant.queued') }}</p>
-          <!-- eslint-disable-next-line vue/no-v-html -- sanitized by MarkdownRenderer (DOMPurify) -->
-          <div v-else-if="streaming" class="ap__md" v-html="render(streaming)" />
         </AssistantTurn>
       </div>
 
@@ -205,7 +213,7 @@
 // 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
 // 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
 // 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
-import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
+import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
 import type { AssistantHanded } from '@/stores/agentThread'
@@ -224,6 +232,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
+import { interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
 export interface PanelTopic {
@@ -249,6 +258,8 @@ export interface PanelMessage {
   proposals?: PanelProposal[]
   /** 芝士交给人的文件。 */
   handed?: AssistantHanded[]
+  /** 做了事，却一个字没写。 */
+  silent?: boolean
 }
 
 /** 要随下一个问题交给芝士的文件。 */
@@ -365,6 +376,22 @@ function runLine(shown?: { routine?: string }): string {
   return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
 }
 const markdown = new MarkdownRenderer()
+
+/** 正在答的这一轮，按发生的顺序。最后做的几步都已回来、还没开始写下一段话时，末尾是
+ *  一行「思考中」：芝士在想下一步，不让最后一个工具一直转着。 */
+const livePieces = computed<TurnPiece[]>(() => {
+  const pieces = interleave(props.streaming ?? '', props.steps)
+  const last = pieces[pieces.length - 1]
+  if (last?.kind === 'steps' && !props.queued && !props.steps.some((step) => step.state === 'run'))
+    last.steps.push({
+      key: 'pending',
+      verb: t('tasks.assistant.steps.thinking'),
+      arg: '',
+      state: 'run',
+      thinking: true,
+    })
+  return pieces
+})
 const draft = ref('')
 const scroller = ref<HTMLElement | null>(null)
 const composing = ref(false)

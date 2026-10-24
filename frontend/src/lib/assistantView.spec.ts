@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { stepError, stepView } from './assistantView'
+import { interleave, type PanelStep, stepError, stepView } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -186,5 +186,30 @@ describe('writesView', () => {
         true,
       ],
     ])
+  })
+})
+
+describe('interleave', () => {
+  const step = (key: string, at?: number): PanelStep => ({ key, verb: '读取', arg: '', state: 'done', at })
+  const shape = (text: string, steps: PanelStep[]) =>
+    interleave(text, steps).map((p) => (p.kind === 'text' ? p.text : p.steps.map((s) => s.key).join('+')))
+
+  it('places each step after the words written before it, and steps in a row together', () => {
+    const text = '我先查一下。\n\n有两件事。\n\n都处理好了。'
+    expect(shape(text, [step('a', 6), step('b', 6), step('c', 13)])).toEqual([
+      '我先查一下。',
+      'a+b',
+      '有两件事。',
+      'c',
+      '都处理好了。',
+    ])
+  })
+
+  it('puts steps that kept no place before the words, as answers did before', () => {
+    expect(shape('好了。', [step('a'), step('b')])).toEqual(['a+b', '好了。'])
+  })
+
+  it('shows steps alone when nothing was written', () => {
+    expect(shape('', [step('a', 0)])).toEqual(['a'])
   })
 })

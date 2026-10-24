@@ -120,6 +120,53 @@ describe('AssistantPanel', () => {
     expect(view.emitted('openLink')).toEqual([['/projects/cheese-dev/channels/15']])
   })
 
+  it('shows what 芝士 said and the calls it made in the order they happened', () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '有什么要我处理的？', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '我先查一下待办。\n\n有一件：周明的邀请。',
+          at: '2026-10-04T08:00:05Z',
+          steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 8 }],
+        },
+      ],
+    })
+
+    const said = view.getByText('我先查一下待办。')
+    const call = view.getByText('查看待办')
+    const after = view.getByText('有一件：周明的邀请。')
+    expect(said.compareDocumentPosition(call) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(call.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('while 芝士 goes on after its last call came back, a line says it is thinking', () => {
+    const view = mount({
+      busy: true,
+      streaming: '',
+      steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+    })
+
+    expect(view.getByText('思考中')).toBeTruthy()
+  })
+
+  it('says 芝士 gave no answer when it did something and wrote nothing', () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '有什么待办？', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '',
+          silent: true,
+          at: '2026-10-04T08:00:05Z',
+          steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+        },
+      ],
+    })
+
+    expect(view.getByText('芝士没有给出回答')).toBeTruthy()
+  })
+
   it('asks a starter question in one click when the conversation is empty', async () => {
     const view = mount({ messages: [] })
     await fireEvent.click(view.getByRole('button', { name: '做这道题要先会什么？' }))

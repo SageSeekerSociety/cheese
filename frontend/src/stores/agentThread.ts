@@ -5,7 +5,7 @@
 //
 // 回答是流式的（server-sent events）：`queued` 在等会话机空出来，`delta` 是文字，
 // `tool` 是芝士开始调一个工具，`tool_args` 是那次调用边写边流过来的参数（页面拿它
-// 先把表单填上），`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
+// 先把表单填上），`tool_done` 是那次调用回来了，`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
 // （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，
 // `proposal` 是它替人起草了一条要发到项目里的消息、或一个要开的任务（人确认后才发出），`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
@@ -37,11 +37,15 @@ export interface AssistantStep {
   ms?: number
   /** 开始的时刻（本页的钟），算推理用了多久。 */
   startedAt?: number
+  /** 它之前回答写到了第几个字：面板把它排在这些字后面。 */
+  at?: number
 }
 
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
-  steps?: { call: string; name: string; args: string; failed?: string; ms?: number }[]
+  steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number }[]
+  /** 做了事，却一个字没写。 */
+  silent?: boolean
   edits?: Record<string, unknown>[]
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
@@ -137,6 +141,8 @@ export interface AssistantMessage {
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
   handed?: AssistantHanded[]
+  /** 做了事，却一个字没写：面板说一句，不留一段空白。 */
+  silent?: boolean
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
@@ -360,15 +366,17 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
   function kept(
     parts: StoredParts
-  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed'> {
+  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed' | 'silent'> {
     return {
       ...(parts.files?.length ? { files: parts.files } : {}),
+      ...(parts.silent ? { silent: true } : {}),
       ...(parts.shown ? { shown: parts.shown } : {}),
       steps: (parts.steps ?? []).map((step) => ({
         call: step.call,
         name: step.name,
         args: step.args,
         ms: step.ms,
+        ...(typeof step.at === 'number' ? { at: step.at } : {}),
         state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
         error: step.failed,
       })),
@@ -398,13 +406,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
     }
   }
 
-  /** 还在跑的那几步算做完了：芝士开始说话、调下一个工具、或答完了。推理的那一段记下
-   *  它用了多久。 */
-  function settleSteps() {
+  /** 还在跑的那几步算做完了：芝士开始说话、开始推理、或答完了。推理的那一段记下它用了
+   *  多久。`thinkingOnly`：只结束推理——芝士接着调下一个工具时，同时调的那几个还在跑，
+   *  它们各自回来时（`tool_done`）才算完。 */
+  function settleSteps(thinkingOnly = false) {
     let changed = false
     const now = Date.now()
     const next = steps.value.map((step) => {
-      if (step.state !== 'run') return step
+      if (step.state !== 'run' || (thinkingOnly && step.name !== 'thinking')) return step
       changed = true
       if (step.name === 'thinking') return { ...step, state: 'done' as const, ms: now - (step.startedAt ?? now) }
       on.toolEnded?.(step.call, step.name, false)
@@ -414,21 +423,36 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   function onStep(event: string, payload: Record<string, unknown>) {
+    const at = typeof payload.at === 'number' ? { at: payload.at } : {}
     if (event === 'thinking') {
       settleSteps()
       steps.value = [
         ...steps.value,
-        { call: `thinking-${steps.value.length}`, name: 'thinking', args: '', state: 'run', startedAt: Date.now() },
+        {
+          call: `thinking-${steps.value.length}`,
+          name: 'thinking',
+          args: '',
+          state: 'run',
+          startedAt: Date.now(),
+          ...at,
+        },
       ]
       queued.value = false
     } else if (event === 'tool') {
-      settleSteps()
+      settleSteps(true)
       const call = typeof payload.call === 'string' ? payload.call : `step-${steps.value.length}`
       const name = typeof payload.name === 'string' ? payload.name : ''
       if (!steps.value.some((s) => s.call === call))
-        steps.value = [...steps.value, { call, name, args: '', state: 'run' }]
+        steps.value = [...steps.value, { call, name, args: '', state: 'run', ...at }]
       tool.value = name || null
       queued.value = false
+    } else if (event === 'tool_done' && typeof payload.call === 'string') {
+      steps.value = steps.value.map((step) => {
+        if (step.call !== payload.call || step.state !== 'run') return step
+        on.toolEnded?.(step.call, step.name, false)
+        return { ...step, state: 'done' }
+      })
+      if (!steps.value.some((step) => step.state === 'run')) tool.value = null
     } else if (event === 'tool_args' && typeof payload.call === 'string' && typeof payload.text === 'string') {
       const at = typeof payload.at === 'number' ? payload.at : 0
       steps.value = steps.value.map((step) => {
@@ -534,6 +558,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             published: published.value,
             proposals: proposals.value,
             handed: handed.value,
+            ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
         ]
       if (current.value === conversation) {

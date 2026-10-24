@@ -15,6 +15,32 @@ export interface PanelStep {
   error?: string
   /** 推理的那一段，不是一次工具调用。 */
   thinking?: boolean
+  /** 它前面回答已经写了多少字：步骤排在这些字后面。旧的回答没有。 */
+  at?: number
+}
+
+/** 一轮回答按发生的顺序排开：说的一段话，或接连做的几步。 */
+export type TurnPiece = { kind: 'text'; key: string; text: string } | { kind: 'steps'; key: string; steps: PanelStep[] }
+
+/** 把一轮回答的话和步骤按发生的顺序排开：每一步排在它之前写下的那些字后面，接连的几步
+ *  归成一组。没记位置的步骤（更早的回答）都排在话前面，和从前一样。 */
+export function interleave(text: string, steps: PanelStep[]): TurnPiece[] {
+  const pieces: TurnPiece[] = []
+  let from = 0
+  const say = (to: number) => {
+    const said = text.slice(from, to).trim()
+    if (said) pieces.push({ kind: 'text', key: `text-${from}`, text: said })
+    from = to
+  }
+  for (const step of steps) {
+    const at = Math.min(Math.max(step.at ?? 0, from), text.length)
+    if (at > from) say(at)
+    const last = pieces[pieces.length - 1]
+    if (last?.kind === 'steps') last.steps.push(step)
+    else pieces.push({ kind: 'steps', key: `steps-${step.key}`, steps: [step] })
+  }
+  say(text.length)
+  return pieces
 }
 
 export interface PanelChangeRow {
@@ -150,6 +176,7 @@ export function stepView(step: AssistantStep): PanelStep {
       arg: '',
       state: step.state,
       thinking: true,
+      ...(step.at === undefined ? {} : { at: step.at }),
     }
   const key = STEP_ARG[step.name]
   const arg = key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : ''
@@ -159,6 +186,7 @@ export function stepView(step: AssistantStep): PanelStep {
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
     error: step.error === undefined ? undefined : stepError(step.error),
+    ...(step.at === undefined ? {} : { at: step.at }),
   }
 }
 

@@ -1,31 +1,37 @@
 <template>
-  <!-- One answer of 芝士: the calls it made, one line each; what it wrote into a draft, as a card
-       with an undo per field; what it asks the person to confirm; what it published; then its words. -->
+  <!-- One answer of 芝士: what it said and the calls it made, in the order they happened (a run of
+       calls, one line each); what it wrote into a draft, as a card with an undo per field; what it
+       asks the person to confirm; what it published. -->
   <div class="at">
-    <template v-if="steps.length">
-      <button
-        v-if="folded"
-        type="button"
-        class="at__fold"
-        :aria-expanded="open"
-        :data-testid="'turn-steps-fold'"
-        @click="open = !open"
-      >
-        <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': open }">mdi-chevron-right</v-icon>
-        {{ t('tasks.assistant.steps.folded', { first: (calls[0] ?? steps[0]).verb, n: calls.length || steps.length }) }}
-      </button>
-      <ul v-if="!folded || open" class="at__steps">
-        <li v-for="step in steps" :key="step.key" class="at__step" :class="`at__step--${step.state}`">
-          <span class="at__ico" aria-hidden="true">
-            <span v-if="step.state === 'run'" class="at__spin" />
-            <v-icon v-else-if="step.state === 'done'" size="14">mdi-check</v-icon>
-            <v-icon v-else size="14">mdi-close</v-icon>
-          </span>
-          <span class="at__verb">{{ step.verb }}</span>
-          <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
-          <span v-if="step.state === 'failed' && step.error" class="at__err">{{ step.error }}</span>
-        </li>
-      </ul>
+    <template v-for="piece in pieces" :key="piece.key">
+      <slot v-if="piece.kind === 'text'" name="text" :text="piece.text" />
+      <template v-else>
+        <button
+          v-if="foldable(piece.steps)"
+          type="button"
+          class="at__fold"
+          :aria-expanded="opened.has(piece.key)"
+          :data-testid="'turn-steps-fold'"
+          @click="toggle(piece.key)"
+        >
+          <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': opened.has(piece.key) }"
+            >mdi-chevron-right</v-icon
+          >
+          {{ folded(piece.steps) }}
+        </button>
+        <ul v-if="!foldable(piece.steps) || opened.has(piece.key)" class="at__steps">
+          <li v-for="step in piece.steps" :key="step.key" class="at__step" :class="`at__step--${step.state}`">
+            <span class="at__ico" aria-hidden="true">
+              <span v-if="step.state === 'run'" class="at__spin" />
+              <v-icon v-else-if="step.state === 'done'" size="14">mdi-check</v-icon>
+              <v-icon v-else size="14">mdi-close</v-icon>
+            </span>
+            <span class="at__verb">{{ step.verb }}</span>
+            <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
+            <span v-if="step.state === 'failed' && step.error" class="at__err">{{ step.error }}</span>
+          </li>
+        </ul>
+      </template>
     </template>
 
     <section
@@ -148,11 +154,12 @@
 </template>
 
 <script setup lang="ts">
-// 芝士的一轮回答（`AssistantPanel` 里的一段）：它调的工具一行一步，答完收成一行「N 步」；
-// 写进草稿的改动是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个
-// 「查看题目」。话本身由外面那一层塞进默认插槽；话后面是它交给人的文件（一份一张卡，点了
-// 下载），和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
-import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
+// 芝士的一轮回答（`AssistantPanel` 里的一段）：说的话和调的工具按发生的顺序排开
+// （`interleave`），接连调的几个工具一行一步，答完每一组收成一行「N 步」；写进草稿的改动
+// 是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个「查看题目」。默认
+// 插槽放话后面的一句（已停止、排队中）；再后面是它交给人的文件（一份一张卡，点了下载），
+// 和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
+import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { AssistantHanded } from '@/stores/agentThread'
 
 import { computed, ref } from 'vue'
@@ -166,7 +173,8 @@ import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
 
 const props = withDefaults(
   defineProps<{
-    steps: PanelStep[]
+    /** 说的话和调的工具，按发生的顺序；话由外面那一层用 `text` 插槽画。 */
+    pieces: TurnPiece[]
     changes: PanelChange[]
     results: PanelResult[]
     /** 替人起草、等人确认的消息和任务。 */
@@ -196,13 +204,25 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const open = ref(false)
+/** 点开看过的那几组步骤。 */
+const opened = ref(new Set<string>())
 
-/** 工具调用（推理的那几段不算步数）。 */
-const calls = computed(() => props.steps.filter((step) => !step.thinking))
+function toggle(key: string) {
+  const next = new Set(opened.value)
+  if (!next.delete(key)) next.add(key)
+  opened.value = next
+}
 
-/** 答完了、做了两步以上：收成一行，点开再看。 */
-const folded = computed(() => !props.live && props.steps.length > 1)
+/** 答完了、这一组做了两步以上：收成一行，点开再看。 */
+function foldable(steps: PanelStep[]): boolean {
+  return !props.live && steps.length > 1
+}
+
+/** 收起的那一行：第一个工具做了什么，一共几步（推理的那几段不算步数）。 */
+function folded(steps: PanelStep[]): string {
+  const calls = steps.filter((step) => !step.thinking)
+  return t('tasks.assistant.steps.folded', { first: (calls[0] ?? steps[0]).verb, n: calls.length || steps.length })
+}
 
 const notes = computed(() =>
   props.changes.filter((change) => change.notes.length).map((change) => ({ id: change.id, items: change.notes }))

@@ -286,6 +286,37 @@ describe('芝士这一轮做了什么', () => {
     expect(steps[1].args).toBe('{"query":"Lab"}')
   })
 
+  it('calls made together each end when they come back, not when the next one starts', async () => {
+    serve(() =>
+      events(
+        ['tool', { name: 'cheese_read', call: 'c1', at: 0 }],
+        ['tool', { name: 'cheese_find', call: 'c2', at: 0 }],
+        ['tool_done', { call: 'c2' }],
+        ['tool_done', { call: 'c1' }],
+        ['delta', { text: '都读完了。', at: 0 }],
+        ['done', {}]
+      )
+    )
+    const ended: string[] = []
+    const a = createAssistant({ on: { toolEnded: (call) => ended.push(call) } })
+    await a.load()
+
+    await a.ask('看看待办', '答不上来')
+
+    expect(ended).toEqual(['c2', 'c1'])
+    expect(a.messages.value.at(-1)?.steps?.map((s) => s.at)).toEqual([0, 0])
+  })
+
+  it('an answer that did something and wrote nothing says so instead of standing empty', async () => {
+    serve(() => events(['tool', { name: 'cheese_inbox', call: 'c1' }], ['tool_done', { call: 'c1' }], ['done', {}]))
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('有什么待办？', '答不上来')
+
+    expect(a.messages.value.at(-1)).toMatchObject({ role: 'assistant', text: '', silent: true })
+  })
+
   it('a file 芝士 hands over stays with its answer, live and when the conversation is opened again', async () => {
     const file = { team: 9, path: '成绩分布.png', bytes: 84000 }
     serve(() => events(['tool', { call: 'g1', name: 'cheese_file_give' }], ['handed', file], ['done', {}]))
