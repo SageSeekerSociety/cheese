@@ -167,6 +167,11 @@ async function postFileComment(payload: { content: string; quote: string | null;
   await props.comments?.post(payload)
   clearLocator()
 }
+// 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
+// `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
+// 样子，所以 `nameOf`/`avatarOf` 在这一栏是必填的 prop，不接就编译不过。
+const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
+const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
 
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
@@ -360,9 +365,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :pick="commentPick"
       :writable="true"
       :post="postFileComment"
-      :name-of="(handle: string) => handle"
+      :name-of="commentNameOf"
+      :avatar-of="commentAvatarOf"
       :agent-name="agentName"
       @clear-pick="clearLocator"
+      @close="props.comments?.toggle()"
     />
 
     <PreviewLocator

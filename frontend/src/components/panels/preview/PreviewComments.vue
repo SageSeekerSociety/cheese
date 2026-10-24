@@ -35,10 +35,13 @@ const props = defineProps<{
   post: (payload: { content: string; quote: string | null; anchor: QuotedContext | null }) => Promise<unknown>
   /** 这间房队友的名字：卡片上「谁在答」用（文件上的评论现在还没有人答）。 */
   agentName?: string
+  /** handle 读成名字。必填：这一栏的每一张卡都写作者名，缺了会静默显示成 handle。 */
   nameOf: (handle: string) => string
-  avatarOf?: (handle: string) => string
+  /** handle 读成他挑过的头像地址。必填：缺了会静默退回色块——这一栏曾经就是这样，
+   *  谁也没发现。名册上没他、或他没挑过，给空串（由 UserAvatar 画首字母）。 */
+  avatarOf: (handle: string) => string
 }>()
-const emit = defineEmits<{ (e: 'clear-pick'): void }>()
+const emit = defineEmits<{ (e: 'clear-pick'): void; (e: 'close'): void }>()
 
 /** 正在看的那一条：只有它在看时才给回复框和解决（和文档里那一栏同一条理由——
  *  一屏上几张卡都摊着输入框，读起来分不清在回哪一条）。 */
@@ -141,6 +144,17 @@ defineExpose({ focus: () => input.value?.focus() })
     <div class="file-comments__head">
       <span class="file-comments__title">{{ t('work.room.comments.title') }}</span>
       <span class="t-meta">{{ threads.length }}</span>
+      <!-- 这一栏是浮层，盖住右边：开它的那颗按钮就在它底下，关不掉。
+           所以关闭入口得长在栏自己身上，和文档那一栏同一个位置（右上角）。 -->
+      <button
+        type="button"
+        class="file-comments__close"
+        :aria-label="t('work.room.comments.close')"
+        :title="t('work.room.comments.close')"
+        @click="emit('close')"
+      >
+        <v-icon size="18">mdi-close</v-icon>
+      </button>
     </div>
 
     <div v-if="writable" class="file-comments__draft">
@@ -219,8 +233,26 @@ defineExpose({ focus: () => input.value?.focus() })
 }
 .file-comments__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+.file-comments__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.file-comments__close:hover {
+  background: var(--fill);
+}
+.file-comments__close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .file-comments__title {
   font-weight: 600;
