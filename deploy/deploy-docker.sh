@@ -982,12 +982,12 @@ PULL_STARTED=""
 # for the attempt, to tell a full disk from everything else.
 #
 # Only a full disk reclaims before the next attempt. `docker image prune -af`
-# deletes every image no container uses, which includes whatever an earlier
-# attempt already finished pulling (2026-10-24, run 40107162141: frontend
-# "Pulled", backend reset), so pruning before a retry after a dropped connection
-# would make every attempt start from nothing — the opposite of riding out a
-# burst. Docker reports ENOSPC as "no space left on device", the one failure
-# that freeing space cures.
+# deletes every image no container uses yet, which includes this release's
+# images pulled moments before. Dev deploy run 40108853373 (attempt 5,
+# 2026-10-24) pulled backend and frontend, pruned them when the collab pull was
+# reset, and then died pulling backend again for `dc run`. After a dropped
+# connection that prune only throws away progress; ENOSPC, which docker reports
+# as "no space left on device", is the one failure that freeing space cures.
 retry_pull() {
   local what="$1"
   shift
