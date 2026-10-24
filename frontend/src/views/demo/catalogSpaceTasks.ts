@@ -448,6 +448,10 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           busy: true,
           streaming: '好，第 30 份以后的不打了。',
           steps: [{ key: 'r1', verb: '读取', arg: '报告 12.pdf', state: 'done', at: 0 }],
+          // 「+」和麦克风在答的时候也在：选好的文件随这句话一起进这一轮。
+          canAttach: true,
+          files: [{ name: '第 35 份补交.pdf', mime: 'application/pdf' }],
+          hearVoice: async () => ({ text: '', raw: '' }),
         },
         expect: '第 30 份以后的不用打了',
       },

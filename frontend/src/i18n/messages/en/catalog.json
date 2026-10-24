@@ -1639,7 +1639,7 @@
     },
     "s11": {
       "name": "Saying more while Cheese works",
-      "note": "While Cheese answers, typing turns the button into send, and the words go into the answer under way."
+      "note": "While Cheese answers, + and the microphone stay; typing or picking a file turns the button into send, and it goes into the answer under way."
     },
     "s12": {
       "name": "Work done, nothing written",
