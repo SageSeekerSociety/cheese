@@ -113,6 +113,45 @@ sha256_of() {{
     return 1
   fi
 }}
+# macOS keeps its proxy in System Settings, where curl does not look: libcurl
+# calls SCDynamicStoreCopyProxies only to turn IPv4 literals into IPv6 ones and
+# says so in lib/macos.c. On a network whose only way out is that proxy — a
+# campus network, typically — this download stalls or never starts. The
+# connector reads this same setting; take it here unless the environment
+# already names a proxy, which keeps the last word there as it does here.
+if [ "$os" = darwin ] && [ -z "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}${{http_proxy:-}}${{https_proxy:-}}" ] && command -v scutil >/dev/null 2>&1; then
+  settings=$(scutil --proxy 2>/dev/null || true)
+  field() {{
+    printf '%s\\n' "$settings" | awk -v k="$1" '
+      $1 == k && $2 == ":" {{ sub(/^[^:]*:[ \\t]*/, ""); print; exit }}'
+  }}
+  proxy_url() {{
+    host=$(field "$1")
+    [ -n "$host" ] || return 0
+    port=$(field "$2")
+    if [ -n "$port" ]; then printf 'http://%s:%s' "$host" "$port"; else printf 'http://%s' "$host"; fi
+  }}
+  if [ "$(field HTTPEnable)" = 1 ]; then
+    HTTP_PROXY=$(proxy_url HTTPProxy HTTPPort)
+  fi
+  if [ "$(field HTTPSEnable)" = 1 ]; then
+    HTTPS_PROXY=$(proxy_url HTTPSProxy HTTPSPort)
+  fi
+  # The bypass list is what the pane shows as "Bypass proxy settings for these
+  # hosts"; without it a bypassed host would be forced through the proxy. The
+  # entries sit one per line inside a nested array, indexed.
+  NO_PROXY=$(printf '%s\\n' "$settings" | awk '
+    /ExceptionsList/ {{ inside = 1; next }}
+    inside && /^[ \\t]*}}/ {{ exit }}
+    inside {{ sub(/^[^:]*:[ \\t]*/, ""); if ($0 != "") printf "%s%s", (n++ ? "," : ""), $0 }}')
+  if [ -n "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}" ]; then
+    http_proxy="${{HTTP_PROXY:-}}"
+    https_proxy="${{HTTPS_PROXY:-}}"
+    no_proxy="${{NO_PROXY:-}}"
+    export HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy
+    echo "using the proxy from System Settings"
+  fi
+fi
 echo "downloading cheesehost ($target)…"
 # A download through a relay can be cut mid-transfer, and plain --retry does
 # not retry a cut one (curl 56). Each attempt resumes the partial file (-C -);
