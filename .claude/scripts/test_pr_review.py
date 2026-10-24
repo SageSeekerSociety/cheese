@@ -422,13 +422,36 @@ class PrReview(unittest.TestCase):
                        "the result takes only `blocker` and `major`"):
             self.assertIn(needle, text)
 
+    def test_the_method_carries_the_grouped_pipeline(self):
+        # The grouped method is prose a subagent follows, so the rules that make it
+        # mechanical have to be in REVIEW.md itself: the grouping constants, the five
+        # prompt bodies, the read-only rule, the coverage ledger, the coordinator's own
+        # experiments, and the cross-group duty. Asserted by phrase, not by section
+        # number, so rewording that keeps the rule stays green.
+        _, text = self.prepare()
+        for needle in (
+            "你是文件分组助理",
+            "Fewer than 4 files and fewer than 200 changed lines",
+            "4 or more files: semantic groups, at most 10 files in each",
+            "frontend/src/i18n/messages/en/ask.json",
+            "What lives across groups is yours",
+            "你是代码审查助手",
+            "你没有跑命令的权限",
+            "你是代码审查评论的事实核查员",
+            "默认答案是全部放行",
+            "默认判 REFUTED",
+            "Bring the survivors to evidence rung 4",
+            "skipped with a reason",
+        ):
+            self.assertIn(needle, text)
+
     def test_prepare_prints_the_topology_that_tier_spends(self):
         # The topology is what the tier costs in subagents; it is written where the reviewer
         # reads it, next to the tier it belongs to. PR 7 is small enough for the B fast
         # path: one finder, and at most one refuter spent on blockers and majors.
         _, text = self.prepare()
         line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
-        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [1, 1, 1])
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [1, 1])
         # The effort is an enum the tier spends, not a phrase: rewording the sentence around
         # it must not go red, and dropping it must.
         self.assertIn("high", line)
@@ -444,8 +467,8 @@ class PrReview(unittest.TestCase):
         text = Path(out.stdout.strip()).read_text()
         self.assertIn("**档位 B 实现代码**", text)
         line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
-        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
-        self.assertIn("两路全新上下文找茬", text)
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2])
+        self.assertIn("按包分组、每组一路全新上下文找茬", text)
 
     def meta_of(self, review_md):
         return dict(

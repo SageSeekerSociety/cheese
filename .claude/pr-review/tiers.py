@@ -65,7 +65,7 @@ TIERS = (
         "高风险",
         "迁移、鉴权、部署链、计量代理、用户可见文案",
         "可逆性、鉴权边界、影响面、回滚方式；文案看会不会改变用户已定的状态",
-        "两路找茬 + 只对 blocker/major 逐条证伪；碰正式部署一律人定",
+        "按包分组、每组一路找茬，只对 blocker/major 逐条证伪；碰正式部署一律人定",
         {"finders": 2, "refuters": 2, "claim": 1, "effort": "high"},
     ),
     (
@@ -73,7 +73,7 @@ TIERS = (
         "实现代码",
         "后端、前端逻辑，API，脚本",
         "做没做对需求、可达路径上的错行为、边界与并发、复杂度；每条问题带 文件:行",
-        "两路全新上下文找茬，各自给结论，再逐条证伪只留站得住的",
+        "按包分组、每组一路全新上下文找茬，各组结论汇合后逐条证伪只留站得住的",
         {"finders": 2, "refuters": 2, "claim": 0, "effort": "high"},
     ),
     (
@@ -81,7 +81,7 @@ TIERS = (
         "测试",
         "只改测试、夹具、守卫自测",
         "测试会不会咬人：一次变异必须红；断言两边是否同源",
-        "一路，重点跑变异",
+        "按包分组；重点是测试咬不咬人，变异由协调者在结论阶段跑",
         {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
     (
@@ -89,7 +89,7 @@ TIERS = (
         "配置与 CI",
         "workflow、pre-commit、settings、路由表",
         "影响面、密钥有没有写进去、能不能回滚；与代码改动拆开",
-        "一路，读全 diff",
+        "按包分组，读全 diff",
         {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
     (
@@ -97,7 +97,7 @@ TIERS = (
         "文档与说明",
         "AGENTS.md、.claude/rules、技能、README",
         "每句问「删掉会不会出错」；有没有已被 lint 或测试拦着的；引用的命令和路径存不存在",
-        "一路，只读",
+        "按包分组，只读",
         {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
 )
@@ -119,8 +119,8 @@ MECHANICAL = (
 B_FAST = {"finders": 1, "refuters": 1, "claim": 0, "effort": "high"}
 B_FAST_FILES = 6
 B_FAST_LINES = 250
-#: 快路径「审多深」那一句：B 档的表里写的是两路，而这条路只有一个分身，两个镜头都得跑。
-B_FAST_DEPTH = "一路全新上下文找茬，两个镜头都跑并说明每条候选来自哪个镜头，再逐条证伪只留站得住的"
+#: 快路径「审多深」那一句：B 档的表里写的是按包分组，而这一档的改动小到一组就够。
+B_FAST_DEPTH = "按包分组后每组一路全新上下文找茬，跨包由协调者点，再逐条证伪只留站得住的"
 
 #: 让一张小 B 档不能只派一路的面，按路径里的字面词匹配。两件事都在说同一件事：
 #: PR 上的 CI 不跑它（remote），或者它跨了前后端或平台（contract、Windows），或者它的数字和别的在途 PR 相撞
@@ -584,7 +584,7 @@ def topology_line(top):
     changes between sessions, and a review must run on whatever it was handed."""
     if not top["finders"]:
         return "不派分身"
-    parts = [f"{top['finders']} 路找茬"]
+    parts = ["按包分组，每组一路主审查"]
     if top["refuters"]:
         parts.append(f"最多 {top['refuters']} 路证伪（只对 blocker 或 major）")
     if top["claim"]:
@@ -714,7 +714,7 @@ def self_test():
     check("拓扑行里的数字就是这一档拓扑的数字",
           [(sorted({int(n) for n in re.findall(r"\d+", topology_line(topology(l)))}),
             len(re.findall(r"\d+", topology_line(topology(l))))) for l in "ABCDE"],
-          [([1, 2], 4), ([2], 3), ([1], 3), ([1], 3), ([1], 3)])
+          [([1, 2], 3), ([2], 2), ([1], 2), ([1], 2), ([1], 2)])
     check("带证伪的档都在拓扑行里点名 blocker 和 major",
           [all(s in topology_line(topology(l)) for s in ("blocker", "major"))
            for l in "ABCDE"], [True] * 5)
@@ -729,14 +729,15 @@ def self_test():
           {"finders": 1, "refuters": 1, "claim": 0, "effort": "high"})
     check("B 快路径仍留着一路独立证伪", B_FAST["refuters"], 1)
     check("B 快路径的单轮并发只有 1", max_in_flight(B_FAST), 1)
-    check("B 快路径的拓扑行说一路找茬", "1 路找茬" in topology_line(B_FAST), True)
+    check("B 快路径的拓扑行说单轮一路并发", "1 路并发" in topology_line(B_FAST), True)
+    check("B 快路径的拓扑行说按包分组", "按包分组" in topology_line(B_FAST), True)
     check("B 快路径的块里那行拓扑就是快路径",
           f"- 子代理拓扑：{topology_line(B_FAST)}" in block("B", "x", B_FAST), True)
     check("B 快路径的块仍写档位 B",
           block("B", "x", B_FAST).splitlines()[0].startswith("**档位 B "), True)
     check("B 快路径的「审多深」跟着拓扑，不说两路",
           "两路" in block("B", "x", B_FAST), False)
-    check("没有快路径时 B 档仍是两路", topology_line(topology("B")).count("2 路找茬"), 1)
+    check("没有快路径时 B 档单轮两路并发", topology_line(topology("B")).count("2 路并发"), 1)
 
     check("块状 paths 前言读出来", paths_frontmatter('---\npaths:\n  - "backend/tests/**"\n---\n\n# 标题\n'),
           ["backend/tests/**"])

@@ -29,7 +29,7 @@
 #       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): symbol refs, trial merges, regression proofs.
 #       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
 #       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
-#       overrides the command), so the finders do not open the files themselves.
+#       overrides the command), so the reviewers do not open the files themselves.
 #       A --since round whose increment §4 does not re-review (only a merge of the base
 #       branch, or only tests, docs or copy) and whose last round on this machine had no
 #       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
@@ -333,7 +333,8 @@ PY
 ## Incremental review
 
 This is a delta review of \`${since:0:12}..${sha:0:12}\`, not of the whole PR. It
-changes the scope of steps 1 to 3 as follows; steps 4 to 7 stand.
+changes the grouping and the brief of steps 2 and 3 as follows; steps 3b to 7
+stand.
 
 - The previous round reviewed ${since:0:12}. Its blocker and major findings
   are in $dir/previous.md if that file exists, otherwise in the review
@@ -344,12 +345,15 @@ changes the scope of steps 1 to 3 as follows; steps 4 to 7 stand.
   empty diff means the base branch's own version is what arrived. A merge that
   resolved a conflict wrote code of the author's and is in scope; a log walk
   that skips merges cannot see it, so do not use one to decide scope.
-- Finder A checks, for each blocker and major finding of the last round,
-  whether the failure is gone at ${sha:0:12}: re-run its confirm command or
-  replay its failure. Finder B looks at what the increment adds, with the
-  lenses of step 2, only inside the increment.
-- Refute as in step 3. Findings about code outside the increment are out of
-  scope, even if they were missed last time.
+- Group the increment with the same rules as step 2. An increment is almost
+  always one group, and one main reviewer reads all of its files.
+- That reviewer is handed, besides its own files, the last round's blocker and
+  major findings. For each it says whether the failure is gone at
+  ${sha:0:12}, what it read to decide, or the command the coordinator should
+  run; then it reviews what the increment adds, inside the increment only.
+- The conclusion filter, refutation and the coordinator's runs are as in steps
+  3b, 4 and 4b. Findings about code outside the increment are out of scope,
+  even if they were missed last time.
 - The result's summary says, finding by finding, which of the last round's
   blockers and majors are fixed, and which are not.
 EOF
@@ -361,8 +365,8 @@ EOF
 $tier_txt
 
 档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改你花多少
-力气——尤其是不改 step 3 的证伪规矩，blocker 和 major 一律要有独立证伪分身。
-档位 A 时把两路找茬都用在最危险的那几处上，不要平摊。
+力气——尤其是不改 step 4 的证伪规矩，blocker 和 major 一律要有独立证伪分身。
+档位 A 时把最危险的几包排在最前面，不要只按文件顺序读。
 EOF
   if [ -n "$spec_txt" ]; then
     cat >> "$dir/REVIEW.md" <<EOF
@@ -420,7 +424,7 @@ EOF
     return 0
   fi
   python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
-  # Call slices and single-file pyright, so the finders read the bundle instead of the
+  # Call slices and single-file pyright, so the reviewers read the bundle instead of the
   # files. A delta round slices only the increment.
   python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \
       --head "$sha" ${PYRIGHT:+--pyright "$PYRIGHT"} --out "$dir/BUNDLE.md" >&2 \
