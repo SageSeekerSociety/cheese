@@ -2,10 +2,18 @@
 collects that turn — the room goes on saying its teammate is working.
 
 THIS FILE IS A REPRODUCTION, NOT A GUARD. It pins the behaviour the platform
-has today, and its assertions are meant to be INVERTED by the change that gives
-the platform a way to close a turn whose machine is gone (task「机器没了轮次
-不收」). Every assertion here goes red the moment that change lands, and that is
-the point: it is the "before" half of that fix's 修前失败/修后通过 pair.
+has today, and its assertions about the turn being left open are meant to be
+INVERTED by the change that gives the platform a way to close a turn whose
+machine is gone (task「机器没了轮次不收」). This is the "before" half of that
+fix's 修前失败/修后通过 pair: the fix's author flips them and this file becomes
+its regression guard.
+
+Only the assertions about the OUTCOME move with that fix — the ones that count
+collected turns, the row's ``stopped_at``, the session's ``worker_status`` and
+the room's ``moving``. The ones naming the state it is judged from (the open
+delivered interval, the machine's ``at_work`` window, ``unknown_row``) describe
+facts the fix does not touch; a fix that makes them false is a different change
+than the one this file is waiting for.
 
 The chain it reconstructs, each step being one of the judgements the platform
 uses to decide whether a still-open turn is dead:
@@ -38,9 +46,10 @@ the same construction with the one thing changed — the machine answers — and
 collects it. The pair shows the sweep is not broken: it is waiting for an answer
 a recycled machine can never give.
 
-When the fix lands, flip the assertions in the first test (a collected turn,
-``worker_status`` no longer "running", the room no longer "moving") and this file
-becomes that fix's regression guard.
+When the fix lands, flip the outcome assertions in the first test (the sweep
+collects it, the row's ``stopped_at`` is set, ``worker_status`` is no longer
+"running", the room is no longer "moving") and this file becomes that fix's
+regression guard.
 """
 
 import time
