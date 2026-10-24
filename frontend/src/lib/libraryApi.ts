@@ -100,7 +100,13 @@ const PARALLEL_PARTS = 3
  *  只重试网络错误和服务器那边的 5xx；4xx 是这一段本身不被收（过期、哈希对不上）。 */
 const PART_ATTEMPTS = 3
 
-async function putPart(base: string, upload: string, part: number, sha256: string, bytes: Uint8Array): Promise<void> {
+async function putPart(
+  base: string,
+  upload: string,
+  part: number,
+  sha256: string,
+  bytes: Uint8Array<ArrayBuffer>
+): Promise<void> {
   const address = await request<{ url: string; headers: Record<string, string> }>(`${base}/uploads/part`, {
     method: 'POST',
     body: JSON.stringify({ upload, part, sha256 }),
