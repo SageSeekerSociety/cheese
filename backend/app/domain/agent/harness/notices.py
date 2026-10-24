@@ -1,7 +1,7 @@
 """平台自己说的那几句话：标记、提醒，以及它们按谁的语言说。
 
 一组同源的东西凑在一处：那个「【平台】」标记、「用户正文里的标记要中和掉」这条
-规矩、以及四条平台对模型说的话（发布契约、静默提醒、清单提醒、任务状态提醒）。它们不碰数据库、
+规矩、以及四条平台对模型说的话（发布契约、没回话的提醒、清单提醒、任务状态提醒）。它们不碰数据库、
 不读配置、也不认识 harness 里任何别的模块——想用就直接 import，`prompt.py` 再把
 它们原样 re-export 出去，既有调用点一个字都不用改。
 
@@ -23,30 +23,37 @@ _PUBLICATION_ZH = (
     "日常输出和最终答复不会发到聊天里，要用 chat_send 工具发。"
     "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
     "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
-    "重要进展、改方向、阻碍和完成结果也要主动发消息。"
+    "干活的过程不用在对话里播报，现场看得到；只在要人出手、卡住了、递了卡、"
+    "改了方向或计划、有改变任务的发现、有重要的结果、做完时主动发消息。"
+    "重要的结果是改变大家对这件活的看法或预期的结果：查实了根因、关键的验证有了"
+    "结论（通过或失败）、活比预想的大或小。刚动手、正在查、做完一步都不发。"
 )
 _PUBLICATION_EN = (
     "Ordinary output and final responses are not published to chat. "
     "Publish with the chat_send tool. When a person's message needs an "
     "answer — including one queued or added while you work — answer it "
     "if you can; if you have to keep working, say what you understood "
-    "and what you are about to do, then carry on. Publish major "
-    "progress, changes of direction, blockers and results too."
+    "and what you are about to do, then carry on. Do not narrate your "
+    "work in the chat: people can watch it live. Publish on your own "
+    "only when you need a person, are blocked, filed a card, changed "
+    "direction or plan, found something that changes the task, have an "
+    "important result, or are done. An important result changes what people "
+    "think of the work or expect from it: a root cause confirmed, a key check "
+    "came back, passed or failed, the work turning out bigger or smaller than expected. "
+    "Starting, checking or finishing one step is not announced."
 )
 
 _SILENCE_ZH = (
-    "这个房间已经 {minutes} 分钟没听到你说话了，提问的人还在等。"
-    "如果你还在做，现在就用 chat_send 发一条消息：说清你知道什么、"
-    "在等什么——房间不出声，和卡住了分不出来。计划变了就顺手用 todo_write "
-    "改步骤清单。你已经停下的话才不用理会。"
+    "有人对你说的话，你读到 {minutes} 分钟了还没回，他还在等。"
+    "现在就用 chat_send 回他：能答就答；还要接着做，就说你理解的意思和下一步。"
+    "计划变了就顺手用 todo_write 改步骤清单。你已经停下的话才不用理会。"
 )
 _SILENCE_EN = (
-    "You have published nothing to this room for {minutes} minutes and the "
-    "person who asked is still waiting. If this turn is still running, call "
-    "chat_send now with what you know so far and what you are waiting on — a "
-    "room that shows nothing cannot be told apart from one that is stuck. If "
-    "your plan has changed, also update it with todo_write. Ignore this only "
-    "if the turn is already finished."
+    "Someone spoke to you {minutes} minutes ago and you have not answered; "
+    "they are still waiting. Call chat_send now: answer if you can, or say "
+    "what you understood and what you will do next. If your plan has changed, "
+    "also update it with todo_write. Ignore this only if the turn is already "
+    "finished."
 )
 
 _CHECKLIST_ZH = (
@@ -132,7 +139,7 @@ def without_reminders(text: str) -> str:
     """拿掉一段展示文字里平台反复说的那几句，其余一字不动。
 
     现场摊开的是 harness 记下的输入原文，而每一条输入都带着平台自己的话：每一轮
-    都附一遍的聊天约定，房间安静太久、清单或任务状态停住时的提醒。它们是说给模型
+    都附一遍的聊天约定，有人的话没回、清单或任务状态停住时的提醒。它们是说给模型
     听的，不是对话——读者翻现场时只会一遍遍读到同一段。这里只拿掉展示里的那一
     份：日志里一行不少，模型也早就读过了。
 
@@ -169,7 +176,8 @@ def publication_prompt(content: str, language: str | None = None) -> str:
 
 
 def silence_reminder(minutes: int, language: str | None = None) -> str:
-    """The room heard nothing from a running turn for `minutes` minutes.
+    """A working session read a person's message `minutes` minutes ago and has
+    not answered it.
 
     The platform's own words to the model, said in the reader's language for the
     same reason the contract above is: a reminder is what a turn that stalled

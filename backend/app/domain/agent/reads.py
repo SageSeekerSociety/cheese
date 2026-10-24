@@ -31,6 +31,10 @@ class Writing:
     #: they stand: each one's id, the call that started it, what it does, how
     #: it is going and its latest steps.
     branches: tuple[dict, ...] = ()
+    #: The calls of the work under way as they were made: each one's
+    #: ``call``, its whole ``args`` once it is made, and what it read
+    #: (``shown``) once it came back, when a harness says so.
+    made: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -207,6 +211,13 @@ class Replaced:
 
 
 @dataclass(frozen=True)
+class Compacted:
+    """The session compacted its context, and the compaction took: the history
+    it was told the session opening in is a summary now. Said with the seat's
+    own session, which the event itself does not name."""
+
+
+@dataclass(frozen=True)
 class ResultLanded:
     """The room landed the closing result ``report`` carries: delivered again,
     it is not handed to the room a second time (``runner_reports.landed``)."""
@@ -239,6 +250,7 @@ class Read:
         | Followed
         | ResultLanded
         | Replaced
+        | Compacted
         | Reachable
         | Moved
         | CaughtUp

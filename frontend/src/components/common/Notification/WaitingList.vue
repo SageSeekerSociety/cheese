@@ -363,7 +363,8 @@ function askLabelOf(item: WaitingAsk): string {
 }
 
 function askTitleOf(item: WaitingAsk): string {
-  const person = item.person.name
+  // 邀请人自己的芝士替他发的邀请，照实说是芝士代他邀请的。
+  const person = item.byAssistant ? t('work.onBehalf.who', { name: item.person.name }) : item.person.name
   if (item.kind === 'project_invite') return t('home.inbox.invite.project', { person })
   if (item.kind === 'project_transfer') return t('home.inbox.invite.transfer', { person })
   if (item.kind === 'team_invite') return t('home.inbox.invite.team', { person })

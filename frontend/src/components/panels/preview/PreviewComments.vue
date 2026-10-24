@@ -117,6 +117,13 @@ async function act(id: string, action: 'resolve' | 'reopen') {
     // 同上。
   }
 }
+async function stopAgent(id: string) {
+  try {
+    await props.threadActions.stopAgent(id)
+  } catch {
+    // 同上。
+  }
+}
 async function resend(id: string) {
   try {
     const sent = await props.threadActions.recover(id)
@@ -177,6 +184,7 @@ defineExpose({ focus: () => input.value?.focus() })
         :thread="thread"
         :active="openId === thread.comment.id"
         :place="placeOf(thread.comment)"
+        :activity="thread.answering ? { state: thread.answering } : undefined"
         :busy="threadState.busy"
         :unknown="threadState.unknown === thread.comment.id"
         :error="threadState.errors[thread.comment.id]"
@@ -192,6 +200,7 @@ defineExpose({ focus: () => input.value?.focus() })
         @resolve="act(thread.comment.id, 'resolve')"
         @reopen="act(thread.comment.id, 'reopen')"
         @resend="resend(thread.comment.id)"
+        @stop-agent="stopAgent(thread.comment.id)"
       />
     </div>
   </aside>
