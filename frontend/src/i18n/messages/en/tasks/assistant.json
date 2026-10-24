@@ -14,6 +14,7 @@
     "start": "Where should I start?"
   },
   "stopped": "Stopped",
+  "silent": "Cheese gave no answer",
   "today": "Today",
   "steps": {
     "folded": "{first} and {n} steps",
@@ -83,6 +84,20 @@
   },
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
+  "olderMessages": "Earlier messages",
+  "subagent": {
+    "running": "Working",
+    "done": "Done",
+    "failed": "Failed",
+    "stopped": "Stopped"
+  },
+  "checklist": {
+    "pending": "To do",
+    "inProgress": "In progress",
+    "completed": "Done",
+    "folded": "{done} of {total} done",
+    "label": "Checklist"
+  },
   "dock": "Pin to the right",
   "undock": "Unpin",
   "anywhere": {

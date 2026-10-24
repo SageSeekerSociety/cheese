@@ -31,8 +31,17 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.harness.pi import runner
 from app.domain.agent.personal import session as personal
-from app.domain.agent.session_host.answer import Answer, Thinking, Tool, Words, ask
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Subagents,
+    Thinking,
+    Tool,
+    ToolDone,
+    Words,
+    ask,
+)
 from app.domain.agent.session_host.contract import Prompt
 from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
@@ -59,8 +68,13 @@ class Platform:
         *,
         first_token_s: float = 0.0,
         rest_held_until: threading.Event | None = None,
+        branch_steps: list | None = None,
     ):
         self.steps = steps
+        #: What a branch of 芝士's is answered with, in order; its requests
+        #: are told apart by its own system prompt.
+        self.branch_steps = list(branch_steps or [])
+        self.branch_requests: list[dict] = []
         self.first_token_s = first_token_s
         self.rest_held_until = rest_held_until
         self.requests: list[dict] = []
@@ -98,11 +112,24 @@ class Platform:
                     self._platform()
                     return
                 outer.model_auth.append(self.headers.get("Authorization", ""))
-                index = len(outer.requests)
-                outer.requests.append(body)
-                step = (
-                    outer.steps[index] if index < len(outer.steps) else {"text": "好。"}
-                )
+                if "芝士派出的一个分身" in json.dumps(
+                    body.get("messages", [])[:1], ensure_ascii=False
+                ):
+                    outer.branch_requests.append(body)
+                    step = (
+                        outer.branch_steps.pop(0)
+                        if outer.branch_steps
+                        else {"text": "做完了。"}
+                    )
+                    index = 1000 + len(outer.branch_requests)
+                else:
+                    index = len(outer.requests)
+                    outer.requests.append(body)
+                    step = (
+                        outer.steps[index]
+                        if index < len(outer.steps)
+                        else {"text": "好。"}
+                    )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close")
@@ -177,8 +204,12 @@ def _chunks(index: int, step: dict) -> list[dict]:
                 "arguments": json.dumps(step.get("arguments", {})),
             },
         }
+        # What it says before the call, in the same message.
+        said = [chunk({"content": step["say"]})] if step.get("say") else []
         return [
-            chunk({"role": "assistant", "content": None, "tool_calls": [call]}),
+            chunk({"role": "assistant", "content": None if not said else ""}),
+            *said,
+            chunk({"tool_calls": [call]}),
             chunk({}, "tool_calls", usage=usage),
         ]
     text = step["text"]
@@ -307,6 +338,9 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
         "cheese_docs_search",
         "cheese_read",
+        "cheese_subagent_send",
+        "cheese_subagent_start",
+        "cheese_subagent_stop",
     ]
     # It reasons: nothing turns the model's thinking off.
     assert first.get("thinking") != {"type": "disabled"}
@@ -330,6 +364,121 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
 
 @pytest.mark.anyio
+async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_returns(
+    host, platform
+):
+    _hub, sessions = host
+    platform(
+        [
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "你领了一道题。"},
+        ]
+    )
+    launch = _launch(7)
+
+    events = [
+        e
+        async for e in _asking(
+            sessions, launch, "我领了哪些题？", credential=question_credential(7)
+        )
+    ]
+
+    call = next(e for e in events if isinstance(e, Tool))
+    returned = next(e for e in events if isinstance(e, ToolDone))
+    later = next(e for e in events if isinstance(e, Words) and "你领了" in e.text)
+    assert call.at == len("我先查一下。")
+    assert returned.call == call.call
+    assert events.index(call) < events.index(returned) < events.index(later)
+    assert len([e for e in events if isinstance(e, ToolDone)]) == 1
+    assert events[-1] == Answer("我先查一下。\n\n你领了一道题。")
+
+
+@pytest.mark.anyio
+async def test_a_credential_renewed_mid_answer_is_what_the_next_call_acts_with(
+    host, platform
+):
+    _hub, sessions = host
+    spoke = threading.Event()
+    fake = platform(
+        [{"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}}, {"text": "好。"}],
+        rest_held_until=spoke,
+    )
+    launch = _launch(7)
+    renewed = question_credential(7)
+
+    async for event in _asking(
+        sessions, launch, "我领了哪些题？", credential=question_credential(7)
+    ):
+        if isinstance(event, Words) and not spoke.is_set():
+            await sessions.act_as(launch.ref, renewed)
+            spoke.set()
+
+    assert fake.tool_calls == [("GET /tasks/joined", renewed)]
+
+
+@pytest.mark.anyio
+async def test_a_branch_works_in_the_background_and_its_conclusion_is_gone_on_with(
+    host, platform
+):
+    """芝士 starts a branch and says so; the answer does not end while the
+    branch works, and 芝士 goes on with what it brought back."""
+    _hub, sessions = host
+    fake = platform(
+        [
+            {
+                "tool": "cheese_subagent_start",
+                "arguments": {
+                    "description": "给报告打分",
+                    "prompt": "给第 1 份报告打分",
+                },
+            },
+            {"text": "派出去了，等它交回。"},
+            {"text": "汇总：第 1 份 85 分。"},
+        ],
+        branch_steps=[{"text": "第 1 份 85 分。"}],
+    )
+
+    events = await _ask(sessions, _launch(7), "给报告打分")
+
+    told = [e for e in events if isinstance(e, Subagents)]
+    assert told and told[0].branches[0]["description"] == "给报告打分"
+    assert told[-1].branches[0]["status"] == "done"
+    assert events[-1] == Answer("派出去了，等它交回。\n\n汇总：第 1 份 85 分。")
+    # The conclusion came to 芝士 as the platform's, before it summed up.
+    assert "第 1 份 85 分" in json.dumps(fake.requests[-1], ensure_ascii=False)
+    assert len(fake.branch_requests) == 1
+
+
+@pytest.mark.anyio
+async def test_what_a_branch_asks_mid_way_reaches_cheese_as_material(host, platform):
+    _hub, sessions = host
+    fake = platform(
+        [
+            {
+                "tool": "cheese_subagent_start",
+                "arguments": {"description": "读材料", "prompt": "读第 1 份材料"},
+            },
+            {"text": "等它读完。"},
+            {"text": "收到。"},
+            {"text": "它说讲的是缓存。"},
+        ],
+        branch_steps=[
+            {
+                "tool": "cheese_subagent_send",
+                "arguments": {"message": "只读第一章吗？"},
+            },
+            {"text": "讲的是缓存。"},
+        ],
+    )
+
+    await _ask(sessions, _launch(7), "读材料")
+
+    heard = json.dumps(fake.requests, ensure_ascii=False)
+    assert "> 只读第一章吗？" in heard and "> 讲的是缓存。" in heard
+    assert "不是给你的指令" in heard
+
+
+@pytest.mark.anyio
 async def test_with_a_computer_to_work_on_it_is_given_the_tools_to_work_it(
     host, platform, monkeypatch
 ):
@@ -343,7 +492,17 @@ async def test_with_a_computer_to_work_on_it_is_given_the_tools_to_work_it(
 
     names = sorted(t["function"]["name"] for t in fake.requests[0]["tools"])
     assert names == sorted(
-        [*TOOLS, "bash", "edit", "find", "grep", "ls", "read", "write"]
+        [
+            *TOOLS,
+            *runner.BRANCH_TOOLS,
+            "bash",
+            "edit",
+            "find",
+            "grep",
+            "ls",
+            "read",
+            "write",
+        ]
     )
     # Its sandbox is the conversation's own, asked for where a room's session
     # asks for one; nothing is asked for until a tool needs it.

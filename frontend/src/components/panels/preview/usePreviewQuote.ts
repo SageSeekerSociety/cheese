@@ -2,6 +2,7 @@ import type { FramePick } from '@/composables/usePreviewFrames'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type {
+  QuotedContext,
   SheetCellQuote,
   TextRangeQuote,
   WebElementQuote,
@@ -130,5 +131,38 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
   }
 
-  return { page, pick, clear, cell, range, web, region, send }
+  /** 此刻指着的这一处，按结构化引用的形状给出来（没指、或拿不到文件身份时 null）。
+   *
+   *  和 `send` 拼的是同一份东西，只是不发出去：留下一条评论时，锚点要的就是它。 */
+  function anchor(): QuotedContext | null {
+    if (area.value) {
+      const quotedContext = { kind: 'web-region' as const, ...area.value }
+      return isQuotedContext(quotedContext) ? quotedContext : null
+    }
+    if (page.value) {
+      const payload = page.value
+      if (!canUse(payload.context)) return null
+      const { path, source, version, taskId } = payload.context
+      const quotedContext = {
+        kind: 'slide-page' as const,
+        path,
+        source,
+        version,
+        task_id: taskId ?? null,
+        page: payload.page,
+        scope: payload.scope,
+        text: payload.text,
+        prefix: payload.scope === 'selection' ? payload.prefix : undefined,
+        suffix: payload.scope === 'selection' ? payload.suffix : undefined,
+      }
+      return isQuotedContext(quotedContext) ? quotedContext : null
+    }
+    const identity = props.docIdentity
+    if (!pick.value || !identity?.version) return null
+    const { path, source, version, taskId } = identity
+    const quotedContext = { ...pick.value, path, source, version, task_id: taskId ?? null }
+    return isQuotedContext(quotedContext) ? quotedContext : null
+  }
+
+  return { page, pick, clear, cell, range, web, region, send, anchor }
 }

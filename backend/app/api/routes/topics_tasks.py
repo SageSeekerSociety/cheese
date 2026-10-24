@@ -61,6 +61,7 @@ from app.api.topics_deps import (
     ProjectRepository,
 )
 from app.api.write_access import ROUTE_DECIDES
+from app.auth.project_roles import may
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
@@ -241,19 +242,27 @@ async def conclude_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """关闭任务：its owner or its own session says it is over. With a
-    conclusion it is done — the work did not end in a merge (research, a
-    decision); without one it was put down. Delivered work closes by itself
-    when its change is accepted.
+    """关闭任务：someone who works it — its owner or a contributor — or its
+    own session says it is over. With a conclusion it is done — the work did
+    not end in a merge (research, a decision); without one it was put down.
+    Delivered work closes by itself when its change is accepted.
+
+    Closing is not undone by reopening (its open cards are voided, its pull
+    request closed), so it is kept to the people whose word the task's
+    teammate acts on (`TaskService.takes_part`); reopening is wider.
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     tasks = TaskService(db)
-    # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
-    elif actor.handle != task.owner_handle:
+    elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
+    # Who reported it and who works it is the owner's to change (`update_task`);
+    # a contributor closing the task does not get to rewrite that.
+    if credits and actor.via != "cheese" and actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -268,7 +277,7 @@ async def conclude_task(
         if text
         else None
     )
-    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
+    if credits:
         await tasks.set_credits(
             task,
             reporter_handle=(
@@ -378,11 +387,21 @@ async def reopen_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """重新打开：the owner takes a closed task up again. Its AI teammate goes on
-    from the project's latest code when it has landed something."""
+    """重新打开：anyone in the project who works tasks (`Permission.tasks`)
+    takes a closed task up again, or its own session does, so a teammate that
+    closed its task too early can take that back. Wider than who closes it:
+    reopening is undone by closing again and is announced with who did it,
+    while closing voids cards and closes the pull request for good. Its AI
+    teammate goes on from the project's latest code when it has landed
+    something."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
-    if not actor.authenticated or actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+    if actor.via == "cheese":
+        if resolver.credential_conversation() != task.id:
+            raise ForbiddenError(say("taskOwnSessionReopens"))
+    elif not actor.authenticated or not await may(
+        db, place.project_id, actor.handle, Permission.tasks
+    ):
+        raise ForbiddenError(say("taskOwnSessionReopens"))
     # The same test `reopen` moves a task onto a new branch by.
     new_branch = task.branch_name is not None and task.delivered_head is not None
     task = await TaskService(db).reopen(task)

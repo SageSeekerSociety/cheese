@@ -770,6 +770,12 @@ PLATFORM_TOOLS = ToolTable(
             [],
         ),
         _tool(
+            "cheese_reopen_task",
+            "重新打开这件已关闭的任务。有人要接着做这件事时用它，打开后接着做。",
+            {},
+            [],
+        ),
+        _tool(
             "cheese_task_state",
             "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
             "也照旧，直到你再说一次；Claude Code 的会话停下后又被叫醒时，看板先显示"
@@ -1401,7 +1407,7 @@ TASK_WRITE_DESCRIPTION = (
     "填内容；草稿里已经有模板的骨架时，也在小标题下面填，不要整篇换掉。模板填的设置"
     "只是起点，和原文不符的照原文改。\n"
     "\n"
-    "notes 是写给用户、要他确认的地方，挂在对应的格子上，比如原文没写清、你推断"
+    "notes 是写给用户、要用户确认的地方，挂在对应的格子上，比如原文没写清、你推断"
     "出来的截止时间。要用户核对的写进 notes，不写在回复里。\n"
     "\n"
     '例：新建 {"space": 12, "source": "Lab3.pdf", "name": "Lab 3 缓存模拟器", '
@@ -1548,7 +1554,7 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_read",
             "给编号读一样东西。编号就是它页面地址里 /projects/ 后面那段：项目 "
-            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它的审阅卡 "
+            "ml-course，频道 ml-course/channels/3，任务 ml-course/tasks/12，它待审阅的改动 "
             "ml-course/tasks/12/review，文档 ml-course/docs/5；项目以外的：题目 "
             "spaces/4/tasks/87，草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
@@ -1593,12 +1599,12 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_review_decide",
-            "以审阅人（用户）的身份采纳或退回一张审阅卡（ref 给审阅卡编号，如 "
+            "以用户的身份采纳或退回一项待审阅的改动（ref 给它的编号，如 "
             "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
-            "先用 cheese_read 读过这张卡再决定。用户没有对这张卡做决定时不执行，结果写明"
+            "先用 cheese_read 读过它再决定。用户没有对它做决定时不执行，结果写明"
             "原因。",
             {
-                "ref": _text("审阅卡的编号"),
+                "ref": _text("待审阅的改动的编号"),
                 "choice": {"type": "string", "enum": ["accept", "reject"]},
                 "text": _text("退回的说明"),
                 "confirm": _CONFIRM,
@@ -1709,6 +1715,31 @@ DELEGATED_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
+            "cheese_todo",
+            "进度清单，用户在面板上看着它。一件事要做好几步、要做几分钟以上时，先列出步骤，"
+            "之后每开始或做完一步就更新一次；一问一答、两三步就做完的事不要列。每次写整份"
+            "清单（todos），每项写 content（这一步做什么，一句话）和 status：pending 待做、"
+            "in_progress 进行中（同时只有一项）、completed 已完成。最多 30 项。",
+            {
+                "todos": {
+                    "type": "array",
+                    "maxItems": 30,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": _text("这一步做什么，一句话"),
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                            },
+                        },
+                        "required": ["content", "status"],
+                    },
+                }
+            },
+            ["todos"],
+        ),
+        _tool(
             "cheese_memory",
             "你关于用户的记忆，只有用户自己的面板里用。action：save 记下或改写一条（同名就"
             "改写原来那条），read 读一条的正文，forget 删掉一条。name 是英文短名（小写字母、"
@@ -1732,7 +1763,7 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_file_give",
-            "把你电脑上的一份文件交给用户：存进用户的资料库，回答里出现一张文件卡片，用户点了"
+            "把你电脑上的一份文件交给用户：存进用户的资料库，回答下方会显示这份文件，用户点了"
             "就下载。做出来的图、表格、文档、压缩包都这样交，不要只把内容贴进回答。电脑闲置"
             "一会儿就收掉，上面的东西不留；交出去的文件留在用户的资料库里，换个话题也能用"
             "（cheese_read library）。",
@@ -2189,6 +2220,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": here + "/task/progress",
             "body": {"state": args["state"], **_given(args, "note")},
         }
+    if tool == "cheese_reopen_task":
+        return {"method": "POST", "path": here + "/reopen"}
     if tool == "cheese_close_task":
         return {
             "method": "POST",
@@ -2317,6 +2350,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": "/assistant/agent/notify-me",
             "body": _given(args, "text"),
+        }
+    if tool == "cheese_todo":
+        return {
+            "method": "POST",
+            "path": "/assistant/agent/todo",
+            "body": _given(args, "todos"),
         }
     if tool == "cheese_memory":
         body = _given(args, "action", "name", "description", "type", "text")
@@ -4065,8 +4104,9 @@ def _file_give(args: dict, host) -> str:
         }
     )["data"]
     return (
-        f"已交给用户：library/{handed['path']}（{handed['bytes']} 字节）。回答里有它的"
-        "文件卡片，回答里不必再贴内容或链接。"
+        f"已交给用户：{handed['path'].rsplit('/', 1)[-1]}（{handed['bytes']} 字节），存进了"
+        f"用户的资料库，以后用编号 library/{handed['path']} 读。回答下方会显示这份文件，"
+        "用户点了就下载，回答里不必再贴内容、链接或编号。"
     )
 
 
@@ -4738,6 +4778,7 @@ _SAY = {
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
+    "cheese_reopen_task": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
     "cheese_task_state": lambda a, d, e: (
         "看板上这件任务现在显示你说的状态，直到你再设一次；Claude Code 的会话停下后"
         "又被叫醒时，它先显示在做。"
@@ -4777,6 +4818,7 @@ _SAY = {
     "cheese_routine": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_notify_me": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_memory": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_todo": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_find": lambda a, d, e: (
         _say_problem_search(a, d, e)
         if "tasks" in (d or {})
