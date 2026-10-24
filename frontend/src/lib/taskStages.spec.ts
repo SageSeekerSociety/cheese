@@ -2,7 +2,7 @@ import type { StagedForm } from './taskStages'
 
 import { describe, expect, it } from 'vitest'
 
-import { addStage, moveStage, removeStage, rowsAfterStageChange } from './taskStages'
+import { addStage, moveStage, refusedStageChange, removeStage, rowsAfterStageChange } from './taskStages'
 
 const stage = (name: string, id: string) => ({ id, name, description: '', dueAt: null })
 
@@ -74,11 +74,24 @@ describe('发题表单里的阶段', () => {
       [null],
       { kept: ['a'], removed: 0 },
     ],
+    ['several stages to none: kept, unstaged', ['a', 'b', 'c'], [], ['b', 'c'], { kept: [null, null], removed: 0 }],
   ])('%s', (_, oldIds, newIds, refs, want) => {
     const rows = refs.map((stage, i) => ({ prompt: String(i), type: 'FILE' as const, stage }))
     const { kept, removed } = rowsAfterStageChange(rows, oldIds, newIds)
     expect(kept.map((row) => row.stage)).toEqual(want.kept)
     expect(removed).toHaveLength(want.removed)
+  })
+
+  // Hand-ins never move between stages: the backend's `HAND_INS` table, case for case.
+  it.each([
+    ['several stages to none, a hand-in in the second', ['a', 'b'], [], [1], 1],
+    ['several stages to none, a hand-in in the first only', ['a', 'b'], [], [0], null],
+    ['several stages to none, no hand-ins', ['a', 'b'], [], [], null],
+    ['a stage holding a hand-in removed', ['a', 'b'], ['b'], [0], 0],
+    ['reordered', ['a', 'b'], ['b', 'a'], [0, 1], null],
+    ['no stage before', [], ['x'], [0], null],
+  ])('%s', (_, oldIds, newIds, held, refused) => {
+    expect(refusedStageChange(oldIds as string[], newIds as string[], new Set(held as number[]))).toBe(refused)
   })
 
   it('调整先后，提交项和评分要点仍指着各自的阶段', () => {

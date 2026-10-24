@@ -235,8 +235,10 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   return { fields, writing: last === 'description_edits' ? 'description' : last, passage }
 }
 
-/** 发布前还缺的格子（芝士的字段名），和后端 `drafts.missing` 同一条规矩：名称、详情、参与方式、难度。 */
-export function missingOf(fields: TaskDraftFields): string[] {
+/** 发布前还缺的格子（芝士的字段名），和后端 `drafts.missing` 同一条规矩：名称、详情、参与方式、难度，
+ *  指着草稿里没有的阶段的提交项和评分要点，以及把已发布题目的提交项全删光的改动
+ *  （`publishedItems` 是那道题现在有几个提交项；新题目是 0）。 */
+export function missingOf(fields: TaskDraftFields, publishedItems = 0): string[] {
   const out: string[] = []
   if (!fields.name?.trim()) out.push('name')
   const markdown = fields.descriptionMarkdown?.trim()
@@ -244,6 +246,22 @@ export function missingOf(fields: TaskDraftFields): string[] {
   if (!markdown && !doc) out.push('description')
   if (fields.submitterType !== 'USER' && fields.submitterType !== 'TEAM') out.push('form')
   if (fields.rank !== 1 && fields.rank !== 2 && fields.rank !== 3) out.push('difficulty')
+  if (publishedItems && Array.isArray(fields.submissionSchema) && !fields.submissionSchema.length) {
+    out.push('submission')
+  }
+  // An item or line naming a stage the draft does not have: what the publish would refuse.
+  const ids = (fields.stages ?? []).map((stage) => String(stage.id))
+  for (const [rows, word] of [
+    [fields.submissionSchema ?? [], 'submission'],
+    [fields.rubric ?? [], 'rubric'],
+  ] as const) {
+    const stray = rows.some((row) => {
+      if (!ids.length) return false
+      const ref = row.stage || ids[0]
+      return !ids.includes(ref)
+    })
+    if (stray) out.push(word)
+  }
   return out
 }
 

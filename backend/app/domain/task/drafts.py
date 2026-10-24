@@ -234,6 +234,18 @@ async def _people(session: AsyncSession, user_ids: list[int]) -> dict[str, str]:
     return dict(found[uid] for uid in ids if uid in found)
 
 
+async def published_items(
+    session: AsyncSession, rows: list[TaskDraft]
+) -> dict[int, int]:
+    """How many submission items each published 题目 these drafts change has:
+    what ``missing`` checks a change draft against."""
+    ids = [r.task_id for r in rows if r.task_id]
+    if not ids:
+        return {}
+    found = await TaskService.of(session).list_submission_schemas(ids)
+    return {task_id: len(found.get(task_id, [])) for task_id in ids}
+
+
 async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, str]:
     """The names of the published 题目 these drafts change."""
     ids = [r.task_id for r in rows if r.task_id]
@@ -1056,7 +1068,7 @@ def blank(fields: dict) -> bool:
     )
 
 
-def missing(draft: TaskDraft) -> list[str]:
+def missing(draft: TaskDraft, published_items: int = 0) -> list[str]:
     """What still has to be written before the draft can be published, in
     芝士's words."""
     fields = draft.fields or {}
@@ -1069,8 +1081,9 @@ def missing(draft: TaskDraft) -> list[str]:
         out.append("form")
     if fields.get("rank") not in (1, 2, 3):
         out.append("difficulty")
-    # Changes to a published 题目 that would leave it nothing to hand in.
-    if draft.task_id is not None and fields.get("submissionSchema") == []:
+    # Changes that would take away every item the published 题目 has
+    # (``published_items``); a 题目 that never had any stays editable.
+    if published_items and fields.get("submissionSchema") == []:
         out.append("submission")
     # What the publish would refuse: an item or line naming a stage the draft
     # does not have (``stages.stage_index``), said now rather than at publish.

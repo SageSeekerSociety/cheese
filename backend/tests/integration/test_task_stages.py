@@ -731,3 +731,83 @@ def test_stages_rewritten_under_new_names_say_what_left_with_them(api_client, bo
     assert saved.status_code == 400, saved.text
     # Nothing was saved onto the 题目.
     assert len(_read(api_client, board, task_id)["submissionSchema"]) == 3
+
+
+def _passed_and_rejected(api_client, board):
+    """A claim with the first stage accepted and the second sent back."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    first = _submit(api_client, board, task_id, membership_id, NEED, ["需求"])
+    _review(api_client, board, task_id, membership_id, _id(first), True)
+    second = _submit(api_client, board, task_id, membership_id, IMPL, ["代码", "说明"])
+    _review(api_client, board, task_id, membership_id, _id(second), False)
+    return task_id, membership_id
+
+
+def test_removing_every_stage_never_merges_the_hand_ins(api_client, board):
+    """Removing all the stages would put the second stage's sent-back hand-in
+    on one stage with the first's accepted one. Hand-ins never move between
+    stages, so a stage holding one cannot go — however many go with it — on
+    the form's save and through 芝士 alike."""
+    task_id, membership_id = _passed_and_rejected(api_client, board)
+
+    patched = api_client.patch(
+        f"/tasks/{task_id}", json={"stages": []}, headers=_headers(board["teacher"])
+    )
+    assert patched.status_code == 400, patched.text
+    assert patched.json()["error"]["i18n"]["key"] == "stageHasSubmissions"
+    written = _cheese_writes(api_client, board, task=task_id, stages=[])
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 400, saved.text
+
+    assert len(_read(api_client, board, task_id)["stages"]) == 2
+    assert _completion(api_client, board, task_id, membership_id) == (
+        "REJECTED_RESUBMITTABLE"
+    )
+
+
+def test_removing_every_stage_keeps_the_first_stages_hand_ins(api_client, board):
+    """With hand-ins in the first stage only, the stages can all go: the first
+    stage is the task's one stage, its hand-in stays, and every item stays."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, NEED, ["需求"]))
+
+    patched = api_client.patch(
+        f"/tasks/{task_id}", json={"stages": []}, headers=_headers(board["teacher"])
+    )
+    assert patched.status_code == 200, patched.text
+    task = _read(api_client, board, task_id)
+    assert len(task["submissionSchema"]) == 3
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "PENDING_REVIEW"
+    ]
+
+
+def test_cheese_renames_a_task_that_has_no_submission_items(api_client, board):
+    """A 题目 published without items stays editable: renaming it is not taking
+    away anything it had."""
+    task_id = _publish(api_client, board, stages=[], submissionSchema=[], rubric=[])
+    written = _cheese_writes(api_client, board, task=task_id, name="改个名字")
+    assert written["missing"] == []
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 200, saved.text
+    assert _read(api_client, board, task_id)["name"] == "改个名字"
+
+
+def test_the_edit_page_cannot_save_away_every_submission_item(api_client, board):
+    """The edit page's own save refuses what 芝士's does: a change draft that
+    takes away every item the 题目 has."""
+    task_id = _publish(api_client, board, stages=[], rubric=[])
+    teacher = _headers(board["teacher"])
+    draft = api_client.post("/task-drafts", json={"task": task_id}, headers=teacher)
+    assert draft.status_code in (200, 201), draft.text
+    draft_id = draft.json()["data"]["id"]
+    api_client.patch(
+        f"/task-drafts/{draft_id}",
+        json={"fields": {"submissionSchema": []}},
+        headers=teacher,
+    )
+    saved = api_client.post(f"/task-drafts/{draft_id}/publish", headers=teacher)
+    assert saved.status_code == 400, saved.text
+    assert len(_read(api_client, board, task_id)["submissionSchema"]) == 3

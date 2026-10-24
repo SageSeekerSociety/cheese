@@ -320,19 +320,30 @@ describe('发题表单：分了阶段时没指阶段的提交项和评分要点'
   })
 })
 
-describe('发题表单：删掉最后一个阶段', () => {
-  it('提交项和评分要点都留下，交出去时不分阶段', async () => {
+describe('发题表单：两个阶段一个一个删掉', () => {
+  it('先删的阶段带走它的提交项和评分要点，最后一个阶段的留下，交出去时不分阶段', async () => {
     const view = mountForm({
       isEditing: true,
       initialData: {
         ...FILLED,
-        stages: [{ id: 'need', name: '需求分析', description: '', dueAt: null }],
-        submissionSchema: [{ prompt: '需求文档', type: 'TEXT', stage: 'need' }],
-        rubric: [{ item: '完整', points: 10, criteria: '', stage: 'need' }],
+        stages: [
+          { id: 'need', name: '需求分析', description: '', dueAt: null },
+          { id: 'impl', name: '实现', description: '', dueAt: null },
+        ],
+        submissionSchema: [
+          { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+          { prompt: '代码', type: 'FILE', stage: 'impl' },
+        ],
+        rubric: [
+          { item: '完整', points: 10, criteria: '', stage: 'need' },
+          { item: '正确', points: 20, criteria: '', stage: 'impl' },
+        ],
       },
     })
 
-    await fireEvent.click(view.getByRole('button', { name: 'tasks.form.stages.remove' }))
+    const removes = () => view.getAllByRole('button', { name: 'tasks.form.stages.remove' })
+    await fireEvent.click(removes()[1])
+    await fireEvent.click(removes()[0])
     const sent = await submitted(view)
     expect(sent.stages).toEqual([])
     expect(sent.submissionSchema).toEqual([{ prompt: '需求文档', type: 'TEXT', stage: null }])

@@ -166,28 +166,30 @@ async def replace_stages(
     old = await list_stages(session, task_id)
     old_count = stage_count(old)
     lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
-    moved = stage_moves([stage.key for stage in old], [line.key for line in lines])
-    gone = [i for i in range(old_count) if i not in moved]
-    if gone:
-        held = set(
-            (
-                await session.execute(
-                    select(TaskSubmission.stage)
-                    .where(
-                        _task_submissions(task_id),
-                        TaskSubmission.deleted_at.is_(None),
-                        TaskSubmission.stage.in_(gone),
-                    )
-                    .distinct()
+    old_ids = [stage.key for stage in old]
+    new_ids = [line.key for line in lines]
+    moved = stage_moves(old_ids, new_ids)
+    rows_moved = row_moves(old_ids, new_ids)
+    held = set(
+        (
+            await session.execute(
+                select(TaskSubmission.stage)
+                .where(
+                    _task_submissions(task_id),
+                    TaskSubmission.deleted_at.is_(None),
                 )
+                .distinct()
             )
-            .scalars()
-            .all()
         )
-        if held:
-            first = min(held)
-            name = old[first].name if first < len(old) else ""
-            raise BadRequestError(say("stageHasSubmissions", name=name))
+        .scalars()
+        .all()
+    )
+    refused = refused_stage_change(old_ids, new_ids, held)
+    if refused is not None:
+        name = old[refused].name if refused < len(old) else ""
+        raise BadRequestError(say("stageHasSubmissions", name=name))
+    gone = [i for i in range(old_count) if i not in rows_moved]
+    if gone:
         await session.execute(
             delete(TaskSubmissionSchemaEntry).where(
                 TaskSubmissionSchemaEntry.task_id == task_id,
@@ -200,16 +202,17 @@ async def replace_stages(
                 TaskRubricItem.stage.in_(gone),
             )
         )
-    shifts = {old_i: new_i for old_i, new_i in moved.items() if old_i != new_i}
-    if shifts:
-        for model, where in (
-            (TaskSubmission, _task_submissions(task_id)),
-            (
-                TaskSubmissionSchemaEntry,
-                TaskSubmissionSchemaEntry.task_id == task_id,
-            ),
-            (TaskRubricItem, TaskRubricItem.task_id == task_id),
-        ):
+    for model, where, moves in (
+        (TaskSubmission, _task_submissions(task_id), moved),
+        (
+            TaskSubmissionSchemaEntry,
+            TaskSubmissionSchemaEntry.task_id == task_id,
+            rows_moved,
+        ),
+        (TaskRubricItem, TaskRubricItem.task_id == task_id, rows_moved),
+    ):
+        shifts = {o: n for o, n in moves.items() if o != n}
+        if shifts:
             await session.execute(
                 update(model)
                 .where(where, model.stage.in_(list(shifts)))
@@ -289,24 +292,42 @@ def stage_moves(
     old_ids: Sequence[str | None], new_ids: Sequence[str | None]
 ) -> dict[int, int]:
     """Where each of the old stages went when the stage list changed, by
-    position; a stage missing from the result was removed, and what belonged
-    to it goes with it. The rules (``lib/taskStages.ts`` keeps the same ones
-    for the page):
+    position — what the hand-ins follow; a stage missing from the result was
+    removed. Hand-ins never move from one stage to another and are never
+    merged. The rules (``lib/taskStages.ts`` keeps the same ones for the page):
 
     - a task that had no stages had one: it is the first of the new stages;
-    - when the last stages go, everything that belonged to them stays, on the
-      one stage a task without stages has;
+    - when the last stages go, the first old stage becomes the one stage a
+      task without stages has, and every other old stage is removed;
     - otherwise a stage is the same stage when its id is.
     """
-    if not old_ids:
+    if not old_ids or not new_ids:
         return {0: 0}
-    if not new_ids:
-        return {index: 0 for index in range(len(old_ids))}
     return {
         index: list(new_ids).index(key)
         for index, key in enumerate(old_ids)
         if key is not None and key in new_ids
     }
+
+
+def row_moves(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None]
+) -> dict[int, int]:
+    """Where submission items and rubric lines go: as ``stage_moves``, except
+    that when the last stages go every item and line stays, on the one stage a
+    task without stages has — as on the page, nothing to hand in is lost."""
+    if old_ids and not new_ids:
+        return {index: 0 for index in range(len(old_ids))}
+    return stage_moves(old_ids, new_ids)
+
+
+def refused_stage_change(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None], held: set[int]
+) -> int | None:
+    """The first old stage (by position) that would be removed while it holds
+    a live hand-in — the change is refused — or None when none would."""
+    moved = stage_moves(old_ids, new_ids)
+    return min((index for index in held if index not in moved), default=None)
 
 
 @dataclass(frozen=True)
@@ -324,9 +345,9 @@ def rows_after_stage_change(
     new_ids: Sequence[str],
 ) -> SettledRows:
     """Items or lines (as written, naming their stage by id) once the stages
-    went from ``old_ids`` to ``new_ids``: by ``stage_moves``, then settled by
+    went from ``old_ids`` to ``new_ids``: by ``row_moves``, then settled by
     ``settled_stage``. One that names a stage this write added stays with it."""
-    moved = stage_moves(old_ids, new_ids)
+    moved = row_moves(old_ids, new_ids)
     kept: list[dict] = []
     removed: list[dict] = []
     for row in rows:

@@ -131,7 +131,7 @@ async def _person(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-def _summary(row, task_names: dict[int, str]) -> dict:
+def _summary(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
     fields = row.fields or {}
     return {
         "id": row.id,
@@ -143,12 +143,12 @@ def _summary(row, task_names: dict[int, str]) -> dict:
         "conversationId": str(row.conversation_id) if row.conversation_id else None,
         "version": row.version,
         "updatedAt": row.updated_at.isoformat(),
-        "missing": drafts.missing(row),
+        "missing": drafts.missing(row, items.get(row.task_id or 0, 0)),
     }
 
 
-def _full(row, task_names: dict[int, str]) -> dict:
-    return {**_summary(row, task_names), "fields": row.fields or {}}
+def _full(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
+    return {**_summary(row, task_names, items), "fields": row.fields or {}}
 
 
 async def _task_names(db, rows: list) -> dict[int, str]:
@@ -214,7 +214,8 @@ async def list_drafts(
     user_id = await _person(resolver)
     rows = await drafts.list_mine(db, user_id, space)
     names = await _task_names(db, rows)
-    return ok({"drafts": [_summary(r, names) for r in rows]})
+    items = await drafts.published_items(db, rows)
+    return ok({"drafts": [_summary(r, names, items) for r in rows]})
 
 
 class StartIn(BaseModel):
@@ -253,7 +254,7 @@ async def start_draft(
         )
         names = {}
     await db.commit()
-    return ok(_full(row, names))
+    return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
 @router.get("/{draftId:int}", **typed_response(TaskDraftOut))
@@ -264,7 +265,13 @@ async def read_draft(
 ) -> dict:
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
-    return ok(_full(row, await _task_names(db, [row])))
+    return ok(
+        _full(
+            row,
+            await _task_names(db, [row]),
+            await drafts.published_items(db, [row]),
+        )
+    )
 
 
 class SaveIn(BaseModel):
@@ -318,6 +325,11 @@ async def publish_draft(
     one. The draft is gone after."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
+    # The same loss 芝士's publish refuses: every submission item the
+    # published 题目 has, gone.
+    published = (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    if "submission" in drafts.missing(row, published):
+        raise BadRequestError(say("draftIncomplete", fields="submission"))
     return ok(await _publish(db, service, row, user_id))
 
 
@@ -556,7 +568,9 @@ async def agent_write(
             "version": row.version,
             "changed": sorted(written.changed),
             "kept": written.kept,
-            "missing": drafts.missing(row),
+            "missing": drafts.missing(
+                row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+            ),
             # Submission items and rubric lines that left with a removed stage.
             "removed": removed,
             # A template's skeleton, for 芝士 to fill under its headings.
@@ -609,7 +623,9 @@ async def agent_publish(
     """cheese_problem_publish: publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
-    missing = drafts.missing(row)
+    missing = drafts.missing(
+        row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    )
     if missing:
         raise BadRequestError(say("draftIncomplete", fields=", ".join(missing)))
     editing = row.task_id is not None
