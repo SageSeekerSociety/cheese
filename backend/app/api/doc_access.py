@@ -235,6 +235,12 @@ def asked_of(reached: Reached) -> Asked | None:
         project_id=doc.project_id,
         subject=OnDocument(doc.id),
         task_id=reached.task.id if reached.task is not None else None,
+        # Where the thread is read: the task's own conversation, or the room a
+        # document kept in one lives in. A document with neither is the
+        # project's, read by its people.
+        conversation_id=(
+            reached.place.conversation_id if reached.place is not None else None
+        ),
     )
 
 
