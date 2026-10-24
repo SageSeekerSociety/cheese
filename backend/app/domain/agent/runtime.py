@@ -439,6 +439,7 @@ class AgentWorkRunner:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -451,6 +452,7 @@ class AgentWorkRunner:
             quoted_context=quoted_context,
             may_summon=may_summon,
             handoff=handoff,
+            by_assistant=by_assistant,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:

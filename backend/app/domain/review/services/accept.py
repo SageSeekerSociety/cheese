@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.identity.actor import acted_by
 from app.domain.review import (
     archive,
     merge_state,
@@ -74,7 +75,10 @@ async def accept(
     decided_by: str,
     head_sha: str | None = None,
     deliverable_revision: str | None = None,
+    by_assistant: bool = False,
 ) -> AcceptCard:
+    """``by_assistant``: the reviewer's own 芝士 accepts for them; the card
+    and the lines announcing it say so (``AcceptCard.decided_by_assistant``)."""
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
     if card.status == AcceptStatus.pending_gate:
@@ -135,6 +139,9 @@ async def accept(
             say("approvalsShort", left=required - votes, n=votes, of=required)
         )
 
+    # Everything below that records the decision records ``decided_by``'s: this
+    # is whose hand it was.
+    card.decided_by_assistant = by_assistant
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
 
@@ -568,7 +575,12 @@ async def _finish_pr_accept(
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
-        say("acceptDone", actor=f"<@{by}>", pr=card.pr_number, how=how)
+        say(
+            "acceptDone",
+            actor=acted_by(by, by_assistant=card.decided_by_assistant),
+            pr=card.pr_number,
+            how=how,
+        )
         if by
         else say("acceptDoneNoActor", pr=card.pr_number, how=how)
     )

@@ -196,6 +196,7 @@ async def send_chat_message(
         handoff=HumanHandoff(
             project=await load_project(db, place.project_id), roster=members
         ),
+        by_assistant=actor.by_assistant,
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")

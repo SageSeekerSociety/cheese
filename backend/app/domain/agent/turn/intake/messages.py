@@ -118,11 +118,15 @@ class RunnerIntake:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
         ``may_summon`` is False for a person whose role does not let them use the
         project's AI teammates (#3830): the message is said, and wakes nobody.
+
+        ``by_assistant``: the person's own 芝士 wrote it for them
+        (`Actor.by_assistant`), and the message says so (``meta.by_assistant``).
 
         Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
@@ -147,6 +151,7 @@ class RunnerIntake:
             client_id=client_id,
             quoted_context=quoted_context,
             handoff=handoff,
+            by_assistant=by_assistant,
         )
         turn_id = user_block_id
         recipient = next(

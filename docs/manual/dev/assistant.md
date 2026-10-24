@@ -177,6 +177,8 @@ covers:
 
 **执行**：入口是 `POST /assistant/agent/act`（`routes/assistant_agent.py`）。它把编号换成实际的东西，写出给判断读、也给人看的一句操作描述，以及完成这项操作要调的接口（就是这个人自己页面上调的那几条）。放行时发一张一次性通行证（`domain/assistant/passes.py`，Valkey，两分钟），写明这次回答能过哪几条接口、在哪个地方；工具带着它（`X-Cheese-Pass`）以这个人的身份调那几条接口。`GATED_ROUTES` 里的接口只认带通行证的个人芝士凭据，用过即作废，所以绕不过判断。
 
+**留痕**：这些接口上的写入署这个人的名，同时记下是他的芝士做的（`Actor.by_assistant`，代行凭据解析出的身份）：消息块的 `meta.by_assistant`，任务的 `created_by_assistant`，审阅卡的 `decided_by_assistant`（采纳、退回时写；别人对这张卡做决定时清掉），邀请的 `invited_by_assistant`。房间里消息的署名旁标「芝士代发」；任务页、审阅卡、邀请和宣布这些的平台那行字写「芝士代 某人」（`identity.actor.acted_by`，句子 `actedByAssistant`）；读房间的 agent 读到的说话人行是「某人（由本人的个人芝士代发）」（`block.authorship.speaker`）。人在确认卡片上点「确认」发出去的，是他自己发的，不标。踢人、改角色、拉人进出频道、建频道、答复邀请这几件事平台本来就不留宣布的那行字，所以也没有地方可标。见 `docs/agent-principles.md` 一的例外。
+
 **先退回给芝士**：照 Claude Code 自动模式把拒绝交还 agent 的做法，模型判断不放行的操作，一次回答里前 3 次不出卡片，原样退回给芝士，附上原因和接下来怎么办（`gate.RETURNS_PER_ANSWER`，判断记录的 `verdict = returned`）：和用户说的有出入就改了再执行，要用户决定或补充的在回复里问，只差用户同意的带 `confirm=true` 再调一次。退回的不出现在设置页的「最近的操作」里，但仍留在判断记录中，之后的判断读到「芝士想执行，未执行」。规则和总要确认的那几类、带 `confirm` 的、第 4 次起的，以及没有人在场的例行事务运行，直接请人确认。
 
 **请人确认**：发消息、开任务照旧是可以改正文的卡片；其他操作是一张通用卡片，写着操作描述和需要确认的原因，带着要调的接口，人点「确认」时前端以他的身份逐个调（`stores/agent.ts` 的 `sendProposal`）。读网页不放行时不出卡片，芝士如实告诉人没有读。

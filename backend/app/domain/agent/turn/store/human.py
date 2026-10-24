@@ -12,7 +12,7 @@ from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.core.work_context import parse_work_id
 from app.domain.block.adapters import dump_blocks_json
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import client_delivery_bundle, message_reply_target
 from app.domain.block.schemas import BlockOut, reply_preview
@@ -99,6 +99,7 @@ async def persist_human_message(
     attachments: list[dict] | None = None,
     client_id: str | None = None,
     quoted_context: dict | None = None,
+    by_assistant: bool = False,
 ) -> StoredHuman:
     async with sessions() as session:
         # A room's own line, or a task's conversation in it.
@@ -154,6 +155,8 @@ async def persist_human_message(
                 await session.commit()
                 return StoredHuman(place, [], payloads, anchor.id, block_ids, True)
         created_blocks: list[Block] = []
+        # Written by the author's own 芝士: every block of the send says so.
+        written_for = {BY_ASSISTANT_META_KEY: True} if by_assistant else {}
         prepared = await prepare(session, place, content, author)
         recipient = prepared.recipient
         anchor_id: uuid.UUID | None = None
@@ -218,6 +221,7 @@ async def persist_human_message(
                         if quoted_context is not None
                         else {}
                     ),
+                    **written_for,
                 },
             )
             if attribution_id is None:
@@ -258,6 +262,7 @@ async def persist_human_message(
                         if not content and index == 0 and client_id
                         else {}
                     ),
+                    **written_for,
                 },
             )
             if attribution_id is None:

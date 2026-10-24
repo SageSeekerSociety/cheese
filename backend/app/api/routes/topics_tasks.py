@@ -444,6 +444,7 @@ async def create_task(
         title=body.title,
         seat_project=seat_project,
         team=project_team,
+        by_assistant=actor.by_assistant,
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()

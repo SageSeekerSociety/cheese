@@ -382,6 +382,7 @@ class InvitationService:
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
             role=role.value,
+            invited_by_assistant=actor.by_assistant,
         )
         await self._notify_invitee(invitation, project)
         return invitation
