@@ -125,7 +125,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_memory: 'toolLabels.cheeseMemory',
   'cheese_library.give': 'toolLabels.cheeseFileGive',
   'cheese_library.take': 'toolLabels.cheeseFileToComputer',
-  'cheese_web.fetch': 'toolLabels.cheeseWebFetch',
   'cheese_web.search': 'toolLabels.cheeseWebSearch',
   cheese_my_tasks: 'toolLabels.cheeseMyTasks',
   cheese_task_search: 'toolLabels.cheeseTaskSearch',
