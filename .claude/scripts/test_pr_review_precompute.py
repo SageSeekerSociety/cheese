@@ -102,6 +102,25 @@ class Precompute(unittest.TestCase):
         out = "\n".join(broken.section_symbols(self.repo, base, head, tree=self.repo))
         self.assertNotIn("⚠ `NotificationUpdate`", out)
 
+    def test_a_failed_scan_is_not_a_section_of_zeros(self):
+        # A scan that fails must not come back as all-zero counts: zero is the
+        # answer the orphan scan reads as "no other user", so a failure would
+        # report every orphan as not-an-orphan. rg exits 2 on an unreadable tree.
+        # One load: each call makes a fresh module, so the exception class in a
+        # second load is a different object and assertRaises would not match it.
+        mod = load()
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "not-a-tree"
+            with self.assertRaises(mod.ScanFailed):
+                mod.count_refs(self.repo, "HEAD", ["helper"], tree=missing)
+        # The deliberate violation: turn the exit-status check back off and the
+        # same call returns zeros instead of raising.
+        broken = mutant("if p.returncode not in (0, 1):", "if False:")
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "not-a-tree"
+            self.assertEqual(broken.count_refs(self.repo, "HEAD", ["helper"], tree=missing),
+                             {"helper": 0})
+
     def test_patch_points_listed(self):
         base = commit(self.repo, {"a.py": "def helper():\n    pass\n",
                                   "t.py": "def test(monkeypatch):\n    monkeypatch.setattr(a, 'helper', 1)\n"}, "b")

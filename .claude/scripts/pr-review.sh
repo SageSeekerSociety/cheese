@@ -362,8 +362,9 @@ EOF
 
 $tier_txt
 
-档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改 OCR 跑多
-少力气——把拓扑行里的 effort、墙钟和并发照抄到 step 2 的那条命令上。
+档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改 OCR 的并
+发——把拓扑行里的并发数照抄到 step 2 的那条命令上。effort 和墙钟不由档位给：method
+里写死了它们，档位高并不意味着让 OCR 对同一份文件多跑几轮。
 档位 A 的改动最危险，step 3 里它的每条结论都要自己看过；档位低的可以快一点。
 EOF
   if [ -n "$spec_txt" ]; then
@@ -421,7 +422,7 @@ EOF
     echo "$dir/REVIEW.md"
     return 0
   fi
-  python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr "$pr" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
+  python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
   # Call slices and single-file pyright, so the reviewers read the bundle instead of the
   # files. A delta round slices only the increment.
   python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \

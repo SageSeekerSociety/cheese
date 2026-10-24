@@ -41,6 +41,12 @@ TS_EXPORT = re.compile(
 PATCHERS = re.compile(r"setattr|monkeypatch|mocker\.|\bpatch(?:\.object)?\(|vi\.(?:mock|spyOn)|jest\.(?:mock|spyOn)")
 
 
+class ScanFailed(Exception):
+    """A reference scan could not run. Its section reports this rather than zeros:
+    a zero count is the answer the orphan scan reads as "nothing else references it",
+    so a failure that returns zeros turns a real orphan into silence."""
+
+
 def git(repo, *args, check=True, env=None):
     p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env)
     if check and p.returncode:
@@ -124,7 +130,12 @@ def count_refs(repo, rev, names, tree=None):
 
     With `tree` (a checked-out revision the caller vouches equals `rev`) ripgrep does
     the scan in one pass. Otherwise the names go to `git grep` in batches of REF_CHUNK,
-    because git's own matcher slows down with the size of the pattern list."""
+    because git's own matcher slows down with the size of the pattern list.
+
+    Raises `ScanFailed` when a scan fails instead of returning zeros. A zero count is
+    the answer the orphan scan reads as "this name has no other user", so a failed scan
+    that came back as zeros would report every orphan as not-an-orphan — the silence
+    this function is the only thing able to break."""
     if not names:
         return {}
     pat = "\n".join(names) + "\n"
@@ -133,11 +144,18 @@ def count_refs(repo, rev, names, tree=None):
         # every match, `_match_counts` sees no bare name, and every count is 0 — the
         # orphan scan then finds nothing and says so. git grep's `-h` does this for
         # the batch branch below.
+        # `--no-messages` would swallow the diagnostic that explains a failure, so it
+        # is left off and stderr is carried into the error below.
         p = subprocess.run(
-            ["rg", "-o", "--no-filename", "-w", "-F", "-f", "/dev/stdin", "--no-messages",
+            ["rg", "-o", "--no-filename", "-w", "-F", "-f", "/dev/stdin",
              "--no-ignore", "--hidden", "-g", "!.git", str(tree)],
             input=pat, capture_output=True, text=True,
         )
+        # rg exits 0 on matches and 1 on none; 2 is a real failure (unreadable path,
+        # bad pattern file). Treating 2 as "no matches" is how a whole section goes
+        # silently empty.
+        if p.returncode not in (0, 1):
+            raise ScanFailed(f"rg exited {p.returncode} over {tree}: {p.stderr.strip()[:200]}")
         return _match_counts(p.stdout, names)
     counts = dict.fromkeys(names, 0)
     for i in range(0, len(names), REF_CHUNK):
@@ -146,6 +164,10 @@ def count_refs(repo, rev, names, tree=None):
             ["git", "-C", str(repo), "grep", "-o", "-h", "-I", "-w", "-F", "-f", "/dev/stdin", rev],
             input="\n".join(batch) + "\n", capture_output=True, text=True,
         )
+        # git grep exits 1 when a batch has no match; that is a real answer, not a
+        # failure. Anything else (2 on a bad revision or an unreadable object) is.
+        if p.returncode not in (0, 1):
+            raise ScanFailed(f"git grep exited {p.returncode} at {rev}: {p.stderr.strip()[:200]}")
         for name, n in _match_counts(p.stdout, batch).items():
             counts[name] += n
     return counts
@@ -265,14 +287,12 @@ def main(argv=None):
     ap.add_argument("--tree", help="checked-out review tree (default: --repo)")
     ap.add_argument("--base", required=True, help="merge base")
     ap.add_argument("--head", required=True)
-    ap.add_argument("--pr", default="0")
     ap.add_argument("--pr-body", default="")
     ap.add_argument("--scripts", default=str(Path(__file__).resolve().parents[1] / "scripts"))
     ap.add_argument("--no-claims", action="store_true")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     tree = a.tree or a.repo
-    body = Path(a.pr_body).read_text(errors="replace") if a.pr_body and Path(a.pr_body).is_file() else ""
     secs = []
     for fn in (lambda: section_symbols(a.repo, a.base, a.head, a.tree),
                lambda: section_claims(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_claims)):

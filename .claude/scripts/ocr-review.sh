@@ -68,7 +68,12 @@ while [ $# -gt 0 ]; do
     --from) FROM="$2"; shift 2 ;;
     --to) TO="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    -h|--help) sed -n '3,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 0 ;;
+    -h|--help)
+      # Stop at the first line that is no longer a comment, instead of a hard-coded
+      # range: the header invites edits (a changed default), and a fixed range
+      # silently truncates or overruns the help text when it grows or shrinks.
+      sed -n '3,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+      exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) if [ -z "$FROM" ]; then FROM="$1"; elif [ -z "$TO" ]; then TO="$1"; else die "unexpected argument $1"; fi; shift ;;
   esac
@@ -88,7 +93,11 @@ REPO="$(git rev-parse --show-toplevel)"
 # materialized first, while a failure is still cheap and visible here.
 if [ -n "$(git -C "$REPO" config --get remote.origin.partialclonefilter 2>/dev/null)" ]; then
   [ "$TO" = "HEAD" ] || die "partial clone: review --to must be HEAD (the checked-out commit), got $TO"
-  git -C "$REPO" diff --name-only "$FROM" HEAD >/dev/null 2>&1 \
+  # `--name-only` walks trees and commits, both of which a blob:none clone has;
+  # it would succeed without fetching a single base-side blob, and the failure
+  # would land later, inside OCR, as a search error the model retries. A plain
+  # `git diff` reads the contents, so the fetch happens here or fails here.
+  git -C "$REPO" diff "$FROM" HEAD >/dev/null 2>&1 \
     || die "partial clone: could not materialize the base side of $FROM..HEAD"
 fi
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cheese-ocr/$VERSION"
@@ -98,9 +107,16 @@ CLI="$CACHE/node_modules/.bin/ocr"
 install_ocr() {
   command -v npm >/dev/null 2>&1 || die "npm is not on PATH; the pinned OCR install needs it"
   mkdir -p "$CACHE"
-  npm install --prefix "$CACHE" --no-save --registry=https://registry.npmjs.org \
-    "@alibaba-group/open-code-review@$VERSION" >/dev/null 2>&1 \
-    || die "could not install $VERSION; the npm registry did not answer"
+  # Both streams go to the log rather than /dev/null: the failure below covers
+  # registry down, TLS/CA error, a 404 on the version and a full disk, and the
+  # install's own last lines are the only thing that says which it was.
+  local log="$CACHE/install.log"
+  if ! npm install --prefix "$CACHE" --no-save --registry=https://registry.npmjs.org \
+       "@alibaba-group/open-code-review@$VERSION" >"$log" 2>&1; then
+    echo "ocr-review: could not install $VERSION; last lines of $log:" >&2
+    tail -5 "$log" >&2
+    exit 1
+  fi
 }
 
 if [ ! -x "$BIN" ]; then
@@ -116,12 +132,24 @@ if [ "$ACTUAL_SHA" != "$PINNED_SHA" ]; then
   [ "$ACTUAL_SHA" = "$PINNED_SHA" ] \
     || die "binary sha256 $ACTUAL_SHA does not match the pinned $PINNED_SHA"
 fi
+# The hash above covers the native binary. What actually runs is the JS wrapper
+# in the package, which picks that binary and execs it, so this is the other half
+# of the pin: the installed package's own version, read from npm's metadata. It
+# is a version rather than a hash — the wrapper changes with the release, and its
+# bytes under one version number are the registry's to keep honest.
+INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' \
+  "$CACHE/node_modules/@alibaba-group/open-code-review/package.json" 2>/dev/null || true)"
+[ "$INSTALLED_VERSION" = "$VERSION" ] \
+  || die "installed package version '$INSTALLED_VERSION' is not the pinned $VERSION"
 
 # Results live beside the cached binary, not inside the worktree: a review
 # tree is disposable, and an untracked result file inside it reads as a change
 # somebody forgot to commit. In a task worktree `.git` is also a file, so
 # "$REPO/.git" is not a directory to write into.
-OUT="${OUT:-$CACHE/results/$(echo "$FROM..$TO" | tr '/:. ' '----').json}"
+# `tr` would fold every separator to the same character, so `a/b..HEAD` and
+# `a.b..HEAD` would land on one path and the second run would overwrite the
+# first's result and log. `sha256sum` keeps them distinct.
+OUT="${OUT:-$CACHE/results/$(printf '%s..%s' "$FROM" "$TO" | sha256sum | cut -c1-16).json}"
 mkdir -p "$(dirname "$OUT")"
 
 OCR_LLM_URL="${CHEESE_API%/}/llm" \
