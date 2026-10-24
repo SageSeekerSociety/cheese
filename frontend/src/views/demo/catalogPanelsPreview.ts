@@ -321,9 +321,11 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelMarkdown.s2.note')
         },
         // 一份有人评过的文件：那两处画着标记，画重一点的是正在看的那一条。
-        // 标记不是文字（是巢在那几个字外面的 `<mark>`），所以这一格看的是形状，不是某一句话。
+        // 标记不是文字（是巢在那几个字外面的 `<mark>`），所以这一格看的是形状，不是某一句话：
+        // 两处都在，且 c2 那一处是重的。只挑重的那一颗的话，「一条评论都没画、只把在看的那条
+        // 画出来」也满足它——而那正是这一格要展示的东西少了一半。
         props: { source: MARKDOWN_SAMPLE, anchors: MARKDOWN_ANCHORS, activeId: 'c2' },
-        expectSelector: 'mark.file-comment-mark.is-active[data-file-comment="c2"]',
+        expectSelector: 'mark.is-active[data-file-comment="c2"] + mark:not(.is-active)[data-file-comment="c1"]',
       },
     ],
   },

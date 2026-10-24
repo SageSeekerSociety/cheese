@@ -4,8 +4,8 @@
  * （PanelPreview.media.spec.ts）；这里盯手势：mouseup 拿到的选区要变成一句话出去、没选中的
  * 点击不该出去、点标记要开那一串；以及标记本身：哪几处画、画重的在哪、什么时候拆掉。
  *
- * 正文的读法是第一次用到才加载的，所以凡是等它画出来的断言都给足 5 秒——默认的 1 秒单独
- * 跑够，整目录 80 来个文件并发跑不够（合并基线上同一个文件里那条也这样）。
+ * 正文的读法是第一次用到才加载的，等它画出来的断言都走 `mark()`／`firstLine()` 这两个助手，
+ * 它们给足 5 秒：默认的 1 秒单独跑够，整目录 80 来个文件并发跑不够。
  */
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, expect, it } from 'vitest'
@@ -213,13 +213,7 @@ it('两条评论指着重叠的文字：点里面那颗开的是里面这一条'
     },
   })
   const md = ui.getByTestId('markdown')
-  const inner = await waitFor(() => {
-    const found = md.querySelector<HTMLElement>('mark[data-file-comment="half"]')
-    expect(found).toBeTruthy()
-    return found!
-  })
-
-  await fireEvent.click(inner)
+  await fireEvent.click(await mark(md, 'half'))
 
   expect(ui.emitted().anchor).toEqual([['half']])
 })
@@ -234,12 +228,7 @@ it('原文里是中文全角空格，也照样找得回来', async () => {
       anchors: [{ id: 'c1', quote: { text: '失败 以后重试 3 次', heading: '配置', prefix: '', suffix: '。' } }],
     },
   })
-  const md = ui.getByTestId('markdown')
-  const drawn = await waitFor(() => {
-    const found = md.querySelector<HTMLElement>('mark[data-file-comment="c1"]')
-    expect(found).toBeTruthy()
-    return found!
-  })
+  const drawn = await mark(ui.getByTestId('markdown'), 'c1')
   // 标记盖住的是原文那几个字，全角空格照原样留着（画标记不改正文）。
   expect(drawn.textContent).toBe('失败\u3000以后重试 3 次')
 })
