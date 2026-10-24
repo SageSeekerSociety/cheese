@@ -83,7 +83,7 @@ covers:
 
 会话启动时拿的是个人凭据（`cxpu_`，`sandbox_auth.mint_personal_credential`），写着这个人和这段对话，不带任何项目、房间、队友的信息。它只开 `/llm/v1/*`（换上这个人自己的网关虚拟 key 转发给网关）和这段对话自己要手的那一条路由（见[个人芝士对话的沙箱](/dev/execution#personal-sandbox)）。带这张凭据调的模型都记在这个人头上；能不能问，在提问时的准入里判。房间的凭据、项目凭据、平台密钥、人自己的登录都不能代替它；它也打不开任何房间或项目的接口，打不开人自己的 API。
 
-工具用的是每次提问另签的代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`）：写着这个人、这段对话（`conversation`）和这次回答的编号，有效期是回答上限再加一分钟。没有队友、没有频道的代行凭据就是这个人自己的芝士：它能进这个人能进的任何项目，每个接口照样按这个人的权限判断（`resolver._resolve_delegated`）；凭据上的项目只说明是在哪一页问的。代行凭据只在 `api/auth/` 的 `DELEGATED_ROUTES` 列出的接口上有效；其他人可见的操作走的接口列在 `GATED_ROUTES`，要先经过[授权判断](#acting)。人自己的设置接口（芝士的规则、撤销）不在里面，芝士改不了自己的规则。
+工具用的是每次提问另签的代行凭据（`cxdg_`，`sandbox_auth.mint_delegated_credential`）：写着这个人、这段对话（`conversation`）和这次回答的编号，有效期一小时（`ACTING_S`）。回答还没完时，读它的后端每 40 分钟另签一张交给会话（`Answers._keep_going` → 会话机的 `act_as` → runner 的 `acting`：只换工具用的凭据，对会话什么也不说），所以一张泄露的凭据最多用一小时，不是整个回答的四小时。接着读的后端不知道上一张是什么时候签的，按最早可能的时刻算，宁早不晚。没有队友、没有频道的代行凭据就是这个人自己的芝士：它能进这个人能进的任何项目，每个接口照样按这个人的权限判断（`resolver._resolve_delegated`）；凭据上的项目只说明是在哪一页问的。代行凭据只在 `api/auth/` 的 `DELEGATED_ROUTES` 列出的接口上有效；其他人可见的操作走的接口列在 `GATED_ROUTES`，要先经过[授权判断](#acting)。人自己的设置接口（芝士的规则、撤销）不在里面，芝士改不了自己的规则。
 
 工具按这个人打交道的东西分，一种东西一个工具；读和搜只各有一个，因为所有东西都按编号用同一种方式读（见[编号](#refs)）：
 
@@ -96,7 +96,7 @@ covers:
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `cheese_message_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
 | `cheese_task_open` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
-| `cheese_review_decide` | 采纳或退回审阅卡 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
+| `cheese_review_decide` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
 | `cheese_member_set` | 项目里邀请、改角色、移出；频道里加入、移出 | 经授权判断，成员接口 |
 | `cheese_channel_create` | 新建频道 | 经授权判断，`POST /topics` |
 | `cheese_settings_set` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
@@ -106,6 +106,8 @@ covers:
 | `cheese_problem_publish` | 发布草稿，和人点「发布」「保存更改」同一条路 | `POST /task-drafts/agent/publish` |
 | `cheese_file_give` | 把电脑上的一份文件交给他：存进他的资料库，回答里出现文件卡片 | `POST /assistant/agent/files/slot` 领地址，电脑自己 `curl -T` 传上去，再 `POST /assistant/agent/files/handed` 登记；流里发 `handed` |
 | `cheese_file_to_computer` | 把他资料库里的一份文件放进电脑 | `POST /assistant/agent/files/link` 领地址，电脑自己 `curl -o` 取下来 |
+| `cheese_todo` | 一件长的事的步骤清单，每次写整份 | `POST /assistant/agent/todo` 只核对、数回去；面板从这次调用的参数直接画，见[长的事](#long-work) |
+| `cheese_subagent_start` / `cheese_subagent_send` / `cheese_subagent_stop` | 派出分身、给分身发消息（做完的就接着做）、停下分身 | 不走平台接口：扩展自己在会话进程里开分身，见[长的事](#long-work) |
 
 工具的报错原样交给芝士：每条拒绝都写明该怎么改（比如编号该怎么写、分类只能是空间已有的哪几个），芝士照着改了再调。
 
@@ -117,7 +119,7 @@ covers:
 
 ## 一次提问 {#ask}
 
-`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先传进他自己的资料库的 `path` 和名字，芝士按 `library/<path>` 读；发布、改题目页上交的是题目材料，仍是经 `POST /attachments` 传上去的 `id`，按 `files/<id>` 读）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`handed`（芝士交给他一份文件：团队 id、资料库里的名字和大小，回答里画成文件卡片）、`error`、`done`（`stopped`：被人停下了）。
+`POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先传进他自己的资料库的 `path` 和名字，芝士按 `library/<path>` 读；发布、改题目页上交的是题目材料，仍是经 `POST /attachments` 传上去的 `id`，按 `files/<id>` 读）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`handed`（芝士交给他一份文件：团队 id、资料库里的名字和大小，回答里画成文件卡片）、`tool_done`（这次调用回来了，没报错）、`subagents`（这一轮派出的分身现在怎样：做什么、做到哪了、最近做的几步）、`error`、`done`（`stopped`：被人停下了）。`tool` 和 `thinking` 带 `at`：它之前回答已经写了多少字，面板把它排在这些字后面；存下的步骤也带着它。
 
 **眼前的页面随问题说**：页面写成一段「当前页面」（题目页是题目说明、这个人的领取和题目材料；草稿页是整份草稿，带 version、空间 id 和这个空间可选的分类、标签、邮箱域名组、能当导师的人——芝士的工具按空间 id 办事），放在问题前面。前端只传页面的种类和 id，正文由服务端按提问人的权限写出（`personal/pages.py`）：每种页面是 `PAGES` 里的一行，写明怎么写出这一页、在这里提问记作哪种用量；加一种页面就是加一个渲染器和一行，提问的路由不用改。请求里的种类列在 `PageKind`，测试保证它和 `PAGES` 一致；不认识的种类在问模型之前就以参数错误拒绝。
 
@@ -125,7 +127,17 @@ covers:
 
 1. **准入**：对话是本人的；对话所在的题目本人打得开（和题目页同一个判断，`_ensure_task_readable`）；网关上 `ASSISTANT_MODEL` 有单价、这个人有一把只认当前 `ASSISTANT_MODEL` 的网关 key（第一次提问时开；模型换了就先把旧 key 的花费扣完，再换一把新的，旧的在网关上吊销），会话机在线，否则拒绝；个人额度有剩余，否则 429 并写明哪天重置；同一段对话同一时间只答一个问题（Valkey 里的锁，和房间、文档的芝士用同一套 `agent/admission.py`：回答期间续期，后端换了由接着读的那个后端续，没人续时 30 秒内自动释放）。会话在回答里起：等会话机时先推一条 `queued`，等不到或起不来就以 `error` 收尾。
 2. **跑**：会话起来以后才签这一问的代行凭据，有效期从那时算，排队的时间不占它。问题连同凭据送进会话，pi 经 `/llm/v1` 调模型，工具带着代行凭据调平台接口。后端读会话：正在写的文字变成 `delta`，正在调的工具变成 `tool`；日志里这一问的最后一条记录是答案。答完后会话若还在压缩对话，等它做完再放开锁。
-3. **收尾**：这一问由会话核心读到答完（`session_host/consumptions.py`），不靠发问的那个请求，也不靠哪一个后端进程：读它的后端每几秒续一次租约，部署时先把租约放掉，异常退出时租约 20 秒内过期，别的后端看到就接着读，从上次读到的地方往下。读者中途离开、后端重启，照样答完、存下、扣费。回答的每一步都写进这一问在 Valkey 里的一条流，响应只是在读这条流：第一条 `answering` 带这一问的 id，之后每条都带它在流里的位置（`id`）；连接断了，用 `GET /api/assistant/conversations/{id}/answers/{这一问}?after={位置}` 接着读剩下的。打开一段还在答的对话，`GET /api/assistant/conversations/{id}` 的 `answering` 就是这一问的 id，面板接上去看。`delta` 带 `at`：这段字从回答的第几个字起，接着读时重复听到的字按它放回原位。要它停只有 `POST /api/assistant/conversations/{id}/stop`（只有本人能停）：排队中的不再等，正在答的让会话停下；已经写出的部分存下，`assistant_messages.stopped` 记着它是被停下的，面板在它后面写「已停止」。答案存进 `assistant_messages`，连同这一轮做了什么（`parts`：从这一问的流里读出的每段推理及其用时、每次工具调用及其参数和是否报错、每次写草稿、每次发布），面板重新打开时照样画出来；放开锁，然后读这个人 key 上新增的网关花费，扣个人额度（`billing.py`；在草稿页上问的记作写作 `kind = "assistant_write"`，别处的记作问答 `kind = "assistant"`；缓存命中的部分按网关的缓存价）。网关的花费记录晚到时过几秒再读；更晚到的由下一次提问读到。
+3. **收尾**：这一问由会话核心读到答完（`session_host/consumptions.py`），不靠发问的那个请求，也不靠哪一个后端进程：读它的后端每几秒续一次租约，部署时先把租约放掉，异常退出时租约 20 秒内过期，别的后端看到就接着读，从上次读到的地方往下。读者中途离开、后端重启，照样答完、存下、扣费。回答的每一步都写进这一问在 Valkey 里的一条流，响应只是在读这条流：第一条 `answering` 带这一问的 id，之后每条都带它在流里的位置（`id`）；连接断了，用 `GET /api/assistant/conversations/{id}/answers/{这一问}?after={位置}` 接着读剩下的。打开一段还在答的对话，`GET /api/assistant/conversations/{id}` 的 `answering` 就是这一问的 id，面板接上去看。`delta` 带 `at`：这段字从回答的第几个字起，接着读时重复听到的字按它放回原位。要它停只有 `POST /api/assistant/conversations/{id}/stop`（只有本人能停）：排队中的不再等，正在答的让会话停下；已经写出的部分存下，`assistant_messages.stopped` 记着它是被停下的，面板在它后面写「已停止」。正在答时人又说了一句，走 `POST /api/assistant/conversations/{id}/say`：这句话作为他的话存进对话，再插进正在答的这一轮（`steer`），芝士在下一步之前读到；没有在答时拒绝（409），面板改为提问。芝士写完一段话后不当场收尾：会话可能还在做（等分身、压缩对话），读到 runner 说这一轮结束、或会话停下且一会儿没有新东西时才收尾（`session_host/answer.py` 的 `follow`）。做了事却一个字没写的回答记 `parts.silent`，面板写「芝士没有给出回答」。答案存进 `assistant_messages`，连同这一轮做了什么（`parts`：从这一问的流里读出的每段推理及其用时、每次工具调用及其参数和是否报错、每次写草稿、每次发布），面板重新打开时照样画出来；放开锁，然后读这个人 key 上新增的网关花费，扣个人额度（`billing.py`；在草稿页上问的记作写作 `kind = "assistant_write"`，别处的记作问答 `kind = "assistant"`；缓存命中的部分按网关的缓存价）。网关的花费记录晚到时过几秒再读；更晚到的由下一次提问读到。
+
+## 长的事 {#long-work}
+
+一次回答最长四小时（`ANSWER_S`），够读几十份材料再汇总；到点前五分钟平台插一句（`WRAP_UP`），让芝士写下做到哪里、结果在哪、还剩什么，到点停下时已写出的留着，面板写「运行时间达到 4 小时上限，已停止」。
+
+- **清单**：`cheese_todo` 每次写整份，最多 30 项，每项待做、进行中（同时只一项）或已完成。规则 2 和工具说明都写着：步骤多、要做几分钟以上才列，一问一答不列。
+- **分身**：扩展在会话进程里开一个 agent 会话（`platform.ts` 的 `registerBranches`；另起一个 pi 要约 130MB，会话总共 512MB），它有自己的上下文，只拿读、搜、上网查和电脑上的工具（`BRANCH_TOOLS`），以这个人的名义做的事只有芝士自己能做：授权判断要看这个人说过的话，分身听不到。照 Claude Code 的分身：`cheese_subagent_start` 派出后立刻返回编号，在后台做，同时最多四个，每个最多调 200 次工具，分身不能再派分身；和 Claude Code 一样，分身最后写的那段话就是结论；做到一半拿不准、要芝士决定的事，分身用自己那一份 `cheese_subagent_send`（没有 `to`，只发给芝士）问，问完接着做。分身的结论和消息都作为平台的话交给芝士（引用起来，写明是资料、不是指令）：芝士正在做，就在它下一步之前插进去（pi 的 steer）；芝士要收尾而还有分身在做，就在 `agent_before_settle` 等，等到分身发来消息或做完再让它接着做；人在这时说话，也停下等先听人的（runner 的 `said_since`）；人点停止，所有分身一起停。扩展把每个分身的状态报给 runner（`branches`），runner 只把这一轮动过的分身放进正在写的内容里（`Writing.branches`），回答流发成 `subagents`。
+- **要不要分身**：规则 2 照 Claude Code 自己的说法写：知道编号的一两样东西直接读；材料多、只要结论，或几件互不相关的事要同时做，才按份派分身，几个在同一条消息里一起派。分身留不留看评测：`run.py --no-subagents` 关掉它再跑一遍，分数不比有它时差，就不该有它（`session.BRANCHES`）。
+- **做完了告诉人**：自己问的问题答了两分钟以上（`TELL_AFTER_S`），答完时没有面板正给他看这段对话，发一条芝士通知「芝士已完成「话题名」」，有待确认的操作时写出几项。面板开着、页面在前台、芝士在答时，每 15 秒说一次正看着（`POST /assistant/conversations/{id}/looking`，记 30 秒）。例行事务的运行照旧发它自己的通知。
+- **别处的面板跟着读**：对话里加了一条消息，就叫醒这个人的收件箱连接；连接醒来或到心跳时比一下他最新的那条芝士消息，变了就发 `{"kind": "assistant", "conversation": id}`（部署时另一个后端写的，最多晚一个心跳）。页面把它转给其他标签页；面板重读话题列表，正开着这段对话又没在答，就把最近的一页重读一遍。
 
 ## 题目草稿 {#drafts}
 
@@ -232,7 +244,7 @@ covers:
 个人芝士用的模型五花八门，弱一些的会原地打转。会话自己拦三种情况，都不靠模型自觉：
 
 - 同一个工具、同样的参数，一次回答里第三次调用不执行，告诉模型换个做法（`platform.ts` 的 `guardTheRound`）；
-- 一次回答调用工具满 200 次后不再调用，模型说明做到哪里，人说「继续」再接着做；
+- 一次回答调用工具满 200 次后不再调用，模型说明做到哪里，人说「继续」再接着做；每个分身另算 200 次；
 - 写出的文字结尾同一段（60 字以上）连续出现三遍，停止这次回答并告诉人原因（`personal/loops.py`）。
 
 ## 开头保持不变 {#cache}
@@ -256,7 +268,7 @@ covers:
 
 ## 面板 {#panel}
 
-题目页「问芝士」、发布页、改题页用的是同一个 `AssistantPanel`，输入框和工作台的是同一套零件（`ComposerEditor`、`ComposerChipRow`、`ComposerActions`），文件能点「+」选，也能拖进面板；芝士每一轮做的事由 `AssistantTurn` 画：调的工具一行一步（动词 + 一个参数，答完收成一行「N 步」），写进草稿的改动是一张卡（每格能撤销），`notes` 是「待你确认」，发布的结果带「查看题目」。题目页的抽屉打开时才挂；发布页、改题页上它一直停在右边，窄屏是底部弹层。面板只拿 props、发事件，取数和流式读取在 `useAssistant`。
+题目页「问芝士」、发布页、改题页用的是同一个 `AssistantPanel`，输入框和工作台的是同一套零件（`ComposerEditor`、`ComposerChipRow`、`ComposerActions`），文件能点「+」选，也能拖进面板，芝士在答时也能交（随插话一起进这一轮）；麦克风和工作台输入框同一套（`composables/useComposerVoice.ts`），听写走 `POST /assistant/voice`：不在哪个项目里，费用记在本人账上，每天的秒数和频道里共用（`voice_inputs.project_id` 可以空着）；芝士每一轮做的事由 `AssistantTurn` 画：说的话和调的工具按发生的先后排开（`lib/assistantView.ts` 的 `interleave`，按每一步的 `at`；没记位置的旧回答把步骤都排在话前面），接连调的工具一行一步（动词 + 一个参数，答完每组收成一行「N 步」），工具回来就打勾，最后几步都回来、还没写下一段话时末尾一行「思考中」；进度清单画在最上面，做完收成「N/N 项已完成」；分身挂在派它的那一步上，跟着转圈、打勾，写「进行中」「已完成」「已停下」「失败」，点开看它做过的几步；写进草稿的改动是一张卡（每格能撤销），`notes` 是「待你确认」，发布的结果带「查看题目」。话题一次读 30 个、一个话题先读最近 50 条消息（`GET /assistant/conversations?before=`、`GET /assistant/conversations/{id}/messages?before=<seq>`），翻到顶接着读：先读完最上面那个话题，再读它上面的话题；读回来的接在上面，眼前看着的不动。芝士在答时输入框照样能打字，打了字或带了文件按钮是发送（插进这一轮），空着是停止。题目页的抽屉打开时才挂；发布页、改题页上它一直停在右边，窄屏是底部弹层。面板只拿 props、发事件，取数和流式读取在 `useAssistant`。
 
 发布页、改题页上，表单跟着芝士动（`useTaskDraft`、`useDraftAgent`）：
 

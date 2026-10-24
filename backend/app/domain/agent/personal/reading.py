@@ -193,8 +193,8 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     card = (await latest_cards_by_task(reader.session, [task.id])).get(task.id)
     if card is not None:
         lines.append(
-            f"审阅卡：{_STATUS.get(card.status, card.status)}，审阅人 "
-            f"{'、'.join(card.reviewer_handles) or '未定'}；"
+            f"审阅：{_STATUS.get(card.status, card.status)}，由 "
+            f"{'、'.join(card.reviewer_handles) or '未定的人'} 审阅；"
             f"读：{refs.review(project.slug, found.number)}"
         )
     lines.append(await _messages(reader, place.conversation_id, page))
@@ -229,12 +229,12 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     place = await access.topic(found.id)
     latest = (await latest_cards_by_task(reader.session, [found.id])).get(found.id)
     if latest is None:
-        return f"任务「{place.task.title}」还没有审阅卡。"
+        return f"任务「{place.task.title}」还没有提交审阅。"
     card = await reader.session.get(AcceptCard, latest.id)
     assert card is not None
     lines = [
-        f"任务「{place.task.title}」的审阅卡（{refs.review(project.slug, found.number)}）",
-        f"状态：{_STATUS.get(card.status, str(card.status))}；审阅人：{card.reviewer_handle}",
+        f"任务「{place.task.title}」的审阅（{refs.review(project.slug, found.number)}）",
+        f"状态：{_STATUS.get(card.status, str(card.status))}；由 {card.reviewer_handle} 审阅",
     ]
     if card.decided_by:
         lines.append(f"由 {card.decided_by} 于 {_when(reader, card.decided_at)} 决定")

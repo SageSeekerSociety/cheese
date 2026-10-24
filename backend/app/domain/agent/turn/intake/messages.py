@@ -193,8 +193,17 @@ class RunnerIntake:
         if duplicate:
             return turn_id
         # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        answer_in = (
+            topic_id
+            if not mentioned
+            or (
+                handoff is not None
+                and handoff.place is not None
+                and handoff.place.inner_id is not None
+            )
+            else await answer_place(
+                chat_service.session_factory, user_block_id, topic_id
+            )
         )
         self._schedule_message(
             chat_service,

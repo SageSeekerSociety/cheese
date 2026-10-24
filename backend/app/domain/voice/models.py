@@ -24,12 +24,15 @@ class VoiceInput(UuidPk, Timestamps, Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE", name="fk_voice_inputs_user_id_user")
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    # The project it was said in; empty when it was said to the person's own
+    # 芝士, which is in none.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
             name="fk_voice_inputs_project_id_projects",
         ),
+        nullable=True,
         index=True,
     )
     # The room, task or 支线 it was said in.
