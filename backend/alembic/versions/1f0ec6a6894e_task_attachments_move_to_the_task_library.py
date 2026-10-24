@@ -338,7 +338,9 @@ def downgrade() -> None:
     written."""
     op.execute(f"""
         INSERT INTO attachment (id, type, url, meta)
-        SELECT DISTINCT attachment_id, type, url, meta::json FROM {BACKUP}
+        SELECT DISTINCT ON (attachment_id) attachment_id, type, url, meta::json
+        FROM {BACKUP}
+        ORDER BY attachment_id
         ON CONFLICT (id) DO NOTHING
     """)
     op.execute(f"""

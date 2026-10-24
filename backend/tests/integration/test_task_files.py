@@ -729,3 +729,58 @@ def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
         return await package.section_for_project(db_session, project)
 
     assert _portal.call(section) is None
+
+
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
+)
+
+
+def test_the_taker_reads_the_task_files_everywhere_the_project_reads_its_library(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """领了题的人在项目里读 `题目/` 的每一条路都读得到：资料库、房间里取文件
+    （`cheese pull`）、复制一份到房间里改、项目文档里引用的图片。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="到处都读得到")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
+    _add(api_client, task_id, board["creator_token"], "示意.png", PNG)
+    _, token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, task_id, token)
+    project_id = _project_from(api_client, task_id, token)
+    headers = _auth(token)
+
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 200
+    room = api_client.post(
+        "/topics", json={"project_id": project_id, "title": "频道"}, headers=headers
+    )
+    assert room.status_code == 200, room.text
+    room_id = room.json()["data"]["id"]
+
+    pulled = api_client.get(
+        f"/topics/{room_id}/files/raw",
+        params={"path": "library/题目/数据.csv"},
+        headers=headers,
+    )
+    assert pulled.status_code == 200, pulled.text
+    copied = api_client.post(
+        f"/topics/{room_id}/files/copy",
+        json={"source": "library/题目/数据.csv", "path": "我的数据.csv"},
+        headers=headers,
+    )
+    assert copied.status_code == 200, copied.text
+
+    made = api_client.post(
+        f"/projects/{project_id}/documents",
+        json={"title": "笔记", "content": "![](library/题目/示意.png)\n"},
+        headers=headers,
+    )
+    assert made.status_code == 200, made.text
+    image = api_client.get(
+        f"/documents/{made.json()['data']['id']}/image",
+        params={"path": "library/题目/示意.png"},
+        headers=headers,
+    )
+    assert image.status_code == 200, image.text
+    assert image.content == PNG

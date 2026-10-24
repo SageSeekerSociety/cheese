@@ -22,7 +22,11 @@ class Shelf:
     with_task: bool = False
 
     @classmethod
-    def of_project(cls, project_id: uuid.UUID, *, with_task: bool = False) -> "Shelf":
+    def of_project(cls, project_id: uuid.UUID, *, with_task: bool) -> "Shelf":
+        """``with_task`` has no default on purpose: whoever reads a project's
+        library decides whether this reader sees `题目/` (in a request,
+        `app.api.project_library.shelf_for`), so a reader that forgot to cannot
+        build one."""
         return cls(project_id=project_id, with_task=with_task)
 
     @classmethod

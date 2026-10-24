@@ -36,7 +36,7 @@ async def source_bytes(
     task: uuid.UUID | None,
     source: Literal["live", "committed"] = "live",
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> bytes:
     """One of this room's files, from whichever store holds it.
 

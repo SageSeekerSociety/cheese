@@ -258,7 +258,7 @@ async def read_attachment(
     room_id: uuid.UUID,
     path: str,
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> bytes:
     """一个附件的字节：资料库里那一份，或者只属于这个房间的那一份。`with_task`：读的人
     看得到 `题目/`（`Shelf.with_task`）。"""
@@ -309,7 +309,7 @@ async def attachment_file(
     room_id: uuid.UUID,
     path: str,
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> Path | Stored:
     """一个附件的字节在哪，给按段读它的人：播放器拖进度条只要那一段，两百兆的录屏
     不该为了一段整份读进内存。房间文件是磁盘上的一个文件，资料库的是存储里的一把键。"""
@@ -371,7 +371,7 @@ async def attachments_present(
     room_id: uuid.UUID,
     paths: list[str],
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> set[str]:
     """这批地址里今天还读得到的那些。
 
@@ -410,7 +410,7 @@ async def read_attachments(
     room_id: uuid.UUID,
     paths: list[str],
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> dict[str, bytes]:
     """一批地址的字节：资料库一条查询拿所有行，各份字节一起去取，房间文件放同一个
     线程池调用里。缺一个就照单条读那样拒——调用方应当先问 `attachments_present`。"""
@@ -445,7 +445,7 @@ async def read_attachment_text(
     room_id: uuid.UUID,
     path: str,
     *,
-    with_task: bool = False,
+    with_task: bool,
 ) -> dict:
     """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
     name = service.library_name(path)
@@ -798,7 +798,8 @@ class ProjectLibraries:
     ) -> str:
         return await add(
             session,
-            Shelf.of_project(project_id),
+            # 放进项目自己的资料库，`题目/` 不在其中（`mount.refuse_write`）。
+            Shelf.of_project(project_id, with_task=False),
             filename,
             data,
             added_by,
@@ -810,7 +811,8 @@ class ProjectLibraries:
     async def stored(
         session: AsyncSession, project_id: uuid.UUID
     ) -> list[tuple[str, str, str]]:
-        return await stored(session, Shelf.of_project(project_id))
+        # 导出的是项目自己的文件；题目的材料归题目，不随项目导出。
+        return await stored(session, Shelf.of_project(project_id, with_task=False))
 
     @staticmethod
     async def read_blob(location: str, key: str) -> bytes:

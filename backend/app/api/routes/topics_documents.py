@@ -263,7 +263,10 @@ async def decide_document_revisions(
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    raw = await source_bytes(db, topic.project_id, topic_id, clean, task)
+    # A library file was refused above; this reads the room's own files only.
+    raw = await source_bytes(
+        db, topic.project_id, topic_id, clean, task, with_task=False
+    )
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(

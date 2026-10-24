@@ -240,3 +240,16 @@ def test_a_tasks_attachment_rows_stop_being_served_by_the_generic_route(
             (192, "image", 7102),
         ]
         assert (uploads / "files" / "191.bin").read_bytes() == b"\x89PNG"
+
+        # Going back puts the rows and their links back as they were.
+        db.downgrade("0f147393ad6a")
+        back = {
+            r["id"]: r["type"]
+            for r in db.fetch("SELECT id, type FROM attachment WHERE id IN (191, 192)")
+        }
+        assert back == {191: "image", 192: "image"}
+        links = db.fetch(
+            "SELECT attachment_id FROM task_attachment"
+            " WHERE attachment_id IN (191, 192) AND deleted_at IS NULL"
+        )
+        assert sorted(r["attachment_id"] for r in links) == [191, 192]

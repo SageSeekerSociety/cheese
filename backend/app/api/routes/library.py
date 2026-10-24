@@ -163,7 +163,9 @@ async def _raw(
 
 
 def _shelf(project_id: uuid.UUID) -> Shelf:
-    return Shelf.of_project(project_id)
+    # 写的那几条路用它：`题目/` 底下谁都写不进去（`mount.refuse_write`），
+    # 读的路一律按读的人取（`shelf_for`）。
+    return Shelf.of_project(project_id, with_task=False)
 
 
 def _library_path(raw: str) -> str:
