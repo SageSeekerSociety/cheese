@@ -508,7 +508,8 @@ async def agent_write(
         if "attachments" in args
         else None
     )
-    fields = drafts.from_agent(args, terms, row.fields or {}, files)
+    removed: list[str] = []
+    fields = drafts.from_agent(args, terms, row.fields or {}, files, removed)
     written = drafts.cheese_writes(
         row, fields, read_at=None if created else body.version
     )
@@ -519,6 +520,15 @@ async def agent_write(
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
+    if removed:
+        # Never silently: the person reads on the change card what went with
+        # the stages 芝士 removed, before anything is saved to the 题目.
+        notes.append(
+            {
+                "field": "stages",
+                "text": str(say("draftStageRemovedRows", names="、".join(removed))),
+            }
+        )
     told = await _report(
         db,
         resolver,
@@ -547,6 +557,8 @@ async def agent_write(
             "changed": sorted(written.changed),
             "kept": written.kept,
             "missing": drafts.missing(row),
+            # Submission items and rubric lines that left with a removed stage.
+            "removed": removed,
             # A template's skeleton, for 芝士 to fill under its headings.
             **(
                 {"description": drafts.markdown_of(row.fields or {})}

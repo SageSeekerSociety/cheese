@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.task.models import TaskDraft, new_stage_key
-from app.domain.task.stages import settled_stage
+from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
 
@@ -401,12 +401,18 @@ def cheese_writes(draft: TaskDraft, fields: dict, *, read_at: int | None) -> Wri
 
 
 def from_agent(
-    args: dict, space: Space, current: dict, files: list[dict] | None = None
+    args: dict,
+    space: Space,
+    current: dict,
+    files: list[dict] | None = None,
+    removed: list[str] | None = None,
 ) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
     have, a deadline it cannot read. ``files`` are the attachments it named
-    (``attachments``), already found to be the person's: id, name and size."""
+    (``attachments``), already found to be the person's: id, name and size.
+    ``removed`` collects the names of the items and rubric lines that left
+    with a stage this write removed."""
     out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
@@ -467,22 +473,22 @@ def from_agent(
         out["rubric"] = _rubric(args["rubric"], stages)
     if "stages" in args:
         # The stages changed under the items and lines already in the draft:
-        # settle them by the same rule the publish applies, so the draft says
-        # now what the 题目 will say. Those of a stage that left go with it,
-        # as on the page; one that names no stage is the first stage's.
+        # they follow the same rules the page and the publish apply
+        # (``stages.rows_after_stage_change``), so the draft says now what the
+        # 题目 will say. What went with a removed stage is said back by name.
         ids = [s["id"] for s in out["stages"]]
         before = [
-            s.get("id") for s in current.get("stages") or [] if isinstance(s, dict)
+            str(s.get("id"))
+            for s in current.get("stages") or []
+            if isinstance(s, dict) and s.get("id")
         ]
-        for form_field in ("submissionSchema", "rubric"):
+        for form_field, label in (("submissionSchema", "prompt"), ("rubric", "item")):
             rows = out.get(form_field, current.get(form_field))
             if isinstance(rows, list):
-                out[form_field] = [
-                    {**row, "stage": settled_stage(row.get("stage"), ids)}
-                    for row in rows
-                    if isinstance(row, dict)
-                    and not (row.get("stage") in before and row.get("stage") not in ids)
-                ]
+                settled = rows_after_stage_change(rows, before, ids)
+                out[form_field] = settled.kept
+                if removed is not None:
+                    removed.extend(str(row.get(label) or "") for row in settled.removed)
     if "rubric_public" in args:
         out["rubricPublic"] = bool(args["rubric_public"])
     if "real_name" in args:
@@ -1063,6 +1069,9 @@ def missing(draft: TaskDraft) -> list[str]:
         out.append("form")
     if fields.get("rank") not in (1, 2, 3):
         out.append("difficulty")
+    # Changes to a published 题目 that would leave it nothing to hand in.
+    if draft.task_id is not None and fields.get("submissionSchema") == []:
+        out.append("submission")
     # What the publish would refuse: an item or line naming a stage the draft
     # does not have (``stages.stage_index``), said now rather than at publish.
     ids = [str(s.get("id")) for s in fields.get("stages") or [] if isinstance(s, dict)]

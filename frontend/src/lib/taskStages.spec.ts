@@ -2,7 +2,7 @@ import type { StagedForm } from './taskStages'
 
 import { describe, expect, it } from 'vitest'
 
-import { addStage, moveStage, removeStage } from './taskStages'
+import { addStage, moveStage, removeStage, rowsAfterStageChange } from './taskStages'
 
 const stage = (name: string, id: string) => ({ id, name, description: '', dueAt: null })
 
@@ -59,6 +59,26 @@ describe('发题表单里的阶段', () => {
     }
 
     expect(removeStage(one, 0)).toEqual({ stages: [], items: [{ prompt: 'a', type: 'FILE', stage: null }], rubric: [] })
+  })
+
+  // The same cases as the backend's `test_stage_rows.py`: the page and the server follow one rule.
+  it.each([
+    ['last stages removed: kept, unstaged', ['a', 'b'], [], ['a', 'b', null], { kept: [null, null, null], removed: 0 }],
+    ['a stage removed: its rows go', ['a', 'b'], ['b'], ['a', 'b'], { kept: ['b'], removed: 1 }],
+    ['no stage before: the first new one', [], ['x', 'y'], [null], { kept: ['x'], removed: 0 }],
+    ['renamed without its id: a new stage, rows go', ['a'], ['n'], ['a'], { kept: [], removed: 1 }],
+    [
+      'no stage named: the old first stage, wherever it went',
+      ['a', 'b'],
+      ['b', 'a'],
+      [null],
+      { kept: ['a'], removed: 0 },
+    ],
+  ])('%s', (_, oldIds, newIds, refs, want) => {
+    const rows = refs.map((stage, i) => ({ prompt: String(i), type: 'FILE' as const, stage }))
+    const { kept, removed } = rowsAfterStageChange(rows, oldIds, newIds)
+    expect(kept.map((row) => row.stage)).toEqual(want.kept)
+    expect(removed).toHaveLength(want.removed)
   })
 
   it('调整先后，提交项和评分要点仍指着各自的阶段', () => {

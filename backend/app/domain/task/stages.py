@@ -166,16 +166,7 @@ async def replace_stages(
     old = await list_stages(session, task_id)
     old_count = stage_count(old)
     lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
-    by_key = {stage.key: stage.index for stage in old}
-    # Where each old stage went, by its id. Without stages, the one implicit
-    # stage is the first stage of whatever replaces it, and the reverse.
-    moved: dict[int, int] = {}
-    if not old or not lines:
-        moved = {0: 0}
-    else:
-        for new_index, line in enumerate(lines):
-            if line.key in by_key:
-                moved[by_key[line.key]] = new_index
+    moved = stage_moves([stage.key for stage in old], [line.key for line in lines])
     gone = [i for i in range(old_count) if i not in moved]
     if gone:
         held = set(
@@ -292,6 +283,67 @@ def keyed_by_name(
                 taken.add(same[0])
         out.append(line)
     return out
+
+
+def stage_moves(
+    old_ids: Sequence[str | None], new_ids: Sequence[str | None]
+) -> dict[int, int]:
+    """Where each of the old stages went when the stage list changed, by
+    position; a stage missing from the result was removed, and what belonged
+    to it goes with it. The rules (``lib/taskStages.ts`` keeps the same ones
+    for the page):
+
+    - a task that had no stages had one: it is the first of the new stages;
+    - when the last stages go, everything that belonged to them stays, on the
+      one stage a task without stages has;
+    - otherwise a stage is the same stage when its id is.
+    """
+    if not old_ids:
+        return {0: 0}
+    if not new_ids:
+        return {index: 0 for index in range(len(old_ids))}
+    return {
+        index: list(new_ids).index(key)
+        for index, key in enumerate(old_ids)
+        if key is not None and key in new_ids
+    }
+
+
+@dataclass(frozen=True)
+class SettledRows:
+    """Items or rubric lines after the stage list changed: what is kept, each
+    naming its stage by the new ids, and what was removed with its stage."""
+
+    kept: list[dict]
+    removed: list[dict]
+
+
+def rows_after_stage_change(
+    rows: Sequence[object],
+    old_ids: Sequence[str],
+    new_ids: Sequence[str],
+) -> SettledRows:
+    """Items or lines (as written, naming their stage by id) once the stages
+    went from ``old_ids`` to ``new_ids``: by ``stage_moves``, then settled by
+    ``settled_stage``. One that names a stage this write added stays with it."""
+    moved = stage_moves(old_ids, new_ids)
+    kept: list[dict] = []
+    removed: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref = row.get("stage")
+        if ref in new_ids:
+            kept.append({**row, "stage": ref})
+            continue
+        # The old stage it belonged to; a stale id is the first one's.
+        was = settled_stage(ref, old_ids)
+        position = list(old_ids).index(was) if was is not None and was in old_ids else 0
+        if position not in moved:
+            removed.append(row)
+            continue
+        kept.append({**row, "stage": new_ids[moved[position]] if new_ids else None})
+    return SettledRows(kept=kept, removed=removed)
 
 
 def settled_stage(ref: object, keys: Sequence[str]) -> str | None:

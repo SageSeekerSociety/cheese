@@ -21,6 +21,7 @@
   "draftSubmissionKind": "提交内容的类型只能是文件或文字",
   "draftStageChoice": "阶段只能是这道题已有的，写它的 id 或名称：{names}",
   "draftStageAmbiguous": "有不止一个阶段叫「{name}」，写它的 id",
+  "draftStageRemovedRows": "去掉的阶段带走了这些提交项和评分要点：{names}",
   "draftTagChoice": "标签 {unknown} 不在这个空间里，可用的有：{names}",
   "draftTaskNotYours": "只有出题人和空间管理员可以修改这道题",
   "draftTemplateChoice": "模板只能是这个空间已有的：{names}",

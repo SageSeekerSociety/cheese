@@ -319,3 +319,23 @@ describe('发题表单：分了阶段时没指阶段的提交项和评分要点'
     expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: 'need' }])
   })
 })
+
+describe('发题表单：删掉最后一个阶段', () => {
+  it('提交项和评分要点都留下，交出去时不分阶段', async () => {
+    const view = mountForm({
+      isEditing: true,
+      initialData: {
+        ...FILLED,
+        stages: [{ id: 'need', name: '需求分析', description: '', dueAt: null }],
+        submissionSchema: [{ prompt: '需求文档', type: 'TEXT', stage: 'need' }],
+        rubric: [{ item: '完整', points: 10, criteria: '', stage: 'need' }],
+      },
+    })
+
+    await fireEvent.click(view.getByRole('button', { name: 'tasks.form.stages.remove' }))
+    const sent = await submitted(view)
+    expect(sent.stages).toEqual([])
+    expect(sent.submissionSchema).toEqual([{ prompt: '需求文档', type: 'TEXT', stage: null }])
+    expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: null }])
+  })
+})

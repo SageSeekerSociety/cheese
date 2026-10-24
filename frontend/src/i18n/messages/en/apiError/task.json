@@ -21,6 +21,7 @@
   "draftSubmissionKind": "A submission item is a file or text, as the form names them",
   "draftStageChoice": "A stage has to be one the task has, by its id or name: {names}",
   "draftStageAmbiguous": "More than one stage is called “{name}”; name it by its id",
+  "draftStageRemovedRows": "The removed stages took these submission items and rubric lines with them: {names}",
   "draftTagChoice": "The tags {unknown} are not in this space; it has: {names}",
   "draftTaskNotYours": "Only the publisher and the space's admins can change this task",
   "draftTemplateChoice": "The template must be one this space has: {names}",

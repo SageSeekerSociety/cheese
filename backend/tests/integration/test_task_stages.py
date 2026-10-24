@@ -673,3 +673,61 @@ def test_stages_restated_without_their_ids_stay_the_same_stages(api_client, boar
         "NOT_SUBMITTED",
         "PENDING_REVIEW",
     ]
+
+
+def test_cheese_removing_every_stage_keeps_the_items_and_rubric(api_client, board):
+    """芝士 writes no stages onto a staged task: as on the page, the items and
+    rubric lines stay, on the one stage a task without stages has."""
+    task_id = _publish(api_client, board)
+    written = _cheese_writes(api_client, board, task=task_id, stages=[])
+    assert written["removed"] == []
+    assert written["missing"] == []
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 200, saved.text
+
+    task = _read(api_client, board, task_id)
+    assert task["stages"] == []
+    assert [(e["prompt"], e["stage"]) for e in task["submissionSchema"]] == [
+        ("需求文档", None),
+        ("代码", None),
+        ("说明", None),
+    ]
+    assert [(r["item"], r["stage"]) for r in task["rubric"]] == [
+        ("完整", None),
+        ("正确", None),
+    ]
+
+
+def test_the_form_removing_every_stage_keeps_the_items_and_rubric(api_client, board):
+    """The same through the edit form's save, which sends the stages alone."""
+    task_id = _publish(api_client, board)
+    resp = api_client.patch(
+        f"/tasks/{task_id}", json={"stages": []}, headers=_headers(board["teacher"])
+    )
+    assert resp.status_code == 200, resp.text
+    task = _read(api_client, board, task_id)
+    assert task["stages"] == []
+    assert len(task["submissionSchema"]) == 3
+    assert len(task["rubric"]) == 2
+
+
+def test_stages_rewritten_under_new_names_say_what_left_with_them(api_client, board):
+    """芝士 rewrites the stages under new names and no ids: those are new
+    stages, the old ones are removed, and what belonged to them is named in
+    the write's answer and on the person's card. A draft left with nothing to
+    hand in is not ready to save."""
+    task_id = _publish(api_client, board)
+    written = _cheese_writes(
+        api_client,
+        board,
+        task=task_id,
+        stages=[{"name": "设计"}, {"name": "编码"}],
+    )
+    assert sorted(written["removed"]) == sorted(
+        ["需求文档", "代码", "说明", "完整", "正确"]
+    )
+    assert "submission" in written["missing"]
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 400, saved.text
+    # Nothing was saved onto the 题目.
+    assert len(_read(api_client, board, task_id)["submissionSchema"]) == 3
