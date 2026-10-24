@@ -161,6 +161,7 @@ async def register(
                 "watchdog": {
                     "no_progress_s": settings.agent_no_progress_s,
                     "unread_s": settings.agent_unread_grace_s,
+                    "silent_s": settings.agent_stuck_silence_s,
                 },
             },
         )
