@@ -230,6 +230,64 @@ def test_a_room_documents_thread_answer_reads_only_the_room(client):
     assert root not in rooms, "a project-wide answer was read into the room's document"
 
 
+def test_a_room_documents_thread_opens_with_the_project_only_for_the_room(client):
+    """The same document's thread is opened with the project's shared memory,
+    goals and recent messages only where everyone who reads the thread may read
+    the project. A room seating somebody from outside it is not that."""
+    p = _project(client)
+    note = (
+        "---\nname: pricing-floor\ndescription: 报价底线\ntype: feedback\n---\n\n"
+        "报价不低于成本的 1.4 倍。\n"
+    )
+    put = client.put(
+        "/memory/files",
+        json={
+            "project_id": p["id"],
+            "scope": "team",
+            "path": "pricing-floor.md",
+            "content": note,
+        },
+        headers=session_auth_headers("dave"),
+    )
+    assert put.status_code == 200, put.text
+    indexed = client.put(
+        "/memory/files",
+        json={
+            "project_id": p["id"],
+            "scope": "team",
+            "path": "MEMORY.md",
+            "content": "- [报价底线](pricing-floor.md) — 报价不低于成本的 1.4 倍\n",
+        },
+        headers=session_auth_headers("dave"),
+    )
+    assert indexed.status_code == 200, indexed.text
+    room = _private_channel(client, p["id"], "alice", "bob")
+    _off_the_team(client, p["id"], "bob")
+    assert _outsider_shape(client, p["id"], room) == ["bob"], "shape not built"
+
+    async def opening() -> dict:
+        async with client.test_request_factory() as db:
+            doc = await Documents(db).create(
+                project_id=uuid.UUID(p["id"]),
+                room_id=uuid.UUID(room),
+                title="一份说明",
+                author="alice",
+            )
+            await db.commit()
+            resolver = ActorResolver(
+                session=db, bearer=session_token("alice"), cheese_token=""
+            )
+            reached = await reach(db, resolver, doc.id)
+            asked = asked_of(reached)
+            assert asked is not None
+            return await question.surroundings(db, asked, seat="芝士", asker=None)
+
+    around = client.portal.call(opening)
+    assert around.memory is None, (
+        "the project's shared memory went into a room's document"
+    )
+
+
 def _off_the_team(client, project: str, handle: str) -> None:
     """Off the team, seats kept: what ``DELETE /teams/{id}/members/{uid}`` does,
     so the project stops being something they read while the room still is."""

@@ -563,17 +563,18 @@ async def surroundings(
         project_wide = await may_read_project(
             db, project_id=asked.project_id, handle=asker
         )
-    elif asked.task_id is not None:
+    elif asked.conversation_id is not None:
+        # Where the answer is read, which is the room for all three shapes
+        # that have one: a task's own conversation, a document kept in a room,
+        # a room holding a file.
         project_wide = not await outsiders_reading(
             db,
             project_id=asked.project_id,
-            room_id=await room_of(db, asked.task_id),
-        )
-    elif asked.room_id is not None:
-        project_wide = not await outsiders_reading(
-            db, project_id=asked.project_id, room_id=asked.room_id
+            room_id=await room_of(db, asked.conversation_id),
         )
     else:
+        # The project's own document: its people read it, and what they read
+        # they may read.
         project_wide = True
     if asked.task_id is not None:
         recent = await BlockRepository(db).page_for_topic(
