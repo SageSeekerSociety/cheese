@@ -45,6 +45,8 @@ becomes that fix's regression guard.
 
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -165,35 +167,40 @@ def _backdate(client, conversation: uuid.UUID, opened_at: datetime) -> None:
     client.portal.call(write)
 
 
-def _working_task(client) -> tuple[KeepsWorking, dict, str, uuid.UUID]:
+@contextmanager
+def _working_task(client) -> Iterator[tuple[KeepsWorking, dict, str, uuid.UUID]]:
     """A task whose teammate is in the middle of its first turn, delivered, and
-    whose runner has reported it at work."""
+    whose runner has reported it at work — with this backend's sessions
+    installed for the test, and taken down again however it ends."""
     data = post_project(client, {"name": "Recycled"}, owner="alice").json()["data"]
     room = data["root_topic_id"]
     channel = KeepsWorking()
     app.dependency_overrides[get_chat_service] = lambda: _backend(client, channel)
-    task = open_task(client, room, "验证一下", owner="alice")
-    task_id = uuid.UUID(task["id"])
-    post_message(client, task["id"], "alice", {"content": "动手吧"})
-    _until(
-        lambda: any(key[0] == task_id for key in channel.sessions),
-        "the owner's first word never reached the task's teammate",
-    )
-    _until(
-        lambda: any(
-            turn.delivered_at is not None and turn.stopped_at is None
-            for turn in _turns(client, task_id)
-        ),
-        "the turn never opened delivered and stayed open",
-    )
-    _until(
-        lambda: (
-            (_session_state(client, task_id) or None) is not None
-            and _session_state(client, task_id).worker_status == "running"
-        ),
-        "the runner never reported the session at work",
-    )
-    return channel, task, room, task_id
+    try:
+        task = open_task(client, room, "验证一下", owner="alice")
+        task_id = uuid.UUID(task["id"])
+        post_message(client, task["id"], "alice", {"content": "动手吧"})
+        _until(
+            lambda: any(key[0] == task_id for key in channel.sessions),
+            "the owner's first word never reached the task's teammate",
+        )
+        _until(
+            lambda: any(
+                turn.delivered_at is not None and turn.stopped_at is None
+                for turn in _turns(client, task_id)
+            ),
+            "the turn never opened delivered and stayed open",
+        )
+        _until(
+            lambda: (
+                (_session_state(client, task_id) or None) is not None
+                and _session_state(client, task_id).worker_status == "running"
+            ),
+            "the runner never reported the session at work",
+        )
+        yield channel, task, room, task_id
+    finally:
+        app.dependency_overrides.pop(get_chat_service, None)
 
 
 def _hand_over_to(
@@ -245,87 +252,88 @@ def test_a_recycled_machines_turn_is_never_collected(client):
     每一步都断言一次，对应模块开头那条链里的一步。最后打印一份现场，让人不读
     代码也看得见现象。
     """
-    channel, task, room, task_id = _working_task(client)
-    runner = session_turn_deps.get_work_runner()
-    opened_at = datetime.now(UTC) - timedelta(hours=21, minutes=24)
-    _backdate(client, task_id, opened_at)
-    (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
+    with _working_task(client) as (channel, task, room, task_id):
+        runner = session_turn_deps.get_work_runner()
+        opened_at = datetime.now(UTC) - timedelta(hours=21, minutes=24)
+        _backdate(client, task_id, opened_at)
+        (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
 
-    # 1. 行开着、已送达、带着自己那条会话的名字 —— 这是「一轮还开着」的定义。
-    assert turn.delivered_at is not None, "the prompt never got through"
-    assert turn.session_id, "the row names no conversation to judge it by"
+        # 1. 行开着、已送达、带着自己那条会话的名字 —— 这是「一轮还开着」的定义。
+        assert turn.delivered_at is not None, "the prompt never got through"
+        assert turn.session_id, "the row names no conversation to judge it by"
 
-    # 2. runner 最后说的是「在跑」；它已经不在了，没人能更正这句话。
-    assert _session_state(client, task_id).worker_status == "running"
+        # 2. runner 最后说的是「在跑」；它已经不在了，没人能更正这句话。
+        assert _session_state(client, task_id).worker_status == "running"
 
-    # 2b. 机器这一侧：这一轮开着，但只在开着的头 2 小时内算它的活在干
-    #     （`STALE_TURN`）。过了这条线，机器该被回收照样被回收 —— 回收不是
-    #     这个缺陷造成的，它只是把缺陷露出来的那一步。
-    assert _machine_counts_as_work(
-        client, task_id, turn.agent_handle, opened_at + timedelta(hours=1)
-    ), "an hour in, the machine still counts this turn as work"
-    assert not _machine_counts_as_work(
-        client, task_id, turn.agent_handle, datetime.now(UTC)
-    ), "past STALE_TURN the machine no longer counts it as work"
+        # 2b. 机器这一侧：这一轮开着，但只在开着的头 2 小时内算它的活在干
+        #     （`STALE_TURN`）。过了这条线，机器该被回收照样被回收 —— 回收不是
+        #     这个缺陷造成的，它只是把缺陷露出来的那一步。
+        assert _machine_counts_as_work(
+            client, task_id, turn.agent_handle, opened_at + timedelta(hours=1)
+        ), "an hour in, the machine still counts this turn as work"
+        assert not _machine_counts_as_work(
+            client, task_id, turn.agent_handle, datetime.now(UTC)
+        ), "past STALE_TURN the machine no longer counts it as work"
 
-    # 3. 机器被回收：平台连问都问不到它（is_online 为假），所以它永远给不出
-    #    「执行器没了」那个唯一被认的答案。
-    recycled, replaced = _hand_over_to(client, channel, online=False)
+        # 3. 机器被回收：平台连问都问不到它（is_online 为假），所以它永远给不出
+        #    「执行器没了」那个唯一被认的答案。
+        recycled, replaced = _hand_over_to(client, channel, online=False)
 
-    # 4. recover 一轮：机器上的会话一个也没接回来 —— 没有任何终止证据。
-    #    （「问不出来」是平台自己的说法：`attach` 在 `is_online` 为假时直接
-    #    返回，连一次调用都没有发出去，所以这里也断言它确实什么都没问。）
-    assert client.portal.call(replaced.recover_sessions) == 0
-    assert recycled.asked, "the platform never even tried the machine"
-    # 死亡证据问的是「行自己那张票有没有被权威作废」，所以这里就用行自己的
-    # 席位去问 —— 答案是没有，因为那台机器根本没能说出一句话。
-    assert replaced.row_is_dead(task_id, turn.agent_handle, turn.session_id) is False
-
-    # 5. 清扫一轮又一轮，每一次都收掉 0 轮。年龄已经远远过了平台「开着的轮次
-    #    只保护 2 小时」那条线，也没用。
-    swept = [client.portal.call(runner.resume_orphans, replaced) for _ in range(3)]
-    assert swept == [0, 0, 0], "the sweep collected a turn the machine never denied"
-
-    # 拦住清扫的那条规矩，点名断言：不是「不在活跃表」也不是「30 分钟没输出」
-    # 挡住了它（两条都成立），是「判不出来的一律算未知，未知保持打开」。
-    assert (
-        death_evidence.unknown_row(replaced, _open_turns(client, replaced)[turn.id])
-        is True
-    )
-
-    # 现象：轮次还开着，会话还报在干活，房间看板还显示在「往前走」。
-    assert _turns(client, task_id)[0].stopped_at is None
-    assert _session_state(client, task_id).worker_status == "running"
-    board = client.get(
-        f"/topics?project_id={task['project_id']}",
-        headers=session_auth_headers("alice"),
-    ).json()["data"]
-    (room_row,) = [item for item in board["data"] if item["id"] == room]
-    assert room_row["moving"] is True, "the room is no longer shown at work"
-
-    print(
-        "\n".join(
-            [
-                "",
-                "===== 现场：机器没了，轮次还开着 =====",
-                f"轮次 {turn.id}",
-                f"  开于            {opened_at.isoformat()}（21 小时 24 分前）",
-                f"  stopped_at      {turn.stopped_at}  ← 一直没被收掉",
-                f"  delivered_at    {turn.delivered_at.isoformat()}（提示确实送到了）",
-                f"  session_id      {turn.session_id}",
-                f"会话状态          {_session_state(client, task_id).worker_status}"
-                "  ← 房间一直报「正在工作」",
-                f"  计时起点        {opened_at.isoformat()}",
-                "机器是否算它在干活  开着的头 2 小时内算，之后不算（STALE_TURN）",
-                "执行器所在机器    不可达（is_online=False，平台连问都没有问）",
-                "recover 一轮      接回 0 个会话，终止证据 0 条",
-                f"清扫 3 轮         收掉 {swept} 轮",
-                "房间看板          moving=True（侧栏/看板仍显示在干活）",
-                "===== 结束 =====",
-            ]
+        # 4. recover 一轮：机器上的会话一个也没接回来 —— 没有任何终止证据。
+        #    （「问不出来」是平台自己的说法：`attach` 在 `is_online` 为假时直接
+        #    返回，连一次调用都没有发出去，所以这里也断言它确实什么都没问。）
+        assert client.portal.call(replaced.recover_sessions) == 0
+        assert recycled.asked, "the platform never even tried the machine"
+        # 死亡证据问的是「行自己那张票有没有被权威作废」，所以这里就用行自己的
+        # 席位去问 —— 答案是没有，因为那台机器根本没能说出一句话。
+        assert (
+            replaced.row_is_dead(task_id, turn.agent_handle, turn.session_id) is False
         )
-    )
-    app.dependency_overrides.pop(get_chat_service, None)
+
+        # 5. 清扫一轮又一轮，每一次都收掉 0 轮。年龄已经远远过了平台「开着的轮次
+        #    只保护 2 小时」那条线，也没用。
+        swept = [client.portal.call(runner.resume_orphans, replaced) for _ in range(3)]
+        assert swept == [0, 0, 0], "the sweep collected a turn the machine never denied"
+
+        # 拦住清扫的那条规矩，点名断言：不是「不在活跃表」也不是「30 分钟没输出」
+        # 挡住了它（两条都成立），是「判不出来的一律算未知，未知保持打开」。
+        assert (
+            death_evidence.unknown_row(replaced, _open_turns(client, replaced)[turn.id])
+            is True
+        )
+
+        # 现象：轮次还开着，会话还报在干活，房间看板还显示在「往前走」。
+        assert _turns(client, task_id)[0].stopped_at is None
+        assert _session_state(client, task_id).worker_status == "running"
+        board = client.get(
+            f"/topics?project_id={task['project_id']}",
+            headers=session_auth_headers("alice"),
+        ).json()["data"]
+        (room_row,) = [item for item in board["data"] if item["id"] == room]
+        assert room_row["moving"] is True, "the room is no longer shown at work"
+
+        print(
+            "\n".join(
+                [
+                    "",
+                    "===== 现场：机器没了，轮次还开着 =====",
+                    f"轮次 {turn.id}",
+                    f"  开于            {opened_at.isoformat()}（21 小时 24 分前）",
+                    f"  stopped_at      {turn.stopped_at}  ← 一直没被收掉",
+                    f"  delivered_at    {turn.delivered_at.isoformat()}（提示确实送到了）",
+                    f"  session_id      {turn.session_id}",
+                    f"会话状态          {_session_state(client, task_id).worker_status}"
+                    "  ← 房间一直报「正在工作」",
+                    f"  计时起点        {opened_at.isoformat()}",
+                    "机器是否算它在干活  开着的头 2 小时内算，之后不算（STALE_TURN）",
+                    "执行器所在机器    不可达（is_online=False，平台连问都没有问）",
+                    "recover 一轮      接回 0 个会话，终止证据 0 条",
+                    f"清扫 3 轮         收掉 {swept} 轮",
+                    "房间看板          moving=True（侧栏/看板仍显示在干活）",
+                    "===== 结束 =====",
+                ]
+            )
+        )
 
 
 def test_a_turn_is_collected_when_the_machine_answers_its_executor_is_gone(client):
@@ -338,20 +346,19 @@ def test_a_turn_is_collected_when_the_machine_answers_its_executor_is_gone(clien
     去比对的那个值（``death_evidence.row_is_dead``），机器按会话的名字说话时说的
     就是它。
     """
-    channel, task, _room, task_id = _working_task(client)
-    runner = session_turn_deps.get_work_runner()
-    (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
-    seat = next(agent for (topic, agent) in channel.sessions if topic == task_id)
+    with _working_task(client) as (channel, _task, _room, task_id):
+        runner = session_turn_deps.get_work_runner()
+        (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
+        seat = next(agent for (topic, agent) in channel.sessions if topic == task_id)
 
-    # 机器还在（问得到它），但它上面已经没有这条会话了，而且它按会话的名字说
-    # 出了这一点 —— 平台认得的那唯一一种终止答案。
-    answered, replaced = _hand_over_to(client, channel, online=True)
-    answered.sessions.pop((task_id, seat), None)
-    answered.report_gone(task_id, turn.agent_handle, turn.session_id)
+        # 机器还在（问得到它），但它上面已经没有这条会话了，而且它按会话的名字
+        # 说出了这一点 —— 平台认得的那唯一一种终止答案。
+        answered, replaced = _hand_over_to(client, channel, online=True)
+        answered.sessions.pop((task_id, seat), None)
+        answered.report_gone(task_id, turn.agent_handle, turn.session_id)
 
-    client.portal.call(replaced.recover_sessions)
-    assert replaced.row_is_dead(task_id, turn.agent_handle, turn.session_id) is True
-    client.portal.call(runner.resume_orphans, replaced)
+        client.portal.call(replaced.recover_sessions)
+        assert replaced.row_is_dead(task_id, turn.agent_handle, turn.session_id) is True
+        client.portal.call(runner.resume_orphans, replaced)
 
-    assert _turns(client, task_id)[0].stopped_at is not None, "收掉了"
-    app.dependency_overrides.pop(get_chat_service, None)
+        assert _turns(client, task_id)[0].stopped_at is not None, "收掉了"
