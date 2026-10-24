@@ -1,58 +1,29 @@
-// 市场（视图）：只吃 props。两张页签能切；目录按「AI 模型 / 工作电脑」分组画卡片；
-// 节点状态由页面递进来，NodeBoard 只画；目录读失败时那一块给一条重试的路，往外 emit。
-import type { MarketNodes, MarketPools } from '@/cx_types'
-
+// 市场（视图）：只吃 props。市场是找东西、装东西的地方——技能、插件、MCP、Agent 模板；
+// 模型和环境是项目的配置，在项目设置里选（`ProjectComputeSettings`、默认模型）；题目在空间里。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, render, screen } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import MarketViewView from './MarketViewView.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
 
-const pools: MarketPools = {
-  ai: [
+const MARKET = {
+  skills: [
     {
-      kind: 'ai',
-      id: 'm1',
-      label: 'Model A',
-      tier: 'default',
-      price: '$0',
-      description: 'Default model',
-      available: true,
-      default: true,
+      name: 'pdf',
+      description: '读 PDF',
+      url: 'https://github.com/o/r/tree/main/skills/pdf',
+      source: 'anthropic',
+      kind: 'skill' as const,
     },
   ],
-  compute: [
-    {
-      kind: 'compute',
-      id: 'c1',
-      label: 'Box',
-      tier: 'byo',
-      price: '$0',
-      description: 'Your own machine',
-      available: false,
-      default: false,
-    },
-  ],
-}
-
-const nodes: MarketNodes = {
-  nodes: [
-    {
-      id: 'n1',
-      label: 'Node One',
-      kind: 'standard',
-      online: true,
-      current: true,
-      detail: 'ok',
-      description: 'A cloud node',
-    },
-  ],
-  active_turns_total: 3,
-  current_provider: 'standard',
+  plugins: [],
+  plugin_total: 0,
+  mcp: [],
+  notes: [],
 }
 
 const plugins = () => [createVuetify({ components, directives }), i18n]
@@ -70,39 +41,19 @@ beforeAll(() => {
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
-async function openPools() {
-  await fireEvent.click(screen.getByText(t('market.tabs.pools')))
-}
-
 describe('MarketViewView', () => {
-  it('identifies the team pool as enrolled devices', async () => {
-    const teamNodes: MarketNodes = {
-      ...nodes,
-      nodes: [{ ...nodes.nodes[0], id: 'team_devices', kind: 'team_devices', label: 'Team devices' }],
-    }
-    render(MarketViewView, { props: { pools, nodes: teamNodes }, global: { plugins: plugins() } })
-    await openPools()
-    expect(screen.getByText(t('work.nodeBoard.device'))).toBeTruthy()
-    expect(screen.queryByText(t('work.nodeBoard.cloud'))).toBeNull()
-  })
-
-  it('renders the catalog and the node board from props alone', async () => {
-    render(MarketViewView, { props: { pools, nodes }, global: { plugins: plugins() } })
+  it('opens on the skills and plugins catalog', async () => {
+    render(MarketViewView, { props: { market: MARKET, marketLoaded: true }, global: { plugins: plugins() } })
     expect(screen.getByText(t('market.title'))).toBeTruthy()
-    await openPools()
-    expect(await screen.findByText('Model A')).toBeTruthy()
-    expect(screen.getByText('Box')).toBeTruthy()
-    expect(screen.getByText('Node One')).toBeTruthy()
-    expect(screen.getByText(t('work.nodeBoard.active', { count: 3 }))).toBeTruthy()
+    expect(await screen.findByText('pdf')).toBeTruthy()
   })
 
-  it('asks the page to retry when the catalog failed to load', async () => {
-    const view = render(MarketViewView, {
-      props: { pools: null, error: 'boom' },
-      global: { plugins: plugins() },
-    })
-    await openPools()
-    await fireEvent.click(await screen.findByRole('button', { name: t('global.loadError.retry') }))
-    expect(view.emitted('retry')).toHaveLength(1)
+  // 只放能装的：模型和环境在项目设置里选，题目在空间里发布和应征。
+  it('offers only installables: no models and environments, no challenge matching', () => {
+    render(MarketViewView, { props: { market: MARKET, marketLoaded: true }, global: { plugins: plugins() } })
+    expect(screen.queryByText('模型与环境')).toBeNull()
+    expect(screen.queryByText('环境状态')).toBeNull()
+    expect(screen.queryByText('题目匹配')).toBeNull()
+    expect(document.body.textContent).not.toContain('机构把')
   })
 })

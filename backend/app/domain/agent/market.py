@@ -1,28 +1,16 @@
-"""Resource-pool market (design v3: AI and compute are symmetric pools).
+"""What a run can be given, and what each costs.
 
-A single catalog that backs both the 市场 (browse everything on offer) and a
-project's settings (pick which pool this project runs on). Two kinds of pool:
-
-  - ``ai``      — which model/provider a turn runs on (ExecutionProfile / AIPool)
-  - ``compute`` — the sandbox specs an agent's execution environment may have
-    (``agent.environment``)
-
-`available` is the honest flag: a listing that isn't deployed/credentialed can't
-be selected, so a project never silently runs on something that isn't there.
-
-The catalog carries only pools that EXIST. `available` is for a pool that is
-real but not reachable right now (no machine online, no provisioning
-configured); a pool that does not exist is not listed greyed out, it is not
-listed. Teaching a reader that connecting something would light a row up is
-only honest when it would.
+The tiers models and machines share (the project's tier policy compares against
+them), the Claude models a project may pick for its subscription turns, and
+whether this deployment can provision the platform's sandboxes. A project
+chooses its model and its environment in its settings; the sandbox specs it is
+offered come from ``app.domain.machine.environments.offered_specs``.
 """
 
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.environment import STANDARD, TEAM_DEVICES, VM
-from app.domain.agent.profiles import ProfileRegistry
 
 # --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------
 # 一件工作占用的资源花谁的钱，模型和机器用同一套词——项目的档位策略
@@ -39,7 +27,7 @@ TIER_FRONTIER = "frontier"
 
 @dataclass(frozen=True)
 class PoolListing:
-    kind: str  # "ai" | "compute"
+    kind: str  # "model"
     id: str
     label: str
     tier: str
@@ -47,38 +35,6 @@ class PoolListing:
     description: str
     available: bool
     default: bool = False
-
-
-# Curated copy for each AI profile, keyed by profile name. Falls back to a
-# generic line for profiles we don't have bespoke copy for.
-_AI_COPY: dict[str, tuple[str, str]] = {
-    "default": (
-        "包含（平台补贴）",
-        "平台托管的通用大模型，开箱即用，适合绝大多数项目。",
-    ),
-}
-_TIER_PRICE = {"byo": "自带 API 密钥"}
-
-
-def ai_listings(registry: ProfileRegistry) -> list[PoolListing]:
-    """Every AI pool in the catalog. `available` reflects credentials."""
-    selectable = {v.name for v in registry.selectable()}
-    out: list[PoolListing] = []
-    for name, p in registry.all():
-        price, desc = _AI_COPY.get(name, (_TIER_PRICE.get(p.tier, "—"), f"{p.label}。"))
-        out.append(
-            PoolListing(
-                kind="ai",
-                id=name,
-                label=p.label,
-                tier=p.tier,
-                price=price,
-                description=desc,
-                available=name in selectable,
-                default=(name == "default"),
-            )
-        )
-    return out
 
 
 def cloud_provisionable(
@@ -97,53 +53,6 @@ def cloud_vm_provisionable(
     """Can a session on this deployment have a whole cloud VM of its own? Only
     where cloud is configured and an operator named the VM offering."""
     return cloud_provisionable(settings) and bool(settings.microcloud_vm_offering_id)
-
-
-def compute_listings(
-    settings,  # type: ignore[no-untyped-def]
-    *,
-    device_online: bool | None = None,
-) -> list[PoolListing]:
-    """The sandbox specs on offer on this deployment: the platform's machines,
-    a whole VM of the platform's, and the team's enrolled computers.
-    ``device_online`` scopes the last to a project's team; left
-    as None (the global 市场) it asks whether any machine is connected."""
-    if device_online is None:
-        # deferred-import: tests replace this name on app.domain.agent.device_hub
-        from app.domain.agent.device_hub import device_hub
-
-        device_online = bool(device_hub.online_device_ids())
-    return [
-        PoolListing(
-            kind="compute",
-            id=STANDARD,
-            label="标准沙箱",
-            tier="included",
-            price="按时长计费",
-            description="每位 AI 队友一个沙箱，在平台的机器上，"
-            "只看得到自己的工作目录。",
-            available=cloud_provisionable(settings),
-            default=True,
-        ),
-        PoolListing(
-            kind="compute",
-            id=VM,
-            label="虚拟机沙箱",
-            tier="included",
-            price="按规格和时长计费",
-            description="一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块。",
-            available=cloud_vm_provisionable(settings),
-        ),
-        PoolListing(
-            kind="compute",
-            id=TEAM_DEVICES,
-            label="团队设备",
-            tier="byo",
-            price="不收费",
-            description="环境放在团队接入的设备上；由团队管理员在『设备』页接入。",
-            available=device_online,
-        ),
-    ]
 
 
 # Models available to agents using the subscription supply.
