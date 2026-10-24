@@ -95,6 +95,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "contributor_handles",
     "created_at",
     "created_by",
+    "created_by_assistant",
     "delivered_head",
     "document_id",
     "historical_delivery_id",

@@ -568,7 +568,12 @@ useCommands(() => [
               </div>
               <div v-if="inv.invitee_name" class="t-meta c-muted">{{ inv.invitee_handle }}</div>
               <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
-                <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
+                <template #inviter>
+                  <i18n-t v-if="inv.invited_by_assistant" keypath="work.onBehalf.who" tag="span">
+                    <template #name><UserRef :handle="inv.inviter_handle" /></template>
+                  </i18n-t>
+                  <UserRef v-else :handle="inv.inviter_handle" />
+                </template>
               </i18n-t>
             </div>
             <v-spacer />
