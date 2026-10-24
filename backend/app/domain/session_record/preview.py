@@ -34,6 +34,8 @@ import shlex
 import uuid
 from dataclasses import dataclass
 
+from app.domain.session_record.tool_keys import tool_key
+
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
 
@@ -497,7 +499,10 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
         if described:
             return ToolPreview(described[:PREVIEW_MAX])
         return parsed
-    key = _TOOL_ARG.get(name)
+    # One of an object's verbs quotes its own argument (`cheese_task.close`
+    # its conclusion); a call made under a retired name is read as the action
+    # it was.
+    key = _TOOL_ARG.get(tool_key(name, args), _TOOL_ARG.get(name))
     if key is None or args.get(key) is None:
         return ToolPreview()
     skill = _skill_name(args[key]) if name in _READ_TOOLS else ""

@@ -5,7 +5,7 @@ import type { AssistantProposal, AssistantStep, AssistantSubagent } from '@/stor
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
-import { toolLabel } from '@/lib/toolLabels'
+import { toolKey, toolLabel } from '@/lib/toolLabels'
 
 export interface PanelStep {
   key: string
@@ -246,12 +246,12 @@ export function stepView(step: AssistantStep): PanelStep {
       hidden: true,
       checklist: checklistIn(step.args),
     }
-  const key = STEP_ARG[step.name]
+  const key = STEP_ARG[toolKey(step.name, step.args)] ?? STEP_ARG[step.name]
   // 读到的东西有名字时写名字，不写编号。
   const arg = step.shown ?? (key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : '')
   return {
     key: step.call,
-    verb: toolLabel(step.name),
+    verb: toolLabel(step.name, step.args),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
     error: step.error === undefined ? undefined : stepError(step.error),
