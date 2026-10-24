@@ -67,6 +67,12 @@ def schemas_of(names: list[str]) -> list[dict]:
     return schemas
 
 
+def ask_for_action(tool: str, verbs: list[str]) -> str:
+    """What a call to an object the session holds only some verbs of is told
+    when it asks for another: the ones it holds."""
+    return _module().ask_for_action(tool, verbs)
+
+
 def is_platform_tool(tool: str) -> bool:
     return tool in _module().PLATFORM_TOOLS
 
