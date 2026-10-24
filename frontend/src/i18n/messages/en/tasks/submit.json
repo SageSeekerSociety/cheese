@@ -31,5 +31,6 @@
   "uploadNext": "The next step starts automatically once the upload finishes",
   "uploadPlaceholder": "Upload {prompt}",
   "uploadingTitle": "Uploading your submission",
-  "viewMine": "View my submissions"
+  "viewMine": "View my submissions",
+  "stagePastDue": "Stage “{name}” is past its due date and takes no more submissions"
 }

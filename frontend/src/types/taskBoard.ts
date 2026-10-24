@@ -4,6 +4,7 @@ import type {
   SpaceTeaching,
   Task,
   TaskRubricLine,
+  TaskStage,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -58,6 +59,7 @@ export type PostTaskRequestData = {
   defaultRole?: string
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
 }
 
 export type { TaskAttachmentData, TaskAttachmentListResponseData } from '@/types/taskAttachments'
@@ -89,6 +91,8 @@ export type PatchTaskRequestData = {
   /** 评分要点：整份替换；省掉它 = 不动。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 阶段：整份替换；省掉它 = 不动。 */
+  stages?: TaskStage[]
   endedAt?: number | null
   hasEndedAt?: boolean
 }

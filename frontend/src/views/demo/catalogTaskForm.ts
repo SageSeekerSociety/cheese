@@ -23,10 +23,12 @@ import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
 import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
+import TaskFormStages from '@/components/tasks/form/TaskFormStages.vue'
 import TaskFormTime from '@/components/tasks/form/TaskFormTime.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 
 /** 只吃 vuetify 的那几件。 */
 const UI: CatalogNeed[] = ['vuetify']
@@ -225,10 +227,111 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '合计 100 分',
       },
       {
+        name: '分了阶段',
+        note: '提交项和评分要点按阶段分组，每组下面加的那一项属于这个阶段，各阶段分别合计。',
+        props: {
+          stages: [
+            { name: '需求分析', description: '', dueAt: null },
+            { name: '实现', description: '', dueAt: null },
+          ],
+          submissionSchema: [
+            { prompt: '需求文档', type: 'TEXT', stage: 0 },
+            { prompt: 'csim.c 源文件', type: 'FILE', stage: 1 },
+          ],
+          rubric: [
+            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 0 },
+            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 1 },
+          ],
+        },
+        expect: '阶段 2：实现',
+      },
+      {
         name: '有一行没写名称（标红）',
         note: '写了评分标准却没写项目名称：点过发布后那一格标红，下面一句说为什么。',
         props: { rubric: [{ item: '', points: 10, criteria: '格式规范' }], missingName: true },
         expect: '写了评分标准的项需要填写项目名称',
+      },
+    ],
+  },
+  {
+    id: 'task-form-stages',
+    title: 'TaskFormStages',
+    about:
+      '「阶段」那一节：把题目分成几个阶段，每个阶段有名称、要求和截止日期，可以增删、调整先后。提交项和评分要点跟着阶段走。',
+    file: 'src/components/tasks/form/TaskFormStages.vue',
+    component: TaskFormStages,
+    needs: UI_T,
+    args: { stages: [], submissionSchema: [{ prompt: '提交文件', type: 'FILE' }], rubric: [] },
+    states: [
+      {
+        name: '不分阶段',
+        note: '新发一道题时不分阶段：只有一句说明和添加按钮，下面的提交与评分和以前一样。',
+        props: {},
+        expect: '不分阶段',
+      },
+      {
+        name: '两个阶段',
+        note: '每个阶段一行名称和截止日期，下面一格要求；可以上移、下移、删除。',
+        props: {
+          stages: [
+            {
+              name: '需求分析',
+              description: '交一份需求文档，说明要实现哪些功能',
+              dueAt: Date.UTC(2026, 10, 1, 15, 59),
+            },
+            { name: '实现与测试', description: '', dueAt: null },
+          ],
+        },
+        expect: '添加阶段',
+      },
+      {
+        name: '有阶段没写名称（标红）',
+        note: '点过发布后，没写名称的阶段那一格标红，下面一句说为什么。',
+        props: { stages: [{ name: '', description: '', dueAt: null }], missingName: true },
+        expect: '每个阶段都需要填写名称',
+      },
+    ],
+  },
+  {
+    id: 'task-stage-timeline',
+    title: 'TaskStageTimeline',
+    about:
+      '阶段时间轴：题目的阶段从左到右排开，写名称和截止时间。给了某个人的状态就写他每个阶段走到哪一步，给了人数就写全体的分布。',
+    file: 'src/components/tasks/TaskStageTimeline.vue',
+    component: TaskStageTimeline,
+    needs: UI_T,
+    args: {
+      stages: [
+        { name: '需求分析', description: '', dueAt: Date.UTC(2026, 10, 1, 15, 59) },
+        { name: '实现', description: '', dueAt: Date.UTC(2026, 10, 15, 15, 59) },
+        { name: '报告', description: '', dueAt: null },
+      ],
+    },
+    states: [
+      { name: '只有时间轴', note: '项目还没领到，或者只是看题目有哪些阶段。', props: {}, expect: '需求分析' },
+      {
+        name: '学生自己的进度',
+        note: '第一个阶段通过了，第二个交了在等批改，第三个还没交。',
+        props: { statuses: ['PASSED', 'PENDING_REVIEW', 'NOT_SUBMITTED'] },
+        expect: '待批改',
+      },
+      {
+        name: '出题人看全体',
+        note: '每个阶段下面列各状态的人数。',
+        props: {
+          counts: [
+            { NOT_SUBMITTED: 2, PENDING_REVIEW: 5, PASSED: 20, REJECTED: 1 },
+            { NOT_SUBMITTED: 12, PENDING_REVIEW: 10, PASSED: 4, REJECTED: 2 },
+            { NOT_SUBMITTED: 28, PENDING_REVIEW: 0, PASSED: 0, REJECTED: 0 },
+          ],
+        },
+        expect: '已通过',
+      },
+      {
+        name: '选一个阶段',
+        note: '交作业和批改时，点一个阶段切过去；选中的那个名称下面加一道线。',
+        props: { selectable: true, current: 1, statuses: ['PASSED', 'NOT_SUBMITTED', 'NOT_SUBMITTED'] },
+        expect: '实现',
       },
     ],
   },

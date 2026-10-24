@@ -182,6 +182,27 @@ it('领题开的项目：写着这份报名自己截到哪一刻，按看的人�
   expect(closing.getByTestId('overview-deadline').textContent).toBe('题目截止：10月24日 16:05')
 })
 
+it('领的题分了阶段：那一行截止换成阶段时间轴，写着这个项目每个阶段走到哪一步', () => {
+  const at = new Date(2030, 9, 24, 16, 5).getTime()
+  const view = mount({
+    overviewText: '## 赛题要求',
+    challengeDeadline: { at, mine: true },
+    challengeStages: {
+      stages: [
+        { name: '需求分析', description: '', dueAt: at },
+        { name: '实现', description: '', dueAt: null },
+      ],
+      statuses: ['PASSED', 'NOT_SUBMITTED'],
+    },
+  })
+  expect(view.queryByTestId('overview-deadline')).toBeNull()
+  const timeline = view.getByTestId('overview-stages')
+  expect(timeline.textContent).toContain('需求分析')
+  expect(timeline.textContent).toContain('截止 10月24日 16:05')
+  expect(timeline.textContent).toContain('已通过')
+  expect(timeline.textContent).toContain('未提交')
+})
+
 it('不是领题开的项目：不写截止', () => {
   const view = mount({ overviewText: '## 现在到哪了' })
   expect(view.queryByTestId('overview-deadline')).toBeNull()

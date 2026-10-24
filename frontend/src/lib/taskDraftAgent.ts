@@ -22,6 +22,7 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   name: ['name'],
   description: ['description', 'descriptionMarkdown'],
   attachments: ['attachmentIds', 'attachmentFiles'],
+  stages: ['stages'],
   submission: ['submissionSchema'],
   rubric: ['rubric'],
   rubric_public: ['rubricPublic'],
@@ -87,6 +88,12 @@ function text(value: unknown): string | null {
 
 function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
+}
+
+/** 芝士从 1 数阶段，表单从 0 数（后端 `drafts._stage_index` 同一条）。 */
+function stageIndex(value: unknown): number {
+  const n = count(value)
+  return n !== null && n > 0 ? n - 1 : 0
 }
 
 /** 参数写到这里时，表单上能确定的那几格。`markdown` 是详情现在的样子：只改几处
@@ -181,23 +188,40 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
       .map((tag) => terms.topics.find((topic) => topic.name === tag)?.id)
       .filter((id): id is number => id !== undefined)
   }
+  if (Array.isArray(given.stages)) {
+    fields.stages = given.stages
+      .map((stage) => stage as { name?: unknown; description?: unknown; due?: unknown })
+      .filter((stage) => typeof stage.name === 'string')
+      .map((stage) => {
+        const found = WHEN.exec(text(stage.due)?.trim() ?? '')
+        const [, y, m, d, hh, mm] = found ?? []
+        const at = found ? dayjs(`${y}-${m}-${d}T${hh ?? '23'}:${mm ?? '59'}`) : null
+        return {
+          name: String(stage.name),
+          description: text(stage.description) ?? '',
+          dueAt: at?.isValid() ? at.valueOf() : null,
+        }
+      })
+  }
   if (Array.isArray(given.submission)) {
     fields.submissionSchema = given.submission
-      .map((item) => item as { name?: unknown; kind?: unknown })
+      .map((item) => item as { name?: unknown; kind?: unknown; stage?: unknown })
       .filter((item) => typeof item.name === 'string')
       .map((item) => ({
         prompt: String(item.name),
         type: KINDS[String(item.kind)] ?? 'FILE',
+        stage: stageIndex(item.stage),
       }))
   }
   if (Array.isArray(given.rubric)) {
     fields.rubric = given.rubric
-      .map((line) => line as { item?: unknown; points?: unknown; criteria?: unknown })
+      .map((line) => line as { item?: unknown; points?: unknown; criteria?: unknown; stage?: unknown })
       .filter((line) => typeof line.item === 'string')
       .map((line) => ({
         item: String(line.item),
         points: count(line.points) ?? 0,
         criteria: text(line.criteria) ?? '',
+        stage: stageIndex(line.stage),
       }))
   }
   if (typeof given.rubric_public === 'boolean') fields.rubricPublic = given.rubric_public

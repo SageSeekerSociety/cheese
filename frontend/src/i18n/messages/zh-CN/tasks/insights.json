@@ -29,5 +29,6 @@
   "trendEmptyTitle": "还没有领取数据",
   "trendSeries": "累计领取",
   "trendSubtitle": "最近 12 天，累计领取人数",
-  "trendTitle": "领取走势"
+  "trendTitle": "领取走势",
+  "stagesTitle": "各阶段进度"
 }

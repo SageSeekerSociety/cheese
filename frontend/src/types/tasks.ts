@@ -53,6 +53,8 @@ export interface ParticipationEligibility {
 export interface TaskSubmissionSchemaEntry {
   prompt: string
   type: TaskSubmissionEntryType
+  /** 属于第几个阶段（从 0 数）；不分阶段的题都是 0。 */
+  stage?: number
 }
 
 /** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
@@ -60,6 +62,30 @@ export interface TaskRubricLine {
   item: string
   points: number
   criteria: string
+  /** 评的是第几个阶段的提交（从 0 数）。 */
+  stage?: number
+}
+
+/** 题目的一个阶段（`app/domain/task/stages.py`）：名称、要做到什么、截止时间。 */
+export interface TaskStage {
+  name: string
+  description: string
+  /** 毫秒时间戳；`null` = 这个阶段不设截止。 */
+  dueAt: number | null
+  /** 改题时它原来是第几个（从 0 数），新加的是 `null`：已交的提交跟着阶段走。 */
+  previousIndex?: number | null
+}
+
+/** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。 */
+export type TaskStageStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'PASSED' | 'REJECTED'
+
+/** `GET /tasks/{id}/progress`：每个阶段上的进度。不分阶段的题算一个阶段。 */
+export interface TaskProgress {
+  stages: TaskStage[]
+  /** 我那条获批的领取在每个阶段上的状态；没领到是 `null`。 */
+  mine: { participantId: number; stages: TaskStageStatus[] } | null
+  /** 批改的人才有：每个阶段上各状态的人数。 */
+  distribution: Record<TaskStageStatus, number>[] | null
 }
 
 /** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。
@@ -90,6 +116,8 @@ export interface Task {
   /** 评分要点。批改的人总能读到；学生只在 `rubricPublic` 时读到，否则是空的。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 阶段；不分阶段是空的。详情与改题的响应才带。 */
+  stages?: TaskStage[]
   participants: {
     total: number
     examples: TaskParticipantSummary[]
@@ -148,6 +176,8 @@ export interface TaskSubmission {
   member: TaskParticipantSummary
   submitter: User
   version: number
+  /** 这一版交的是第几个阶段（从 0 数）。 */
+  stage: number
   index: number
   createdAt: number
   updatedAt: number
@@ -247,4 +277,5 @@ export type TaskFormSubmitData = {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
 }

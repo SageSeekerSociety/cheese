@@ -406,11 +406,74 @@ describe('发题页：发一道', () => {
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
     expect(sent().submissionSchema).toEqual([
-      { prompt: 'csim.c 源文件', type: 'FILE' },
-      { prompt: '合作与参考说明', type: 'TEXT' },
+      { prompt: 'csim.c 源文件', type: 'FILE', stage: 0 },
+      { prompt: '合作与参考说明', type: 'TEXT', stage: 0 },
     ])
-    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对' }])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 60, criteria: '8 组记录全对', stage: 0 }])
     expect(sent().rubricPublic).toBe(false)
+  })
+
+  it('分阶段：每个阶段带名称和要求发出去，提交项和评分要点各归它所在的阶段', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    // The first stage takes what the form already had; the second brings a file item of its own.
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+    await fireEvent.update(view.getByLabelText('第 1 个阶段的名称'), '需求分析')
+    await fireEvent.update(view.getByLabelText('第 1 个阶段的要求'), '交一份需求文档')
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+    await fireEvent.update(view.getByLabelText('第 2 个阶段的名称'), '实现')
+    await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[1], '代码')
+    await fireEvent.click(view.getAllByRole('button', { name: '添加一项' })[1])
+    await fireEvent.update(view.getByLabelText('第 1 项项目'), '正确性')
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect(sent().stages).toEqual([
+      { name: '需求分析', description: '交一份需求文档', dueAt: null, previousIndex: null },
+      { name: '实现', description: '', dueAt: null, previousIndex: null },
+    ])
+    expect(sent().submissionSchema).toEqual([
+      { prompt: '提交文件', type: 'FILE', stage: 0 },
+      { prompt: '代码', type: 'FILE', stage: 1 },
+    ])
+    expect(sent().rubric).toEqual([{ item: '正确性', points: 0, criteria: '', stage: 1 }])
+  })
+
+  it('删掉一个阶段：它的提交项一起去掉，后面阶段的往前挪', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    for (const name of ['一', '二', '三']) {
+      await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+      const fields = view.getAllByPlaceholderText('例如：需求分析')
+      await fireEvent.update(fields[fields.length - 1], name)
+    }
+    await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[2], '第三阶段的文件')
+
+    await fireEvent.click(view.getByRole('button', { name: '删除第 2 个阶段' }))
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect(sent().stages.map((s: { name: string }) => s.name)).toEqual(['一', '三'])
+    expect(sent().submissionSchema).toEqual([
+      { prompt: '提交文件', type: 'FILE', stage: 0 },
+      { prompt: '第三阶段的文件', type: 'FILE', stage: 1 },
+    ])
+  })
+
+  it('有阶段没写名称：不发，那一节说为什么', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    await fireEvent.click(view.getByRole('button', { name: '添加阶段' }))
+
+    await publish(view)
+
+    expect(await view.findByText('每个阶段都需要填写名称')).toBeTruthy()
+    expect(publishDraft).not.toHaveBeenCalled()
   })
 
   it('评分行写了标准没写名称：不发，那一节说为什么', async () => {
@@ -443,7 +506,7 @@ describe('发题页：发一道', () => {
     expect(sent().submitterType).toBe('USER')
     expect(sent().rank).toBe(1)
     expect(sent().categoryId).toBe(3)
-    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE' }])
+    expect(sent().submissionSchema).toEqual([{ prompt: '提交文件', type: 'FILE', stage: 0 }])
     expect(sent().attachmentIds).toEqual([41])
     // 沿用空间的默认指导：不单独设置，让空间那一层生效。
     expect(sent().teachingOwn).toBe(false)

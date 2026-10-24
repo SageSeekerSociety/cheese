@@ -16,6 +16,7 @@ import type {
   TaskDraftFields,
   TaskFormSubmitData,
   TaskRubricLine,
+  TaskStage,
   TaskSubmissionSchemaEntry,
   Topic,
 } from '@/types'
@@ -225,6 +226,15 @@ export function useTaskForm(
   const rubricMissingName = ref(false)
   watch(rubric, () => (rubricMissingName.value = false), { deep: true })
 
+  // 阶段：改题时每个阶段记着它原来是第几个（`previousIndex`），挪了位置，已交的提交
+  // 跟着它走（`app/domain/task/stages.py`）。
+  const stages = ref<TaskStage[]>(
+    (props.initialData?.stages ?? []).map((stage, index) => ({ previousIndex: index, ...stage }))
+  )
+  /** 点过发布后，有没写名称的阶段。 */
+  const stageMissingName = ref(false)
+  watch(stages, () => (stageMissingName.value = false), { deep: true })
+
   /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。 */
   const invalidCount = computed(() => (submitCount.value > 0 ? Object.keys(errors.value).length : 0))
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
@@ -249,9 +259,18 @@ export function useTaskForm(
       rubricMissingName.value = true
       return
     }
-    const items = submissionSchema.value
-      .map((entry) => ({ ...entry, prompt: entry.prompt.trim() }))
+    if (stages.value.some((stage) => !stage.name.trim())) {
+      stageMissingName.value = true
+      return
+    }
+    const written = submissionSchema.value
+      .map((entry) => ({ ...entry, stage: entry.stage ?? 0, prompt: entry.prompt.trim() }))
       .filter((entry) => entry.prompt)
+    // 每个阶段都至少交一样东西：一样都没写的阶段交一个文件。
+    const items = Array.from({ length: Math.max(1, stages.value.length) }, (_, stage) => {
+      const own = written.filter((entry) => entry.stage === stage)
+      return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
+    }).flat()
     const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
@@ -276,13 +295,20 @@ export function useTaskForm(
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
       mentors: mentorsJoin.value ? mentors.value : [],
-      submissionSchema: items.length ? items : DEFAULT_SUBMISSION_SCHEMA,
+      submissionSchema: items,
       rubric: lines.map((line) => ({
         item: line.item.trim(),
         points: Number(line.points) || 0,
         criteria: line.criteria.trim(),
+        stage: line.stage ?? 0,
       })),
       rubricPublic: rubricPublic.value,
+      stages: stages.value.map((stage) => ({
+        name: stage.name.trim(),
+        description: stage.description.trim(),
+        dueAt: stage.dueAt,
+        previousIndex: stage.previousIndex ?? null,
+      })),
     }
     emit('submit', submissionData)
   }
@@ -311,6 +337,7 @@ export function useTaskForm(
       submissionSchema: submissionSchema.value,
       rubric: rubric.value,
       rubricPublic: rubricPublic.value,
+      stages: stages.value,
     }
   }
 
@@ -343,6 +370,7 @@ export function useTaskForm(
     if ('submissionSchema' in fields) submissionSchema.value = (fields.submissionSchema ?? []).map((e) => ({ ...e }))
     if ('rubric' in fields) rubric.value = (fields.rubric ?? []).map((line) => ({ ...line }))
     if ('rubricPublic' in fields) rubricPublic.value = fields.rubricPublic ?? true
+    if ('stages' in fields) stages.value = (fields.stages ?? []).map((stage) => ({ ...stage }))
   }
 
   const privacyDialogOpen = ref(false)
@@ -402,6 +430,8 @@ export function useTaskForm(
     rubric,
     rubricPublic,
     rubricMissingName,
+    stages,
+    stageMissingName,
     isSubmitting,
     submitForm,
     check,
