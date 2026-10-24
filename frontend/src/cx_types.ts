@@ -176,6 +176,8 @@ export interface BlockMeta extends AskBlockMeta {
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
   quoted_context?: import('./lib/quotedContext').QuotedContext
+  // 作者自己的芝士替他写的（后端 `meta.by_assistant`）：署的是他的名，名字旁边标「芝士代发」。
+  by_assistant?: boolean
 }
 
 export interface ChecklistMeta {
@@ -282,6 +284,7 @@ export interface RoomTask {
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
   reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
+  created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
   document_id?: string | null // 实况文档；第一次打开任务时才建
@@ -509,6 +512,8 @@ export interface ProjectInvitation {
   project_id: string
   invitee_handle: string
   inviter_handle: string
+  /** 邀请人自己的芝士替他发的。 */
+  invited_by_assistant?: boolean
   status: 'pending' | 'accepted' | 'declined' | 'revoked'
   created_at: string
   responded_at?: string | null

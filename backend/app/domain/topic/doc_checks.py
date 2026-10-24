@@ -81,7 +81,7 @@ def living_doc_warnings(content: str) -> list[str]:
             f"正文 {len(content)} 字，超过 {LIVING_DOC_CHAR_LIMIT} 字的写作预算。"
             "删掉做完的事、过程和证据细节，只留读的人要知道的：为什么做、到哪了、"
             "在等谁、定了什么、还有什么没定；"
-            "细节留在聊天、任务卡和 PR 里。"
+            "过程看现场，细节留在任务卡和 PR 里。"
         )
 
     headings = [m.group(1) for m in _HEADING_RE.finditer(content)]
@@ -89,7 +89,7 @@ def living_doc_warnings(content: str) -> list[str]:
     if logs:
         warnings.append(
             "小节《" + "》《".join(logs) + "》是流水账：文档记状态，不记过程。"
-            "把这几天发生了什么留在聊天或结论卡里，正文只留「现在成立」的那几条。"
+            "这几天发生了什么现场里看得到，正文只留「现在成立」的那几条。"
         )
 
     lines = content.splitlines()

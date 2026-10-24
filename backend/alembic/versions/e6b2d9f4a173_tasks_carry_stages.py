@@ -1,7 +1,7 @@
 """tasks carry stages
 
 Revision ID: e6b2d9f4a173
-Revises: c5e8a2d71f46
+Revises: e73ca7b0dd69
 Create Date: 2026-10-24
 
 A 题目's 阶段 (`app.domain.task.stages`): one row per stage, in order, with its
@@ -23,7 +23,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "e6b2d9f4a173"
-down_revision: str | Sequence[str] | None = "c5e8a2d71f46"
+down_revision: str | Sequence[str] | None = "e73ca7b0dd69"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

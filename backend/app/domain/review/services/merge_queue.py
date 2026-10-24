@@ -442,6 +442,7 @@ async def _merge_armed_card(
         await self._session.flush()
         return
     if result.queued:
+        card.decided_by_assistant = False
         await self._record_queue_entry(card, armer)
         return
     if result.sha is None:
@@ -459,6 +460,7 @@ async def _merge_armed_card(
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, armer)
     card.decided_by = armer
+    card.decided_by_assistant = False
     card.decided_at = datetime.now(UTC)
     await self._finish_pr_accept(card=card, topic=topic)
 

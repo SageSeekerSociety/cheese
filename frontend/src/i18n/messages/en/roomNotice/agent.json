@@ -1,4 +1,5 @@
 {
+  "actedByAssistant": "Cheese on behalf of {person}",
   "actionNotify": "{actor} sent a notification",
   "apiRetry": "A request to the AI service failed; retrying",
   "apiRetryAttempt": "A request to the AI service failed; retrying (attempt {attempt})",
