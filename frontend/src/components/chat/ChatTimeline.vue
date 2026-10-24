@@ -250,11 +250,12 @@ const createdCont = computed(() =>
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
 )
+const NO_TASKS: TaskLine[] = []
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
-  return props.tasksUnder?.(blockId) ?? []
+  return props.tasksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -262,8 +263,10 @@ function became(m: Block): TaskLine | undefined {
 }
 /** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
 function madeFrom(m: Block): TaskLine[] {
+  const tasks = under(m.id)
+  if (!tasks.length) return NO_TASKS
   const own = props.threadable ? became(m) : undefined
-  return under(m.id).filter((task) => task !== own)
+  return own ? tasks.filter((task) => task !== own) : tasks
 }
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
@@ -310,7 +313,7 @@ const faceRows = computed(() => {
 // 悬停在动的头像上：现场顶上那一行，连同已经用了多久。秒数只在有队友在跑时走。
 const now = ref(Date.now())
 let ticker: ReturnType<typeof setInterval> | undefined
-const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status))
+const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status && f.status.startedAt !== null))
 watch(
   ticking,
   (on) => {
@@ -335,6 +338,23 @@ function faceLabel(face: AgentFace | undefined): string | null {
 function faceStatus(face: AgentFace | undefined): string | null {
   return face?.status ? siteStatusLabel(face.status) : null
 }
+
+const faceLabels = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const label = faceLabel(face)
+    if (label) out.set(id, label)
+  }
+  return out
+})
+const faceStatuses = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const status = faceStatus(face)
+    if (status) out.set(id, status)
+  }
+  return out
+})
 
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
@@ -563,8 +583,8 @@ const rowLabels = computed(() =>
               :time-of="fmtTime"
               :cont="noticeCont[i]"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :time="fmtTime(m.created_at)"
               :agent-name="agentName"
               :refs="refs"
@@ -633,8 +653,8 @@ const rowLabels = computed(() =>
               :active="bar.shown && bar.id === m.id"
               :live="liveChecklists.has(m.id)"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :editing="editingId === m.id"
               :saving="editSaving"
               :mention-pool="mentionPool"
@@ -744,7 +764,11 @@ const rowLabels = computed(() =>
             :refs="refs"
             :viewer="viewer"
             :ask-busy="false"
-            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+            :outgoing="{
+              error: item.error,
+              failed: item.state === 'failed',
+              slow: !!item.slow || !!outgoingState(item),
+            }"
             @animationend="emit('settle-sent', $event, item.clientId)"
             @retry="emit('retry-send', item.clientId)"
             @edit="emit('edit-send', item)"
