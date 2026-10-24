@@ -49,7 +49,7 @@
   "taskBriefIsGenerated": "《{name}》是按题目内容生成的，改题目内容它会跟着更新，不能单独替换或删除",
   "taskCreatedByPerson": "只有人可以这样创建任务",
   "taskEarlierPending": "这位出题人还有更早的题目在等审核，先审核那些",
-  "taskFilesForTakers": "只有出题人、空间管理员和已经领取的人能下载题目的材料",
+  "taskFilesForTakers": "只有出题人、空间管理员和在做这道题的人能下载题目的材料",
   "taskLockingPolicyInvalid": "队伍成员变更的设置无效",
   "taskOpeningNotFailed": "AI 队友接手这个任务时没有失败，不用重试",
   "taskOwnSessionCloses": "只有任务的负责人、协作者，或者在这个任务对话里工作的 AI 队友，可以关闭它",

@@ -186,7 +186,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一位导师',
-        note: '领题前说清，学生同意后才能领。',
+        note: '申请前说清，学生同意后才能申请。',
         props: { names: '周立群' },
         expect: '会作为导师加入你的项目',
       },
@@ -308,7 +308,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       ],
     },
     states: [
-      { name: '只有时间轴', note: '项目还没领到，或者只是看题目有哪些阶段。', props: {}, expect: '需求分析' },
+      { name: '只有时间轴', note: '还没开始做，或者只是看题目有哪些阶段。', props: {}, expect: '需求分析' },
       {
         name: '学生自己的进度',
         note: '第一个阶段通过了，第二个交了在等批改，第三个还没交。',

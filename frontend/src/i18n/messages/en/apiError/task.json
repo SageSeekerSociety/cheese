@@ -49,7 +49,7 @@
   "taskBriefIsGenerated": "{name} is generated from the task's content and follows every change to it. It can't be replaced or deleted on its own",
   "taskCreatedByPerson": "Only a person can create a task this way",
   "taskEarlierPending": "This publisher has earlier tasks waiting for review; review those first",
-  "taskFilesForTakers": "Only the publisher, a space admin or someone who took this task can download its materials",
+  "taskFilesForTakers": "Only the publisher, a space admin or someone working on this task can download its materials",
   "taskLockingPolicyInvalid": "The team membership setting is not valid",
   "taskOpeningNotFailed": "The AI teammate didn't fail when it took on this task; there is nothing to retry",
   "taskOwnSessionCloses": "Only the task's owner, its collaborators, or the AI teammate working in the task's conversation can close it",
