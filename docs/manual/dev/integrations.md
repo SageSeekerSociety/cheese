@@ -56,13 +56,23 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 | 应用 | `app_id` + `app_secret` → tenant token | 分享给这个应用的那些文档 |
 | 用户授权 | OAuth 拿到的 `user_access_token` + `refresh_token` | 这个人看得见的；**搜索 API 只在这条路上有答案** |
 
-**应用是组织的，一个人建一次。** 成员以前各自去飞书建一个企业自建应用、把 App ID / Secret 填进「我的连接」——每个人做的是同一件事。现在它落在 `FeishuApp`（`feishu_apps` 表，固定一行）：平台管理员在飞书建好自建应用、开好云文档读写、搜索云文档、获取用户身份这几个权限、把回调地址填成 `{frontend_url}/api/integrations/feishu/callback`、发布并通过审核，然后在后台的「飞书应用」那一页（`PUT /admin/integrations/feishu`，门是 `PlatformAdminDep`）把凭据填一次。Secret 只写不回显，空着提交表示不改已经存下的那一个。
+授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和下面让管理员开的那几项要一一对应，改一处就改另一处。
+
+**应用是组织的，一个人建一次。** 成员以前各自去飞书建一个企业自建应用、把 App ID / Secret 填进「我的连接」——每个人做的是同一件事。现在它落在 `FeishuApp`（`feishu_apps` 表，固定一行）：平台管理员在飞书建好自建应用，在「权限管理」里开通 `feishu.USER_SCOPES` 列的那几个用户身份权限（`offline_access`、`search:docs:read`、`docx:document`），在「安全设置」里打开「刷新 user_access_token」，把回调地址填成 `{frontend_url}/api/integrations/feishu/callback`、发布并通过审核，然后在后台的「飞书应用」那一页（`PUT /admin/integrations/feishu`，门是 `PlatformAdminDep`）把凭据填一次。Secret 只写不回显，空着提交表示不改已经存下的那一个。
 
 成员那边只有一颗「连接飞书」：`POST /me/integrations/feishu` 先落一行（不带任何凭据 —— 应用是管理员的，个人出的是自己的账号），`GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。平台没配应用时按钮是灰的，提示「管理员还没配置飞书应用」；没配就发起授权会得到同一句话的 422。
 
 **自带凭据的老连接照旧能用。** `feishu_settings` 的次序是：这一行自己的 `app_id` 在先，平台应用在后，都没有才报错 —— 所以库里那些每个人自己建的连接不用迁移就还在跑，只是页面不再引导建新的那种。`public(row)` 用 `shared_app` 说出这一行走的是哪一条。
 
-错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind。令牌刷新后**写回**（`keep_feishu_tokens` 在 `finally` 里跑），否则下次调用又刷一遍，而刷新令牌常常是一次性的；刷不动时报「授权已失效，到「我的连接」里重新授权」。
+错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`。
+
+**刷新令牌只能用一次，大约一周过期。** 由此有三条：
+
+- **刷新前锁住这一行**（`service._renewed`）。`user_access_token` 快到期时，先 `SELECT … FOR UPDATE` 重读这一行，确实还要刷才刷，刷完立刻写回。两个调用同时发现过期，后一个等锁、读到新令牌，不会拿已经用掉的那个再刷一次。
+- **到期前续上**（`service.renew_feishu`，每小时一次）。刷新令牌离过期不到 `RENEW_BEFORE_S`（两天）就刷一次，过期时间（`refresh_token_expires_at`）跟令牌一起封在 `secret` 里。一周没人用的授权照样能用；飞书规定授权满一年必须重新授权，到那时刷新被拒，这一行标成 `auth_failed`。
+- **「重新检查」验的是本人授权**。有用户授权的行，检查时刷新一次：刷得动才算正常，刷不动就是 `auth_failed`，页面如实显示。只验应用凭据的话，个人授权早已失效，状态也还是「正常」。
+
+刷不动时报「授权已失效，到「我的连接」里重新授权」。
 
 授权码回来的那条路是 `GET /integrations/feishu/callback`：`state` 是 `"<id>.<kid>.<digest>"`，用 `keyed_digests(Purpose.INTEGRATION_STATE, …)` 重算再 `hmac.compare_digest` 比 —— 对不上就带着一句人能读的话跳回前端页面。这条路上所有失败都跳转（页面能显示原因），不抛 4xx。
 

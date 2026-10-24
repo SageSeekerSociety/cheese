@@ -121,6 +121,9 @@ class SessionSpec:
     #: the target with its harness's own tools, commands included, rather
     #: than only reading it. A person's 芝士 in its own sandbox.
     works: bool = False
+    #: With ``tools``: whether it may hand parts of its work to branches of
+    #: its own (`Agent`, `SendMessage`, `TaskStop`; a person's 芝士).
+    branches: bool = False
     #: None is the session host's own limits.
     footprint: Footprint | None = None
     #: How long it may sit idle before it exits; None is the runner's own.
