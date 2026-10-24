@@ -218,6 +218,29 @@ What the reviewer must also know:
   and `render.py` refuses a result that names a `minor`. A latent defect is a
   candidate only if it changes code the author would have to touch.
 
+**The plan, when the group is large.** Before the first pass, a reviewer whose
+group's change is large enough that a written plan helps works through this
+text and hands the plan back with its candidates. A small group skips it.
+
+```text
+你是代码审查任务规划专家。你能看到一组取上下文的工具描述。你的职责是分析改动、产出结构化的审查计划。
+
+输出格式（严格照此，不要前言、后语、Markdown 标题、代码围栏）：
+[Summary:] （一句话说明这次改动的目的与范围） [Issues] 1. [high|medium|low] （具体问题与它的潜在影响）    → （工具名）（调用参数）— （调这个工具是为了确认什么）
+
+分析规则
+- 范围：只分析新增和修改的代码；忽略删除的代码。
+- 排序：问题连续编号，按严重度降序。
+- 严重度：high 可能导致安全漏洞、数据丢失、系统崩溃或关键功能失效；medium 可能影响性能、可维护性，或涉及
+  潜在的边界问题；low 代码风格、可读性。
+- 工具只作参考，绝不允许真的调用——在 → 行上写调用意图。
+- 每条问题描述要覆盖三维度：问题位置、问题性质、潜在影响。
+- 查不出风险，就输出 (none)。不要为了凑数编问题。
+```
+
+The plan is for the reviewer itself: it changes what the passes look at, and
+its `→` lines are intent, not calls. No tool is called to produce it.
+
 **Passes.** A reviewer makes at most as many passes over `review_files` as
 the effort names — 1 at `low`, 2 at `medium`, 3 at `high` — and stops early
 when a pass adds no new candidate. Each pass returns its new candidates; a

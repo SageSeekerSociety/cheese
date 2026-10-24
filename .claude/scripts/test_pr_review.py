@@ -436,6 +436,7 @@ class PrReview(unittest.TestCase):
             "frontend/src/i18n/messages/en/ask.json",
             "What lives across groups is yours",
             "你是代码审查助手",
+            "你是代码审查任务规划专家",
             "你没有跑命令的权限",
             "你是代码审查评论的事实核查员",
             "默认答案是全部放行",
