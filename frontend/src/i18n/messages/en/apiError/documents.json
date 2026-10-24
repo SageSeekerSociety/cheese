@@ -91,5 +91,6 @@
   "docShareNotAllowed": "A project's document takes the Share documents permission; a team's or a person's own, its creator or a team admin",
   "docShareGone": "This share link no longer works",
   "docShareAppElsewhere": "This mini app belongs to another document and is not shared with this one",
-  "docShareImageUnavailable": "This image is not shared with the document"
+  "docShareImageUnavailable": "This image is not shared with the document",
+  "commentAnchorOtherFile": "This anchor points at a different file"
 }

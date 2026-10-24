@@ -111,6 +111,20 @@ export async function hearVoice(topicId: string, wav: Blob): Promise<{ text: str
   return body.data
 }
 
+/** 对自己的芝士说的一段：不在哪个频道里，听写的方式和额度都和频道里的一样。 */
+export async function hearAssistantVoice(wav: Blob): Promise<{ text: string; raw: string }> {
+  const form = new FormData()
+  form.append('file', wav, 'voice.wav')
+  const { status, body } = await postFormWithProgress<ApiEnvelope<{ text: string; raw: string }>>(
+    `${BASE}/assistant/voice`,
+    form,
+    authHeaders()
+  )
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
+}
+
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 //
 // 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，

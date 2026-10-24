@@ -363,6 +363,15 @@ export function previewBundle(
     docPage: computed(() => false),
     canPage: computed(() => pageViewOf(identity?.path)),
     docPageHtml: ref(null),
+    // 这一格是 markdown 演示：评论那一包用真的文档评论动作，这里还没有评论。
+    comments: {
+      target: computed(() => null),
+      author: 'demo',
+      open: ref(false),
+      toggle: noop,
+      threads: docThreadsBundle(),
+      post: noopAsync,
+    },
     revs: v.revs,
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),

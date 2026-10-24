@@ -327,6 +327,40 @@ def test_a_browsers_feed_hears_of_every_new_row_not_only_pushable_ones(client):
     assert changed["latest"] != opened["latest"]
 
 
+def test_a_feed_hears_when_a_conversation_with_cheese_says_more(client):
+    """An answer ended or a routine ran: a panel open in another tab or on
+    another device is told which conversation to read again."""
+    from app.domain.agent.personal import service as assistant
+
+    user_id, _, page = _signed_in(client, "kai")
+    notices = _notices_token(client, page)
+
+    async def started() -> str:
+        async with client.test_request_factory() as db:  # type: ignore[attr-defined]
+            store = assistant.AssistantConversations(db)
+            row = await store.start(user_id, assistant.Place.personal(user_id))
+            await db.commit()
+            return str(row.id)
+
+    async def said(conversation: str) -> None:
+        async with client.test_request_factory() as db:  # type: ignore[attr-defined]
+            store = assistant.AssistantConversations(db)
+            row = await store.owned(user_id, uuid.UUID(conversation))
+            await store.append(row, "assistant", "做完了。")
+            await db.commit()
+
+    assert client.portal is not None
+    conversation = client.portal.call(started)
+    with client.websocket_connect("/notifications/inbox") as ws:
+        ws.send_json({"token": notices})
+        _next(ws, "inbox")
+        client.portal.call(said, conversation)
+        assert _next(ws, "assistant") == {
+            "kind": "assistant",
+            "conversation": conversation,
+        }
+
+
 def test_a_feed_hears_nothing_of_someone_elses_inbox(client, monkeypatch):
     monkeypatch.setattr(notifications_live, "BEAT_SECONDS", 0.2)
     _, _, page = _signed_in(client, "hal")
