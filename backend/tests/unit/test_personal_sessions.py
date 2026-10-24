@@ -48,7 +48,7 @@ from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = ("cheese_my_tasks", "cheese_docs_search", "cheese_read")
+TOOLS = ("cheese_read", "cheese_docs_search")
 
 
 #: What the platform's routes answer a tool's request with, by path prefix.
@@ -321,7 +321,10 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     hub, sessions = host
     first_words_seen = threading.Event()
     fake = platform(
-        [{"tool": "cheese_my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        [
+            {"tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "你领了一道题：图像分类基线复现。"},
+        ],
         rest_held_until=first_words_seen,
     )
     launch = _launch(7)
@@ -335,7 +338,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert any(isinstance(e, Tool) and e.name == "cheese_my_tasks" for e in events)
+    assert any(isinstance(e, Tool) and e.name == "cheese_read" for e in events)
     assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
@@ -344,7 +347,6 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
         "cheese_docs_search",
-        "cheese_my_tasks",
         "cheese_read",
         "cheese_subagent_send",
         "cheese_subagent_start",
@@ -378,7 +380,7 @@ async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_r
     _hub, sessions = host
     platform(
         [
-            {"say": "我先查一下。", "tool": "cheese_my_tasks"},
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
             {"text": "你领了一道题。"},
         ]
     )
@@ -434,7 +436,10 @@ async def test_a_credential_renewed_mid_answer_is_what_the_next_call_acts_with(
     _hub, sessions = host
     spoke = threading.Event()
     fake = platform(
-        [{"say": "我先查一下。", "tool": "cheese_my_tasks"}, {"text": "好。"}],
+        [
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "好。"},
+        ],
         rest_held_until=spoke,
     )
     launch = _launch(7)

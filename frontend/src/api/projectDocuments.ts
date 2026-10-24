@@ -4,6 +4,7 @@ import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
 import { t } from '../i18n'
 import { rememberNumbered } from '../lib/addresses'
+import { refusalWords } from '../lib/noticeText'
 
 import { authHeaders, BASE, request } from './http'
 
@@ -64,11 +65,66 @@ export function deleteDocument(documentId: string): Promise<unknown> {
  *  先 fetch 再转 URL，是因为只有 fetch 带得上登录凭证，`<img src>` 发出的请求是匿名的。
  *  调用方在不再需要时 `URL.revokeObjectURL`。 */
 export async function documentImageUrl(documentId: string, path: string): Promise<string> {
+  return URL.createObjectURL(await documentImageBytes(documentId, path))
+}
+
+/** 印成纸用的那张图：字节就在地址里（`data:`），平台的打印浏览器没有凭证也画得出来。 */
+export async function documentImageDataUrl(documentId: string, path: string): Promise<string> {
+  return await bytesAsDataUrl(await documentImageBytes(documentId, path))
+}
+
+async function documentImageBytes(documentId: string, path: string): Promise<Blob> {
   const res = await fetch(`${BASE}${one(documentId)}/image?path=${encodeURIComponent(path)}`, {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
-  return URL.createObjectURL(await res.blob())
+  return await res.blob()
+}
+
+async function bytesAsDataUrl(blob: Blob): Promise<string> {
+  const shown = await smaller(blob).catch(() => blob)
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('unreadable'))
+    reader.readAsDataURL(shown)
+  })
+}
+
+/** 长边缩到 1600 像素：A4 的正文列约 660 像素宽，打出 200dpi 也就这么多，再大只是让
+ *  那一页变重。缩不了、缩完更大、浏览器不给画布时，原样还回去。 */
+async function smaller(blob: Blob): Promise<Blob> {
+  if (blob.size <= 300 * 1024 || typeof createImageBitmap !== 'function') return blob
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height))
+    if (scale === 1 && blob.size <= 800 * 1024) return blob
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const context = canvas.getContext('2d')
+    if (!context) return blob
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    const made = await new Promise<Blob | null>((resolve) => canvas.toBlob((out) => resolve(out), 'image/webp', 0.9))
+    return made && made.size < blob.size ? made : blob
+  } finally {
+    bitmap.close()
+  }
+}
+
+/** 把排好的一页交给平台的打印浏览器，回执是那份 PDF。读得了这份文档的人才拿得到；
+ *  部署里没有打印浏览器时，后端用一句现成的话拒绝。 */
+export async function documentPdf(documentId: string, html: string): Promise<Blob> {
+  const res = await fetch(`${BASE}${one(documentId)}/pdf`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ html }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(refusalWords(body) || t('work.room.doc.exportPdfFailed'))
+  }
+  return await res.blob()
 }
 
 /** 这份文档最后存下的正文；还没写过字时是空的。 */
