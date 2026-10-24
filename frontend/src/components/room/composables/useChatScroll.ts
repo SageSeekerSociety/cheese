@@ -143,26 +143,25 @@ export function useChatScroll(
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
     pointerHeld = false
   })
-  // 键盘同理：不是所有键都算，而且同一个键在输入框里和落在面板上做的不是一件事。输入框
-  // 里的 keydown 一路冒到 window，「打的是什么键」定不了「这一栏动没动」，得看它落在哪、
-  // 是哪个键：
-  // - 翻页键（PageUp/PageDown）光标挪不了页，浏览器把它交给最近的可滚祖先。焦点在发消息
-  //   的输入框里时挪的是输入框自己（它在面板外，这是「往回翻」，不算）；焦点在面板里时
-  //   挪的就是这一栏——哪怕落在时间线里的就地编辑器（改自己的消息）里也算。
-  // - 方向键、Home/End、空格在可编辑区里是挪光标，一个都不算这一栏。中文输入法每打一个
-  //   词按一次空格，不排掉的话，停下来读的人的改写兜底就一直是废的（2026-10-24）。
-  const CARET_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', ' ', 'Spacebar'])
-  const PAGE_KEYS = new Set(['PageUp', 'PageDown'])
+  // 键盘同理：只有会挪这一栏的那几个键算，而且得是**这一栏会跟着动**的那一下。
+  // 键名定不了这件事——同一个键在输入框里和落在面板上做的不是一件事，而输入框里的
+  // keydown 一路冒到 window：
+  // - 发消息的输入框在面板**外面**，它里面的按键（打字的空格、挪光标的箭头、翻它自己
+  //   的 PageUp）挪的都是它自己，这一栏一动不动。中文输入法每打一个词按一次空格，这
+  //   一下要是不排掉，停下来读的人的改写兜底就一直是废的（2026-10-24 真机反馈）。所以
+  //   落在输入框里、又不在面板里的按键，一个都不算。
+  // - 其余的都算：落在面板里的（包括时间线里的就地编辑器——改自己的消息时，光标走出
+  //   可视范围、翻页键，挪的都是这一栏），以及压根不在输入框里的。合并基线上每个键都
+  //   算，这里只把上面那一类摘出去，别的一律照旧。
+  const MOVES_THE_PANE = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', ' ', 'Spacebar', 'PageUp', 'PageDown'])
   useEventListener(window, 'keydown', (e) => {
+    if (!MOVES_THE_PANE.has(e.key)) return
     const el = scrollRef.value
     const target = e.target instanceof Element ? e.target : null
     const inPane = !!(el && target && el.contains(target))
     const inEditable = !!target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')
-    if (PAGE_KEYS.has(e.key)) {
-      if (inPane) touched()
-    } else if (!inEditable && CARET_KEYS.has(e.key)) {
-      touched()
-    }
+    if (inEditable && !inPane) return
+    touched()
   })
   // The pane's column too: the composer zone under the pane leaving and coming back in
   // one task clamps it the same way, with the timeline untouched. The pane's direct
