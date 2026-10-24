@@ -125,7 +125,7 @@ class ToolTable:
 
     表在这里，它就不再问任何人。表上是**纯平台动作**：它们要的是平台，不是那台机器，
     所以从会话直接打后端，机器离线时一样不少——对话、文档、任务卡、验收都在。只有
-    `cheese_accept_request` 还要机器：它先让机器把任务的提交推上去；机器够不着时当场
+    `cheese_card` 递卡（request）还要机器：它先让机器把任务的提交推上去；机器够不着时当场
     说够不着，不等超时。
 
     必须在机器上作为进程跑的（任务目录、同步与恢复、预览、读写工作区文件的转换、git
@@ -410,7 +410,7 @@ _ROUTINE_SPEC = (
 )
 _ROUTINE_TIMEZONE = _text("时区；不写就用规则主人自己的时区")
 
-#: `cheese_task_state` 能说的状态和那句话的长度。后端 `room_task.models.TaskProgress`
+#: `cheese_task(action=state)` 能说的状态和那句话的长度。后端 `room_task.models.TaskProgress`
 #: 与 `room_task.progress.NOTE_MAX_CHARS` 的副本：这个文件单独发到机器上，读不到后端。
 #: tests/contract/test_platform_tools.py 在它和后端对不上时红。
 TASK_PROGRESS_STATES = ("working", "waiting", "blocked")
@@ -734,177 +734,176 @@ PLATFORM_TOOLS = ToolTable(
             },
             ["canvas", "changes"],
         ),
-        _tool(
+        _object(
             "cheese_task",
-            "有人要把支线里说的事做出来时建任务，两种做法：这条支线讨论的就是这一件事，"
-            "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，从下一次起你可以"
-            "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
-            "所在的那条消息下面，由那边的 AI 队友去做，summary 必填。只在有人说要做时"
-            "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
-            "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。"
-            "已经在任务里时：这条任务里的活由你自己接着做，不要再开一条做同一件事；"
-            "要拆的是**另一件**活时 here 不填。",
+            "这件任务本身：开一件任务，报你的活在哪一步，关掉它，重新打开它。",
             {
-                "title": _text(
-                    f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
-                ),
-                "summary": _text(
-                    "另开任务时必填：要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
-                    "那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
-                ),
-                "owner": _text(
-                    "负责人 handle，就是说要做这件事的人；省略是你这次回应的那个人"
-                ),
-                "source_message_id": _text(
-                    "任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"
-                ),
-                "here": {
-                    "type": "boolean",
-                    "description": "这条支线原地转为任务填 true；另开任务不填",
-                },
-            },
-            ["title"],
-        ),
-        _tool(
-            "cheese_close_task",
-            "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
-            "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），写明结论关闭；"
-            "最后一步的交付采纳后，平台会让你写一次总结，写完用这个关闭任务、结论写一句结果。",
-            {
-                "conclusion": _text("关闭原因或最终说明"),
-                "reported_by": _text("需求提出者的 handle"),
-                "contributor": _CONTRIBUTOR,
-            },
-            [],
-        ),
-        _tool(
-            "cheese_reopen_task",
-            "重新打开这件已关闭的任务。有人要接着做这件事时用它，打开后接着做。",
-            {},
-            [],
-        ),
-        _tool(
-            "cheese_task_state",
-            "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
-            "也照旧，直到你再说一次；Claude Code 的会话停下后又被叫醒时，看板先显示"
-            "在做。被叫醒后还在等、还卡着，就再说一次。"
-            "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
-            "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
-            "问题照样用 cheese_ask 问。做完交给人审阅不用设：递卡"
-            "（cheese_accept_request）之后看板显示等审，卡在等审阅的时候这里报不了；"
-            "卡被退回或作废，任务回到在做，你再接着报。"
-            "情况变了就再设一次。note 用一句话说在做什么、在等什么或卡在哪。",
-            {
-                "state": {
-                    "type": "string",
-                    "enum": list(TASK_PROGRESS_STATES),
-                    "description": "working 在做；waiting 在等结果；blocked 卡住了",
-                },
-                "note": _text(f"一句话，{TASK_PROGRESS_NOTE_CHARS} 字以内；可以不填"),
-            },
-            ["state"],
-        ),
-        _tool(
-            "cheese_accept_request",
-            "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
-            "递卡交的是要并进主干的改动，或产物清单上一项的新一版；界面原型、demo 或一次性文件"
-            "不进主干也不上产物清单，用 cheese show 摆出预览后等反馈（cheese_ask）或用 "
-            "cheese_close_task 结束，不提交进 git、不递卡。交合并时任务分支上要有改动了文件的提交，"
-            "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
-            "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
-            "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
-            "发一条总结，再用 cheese_close_task 关闭任务；不是最后一步，采纳后任务还开着，"
-            "平台会叫你从最新代码接着做下一步。"
-            "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
-            "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
-            "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
-            "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
-            "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
-            "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
-            "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
-            "不抄 subject，抄了会被打回。",
-            {
-                "subject": _text(
-                    "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
-                    "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
-                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
-                    "末尾的 (#N) 平台会加，不要写"
-                ),
-                "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
-                "focus": _text(
-                    "审阅重点：请审阅的人确认的事，最多 3 条，每条一句，合计 300 字以内，"
-                    "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
-                    "测试结果和验证过程写进 body，不在这里重复"
-                ),
-                "body": _text(
-                    "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
-                ),
-                "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
-                "new_artifact": _text("清单上还没有的东西的真名"),
-                "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
-                "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
-                "deliver_url": _text("交出去的地址"),
-                "completes_task": {
-                    "type": "boolean",
-                    "description": "这次交付后任务目标全部达成填 true；还有没做完的填 false，并在 body 里写下一步做什么",
-                },
-                "comment_outcomes": {
-                    "type": "array",
-                    "description": (
-                        "上一次退回附带了批注时必填：逐条说处理了没有。id 照抄退回消息里"
-                        "方括号中的那个；handled 处理了填 true，没处理填 false；note 一句话，"
-                        "处理了写怎么改的，没处理写为什么。审阅的人看着这一句核对"
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "handled": {"type": "boolean"},
-                            "note": {"type": "string"},
+                "open": _verb(
+                    "有人要把支线里说的事做出来时建任务，两种做法：这条支线讨论的就是这一件事，"
+                    "here 填 true，支线原地转为任务，还是这段对话、还是你接着做，从下一次起你可以"
+                    "改项目；讨论拆出了几件各自要做的事，here 不填，每件另开一个任务，挂在支线"
+                    "所在的那条消息下面，由那边的 AI 队友去做，brief 必填。只在有人说要做时"
+                    "调：是你自己看出来该做的，先用 cheese_ask 问一句要不要转为任务（选项"
+                    "「转为任务」「不转」），有人选了「转为任务」再调，owner 就是他。"
+                    "已经在任务里时：这条任务里的活由你自己接着做，不要再开一条做同一件事；"
+                    "要拆的是**另一件**活时 here 不填。",
+                    {
+                        "title": _text(
+                            f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
+                        ),
+                        "brief": _text(
+                            "另开任务时必填：要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
+                            "那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
+                        ),
+                        "owner": _text(
+                            "负责人 handle，就是说要做这件事的人；省略是你这次回应的那个人"
+                        ),
+                        "source_message_id": _text(
+                            "任务所依据的消息 id；成员自己的 AI 必须引用主人发送的消息"
+                        ),
+                        "here": {
+                            "type": "boolean",
+                            "description": "这条支线原地转为任务填 true；另开任务不填",
                         },
-                        "required": ["id", "handled", "note"],
                     },
-                },
+                    ["title"],
+                ),
+                "state": _verb(
+                    "在任务里说你的活此刻在哪一步。看板上这件任务显示你说的这一句，你停下了"
+                    "也照旧，直到你再说一次；Claude Code 的会话停下后又被叫醒时，看板先显示"
+                    "在做。被叫醒后还在等、还卡着，就再说一次。"
+                    "开工时设 working；起了构建、CI、长命令在等结果时设 waiting；"
+                    "没有人帮忙走不下去时设 blocked（负责人会看到要他处理），要人回答的"
+                    "问题照样用 cheese_ask 问。做完交给人审阅不用设：递卡"
+                    "（cheese_card 的 request）之后看板显示等审，卡在等审阅的时候这里报不了；"
+                    "卡被退回或作废，任务回到在做，你再接着报。"
+                    "情况变了就再设一次。note 用一句话说在做什么、在等什么或卡在哪。",
+                    {
+                        "state": {
+                            "type": "string",
+                            "enum": list(TASK_PROGRESS_STATES),
+                            "description": "working 在做；waiting 在等结果；blocked 卡住了",
+                        },
+                        "note": _text(
+                            f"一句话，{TASK_PROGRESS_NOTE_CHARS} 字以内；可以不填"
+                        ),
+                    },
+                    ["state"],
+                ),
+                "close": _verb(
+                    "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
+                    "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
+                    "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
+                    "任务、结论写一句结果。",
+                    {
+                        "conclusion": _text("关闭原因或最终说明"),
+                        "reported_by": _text("需求提出者的 handle"),
+                        "contributor": _CONTRIBUTOR,
+                    },
+                ),
+                "reopen": _verb(
+                    "重新打开这件已关闭的任务。有人要接着做这件事时用它，打开后接着做。"
+                ),
             },
-            ["subject", "completes_task"],
         ),
-        _tool(
-            "cheese_describe",
-            "修改当前任务尚未采纳的验收卡及 PR 的标题、正文或审阅重点；采纳以卡为准。",
+        _object(
+            "cheese_card",
+            "这件任务的验收卡：递卡，改卡上的描述，换交付物，把 draft PR 标成可评审。",
             {
-                "subject": _text(
-                    "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
-                    "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
-                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
-                    "末尾的 (#N) 平台会加，不要写"
+                "request": _verb(
+                    "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+                    "递卡交的是要并进主干的改动，或产物清单上一项的新一版；界面原型、demo 或一次性文件"
+                    "不进主干也不上产物清单，用 cheese show 摆出预览后等反馈（cheese_ask）或用 "
+                    "cheese_task 的 close 结束，不提交进 git、不递卡。交合并时任务分支上要有改动了文件的提交，"
+                    "空提交会被打回；交独立文件（deliver）或地址（deliver_url）且没有仓库改动时直接留快照或记指针，不开 PR。"
+                    "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
+                    "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
+                    "发一条总结，再用 cheese_task 的 close 关闭任务；不是最后一步，采纳后任务还开着，"
+                    "平台会叫你从最新代码接着做下一步。"
+                    "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
+                    "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
+                    "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
+                    "交文件或地址时 artifact（清单上那一项的 id，照抄，不写名字）与 "
+                    "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
+                    "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
+                    "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
+                    "不抄 subject，抄了会被打回。",
+                    {
+                        "subject": _text(
+                            "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
+                            "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
+                            "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
+                            "末尾的 (#N) 平台会加，不要写"
+                        ),
+                        "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
+                        "focus": _text(
+                            "审阅重点：请审阅的人确认的事，最多 3 条，每条一句，合计 300 字以内，"
+                            "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
+                            "测试结果和验证过程写进 body，不在这里重复"
+                        ),
+                        "body": _text(
+                            "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                        ),
+                        "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
+                        "new_artifact": _text("清单上还没有的东西的真名"),
+                        "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
+                        "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
+                        "deliver_url": _text("交出去的地址"),
+                        "completes_task": {
+                            "type": "boolean",
+                            "description": "这次交付后任务目标全部达成填 true；还有没做完的填 false，并在 body 里写下一步做什么",
+                        },
+                        "comment_outcomes": {
+                            "type": "array",
+                            "description": (
+                                "上一次退回附带了批注时必填：逐条说处理了没有。id 照抄退回消息里"
+                                "方括号中的那个；handled 处理了填 true，没处理填 false；note 一句话，"
+                                "处理了写怎么改的，没处理写为什么。审阅的人看着这一句核对"
+                            ),
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "handled": {"type": "boolean"},
+                                    "note": {"type": "string"},
+                                },
+                                "required": ["id", "handled", "note"],
+                            },
+                        },
+                    },
+                    ["subject", "completes_task"],
                 ),
-                "body": _text(
-                    "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                "describe": _verb(
+                    "修改当前任务尚未采纳的验收卡及 PR 的标题、正文或审阅重点，至少给一样；"
+                    "采纳以卡为准。",
+                    {
+                        "subject": _text(
+                            "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
+                            "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
+                            "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
+                            "末尾的 (#N) 平台会加，不要写"
+                        ),
+                        "body": _text(
+                            "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
+                        ),
+                        "focus": _text(
+                            "审阅重点：请审阅人确认的事，最多 3 条、合计 300 字，一行一条。"
+                            "后来又推了新提交、卡上原来的重点已经过期时用它更正；它不进 PR 正文"
+                        ),
+                    },
                 ),
-                "focus": _text(
-                    "审阅重点：请审阅人确认的事，最多 3 条、合计 300 字，一行一条。"
-                    "后来又推了新提交、卡上原来的重点已经过期时用它更正；它不进 PR 正文"
+                "redeliver": _verb(
+                    "换掉当前任务待审阅那张验收卡交出去的文件或地址，卡和 PR 不变；之前的批准会"
+                    "清掉，验收人会收到通知。只换交付物：标题和正文用 describe，代码的新"
+                    "提交用 cheese push-fix。卡已经有了结果的，重新递卡。deliver 和 "
+                    "deliver_url 给一样。",
+                    {
+                        "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
+                        "deliver_url": _text("换成的地址"),
+                    },
                 ),
+                "ready": _verb("把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"),
             },
-            [],
-        ),
-        _tool(
-            "cheese_redeliver",
-            "换掉当前任务待审阅那张验收卡交出去的文件或地址，卡和 PR 不变；之前的批准会"
-            "清掉，验收人会收到通知。只换交付物：标题和正文用 cheese_describe，代码的新"
-            "提交用 cheese push-fix。卡已经有了结果的，重新递卡。",
-            {
-                "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
-                "deliver_url": _text("换成的地址"),
-            },
-            [],
-        ),
-        _tool(
-            "cheese_ready",
-            "把当前任务已有的 draft PR 标记为可评审；"
-            "请人验收用 cheese_accept_request。",
-            {},
-            [],
         ),
         _tool(
             "cheese_title",
@@ -1591,33 +1590,43 @@ DELEGATED_TOOLS = ToolTable(
             },
             ["where", "text"],
         ),
-        _tool(
-            "cheese_task_open",
-            "以用户的名义开一个任务，交给项目的 AI 队友去做：开在一个频道里（where 给"
-            "频道编号），标题和交代写清楚要做什么、依据什么、做到什么算完。要改项目里"
-            "的文档、代码，或做要花时间的活时用它，你自己不动手。和发消息一样，不是用户"
-            "要开的就不开，结果写明原因。",
+        _object(
+            "cheese_task",
+            "任务：以用户的名义开一个。",
             {
-                "where": _text("频道的编号"),
-                "title": _text("任务标题，一句话"),
-                "text": _text("交代：要做什么、依据什么、做到什么算完"),
-                "confirm": _CONFIRM,
+                "open": _verb(
+                    "以用户的名义开一个任务，交给项目的 AI 队友去做：开在一个频道里（where 给"
+                    "频道编号），标题和交代写清楚要做什么、依据什么、做到什么算完。要改项目里"
+                    "的文档、代码，或做要花时间的活时用它，你自己不动手。和发消息一样，不是用户"
+                    "要开的就不开，结果写明原因。",
+                    {
+                        "where": _text("频道的编号"),
+                        "title": _text("任务标题，一句话"),
+                        "brief": _text("交代：要做什么、依据什么、做到什么算完"),
+                        "confirm": _CONFIRM,
+                    },
+                    ["where", "title", "brief"],
+                ),
             },
-            ["where", "title", "text"],
         ),
-        _tool(
-            "cheese_review_decide",
-            "以用户的身份采纳或退回一项待审阅的改动（ref 给它的编号，如 "
-            "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
-            "先用 cheese_read 读过它再决定。用户没有对它做决定时不执行，结果写明"
-            "原因。",
+        _object(
+            "cheese_card",
+            "待审阅的改动：以用户的身份做决定。",
             {
-                "ref": _text("待审阅的改动的编号"),
-                "choice": {"type": "string", "enum": ["accept", "reject"]},
-                "text": _text("退回的说明"),
-                "confirm": _CONFIRM,
+                "decide": _verb(
+                    "以用户的身份采纳或退回一项待审阅的改动（ref 给它的编号，如 "
+                    "ml-course/tasks/12/review）。退回要写说明（text），说清哪里不对、要怎么改。"
+                    "先用 cheese_read 读过它再决定。用户没有对它做决定时不执行，结果写明"
+                    "原因。",
+                    {
+                        "ref": _text("待审阅的改动的编号"),
+                        "choice": {"type": "string", "enum": ["accept", "reject"]},
+                        "text": _text("退回的说明"),
+                        "confirm": _CONFIRM,
+                    },
+                    ["ref", "choice"],
+                ),
             },
-            ["ref", "choice"],
         ),
         _tool(
             "cheese_inbox_respond",
@@ -2211,26 +2220,26 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 **_given(args, "reason"),
             },
         }
-    if tool == "cheese_task":
+    if tool == "cheese_task.open":
         return {
             "method": "POST",
             "path": f"/topics/{topic}/teammate-tasks",
             "body": {
                 "title": args["title"],
-                "summary": args.get("summary") or "",
+                "summary": args.get("brief") or "",
                 "here": args.get("here") is True,
                 **_given(args, "owner:owner_handle", "source_message_id"),
             },
         }
-    if tool == "cheese_task_state":
+    if tool == "cheese_task.state":
         return {
             "method": "PUT",
             "path": here + "/task/progress",
             "body": {"state": args["state"], **_given(args, "note")},
         }
-    if tool == "cheese_reopen_task":
+    if tool == "cheese_task.reopen":
         return {"method": "POST", "path": here + "/reopen"}
-    if tool == "cheese_close_task":
+    if tool == "cheese_task.close":
         return {
             "method": "POST",
             "path": here + "/close",
@@ -2243,7 +2252,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 ),
             },
         }
-    if tool == "cheese_accept_request":
+    if tool == "cheese_card.request":
         return {
             "method": "POST",
             "path": here + "/accept-card",
@@ -2264,12 +2273,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 ),
             },
         }
-    if tool == "cheese_describe":
+    if tool == "cheese_card.describe":
         body = _given(args, "subject:change_subject", "body:change_body", "focus")
         if not body:
             raise ValueError("describe 至少要给 subject、body 或 focus")
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
-    if tool == "cheese_redeliver":
+    if tool == "cheese_card.redeliver":
         body = _given(args, "deliver", "deliver_url")
         if not body:
             raise ValueError("redeliver 要给 deliver 或 deliver_url")
@@ -2280,7 +2289,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": here + "/accept-card/redeliver",
             "body": body,
         }
-    if tool == "cheese_ready":
+    if tool == "cheese_card.ready":
         return {"method": "POST", "path": here + "/ready"}
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
@@ -2679,7 +2688,9 @@ class PlatformHTTPError(RuntimeError):
         self.body = body
 
 
-def run_platform_tool(tool: str, args: dict, host) -> str:
+def run_platform_tool(
+    tool: str, args: dict, host, *, delegated: bool = False
+) -> str:
     """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
     text, what came of it.
 
@@ -2689,8 +2700,15 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     `sync_task(task_id)` (the one that needs the machine),
     plus a `doc_versions` dict that outlives a single call. The text is what the
     agent acts on — ids, the next call to make — so it is written for that
-    reader, not dumped JSON."""
-    table = next((t for t in (PLATFORM_TOOLS, DELEGATED_TOOLS) if tool in t), None)
+    reader, not dumped JSON.
+
+    `delegated` says the call is made under a delegated credential (a
+    person's 芝士, a document's): an object both tables have (`cheese_task`)
+    is then the delegated one, which acts for the person asking."""
+    tables = (PLATFORM_TOOLS, DELEGATED_TOOLS)
+    if delegated:
+        tables = tables[::-1]
+    table = next((t for t in tables if tool in t), None)
     if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
     if tool == COMPACT_TOOL and not switched_on(getattr(host, "environ", None)):
@@ -2703,9 +2721,12 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
         key = tool
     else:
         key = f"{tool}.{_checked(tool, actions, args, table)}"
+    step = (
+        _DELEGATED_STEPS.get(key) if table is DELEGATED_TOOLS else None
+    ) or _STEPS.get(key)
     try:
-        if key in _STEPS:
-            return _STEPS[key](args, host)
+        if step is not None:
+            return step(args, host)
         plan = request_plan(key, args, host.environ)
     except ValueError as exc:
         raise PlatformToolError(str(exc)) from exc
@@ -3459,7 +3480,7 @@ def _accept_request(args: dict, host) -> str:
     if args.get("deliver"):
         task = host.environ.get("CHEESE_TOPIC", "")
         args = {**args, "deliver": _task_relative(args["deliver"], task)}
-    plan = request_plan("cheese_accept_request", args, host.environ)
+    plan = request_plan("cheese_card.request", args, host.environ)
     # 卡读的是 forge 上那条分支：先让机器把这条任务的提交推上去，推不上去就不递
     # ——递一张照着旧提交的卡，比一次「机器够不着」更糟，因为没人会发现。
     host.sync_task(host.environ.get("CHEESE_TOPIC", ""))
@@ -3473,8 +3494,8 @@ def _accept_request(args: dict, host) -> str:
     # 递卡改了任务在看板上的样子，而这是它自己做的事：平台不会再另外告诉它，
     # 所以就在这里说（`room_task.heard`）。
     lines.append(
-        "看板上这件任务现在显示「等审」；你之前用 cheese_task_state 报的状态和说明"
-        "已经清掉。卡在等审阅的时候 cheese_task_state 报不了；卡被退回或作废，"
+        "看板上这件任务现在显示「等审」；你之前用 cheese_task 的 state 报的状态和说明"
+        "已经清掉。卡在等审阅的时候 state 报不了；卡被退回或作废，"
         "平台会叫你，任务回到「在做」，那时再接着报。"
     )
     # 新建的那一次把 id 说出来：往后交付这一项就用它，而这里是它第一次存在的地方。
@@ -3997,7 +4018,7 @@ def _task(args: dict, host) -> str:
     with nothing said of what it is for. Handed the raw body instead, it reads
     as a wall of JSON and makes the same call a second time."""
     try:
-        answer = host.request(request_plan("cheese_task", args, host.environ))
+        answer = host.request(request_plan("cheese_task.open", args, host.environ))
     except Exception as exc:
         if getattr(exc, "status", None) != 422:
             raise
@@ -4006,7 +4027,7 @@ def _task(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没有建出任务：{why.rstrip('。')}。改好了，再调一次 cheese_task。"
+            f"没有建出任务：{why.rstrip('。')}。改好了，再调一次 cheese_task(action=open)。"
         ) from exc
     return _say_task(args, answer.get("data"), host.environ)
 
@@ -4248,8 +4269,6 @@ def _web_fetch(args: dict, host):
 
 _STEPS = {
     "cheese_message_send": _acting("message", "where", "text"),
-    "cheese_task_open": _acting("task", "where", "title", "text"),
-    "cheese_review_decide": _acting("review", "ref", "choice", "text"),
     "cheese_inbox_respond": _acting("respond", "ref", "choice"),
     "cheese_member_set": _acting("member", "where", "who", "role", "remove"),
     "cheese_channel_create": _acting(
@@ -4259,7 +4278,7 @@ _STEPS = {
     "cheese_file_give": _file_give,
     "cheese_file_to_computer": _file_to_computer,
     "chat_send": _chat_send,
-    "cheese_task": _task,
+    "cheese_task.open": _task,
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
     "cheese_chat_search": _chat_page("cheese_chat_search"),
@@ -4271,7 +4290,7 @@ _STEPS = {
     "cheese_app_save": _app_save,
     "cheese_app_get": _app_get,
     "cheese_canvas_edit": _canvas_edit,
-    "cheese_accept_request": _accept_request,
+    "cheese_card.request": _accept_request,
     "platform_request": _platform_request,
     "cheese_feedback_list": _feedback_list,
     "cheese_feedback_get": _feedback_get,
@@ -4286,6 +4305,16 @@ _STEPS = {
     "cheese_problem_publish": lambda args, host: _task_step(
         "cheese_problem_publish", args, host
     ),
+}
+
+
+#: 个人芝士手里的那几样对象，和房间里的同名：同一个 `cheese_task(action=open)`，
+#: 个人芝士以用户的名义、经过授权判断去开（`/assistant/agent/act`），房间的 agent
+#: 从自己的支线拆。名字一样，凭证不同，走的路不同；`run_platform_tool` 替代行凭证
+#: 的调用先查这里。
+_DELEGATED_STEPS = {
+    "cheese_task.open": _acting("task", "where", "title", "brief:text"),
+    "cheese_card.decide": _acting("review", "ref", "choice", "text"),
 }
 
 
@@ -4781,21 +4810,21 @@ _SAY = {
     "chat_send": _say_chat_send,
     "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
     "todo_write": _say_todo,
-    "cheese_task": _say_task,
-    "cheese_close_task": lambda a, d, e: (
+    "cheese_task.open": _say_task,
+    "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
+    "cheese_task.close": lambda a, d, e: (
         f"「{(d or {}).get('title')}」收了。"
         f"结论：{(d or {}).get('conclusion') or '（没有留话）'}"
     ),
-    "cheese_reopen_task": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
-    "cheese_task_state": lambda a, d, e: (
+    "cheese_task.state": lambda a, d, e: (
         "看板上这件任务现在显示你说的状态，直到你再设一次；Claude Code 的会话停下后"
         "又被叫醒时，它先显示在做。"
     ),
-    "cheese_describe": lambda a, d, e: (
+    "cheese_card.describe": lambda a, d, e: (
         "验收卡的描述已更正（PR 正文同步改掉了）。现在的标题："
         f"{(d or {}).get('change_subject') or '（空）'}"
     ),
-    "cheese_redeliver": lambda a, d, e: (
+    "cheese_card.redeliver": lambda a, d, e: (
         "验收卡交出去的那一份已换成 "
         + (
             ((d or {}).get("deliverable") or {}).get("filename")
@@ -4804,7 +4833,7 @@ _SAY = {
         )
         + "，之前的批准已清掉，验收人收到了通知。"
     ),
-    "cheese_ready": lambda a, d, e: (
+    "cheese_card.ready": lambda a, d, e: (
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"
         if (d or {}).get("ready")
         else (d or {}).get("reason") or "没有可以翻的 PR。"
@@ -7421,7 +7450,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
             "输出路径；不会改变当前 shell 的目录。支线里看代码、跑命令用它：这里的"
-            "改动留不下，要改项目就转为任务（cheese_task）。"
+            "改动留不下，要改项目就转为任务（cheese_task 的 open）。"
         ),
     )
     psync = sub.add_parser(
@@ -7572,7 +7601,7 @@ def build_parser() -> argparse.ArgumentParser:
             "你显式指定。最后摆的那一样同时是这里的当前预览。\n\n"
             "摆出来的东西留在这里。用户想把一份留下来以后再用,自己按"
             "「保存到资料库」;它不因此上产物清单——这次真交付了什么,走 "
-            "cheese_accept_request 的 artifact / deliver。"
+            "cheese_card(action=request) 的 artifact / deliver。"
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")

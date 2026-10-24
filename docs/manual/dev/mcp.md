@@ -17,23 +17,23 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，46 样 {#table}
+## 一张表，49 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 46 样：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 49 样，任务和验收卡各是一样对象工具（见[一个对象一样工具](#objects)）：
 
 | 类别 | 工具 |
 | --- | --- |
 | 对话 | `chat_send`、`chat_edit`、`todo_write` |
 | 读房间 | `cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`、`cheese_chat_replies` |
-| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit`、`cheese_doc_new`、`cheese_doc_list` |
-| 任务与验收 | `cheese_task`、`cheese_close_task`、`cheese_reopen_task`、`cheese_accept_request`、`cheese_describe`、`cheese_redeliver`、`cheese_ready` |
+| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit`、`cheese_doc_new`、`cheese_doc_list`、`cheese_app_save`、`cheese_app_get`、`cheese_canvas_get`、`cheese_canvas_edit` |
+| 任务与验收 | `cheese_task`（open / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
 | 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |
 | 资料 | `cheese_fetch`、`cheese_web_search`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
 | 房间状态 | `cheese_members`、`cheese_status` |
-| 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at` |
+| 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at`、`cheese_compact`（部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
 | 例行事务 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
-| 项目技能 | `cheese_skill_draft`、`cheese_skill_update` |
+| 项目技能 | `cheese_skill_draft`、`cheese_skill_update`、`skills_search`、`skills_read` |
 | 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
 | 运行记录 | `cheese_run_records`（只在平台自己的项目里读得到，见[运行记录](/dev/run-records#retention)） |
 | 其余的平台接口 | `platform_request` |
@@ -42,7 +42,25 @@ covers:
 
 常用的动作各有一样专门的工具，其余的只有 `platform_request` 一样，原因和用法见下面[其余的平台接口](#rest)。
 
-只有 `cheese_accept_request` 还要机器：它先让机器把任务的提交推上去。文档类工具直接收正文，不碰机器，所以任务开始前、改动留不下时也能写实况文档。要作为进程在机器上跑的（任务目录、同步与恢复、预览、文件转换、git 凭据）不在表里，是这个文件的 CLI 子命令。
+只有 `cheese_card(action=request)` 还要机器：它先让机器把任务的提交推上去。文档类工具直接收正文，不碰机器，所以任务开始前、改动留不下时也能写实况文档。要作为进程在机器上跑的（任务目录、同步与恢复、预览、文件转换、git 凭据）不在表里，是这个文件的 CLI 子命令。
+
+## 一个对象一样工具 {#objects}
+
+一个对象有几个动词时，它是表上的一行（`_object`），`action` 选做哪一件，每个动词（`_verb`）有自己的说明和参数。schema 是扁平的：`action` 枚举排第一、也是唯一的必填项，后面是各动词参数的并集，每个参数的说明写着哪几件收它、哪几件必填。不用 `oneOf` / `anyOf`：同一份 schema 要过三种骨架的工具机制和它们背后的 Anthropic 兼容网关。
+
+一个动词收什么，在调用时查（`run_platform_tool` 里的 `_checked`），发出任何请求之前：
+
+- 没给 `action`，或者给的不是表上的：`cheese_task 要 action：open / state / close / reopen`。
+- 缺这个动词的必填参数：`cheese_task(action=state) 缺少参数：state`。
+- 带了这个动词不收的参数，直接拒，并说出哪件收它：`cheese_task(action=close) 不收 subject：subject 是 cheese_card(action=request)、cheese_card(action=describe) 的参数。`，后面列出这个动词收的参数。只给了空值的参数等于没给，不算。
+
+调用按键分派：`<工具>.<action>`（`cheese_task.close`），只做一件事的工具就是它的名字。`request_plan`、`_STEPS`、`_SAY` 都按这个键查。
+
+同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。
+
+### 退役的名字 {#retired}
+
+会话记录里的调用永远是当时的名字和写法，所以读记录的地方（现场那一行的动词和参数预览）都按键读：`app/domain/session_record/tool_keys.py` 的 `tool_key(name, args)`，前端 `toolLabels.ts` 的 `toolKey`。`RETIRED` 记着并进某个对象、成了它一个动词的旧名字各自变成了哪个键（还在表上、后来才收 `action` 的名字也在，给它收 action 以前的调用）；直接删掉、什么也没变成的工具不在这里，它的旧记录用自己的标签。前端那份副本由 `tests/unit/test_tool_labels.py` 对齐。这张表描述的是库里已有的记录，所以一直留着。
 
 ## 一个对象一样工具 {#objects}
 
@@ -107,7 +125,7 @@ Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/
 - `MACHINE_OUT_OF_REACH` 是这句话；`MachineOutOfReach` 是它的类型。以前调用方只能比字符串，于是只认得「执行器答了 502/503/504」这一档；机器真的没了时执行器什么也不答——读超时 660 秒到点抛 `TimeoutError`，连接被拒是重试窗口耗尽后抛 `ConnectionRefusedError`，两者的文字都不是那句话。`MachineOutOfReach` 让最该被认出来的那一档认得出来。
 - 判「够不着」不能只看非 200：`OUT_OF_REACH_STATUSES` 只有 `{502, 503, 504}`（中间那一跳转不过去，或者执行器没在听），还有一个得连响应头一起看的 409（`_device_is_offline`：`X-Device-Id` 在就是链路断了，不在就是代际冲突，机器好好的）。其余的（500 是机器上某个工具抛了异常、401 是令牌过期、别的 4xx 是执行器比后端旧）手好好的，说成够不着是假话，agent 会照着它放弃整轮的文件与命令操作。
 - **答案当场给，不等超时**：接不通只重试到 `CONNECT_RETRY_WINDOW_S = 180` 秒为止；机器上那个 MCP 进程撞上第一次之后，余下的调用在 `RECHECK_AFTER_S = 30` 秒内直接答同一句话，不再一个个去撞 660 秒。
-- 平台工具里只有 `cheese_accept_request` 要机器，吃这个闸；机器答了错但手还在的调用拿到的是 `EXECUTOR_CALL_FAILED`（「机器还在，这一个可以重试」）。
+- 平台工具里只有 `cheese_card(action=request)` 要机器，吃这个闸；机器答了错但手还在的调用拿到的是 `EXECUTOR_CALL_FAILED`（「机器还在，这一个可以重试」）。
 
 ## 时间线上的工具名 {#timeline}
 

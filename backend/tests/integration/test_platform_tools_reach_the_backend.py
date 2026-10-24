@@ -227,14 +227,14 @@ def test_a_suggestion_that_cannot_be_made_is_not_sent_back_to_reread(client, tas
 
 
 def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
-    """`cheese_task` creates the task for the person who asked for it. Creating
+    """`cheese_task(action=open)` creates the task for the person who asked for it. Creating
     one needs no machine."""
     project, topic = room
     host = BackendHost(client, project, topic)
 
     said = cheese.run_platform_tool(
         "cheese_task",
-        {"title": "数据清洗", "summary": "按新口径", "owner": "alice"},
+        {"action": "open", "title": "数据清洗", "brief": "按新口径", "owner": "alice"},
         host,
     )
 
@@ -247,7 +247,7 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
 
 def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, room):
     """侧栏放不下的标题，后端拒绝、CLI 把平台原话交给 AI 改短。工具报的是
-    下一步怎么走（再调一次 `cheese_task`），不是一句「失败了」。"""
+    下一步怎么走（再调一次 `cheese_task(action=open)`），不是一句「失败了」。"""
     project, topic = room
     host = BackendHost(client, project, topic)
 
@@ -255,15 +255,16 @@ def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, ro
         cheese.run_platform_tool(
             "cheese_task",
             {
+                "action": "open",
                 "title": "把这一条过于冗长的任务标题改短到侧栏一行里放得下",
-                "summary": "按新口径",
+                "brief": "按新口径",
                 "owner": "alice",
             },
             host,
         )
 
     assert "48" in str(refused.value)
-    assert "cheese_task" in str(refused.value)
+    assert "cheese_task(action=open)" in str(refused.value)
     assert client.get(f"/topics/{topic}/tasks").json()["data"]["data"] == []
 
 

@@ -236,7 +236,7 @@ def task_section(
             "## 这个任务\n"
             "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
             "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
-            "用 cheese_reopen_task 重新打开再接着做；"
+            "用 cheese_task(action=reopen) 重新打开再接着做；"
             "说的是另一件事，建议他回到频道主线说，或者另开任务。"
         )
     people = [f"@{h}" for h in (owner, *contributors) if h]
@@ -258,7 +258,7 @@ def task_section(
 
 def became_task_prompt(*, owner: str | None) -> str:
     """支线转为任务那一刻交给 AI 队友的话：人点「转为任务」时是一条指令，叫它马上
-    开工；它自己转的（`cheese_task` 的 ``here``）在工具的回复里读到同样的话。"""
+    开工；它自己转的（`cheese_task(action=open)` 的 ``here``）在工具的回复里读到同样的话。"""
     who = f"负责人是 @{owner}。" if owner else ""
     return (
         f"这条支线已经转为任务，{who}从现在起你可以改动项目：在任务自己的工作目录里"
@@ -366,7 +366,7 @@ def build_session_opening(
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
-        # 规则在 `cheese_accept_request` 的工具说明里（与代码同源），这里只给清单
+        # 规则在 `cheese_card(action=request)` 的工具说明里（与代码同源），这里只给清单
         # 和一句指路；交合并的那条路上没有名字可写错，所以也不用嘱咐。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
         if artifacts:
@@ -381,14 +381,14 @@ def build_session_opening(
                 head + "交出文件或地址时，交的是下面某一项的新一版就用 "
                 "`artifact=<那一行的 id>`，是一样新东西就用 `new_artifact` 加 "
                 "`about`；交合并的不用声明产物，交的是项目那个仓库。细则看 "
-                "`cheese_accept_request` 的说明。"
+                "`cheese_card(action=request)` 的说明。"
                 "\n\n" + lines
             )
         else:
             sections["artifacts"] = (
                 head + "清单还空着。第一次交出文件或地址时，用 `new_artifact=<真名>` "
                 "加 `about=<一句话>` 声明它；交合并的不用声明产物，交的是项目那个"
-                "仓库。细则看 `cheese_accept_request` 的说明。"
+                "仓库。细则看 `cheese_card(action=request)` 的说明。"
             )
     if roster:
         names = {m["handle"]: m["name"] for m in roster if not m.get("agent")}

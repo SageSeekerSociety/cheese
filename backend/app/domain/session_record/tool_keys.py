@@ -17,7 +17,21 @@ is not here: its old records keep their own label. The frontend's copy is
 """
 
 #: Retired name → the key it became.
-RETIRED: dict[str, str] = {}
+RETIRED: dict[str, str] = {
+    # The task itself: the room's verbs, and a person's 芝士 opening one.
+    "cheese_task": "cheese_task.open",
+    "cheese_task_state": "cheese_task.state",
+    "cheese_close_task": "cheese_task.close",
+    "cheese_reopen_task": "cheese_task.reopen",
+    "cheese_task_open": "cheese_task.open",
+    # Its review card: filed and kept up by the task's agent, decided by a
+    # person's 芝士 as the reviewer.
+    "cheese_accept_request": "cheese_card.request",
+    "cheese_describe": "cheese_card.describe",
+    "cheese_redeliver": "cheese_card.redeliver",
+    "cheese_ready": "cheese_card.ready",
+    "cheese_review_decide": "cheese_card.decide",
+}
 
 
 def tool_key(name: str, args: object) -> str:

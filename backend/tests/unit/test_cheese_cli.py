@@ -507,7 +507,7 @@ def test_the_library_on_the_machine_only_fetches():
 
 
 def test_worktree_prepares_the_task_directory(monkeypatch, tmp_path, capsys):
-    """开活是会话侧的 `cheese_task`；目录在机器上，由这一条准备。"""
+    """开活是会话侧的 `cheese_task(action=open)`；目录在机器上，由这一条准备。"""
     cli = _load()
     prepared = []
 

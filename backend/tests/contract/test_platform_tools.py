@@ -85,29 +85,31 @@ CALLS = {
         "POST",
         "/canvases/c-1/changes",
     ),
-    "cheese_task": (
-        {"title": "数据清洗", "summary": "按新口径重算", "start": False},
+    # One of an object's verbs is keyed `<tool>.<action>`, and its call
+    # carries that action.
+    "cheese_task.open": (
+        {"action": "open", "title": "数据清洗", "brief": "按新口径重算"},
         "POST",
         f"/topics/{TOPIC}/teammate-tasks",
     ),
-    "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
-    "cheese_reopen_task": ({}, "POST", f"/topics/{TOPIC}/reopen"),
-    "cheese_task_state": (
-        {"state": "waiting", "note": "等 CI"},
+    "cheese_task.close": ({"action": "close"}, "POST", f"/topics/{TOPIC}/close"),
+    "cheese_task.reopen": ({"action": "reopen"}, "POST", f"/topics/{TOPIC}/reopen"),
+    "cheese_task.state": (
+        {"action": "state", "state": "waiting", "note": "等 CI"},
         "PUT",
         f"/topics/{TOPIC}/task/progress",
     ),
-    "cheese_describe": (
-        {"subject": "fix: x"},
+    "cheese_card.describe": (
+        {"action": "describe", "subject": "fix: x"},
         "POST",
         f"/topics/{TOPIC}/accept-card/describe",
     ),
-    "cheese_redeliver": (
-        {"deliver_url": "https://site.example/r"},
+    "cheese_card.redeliver": (
+        {"action": "redeliver", "deliver_url": "https://site.example/r"},
         "POST",
         f"/topics/{TOPIC}/accept-card/redeliver",
     ),
-    "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
+    "cheese_card.ready": ({"action": "ready"}, "POST", f"/topics/{TOPIC}/ready"),
     "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
     "cheese_notify": (
         {"title": "看一眼"},
@@ -221,8 +223,8 @@ CALLS = {
 
 #: 要机器的那一样：推一条任务分支。
 NEEDS_THE_MACHINE = {
-    "cheese_accept_request": (
-        {"subject": "fix(x): y", "completes_task": True},
+    "cheese_card.request": (
+        {"action": "request", "subject": "fix(x): y", "completes_task": True},
         "POST",
         f"/topics/{TOPIC}/accept-card",
     ),
@@ -374,6 +376,11 @@ def machine_is_here(tmp_path, runner_socket):
         log.close()
 
 
+def _tool(key):
+    """The tool a key names: `cheese_task.close` is a call to `cheese_task`."""
+    return key.partition(".")[0]
+
+
 def _listing(process):
     return [tool["name"] for tool in process.call("tools/list", {})["tools"]]
 
@@ -406,10 +413,8 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     """
     process, _, executor_calls = machine_is_gone
     assert set(_listing(process)) == {
-        *CALLS,
-        *NEEDS_THE_MACHINE,
-        *WAITS_FOR_THE_MACHINE,
-        *TRANSPORT,
+        _tool(key)
+        for key in (*CALLS, *NEEDS_THE_MACHINE, *WAITS_FOR_THE_MACHINE, *TRANSPORT)
     }
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
@@ -427,7 +432,7 @@ def test_each_platform_tool_reaches_the_platform_without_the_machine(
     process, platform_calls, executor_calls = machine_is_gone
     arguments, method, path = CALLS[tool]
 
-    outcome = _call(process, tool, arguments)
+    outcome = _call(process, _tool(tool), arguments)
 
     assert "deny" not in outcome, outcome
     assert (method, path) in [(m, p) for m, p, _ in platform_calls], platform_calls
@@ -498,6 +503,60 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
     assert executor_calls == []
 
 
+@pytest.mark.parametrize(
+    ("tool", "arguments", "said"),
+    [
+        (
+            "cheese_task",
+            {"title": "数据清洗"},
+            "cheese_task 要 action：open / state / close / reopen",
+        ),
+        (
+            "cheese_task",
+            {"action": "state"},
+            "cheese_task(action=state) 缺少参数：state",
+        ),
+        (
+            "cheese_task",
+            {"action": "close", "conclusion": "做完了", "subject": "fix: x"},
+            "cheese_task(action=close) 不收 subject：subject 是 "
+            "cheese_card(action=request)、cheese_card(action=describe) 的参数。",
+        ),
+        (
+            "cheese_card",
+            {"action": "request", "completes_task": True},
+            "cheese_card(action=request) 缺少参数：subject",
+        ),
+        (
+            "cheese_card",
+            {"action": "ready", "deliver_url": "https://site.example/r"},
+            "cheese_card(action=ready) 不收 deliver_url：deliver_url 是 "
+            "cheese_card(action=request)、cheese_card(action=redeliver) 的参数。",
+        ),
+        # Deciding a card is a person's 芝士's, as the reviewer: the room's card
+        # has no such verb.
+        (
+            "cheese_card",
+            {"action": "decide", "ref": "p/tasks/1/review", "choice": "accept"},
+            "cheese_card 要 action：request / describe / redeliver / ready",
+        ),
+    ],
+)
+def test_a_verb_is_refused_what_it_does_not_take_before_anything_is_sent(
+    machine_is_gone, tool, arguments, said
+):
+    """A call its verb cannot take says what to pass instead, and nothing
+    reaches the platform: a task closed with a card's title, or a card filed
+    with no title, is not half done — it is not done."""
+    process, platform_calls, executor_calls = machine_is_gone
+
+    outcome = _call(process, tool, arguments)
+
+    assert said in outcome["deny"], outcome
+    assert platform_calls == [], platform_calls
+    assert executor_calls == []
+
+
 @pytest.mark.parametrize("tool", sorted(NEEDS_THE_MACHINE))
 def test_a_tool_that_needs_the_machine_says_it_is_out_of_reach(machine_is_gone, tool):
     """推分支要那台机器：它不在，当场说不在，而且什么都没写到平台上。
@@ -507,7 +566,7 @@ def test_a_tool_that_needs_the_machine_says_it_is_out_of_reach(machine_is_gone, 
     process, platform_calls, _ = machine_is_gone
     arguments, method, path = NEEDS_THE_MACHINE[tool]
 
-    outcome = _call(process, tool, arguments)
+    outcome = _call(process, _tool(tool), arguments)
 
     assert outcome == {"deny": MACHINE_OUT_OF_REACH}
     assert (method, path) not in [(m, p) for m, p, _ in platform_calls]
@@ -547,8 +606,13 @@ def test_acceptance_pushes_the_work_before_it_files_the_card(machine_is_here):
 
     outcome = _call(
         process,
-        "cheese_accept_request",
-        {"subject": "fix(x): y", "reviewer": "lisi", "completes_task": True},
+        "cheese_card",
+        {
+            "action": "request",
+            "subject": "fix(x): y",
+            "reviewer": "lisi",
+            "completes_task": True,
+        },
     )
 
     assert "deny" not in outcome, outcome
@@ -621,10 +685,8 @@ def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
     from app.domain.room_task.progress import NOTE_MAX_CHARS
 
     tools = platform_tools()
-    schema = next(
-        t for t in tools.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_task_state"
-    )
-    offered = schema["inputSchema"]["properties"]["state"]["enum"]
+    state = tools.PLATFORM_TOOLS.actions("cheese_task")["state"]
+    offered = state["properties"]["state"]["enum"]
     assert set(offered) == {state.value for state in TaskProgress}
     assert tools.TASK_PROGRESS_NOTE_CHARS == NOTE_MAX_CHARS
 

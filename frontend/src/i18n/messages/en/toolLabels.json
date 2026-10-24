@@ -98,7 +98,6 @@
   "cheeseTask": "Create a task",
   "cheeseTaskDraft": "Draft task",
   "cheeseTaskGet": "Read task",
-  "cheeseTaskOpen": "Open a task",
   "cheeseTaskSearch": "Look through the space's tasks",
   "cheeseTaskState": "Report the task's state",
   "cheeseTemplateList": "List document templates",

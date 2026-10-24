@@ -56,7 +56,7 @@ export const TOOL_LABELS: Record<string, string> = {
   git: 'toolLabels.piGit',
   // 平台工具表（backend/sandbox/cheese 的 PLATFORM_TOOLS）里的每一样，以及
   // pi 房间里由机器上的 CLI 命令变成的工具（`cheese_<命令>`）。一条都不能少：
-  // 少一条，现场那一行显示的就是 `cheese_accept_request`，而这是房间里最该看懂
+  // 少一条，现场那一行显示的就是 `cheese_card`，而这是房间里最该看懂
   // 的那一类动作。少了哪条由 backend/tests/unit/test_tool_labels.py 对着工具表
   // 和 CLI 的命令树说出来。
   chat_send: 'toolLabels.chatSend',
@@ -76,15 +76,15 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_canvas_get: 'toolLabels.cheeseCanvasGet',
   cheese_canvas_edit: 'toolLabels.cheeseCanvasEdit',
   cheese_doc_comment_reply: 'toolLabels.cheeseDocCommentReply',
-  cheese_task: 'toolLabels.cheeseTask',
+  'cheese_task.open': 'toolLabels.cheeseTask',
   cheese_worktree: 'toolLabels.cheeseWorktree',
   cheese_checkout: 'toolLabels.cheeseCheckout',
   cheese_sync: 'toolLabels.cheeseSync',
   cheese_transcript: 'toolLabels.cheeseTranscript',
   cheese_recover: 'toolLabels.cheeseRecover',
-  cheese_close_task: 'toolLabels.cheeseCloseTask',
-  cheese_reopen_task: 'toolLabels.cheeseReopenTask',
-  cheese_task_state: 'toolLabels.cheeseTaskState',
+  'cheese_task.close': 'toolLabels.cheeseCloseTask',
+  'cheese_task.reopen': 'toolLabels.cheeseReopenTask',
+  'cheese_task.state': 'toolLabels.cheeseTaskState',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   cheese_fetch: 'toolLabels.cheeseFetch',
   cheese_docs_search: 'toolLabels.cheeseDocsSearch',
@@ -96,8 +96,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_find: 'toolLabels.cheeseFind',
   cheese_help: 'toolLabels.cheeseHelp',
   cheese_message_send: 'toolLabels.cheeseMessageSend',
-  cheese_task_open: 'toolLabels.cheeseTaskOpen',
-  cheese_review_decide: 'toolLabels.cheeseReviewDecide',
+  'cheese_card.decide': 'toolLabels.cheeseReviewDecide',
   cheese_member_set: 'toolLabels.cheeseMemberSet',
   cheese_channel_create: 'toolLabels.cheeseChannelCreate',
   cheese_settings_set: 'toolLabels.cheeseSettingsSet',
@@ -126,10 +125,10 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_title: 'toolLabels.cheeseTitle',
   cheese_notify: 'toolLabels.cheeseNotify',
   cheese_ask: 'toolLabels.cheeseAsk',
-  cheese_accept_request: 'toolLabels.cheeseAcceptRequest',
-  cheese_describe: 'toolLabels.cheeseDescribe',
-  cheese_redeliver: 'toolLabels.cheeseRedeliver',
-  cheese_ready: 'toolLabels.cheeseReady',
+  'cheese_card.request': 'toolLabels.cheeseAcceptRequest',
+  'cheese_card.describe': 'toolLabels.cheeseDescribe',
+  'cheese_card.redeliver': 'toolLabels.cheeseRedeliver',
+  'cheese_card.ready': 'toolLabels.cheeseReady',
   cheese_milestone: 'toolLabels.cheeseMilestone',
   cheese_members: 'toolLabels.cheeseMembers',
   cheese_gh_token: 'toolLabels.cheeseGhToken',
@@ -193,7 +192,18 @@ export function mcpServerOf(name: string): string {
  *  后来才收 `action` 的名字也在，给它收 action 以前的那些调用。记录里的调用永远是当时
  *  的写法，所以这张表一直留着。它是 `backend/app/domain/session_record/tool_keys.py` 里 `RETIRED` 的
  *  副本，两份由 backend/tests/unit/test_tool_labels.py 对齐。 */
-export const RETIRED: Record<string, string> = {}
+export const RETIRED: Record<string, string> = {
+  cheese_task: 'cheese_task.open',
+  cheese_task_state: 'cheese_task.state',
+  cheese_close_task: 'cheese_task.close',
+  cheese_reopen_task: 'cheese_task.reopen',
+  cheese_task_open: 'cheese_task.open',
+  cheese_accept_request: 'cheese_card.request',
+  cheese_describe: 'cheese_card.describe',
+  cheese_redeliver: 'cheese_card.redeliver',
+  cheese_ready: 'cheese_card.ready',
+  cheese_review_decide: 'cheese_card.decide',
+}
 
 /** 调用里的 `action`：记录里是解析好的参数，现场那一帧是还在写的 JSON 原文，只认
  *  已经写完的那个值。 */

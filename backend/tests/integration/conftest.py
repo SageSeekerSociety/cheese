@@ -460,7 +460,7 @@ def teammate_task(
     said_by: str = "alice",
 ) -> dict:
     """A task the room's AI teammate made from a 支线 on someone's word
-    (``cheese_task``): a new task under the message the 支线 hangs under."""
+    (``cheese_task(action=open)``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(

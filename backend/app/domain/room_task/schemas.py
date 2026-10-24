@@ -80,7 +80,7 @@ class TaskOut(BaseModel):
 
 
 class ProgressIn(BaseModel):
-    """What the task's AI teammate reports (`cheese_task_state`)."""
+    """What the task's AI teammate reports (`cheese_task(action=state)`)."""
 
     state: TaskProgress
     note: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)
