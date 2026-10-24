@@ -444,6 +444,7 @@ class PrReview(unittest.TestCase):
             "Bring the survivors to evidence rung 4",
             "skipped with a reason",
             "整个组最多 20 次工具调用",
+            "一轮里把互不依赖的读取和搜索一起发出去",
             "单组累计最多提 30 条候选",
             "同一个工具连续失败 3 次",
             "50 changed lines in one file",

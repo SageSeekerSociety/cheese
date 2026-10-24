@@ -212,6 +212,8 @@ The text to give it is:
 写清「要跑哪条命令、预期什么结果」。
 
 预算（先花完再说结束；花完了就交回已有的）：
+- **一轮里把互不依赖的读取和搜索一起发出去**，不要一次只发一个。模型每等一轮就是
+  十几秒，并行发四个方向只付一次等待；这是从 38 次调用里省下墙钟的主要办法。
 - 整个组最多 20 次工具调用；到第 20 次要交回手上的候选，不要再来一轮。一次调用约
   15–20 秒的模型时间，20 次就是一个五分钟的组；要覆盖更多文件，交给分组，不要靠
   一个分身多读。
@@ -249,7 +251,8 @@ What the reviewer must also know:
   and `render.py` refuses a result that names a `minor`. A latent defect is a
   candidate only if it changes code the author would have to touch.
 
-**The plan, when the group is large.** Before the first pass, a reviewer whose
+**The plan, when the group is large.** Before the first pass — and only then: a
+plan written for the second pass becomes a coverage ceiling — a reviewer whose
 group's change reaches 50 changed lines in one file, or 100 in the whole
 group, works through this text and hands the plan back with its candidates.
 A smaller group skips it.
