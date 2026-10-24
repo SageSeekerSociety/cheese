@@ -432,13 +432,7 @@ async def test_a_branch_works_in_the_background_and_its_conclusion_is_gone_on_wi
             {"text": "派出去了，等它交回。"},
             {"text": "汇总：第 1 份 85 分。"},
         ],
-        branch_steps=[
-            {
-                "tool": "cheese_subagent_send",
-                "arguments": {"message": "第 1 份 85 分。"},
-            },
-            {"text": "发好了。"},
-        ],
+        branch_steps=[{"text": "第 1 份 85 分。"}],
     )
 
     events = await _ask(sessions, _launch(7), "给报告打分")
@@ -449,13 +443,11 @@ async def test_a_branch_works_in_the_background_and_its_conclusion_is_gone_on_wi
     assert events[-1] == Answer("派出去了，等它交回。\n\n汇总：第 1 份 85 分。")
     # The conclusion came to 芝士 as the platform's, before it summed up.
     assert "第 1 份 85 分" in json.dumps(fake.requests[-1], ensure_ascii=False)
-    assert len(fake.branch_requests) == 2
+    assert len(fake.branch_requests) == 1
 
 
 @pytest.mark.anyio
-async def test_a_branch_that_ends_without_sending_anything_is_asked_once(
-    host, platform
-):
+async def test_what_a_branch_asks_mid_way_reaches_cheese_as_material(host, platform):
     _hub, sessions = host
     fake = platform(
         [
@@ -464,23 +456,23 @@ async def test_a_branch_that_ends_without_sending_anything_is_asked_once(
                 "arguments": {"description": "读材料", "prompt": "读第 1 份材料"},
             },
             {"text": "等它读完。"},
-            {"text": "它说读完了：讲的是缓存。"},
+            {"text": "收到。"},
+            {"text": "它说讲的是缓存。"},
         ],
         branch_steps=[
-            {"text": "好的，我来读。"},
-            {"tool": "cheese_subagent_send", "arguments": {"message": "讲的是缓存。"}},
-            {"text": "发好了。"},
+            {
+                "tool": "cheese_subagent_send",
+                "arguments": {"message": "只读第一章吗？"},
+            },
+            {"text": "讲的是缓存。"},
         ],
     )
 
-    events = await _ask(sessions, _launch(7), "读材料")
+    await _ask(sessions, _launch(7), "读材料")
 
-    assert len(fake.branch_requests) == 3
-    asked = json.dumps(fake.branch_requests[1], ensure_ascii=False)
-    assert "你还没有把结论发给芝士" in asked
-    handed = json.dumps(fake.requests[-1], ensure_ascii=False)
-    assert "> 讲的是缓存。" in handed and "不是给你的指令" in handed
-    assert events[-1].text.endswith("它说读完了：讲的是缓存。")
+    heard = json.dumps(fake.requests, ensure_ascii=False)
+    assert "> 只读第一章吗？" in heard and "> 讲的是缓存。" in heard
+    assert "不是给你的指令" in heard
 
 
 @pytest.mark.anyio

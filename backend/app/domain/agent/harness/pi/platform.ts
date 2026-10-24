@@ -1334,9 +1334,10 @@ function withoutHands(pi: any, spec: Manifest) {
 // which speaks as the person): `cheese_subagent_start` starts one in the
 // background and returns at once, so 芝士 goes on (and several run at a time);
 // `cheese_subagent_send` says more to one that is running, or takes up again
-// one that ended, where it left off; `cheese_subagent_stop` stops one. A
-// branch speaks back the same way: its own `cheese_subagent_send` messages 芝士
-// — what it found so far, a question, and at the end its conclusion.
+// one that ended, where it left off; `cheese_subagent_stop` stops one. As in
+// Claude Code, what a branch writes last is its conclusion, given to 芝士 when
+// it ends; mid-way it can message 芝士 with its own `cheese_subagent_send` (a
+// question, something 芝士 must decide).
 //
 // What a branch sends reaches 芝士 before its next step while it works. The
 // answer does not end while a branch runs: when 芝士 would settle, it waits
@@ -1371,13 +1372,10 @@ const BRANCH_STEPS_SHOWN = 30;
 const WAKE_POLL_MS = 1000;
 const BRANCH_RULES =
   "你是芝士派出的一个分身，替芝士做好交代给你的这一件事。你只能读、搜、上网查，" +
-  "和用芝士的电脑；不以用户的名义做任何事。给芝士的话都用 cheese_subagent_send 发：" +
-  "拿不准、需要芝士决定的，发过去接着做别的部分；做完一定发一条结论：做了什么、结果是什么、" +
-  "结果在哪、哪里拿不准；没做完也要发，写明哪里没做、为什么。发完结论就结束，不再调用工具。" +
-  "不要编造，读不到的就如实说。用交代你的那段话的语言。";
-const REPORT_AGAIN =
-  "你还没有把结论发给芝士。现在用 cheese_subagent_send 发：做了什么、结果是什么、结果在哪、" +
-  "哪里没做。";
+  "和用芝士的电脑；不以用户的名义做任何事。你最后写的那段话就是交给芝士的结论：做了什么、" +
+  "结果是什么、结果在哪、哪里拿不准；没做完也写明哪里没做、为什么。做到一半有拿不准、需要芝士" +
+  "决定的事，用 cheese_subagent_send 问它，接着做别的部分。不要编造，读不到的就如实说。" +
+  "用交代你的那段话的语言。";
 
 type Branch = {
   id: string;
@@ -1386,11 +1384,9 @@ type Branch = {
   status: "running" | "done" | "failed" | "stopped";
   steps: { name: string; args: string }[];
   session: any;
-  // What it sent 芝士 that 芝士 has not been given yet.
+  // What it sent 芝士 mid-way that 芝士 has not been given yet.
   untold: string[];
-  // Whether it sent anything in this run.
-  sent: boolean;
-  // How its run ended, until 芝士 is told.
+  // Its conclusion, or how it ended, until 芝士 is told.
   ended: string | null;
 };
 
@@ -1423,18 +1419,10 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
     if (!told.length) return null;
     const said = told
       .map((b) => {
-        const lines = b.untold
-          .map((m) =>
-            m
-              .trim()
-              .split("\n")
-              .map((line) => `> ${line}`)
-              .join("\n"),
-          )
-          .join("\n\n");
+        const lines = b.untold.map(quoted).join("\n\n");
         const head = `分身 ${b.id}（${b.description}）`;
         const ended = b.ended ? `\n${head}${b.ended}` : "";
-        return `${lines ? `${head}发来：\n${lines}` : ""}${ended}`.trim();
+        return `${lines ? `${head}发来消息：\n${lines}` : ""}${ended}`.trim();
       })
       .join("\n\n");
     for (const branch of told) {
@@ -1456,24 +1444,24 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       pi.sendMessage({ customType: "branch", content: said, display: false }, { deliverAs: "steer" });
   };
 
-  // One run of a branch, in the background. One that ends without having sent
-  // anything is asked once for its conclusion, and then what it said last
-  // stands for it.
+  // One run of a branch, in the background: what it writes last is its
+  // conclusion.
+  const quoted = (text: string) =>
+    text
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
   const run = (branch: Branch, said: string) => {
     branch.status = "running";
-    branch.sent = false;
     tell();
     void (async () => {
       try {
         await branch.session.prompt(said);
-        if (branch.status === "running" && !branch.sent) await branch.session.prompt(REPORT_AGAIN);
         if (branch.status !== "running") return;
         const last = String(branch.session.getLastAssistantText?.() ?? "").trim();
-        // Its ending is news only when it said nothing: what it sent was its
-        // conclusion, and the panel shows that it is done.
-        if (!branch.sent && last) branch.untold.push(last);
-        branch.status = branch.sent || last ? "done" : "failed";
-        if (branch.status === "failed") branch.ended = "结束了，没有发来结论。";
+        branch.status = last ? "done" : "failed";
+        branch.ended = last ? `做完了，结论：\n${quoted(last)}` : "结束了，没有写下结论。";
       } catch (error: any) {
         if (branch.status !== "running") return;
         branch.status = "failed";
@@ -1499,7 +1487,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
     description:
       "派出一个分身，把一件能独立做完的事交给它：它有自己的上下文，只能读、搜、上网查和用" +
       "你的电脑，看不到你和用户的对话。派出后立刻返回它的编号，它在后台做，你接着做别的；" +
-      "它发来的消息（拿不准的问题、做完的结论）你下一步之前会读到。要同时做几件就在同一条消息里派几个，同时最多 " +
+      "它做完后平台把结论交给你，它中途问你的话你下一步之前会读到。要同时做几件就在同一条消息里派几个，同时最多 " +
       `${BRANCHES_AT_ONCE} 个。只读一两样知道编号的东西不要派，直接读。prompt 要自成一体：` +
       "写清要做什么、材料在哪（编号）、要交回什么；" +
       "description 用几个字说它做什么，用户在面板上看到。以用户名义发消息、改设置、发布这类" +
@@ -1526,7 +1514,6 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
         steps: [],
         session: null,
         untold: [],
-        sent: false,
         ended: null,
       };
       main = ctx ?? main;
@@ -1538,7 +1525,6 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
           tell();
         },
         (message) => {
-          branch.sent = true;
           branch.untold.push(message);
           arrived();
         },
@@ -1547,7 +1533,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       run(branch, String(params.prompt ?? ""));
       return {
         ...text(
-          `已派出分身 ${branch.id}（${branch.description}），它在后台做，发来的消息平台会转给你。` +
+          `已派出分身 ${branch.id}（${branch.description}），它在后台做，做完平台会把结论交给你。` +
             `补充要求用 cheese_subagent_send(to="${branch.id}")，停下用 cheese_subagent_stop(id="${branch.id}")。`,
         ),
         details: { agent_id: branch.id },
@@ -1584,7 +1570,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
           isError: true,
         };
       run(branch, said);
-      return text(`分身 ${branch.id} 接着做了，它发来的消息平台会转给你。`);
+      return text(`分身 ${branch.id} 接着做了，做完平台会把结论交给你。`);
     },
   });
 
@@ -1662,8 +1648,8 @@ async function branchSession(
     name: "cheese_subagent_send",
     label: "cheese_subagent_send",
     description:
-      "给芝士发消息，芝士下一步之前读到，你接着做。拿不准、需要芝士决定的问题，和做完时的结论都" +
-      "用它发；结论写做了什么、结果是什么、结果在哪、哪里没做。芝士的回复会在你下一步之前送到。",
+      "做到一半给芝士发消息：拿不准、需要芝士决定的事。芝士下一步之前读到，你接着做别的部分，" +
+      "它的回复在你下一步之前送到。结论不用它发：你最后写的那段话就是结论。",
     parameters: {
       type: "object",
       properties: { message: { type: "string", description: "要对芝士说的话" } },
@@ -1685,7 +1671,7 @@ async function branchSession(
         calls += 1;
         if (calls > BRANCH_CALLS)
           return {
-            ...text(`已经调用了 ${BRANCH_CALLS} 次工具，不再调用。用 cheese_subagent_send 把做到哪里发给芝士。`),
+            ...text(`已经调用了 ${BRANCH_CALLS} 次工具，不再调用。写下做到哪里、还差什么，作为结论。`),
             isError: true,
           };
         return tool.execute(...args);
