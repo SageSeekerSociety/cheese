@@ -129,6 +129,26 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
+it('题目更新了：写到了第几版、改了什么，点开去看题目的材料', async () => {
+  const item: ProgressItem = {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version: 3,
+    changes: { rubric: true, files: { replaced: ['数据.csv'] } },
+  }
+  const view = mount({ progress: [item] })
+  const line = view.getByText('第 3 版：改了评分要点、替换 数据.csv')
+  await fireEvent.click(line)
+  expect(view.emitted('open-task-folder')).toEqual([[]])
+})
+
 it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
   const item: ProgressItem = {
     kind: 'accepted',

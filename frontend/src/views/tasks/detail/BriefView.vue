@@ -47,13 +47,13 @@
       </div>
     </section>
 
-    <!-- 材料：清单与下载次数都是服务端的，点不点得动也由它说。没有材料就不画这一段。 -->
+    <!-- Materials: the list is the server's, and so is whether they download. No section without materials. -->
     <section v-if="attachments.length" class="tb__sec">
       <h2 class="tb__h t-title">{{ t('tasks.brief.materials') }}</h2>
       <TaskAttachmentList
         :attachments="attachments"
         :can-download="canDownload"
-        :downloading-id="downloadingId"
+        :downloading="downloading"
         @download="emit('download', $event)"
       />
     </section>
@@ -62,7 +62,7 @@
 
 <script setup lang="ts">
 import type { Task } from '@/types'
-import type { TaskAttachmentData } from '@/types/taskBoard'
+import type { TaskFileData } from '@/types/taskBoard'
 
 import { useI18n } from 'vue-i18n'
 
@@ -71,12 +71,13 @@ import TaskDescription from '@/components/tasks/TaskDescription.vue'
 
 const props = defineProps<{
   taskData: Task | null
-  attachments: TaskAttachmentData[]
+  attachments: TaskFileData[]
   canDownload: boolean
-  downloadingId: number | null
+  /** 正在下载的那一份（名字）。 */
+  downloading: string | null
 }>()
 
-const emit = defineEmits<{ download: [file: TaskAttachmentData] }>()
+const emit = defineEmits<{ download: [file: TaskFileData] }>()
 
 const { t } = useI18n()
 </script>
