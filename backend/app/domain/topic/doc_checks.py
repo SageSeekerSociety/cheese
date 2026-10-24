@@ -89,7 +89,7 @@ def living_doc_warnings(content: str) -> list[str]:
     if logs:
         warnings.append(
             "小节《" + "》《".join(logs) + "》是流水账：文档记状态，不记过程。"
-            "这几天发生了什么现场里看得到，结论写进结论卡，正文只留「现在成立」的那几条。"
+            "这几天发生了什么现场里看得到，正文只留「现在成立」的那几条。"
         )
 
     lines = content.splitlines()
