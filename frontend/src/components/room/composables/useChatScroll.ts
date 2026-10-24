@@ -122,19 +122,47 @@ export function useChatScroll(
   let lastHeight = 0
   let readerInputAt = -Infinity
   let pointerHeld = false
+  let pointerTop = 0
   let rewrittenAt = -Infinity
   const touched = () => (readerInputAt = performance.now())
   for (const type of ['wheel', 'touchmove'] as const) useEventListener(scrollRef, type, touched, { passive: true })
+  // 「人在滚」= 位置真的动了。按一下不是滚：单击一条消息、点住又松手、手指在消息上
+  // 点一下，位置一个像素都没动，可按住期间这一份却被当成读者在滚，于是下面那条「刚被
+  // 改写、没人动却往上挪」的兜底失效，停住的人被留在半路（「回到最新」冒出来，真机
+  // 2026-10-24 反馈）。所以按住之后要位置变了才算。
   useEventListener(scrollRef, 'pointerdown', () => {
     pointerHeld = true
+    pointerTop = scrollRef.value?.scrollTop ?? 0
+  })
+  useEventListener(window, 'pointermove', () => {
+    const el = scrollRef.value
+    if (!pointerHeld || !el || el.scrollTop === pointerTop) return
+    pointerTop = el.scrollTop
     touched()
   })
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
-    if (!pointerHeld) return
     pointerHeld = false
+  })
+  // 键盘同理：只有会挪这一栏的那几个键算，而且得是**这一栏会跟着动**的那一下。
+  // 键名定不了这件事——同一个键在输入框里和落在面板上做的不是一件事，而输入框里的
+  // keydown 一路冒到 window：
+  // - 发消息的输入框在面板**外面**，它里面的按键（打字的空格、挪光标的箭头、翻它自己
+  //   的 PageUp）挪的都是它自己，这一栏一动不动。中文输入法每打一个词按一次空格，这
+  //   一下要是不排掉，停下来读的人的改写兜底就一直是废的（2026-10-24 真机反馈）。所以
+  //   落在输入框里、又不在面板里的按键，一个都不算。
+  // - 其余的都算：落在面板里的（包括时间线里的就地编辑器——改自己的消息时，光标走出
+  //   可视范围、翻页键，挪的都是这一栏），以及压根不在输入框里的。合并基线上每个键都
+  //   算，这里只把上面那一类摘出去，别的一律照旧。
+  const MOVES_THE_PANE = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', ' ', 'Spacebar', 'PageUp', 'PageDown'])
+  useEventListener(window, 'keydown', (e) => {
+    if (!MOVES_THE_PANE.has(e.key)) return
+    const el = scrollRef.value
+    const target = e.target instanceof Element ? e.target : null
+    const inPane = !!(el && target && el.contains(target))
+    const inEditable = !!target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')
+    if (inEditable && !inPane) return
     touched()
   })
-  useEventListener(window, 'keydown', touched)
   // The pane's column too: the composer zone under the pane leaving and coming back in
   // one task clamps it the same way, with the timeline untouched. The pane's direct
   // parent is not that column: the timeline sits in its own wrapper (the floating
