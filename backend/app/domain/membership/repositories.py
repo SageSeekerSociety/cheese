@@ -122,11 +122,13 @@ class InvitationRepository:
         invitee_handle: str,
         inviter_handle: str,
         role: str = "member",
+        invited_by_assistant: bool = False,
     ) -> ProjectInvitation:
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=inviter_handle,
+            invited_by_assistant=invited_by_assistant,
             status=InvitationStatus.pending,
             role=role,
         )

@@ -198,6 +198,7 @@ async def send_chat_message(
             roster=members,
             place=place,
         ),
+        by_assistant=actor.by_assistant,
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
