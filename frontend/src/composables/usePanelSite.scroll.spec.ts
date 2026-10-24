@@ -16,10 +16,14 @@ vi.mock('./useSessionInspector', () => ({ useSessionInspector: () => ({}) }))
 vi.mock('@/i18n', () => ({ t: (key: string) => key }))
 
 import { storageRemove } from '../lib/browserStorage'
+import { cachedWindow, forgetWindows, rememberWindow } from '../lib/siteWindow'
 
 import { usePanelSite } from './usePanelSite'
 
 beforeEach(() => {
+  // 现场那一窗存在模块级的表里（`lib/siteWindow`）：前一条用例留下的窗口会变成
+  // 后一条的「上次打开」。清掉，每条用例都从没有缓存开始。
+  forgetWindows()
   vi.useFakeTimers()
   vi.stubGlobal(
     'ResizeObserver',
@@ -70,8 +74,13 @@ function row(id: string, second: number): Block {
   return { ...block(id, second), run_record: false } as Block
 }
 
-function page(rows: Block[], extra: { has_more?: boolean; oldest_id?: string | null } = {}) {
-  return { data: rows, has_more: extra.has_more ?? false, oldest_id: extra.oldest_id ?? null }
+function page(rows: Block[], extra: { has_more?: boolean; oldest_id?: string | null; newest_id?: string | null } = {}) {
+  return {
+    data: rows,
+    has_more: extra.has_more ?? false,
+    oldest_id: extra.oldest_id ?? null,
+    newest_id: extra.newest_id ?? null,
+  }
 }
 
 const OPEN = page([block('a', 1), block('b', 2)])
@@ -83,13 +92,13 @@ async function settle(): Promise<void> {
   }
 }
 
-async function openAtBottom() {
+async function openAtBottom(topic: { id: string } = { id: 'room' }) {
   const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 }
   const el = pane(box)
   const scope = effectScope()
   const site = scope.run(() =>
     usePanelSite({
-      topicId: () => 'room',
+      topicId: () => topic.id,
       active: () => true,
       refreshTick: () => 0,
       runningTurns: () => ({}),
@@ -120,6 +129,193 @@ describe('where 现场 opens', () => {
     await settle()
 
     expect(box.scrollTop).toBe(1500)
+    scope.stop()
+  })
+})
+
+describe('a row the socket updates in place', () => {
+  it('keeps its cursor, so next time can still page up from it', async () => {
+    // 读回来的那一页每条都带游标，socket 的 `run_record` 帧不带。原地换掉时不能把
+    // 游标弄丢：缓存要靠它定位，丢了下次打开就翻不动了。
+    const withCursor = row('a', 1)
+    withCursor.meta = { ...withCursor.meta, cursor: 'c-a' }
+    api.getTranscript.mockResolvedValue(page([withCursor], { newest_id: 'n1' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    const updated = { ...row('a', 1), content: '后来的一句话' }
+    site.receive(updated)
+    await settle()
+    // 缓存是下一次刷新时才写回去的：等它写一次，再看到底存了什么。
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    const held = cachedWindow('room', null, 120)!
+    expect(held.blocks[0].meta?.cursor, '原地换掉时游标留着').toBe('c-a')
+    scope.stop()
+  })
+})
+
+describe('switching to another conversation', () => {
+  it("does not keep the previous conversation's records", async () => {
+    // 换对话是就地换的（任务路由没有 topicId 这个 key）：手上那几行是上一条对话的，
+    // 不能留在新的这一条里。这里让新对话的最新一页比旧的**更早**——`mergeSite` 那条
+    // 「把更旧的接在前面」的分支正是这么漏出来的。
+    const topic = { id: 'room' }
+    api.getTranscript.mockResolvedValueOnce(page([row('a1', 5), row('a2', 6)]))
+    const { site, scope } = await openAtBottom(topic)
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a1', 'a2'])
+
+    topic.id = 'task'
+    api.getTranscript.mockResolvedValue(page([row('b1', 1), row('b2', 2)]))
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    expect(
+      site.transcript.value.map((b) => b.id),
+      '只留下新对话的'
+    ).toEqual(['b1', 'b2'])
+    scope.stop()
+  })
+})
+
+describe('the window from last time', () => {
+  it('paints it at once, then asks only for what came after it', async () => {
+    forgetWindows()
+    // 上一次打开留下的那一窗（`lib/siteWindow`）。这一条用例前把它放进去。
+    rememberWindow(
+      'room',
+      null,
+      {
+        blocks: [row('a', 1), row('b', 2)],
+        hasMore: true,
+        oldestCursor: 'c1',
+        newestCursor: 'n1',
+      },
+      120
+    )
+    let answer!: (v: ReturnType<typeof page>) => void
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          answer = r
+        })
+    )
+
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 }
+    const el = pane(box)
+    const scope = effectScope()
+    const site = scope.run(() =>
+      usePanelSite({
+        topicId: () => 'room',
+        active: () => true,
+        refreshTick: () => 0,
+        runningTurns: () => ({}),
+        agentControl: () => null,
+      })
+    )!
+    site.scrollRef.value = el
+    await settle()
+
+    // 请求还在路上，屏上已经是上次那一窗了——不是骨架屏。
+    expect(site.loading.value, '有缓存就不摆骨架屏').toBe(false)
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a', 'b'])
+    // 问的是「从这一窗往后有什么」，不是重读一整页。
+    expect(api.getTranscript.mock.calls[0][1]).toMatchObject({ after: 'n1' })
+
+    answer(page([row('c', 3)], { newest_id: 'n2' }))
+    await settle()
+    // 新的接在末尾，不是把整窗换掉。
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['a', 'b', 'c'])
+    // 往前读的这一路不说「上面还有没有」，所以它不该把缓存里的往上翻能力冲掉。
+    expect(site.hasOlder.value, '缓存打开后仍能往上翻').toBe(true)
+    scope.stop()
+  })
+
+  it('keeps the cursor when a refresh brings nothing new', async () => {
+    forgetWindows()
+    rememberWindow('room', null, { blocks: [row('a', 1)], hasMore: false, oldestCursor: null, newestCursor: 'n1' }, 120)
+    // 追平了：这一页是空的，也没有新的游标可给。
+    api.getTranscript.mockResolvedValue(page([], { newest_id: null }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    api.getTranscript.mockClear()
+    vi.advanceTimersByTime(3000)
+    await settle()
+
+    // 又一次从同一个游标往后读，没有退回整页重读。
+    expect(api.getTranscript.mock.calls[0][1], '空的一页之后手上还有游标').toMatchObject({
+      after: 'n1',
+    })
+    scope.stop()
+  })
+
+  it("does not paint another view's window", async () => {
+    forgetWindows()
+    rememberWindow(
+      'room',
+      'cheese-a',
+      {
+        blocks: [row('a', 1)],
+        hasMore: false,
+        oldestCursor: null,
+        newestCursor: 'n1',
+      },
+      120
+    )
+    api.getTranscript.mockResolvedValue(page([row('b', 2)]))
+    const { site, scope } = await openAtBottom()
+
+    // 「全部」这一视角没有缓存，不该把「只看 cheese-a」那一窗端上来。
+    expect(site.transcript.value.map((b) => b.id)).toEqual(['b'])
+    scope.stop()
+  })
+
+  it('never shows the same record twice when paging up past the cursor it held', async () => {
+    // 缓存的游标可能退到一条**更靠后**的行上（画出来的头一条是 socket 换上来的、
+    // 不带游标的那种，见 lib/siteWindow）。从它往回读会把已经画出来的几条再读一遍：
+    // 拼之前必须按 id 去重，不然同一个 id 在列表里出现两次。
+    forgetWindows()
+    const a = row('a', 1)
+    a.meta = { ...a.meta, cursor: 'c-a' }
+    const b = row('b', 2)
+    b.meta = { ...b.meta, cursor: 'c-b' }
+    rememberWindow('room', null, { blocks: [a, b], hasMore: true, oldestCursor: 'c-b', newestCursor: 'n1' }, 1)
+    api.getTranscript.mockResolvedValue(page([a, b], { has_more: false }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    site.onSiteScroll()
+    await settle()
+
+    const ids = site.transcript.value.map((x) => x.id)
+    expect(ids.length, '同一个 id 不该出现两次').toBe(new Set(ids).size)
+    scope.stop()
+  })
+
+  it('reads a fresh page again once the window has outgrown its cap', async () => {
+    // 窗口涨过封顶：裁掉的是**最新**那一截。读者回到末尾时得整页重读一页最新的把它
+    // 接回来——不能再从手上那个游标往后接，那个游标指的是已经被裁出窗口的那一条。
+    forgetWindows()
+    rememberWindow('room', null, { blocks: [row('a', 1)], hasMore: false, oldestCursor: null, newestCursor: 'n1' }, 120)
+    // 第一批就超过 600 条封顶（MAX_WINDOW），于是当场裁掉最新的那些。
+    const flood = Array.from({ length: 700 }, (_, i) => row(`f${i}`, 10 + i))
+    api.getTranscript.mockResolvedValue(page(flood, { newest_id: 'n2' }))
+    const { site, scope } = await openAtBottom()
+    await settle()
+    expect(site.transcript.value.length, '窗口封在 MAX_WINDOW').toBe(600)
+
+    api.getTranscript.mockClear()
+    api.getTranscript.mockResolvedValue(page([row('tail', 9999)], { newest_id: 'n3' }))
+    site.onSiteScroll()
+    await settle()
+
+    // 整页读（没有 `after`），不是接着旧游标往下接。
+    expect(api.getTranscript.mock.calls[0][1], '回到末尾整页重读').not.toMatchObject({
+      after: 'n1',
+    })
+    expect(site.transcript.value.map((b) => b.id)).toContain('tail')
     scope.stop()
   })
 })

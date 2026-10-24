@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -635,6 +636,13 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 	stdout := &cappedBuffer{limit: execMaxOut}
 	stderr := &cappedBuffer{limit: execMaxOut}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if m.Stream {
+		// cmd.Run returns only once its copy of stderr has drained into this
+		// writer, so every line goes up before the exec.result below.
+		cmd.Stderr = io.MultiWriter(stderr, &lineSender{send: func(line string) {
+			_ = h.conn.Send(link.ExecOutput(m.ID, line))
+		}})
+	}
 
 	exit := 0
 	if err := cmd.Run(); err != nil {
@@ -704,6 +712,34 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 		c.truncated = true
 	}
 	return len(p), nil
+}
+
+// execMaxLine bounds one streamed line: a command that writes a long run of
+// bytes with no line end still has it sent, in pieces of this size.
+const execMaxLine = 4 << 10
+
+// lineSender hands each complete line written to it to send, without its line
+// end. A last line with no line end is not sent: the exec.result carries it.
+type lineSender struct {
+	pending []byte
+	send    func(string)
+}
+
+func (l *lineSender) Write(p []byte) (int, error) {
+	l.pending = append(l.pending, p...)
+	for {
+		end := bytes.IndexByte(l.pending, '\n')
+		if end < 0 || end >= execMaxLine {
+			if len(l.pending) < execMaxLine {
+				return len(p), nil
+			}
+			l.send(string(l.pending[:execMaxLine]))
+			l.pending = l.pending[execMaxLine:]
+			continue
+		}
+		l.send(strings.TrimSuffix(string(l.pending[:end]), "\r"))
+		l.pending = l.pending[end+1:]
+	}
 }
 
 func (c *cappedBuffer) String() string { return c.buf.String() }

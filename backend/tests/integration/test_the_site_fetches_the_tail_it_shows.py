@@ -45,6 +45,27 @@ def _drop_rows(client, topic: uuid.UUID) -> None:
     client.portal.call(run)
 
 
+def _drop_rows_for_turn(client, topic: uuid.UUID, turn: str) -> None:
+    """Take **one turn's** rows away, as the retention sweep does at thirty days.
+
+    The rest of the conversation keeps its rows, so the page the reader gets is
+    built from what the database still holds — and the turn dropped here is
+    reachable only through the index. `turn` is the work id the journal stamped
+    on that turn's records; the row carries it as the turn id."""
+
+    async def run() -> None:
+        async with client.test_request_factory() as db:
+            await db.execute(
+                delete(SessionRecord).where(
+                    SessionRecord.conversation_id == topic,
+                    SessionRecord.turn_id == uuid.UUID(turn),
+                )
+            )
+            await db.commit()
+
+    client.portal.call(run)
+
+
 def _long_turn(work: str, count: int) -> list[dict]:
     """One turn's journal: `count` steps, each naming itself."""
     return [
@@ -71,6 +92,12 @@ class _CountingBucket(_Bucket):
         self.bodies: list[bytes] = []
         self.in_flight = 0
         self.max_in_flight = 0
+        self.listings = 0
+
+    async def list_keys(self, prefix: str):
+        self.listings += 1
+        async for key in super().list_keys(prefix):
+            yield key
 
     async def download(self, key: str) -> bytes | None:
         self.in_flight += 1
@@ -129,6 +156,52 @@ def test_the_newest_page_does_not_fetch_the_beginning_of_a_long_turn(
     # The page is the tail of the turn; its first steps are not on screen and
     # must not be fetched (gzip cannot be read from the middle).
     assert '"step 0000"' not in fetched
+
+
+def test_a_page_the_rows_already_hold_never_lists_the_index(
+    client, tmp_path, monkeypatch
+):
+    # Sealed runs keep their rows until the retention sweep, so the newest page
+    # is answerable from the database alone. Listing the bucket costs a round
+    # trip the open panel pays every three seconds; it must not be spent when
+    # the rows have already filled the page.
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=600)
+    bucket.listings = 0
+
+    page = _site(client, topic)
+
+    assert len(page["data"]) == 120
+    assert bucket.listings == 0, "读者要的那一页数据库自己就有"
+
+
+def test_a_page_the_rows_exactly_fill_still_reaches_the_archive(
+    client, tmp_path, monkeypatch
+):
+    """行正好填满一页时，更早的记录还在归档里，读者得能翻上去。
+
+    这一条守的是那个等号：只有行给出**多于**一页时才有一道边界可交回去、才
+    谈得上不必列归档。正好一页时，撑起「上面还有」的那几条可能正是行已经被清理
+    掉的记录（三十天保留），省掉列归档就等于告诉读者上面没有了。"""
+    bucket = _CountingBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    # 更早的一轮：稍后把它的行清掉，只留归档里的对象与索引。
+    older = str(uuid.uuid4())
+    session.write(_long_turn(older, 50))
+    session.drain()
+    # 更新的一轮：行数正好一页（默认 120）。
+    session.write(_long_turn(str(uuid.uuid4()), 120))
+    session.drain()
+    _seal(client, bucket)
+    topic = session.ref.topic_id
+    _drop_rows_for_turn(client, topic, older)
+
+    page = _site(client, topic)
+
+    assert len(page["data"]) == 120
+    assert page["has_more"] is True, "上面还有更早的一轮，读者得翻得到"
+    assert page["oldest_id"], "交回去一个能往上翻的游标"
 
 
 def test_reading_the_same_page_again_keeps_the_sealed_body(

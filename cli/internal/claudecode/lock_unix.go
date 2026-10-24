@@ -7,7 +7,10 @@ import (
 	"syscall"
 )
 
-func lockMigration(path string) (func(), error) {
+// lockFile holds an exclusive lock on path until the returned function is
+// called. It is flock, the lock the executor's bootstrap takes on the same
+// files (`remote_execution/executor_download.lock`).
+func lockFile(path string) (func(), error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err

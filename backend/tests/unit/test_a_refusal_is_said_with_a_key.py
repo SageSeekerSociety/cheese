@@ -358,7 +358,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/forge_cli.py": 10,
     "app/domain/agent/gateway.py": 2,
     "app/domain/agent/gateway_usage.py": 2,
-    "app/domain/agent/harness/claude_code/remote_execution/bootstrap.py": 12,
+    "app/domain/agent/harness/claude_code/remote_execution/bootstrap.py": 11,
     "app/domain/agent/harness/claude_code/remote_execution/client.py": 10,
     "app/domain/agent/harness/claude_code/remote_execution/context_service.py": 1,
     "app/domain/agent/harness/claude_code/remote_execution/forwarded_fs.py": 2,
