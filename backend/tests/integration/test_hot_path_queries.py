@@ -317,10 +317,16 @@ def test_a_sent_message_groups_under_itself_without_a_second_write(client, beare
         "the write re-read its own row; only the route's read of the anchor "
         "it returns should ask for it by id:\n" + "\n".join(reads)
     )
-    client_id_scans = [s for s in statements if "client_id" in s and "FROM blocks" in s]
+    client_id_scans = [
+        s
+        for s in statements
+        if "FROM blocks" in s
+        and "blocks.author =" in s
+        and "ORDER BY blocks.created_at, blocks.id" in s
+    ]
     assert not client_id_scans, (
-        "sending a message scanned blocks by client_id instead of relying on "
-        "idempotency_keys:\n" + "\n".join(client_id_scans)
+        "sending a message scanned blocks by author/client_id instead of "
+        "relying on idempotency_keys:\n" + "\n".join(client_id_scans)
     )
     topic_by_id = [s for s in statements if "FROM topics WHERE topics.id =" in s]
     assert len(topic_by_id) == 1, (

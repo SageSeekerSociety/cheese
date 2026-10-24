@@ -2,6 +2,7 @@
 ``dump_blocks_json`` and replays committed deliveries from ``idempotency_keys``
 without scanning ``blocks``."""
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.agent.turn.store import human
+from app.domain.block import adapters
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
 
@@ -101,6 +103,20 @@ async def test_persist_human_message_replays_from_idempotency_store(
     monkeypatch.setattr(human.idem, "record_result", fake_record_result)
     monkeypatch.setattr(human.idem, "stored_result", fake_stored_result)
 
+    real_sleep = asyncio.sleep
+    sleep_zero_calls = 0
+
+    async def counting_sleep(delay: float):
+        nonlocal sleep_zero_calls
+        if delay == 0:
+            sleep_zero_calls += 1
+        return await real_sleep(delay)
+
+    monkeypatch.setattr(adapters.asyncio, "sleep", counting_sleep)
+
+    attachments = [
+        {"path": f"uploads/a-{i}.png", "mime": "image/png"} for i in range(1199)
+    ]
     first = await human.persist_human_message(
         sessions,  # type: ignore[arg-type]
         prepare=prepare,
@@ -111,11 +127,12 @@ async def test_persist_human_message_replays_from_idempotency_store(
         content="hello idempotent world",
         turn_id=turn_id,
         reply_to=None,
-        attachments=[{"path": "uploads/a.png", "mime": "image/png"}],
+        attachments=attachments,
         client_id=client_id,
     )
     assert first.duplicate is False
-    assert len(first.payloads) == 2
+    assert len(first.payloads) == 1200
+    assert sleep_zero_calls == 2
     expected = [
         BlockOut.model_validate(b).model_dump(mode="json")
         for b in created_on_first_send
@@ -134,7 +151,7 @@ async def test_persist_human_message_replays_from_idempotency_store(
         content="hello idempotent world",
         turn_id=turn_id,
         reply_to=None,
-        attachments=[{"path": "uploads/a.png", "mime": "image/png"}],
+        attachments=attachments,
         client_id=client_id,
     )
     assert replay.duplicate is True
