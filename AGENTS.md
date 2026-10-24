@@ -6,7 +6,7 @@ Principles that no tool will enforce, so they hold by being read. Two limits kee
 
 Cheese hosts other people's repositories, and a hosted repository must never have to change to be hosted: no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. The rule governs a repository's contents, not a machine's: a machine enrolled to run agents was enrolled for exactly that. When you build a platform feature here, that is the constraint it must meet.
 
-So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md`, a rule true only for platform-run agents on this repo in the description of the platform tool it concerns — not into this file. When unsure: a rule that is false outside a session the platform runs is platform knowledge.
+So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md` — not into this file. A rule true only of this repo goes here, even when only sessions the platform runs ever meet it: a platform tool's description and the platform's prompts are read by the agents of every hosted repo. When unsure: a rule that is false outside a session the platform runs, and true of every hosted repo, is platform knowledge.
 
 ## Production changes go through CI/CD
 
@@ -81,6 +81,10 @@ An audit finding needs a way to actually happen — a crash, corruption, a secur
 ## Name the feedback a fix closes
 
 A commit that completes a fix for a report in the dev feedback center (okcheese.com) carries `Fixes-feedback: FB-<n>` as a line of its own, flush left, in its commit message — several numbers comma-separated. Only commit messages reach main, never the PR description; a production report's number names a different report and never goes in this line.
+
+## A task's last merge posts its record
+
+When a task in this repository closes after its last delivery merged, post, before closing it, one message of its own whose first line is 【留痕记录】, then: the task name, the PR number and link, its title, its merge time in the reader's local time, and 正文： followed by the full PR body verbatim. The team copies it whole into its work-record sheet, so it repeats the PR body on purpose and is neither folded into the write-up nor split.
 
 ## Fix bugs freely; propose product and interaction changes first
 

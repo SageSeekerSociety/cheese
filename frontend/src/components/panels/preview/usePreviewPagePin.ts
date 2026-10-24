@@ -141,5 +141,23 @@ export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
     }
   }
 
-  return { pin, canUse, onPin, send, sending }
+  /** 此刻钉着的那一点，按引用形状给出来（没钉、或那份上下文已不可信时 null）。
+   *  留下一条评论时，锚点要的就是它——和 `send` 拼的是同一份东西。 */
+  function anchor() {
+    const target = pin.value
+    if (!target || !canUse(target.context)) return null
+    const quotedContext = {
+      kind: 'page-pin' as const,
+      path: target.context.path,
+      source: target.context.source,
+      version: target.context.version,
+      task_id: target.context.taskId ?? null,
+      page: target.page,
+      x: target.x,
+      y: target.y,
+    }
+    return isQuotedContext(quotedContext) ? quotedContext : null
+  }
+
+  return { pin, canUse, onPin, send, sending, anchor }
 }

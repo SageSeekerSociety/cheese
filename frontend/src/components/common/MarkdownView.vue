@@ -58,7 +58,12 @@ function draw() {
 }
 
 onMounted(draw)
-watch([() => props.source, () => props.as, () => props.names, () => props.copyCode], draw, { deep: true })
+watch([() => props.source, () => props.as, () => props.copyCode], draw)
+watch(
+  () => (/<[@#&]/.test(props.source) ? props.names : undefined),
+  (names) => names && draw(),
+  { deep: true }
+)
 // 一个 `<#id>` 指着什么是后到的（lib/refDirectory）：到了，有这种引用的再画一遍。
 watch(refsVersion, () => props.source.includes('<#') && draw())
 onBeforeUnmount(() => {

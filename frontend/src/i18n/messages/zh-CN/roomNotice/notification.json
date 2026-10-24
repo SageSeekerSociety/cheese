@@ -5,6 +5,7 @@
   "pushAwaitingAnswer": "等你回答",
   "pushMentioned": "{who} 在「{room}」提到了你",
   "pushMentionedInDoc": "{who} 在文档「{doc}」提到了你",
+  "pushMentionedInFile": "{who} 在文件「{doc}」提到了你",
   "pushThreadReply": "{who} 在「{room}」的支线里回复了",
   "pushJoinRequest": "{who} 申请加入「{team}」",
   "pushAway": "离开期间有 {count} 条新通知"

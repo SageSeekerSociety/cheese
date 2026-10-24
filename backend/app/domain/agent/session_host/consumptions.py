@@ -40,12 +40,8 @@ from app.domain.agent.admission import Held, Slot, adopt
 from app.domain.agent.session_host.answer import (
     Answer,
     Progress,
-    Thinking,
-    Tool,
-    ToolArgs,
-    ToolFailed,
+    Said,
     Waiting,
-    Words,
     follow,
     say,
     starting,
@@ -172,7 +168,7 @@ class Consumer(Protocol):
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         """One step of the answer, as it comes."""
         ...
@@ -408,6 +404,17 @@ class Consumptions:
         enough. The reading ends as for a stopped session, and the consumer
         says why when the question ends."""
         await self._host.stop(consumption.ref)
+
+    async def steer(self, consumption: Consumption, text: str) -> None:
+        """Say ``text`` to the session in the middle of answering, as the
+        platform: it reads it at its next step."""
+        await self._host.steer(
+            consumption.ref, Prompt(uuid.uuid4(), text), work_id=consumption.work
+        )
+
+    async def act_as(self, consumption: Consumption, acting: str) -> None:
+        """What the session's tools act with from now on, for this answer."""
+        await self._host.act_as(consumption.ref, acting)
 
     async def publish(self, consumption: Consumption, event: str, data: dict) -> None:
         """Tell the question's viewers ``event``."""
