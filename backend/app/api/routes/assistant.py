@@ -55,7 +55,6 @@ from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
-    Prompt,
     SessionRef,
     SessionSpec,
 )
@@ -446,8 +445,11 @@ class AskIn(BaseModel):
     #: Text the person selected on the page and asked about.
     selection: str | None = Field(default=None, max_length=citing.SELECTION_CHARS)
     #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
-    #: reads them with ``cheese_file_read``, as the asker may.
+    #: reads them with ``cheese_read`` (``files/<id>``), as the asker may.
     files: list[FileIn] = Field(default_factory=list, max_length=10)
+    #: Already in the conversation: said while an answer was going
+    #: (``say``), which ended before 芝士 heard it, and now asked on its own.
+    kept: bool = False
 
     @field_validator("question")
     @classmethod
@@ -528,6 +530,7 @@ async def ask(
             files=[(f.ref, f.name) for f in body.files],
             kind=pages.billed_as(None if shown is None else shown.kind),
             project=None if page is None else page.project,
+            kept=body.kept,
         )
     except BaseException:
         await slot.release()
@@ -596,7 +599,6 @@ async def say_in(
     body: SayIn,
     db: DbSession,
     auth: AuthUser,
-    people: People,
     questions: Questions,
     spaces: Spaces,
     resolver: ActorResolverDep,
@@ -605,7 +607,12 @@ async def say_in(
     answered: kept in the conversation as theirs, and said to 芝士 in the
     middle of its answer, which it reads before its next step (a long piece of
     work need not be stopped to be steered). Nothing being answered, it is
-    refused: ask it as a question."""
+    refused: ask it as a question.
+
+    The answer may be read by another process, or by none for a moment (a
+    deploy hands it over): what is said waits with the question for whoever
+    reads it (``Consumptions.say``). If the answer ends first, its stream
+    gives it back (``unheard``), to be asked again with ``kept``."""
     row = await _owned(db, auth.user_id, conversation_id)
     answering = (
         await questions.current(assistant.KIND, str(row.id))
@@ -639,11 +646,10 @@ async def say_in(
         )
         if part
     )
-    ref, _, _ = conversation_session(auth.user_id, row.id)
-    await people.steer(
-        ref,
-        Prompt(uuid.uuid4(), told + assistant.files_said(files)),
-        work_id=uuid.UUID(answering.work_id),
+    await questions.say(
+        answering,
+        told + assistant.files_said(files),
+        body.model_dump(exclude_none=True),
     )
     return ok({"said": True})
 

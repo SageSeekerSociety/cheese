@@ -190,6 +190,12 @@ export interface AssistantAsking {
 /** 交给芝士的一个文件：消息附件，或个人资料库里的一份。 */
 export type HandedFile = { id: number; name: string } | { path: string; name: string }
 
+/** 芝士答着时插进去的一句话，那一轮结束前芝士没听到（服务端原样交回）。 */
+export interface Unheard {
+  text?: string
+  files?: HandedFile[]
+}
+
 export interface AssistantPage {
   kind: 'task' | 'draft' | 'topic' | 'doc' | 'project' | 'library'
   id: number | string
@@ -316,7 +322,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         (onEvent) => getEventStream(`/assistant/conversations/${id}/answers/${answering}`, onEvent),
         t('tasks.assistant.failed'),
         answering
-      )
+      ).then((unheard) => askUnheard(unheard, t('tasks.assistant.failed')))
   }
 
   /** 打开面板：接着最近的那个话题；一个都没有，就从第一句话开始一个新的。只读一次，
@@ -432,7 +438,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return data.id
   }
 
-  async function ask(question: string, fallback: string, files: HandedFile[] = []) {
+  /** `kept`：这句话已经在对话里了（芝士答着时插的话，没等它听到那一轮就结束了），
+   *  只问，不再记一遍。 */
+  async function ask(question: string, fallback: string, files: HandedFile[] = [], kept = false) {
     const text = question.trim()
     if ((!text && !files.length) || busy.value) return
     notice.value = null
@@ -440,17 +448,19 @@ export function createAssistant(opts: AssistantOptions = {}) {
     streaming.value = ''
     const at = new Date().toISOString()
     const asking = opts.asking?.(text)
-    messages.value = [
-      ...messages.value,
-      { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
-    ]
+    if (!kept)
+      messages.value = [
+        ...messages.value,
+        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
+      ]
     // 面板只留服务端存下的东西：被拒的问题不留那一句。
     let asked = false
+    let unheard: Unheard[] = []
     try {
       await opts.prepare?.()
       const id = await ensureConversation()
       const page = opts.page?.() ?? null
-      await follow(
+      unheard = await follow(
         id,
         (onEvent) =>
           postEventStream(
@@ -460,6 +470,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
               ...(page ? { page } : {}),
               ...(files.length ? { files } : {}),
               ...asking?.body,
+              ...(kept ? { kept: true } : {}),
             },
             onEvent,
             { onOpen: () => (asked = true) }
@@ -472,10 +483,26 @@ export function createAssistant(opts: AssistantOptions = {}) {
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
-      if (!asked) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
       streaming.value = null
       await listConversations().catch(() => undefined)
     }
+    await askUnheard(unheard, fallback)
+  }
+
+  /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */
+  async function askUnheard(unheard: Unheard[], fallback: string) {
+    if (!unheard.length) return
+    const text = unheard
+      .map((u) => u.text ?? '')
+      .filter(Boolean)
+      .join('\n\n')
+    await ask(
+      text,
+      fallback,
+      unheard.flatMap((u) => u.files ?? []),
+      true
+    )
   }
 
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
@@ -620,13 +647,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 读一个问题的回答，直到它答完：连接断了（关了页面、后端重启）就从断的地方接着读，
-   *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。 */
+   *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。交回答着时插进去、芝士
+   *  却没听到的话（人按了停止的不算：那是不要它接着做了）。 */
   async function follow(
     conversation: string,
     start: (onEvent: OnEvent) => Promise<void>,
     fallback: string,
     question?: string
-  ) {
+  ): Promise<Unheard[]> {
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -640,6 +668,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let failed = false
     let stopped = false
     let done = false
+    let unheard: Unheard[] = []
     const onEvent: OnEvent = (event, payload) => {
       if (event === 'queued') {
         queued.value = true
@@ -655,6 +684,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         settleSteps()
         done = true
         stopped = payload.stopped === true
+      } else if (event === 'unheard' && Array.isArray(payload.said)) {
+        unheard = payload.said as Unheard[]
       } else if (event === 'error') {
         failed = true
         notice.value = renderNoticeMessage(
@@ -712,6 +743,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         subagents.value = []
       }
     }
+    return stopped || current.value !== conversation ? [] : unheard
   }
 
   /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
@@ -755,7 +787,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         (onEvent) => getEventStream(`/assistant/conversations/${conversation}/answers/${data.answering}`, onEvent),
         t('tasks.assistant.failed'),
         data.answering
-      )
+      ).then((unheard) => askUnheard(unheard, t('tasks.assistant.failed')))
   }
 
   /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
