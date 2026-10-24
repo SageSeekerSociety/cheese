@@ -52,7 +52,7 @@ const props = defineProps<{
   /** 打开时停在这一条（地址里的 `?block=`）。 */
   focusBlock?: string | null
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
-   *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
+   *  提议卡（技能、反馈）也按这个任务取——队友在哪儿提的，卡就落在哪儿。 */
   taskId?: string | null
   /** 这一栏是一条还没转成任务的支线。 */
   threadId?: string | null

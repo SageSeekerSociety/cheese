@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, turn_inputs
+from app.domain.agent.models import STOP_STOPPED
 from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
@@ -171,7 +172,7 @@ class TurnLifecycle:
         try:
             async with self._sessions() as session:
                 closed = await AgentTurnRepository(session).close_one(
-                    topic_id, turn_id, datetime.now(UTC)
+                    topic_id, turn_id, datetime.now(UTC), reason=STOP_STOPPED
                 )
                 if closed:
                     await session.commit()

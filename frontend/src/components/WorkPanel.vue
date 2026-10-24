@@ -813,6 +813,8 @@ defineExpose({
             :active="active === 'preview'"
             :refresh-tick="refreshTick"
             :agent-name="agentName"
+            :members="members"
+            :agent-handle="agentHandle"
             @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
             @open-file="openFileTab"
@@ -879,6 +881,8 @@ defineExpose({
               :active="active === fileKey(f.path)"
               :refresh-tick="refreshTick"
               :agent-name="agentName"
+              :members="members"
+              :agent-handle="agentHandle"
               @locate="emit('locate', $event)"
               @mention-click="emit('mention-click', $event)"
             />

@@ -132,6 +132,9 @@ class Platform:
                         if index < len(outer.steps)
                         else {"text": "好。"}
                     )
+                # A step that answers only once the test lets it.
+                if isinstance(step.get("held"), threading.Event):
+                    step["held"].wait(60)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close")
@@ -483,6 +486,33 @@ async def test_a_branch_works_in_the_background_and_its_conclusion_is_gone_on_wi
     # The conclusion came to 芝士 as the platform's, before it summed up.
     assert "第 1 份 85 分" in json.dumps(fake.requests[-1], ensure_ascii=False)
     assert len(fake.branch_requests) == 1
+
+
+@pytest.mark.anyio
+async def test_the_answer_goes_on_while_cheese_waits_for_a_branch(host, platform):
+    """芝士 says it will wait and stops; its branch is still at work. The
+    answer is not over: once the branch comes back, 芝士 goes on with it."""
+    _hub, sessions = host
+    slow = threading.Event()
+    platform(
+        [
+            {
+                "tool": "cheese_subagent_start",
+                "arguments": {"description": "读频道", "prompt": "读综合频道"},
+            },
+            {"text": "等它读完。"},
+            {"text": "汇总：综合频道在修 CI。"},
+        ],
+        branch_steps=[{"text": "综合频道在修 CI。", "held": slow}],
+    )
+
+    asking = asyncio.ensure_future(_ask(sessions, _launch(7), "写周报"))
+    await asyncio.sleep(3)
+    assert not asking.done(), "the answer ended while its branch was still at work"
+    slow.set()
+    events = await asking
+
+    assert events[-1].text.endswith("汇总：综合频道在修 CI。")
 
 
 @pytest.mark.anyio
