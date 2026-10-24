@@ -68,10 +68,11 @@ def schemas_of(names: list[str]) -> list[dict]:
     verbs: dict[str, list[str] | None] = {}
     for name in names:
         tool, _, verb = name.partition(".")
+        named = verbs.get(tool, [])
         if not verb:
             verbs[tool] = None
-        elif verbs.get(tool, []) is not None:
-            verbs[tool] = [*verbs.get(tool, []), verb]
+        elif named is not None:
+            verbs[tool] = [*named, verb]
     schemas = []
     for tool, only in verbs.items():
         table = next((t for t in tables if tool in t), None)
