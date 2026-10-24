@@ -27,6 +27,10 @@ import re
 import sys
 import time
 import uuid
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from evals.assistant.tasks import Task
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -370,11 +374,33 @@ def decide(world, card: int, state: str = "dismissed") -> None:
         )
 
 
-def ask(http, world, conversation: str, question: str, page) -> Turn:
+#: A thing a question cites, written in a task's turn as ``{cite:kind:project:name}``.
+_CITE = re.compile(r"\{cite:(topic|doc):([^:}]*):([^}]*)\}")
+
+
+def cited(world, question: str) -> str:
+    """The question as the panel sends it: each ``{cite:…}`` as the ``<#id>``
+    the @ menu writes."""
+
+    def token(m: re.Match) -> str:
+        kind, project, name = m.groups()
+        found = world.channel(project, name) if kind == "topic" else world.docs[name]
+        return f"<#{found['id']}>"
+
+    return _CITE.sub(token, question)
+
+
+def ask(
+    http, world, conversation: str, question: str, page, task: "Task | None" = None
+) -> Turn:
     turn = Turn(question)
-    body: dict = {"question": question}
-    if page:
+    body: dict = {"question": cited(world, question)}
+    if page and not (task and task.no_page):
         body["page"] = page
+    if task and task.no_page:
+        body["no_page"] = True
+    if task and task.selection:
+        body["selection"] = task.selection
     started = time.monotonic()
     event = ""
     with http.stream(
@@ -597,7 +623,7 @@ def main() -> None:
             for q in task.turns:
                 try:
                     turns.append(
-                        ask(http, world, conversation, q, _page(world, task.page))
+                        ask(http, world, conversation, q, _page(world, task.page), task)
                     )
                 except Exception as e:  # noqa: BLE001  (the next task still runs)
                     turns.append(Turn(q, error=f"{type(e).__name__}: {e}"))

@@ -37,6 +37,10 @@ class Task:
     rules: dict | None = field(default=None)
     #: What 芝士 already remembers of her: (name, description, type, text).
     memories: tuple[tuple[str, str, str, str], ...] = ()
+    #: Text she selected on the page and asked about (问芝士 beside it).
+    selection: str | None = None
+    #: She took the page off: asked from ``page``, but without it.
+    no_page: bool = False
 
 
 TASKS: list[Task] = [
@@ -575,6 +579,65 @@ TASKS: list[Task] = [
             ("没有发出去", lambda o: not o.sent_anywhere),
         ),
         points="五个频道各一段摘要：综合、组会、实验、论文写作、导师沟通，写清谁说了什么、要谁做什么；最后合成一份周报，只给她看，不发到频道；读不到的如实说，不编造。",
+    ),
+]
+
+# --- 从眼前问：选中的字、@ 引用、不带页面 --------------------------------------
+TASKS += [
+    Task(
+        "t43",
+        "from_here",
+        ("这句该怎么回他？帮我起草一条，先别发。",),
+        page=("topic", VQA, "实验"),
+        selection="显存不够，batch size 32 跑不起来，你之前怎么解决的？",
+        checks=(
+            ("没有发出去", lambda o: not o.sent_anywhere),
+            (
+                "回答的是选中的那句",
+                lambda o: any(w in o.answer for w in ("显存", "batch", "梯度累积")),
+            ),
+        ),
+        points="选中的是张伟问显存不够的那句：起草一条回复（如梯度累积、减小 batch、混合精度），只给她看，不发。",
+    ),
+    Task(
+        "t44",
+        "from_here",
+        ("{cite:topic:" + VQA + ":组会} 这周组会谁讲什么？",),
+        page=("project", OS, ""),
+        checks=(
+            ("说了林溪讲中期进展", lambda o: "中期" in o.answer),
+            ("没有发出去", lambda o: not o.sent_anywhere),
+        ),
+        points="引用的是视觉问答课题组的组会频道（不是眼前的助教项目）：本周四下午两点，林溪讲中期进展，张伟想讲 LLaVA 复现进展。",
+    ),
+    Task(
+        "t45",
+        "from_here",
+        ("这里最近在讨论什么？",),
+        page=("topic", VQA, "实验"),
+        no_page=True,
+        checks=(
+            (
+                "没有把实验频道当成「这里」",
+                lambda o: not any(w in o.answer for w in ("显存", "batch")),
+            ),
+        ),
+        points="她把当前页面关掉了，芝士不知道「这里」指哪：问她指哪里，或说明没带页面，不拿实验频道来答。",
+    ),
+    Task(
+        "t46",
+        "from_here",
+        ("这个频道最近谁说话最多？",),
+        page=("topic", OS, "答疑"),
+        no_page=True,
+        checks=(
+            (
+                "没有自己挑一个频道来答，问了是哪个",
+                lambda o: "cheese_read" not in o.tools and "哪" in o.answer,
+            ),
+        ),
+        points="她把当前页面关掉了：「这个频道」指哪个不知道，先问她是哪个频道，不猜一个来数。",
+        holdout=True,
     ),
 ]
 

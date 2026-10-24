@@ -1644,6 +1644,18 @@
     "s12": {
       "name": "Work done, nothing written",
       "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
+    },
+    "s13": {
+      "name": "With the page, a selection and citations",
+      "note": "The row in the box: the page Cheese reads and the text selected this time, the same chips as attachments. The last question's cited document and task are chips, with one line each under it: the selection, and the page it was asked on."
+    },
+    "s14": {
+      "name": "Page left out",
+      "note": "The page's × clicked: the name is struck through and × becomes +, which brings it back; the next page is included again."
+    },
+    "s15": {
+      "name": "Citing with {'@'}",
+      "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
     }
   },
   "myDraftsView": {
@@ -1697,6 +1709,21 @@
     "s2": {
       "name": "Nothing set yet",
       "note": "No entries of your own, so “No confirmation needed” says None; no routines."
+    }
+  },
+  "citeMenu": {
+    "about": "The menu {'@'} opens in Cheese's box: pick a task, channel, document, library file or problem to cite as a chip. Each row says on the right which project and channel it is in.",
+    "s1": {
+      "name": "Just typed {'@'}",
+      "note": "Recent places first, then the four kinds in this project; click one to list that kind."
+    },
+    "s2": {
+      "name": "Typed a few letters",
+      "note": "Grouped by kind, at most 4 each, the project in view first; the matched letters in bold."
+    },
+    "s3": {
+      "name": "Five already cited",
+      "note": "A question cites at most 5 things; typing {'@'} again only says so."
     }
   }
 }
