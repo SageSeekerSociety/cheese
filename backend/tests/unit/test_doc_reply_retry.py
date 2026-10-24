@@ -70,7 +70,7 @@ def _wire(monkeypatch, outcomes):
 async def _reply(factory):
     await thread.reply(
         factory,
-        Asked(uuid.uuid4(), OnDocument(uuid.uuid4()), None),
+        Asked(uuid.uuid4(), OnDocument(uuid.uuid4()), None, None),
         uuid.uuid4(),
         Bound("cheese-x", "芝士", "m", "m", "s"),
         "hi {agent}",
