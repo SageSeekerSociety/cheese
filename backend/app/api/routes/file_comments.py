@@ -147,6 +147,9 @@ def _asked(place: Place, path: str) -> Asked:
         project_id=place.project_id,
         subject=_file_out(place, path),
         task_id=None,
+        # The room, not the conversation: a file is the room's, and its thread
+        # is read in the room whichever of the room's conversations asked.
+        conversation_id=place.room_id,
     )
 
 
