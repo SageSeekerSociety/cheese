@@ -329,7 +329,7 @@ async def publish_draft(
     # published 题目 has, gone.
     published = (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
     if "submission" in drafts.missing(row, published):
-        raise BadRequestError(say("draftIncomplete", fields="submission"))
+        raise BadRequestError(say("draftKeepsASubmissionItem"))
     return ok(await _publish(db, service, row, user_id))
 
 

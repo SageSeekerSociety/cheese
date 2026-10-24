@@ -11,6 +11,7 @@
   "draftFileNotYours": "Only your own uploads, or attachments of tasks you can see, can be read",
   "draftFormChoice": "Participation must be individual or team, as the form names them",
   "draftIncomplete": "The draft is not complete yet; missing: {fields}",
+  "draftKeepsASubmissionItem": "Keep at least one submission item",
   "draftLockingChoice": "Team changes must be either allowed or locked once approved",
   "draftMentorChoice": "{name} cannot be a mentor; the choices are: {names}",
   "draftNameLength": "The name cannot be empty and is at most 100 characters",

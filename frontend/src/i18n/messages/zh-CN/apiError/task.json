@@ -11,6 +11,7 @@
   "draftFileNotYours": "只能读取自己上传的文件，或自己能看到的题目附件",
   "draftFormChoice": "参与方式只能是个人或团队",
   "draftIncomplete": "草稿还不完整，缺少：{fields}",
+  "draftKeepsASubmissionItem": "至少要保留一项提交内容",
   "draftLockingChoice": "队伍成员变更只能是允许变更或报名通过后锁定",
   "draftMentorChoice": "{name} 不能当导师，可选的有：{names}",
   "draftNameLength": "名称不能为空，最多 100 字",
