@@ -84,8 +84,8 @@ covers:
 
 | 工具 | 做什么 |
 |---|---|
-| `cheese_doc_get` | 读实况文档最新全文 |
-| `cheese_doc_edit` | 改文档里的几处文字（原文只出现一次，有一处用不上就一处都不改） |
+| `cheese_doc(action=get)` | 读实况文档最新全文 |
+| `cheese_doc(action=edit)` | 改文档里的几处文字（原文只出现一次，有一处用不上就一处都不改） |
 | `cheese_project_search` | 按关键词搜项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、产物，和搜索面板同一个接口。只搜提问人能看的频道 |
 | `cheese_memory_read` | 读项目共享记忆里一条的正文（系统提示词里只有索引） |
 | `cheese_attachment_read` | 读消息附件或资料库里的文件，只读文本，最多 3 万字 |

@@ -904,7 +904,10 @@ function holdToAnswering(pi: any) {
     if (!debt) return;
     // Reading the room is on the way to answering it, and answers nothing.
     if (!debt.answers.includes(event.toolName)) {
-      if (debt.reads.includes(event.toolName)) return;
+      // A read is one verb of an object, by its key (`cheese_chat.list`).
+      const action = event.input?.action;
+      const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
+      if (debt.reads.includes(key)) return;
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;
@@ -1330,7 +1333,7 @@ function withoutHands(pi: any, spec: Manifest) {
 // its own ~130MB of a session's 512), with a context of its own, so forty
 // reports read by four branches never fill 芝士's own. They behave as Claude
 // Code's subagents do, named as the rest of 芝士's tools are (an object, then
-// what is done to it; `SendMessage` would read as `cheese_message_send`,
+// what is done to it; `SendMessage` would read as `chat_send`,
 // which speaks as the person): `cheese_subagent_start` starts one in the
 // background and returns at once, so 芝士 goes on (and several run at a time);
 // `cheese_subagent_send` says more to one that is running, or takes up again

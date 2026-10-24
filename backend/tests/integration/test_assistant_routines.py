@@ -245,7 +245,7 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
 
     _due_now(client, routine.id)
     gateway.script = [
-        ("tool", "cheese_message_send", {"where": room, "text": "收到，我会处理"}),
+        ("tool", "chat_send", {"where": room, "content": "收到，我会处理"}),
         ("text", "我起草了一条回复，等你确认。"),
     ]
     started = time.monotonic()

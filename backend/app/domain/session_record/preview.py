@@ -34,7 +34,7 @@ import shlex
 import uuid
 from dataclasses import dataclass
 
-from app.domain.session_record.tool_keys import tool_key
+from app.domain.session_record.tool_keys import RETIRED, tool_key
 
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
@@ -109,17 +109,17 @@ _TOOL_ARG = {
     "grep": "pattern",
     # 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。这张表是判断题不是
     # 覆盖题 —— 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。
-    # `cheese_status`、`cheese_members`、`cheese_doc_get` 这种只有动词就够了，硬找
+    # `cheese_status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
     # 一个参数填进去反而不如留空。
     "chat_send": "content",
-    "chat_edit": "content",
+    "cheese_chat.edit": "content",
     # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
-    "cheese_chat_search": "query",
+    "cheese_chat.search": "query",
     # 改文档时说的是为什么改；那几处原文要读全文才看得懂。
-    "cheese_doc_edit": "reason",
-    "cheese_doc_new": "title",
-    "cheese_app_save": "note",
+    "cheese_doc.edit": "reason",
+    "cheese_doc.new": "title",
+    "cheese_app.save": "note",
     "cheese_task.open": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
@@ -129,7 +129,7 @@ _TOOL_ARG = {
     "cheese_fetch": "url",
     "cheese_web_search": "query",
     "cheese_decision": "text",
-    "cheese_title": "text",
+    "cheese_room.rename": "text",
     "cheese_notify": "title",
     "cheese_ask": "question",
     "cheese_card.request": "subject",
@@ -533,10 +533,10 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send`、`chat_edit` 和 `todo_write`
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write`
 #: 的名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
 _PLATFORM_ALIASES = frozenset(
-    {"chat_send", "chat_edit", "todo_write", "platform_request", "send_user_file"}
+    {"chat_send", "todo_write", "platform_request", "send_user_file"}
 )
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
@@ -558,6 +558,10 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     if raw_name.startswith(_PLATFORM_PREFIXES):
         return True
     if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
+        return True
+    # A call recorded under a name the table no longer has (`chat_edit`, now
+    # `cheese_chat(action=edit)`) was a platform action then too.
+    if _short_tool_name(raw_name) in RETIRED:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))

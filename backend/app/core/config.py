@@ -459,7 +459,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
-    # session is reminded to name it with `cheese_title`.
+    # session is reminded to name it with `cheese_room(action=rename)`.
     # Fallback of the platform model role of the same name: read only while
     # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"

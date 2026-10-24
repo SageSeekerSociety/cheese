@@ -97,7 +97,7 @@ def _history(payload, room=_ROOM):
 
 def test_default_chat_is_one_bounded_page():
     host = _history({"data": [_message()], "has_more": False})
-    out = run("cheese_chat_list", {}, host)
+    out = run("cheese_chat", {"action": "list"}, host)
     [plan] = host.requests
     parsed = urlsplit(plan["path"])
     assert plan["method"] == "GET"
@@ -109,8 +109,8 @@ def test_default_chat_is_one_bounded_page():
 def test_search_encodes_literal_query_and_preserves_scope():
     host = _history({"data": [], "has_more": False}, room="room-2")
     out = run(
-        "cheese_chat_search",
-        {"query": "报错 & 50%_", "topic": "room-2"},
+        "cheese_chat",
+        {"action": "search", "query": "报错 & 50%_", "topic": "room-2"},
         host,
     )
     asked = urlsplit(host.requests[0]["path"])
@@ -133,7 +133,7 @@ def test_special_messages_keep_content_metadata_replies_and_reactions(kind):
         reactions=[{"emoji": "👍", "count": 2, "authors": ["bob", "carol"]}],
     )
     host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
-    out = run("cheese_chat_get", {"message_id": block["id"]}, host)
+    out = run("cheese_chat", {"action": "get", "message_id": block["id"]}, host)
     for value in (
         kind,
         "parent-id",
@@ -152,8 +152,13 @@ def test_special_messages_keep_content_metadata_replies_and_reactions(kind):
 def test_replies_query_is_explicit_and_can_page():
     host = _history({"data": [_message(reply_to="parent-id")], "has_more": False})
     run(
-        "cheese_chat_replies",
-        {"message_id": "parent-id", "before": "cursor-id", "limit": 3},
+        "cheese_chat",
+        {
+            "action": "replies",
+            "message_id": "parent-id",
+            "before": "cursor-id",
+            "limit": 3,
+        },
         host,
     )
     params = parse_qs(urlsplit(host.requests[0]["path"]).query)
@@ -165,17 +170,13 @@ def test_replies_query_is_explicit_and_can_page():
 def test_chat_reads_answer_in_text_only():
     """The text is the whole answer: no raw-JSON mode is offered, and nested
     fields nobody has named yet still reach the reader."""
-    for tool in (
-        "cheese_chat_list",
-        "cheese_chat_search",
-        "cheese_chat_get",
-        "cheese_chat_replies",
-    ):
-        schema = next(t for t in cheese.PLATFORM_TOOLS.schemas() if t["name"] == tool)
-        assert "json" not in schema["inputSchema"]["properties"]
+    schema = next(
+        t for t in cheese.PLATFORM_TOOLS.schemas() if t["name"] == "cheese_chat"
+    )
+    assert "json" not in schema["inputSchema"]["properties"]
     block = _message(meta={"future": {"data": [1, "x"]}})
     host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
-    out = run("cheese_chat_get", {"message_id": block["id"]}, host)
+    out = run("cheese_chat", {"action": "get", "message_id": block["id"]}, host)
     assert f"id={block['id']}" in out
     assert '"future": {"data": [1, "x"]}' in out
 
@@ -183,20 +184,26 @@ def test_chat_reads_answer_in_text_only():
 def test_long_message_can_be_read_without_losing_the_tail():
     block = _message(content="a" * 20000 + "END OF MESSAGE")
     host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
-    first = run("cheese_chat_get", {"message_id": block["id"]}, host)
+    first = run("cheese_chat", {"action": "get", "message_id": block["id"]}, host)
     assert len(first) < 13000
-    assert 'cheese_chat_get(message_id="' in first and "offset=12000" in first
-    rest = run("cheese_chat_get", {"message_id": block["id"], "offset": 12000}, host)
+    assert 'cheese_chat(action="get", message_id="' in first and "offset=12000" in first
+    rest = run(
+        "cheese_chat",
+        {"action": "get", "message_id": block["id"], "offset": 12000},
+        host,
+    )
     assert "END OF MESSAGE" in rest
 
 
 def test_page_budget_keeps_newest_messages_and_a_real_next_cursor():
     blocks = [_message(i, content=f"message-{i}:" + "x" * 20000) for i in range(1, 51)]
-    out = run("cheese_chat_list", {}, _history({"data": blocks, "has_more": False}))
+    out = run(
+        "cheese_chat", {"action": "list"}, _history({"data": blocks, "has_more": False})
+    )
     assert len(out) < 13000
     assert "message-50:" in out
-    assert "cheese_chat_get(" in out
-    assert "cheese_chat_list(" in out
+    assert 'cheese_chat(action="get", ' in out
+    assert 'cheese_chat(action="list", ' in out
     # The continuation must start before the oldest SHOWN message, not before
     # the server's entire page, or budget trimming would silently skip rows.
     shown = [b for b in blocks if f"message-{int(b['id'][-12:])}:" in out]
@@ -206,12 +213,12 @@ def test_page_budget_keeps_newest_messages_and_a_real_next_cursor():
 @pytest.mark.parametrize(
     ("tool", "args"),
     [
-        ("cheese_chat_list", {"limit": 0}),
-        ("cheese_chat_list", {"limit": 501}),
-        ("cheese_chat_get", {"message_id": "id", "offset": -1}),
-        ("cheese_chat_list", {"before": "a", "after": "b"}),
-        ("cheese_chat_search", {}),
-        ("cheese_chat_replies", {}),
+        ("cheese_chat", {"action": "list", "limit": 0}),
+        ("cheese_chat", {"action": "list", "limit": 501}),
+        ("cheese_chat", {"action": "get", "message_id": "id", "offset": -1}),
+        ("cheese_chat", {"action": "list", "before": "a", "after": "b"}),
+        ("cheese_chat", {"action": "search"}),
+        ("cheese_chat", {"action": "replies"}),
     ],
 )
 def test_invalid_read_arguments_fail_before_any_request(tool, args):
@@ -254,15 +261,15 @@ def test_a_set_without_a_read_claims_no_version():
     """Never having read the doc is version 0 — which the platform accepts only
     when there is no doc yet."""
     host = _doc_host()
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert _puts(host)[-1]["expected_version"] == 0
     assert _puts(host)[-1]["content"] == "# 我写的"
 
 
 def test_a_set_writes_against_the_version_get_showed():
     host = _doc_host()
-    assert "# 现在的文档" in run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    assert "# 现在的文档" in run("cheese_doc", {"action": "get"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert _puts(host)[-1]["expected_version"] == 7
 
 
@@ -270,9 +277,9 @@ def test_a_won_set_remembers_the_version_it_produced():
     """Two writes in one turn is normal; the second is based on what the first
     produced."""
     host = _doc_host()
-    run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    run("cheese_doc", {"action": "get"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert [put["expected_version"] for put in _puts(host)] == [7, 8]
 
 
@@ -284,9 +291,9 @@ def test_a_refused_set_says_how_to_recover():
         409, json.dumps({"error": {"data": {"doc_version": 9}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
-        run("cheese_doc_set", {"content": "# 我写的"}, host)
+        run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert "第 9 版" in str(refused.value)
-    assert "cheese_doc_get" in str(refused.value)
+    assert "cheese_doc(action=get)" in str(refused.value)
 
 
 def test_a_set_that_would_lose_text_shows_the_platforms_reason():
@@ -301,7 +308,7 @@ def test_a_set_that_would_lose_text_shows_the_platforms_reason():
         422, json.dumps({"error": {"message": reason, "data": {"line": 3}}})
     )
     with pytest.raises(cheese.PlatformToolError) as refused:
-        run("cheese_doc_set", {"content": "# 我写的"}, host)
+        run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert reason in str(refused.value)
     assert "没有变" in str(refused.value)
 
@@ -313,13 +320,13 @@ def test_an_empty_doc_says_so_instead_of_answering_nothing():
             ("GET", f"/documents/{_DOC}"): None,
         }
     )
-    assert "还是空的" in run("cheese_doc_get", {}, host)
+    assert "还是空的" in run("cheese_doc", {"action": "get"}, host)
 
 
 def test_a_turn_in_a_room_reads_and_writes_the_rooms_document():
     host = _doc_host()
-    run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    run("cheese_doc", {"action": "get"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/topics/{_ROOM}/document"),
         ("GET", f"/documents/{_DOC}"),
@@ -333,8 +340,8 @@ def test_a_session_opened_on_a_document_needs_no_room():
     """A question asked in a document of the project's own runs with that
     document and no room at all."""
     host = _doc_host(environ={"CHEESE_DOCUMENT": _DOC, "CHEESE_TOPIC": ""})
-    assert "# 现在的文档" in run("cheese_doc_get", {}, host)
-    run("cheese_doc_set", {"content": "# 我写的"}, host)
+    assert "# 现在的文档" in run("cheese_doc", {"action": "get"}, host)
+    run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
     assert [(p["method"], p["path"]) for p in host.requests] == [
         ("GET", f"/documents/{_DOC}"),
         ("GET", f"/documents/{_DOC}/links"),
@@ -350,7 +357,7 @@ def test_a_write_back_says_what_does_not_read_like_state():
     """
     host = _doc_host(envelope={"warnings": ["正文 9000 字，超过 6000 字。"]})
 
-    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
+    said = run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
 
     assert "已更新实况文档（第 8 版）" in said
     assert "正文 9000 字" in said
@@ -362,7 +369,7 @@ def test_a_read_says_what_the_document_points_at_that_is_not_there():
     warning = "`<#9f8e>` 指不到这个项目里的任何频道、任务或支线。"
     host = _doc_host(envelope={"warnings": [warning]})
 
-    said = run("cheese_doc_get", {}, host)
+    said = run("cheese_doc", {"action": "get"}, host)
 
     assert said.startswith("# 现在的文档")
     assert warning in said
@@ -371,7 +378,7 @@ def test_a_read_says_what_the_document_points_at_that_is_not_there():
 def test_a_clean_write_back_carries_no_warning():
     host = _doc_host()
 
-    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
+    said = run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
 
     assert said == "已更新实况文档（第 8 版）。"
 
@@ -383,7 +390,7 @@ def test_a_document_is_written_with_the_machine_out_of_reach():
     host = _doc_host()
     host.sync = RuntimeError(cheese_out_of_reach)
 
-    said = run("cheese_doc_set", {"content": "# 我写的"}, host)
+    said = run("cheese_doc", {"action": "set", "content": "# 我写的"}, host)
 
     assert said.startswith("已更新实况文档")
     assert _puts(host)[-1]["content"] == "# 我写的"
@@ -468,7 +475,9 @@ def test_members_reads_the_current_topic_roster():
             }
         }
     )
-    assert "Alice（owner）→ 在消息里写 <@alice>" in run("cheese_members", {}, host)
+    assert "Alice（owner）→ 在消息里写 <@alice>" in run(
+        "cheese_room", {"action": "members"}, host
+    )
 
 
 def test_status_renders_the_snapshot():
@@ -777,7 +786,11 @@ def test_a_message_time_is_read_as_utc_not_as_a_wall_clock():
     """The API answers with an instant; read bare, `07:52` looks like the time on
     someone's wall and gets copied into a document as such."""
     block = _message(created_at="2026-10-07T07:52:42.767338Z")
-    out = run("cheese_chat_list", {}, _history({"data": [block], "has_more": False}))
+    out = run(
+        "cheese_chat",
+        {"action": "list"},
+        _history({"data": [block], "has_more": False}),
+    )
 
     assert "2026-10-07 07:52:42 UTC" in out
     assert "T07:52" not in out
@@ -787,7 +800,7 @@ def test_a_time_with_an_offset_is_shown_in_utc():
     block = _message(created_at="2026-10-07T08:17:43.639592+08:00")
     host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
 
-    out = run("cheese_chat_get", {"message_id": block["id"]}, host)
+    out = run("cheese_chat", {"action": "get", "message_id": block["id"]}, host)
 
     assert "2026-10-07 00:17:43 UTC" in out
 
@@ -912,7 +925,9 @@ def test_a_saved_app_comes_back_with_its_pictures_and_the_block_still_to_place()
             "pictures": {"400": _NARROW, "720": _WIDE},
         }
     )
-    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+    said = run(
+        "cheese_app", {"action": "save", "code": "<p>x</p>", "title": "试算"}, host
+    )
 
     assert [i["data"] for i in said.images] == [_WIDE, _NARROW]
     assert all(i["mimeType"] == "image/png" for i in said.images)
@@ -933,7 +948,9 @@ def test_a_writer_whose_model_cannot_read_pictures_is_neither_handed_nor_told_of
         },
         sees_pictures=False,
     )
-    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+    said = run(
+        "cheese_app", {"action": "save", "code": "<p>x</p>", "title": "试算"}, host
+    )
 
     assert getattr(said, "images", ()) == ()
     assert "截图" not in said
@@ -942,7 +959,9 @@ def test_a_writer_whose_model_cannot_read_pictures_is_neither_handed_nor_told_of
 
 def test_an_app_kept_unchecked_comes_back_without_pictures():
     host = _app_host({"key": "k1", "version": 1, "checked": False})
-    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+    said = run(
+        "cheese_app", {"action": "save", "code": "<p>x</p>", "title": "试算"}, host
+    )
 
     assert said.images == ()
     assert "截图" not in said.replace("也没有截图", "")
@@ -955,7 +974,7 @@ def test_a_new_version_of_an_app_not_yet_in_the_document_says_which_version_to_p
     host = _app_host(
         {"key": "k1", "version": 2, "checked": True}, document_text="正文\n"
     )
-    said = run("cheese_app_save", {"code": "<p>y</p>", "app": "k1"}, host)
+    said = run("cheese_app", {"action": "save", "code": "<p>y</p>", "app": "k1"}, host)
 
     assert ":::app k1@2" in said
 
@@ -976,7 +995,7 @@ def test_reading_a_document_names_what_links_to_it_and_what_it_links_to():
         ],
     }
 
-    said = run("cheese_doc_get", {}, host)
+    said = run("cheese_doc", {"action": "get"}, host)
 
     assert "它引用的文档：文档 3《数据集说明》" in said
     assert "引用它的文档：文档 7《标注规范 v2》" in said
@@ -986,7 +1005,7 @@ def test_reading_a_document_names_what_links_to_it_and_what_it_links_to():
 def test_a_document_nothing_links_reads_as_before():
     host = _doc_host()
 
-    said = run("cheese_doc_get", {}, host)
+    said = run("cheese_doc", {"action": "get"}, host)
 
     assert "链接" not in said
 

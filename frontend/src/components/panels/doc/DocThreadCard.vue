@@ -77,8 +77,9 @@ function told(message: DocComment): RefNames {
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
-  cheese_doc_get: 'reading',
-  cheese_doc_edit: 'editing',
+  // 一个对象的动词按键说（`cheese_doc.edit`）：动作写出来之前说「在回答」。
+  'cheese_doc.get': 'reading',
+  'cheese_doc.edit': 'editing',
   read: 'readingCode',
   ls: 'readingCode',
   find: 'readingCode',

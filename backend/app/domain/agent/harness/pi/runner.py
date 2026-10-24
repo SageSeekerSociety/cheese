@@ -710,7 +710,13 @@ class Runner(runner.Runner[Journal]):
         }
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
-        if tool not in (self.tools.get("names") or []):
+        # A session may be named only some of an object's verbs
+        # (`catalog.schemas_of`): one it was not named is no tool of its.
+        names = self.tools.get("names") or []
+        key = (
+            f"{tool}.{arguments.get('action')}" if isinstance(arguments, dict) else tool
+        )
+        if tool not in names and key not in names:
             return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
         if not self.platform_token:
             # Never the credential the session started with: that one is the

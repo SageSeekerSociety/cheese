@@ -35,8 +35,8 @@ TOPIC = TASK
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
     "chat_send": ({"content": "这一轮我在这里"}, "POST", f"/topics/{TOPIC}/messages"),
-    "chat_edit": (
-        {"message_id": "m-1", "content": "改过的这一句"},
+    "cheese_chat.edit": (
+        {"action": "edit", "message_id": "m-1", "content": "改过的这一句"},
         "PATCH",
         "/blocks/m-1",
     ),
@@ -45,43 +45,63 @@ CALLS = {
         "PUT",
         f"/topics/{TOPIC}/progress",
     ),
-    "cheese_chat_list": ({}, "GET", f"/topics/{TOPIC}/history"),
-    "cheese_chat_search": ({"query": "口径"}, "GET", f"/topics/{TOPIC}/history"),
-    "cheese_chat_get": (
-        {"message_id": "m-1"},
+    "cheese_chat.list": ({"action": "list"}, "GET", f"/topics/{TOPIC}/history"),
+    "cheese_chat.search": (
+        {"action": "search", "query": "口径"},
+        "GET",
+        f"/topics/{TOPIC}/history",
+    ),
+    "cheese_chat.get": (
+        {"action": "get", "message_id": "m-1"},
         "GET",
         f"/topics/{TOPIC}/history/m-1",
     ),
-    "cheese_chat_replies": (
-        {"message_id": "m-1"},
+    "cheese_chat.replies": (
+        {"action": "replies", "message_id": "m-1"},
         "GET",
         f"/topics/{TOPIC}/history",
     ),
     # The task's document: the fixture platform names every id "fixture-id".
-    "cheese_doc_get": ({}, "GET", "/documents/fixture-id"),
+    "cheese_doc.get": ({"action": "get"}, "GET", "/documents/fixture-id"),
     # 不碰机器：任务开始前改动留不下，起草实况文档正是那时要做的事。
-    "cheese_doc_set": ({"content": "# 实况\n"}, "PUT", "/documents/fixture-id"),
-    "cheese_doc_edit": (
-        {"edits": [{"old": "第一段", "new": "第一段，改过"}]},
+    "cheese_doc.set": (
+        {"action": "set", "content": "# 实况\n"},
+        "PUT",
+        "/documents/fixture-id",
+    ),
+    "cheese_doc.edit": (
+        {"action": "edit", "edits": [{"old": "第一段", "new": "第一段，改过"}]},
         "POST",
         "/documents/fixture-id/edits",
     ),
-    "cheese_doc_new": (
-        {"title": "竞品定价对比"},
+    "cheese_doc.new": (
+        {"action": "new", "title": "竞品定价对比"},
         "POST",
         "/projects/fixture-project/documents",
     ),
-    "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
+    "cheese_doc.list": (
+        {"action": "list"},
+        "GET",
+        "/projects/fixture-project/documents",
+    ),
     # 小程序跟着文档走：新建落在这份文档下，改和读按它的短号。
-    "cheese_app_save": (
-        {"code": "<div>试算</div>", "title": "试算"},
+    "cheese_app.save": (
+        {"action": "save", "code": "<div>试算</div>", "title": "试算"},
         "POST",
         "/documents/fixture-id/apps",
     ),
-    "cheese_app_get": ({"app": "q7m2kx4t"}, "GET", "/apps/q7m2kx4t"),
-    "cheese_canvas_get": ({"canvas": "c-1"}, "GET", "/canvases/c-1/text"),
-    "cheese_canvas_edit": (
-        {"canvas": "c-1", "changes": [{"op": "add", "content": "目标"}]},
+    "cheese_app.get": ({"action": "get", "app": "q7m2kx4t"}, "GET", "/apps/q7m2kx4t"),
+    "cheese_canvas.get": (
+        {"action": "get", "canvas": "c-1"},
+        "GET",
+        "/canvases/c-1/text",
+    ),
+    "cheese_canvas.edit": (
+        {
+            "action": "edit",
+            "canvas": "c-1",
+            "changes": [{"op": "add", "content": "目标"}],
+        },
         "POST",
         "/canvases/c-1/changes",
     ),
@@ -110,7 +130,11 @@ CALLS = {
         f"/topics/{TOPIC}/accept-card/redeliver",
     ),
     "cheese_card.ready": ({"action": "ready"}, "POST", f"/topics/{TOPIC}/ready"),
-    "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
+    "cheese_room.rename": (
+        {"action": "rename", "text": "推荐原型"},
+        "POST",
+        f"/topics/{TOPIC}/title",
+    ),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",
@@ -120,7 +144,7 @@ CALLS = {
     "cheese_web_search": ({"query": "芝士"}, "GET", "/web-search"),
     "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
     "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
-    "cheese_members": ({}, "GET", f"/topics/{TOPIC}/members"),
+    "cheese_room.members": ({"action": "members"}, "GET", f"/topics/{TOPIC}/members"),
     "cheese_status": ({}, "GET", f"/topics/{TOPIC}/status"),
     "cheese_library_ls": ({}, "GET", "/projects/fixture-project/library"),
     "cheese_ask": (
@@ -445,11 +469,15 @@ def test_a_named_document_is_read_and_changed_instead_of_the_rooms(
     """点了名的文档（项目资料库里的那一份）就读写那一份，不去碰话题的实况文档。"""
     process, platform_calls, _ = machine_is_gone
 
-    _call(process, "cheese_doc_get", {"document": "library-doc"})
+    _call(process, "cheese_doc", {"action": "get", "document": "library-doc"})
     _call(
         process,
-        "cheese_doc_edit",
-        {"document": "library-doc", "edits": [{"old": "旧", "new": "新"}]},
+        "cheese_doc",
+        {
+            "action": "edit",
+            "document": "library-doc",
+            "edits": [{"old": "旧", "new": "新"}],
+        },
     )
 
     reached = [(m, p) for m, p, _ in platform_calls]
@@ -533,6 +561,23 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
             "cheese_card(action=ready) 不收 deliver_url：deliver_url 是 "
             "cheese_card(action=request)、cheese_card(action=redeliver) 的参数。",
         ),
+        (
+            "cheese_chat",
+            {"action": "edit", "message_id": "m-1"},
+            "cheese_chat(action=edit) 缺少参数：content",
+        ),
+        (
+            "cheese_doc",
+            {"action": "get", "query": "范围"},
+            "cheese_doc(action=get) 不收 query：query 是 cheese_chat(action=search) 的参数。",
+        ),
+        # Making a channel or changing who is in one is a person's 芝士's, as
+        # the person: the room's own room tool has neither.
+        (
+            "cheese_room",
+            {"action": "create", "where": "p", "title": "新频道"},
+            "cheese_room 要 action：members / rename",
+        ),
         # Deciding a card is a person's 芝士's, as the reviewer: the room's card
         # has no such verb.
         (
@@ -595,8 +640,8 @@ def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
 
 def test_a_write_after_a_read_carries_the_version_it_read(machine_is_here):
     process, platform_calls, _ = machine_is_here
-    _call(process, "cheese_doc_get", {})
-    _call(process, "cheese_doc_set", {"content": DOC})
+    _call(process, "cheese_doc", {"action": "get"})
+    _call(process, "cheese_doc", {"action": "set", "content": DOC})
     [put] = [body for m, p, body in platform_calls if m == "PUT"]
     assert put["expected_version"] == 1
 
