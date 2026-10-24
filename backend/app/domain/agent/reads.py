@@ -31,6 +31,10 @@ class Writing:
     #: they stand: each one's id, the call that started it, what it does, how
     #: it is going and its latest steps.
     branches: tuple[dict, ...] = ()
+    #: The calls of the work under way as they were made: each one's
+    #: ``call``, its whole ``args`` once it is made, and what it read
+    #: (``shown``) once it came back, when a harness says so.
+    made: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
