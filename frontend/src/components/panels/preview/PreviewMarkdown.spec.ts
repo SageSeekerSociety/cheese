@@ -17,7 +17,7 @@ it('选中的一段原文，连同它所在的那一节报出去', async () => {
   const ui = render(PreviewMarkdown, { props: { source: '# 配置\n\n失败以后重试 3 次。\n' } })
   const md = ui.getByTestId('markdown')
   // 正文的读法第一次用到才加载，画出来要等一下。
-  const node = await waitFor(() => md.querySelector('p')!.firstChild!)
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
   const range = document.createRange()
   range.setStart(node, 4)
   range.setEnd(node, 10)
@@ -53,11 +53,15 @@ const ANCHOR = { text: '重试 3 次', heading: '配置', prefix: '失败以后'
 
 /** 正文上那一颗标记，画出来要等正文自己加载完。 */
 function mark(md: HTMLElement, id: string): Promise<HTMLElement> {
-  return waitFor(() => {
-    const found = md.querySelector<HTMLElement>(`mark[data-file-comment="${id}"]`)
-    expect(found).toBeTruthy()
-    return found!
-  })
+  // 正文的读法是懒加载的：整目录并发跑时那一次 import 可能超过默认的 1 秒。
+  return waitFor(
+    () => {
+      const found = md.querySelector<HTMLElement>(`mark[data-file-comment="${id}"]`)
+      expect(found).toBeTruthy()
+      return found!
+    },
+    { timeout: 5000 }
+  )
 }
 
 it('评论记下的那一处，在今天的正文里找回来包成标记', async () => {
@@ -80,7 +84,7 @@ it('一句话里夹着加粗，标出来的两段都点得动', async () => {
     },
   })
   const md = ui.getByTestId('markdown')
-  await waitFor(() => expect(md.querySelectorAll('mark[data-file-comment="c1"]')).toHaveLength(2))
+  await waitFor(() => expect(md.querySelectorAll('mark[data-file-comment="c1"]')).toHaveLength(2), { timeout: 5000 })
 
   await fireEvent.click(md.querySelector('mark[data-file-comment="c1"]')!)
   expect(ui.emitted().anchor).toEqual([['c1']])

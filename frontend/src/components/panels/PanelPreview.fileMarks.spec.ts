@@ -115,11 +115,15 @@ it('打开一份有评论的 markdown，评论栏没开，正文上那几处也�
   })
 
   const md = ui.getByTestId('markdown')
-  const drawn = await waitFor(() => {
-    const found = md.querySelector<HTMLElement>('mark[data-file-comment="c1"]')
-    expect(found).toBeTruthy()
-    return found!
-  })
+  // 正文的读法是懒加载的：整目录并发跑时那一次 import 和评论串那一次取数都可能超过默认的 1 秒。
+  const drawn = await waitFor(
+    () => {
+      const found = md.querySelector<HTMLElement>('mark[data-file-comment="c1"]')
+      expect(found).toBeTruthy()
+      return found!
+    },
+    { timeout: 5000 }
+  )
   expect(drawn.textContent).toBe('重试 3 次')
   expect(comments.open.value).toBe(false)
 })

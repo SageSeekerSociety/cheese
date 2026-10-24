@@ -80,7 +80,7 @@ function mount(overrides: Record<string, unknown> = {}) {
 
 /** 正文第一段的字。正文的读法第一次用到才加载，画出来要等一下。 */
 function firstLine(md: HTMLElement): Promise<ChildNode> {
-  return waitFor(() => md.querySelector('p')!.firstChild!)
+  return waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
 }
 
 it('选中一段原文，定位条上写的是它在哪一节、原文是什么', async () => {
@@ -499,11 +499,15 @@ function commentsWithOpen(
 
 /** 正文上那一颗标记，画出来要等正文自己加载完。 */
 function markIn(md: HTMLElement, id: string): Promise<HTMLElement> {
-  return waitFor(() => {
-    const found = md.querySelector<HTMLElement>(`mark[data-file-comment="${id}"]`)
-    expect(found).toBeTruthy()
-    return found!
-  })
+  // 正文的读法是懒加载的：整目录并发跑时那一次 import 可能超过默认的 1 秒。
+  return waitFor(
+    () => {
+      const found = md.querySelector<HTMLElement>(`mark[data-file-comment="${id}"]`)
+      expect(found).toBeTruthy()
+      return found!
+    },
+    { timeout: 5000 }
+  )
 }
 
 it('只画这一版上记的正文锚点，别的版本记的和不是正文的那几种都不画', async () => {
