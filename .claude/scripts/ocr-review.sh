@@ -27,7 +27,12 @@
 #   OCR_MAX_TOOLS        tool rounds per subtask; RAISES the 100-row template
 #                        default and cannot lower it, so leaving this unset is
 #                        the only way to get less than 100 (unset)
-#   OCR_TIMEOUT          wall clock in minutes for the whole run (12)
+#   OCR_TIMEOUT          wall clock in minutes for the whole run (25). It is not a
+#                        hard kill: OCR stops dispatching new groups at it and lets
+#                        the ones in flight finish, so the run can end sooner (its
+#                        own dispatch budget is checked between rounds). Too low a
+#                        value is worse than too high — 10 minutes on a five-file
+#                        change ended every group as `timeout` and produced nothing
 #   OCR_CONCURRENCY      concurrent subtasks (8)
 #   OCR_TOKEN_BUDGET     total token budget; 0 = unlimited (0)
 #   OCR_VERSION          open-code-review version to install and run (1.13.3)
@@ -44,7 +49,7 @@ VERSION="${OCR_VERSION:-1.13.3}"
 MODEL="${OCR_MODEL:-deepseek-flash}"
 EFFORT="${OCR_EFFORT:-low}"
 MAX_TOOLS="${OCR_MAX_TOOLS:-}"
-TIMEOUT_MIN="${OCR_TIMEOUT:-12}"
+TIMEOUT_MIN="${OCR_TIMEOUT:-25}"
 CONCURRENCY="${OCR_CONCURRENCY:-8}"
 TOKEN_BUDGET="${OCR_TOKEN_BUDGET:-0}"
 

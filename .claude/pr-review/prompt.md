@@ -27,10 +27,10 @@ first line (`独立 review：head <sha8> 结论 ...｜档位 A..G`) is what the 
 
 - The "Review tier" section at the end says how deep this change is to be
   reviewed (A–G), why, and what that spends: the `- 子代理拓扑：` line under
-  it gives the effort, the concurrency and the wall clock this review runs OCR
-  with. It changes how much of step 2 runs, not the steps themselves. It is
-  decided from the files the PR touches, so a delta review still reports the
-  tier of the whole change.
+  it gives the effort and the concurrency this review runs OCR with. It changes
+  how much of step 2 runs, not the steps themselves. It is decided from the
+  files the PR touches, so a delta review still reports the tier of the whole
+  change.
 - "This review" also names the rules injected into this review — the ones the
   changed paths load, read from the default branch — and, when the PR came
   with one, the requirement contract it is supposed to satisfy. Step 5b uses
@@ -93,13 +93,19 @@ was handed is not doing the job this method exists for.
 From the review tree:
 
 ```
-OCR_EFFORT=low OCR_TIMEOUT=<minutes> OCR_CONCURRENCY=<n> \
-  .claude/scripts/ocr-review.sh --from <merge base> --to HEAD
+OCR_CONCURRENCY=<n> .claude/scripts/ocr-review.sh --from <merge base> --to HEAD
 ```
 
-Take the effort, wall clock and concurrency from the topology line under
-"Review tier". The script prints a one-line JSON summary when it finishes and
-leaves the full result next to it (the `result` field); read that file.
+Take the concurrency from the topology line under "Review tier", and leave the
+wall clock at its default unless the change is much larger or smaller than the
+five-file change that default was measured on. Leave the effort at its default
+(`low`, one round per file): the tier's effort is what you and any subagent you
+start put into judging, not how many rounds OCR takes — a second and third round
+over the same file cost the wall clock without adding coverage, and on this repo
+one round already fills a twenty-five minute budget.
+
+The script prints a one-line JSON summary when it finishes and leaves the full
+result next to it (the `result` field); read that file.
 
 What the script handles, so you do not: it pins the OCR version, checks the
 binary's sha256, installs it into a per-version cache when it is not there, and
