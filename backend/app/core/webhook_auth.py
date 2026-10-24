@@ -14,10 +14,9 @@ storing the live secret itself.
 """
 
 import base64
-import hmac
 import json
 
-from app.core.hmac_token import sign_body
+from app.core.hmac_token import constant_time_equal, sign_body
 from app.core.sandbox_auth import SANDBOX_TOKEN
 
 # The key is the sandbox signing secret: a webhook credential and a sandbox
@@ -45,7 +44,7 @@ def webhook_token_claims(token: str, *, topic_id: str) -> dict | None:
         body, sig = token.split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
+    if not constant_time_equal(sig, sign_body(_SECRET, body)):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)

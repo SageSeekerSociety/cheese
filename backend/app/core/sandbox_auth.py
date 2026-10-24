@@ -25,16 +25,14 @@ other three open:
 """
 
 import base64
-import hmac
 import json
-import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
 from app.core.config import settings
-from app.core.hmac_token import sign_body
+from app.core.hmac_token import constant_time_equal, sign_body
 
 # Signing secret. Stable across restarts by construction — pinned via
 # SANDBOX_TOKEN, else derived from jwt_secret; see
@@ -196,7 +194,7 @@ def scoped_token_claims(token: str) -> dict | None:
         body, sig = token.split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
+    if not constant_time_equal(sig, sign_body(_SECRET, body)):
         return None
     if body.startswith("cxss_"):
         body = body.removeprefix("cxss_")
@@ -289,7 +287,7 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         body, signature = token[len(AGENT_CREDENTIAL_PREFIX) :].split(".", 1)
     except ValueError:
         return None
-    if not hmac.compare_digest(
+    if not constant_time_equal(
         signature, sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
     ):
         return None
@@ -364,7 +362,7 @@ def personal_claims(token: str) -> PersonalClaims | None:
     except ValueError:
         return None
     expected = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
-    if not hmac.compare_digest(signature, expected):
+    if not constant_time_equal(signature, expected):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)
@@ -535,7 +533,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
     except ValueError:
         return None
     expected = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
-    if not hmac.compare_digest(signature, expected):
+    if not constant_time_equal(signature, expected):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)
@@ -580,7 +578,7 @@ def is_global_sandbox_token(token: str) -> bool:
     """True for the signing secret used directly (dev / trusted-single-host
     override). It carries NO project scope, so a caller accepting it must get the
     room from somewhere else — see the note on `is_valid_cheese_token`."""
-    return bool(token) and secrets.compare_digest(token, SANDBOX_TOKEN)
+    return bool(token) and constant_time_equal(token, SANDBOX_TOKEN)
 
 
 def is_valid_cheese_token(
@@ -592,4 +590,4 @@ def is_valid_cheese_token(
         return False
     if verify_scoped_token(token, project_id=project_id, topic_id=topic_id):
         return True
-    return secrets.compare_digest(token, SANDBOX_TOKEN)
+    return constant_time_equal(token, SANDBOX_TOKEN)
