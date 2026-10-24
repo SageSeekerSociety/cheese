@@ -74,7 +74,9 @@ not bring to evidence.
 
 A stage runs to its end before the next one starts, so the largest count on
 the topology line is the most subagents ever running at once. Groups are
-started in the order the topology line's concurrency allows and the rest wait.
+started in the order the topology line's concurrency allows and the rest wait;
+never more than 8, and never more than the environment allows — 4 on this
+platform — whatever the line says.
 
 Whether a finding stands is decided by its refuter, not by you: do not add,
 drop, merge away or soften a finding on your own judgment. This matters most
@@ -173,6 +175,11 @@ A reviewer that has not returned in 15 minutes will not return in this round:
 stop waiting, record its files under Not covered with that reason, and say in
 the summary that the group did not finish. Do not start a second copy of it.
 
+The reviewer spends its own budget — the tool calls, candidates, reads,
+searches and passes step 3 names. The 15-minute rule is the backstop for a
+group that spends nothing and returns nothing; do not replace the budget with
+your own enthusiasm for one more angle.
+
 Write the group's diff to a file first (`git -C <tree> diff <base> HEAD --
 <its files>`), so the reviewer reads it instead of building one.
 
@@ -203,6 +210,14 @@ The text to give it is:
 我们的追加：你只读——可以读文件、可以 grep / rg / find 这类搜索，但不跑测试、不构建、不写文件。
 判断只能来自代码本身。读下来仍然说不准、而且这条判断会改变结论的，不要写进评论，单独标出来交给协调者，
 写清「要跑哪条命令、预期什么结果」。
+
+预算（先花完再说结束；花完了就交回已有的）：
+- 整个组最多 100 次工具调用；到第 100 次要交回手上的候选，不要再来一轮。
+- 单组累计最多提 30 条候选；到 30 条就停止提新的，交回。
+- 同一个工具连续失败 3 次，这一组里不再用它。
+- 连续 3 轮没有新候选就结束这一组。
+- 一次读最多 500 行；一次搜索最多 100 条命中；超过 10 秒的搜索放弃。
+- 计划那一步只在单文件达到 50 行、或整组达到 100 行改动时做，更小的组直接审。
 ```
 
 What the reviewer must also know:
@@ -231,8 +246,9 @@ What the reviewer must also know:
   candidate only if it changes code the author would have to touch.
 
 **The plan, when the group is large.** Before the first pass, a reviewer whose
-group's change is large enough that a written plan helps works through this
-text and hands the plan back with its candidates. A small group skips it.
+group's change reaches 50 changed lines in one file, or 100 in the whole
+group, works through this text and hands the plan back with its candidates.
+A smaller group skips it.
 
 ```text
 你是代码审查任务规划专家。你能看到一组取上下文的工具描述。你的职责是分析改动、产出结构化的审查计划。

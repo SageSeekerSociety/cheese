@@ -443,6 +443,11 @@ class PrReview(unittest.TestCase):
             "默认判 REFUTED",
             "Bring the survivors to evidence rung 4",
             "skipped with a reason",
+            "整个组最多 100 次工具调用",
+            "单组累计最多提 30 条候选",
+            "同一个工具连续失败 3 次",
+            "50 changed lines in one file",
+            "never more than the environment allows",
         ):
             self.assertIn(needle, text)
 
