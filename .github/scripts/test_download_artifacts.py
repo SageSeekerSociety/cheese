@@ -102,11 +102,12 @@ class DownloadArtifacts(unittest.TestCase):
         self.assertEqual((self.dest / "backend-pure-0-1/report.xml").read_text(), "blob-1")
 
     def test_a_reset_retries_only_that_request(self):
-        # blob-2 resets once; blob-1, fetched before it, can be served only once. A whole-
-        # batch retry would fetch blob-1 again and get 410.
+        # Artifacts download in name order: backend-expected-1 (blob-2), then
+        # backend-pure-0-1 (blob-1). blob-2, fetched first, can be served only once;
+        # blob-1 resets once. A whole-batch retry would fetch blob-2 again and get 410.
         self.github.list_resets = 2
-        self.github.serve_once = {"blob-1"}
-        self.github.blob_faults["blob-2"] = [ConnectionResetError("ECONNRESET")]
+        self.github.serve_once = {"blob-2"}
+        self.github.blob_faults["blob-1"] = [ConnectionResetError("ECONNRESET")]
         self.assertEqual(dl.main("backend-*", str(self.dest)), 0)
         self.assertEqual(len(self._files()), 2)
 
@@ -118,6 +119,14 @@ class DownloadArtifacts(unittest.TestCase):
     def test_the_token_never_reaches_the_blob_host(self):
         # The fake blob host answers 400 to a request carrying Authorization.
         self.assertEqual(dl.main("backend-*", str(self.dest)), 0)
+
+    def test_the_zip_endpoint_redirect_is_not_followed(self):
+        # urllib follows a 302 with the request's headers, Authorization included; the
+        # opener used for the zip endpoint must hand the redirect back instead.
+        request = dl._api("/repos/o/r/actions/artifacts/1/zip")
+        self.assertIsNone(
+            dl._NoRedirect().redirect_request(request, None, 302, "Found", {}, "https://blob/x")
+        )
 
     def test_a_client_error_is_not_retried(self):
         # A 403 that a retry would get past still fails: client errors are final.

@@ -31,8 +31,10 @@ import zipfile
 from pathlib import Path
 
 ATTEMPTS = 5
-# All retrying stops here, inside the job's `timeout-minutes: 5`, so a stalled link
-# fails the step with its own message instead of the runner killing the job.
+# No new attempt starts after this many seconds, so a stalled link usually fails the
+# step with its own message rather than the runner killing the job at
+# `timeout-minutes: 5`. It bounds when attempts start, not how long one runs (each
+# socket operation has its own timeout below).
 DEADLINE_S = 200
 _started = time.monotonic()
 
