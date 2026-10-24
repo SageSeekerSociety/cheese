@@ -201,7 +201,11 @@ What the reviewer must also know:
 
 - Its tools are the read-only ones: read files, grep, glob. No shell, no
   edits. The precomputed sections were produced for it at the pinned SHA —
-  start there and do not re-derive them.
+  start there and do not re-derive them. `PRECOMPUTED.md` says where the
+  public symbols this change touches are referenced elsewhere and where tests
+  patch them, and recomputes the numbers the PR body states; it runs no test,
+  so a test that stays green without the change is the reviewer's candidate
+  and the coordinator's experiment, not a precomputed fact.
 - What CI checks — `ruff`, `eslint`, types, the boundary and import guards,
   the ratchets and the suites the pull request runs — is answered by the PR's
   own checks. Aim instead at what no script or suite can decide, and at the

@@ -26,7 +26,8 @@
 #       subagent topology that tier spends. A tier G change is mechanical: no
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
-#       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): symbol refs, trial merges, regression proofs.
+#       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): symbol refs and
+#       the PR body's numbers recomputed. It runs no tests: those are CI's and the seat's.
 #       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
 #       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
 #       overrides the command), so the reviewers do not open the files themselves.

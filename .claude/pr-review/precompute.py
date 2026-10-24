@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """precompute.py — facts about a PR that a reviewer would otherwise burn subagents on.
 
-pr-review.sh prepare runs this and appends its PRECOMPUTED.md to REVIEW.md. Three
-sections, each a thing a script finds faster and more exactly than a model:
+pr-review.sh prepare runs this and appends its PRECOMPUTED.md to REVIEW.md.
+Two sections, each a thing a script finds faster and more exactly than a model:
 
   1. Symbols — public Python/TS symbols the diff added, removed or changed, where the
      whole repo references them, where tests patch them, and exports that the deletion
      left with one reference (their own definition): dead code the diff made.
-  2. Trial merge — when the PR adds a repo-wide guard test (_KNOWN/_BASELINE) or its body
-     names other PRs, merge them with the latest main in a scratch tree and run the new
-     tests there. Two PRs that are each green alone can fail together.
-  3. prove-regression --auto and recompute-pr-claims on the PR's own tree and body.
+  2. recompute-pr-claims on the PR's body: the numbers it states, recomputed.
+
+Tests do not run here. CI on GitHub runs them, and the seat running the review runs
+whatever experiment a finding needs while it writes the conclusion; a subagent only
+reads. A prepare step that ran a suite would be doing a third party's job with the
+reviewer's clock.
 
 Nothing here decides anything: it prints facts and a section that cannot be computed
 says so. Exit 0 whenever PRECOMPUTED.md was written.
@@ -23,12 +25,9 @@ from __future__ import annotations
 
 import argparse
 import ast
-import os
 import re
-import shlex
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 MAX_SYMBOLS = 300
@@ -38,10 +37,7 @@ MAX_REMOVED = 600
 TS_EXPORT = re.compile(
     r"^export\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?"
     r"(?:type|interface|const|let|function\*?|class|enum)\s+(\w+)", re.M)
-TEST_PATH = re.compile(r"(^|/)(tests?/|test_[^/]*$|[^/]*\.(test|spec)\.[jt]sx?$)")
-GUARD_WORDS = re.compile(r"^\s*[A-Z0-9_]*(?:KNOWN|BASELINE)[A-Z0-9_]*\s*(?::[^=\n]*)?=", re.M)
 PATCHERS = re.compile(r"setattr|monkeypatch|mocker\.|\bpatch(?:\.object)?\(|vi\.(?:mock|spyOn)|jest\.(?:mock|spyOn)")
-PR_MENTION = re.compile(r"(?<![\w/])#(\d{3,6})\b")
 
 
 def git(repo, *args, check=True, env=None):
@@ -201,118 +197,7 @@ def section_symbols(repo, base, head):
     return out
 
 
-# ---------------------------------------------------------- 2. trial merge
-def added_test_files(repo, base, head):
-    files, guard = [], []
-    for line in git(repo, "diff", "--name-status", "--no-renames", base, head).splitlines():
-        st, _, path = line.partition("\t")
-        if st in ("A", "M") and TEST_PATH.search(path):
-            files.append((st, path))
-    for st, path in files:
-        if st != "A":
-            continue
-        src = show(repo, head, path) or ""
-        if GUARD_WORDS.search(src):
-            guard.append(path)
-    return files, guard
-
-
-def run_tests(wt, files, test_cmd):
-    py = [f for f in files if f.endswith(".py")]
-    if not py:
-        return None, "新增/改动的测试里没有 Python 文件，这里不跑（前端测试交 CI）"
-    if test_cmd:
-        cmd = shlex.split(test_cmd.replace("{files}", " ".join(shlex.quote(f) for f in py)))
-        cwd = wt
-    else:
-        cwd = wt
-        if all(f.startswith("backend/") for f in py):
-            cwd = wt / "backend"
-            py = [f[len("backend/"):] for f in py]
-        venv_py = wt / "backend" / ".venv" / "bin" / "python"
-        cmd = [str(venv_py) if venv_py.exists() else sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *py]
-    try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        return None, "测试超过 600 秒，已停"
-    except OSError as exc:
-        return None, f"测试命令起不来：{exc}"
-    text = p.stdout + p.stderr
-    tail = "\n".join(text.strip().splitlines()[-12:])
-    ran_tests = re.search(r"\d+ (?:passed|failed|error)|FAILED|Traceback|AssertionError", text)
-    if p.returncode and not ran_tests and re.search(r"No module named pytest|command not found|Failed to spawn", text):
-        return None, "跑测试的环境缺 pytest，没跑成（不是测试失败）：" + tail.splitlines()[-1]
-    return p.returncode, tail
-
-
-def trial(repo, main_ref, merge_refs, head, test_files, test_cmd):
-    """Merge main + merge_refs + head in a scratch tree; (status, detail)."""
-    tmp = tempfile.mkdtemp(prefix="precompute-")
-    wt = Path(tmp) / "t"
-    env = {**os.environ, "GIT_AUTHOR_NAME": "p", "GIT_AUTHOR_EMAIL": "p@x", "GIT_COMMITTER_NAME": "p",
-           "GIT_COMMITTER_EMAIL": "p@x"}
-    try:
-        git(repo, "worktree", "add", "-q", "--detach", str(wt), main_ref)
-        for name, ref in [*merge_refs, ("本 PR", head)]:
-            p = subprocess.run(["git", "-C", str(wt), "merge", "--no-edit", "--no-ff", "-q", ref],
-                               capture_output=True, text=True, env=env)
-            if p.returncode:
-                files = git(wt, "diff", "--name-only", "--diff-filter=U", check=False).split()
-                subprocess.run(["git", "-C", str(wt), "merge", "--abort"], capture_output=True)
-                return "冲突", f"合入 {name} 时冲突：{', '.join(files) or p.stderr.strip()[:200]}"
-        for rel in ("backend/.venv", "frontend/node_modules", "node_modules", ".venv"):
-            src = Path(repo) / rel
-            if src.exists() and not (wt / rel).exists():
-                (wt / rel).symlink_to(src)
-        code, tail = run_tests(wt, test_files, test_cmd)
-        if code is None:
-            return "未跑", tail
-        return ("通过" if code == 0 else "失败"), tail
-    except (RuntimeError, OSError) as exc:
-        return "未跑", str(exc)
-    finally:
-        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], capture_output=True)
-        subprocess.run(["rm", "-rf", tmp])
-
-
-def section_trial(repo, base, head, pr, body, main_ref, others, test_cmd):
-    out = ["## 2. 与 main / 其他 PR 的试合并"]
-    try:
-        test_files, guards = added_test_files(repo, base, head)
-    except RuntimeError as exc:
-        return out + [f"算不出新增测试：{exc}"]
-    mentioned = [n for n in dict.fromkeys(PR_MENTION.findall(body)) if n != str(pr)][:4]
-    merge_refs = list(others)
-    for n in mentioned:
-        ref = f"refs/precompute/pr-{n}"
-        try:
-            p = subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", f"+refs/pull/{n}/head:{ref}"],
-                               capture_output=True, text=True, timeout=60)
-        except subprocess.TimeoutExpired:
-            out.append(f"- #{n}：取它的 head 超过 60 秒，没试合")
-            continue
-        if p.returncode == 0:
-            merge_refs.append((f"#{n}", ref))
-        else:
-            out.append(f"- #{n}：取不到它的 head，没试合（{p.stderr.strip()[:100]}）")
-    if not guards and not mentioned and not others:
-        return out + ["本 PR 没有新增全仓基线守卫测试（`_KNOWN`/`_BASELINE`），正文也没点名别的 PR，不做。"]
-    if guards:
-        out.append("新增守卫测试：" + ", ".join(f"`{g}`" for g in guards))
-    files = [p for _, p in test_files]
-    out.append("试合并时跑的测试：" + (", ".join(f"`{f}`" for f in files) or "无"))
-    scenarios = [("最新 main + 本 PR", [])] + [(f"最新 main + {n} + 本 PR", [(n, r)]) for n, r in merge_refs]
-    for label, mrefs in scenarios:
-        status, detail = trial(repo, main_ref, mrefs, head, files, test_cmd)
-        out.append(f"- {label}：**{status}**")
-        if status != "通过" and detail:
-            out.append("  ```\n  " + detail.replace("\n", "\n  ") + "\n  ```")
-    for n in mentioned:
-        subprocess.run(["git", "-C", str(repo), "update-ref", "-d", f"refs/precompute/pr-{n}"], capture_output=True)
-    return out
-
-
-# ------------------------------------------------------- 3. helper scripts
+# ------------------------------------------------------- 2. helper scripts
 def run_helper(cmd, cwd, timeout):
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
@@ -322,28 +207,16 @@ def run_helper(cmd, cwd, timeout):
     return p.returncode, "\n".join(text.splitlines()[-25:])
 
 
-def section_helpers(tree, repo, base, head, pr_body, scripts, skip_prove, skip_claims):
-    out = ["## 3. 回归证明与正文数字复算"]
-    scripts = Path(scripts)
-    for rel in ("backend/.venv", "frontend/node_modules", "node_modules", ".venv"):
-        src, dst = Path(repo) / rel, Path(tree) / rel
-        if src.exists() and dst.parent.is_dir() and not dst.exists() and not dst.is_symlink():
-            dst.symlink_to(src)
-    if skip_prove:
-        out.append("- prove-regression --auto：本次跳过。")
-    else:
-        code, text = run_helper([sys.executable, str(scripts / "prove-regression.py"), "--auto"], tree, 900)
-        meaning = {0: "已证明（修前红、修后绿）", 1: "没证明", 2: "判不了（没有测试文件或布局不认识）"}
-        out.append(f"- prove-regression --auto：退出 {code}，{meaning.get(code, '没跑成')}")
-        out.append("  ```\n  " + text.replace("\n", "\n  ") + "\n  ```")
+def section_claims(tree, repo, base, head, pr_body, scripts, skip_claims):
+    out = ["## 2. 正文数字复算"]
     if skip_claims:
-        out.append("- recompute-pr-claims：本次跳过。")
-    else:
-        code, text = run_helper([sys.executable, str(scripts / "recompute-pr-claims.py"), "--text", pr_body,
-                                 "--base", base, "--head", head, "--repo", str(repo)], tree, 120)
-        meaning = {0: "正文里认得的数字都对", 1: "**有数字对不上**", 2: "没有可核的数字或证据不全"}
-        out.append(f"- recompute-pr-claims：退出 {code}，{meaning.get(code, '没跑成')}")
-        out.append("  ```\n  " + text.replace("\n", "\n  ") + "\n  ```")
+        return out + ["- recompute-pr-claims：本次跳过。"]
+    scripts = Path(scripts)
+    code, text = run_helper([sys.executable, str(scripts / "recompute-pr-claims.py"), "--text", pr_body,
+                             "--base", base, "--head", head, "--repo", str(repo)], tree, 120)
+    meaning = {0: "正文里认得的数字都对", 1: "**有数字对不上**", 2: "没有可核的数字或证据不全"}
+    out.append(f"- recompute-pr-claims：退出 {code}，{meaning.get(code, '没跑成')}")
+    out.append("  ```\n  " + text.replace("\n", "\n  ") + "\n  ```")
     return out
 
 
@@ -356,26 +229,20 @@ def main(argv=None):
     ap.add_argument("--pr", default="0")
     ap.add_argument("--pr-body", default="")
     ap.add_argument("--scripts", default=str(Path(__file__).resolve().parents[1] / "scripts"))
-    ap.add_argument("--main-ref", default="origin/main")
-    ap.add_argument("--other", action="append", default=[], metavar="LABEL=REF", help="extra merge (tests)")
-    ap.add_argument("--test-cmd", help="command template with {files}")
-    ap.add_argument("--no-prove", action="store_true")
     ap.add_argument("--no-claims", action="store_true")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     tree = a.tree or a.repo
     body = Path(a.pr_body).read_text(errors="replace") if a.pr_body and Path(a.pr_body).is_file() else ""
-    others = [tuple(o.split("=", 1)) for o in a.other]
     secs = []
     for fn in (lambda: section_symbols(a.repo, a.base, a.head),
-               lambda: section_trial(a.repo, a.base, a.head, a.pr, body, a.main_ref, others, a.test_cmd),
-               lambda: section_helpers(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_prove, a.no_claims)):
+               lambda: section_claims(tree, a.repo, a.base, a.head, a.pr_body, a.scripts, a.no_claims)):
         try:
             secs.append("\n".join(fn()))
         except Exception as exc:  # a section that breaks must not take the review down
             secs.append(f"（这一节没算出来：{type(exc).__name__}: {exc}）")
     head = ("## Precomputed facts\n\n脚本在 prepare 时算好的事实，不是结论。CI 的结果看 PR 上的检查，"
-            "这里不重复；第 1、2 节的警告是靶心。\n")
+            "这里不重复；第 1 节的警告是靶心。\n")
     Path(a.out).write_text(head + "\n" + "\n\n".join(secs) + "\n")
     print(a.out)
     return 0
