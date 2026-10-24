@@ -294,28 +294,27 @@ describe('the window from last time', () => {
     scope.stop()
   })
 
-  it('reads a fresh page again once the window has outgrown its cap', async () => {
-    // 窗口涨过封顶：裁掉的是**最新**那一截。读者回到末尾时得整页重读一页最新的把它
-    // 接回来——不能再从手上那个游标往后接，那个游标指的是已经被裁出窗口的那一条。
+  it('keeps the newest end when one page alone floods the window', async () => {
+    // 一页就灌过封顶（700 条 > MAX_WINDOW），开着的读者停在末尾：留下的该是最新的 600
+    // 条，裁掉的是更早的那一截。窗口的尾巴还连着最新的一条，下一次刷新接着往后读就行。
     forgetWindows()
     rememberWindow('room', null, { blocks: [row('a', 1)], hasMore: false, oldestCursor: null, newestCursor: 'n1' }, 120)
-    // 第一批就超过 600 条封顶（MAX_WINDOW），于是当场裁掉最新的那些。
     const flood = Array.from({ length: 700 }, (_, i) => row(`f${i}`, 10 + i))
     api.getTranscript.mockResolvedValue(page(flood, { newest_id: 'n2' }))
     const { site, scope } = await openAtBottom()
     await settle()
-    expect(site.transcript.value.length, '窗口封在 MAX_WINDOW').toBe(600)
+
+    const ids = site.transcript.value.map((b) => b.id)
+    expect(ids, '窗口封在 MAX_WINDOW').toHaveLength(600)
+    expect(ids[ids.length - 1], '最新那一截留着').toBe('f699')
+    expect(ids[0], '裁掉的是更早的那一截').toBe('f100')
 
     api.getTranscript.mockClear()
-    api.getTranscript.mockResolvedValue(page([row('tail', 9999)], { newest_id: 'n3' }))
-    site.onSiteScroll()
+    vi.advanceTimersByTime(3000)
     await settle()
-
-    // 整页读（没有 `after`），不是接着旧游标往下接。
-    expect(api.getTranscript.mock.calls[0][1], '回到末尾整页重读').not.toMatchObject({
-      after: 'n1',
+    expect(api.getTranscript.mock.calls[0][1], '窗口还连着最新的一条，接着往后读').toMatchObject({
+      after: 'n2',
     })
-    expect(site.transcript.value.map((b) => b.id)).toContain('tail')
     scope.stop()
   })
 })
@@ -524,6 +523,95 @@ describe('a topic with no records yet', () => {
     answer(page([]))
     await settle()
     expect(site.loading.value).toBe(false)
+    scope.stop()
+  })
+})
+
+describe('the window at its cap', () => {
+  // 读回来的一页每条都带着自己的游标（`topics_transcript` 给每条都编了一个），往回翻
+  // 就从这一条接着读。时间按秒排开，跨过一分钟也不会撞在一起。
+  function at(i: number): string {
+    return new Date(Date.UTC(2026, 9, 19, 10, 0, 0) + i * 1000).toISOString()
+  }
+  function rec(i: number): Block {
+    const one = row(`r${i}`, 0)
+    return { ...one, created_at: at(i), meta: { ...one.meta, cursor: `c${i}` } }
+  }
+
+  it('keeps the newest end, so the reader never gets scrolled back', async () => {
+    // 停在末尾的人看的是**最新**那一截。窗口涨过 MAX_WINDOW 时裁掉的只能是更早的
+    // 那一头：裁最新那头的话，新来的行一进窗口就被裁走，他眼前的现场就停在几分钟前
+    // 不动了（每三秒一次刷新能一直这么转下去）。
+    let read = 0
+    api.getTranscript.mockImplementation(async (_topic: string, args: { before?: string | null } = {}) => {
+      if (args.before) return page([], { has_more: false }) // 上面没有了，别让预取搅进来
+      const from = read * 120
+      read += 1
+      return page(
+        Array.from({ length: 120 }, (_, k) => rec(from + k)),
+        { newest_id: `c${from + 119}` }
+      )
+    })
+    const { site, scope } = await openAtBottom()
+    await settle()
+
+    // 每三秒来一页新的，读者一直停在末尾（打开时就钉在那儿了）。
+    for (let i = 0; i < 5; i += 1) {
+      vi.advanceTimersByTime(3000)
+      await settle()
+    }
+    // 7 页共 840 条，裁过两次：留下的该是最新的 600 条。
+    const ids = site.transcript.value.map((b) => b.id)
+    expect(ids, '窗口封在 MAX_WINDOW').toHaveLength(600)
+    expect(ids[ids.length - 1], '最新那一条还在窗口里').toBe('r719')
+    expect(ids[0], '裁掉的是更早的那一头').toBe('r120')
+
+    // 尾巴还连着最新的一条：下一次刷新只问后来的那几条，不要整页重读。
+    api.getTranscript.mockClear()
+    vi.advanceTimersByTime(3000)
+    await settle()
+    expect(api.getTranscript.mock.calls[0][1]).toMatchObject({ after: 'c719' })
+    scope.stop()
+  })
+
+  it('pages back up from the row it kept, so the end it cut is reachable', async () => {
+    // 裁掉最旧那一截不算丢：那几条还在库里，往上翻的游标退到新头一条（c120）就还能
+    // 读回来。游标要是没跟着挪（还指着已被裁掉的 r0），从它往回读会跳过被裁的那一段。
+    let read = 0
+    api.getTranscript.mockImplementation(async (_topic: string, args: { before?: string | null } = {}) => {
+      if (args.before) {
+        return page(
+          Array.from({ length: 120 }, (_, k) => rec(k)),
+          { has_more: false, oldest_id: 'c0' }
+        )
+      }
+      const from = read * 120
+      read += 1
+      return page(
+        Array.from({ length: 120 }, (_, k) => rec(from + k)),
+        { newest_id: `c${from + 119}` }
+      )
+    })
+    const { box, el, site, scope } = await openAtBottom()
+    await settle()
+    for (let i = 0; i < 5; i += 1) {
+      vi.advanceTimersByTime(3000)
+      await settle()
+    }
+    expect(site.transcript.value.map((b) => b.id)[0]).toBe('r120')
+
+    // 读者翻到顶：读的是新头一条的游标，读回来的正是被裁掉的那 120 条。
+    box.scrollTop = 0
+    el.dispatchEvent(new Event('scroll'))
+    site.onSiteScroll()
+    await settle()
+
+    expect(api.getTranscript.mock.calls.at(-1)?.[1], '从留下的头一条往回读').toMatchObject({
+      before: 'c120',
+    })
+    const ids = site.transcript.value.map((b) => b.id)
+    expect(ids.slice(0, 3), '被裁掉的那几条回来了').toEqual(['r0', 'r1', 'r2'])
+    expect(ids.length, '同一个 id 不该出现两次').toBe(new Set(ids).size)
     scope.stop()
   })
 })

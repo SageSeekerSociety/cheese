@@ -1,0 +1,4 @@
+{
+  "docPrintFailed": "Couldn't print this document. Try again later",
+  "docPrintUnavailable": "Page printing isn't enabled on this deployment, so PDFs can't be exported yet"
+}
