@@ -12,6 +12,7 @@ from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.integration.conftest import (
     add_external_member,
+    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -503,6 +504,31 @@ def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
     [line] = _proposal_lines(client, room, written["id"])
     assert "修改没有保存" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+
+
+def test_a_proposal_raised_in_a_task_lands_in_the_task(client):
+    """A task is a conversation of its own. The card and the line about the
+    proposal are drawn where the teammate was, so a proposal raised while
+    working in a task belongs to that task — not to the channel it hangs in,
+    where the task page cannot find it and the channel would show a card about
+    work it never saw."""
+    project = _project(client)
+    room = _room(client, project)
+    task = open_task(client, room, owner=OWNER)["id"]
+
+    proposed = client.post(f"/topics/{task}/skills", json=_proposal())
+    assert proposed.status_code == 200, proposed.text
+    skill = proposed.json()["data"]
+    assert skill["source_topic_id"] == task, (
+        "the card is not in the task it was raised in"
+    )
+
+    [line] = _proposal_lines(client, task, skill["id"])
+    assert line["conversation_id"] == task
+    assert line["meta"]["who"] == "human"
+    assert _proposal_lines(client, room, skill["id"]) == [], (
+        "the task's proposal also went to the channel"
+    )
 
 
 def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):

@@ -69,7 +69,7 @@ function pieces(conversation: string, room: string, snapshot: RoomSnapshot | nul
   cached.push([keys.roomChapters(conversation), snapshot?.chapters])
   const waited: [readonly unknown[], unknown][] = [
     [keys.roomFeedbackProposals(conversation), snapshot?.feedback_proposals],
-    [keys.roomSkillProposals(room), snapshot?.skill_proposals],
+    [keys.roomSkillProposals(conversation), snapshot?.skill_proposals],
   ]
   if (task) {
     waited.push(

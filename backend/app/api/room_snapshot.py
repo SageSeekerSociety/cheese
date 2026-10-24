@@ -31,7 +31,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.chapter_rows import chapter_rows
-from app.api.project_skill_rows import proposals_in_room
+from app.api.project_skill_rows import proposals_in_conversation
 from app.api.review_comment_rows import review_comment_rows
 from app.api.room_task_rows import (
     room_task_items,
@@ -69,7 +69,9 @@ async def room_snapshot(
     snapshot: dict = {
         "members": await roster_rows(db, room, viewer=viewer),
         "feedback_proposals": await ProposalService(db).live_cards(conversation_id),
-        "skill_proposals": await proposals_in_room(db, place.project_id, place.room_id),
+        "skill_proposals": await proposals_in_conversation(
+            db, place.project_id, place.conversation_id
+        ),
     }
     task = place.task
     if task is None:
