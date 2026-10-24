@@ -173,3 +173,27 @@ it('从标记里拖选了一段：那是「指着这处」，不是「打开这�
 
   expect(ui.emitted().anchor).toBeUndefined()
 })
+
+it('两条评论指着重叠的文字：点里面那颗开的是里面这一条', async () => {
+  // 一段话里的半句和整句都被评过时，两颗标记是套着的（外面整句、里面半句）。点里面那颗，
+  // 事件会一路冒到外面那颗上——不挡住的话最后打开的是外面那一串，点谁开谁就成了空话。
+  const ui = render(PreviewMarkdown, {
+    props: {
+      source: '# 配置\n\n失败以后重试 3 次。\n',
+      anchors: [
+        { id: 'whole', quote: { text: '失败以后重试 3 次', heading: '配置', prefix: '', suffix: '。' } },
+        { id: 'half', quote: { text: '重试 3 次', heading: '配置', prefix: '失败以后', suffix: '。' } },
+      ],
+    },
+  })
+  const md = ui.getByTestId('markdown')
+  const inner = await waitFor(() => {
+    const found = md.querySelector<HTMLElement>('mark[data-file-comment="half"]')
+    expect(found).toBeTruthy()
+    return found!
+  })
+
+  await fireEvent.click(inner)
+
+  expect(ui.emitted().anchor).toEqual([['half']])
+})

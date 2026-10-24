@@ -68,8 +68,12 @@ function paint() {
       //
       // 拖选落在同一颗标记里也会来一次 `click`：那时读者要的是「指着这一段」，不是「打开
       // 这一串」。有选中就别开栏——选中的那条路是 `mouseup` 上的 `quote`。
-      mark?.addEventListener('click', () => {
+      //
+      // 两条评论指着重叠的文字时（一段话里的半句和整句），后画的那颗包在前一颗里面。不挡住
+      // 冒泡的话，点里面那颗会连外面那颗一起触发，最后打开的是外面那一串——点谁开谁。
+      mark?.addEventListener('click', (event) => {
         if (window.getSelection()?.isCollapsed === false) return
+        event.stopPropagation()
         emit('anchor', anchor.id)
       })
     }
