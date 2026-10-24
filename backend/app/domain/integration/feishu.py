@@ -23,7 +23,21 @@ from app.domain.integration.mail import IntegrationError
 DOMAINS = {"feishu": "https://open.feishu.cn", "lark": "https://open.larksuite.com"}
 
 #: Codes the open platform answers with, by what the caller can do about them.
-AUTH_CODES = {99991661, 99991663, 99991664, 99991665, 99991668, 99991677, 20005}
+#: A refresh token refused as invalid, expired, revoked or already used
+#: (20026, 20037, 20064, 20073) is an authorization to give again.
+AUTH_CODES = {
+    99991661,
+    99991663,
+    99991664,
+    99991665,
+    99991668,
+    99991677,
+    20005,
+    20026,
+    20037,
+    20064,
+    20073,
+}
 FORBIDDEN_CODES = {99991672, 99991679, 1770032, 1770031, 91204, 131006, 1061004}
 NOT_FOUND_CODES = {1770002, 91402, 131005, 1061003}
 
@@ -44,6 +58,13 @@ BLOCK_KEY = {
     13: "ordered",
 }
 
+#: What the owner is asked to grant: keeping the authorization past the access
+#: token's two hours (``offline_access`` — without it Feishu issues no refresh
+#: token), searching their documents, and reading and writing them. The
+#: platform's app has to have each of these enabled in Feishu's developer
+#: console, or the authorization page refuses everyone (20027).
+USER_SCOPES = ("offline_access", "search:docs:read", "docx:document")
+
 
 @dataclass
 class FeishuSettings:
@@ -53,6 +74,10 @@ class FeishuSettings:
     user_access_token: str | None = None
     user_token_expires_at: float | None = None
     refresh_token: str | None = None
+    #: When the refresh token stops working. Feishu issues one for about a week
+    #: and each is good for one refresh, so an authorization nobody uses lapses
+    #: unless it is renewed before then (``service.renew_feishu``).
+    refresh_token_expires_at: float | None = None
     #: Folders the app may list when there is no user authorization to search with.
     folders: list[str] = field(default_factory=list)
 
@@ -157,6 +182,7 @@ class FeishuClient:
                 "app_id": self.settings.app_id,
                 "redirect_uri": redirect_uri,
                 "state": state,
+                "scope": " ".join(USER_SCOPES),
             }
         )
         return f"{self.settings.base}/open-apis/authen/v1/authorize?{query}"
@@ -189,8 +215,11 @@ class FeishuClient:
         self.settings.user_token_expires_at = time.time() + int(
             body.get("expires_in", 7200)
         )
-        self.settings.refresh_token = (
-            body.get("refresh_token") or self.settings.refresh_token
+        self.settings.refresh_token = body.get("refresh_token")
+        self.settings.refresh_token_expires_at = (
+            time.time() + int(body["refresh_token_expires_in"])
+            if body.get("refresh_token") and body.get("refresh_token_expires_in")
+            else None
         )
 
     async def exchange_code(self, code: str, redirect_uri: str) -> None:

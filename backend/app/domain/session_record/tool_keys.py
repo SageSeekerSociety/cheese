@@ -22,6 +22,7 @@ RETIRED: dict[str, str] = {
     "cheese_task": "cheese_task.open",
     "cheese_task_state": "cheese_task.state",
     "cheese_close_task": "cheese_task.close",
+    "cheese_reopen_task": "cheese_task.reopen",
     "cheese_task_open": "cheese_task.open",
     # Its review card: filed and kept up by the task's agent, decided by a
     # person's 芝士 as the reviewer.

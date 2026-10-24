@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
-// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名归负责人和协作者，转交、
-// 关闭只归负责人）。
+// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名、关闭归负责人和协作者，
+// 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
@@ -56,6 +56,8 @@ const props = withDefaults(
     panelOpen?: boolean
     /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
     copyLink?: () => void
+    /** 我的角色有「新建任务和审阅」：关了的任务我能重新打开。页面从项目的 `my_permissions` 读。 */
+    worksTasks?: boolean
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
   { connected: true }
@@ -223,10 +225,17 @@ const menuActions = computed<MenuCommand[]>(() =>
           close: () => (closeOpen.value = true),
           reopen: () => void props.reopen(),
         },
-        { me: ME, canHandOver: otherPeople.value.length > 0, copyLink: props.copyLink ?? null }
+        {
+          me: ME,
+          canHandOver: otherPeople.value.length > 0,
+          copyLink: props.copyLink ?? null,
+          worksTasks: props.worksTasks,
+        }
       )
     : []
 )
+// ⋯ 给参加这件活的人，和能重新打开这件关了的任务的人；只剩「复制链接」时不摆。
+const showsMenu = computed(() => takesPart.value || menuActions.value.some((action) => action.id === 'task.reopen'))
 // 两条既有用例按这两个 test id 找按钮：其余项不必有。
 function actionTestId(id: string): string | undefined {
   if (id === 'task.rename') return 'task-rename'
@@ -439,7 +448,7 @@ function actionTestId(id: string): string | undefined {
     </v-menu>
 
     <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
-    <v-menu v-if="task && takesPart" location="bottom end">
+    <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
           v-bind="menuProps"

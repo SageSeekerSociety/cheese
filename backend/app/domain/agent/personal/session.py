@@ -98,6 +98,11 @@ def effort(model: str) -> str | None:
 #: everything reads the same way by its ref (`assistant.refs`). What others see
 #: goes through its gate (`assistant.gate`). The page the person has open is
 #: said with each question (``prompt.page``); it never narrows the tools.
+#: Whether a person's 芝士 may hand parts of its work to subagents (分身). Kept
+#: only while the eval scores better with them than without
+#: (``evals/assistant``, ``--no-subagents``).
+BRANCHES = True
+
 TOOLS = (
     "cheese_inbox",
     "cheese_inbox_respond",
@@ -112,6 +117,7 @@ TOOLS = (
     "cheese_settings_set",
     "cheese_routine",
     "cheese_notify_me",
+    "cheese_todo",
     "cheese_memory",
     "cheese_file_give",
     "cheese_file_to_computer",
@@ -160,6 +166,7 @@ def session(
         model=model_roles.model("assistant_model"),
         tools=TOOLS,
         works=machine is not None,
+        branches=BRANCHES,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,

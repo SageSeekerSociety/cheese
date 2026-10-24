@@ -937,6 +937,117 @@ def test_a_question_stopped_while_waiting_is_not_answered(client, gateway):
     ]
 
 
+def _told(client, user_id: int) -> list[dict]:
+    """The notices about 芝士 the person was sent."""
+    from app.domain.notification.models import Notification, NotificationType
+
+    async def read():
+        async with client.test_factory() as s:
+            rows = await s.scalars(
+                select(Notification)
+                .where(
+                    Notification.receiver_id == user_id,
+                    Notification.type == NotificationType.ASSISTANT_NOTICE.value,
+                )
+                .order_by(Notification.id)
+            )
+            return [dict(r.metadata_payload or {}) for r in rows]
+
+    return asyncio.run(read())
+
+
+def test_an_answer_that_took_a_while_is_told_unless_its_panel_is_showing(
+    client, gateway, monkeypatch
+):
+    """A question that took a while is told as a notification when it is
+    answered, naming its topic; not when a panel is showing it."""
+    from app.domain.agent.personal import service as personal
+
+    monkeypatch.setattr(personal, "TELL_AFTER_S", 0)
+    me = _auth(client, "teller")
+    user_id, _, _ = _ledger_user(client, "teller")
+    task = _task(client)
+
+    unseen = _start(client, task, me)
+    gateway.script = [("text", "要先会 PyTorch。")]
+    assert _ask(client, unseen, "先会什么？", me).status_code == 200
+    [told] = _told(client, user_id)
+    assert told["event"] == "answered"
+    assert told["assistantConversation"] == unseen
+    assert "先会什么？" in told["content"] and "已完成" in told["content"]
+    assert told["quote"] == "要先会 PyTorch。"
+
+    seen = _start(client, task, me)
+    showing = client.post(f"/assistant/conversations/{seen}/looking", headers=me)
+    assert showing.status_code == 200, showing.text
+    gateway.script = [("text", "从 0.1 起步。")]
+    assert _ask(client, seen, "学习率设多少？", me).status_code == 200
+    assert len(_told(client, user_id)) == 1
+
+
+def test_an_answer_stopped_at_its_ceiling_says_why(client, gateway, monkeypatch):
+    from app.domain.agent.personal import service as personal
+
+    me = _auth(client, "ceiling")
+    conversation = _start(client, _task(client), me)
+    # The session is up already: what bounds the answer below is its ceiling.
+    gateway.script = [("text", "在。")]
+    assert _ask(client, conversation, "在吗？", me).status_code == 200
+    monkeypatch.setattr(personal, "ANSWER_S", 3.0)
+    gateway.script = [("held", "前 3 份已经打完分，", "剩下的还没看。")]
+
+    answered = _ask(client, conversation, "把报告都打分", me)
+    gateway.release.set()
+
+    errors = [d for e, d in _events(answered.text) if e == "error"]
+    assert [e["i18n"] for e in errors] == [
+        {"key": "assistantPastCeiling", "params": {"hours": 4}}
+    ]
+
+
+def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step_with_its_files(
+    client, gateway
+):
+    me = _auth(client, "steerer")
+    conversation = _start(client, _task(client), me)
+    idle = client.post(
+        f"/assistant/conversations/{conversation}/say",
+        json={"text": "只看第 3 份"},
+        headers=me,
+    )
+    assert idle.status_code == 409
+
+    gateway.script = [
+        ("held", "我先读一遍，", "然后再打分。"),
+        ("text", "好，只看第 3 份。"),
+    ]
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "把报告打分", me))
+    )
+    asking.start()
+    assert gateway.holding.wait(60)
+
+    said = client.post(
+        f"/assistant/conversations/{conversation}/say",
+        json={
+            "text": "只看第 3 份",
+            "files": [{"path": "报告/第3份.pdf", "name": "第3份.pdf"}],
+        },
+        headers=me,
+    )
+    assert said.status_code == 200, said.text
+    gateway.release.set()
+    asking.join(60)
+
+    # A file handed over with it is read the way one handed with a question is.
+    heard = json.dumps(gateway.requests[-1], ensure_ascii=False)
+    assert "只看第 3 份" in heard and "library/报告/第3份.pdf" in heard
+    got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    texts = [(m["role"], m["text"]) for m in got["data"]["messages"]]
+    assert ("user", "只看第 3 份") in texts
+
+
 def test_a_stopped_answer_keeps_what_was_written(client, gateway):
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)
@@ -1256,6 +1367,66 @@ def test_the_thread_lists_every_topic_and_a_new_one_is_the_persons(client, gatew
             assert (row.place_kind, row.place_id) == ("personal", str(user_id))
 
     asyncio.run(placed())
+
+
+def test_topics_and_what_was_said_in_one_are_read_a_page_at_a_time(client, gateway):
+    """The panel reads topics a page at a time, latest first, and a long
+    topic's latest messages first; it reads further back as the person
+    scrolls up, with nothing skipped or read twice."""
+    me = _auth(client, "pager")
+    user_id, _, _ = _ledger_user(client, "pager")
+
+    async def seed() -> str:
+        from app.domain.agent.personal import service
+
+        async with client.test_factory() as s:
+            store = service.AssistantConversations(s)
+            rows = []
+            for n in range(3):
+                row = await store.start(user_id, service.Place.personal(user_id))
+                row.title = f"话题 {n}"
+                rows.append(row)
+            for n in range(52):
+                await store.append(rows[0], "user", f"第 {n} 句")
+            for n, row in enumerate(rows):
+                row.last_active_at = datetime(2026, 10, 1 + n, tzinfo=UTC)
+            await s.commit()
+            return str(rows[0].id)
+
+    long = asyncio.run(seed())
+
+    first = client.get("/assistant/conversations?limit=2", headers=me).json()["data"]
+    assert [c["title"] for c in first["conversations"]] == ["话题 2", "话题 1"]
+    rest = client.get(
+        "/assistant/conversations",
+        params={"limit": 2, "before": first["next"]},
+        headers=me,
+    ).json()["data"]
+    assert [c["title"] for c in rest["conversations"]] == ["话题 0"]
+    assert rest["next"] is None
+
+    opened = client.get(f"/assistant/conversations/{long}", headers=me).json()["data"]
+    assert [m["text"] for m in opened["messages"]] == [
+        f"第 {n} 句" for n in range(2, 52)
+    ]
+    assert opened["earlier"] is True
+    earlier = client.get(
+        f"/assistant/conversations/{long}/messages",
+        params={"before": opened["messages"][0]["seq"]},
+        headers=me,
+    ).json()["data"]
+    assert [m["text"] for m in earlier["messages"]] == ["第 0 句", "第 1 句"]
+    assert earlier["earlier"] is False
+
+    stranger = _auth(client, "pager-stranger")
+    assert (
+        client.get(
+            f"/assistant/conversations/{long}/messages",
+            params={"before": 10},
+            headers=stranger,
+        ).status_code
+        == 404
+    )
 
 
 class _Stops:

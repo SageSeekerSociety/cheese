@@ -77,6 +77,14 @@ async def steer(
         raise InputUnconfirmed(accepted=False) from exc.__cause__
 
 
+async def act_as(svc: SessionHost, ref: SessionRef, acting: str) -> None:
+    """Have what the session's tools act with be ``acting`` from now on,
+    saying nothing to it: a long answer's credential renewed before it
+    runs out."""
+    running = svc._started(ref)
+    await svc._call(running, ref, "acting", {"platform_token": acting})
+
+
 async def _say(
     svc: SessionHost,
     ref: SessionRef,

@@ -246,11 +246,20 @@ const taskLines = computed(
     )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
+const NO_TASKS: TaskLine[] = []
+const tasksByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  for (const [blockId, tasks] of taskOrigins.value) {
+    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
 function tasksUnder(blockId: string): TaskLine[] {
-  return (taskOrigins.value.get(blockId) ?? []).flatMap((task) => taskLines.value.get(task.id) ?? [])
+  return tasksByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -305,6 +314,7 @@ const {
   togglePicker,
   bar,
   barBlock,
+  kbdNav,
   reactionPickerFor,
   timeShownId,
   arrived,
@@ -496,6 +506,7 @@ useComposerShortcut({
             :bar="bar"
             :bar-block="barBlock"
             :bar-editable="barEditable"
+            :kbd-nav="kbdNav"
             :reaction-picker-for="reactionPickerFor"
             :loading-history="loadingHistory"
             :has-more="hasMore"
