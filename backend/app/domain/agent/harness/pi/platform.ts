@@ -1382,7 +1382,7 @@ type Branch = {
   call: string;
   description: string;
   status: "running" | "done" | "failed" | "stopped";
-  steps: { name: string; args: string }[];
+  steps: { name: string; args: string; shown?: string }[];
   session: any;
   // What it sent 芝士 mid-way that 芝士 has not been given yet.
   untold: string[];
@@ -1392,6 +1392,9 @@ type Branch = {
 
 function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
   const branches = new Map<string, Branch>();
+  // Numbered as they are started, before anything is awaited: several started
+  // in one message start at once, and each keeps a number of its own.
+  let started = 0;
   let woken: (() => void) | null = null;
   // The main session's context, for whether 芝士 is working right now.
   let main: any = null;
@@ -1475,7 +1478,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
   const stopAll = () => {
     for (const branch of running()) {
       branch.status = "stopped";
-      void branch.session.abort?.();
+      void branch.session?.abort?.();
     }
     tell();
     wake();
@@ -1506,8 +1509,9 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
           ...text(`同时最多 ${BRANCHES_AT_ONCE} 个分身在做，等一个交回结论再派。`),
           isError: true,
         };
+      started += 1;
       const branch: Branch = {
-        id: `branch-${branches.size + 1}`,
+        id: `branch-${started}`,
         call,
         description: String(params.description ?? ""),
         status: "running",
@@ -1517,19 +1521,26 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
         ended: null,
       };
       main = ctx ?? main;
-      branch.session = await branchSession(
-        tools,
-        ctx,
-        (step) => {
-          branch.steps.push(step);
-          tell();
-        },
-        (message) => {
-          branch.untold.push(message);
-          arrived();
-        },
-      );
+      // Counted at once, so the limit holds for several started together.
       branches.set(branch.id, branch);
+      try {
+        branch.session = await branchSession(
+          tools,
+          ctx,
+          (step) => {
+            if (step) branch.steps.push(step);
+            tell();
+          },
+          (message) => {
+            branch.untold.push(message);
+            arrived();
+          },
+        );
+      } catch (error) {
+        branches.delete(branch.id);
+        throw error;
+      }
+      if (branch.status !== "running") return text(`分身 ${branch.id} 还没开始就停下了。`);
       run(branch, String(params.prompt ?? ""));
       return {
         ...text(
@@ -1561,6 +1572,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       if (!branch) return { ...text(`没有编号是 ${params.to} 的分身。`), isError: true };
       const said = String(params.message ?? "");
       if (branch.status === "running") {
+        if (!branch.session) return { ...text(`分身 ${branch.id} 还在启动，稍后再发。`), isError: true };
         await branch.session.steer(said);
         return text(`已告诉分身 ${branch.id}，它下一步之前会读到。`);
       }
@@ -1588,7 +1600,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       if (!branch) return { ...text(`没有编号是 ${params.id} 的分身。`), isError: true };
       if (branch.status !== "running") return text(`分身 ${branch.id} 已经不在做了。`);
       branch.status = "stopped";
-      await branch.session.abort?.();
+      await branch.session?.abort?.();
       tell();
       wake();
       return text(`已停下分身 ${branch.id}。`);
@@ -1639,7 +1651,8 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
 async function branchSession(
   tools: Map<string, any>,
   ctx: any,
-  stepped: (step: { name: string; args: string }) => void,
+  // A step it made, or null when one it made changed (what it read came back).
+  stepped: (step: { name: string; args: string; shown?: string } | null) => void,
   sent: (message: string) => void,
 ) {
   let calls = 0;
@@ -1704,13 +1717,24 @@ async function branchSession(
     sessionManager: SessionManager.inMemory(ctx?.cwd ?? process.cwd()),
     settingsManager: SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 3 } }),
   });
+  // What it reads, by name, once it comes back: what came back opens with
+  // the thing's name (as the runner reads it for 芝士's own calls, `named`).
+  const steps = new Map<string, { name: string; args: string; shown?: string }>();
   session.subscribe((event: any) => {
-    if (
-      event.type === "tool_execution_start" &&
-      !event.parentToolCallId &&
-      event.toolName !== sendBack.name
-    )
-      stepped({ name: event.toolName, args: JSON.stringify(event.args ?? {}) });
+    if (event.parentToolCallId || event.toolName === sendBack.name) return;
+    if (event.type === "tool_execution_start") {
+      const step = { name: event.toolName, args: JSON.stringify(event.args ?? {}) };
+      steps.set(String(event.toolCallId ?? ""), step);
+      stepped(step);
+    } else if (event.type === "tool_execution_end") {
+      const step = steps.get(String(event.toolCallId ?? ""));
+      const read = (event.result?.content ?? []).find((b: any) => b?.type === "text")?.text ?? "";
+      const found = /^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)/.exec(String(read).trimStart());
+      if (step && found) {
+        step.shown = found[1];
+        stepped(null);
+      }
+    }
   });
   return session;
 }
