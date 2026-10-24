@@ -50,24 +50,28 @@ function collectText(root: HTMLElement): Text[] {
 /** 全文按归一后的样子拼一遍，并且记住每个字来自哪个节点、第几个字。
  *
  *  归一指的是把每一段连续的空白压成一个空格、两端去掉——和 `normaliseText` 同一把
- *  尺子，取的时候是这么量的，找的时候就得这么量。 */
+ *  尺子（`/\s/`，**不是**只认空格和换行：中文文档里的全角空格 U+3000、不换行空格
+ *  U+00A0 都算空白），取的时候是这么量的，找的时候就得这么量。只认 ASCII 空白的话，
+ *  原文里一个全角空格，存下的那句话就和这里的正文永远对不上，那一处再也不会画出来。 */
 function flatten(root: HTMLElement): { text: string; slots: Slot[] } {
   const slots: Slot[] = []
   let text = ''
-  let pendingSpace = false
+  // 那一段空白里最后一个字的出处：压缩成的那一个空格要指向它，而不是「当前字的前一格」——
+  // 空白可能整段都在上一个文字节点里（`甲 ` + `乙`），那时 `i - 1` 在这个节点上是 -1。
+  let pendingSpace: Slot | null = null
   for (const node of collectText(root)) {
     const data = node.data
     for (let i = 0; i < data.length; i += 1) {
       const ch = data[i]
-      if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f') {
+      if (/\s/.test(ch)) {
         // 一段空白只留一个空格，而且要等下一个非空白字到了才留：末尾的空白等于没有。
-        if (text) pendingSpace = true
+        if (text) pendingSpace = { node, offset: i }
         continue
       }
       if (pendingSpace) {
         text += ' '
-        slots.push({ node, offset: i - 1 })
-        pendingSpace = false
+        slots.push(pendingSpace)
+        pendingSpace = null
       }
       text += ch
       slots.push({ node, offset: i })
@@ -162,11 +166,15 @@ export function clearMarks(root: HTMLElement | null): void {
   root.normalize()
 }
 
-/** 把一个 Range 包进一颗 `mark`，返回它；包不成（节点已经不在文档里了）返回 null。
+/** 把一个 Range 包进一颗 `mark`，返回包出来的每一颗（按文档顺序）；包不成返回 null。
+ *
+ *  返回的是**全部**，不是第一颗：一句话里夹着加粗或链接时，这一处被切成好几个文字节点，
+ *  每一段各包一颗 `mark`。只交回一颗的话，外面给它接的点击只有那一段点得动——读者点在
+ *  别的几段上，一颗看得见、点不开的标记。
  *
  *  从最里往外包：一包完，外面那一层的偏移就不作数了，所以先包最后一个文字节点、再往
- *  前。跨节点的选区（一句话里夹着加粗或链接）逐个文字节点按 Range 的偏移切。 */
-export function wrapRange(range: Range, id: string, active: boolean): HTMLElement | null {
+ *  前。跨节点的选区逐个文字节点按 Range 的偏移切。 */
+export function wrapRange(range: Range, id: string, active: boolean): HTMLElement[] | null {
   const parts: { node: Text; from: number; to: number }[] = []
   const visit = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -196,5 +204,7 @@ export function wrapRange(range: Range, id: string, active: boolean): HTMLElemen
     mark.appendChild(piece)
     marks.push(mark)
   }
-  return marks[0] ?? null
+  // 按文档顺序交回：外面拿它当「这一段被切成哪几颗」来用，顺序和读的顺序对不上会让人
+  // 以为第一颗就是最左边那颗。
+  return marks.length ? marks.reverse() : null
 }

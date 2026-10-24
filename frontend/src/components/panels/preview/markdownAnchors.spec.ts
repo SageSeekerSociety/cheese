@@ -96,7 +96,7 @@ describe('把标记画到正文上', () => {
     const root = doc('<p>前 目标 后</p>')
     const before = root.textContent
     const range = locateQuote(root, { text: '目标', heading: null, prefix: '', suffix: '' })!
-    const mark = wrapRange(range, 't1', false)!
+    const [mark] = wrapRange(range, 't1', false)!
     expect(mark.tagName).toBe('MARK')
     expect(mark.getAttribute(MARK_ATTR)).toBe('t1')
     expect(mark.textContent).toBe('目标')
@@ -114,11 +114,13 @@ describe('把标记画到正文上', () => {
     expect(locateQuote(root, quote)).not.toBeNull()
   })
 
-  it('一句话里夹着加粗：跨节点的那一段整段都标上', () => {
+  it('一句话里夹着加粗：跨节点的每一段都标上，而且每一段都交回来', () => {
+    // 交回来的那几颗是外面接点击的名单：少一颗，那一段就是看得见、点不开的标记。
     const root = doc('<p>前 目标<strong>加粗</strong>尾</p>')
     const range = locateQuote(root, { text: '目标加粗', heading: null, prefix: '', suffix: '' })!
     expect(range).not.toBeNull()
-    wrapRange(range, 't1', false)
+    const marks = wrapRange(range, 't1', false)!
+    expect(marks.map((m) => m.textContent)).toEqual(['目标', '加粗'])
     const marked = Array.from(root.querySelectorAll('mark'))
       .map((m) => m.textContent)
       .join('')
@@ -128,7 +130,7 @@ describe('把标记画到正文上', () => {
   it('正在看的那一条标记画得显眼些', () => {
     const root = doc('<p>目标</p>')
     const range = locateQuote(root, { text: '目标', heading: null, prefix: '', suffix: '' })!
-    const mark = wrapRange(range, 't1', true)!
+    const [mark] = wrapRange(range, 't1', true)!
     expect(mark.className).toContain('is-active')
   })
 })

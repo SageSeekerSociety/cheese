@@ -70,6 +70,24 @@ it('评论记下的那一处，在今天的正文里找回来包成标记', asyn
   expect(ui.getByTestId('markdown').textContent).toContain('失败以后重试 3 次。')
 })
 
+it('一句话里夹着加粗，标出来的两段都点得动', async () => {
+  // 跨节点的标记是好几颗，每一颗都接了点击才都点得动。只给其中一颗接，其余几段是
+  // 看得见、点不开的标记——读者点在「重试」上什么都没发生。
+  const ui = render(PreviewMarkdown, {
+    props: {
+      source: '# 配置\n\n失败以后**重试 3 次**。\n',
+      anchors: [{ id: 'c1', quote: { text: '以后重试 3 次', heading: '配置', prefix: '失败', suffix: '。' } }],
+    },
+  })
+  const md = ui.getByTestId('markdown')
+  await waitFor(() => expect(md.querySelectorAll('mark[data-file-comment="c1"]')).toHaveLength(2))
+
+  await fireEvent.click(md.querySelector('mark[data-file-comment="c1"]')!)
+  expect(ui.emitted().anchor).toEqual([['c1']])
+  await fireEvent.click(md.querySelectorAll('mark[data-file-comment="c1"]')[1]!)
+  expect(ui.emitted().anchor).toEqual([['c1'], ['c1']])
+})
+
 it('点正文上的标记，把那一串评论叫出来', async () => {
   const ui = render(PreviewMarkdown, {
     props: { source: '# 配置\n\n失败以后重试 3 次。\n', anchors: [{ id: 'c1', quote: ANCHOR }] },
@@ -196,4 +214,24 @@ it('两条评论指着重叠的文字：点里面那颗开的是里面这一条'
   await fireEvent.click(inner)
 
   expect(ui.emitted().anchor).toEqual([['half']])
+})
+
+it('原文里是中文全角空格，也照样找得回来', async () => {
+  // 取评论那一侧把空白归一成半角空格（`/\s+/`），找的这边要是只认半角空格和换行，
+  // 全角空格 U+3000 就原样留着——存下的那句话和这里的正文永远对不上，那一处再也画不出来。
+  // 中文文档里全角空格是普通正文，不是角上的情况。
+  const ui = render(PreviewMarkdown, {
+    props: {
+      source: '# 配置\n\n失败\u3000以后重试 3 次。\n',
+      anchors: [{ id: 'c1', quote: { text: '失败 以后重试 3 次', heading: '配置', prefix: '', suffix: '。' } }],
+    },
+  })
+  const md = ui.getByTestId('markdown')
+  const drawn = await waitFor(() => {
+    const found = md.querySelector<HTMLElement>('mark[data-file-comment="c1"]')
+    expect(found).toBeTruthy()
+    return found!
+  })
+  // 标记盖住的是原文那几个字，全角空格照原样留着（画标记不改正文）。
+  expect(drawn.textContent).toBe('失败\u3000以后重试 3 次')
 })

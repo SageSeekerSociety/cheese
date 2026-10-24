@@ -60,22 +60,25 @@ function paint() {
     for (const anchor of props.anchors ?? []) {
       const range = locateQuote(root, anchor.quote)
       if (!range) continue
-      const mark = wrapRange(range, anchor.id, anchor.id === props.activeId)
-      // 点它开那一串评论：和文档里点标记是同一条路，都由外面接。
-      //
-      // 用 `click` 不用 `mousedown`：标记盖住的那几个字仍然要能选中、能拖（读者可能正是
-      // 想指出那一段）。`mousedown` 还得 `preventDefault` 挡掉选字，那等于把这几个字锁住了。
-      //
-      // 拖选落在同一颗标记里也会来一次 `click`：那时读者要的是「指着这一段」，不是「打开
-      // 这一串」。有选中就别开栏——选中的那条路是 `mouseup` 上的 `quote`。
-      //
-      // 两条评论指着重叠的文字时（一段话里的半句和整句），后画的那颗包在前一颗里面。不挡住
-      // 冒泡的话，点里面那颗会连外面那颗一起触发，最后打开的是外面那一串——点谁开谁。
-      mark?.addEventListener('click', (event) => {
-        if (window.getSelection()?.isCollapsed === false) return
-        event.stopPropagation()
-        emit('anchor', anchor.id)
-      })
+      // 一句话里夹着加粗或链接时这一处会包成好几颗（每段文字节点一颗）：每一颗都要能点。
+      // 只给其中一颗接点击，剩下的几段就是看得见、点不开的标记。
+      for (const mark of wrapRange(range, anchor.id, anchor.id === props.activeId) ?? []) {
+        // 点它开那一串评论：和文档里点标记是同一条路，都由外面接。
+        //
+        // 用 `click` 不用 `mousedown`：标记盖住的那几个字仍然要能选中、能拖（读者可能正是
+        // 想指出那一段）。`mousedown` 还得 `preventDefault` 挡掉选字，那等于把这几个字锁住了。
+        //
+        // 拖选落在同一颗标记里也会来一次 `click`：那时读者要的是「指着这一段」，不是「打开
+        // 这一串」。有选中就别开栏——选中的那条路是 `mouseup` 上的 `quote`。
+        //
+        // 两条评论指着重叠的文字时（一段话里的半句和整句），后画的那颗包在前一颗里面。不挡住
+        // 冒泡的话，点里面那颗会连外面那颗一起触发，最后打开的是外面那一串——点谁开谁。
+        mark.addEventListener('click', (event) => {
+          if (window.getSelection()?.isCollapsed === false) return
+          event.stopPropagation()
+          emit('anchor', anchor.id)
+        })
+      }
     }
   } finally {
     observer?.observe(root, { childList: true, subtree: true })
