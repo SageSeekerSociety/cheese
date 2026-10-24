@@ -21,6 +21,11 @@ export function postFileThread(
   return request(root(topic), { method: 'POST', body: JSON.stringify(body) })
 }
 
+/** Stop the agent answering the thread: its wait, or the reply being written. */
+export function stopFileThreadAgent(topic: string, path: string, id: string): Promise<unknown> {
+  return request(`${root(topic)}/${encodeURIComponent(id)}/agent/stop${withPath(path)}`, { method: 'POST' })
+}
+
 export function writeFileThread(
   topic: string,
   path: string,

@@ -29,7 +29,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
-from app.domain.identity.actor import Actor
+from app.domain.identity.actor import Actor, acted_by
 from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_CARD_REJECTED,
@@ -496,6 +496,7 @@ async def accept_card(
         decided_by=actor.handle,
         head_sha=body.head_sha,
         deliverable_revision=body.deliverable_revision,
+        by_assistant=actor.by_assistant,
     )
     return ok(await svc.describe(card))
 
@@ -535,7 +536,12 @@ async def reject_card(
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("returnSignIn"))
     svc = _accept_service(db)
-    card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    card = await svc.reject(
+        card_id=card_id,
+        decided_by=actor.handle,
+        note=body.note,
+        by_assistant=actor.by_assistant,
+    )
     sent = await ReviewCommentService(db).send(card, actor.handle, body.comment_ids)
     described = await svc.describe(card)
     topic_id = card.topic_id
@@ -543,6 +549,7 @@ async def reject_card(
     reason = (card.note or "").strip()
     # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
     reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    who = acted_by(decided_by, by_assistant=card.decided_by_assistant)
     if sent:
         reason_line += "\n" + await comment_instruction(db, sent)
     task = await TaskService(db).get(card.task_id) if card.task_id else None
@@ -561,12 +568,13 @@ async def reject_card(
         topic=topic,
         task=task,
         content=(
-            f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
+            f"{decided_by}{' 的芝士代他' if card.decided_by_assistant else ' '}"
+            f"驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=f"<@{decided_by}>")
+            say("cardRejectedFixing", who=who)
             if actionable
-            else say("cardRejectedClosed", who=f"<@{decided_by}>")
+            else say("cardRejectedClosed", who=who)
         ),
         meta=notice(
             EVENT_CARD_REJECTED,

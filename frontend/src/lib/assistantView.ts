@@ -38,7 +38,7 @@ export function withSubagents(steps: PanelStep[], subagents: AssistantSubagent[]
       subagent: {
         status: found.status,
         steps: found.steps.map((done, i) =>
-          stepView({ call: `${found.id}-${i}`, name: done.name, args: done.args, state: 'done' })
+          stepView({ call: `${found.id}-${i}`, name: done.name, args: done.args, state: 'done', shown: done.shown })
         ),
       },
     }
@@ -247,7 +247,8 @@ export function stepView(step: AssistantStep): PanelStep {
       checklist: checklistIn(step.args),
     }
   const key = STEP_ARG[step.name]
-  const arg = key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : ''
+  // 读到的东西有名字时写名字，不写编号。
+  const arg = step.shown ?? (key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : '')
   return {
     key: step.call,
     verb: toolLabel(step.name),

@@ -90,6 +90,8 @@ let sent: Array<{ url: string; body: Record<string, unknown> }> = []
 let takenBack: string[] = []
 /** 跳过那一次请求（`POST …/skip`）。 */
 let skippedIds: string[] = []
+/** 拖住发消息那一次请求（不给就是不拖）：卡收起之前那一段只有靠它才看得见。 */
+let holdMessages: (() => Promise<void>) | null = null
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -101,6 +103,7 @@ beforeEach(() => {
   sent = []
   takenBack = []
   skippedIds = []
+  holdMessages = null
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
@@ -136,6 +139,8 @@ beforeEach(() => {
     if (String(url).includes('/messages') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
       sent.push({ url: String(url), body })
+      // 停在路上的那一段：卡还没收起，题块也还没带着答案回来。
+      if (holdMessages) await holdMessages()
       return {
         ok: true,
         status: 200,
@@ -201,6 +206,24 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(sent[0].url).toContain('/topics/t-click/messages')
     expect(sent[0].body.content).toBe('按项目')
     expect(sent[0].body.reply_to).toBe('q-t-click')
+  })
+
+  // 卡片要等这条消息落库、题块再带着答案回来才收起；那一趟走完之前它还是「没答」的
+  // 样子，手快就会多点出几条，房间里真会多出几条消息。
+  it('手快连点两下，只发出一条', async () => {
+    history = [question('t-double')]
+    let release: () => void = () => {}
+    holdMessages = () => new Promise<void>((resolve) => (release = resolve))
+    const { getByRole } = await open('t-double')
+    const option = getByRole('button', { name: /按部门/ })
+    await fireEvent.click(option)
+    await fireEvent.click(option)
+    await fireEvent.click(option)
+    expect(sent).toHaveLength(1)
+    release()
+    // 发件箱一次只送一条：没挡住的那几下会排着队，放行之后一条接一条地出去。
+    await until(() => sent.length > 1, 50)
+    expect(sent).toHaveLength(1)
   })
 
   it('任务关了、没人答过的题不再给点，说它不再等回答', async () => {

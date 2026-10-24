@@ -39,6 +39,8 @@ class InvitationOut(BaseModel):
     project_id: uuid.UUID
     invitee_handle: str
     inviter_handle: str
+    #: The inviter's own 芝士 sent it for them.
+    invited_by_assistant: bool = False
     status: InvitationStatus
     created_at: datetime
     responded_at: datetime | None

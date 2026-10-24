@@ -634,6 +634,7 @@ class SessionHost:
                             tuple(live.get("blocks") or ()),
                             returned=tuple(live.get("returned") or ()),
                             branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
                         ),
                     )
                 )
@@ -758,6 +759,7 @@ class SessionHost:
                             tuple(live.get("blocks") or ()),
                             returned=tuple(live.get("returned") or ()),
                             branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
                         ),
                     )
                 )
