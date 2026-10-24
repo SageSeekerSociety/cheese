@@ -47,6 +47,8 @@ const props = defineProps<{
   block: Block
   /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
   askClosed?: boolean
+  /** 这一行上的那道题，我有一条答复还在路上：选项先不给点（`AskQuickReplies` 的 answering）。 */
+  askAnswering?: boolean
   /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
   parent: Block | ReplyPreview | null
   parentName: string | null
@@ -377,6 +379,7 @@ const told = computed(() => toldByMessage(props.refs))
         :asker="runStart ? undefined : authorName"
         :names="refs.mentionNames"
         :closed="askClosed"
+        :answering="askAnswering"
         :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
         @withdraw="emit('ask-withdraw', block)"

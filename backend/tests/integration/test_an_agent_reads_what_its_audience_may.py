@@ -175,6 +175,7 @@ def test_the_document_box_opens_with_the_project_only_for_a_project_reader(clien
     """The box's answer is the asker's alone, so its opening context holds the
     project's shared memory only when the asker may read the project."""
     from app.domain.agent.document import question
+    from app.domain.living_doc.comments import OnDocument
 
     p = _project(client)
     note = (
@@ -211,7 +212,7 @@ def test_the_document_box_opens_with_the_project_only_for_a_project_reader(clien
     assert doc.status_code == 200, doc.text
     asked = question.Asked(
         project_id=uuid.UUID(p["id"]),
-        document_id=uuid.UUID(doc.json()["data"]["id"]),
+        subject=OnDocument(uuid.UUID(doc.json()["data"]["id"])),
         task_id=None,
     )
 

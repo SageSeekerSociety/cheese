@@ -134,12 +134,23 @@ describe('首页目录的画面', () => {
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
   })
 
-  // 手机端不占底栏格（底栏固定三格），市场从这份目录进——两端都要到得着。
-  it('目录里有通往「市场」的一行', async () => {
-    await mount({ teams: [team('crew', '知是开发组')] })
+  // 市场（技能、插件、MCP、Agent 模板）全站一份，入口只在首页这份目录里，挨着空间：
+  // 桌面侧栏和手机「首页」整页都画这一份，两端从同一行进。
+  it('「市场」那一行挨着空间，排在空间那一段之后、团队之外', async () => {
+    const space = { id: 7, name: '数据课', avatarId: null } as unknown as SpaceLink
+    await mount({ teams: [team('crew', '知是开发组')], spaces: [space] })
     await screen.findByText('知是开发组')
     expect(screen.getByText('市场')).toBeTruthy()
-    expect(hrefs()).toContain('/market')
+    const order = hrefs()
+    const market = order.indexOf('/market')
+    expect(market).toBeGreaterThan(-1)
+    // 空间那一段（标题、空间、加入 / 创建）之后才是市场；团队那一段在它们前面。
+    expect(market).toBeGreaterThan(order.indexOf('/spaces/7/tasks'))
+    expect(market).toBeGreaterThan(order.indexOf('/teams/explore'))
+    const labels = Array.from(document.querySelectorAll('.v-list-subheader, .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(labels.indexOf('市场')).toBeGreaterThan(labels.indexOf('新建空间'))
   })
 
   it('点一个团队在原地展开，再点收起', async () => {

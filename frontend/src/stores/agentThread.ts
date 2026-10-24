@@ -39,6 +39,8 @@ export interface AssistantStep {
   startedAt?: number
   /** 它之前回答写到了第几个字：面板把它排在这些字后面。 */
   at?: number
+  /** 它读到的东西叫什么（「频道「综合」」）：回来时才知道，显示在编号的位置。 */
+  shown?: string
 }
 
 /** 芝士派出的一个分身：派它的那次调用（`call`）、它做什么、做到哪了、最近做的几步。 */
@@ -47,12 +49,12 @@ export interface AssistantSubagent {
   call: string
   description: string
   status: 'running' | 'done' | 'failed' | 'stopped'
-  steps: { name: string; args: string }[]
+  steps: { name: string; args: string; shown?: string }[]
 }
 
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
-  steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number }[]
+  steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number; shown?: string }[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
   /** 这一轮派出的分身，最后是什么样。 */
@@ -464,6 +466,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         args: step.args,
         ms: step.ms,
         ...(typeof step.at === 'number' ? { at: step.at } : {}),
+        ...(step.shown ? { shown: step.shown } : {}),
         state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
         error: step.failed,
       })),
@@ -537,7 +540,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       steps.value = steps.value.map((step) => {
         if (step.call !== payload.call || step.state !== 'run') return step
         on.toolEnded?.(step.call, step.name, false)
-        return { ...step, state: 'done' }
+        const shown = typeof payload.shown === 'string' && payload.shown ? { shown: payload.shown } : {}
+        return { ...step, ...shown, state: 'done' }
       })
       if (!steps.value.some((step) => step.state === 'run')) tool.value = null
     } else if (event === 'tool_args' && typeof payload.call === 'string' && typeof payload.text === 'string') {

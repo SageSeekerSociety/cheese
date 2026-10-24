@@ -272,6 +272,9 @@ class Runner(Generic[J]):  # noqa: UP046
         #: The branches of a person's 芝士 that the work under way started or
         #: moved, as they stand (``Writing.branches``).
         self.live_branches: list[dict] = []
+        #: The calls of the work under way as they were made, by id
+        #: (``Writing.made``).
+        self.live_made: dict[str, dict] = {}
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
@@ -532,6 +535,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 "blocks": [dict(block) for block in self.live_blocks],
                 "returned": list(self.live_returned),
                 "branches": [dict(branch) for branch in self.live_branches],
+                "made": [dict(made) for made in self.live_made.values()],
             }
         return answer
 

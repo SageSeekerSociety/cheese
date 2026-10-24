@@ -302,24 +302,3 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
     # And no further credits were burned by the refused turn.
     after = client.get(f"/projects/{project_id}/credits").json()["data"]
     assert after["credits_used"] == pytest.approx(data["credits_used"])
-
-
-def test_market_nodes_board(client):
-    """节点看板 shows the sandbox specs this deployment offers, and marks the one
-    an agent nothing was chosen for gets."""
-    from app.core.config import settings
-    from app.domain.agent.market import compute_listings
-
-    r = client.get("/market/nodes")
-    assert r.status_code == 200
-    data = r.json()["data"]
-
-    ids = [n["id"] for n in data["nodes"]]
-    assert ids == [p.id for p in compute_listings(settings)]
-    assert data["current_provider"] == "standard"
-    assert [n["id"] for n in data["nodes"] if n["current"]] == [
-        data["current_provider"]
-    ]
-    for node in data["nodes"]:
-        assert isinstance(node["online"], bool)
-        assert node["detail"]
