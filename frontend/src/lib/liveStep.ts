@@ -15,7 +15,7 @@
 import type { LiveBlock } from '../types/live'
 
 import { partialStringField } from './partialJson'
-import { toolLabel } from './toolLabels'
+import { toolKey, toolLabel } from './toolLabels'
 
 type ToolBlock = Extract<LiveBlock, { type: 'tool' }>
 
@@ -114,8 +114,8 @@ export function liveStep(blocks: LiveBlock[]): LiveStep | null {
   const block = currentTool(blocks)
   if (!block) return null
   const name = (block.name as string).replace(MCP_PREFIX, '')
-  const verb = toolLabel(name)
-  const key = ARG_KEY[name]
+  const verb = toolLabel(name, block.arguments)
+  const key = ARG_KEY[toolKey(name, block.arguments)] ?? ARG_KEY[name]
   const raw = key ? partialStringField(block.arguments, key)?.text ?? '' : ''
   return { verb, arg: collapse(raw).slice(0, STEP_ARG_MAX) }
 }

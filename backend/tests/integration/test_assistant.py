@@ -609,7 +609,7 @@ def test_each_model_call_begins_with_the_whole_of_the_one_before(client, gateway
     task_id = _task(client)
     conversation = _start(client, task_id, me)
     gateway.script = [
-        ("tool", "cheese_task_get", {"task": task_id}, "先读题目。"),
+        ("tool", "cheese_read", {"ref": "me"}, "先读题目。"),
         ("text", "要先会 PyTorch。", "读完了。"),
     ]
     assert _ask(client, conversation, "做这道题要先会什么？", me).status_code == 200

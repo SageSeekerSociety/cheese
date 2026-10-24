@@ -9,6 +9,8 @@
 // re-reads a line already on screen. Every value is a complete literal:
 // `catalog.spec.ts` finds a key's readers by scanning for `toolLabels.<key>`.
 
+import { partialStringField } from './partialJson'
+
 import { t } from '@/i18n'
 
 export const TOOL_LABELS: Record<string, string> = {
@@ -182,9 +184,39 @@ export function mcpServerOf(name: string): string {
   return /^mcp__([a-z0-9_-]+?)__/.exec(name)?.[1] ?? ''
 }
 
-export function toolLabel(name: string): string {
+/** 平台工具表上已经没有的名字，和它变成的那个动作（`<工具>.<action>`）；还在表上、
+ *  后来才收 `action` 的名字也在，给它收 action 以前的那些调用。记录里的调用永远是当时
+ *  的写法，所以这张表一直留着。它是 `backend/app/core/tool_keys.py` 里 `RETIRED` 的
+ *  副本，两份由 backend/tests/unit/test_tool_labels.py 对齐。 */
+export const RETIRED: Record<string, string> = {}
+
+/** 调用里的 `action`：记录里是解析好的参数，现场那一帧是还在写的 JSON 原文，只认
+ *  已经写完的那个值。 */
+function actionOf(args: unknown): string {
+  if (typeof args === 'string') {
+    const field = partialStringField(args, 'action')
+    return field?.closed ? field.text : ''
+  }
+  if (args !== null && typeof args === 'object') {
+    const action = (args as Record<string, unknown>).action
+    return typeof action === 'string' ? action : ''
+  }
+  return ''
+}
+
+/** 一次调用是哪个动作：一个对象的几个动词之一是 `cheese_task.close`，按退役的名字
+ *  做的调用读成它后来的那个动作，只做一件事的工具就是它的名字。 */
+export function toolKey(name: string, args?: unknown): string {
   const short = name.replace(MCP_PREFIX, '')
-  const key: string | undefined = TOOL_LABELS[short]
+  const action = actionOf(args)
+  if (action) return `${short}.${action}`
+  return RETIRED[short] ?? short
+}
+
+/** 这一步的动词。`args` 给了，就按它是哪个动作取词；动作没有自己的词时用工具的。 */
+export function toolLabel(name: string, args?: unknown): string {
+  const short = name.replace(MCP_PREFIX, '')
+  const key: string | undefined = TOOL_LABELS[toolKey(short, args)] ?? TOOL_LABELS[short]
   return key === undefined ? short : t(key)
 }
 

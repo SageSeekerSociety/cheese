@@ -5,7 +5,7 @@ import type { AssistantProposal, AssistantStep } from '@/stores/agentThread'
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
-import { toolLabel } from '@/lib/toolLabels'
+import { toolKey, toolLabel } from '@/lib/toolLabels'
 
 export interface PanelStep {
   key: string
@@ -142,11 +142,11 @@ export function stepView(step: AssistantStep): PanelStep {
       state: step.state,
       thinking: true,
     }
-  const key = STEP_ARG[step.name]
+  const key = STEP_ARG[toolKey(step.name, step.args)] ?? STEP_ARG[step.name]
   const arg = key ? partialStringField(step.args, key)?.text ?? '' : ''
   return {
     key: step.call,
-    verb: toolLabel(step.name),
+    verb: toolLabel(step.name, step.args),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
     error: step.error === undefined ? undefined : stepError(step.error),

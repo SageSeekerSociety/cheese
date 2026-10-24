@@ -134,7 +134,13 @@ class ToolTable:
     """
 
     def __init__(self, tools):
-        self._tools = tuple(tools)
+        tools = tuple(tools)
+        #: 一个对象一样工具的那几行，各自的动词（`_object`）：调用时按它查这一个
+        #: 动词收哪些参数。它不进清单——清单上只有 MCP 认得的那三个字段。
+        self._actions = {t["name"]: t["actions"] for t in tools if "actions" in t}
+        self._tools = tuple(
+            {key: value for key, value in t.items() if key != "actions"} for t in tools
+        )
 
     def names(self) -> tuple[str, ...]:
         return tuple(tool["name"] for tool in self._tools)
@@ -142,6 +148,11 @@ class ToolTable:
     def schemas(self) -> list[dict]:
         """MCP `tools/list` 要的那一份。"""
         return list(self._tools)
+
+    def actions(self, name: str) -> dict | None:
+        """The verbs of the tool `name`, each with what it takes; None for a
+        tool that does one thing."""
+        return self._actions.get(name)
 
     def __contains__(self, name: object) -> bool:
         return name in self.names()
@@ -194,6 +205,70 @@ def _tool(name: str, description: str, properties=None, required=()) -> dict:
 
 def _text(description: str) -> dict:
     return {"type": "string", "description": description}
+
+
+def _verb(description: str, properties=None, required=()) -> dict:
+    """One verb of a tool for one object (`_object`): what it does, and the
+    parameters it takes."""
+    return {
+        "description": description,
+        "properties": properties or {},
+        "required": list(required),
+    }
+
+
+def _object(name: str, description: str, actions: dict) -> dict:
+    """One tool for one object: `action` picks the verb (`_verb`).
+
+    The schema stays flat: an `action` enum first, then every verb's
+    parameters, each saying which verbs take it. No `oneOf` / `anyOf`: the same
+    schema goes through three harnesses' tool mechanisms and the
+    Anthropic-compatible gateways behind them, and the rest of the table uses
+    none. What one verb takes is checked when it is called (`_checked`), so a
+    parameter meant for another verb is refused rather than dropped."""
+    properties: dict = {
+        "action": {
+            "type": "string",
+            "enum": list(actions),
+            "description": "做哪一件；每个参数的说明写着哪几件收它",
+        }
+    }
+    takers: dict[str, list[tuple[str, dict, bool]]] = {}
+    for verb, spec in actions.items():
+        for param, schema in spec["properties"].items():
+            takers.setdefault(param, []).append(
+                (verb, schema, param in spec["required"])
+            )
+    for param, used in takers.items():
+        shape = {k: v for k, v in used[0][1].items() if k != "description"}
+        if any(
+            {k: v for k, v in schema.items() if k != "description"} != shape
+            for _, schema, _ in used
+        ):
+            raise ValueError(f"{name}.{param} is not one shape across its verbs")
+        said: dict[tuple[str, bool], list[str]] = {}
+        for verb, schema, required in used:
+            said.setdefault((schema.get("description") or "", required), []).append(
+                verb
+            )
+        properties[param] = {
+            **shape,
+            "description": "；".join(
+                f"{'、'.join(verbs)}{'（必填）' if required else ''}：{text}"
+                for (text, required), verbs in said.items()
+            ),
+        }
+    lines = [f"- {verb}：{spec['description']}" for verb, spec in actions.items()]
+    return {
+        "name": name,
+        "description": description + "\n\n" + "\n".join(lines),
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": ["action"],
+        },
+        "actions": actions,
+    }
 
 
 #: Every action 芝士 takes as the person carries it: an action the platform
@@ -1301,7 +1376,7 @@ TASK_WRITE_DESCRIPTION = (
     "题目名称起头，名称、截止时间、人数、分值这些表单上已有的格子也不要在描述里重复。"
     "原文写明的设置（个人还是团队、几人、什么时候截止）照原文填。\n"
     "\n"
-    "改草稿时带上读到的 version（当前页面或 cheese_task_get 里有）：用户在那之后"
+    "改草稿时带上读到的 version（当前页面或 cheese_read 读到的草稿里有）：用户在那之后"
     "改过的格子保持用户的版本，返回里会列出来。\n"
     "\n"
     "字段：name 名称；description 题目详情（Markdown，整篇写入）；"
@@ -1715,33 +1790,6 @@ DELEGATED_TOOLS = ToolTable(
             ["path"],
         ),
         _tool(
-            "cheese_my_tasks",
-            "列出提问人参加的题目：标题、简介、题目截止时间（deadline）、提问人自己的"
-            "提交截止时间（myDeadline，领取被批准时定下，还没批准时为空）、"
-            "是否已结束。时间都带着提问人所在时区的偏移。",
-        ),
-        _tool(
-            "cheese_task_search",
-            "在一个空间里搜题目：已发布的题目（名称或简介含所有关键词），以及提问人在"
-            "这个空间的草稿。出题前用它查有没有重复、参考已有题目的编号和写法。"
-            "query 留空列出最近的题目。",
-            {
-                "space": {"type": "integer", "description": "空间 id（见当前页面）"},
-                "query": _text("关键词，空格分开"),
-            },
-            ["space"],
-        ),
-        _tool(
-            "cheese_task_get",
-            "读一道题的全部字段：草稿（draft）或已发布的题目（task），二选一。字段名和 "
-            "cheese_problem_write 写入时用的一样。草稿带 version：写入时原样带上，"
-            "用户在那之后改过的格子不会被覆盖。",
-            {
-                "draft": {"type": "integer", "description": "草稿 id"},
-                "task": {"type": "integer", "description": "已发布题目的 id"},
-            },
-        ),
-        _tool(
             "cheese_problem_write",
             TASK_WRITE_DESCRIPTION,
             TASK_WRITE_FIELDS,
@@ -1753,28 +1801,6 @@ DELEGATED_TOOLS = ToolTable(
             "没有了，对话跟着题目走。用户说发布、保存时再调用。",
             {"draft": {"type": "integer", "description": "草稿 id"}},
             ["draft"],
-        ),
-        _tool(
-            "cheese_file_read",
-            "读用户交给你的文件（问题里写着「文件 id」），或题目上的附件。文本文件读全文；"
-            'PDF 一次读一段页（pages，如 "1-20"），返回总页数，没读完就接着读后面的页。'
-            "扫描页没有文字层，模型能看图时附上页面图片。",
-            {
-                "file": {"type": "integer", "description": "文件 id"},
-                "pages": _text("PDF 的页码范围，如 1-20；省略读前 20 页"),
-            },
-            ["file"],
-        ),
-        _tool(
-            "cheese_space_materials",
-            "空间资料库：不给 material 列出提问人能看的资料（id、名称、大小）；"
-            "给 material 读那一份的文字，PDF 用 pages 分段读。",
-            {
-                "space": {"type": "integer", "description": "空间 id"},
-                "material": {"type": "integer", "description": "资料 id"},
-                "pages": _text("PDF 的页码范围，如 1-20"),
-            },
-            ["space"],
         ),
     )
 )
@@ -2055,7 +2081,7 @@ def _read_plan(args: dict) -> dict:
 
 def _say_read(args: dict, data, environ) -> str:
     if args["ref"].strip().strip("/") == "me":
-        return _say_my_tasks(args, data, environ)
+        return _say_joined_problems(args, data, environ)
     found = _read_kind(args["ref"])
     kind = found[0] if found else None
     if kind == "file":
@@ -2075,11 +2101,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     topic = env.get("CHEESE_TOPIC", "")
     project = env.get("CHEESE_PROJECT", "")
     document = env.get("CHEESE_DOCUMENT", "")
-    if tool in _NEEDS_DOCUMENT and not document:
+    # `tool` is a key: a tool's name, or `<name>.<action>` for one of an
+    # object's verbs (`_object`), whose needs are its tool's.
+    name = tool.partition(".")[0]
+    if name in _NEEDS_DOCUMENT and not document:
         raise ValueError("Missing CHEESE_DOCUMENT")
-    if tool in _NEEDS_TOPIC and not topic:
+    if name in _NEEDS_TOPIC and not topic:
         raise ValueError("Missing CHEESE_TOPIC")
-    if tool in _NEEDS_PROJECT and not project:
+    if name in _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
     here = f"/topics/{topic}"
     if tool == "platform_request":
@@ -2316,27 +2345,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/docs/agent/search",
             "body": {"query": args["query"]},
         }
-    if tool == "cheese_my_tasks":
-        return {"method": "GET", "path": "/tasks/joined"}
-    if tool == "cheese_task_search":
-        body = {"space": args["space"], "query": args.get("query") or ""}
-        return {"method": "POST", "path": "/task-drafts/agent/search", "body": body}
-    if tool == "cheese_task_get":
-        body = _given(args, "draft", "task")
-        if not body:
-            raise ValueError("cheese_task_get 需要 draft 或 task 之一")
-        return {"method": "POST", "path": "/task-drafts/agent/read", "body": body}
     if tool == "cheese_problem_write":
         return {"method": "POST", "path": "/task-drafts/agent/write", "body": args}
     if tool == "cheese_problem_publish":
         body = {"draft": args["draft"]}
         return {"method": "POST", "path": "/task-drafts/agent/publish", "body": body}
-    if tool == "cheese_file_read":
-        body = {"file": args["file"], **_given(args, "pages")}
-        return {"method": "POST", "path": "/task-drafts/agent/file", "body": body}
-    if tool == "cheese_space_materials":
-        body = {"space": args["space"], **_given(args, "material", "pages")}
-        return {"method": "POST", "path": "/task-drafts/agent/materials", "body": body}
     if tool == "cheese_web_search":
         query = {"q": args["query"], "topic": topic, "project": project}
         if args.get("limit"):
@@ -2636,22 +2649,72 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     if tool == COMPACT_TOOL and not switched_on(getattr(host, "environ", None)):
         raise PlatformToolError("这个部署没有给这个座位打开主动压缩上下文")
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
-    schema = next(t for t in table.schemas() if t["name"] == tool)
-    missing = [
-        name
-        for name in schema["inputSchema"].get("required", ())
-        if args.get(name) in (None, "", [])
-    ]
-    if missing:
-        raise PlatformToolError(f"{tool} 缺少参数：{', '.join(missing)}")
+    actions = table.actions(tool)
+    if actions is None:
+        schema = next(t for t in table.schemas() if t["name"] == tool)
+        _refuse_missing(tool, schema["inputSchema"].get("required", ()), args)
+        key = tool
+    else:
+        key = f"{tool}.{_checked(tool, actions, args, table)}"
     try:
-        if tool in _STEPS:
-            return _STEPS[tool](args, host)
-        plan = request_plan(tool, args, host.environ)
+        if key in _STEPS:
+            return _STEPS[key](args, host)
+        plan = request_plan(key, args, host.environ)
     except ValueError as exc:
         raise PlatformToolError(str(exc)) from exc
     data = host.request(plan).get("data")
-    return _SAY[tool](args, data, host.environ)
+    return _SAY[key](args, data, host.environ)
+
+
+def _unsaid(value) -> bool:
+    """「没说」：省略，或者给了个空的（`_given` 同样不发它）。"""
+    return value in (None, "", [])
+
+
+def _refuse_missing(call: str, required, args: dict) -> None:
+    missing = [name for name in required if _unsaid(args.get(name))]
+    if missing:
+        raise PlatformToolError(f"{call} 缺少参数：{', '.join(missing)}")
+
+
+def _checked(tool: str, actions: dict, args: dict, table: ToolTable) -> str:
+    """The verb a call to `tool` (`_object`) asks for, once it is known to
+    carry what that verb takes and nothing it does not.
+
+    A parameter that belongs to another verb is refused, not dropped: dropped,
+    the call does something other than what the agent meant and says it
+    succeeded. Each refusal names what to pass instead."""
+    action = args.get("action")
+    if not isinstance(action, str) or action not in actions:
+        raise PlatformToolError(f"{tool} 要 action：{' / '.join(actions)}")
+    call = f"{tool}(action={action})"
+    spec = actions[action]
+    _refuse_missing(call, spec["required"], args)
+    stray = [
+        name
+        for name, value in args.items()
+        if name != "action" and name not in spec["properties"] and not _unsaid(value)
+    ]
+    if stray:
+        where = []
+        for name in stray:
+            takers = [
+                f"{other}(action={verb})"
+                for other in table.names()
+                for verb, taken in (table.actions(other) or {}).items()
+                if name in taken["properties"]
+            ]
+            where.append(
+                f"{name} 是 {'、'.join(takers)} 的参数"
+                if takers
+                else f"没有哪一件收 {name}"
+            )
+        takes = "、".join(spec["properties"]) or "不收参数"
+        raise PlatformToolError(
+            f"{call} 不收 {', '.join(stray)}：{'；'.join(where)}。"
+            f"{call} 收的是：{takes}。"
+        )
+    return action
 
 
 def _utc_stamp(value: str) -> str:
@@ -4263,7 +4326,7 @@ def _say_attachment_read(args, data, env) -> str:
     return content
 
 
-def _say_my_tasks(args, data, env) -> str:
+def _say_joined_problems(args, data, env) -> str:
     if not data:
         return "提问人没有参加任何题目。"
     return json.dumps(data, ensure_ascii=False)
@@ -4339,7 +4402,7 @@ def _task_step(tool: str, args: dict, host) -> str:
     if data.get("kept"):
         said += (
             f"用户在你读草稿之后改过 {'、'.join(data['kept'])}，这些保持用户的版本；"
-            "要改先 cheese_task_get 读最新的内容。"
+            "要改先用 cheese_read 读这份草稿（drafts/<草稿 id>）最新的内容。"
         )
     if data.get("missing"):
         said += f"发布前还缺：{'、'.join(data['missing'])}。"
@@ -4351,7 +4414,7 @@ def _task_step(tool: str, args: dict, host) -> str:
     return said
 
 
-def _say_task_search(args, data, env) -> str:
+def _say_problem_search(args, data, env) -> str:
     data = data or {}
     lines = []
     for t in data.get("tasks") or []:
@@ -4394,31 +4457,22 @@ def _say_document(args, data, env):
     if data.get("pages"):
         head += f"（共 {data['pages']} 页，这里是第 {data.get('first')}–{data.get('last')} 页）"
     tail = ""
-    reading = "ref" in args
     if data.get("pages") and data.get("last", 0) < data["pages"]:
         tail += (
             f"\n\n还有第 {data['last'] + 1} 页起没有读：读同一个编号，"
             f"page={(args.get('page') or 1) + 1}。"
-            if reading
-            else f"\n\n还有第 {data['last'] + 1} 页起没有读：用 pages 接着读。"
         )
     if data.get("cut"):
-        tail += (
-            "\n\n文字太长，后面截掉了。"
-            if reading
-            else "\n\n文字太长，后面截掉了：缩小 pages 的范围再读。"
-        )
+        tail += "\n\n文字太长，后面截掉了。"
     return Said(f"{head}\n\n{data.get('text') or ''}{tail}", data.get("images") or [])
 
 
 def _say_materials(args, data, env):
     data = data or {}
     if "materials" in data:
-        found = _read_kind(args["ref"]) if "ref" in args else None
+        space = _read_kind(args["ref"])[1][0]
         rows = [
-            f"- {m.get('name')}（spaces/{found[1][0]}/materials/{m.get('id')}）"
-            if found
-            else f"- 资料 {m.get('id')}：{m.get('name')}"
+            f"- {m.get('name')}（spaces/{space}/materials/{m.get('id')}）"
             for m in data.get("materials") or []
         ]
         return "\n".join(rows) or "这个空间的资料库是空的。"
@@ -4717,7 +4771,6 @@ _SAY = {
     "cheese_project_search": _say_project_search,
     "cheese_memory_read": _say_memory_read,
     "cheese_attachment_read": _say_attachment_read,
-    "cheese_my_tasks": _say_my_tasks,
     "cheese_inbox": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_read": _say_read,
     "cheese_settings_set": lambda a, d, e: (d or {}).get("text") or "",
@@ -4725,17 +4778,13 @@ _SAY = {
     "cheese_notify_me": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_memory": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_find": lambda a, d, e: (
-        _say_task_search(a, d, e)
+        _say_problem_search(a, d, e)
         if "tasks" in (d or {})
         else (d or {}).get("text") or ""
     ),
     "cheese_help": lambda a, d, e: (
         _say_docs_read(a, d, e) if a.get("page") else _say_docs_search(a, d, e)
     ),
-    "cheese_task_search": _say_task_search,
-    "cheese_task_get": lambda a, d, e: (d or {}).get("text") or "",
-    "cheese_file_read": _say_document,
-    "cheese_space_materials": _say_materials,
     "cheese_members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,

@@ -15,6 +15,9 @@ def build() -> bytes:
         "app.domain.agent.harness.codex.entry",
         (
             "domain/agent/executor_transport.py",
+            # The names a thread started before a tool was folded into another
+            # still calls it by (`tools.RemoteTools`).
+            "core/tool_keys.py",
             # What the transport reads from beside itself for a task's checkout.
             "domain/agent/task_checkout.py",
             "domain/agent/pr_creation.py",
