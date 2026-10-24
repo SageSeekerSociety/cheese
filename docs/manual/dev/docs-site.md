@@ -251,7 +251,7 @@ cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`
 
 ## AI 队友查文档 {#agent-docs}
 
-AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_docs_search`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_docs_read`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
+AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_help`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_help`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
 
 - 使用文档对所有项目开放。
 - 开发文档只对「在做知是本身」的项目开放：项目绑定的仓库在 `DOCS_DEV_REPOSITORIES` 里（默认 `SageSeekerSociety/cheese`）。别的项目检索不到开发文档，点名读 `dev/…` 返回 403。

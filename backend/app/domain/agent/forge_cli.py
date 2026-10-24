@@ -392,7 +392,7 @@ def run(name, arguments):
         for index in range(len(arguments) - 1)
     ) and not any(arg in ("--help", "-h") for arg in arguments):
         print(
-            "[cheese] Merging accepts this task. Use cheese_accept_request "
+            "[cheese] Merging accepts this task. Use cheese_card(action=request) "
             "to submit it for project review.",
             file=sys.stderr,
             flush=True,

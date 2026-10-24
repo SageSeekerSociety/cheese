@@ -272,7 +272,7 @@ async def set_session_environment(
             "environment": dump(environment),
             # A session whose work is not kept (a 支线, a task not started yet)
             # keeps nothing wherever it moves; the agent is told so with the
-            # answer to its own move (`cheese_environment`).
+            # answer to its own move (`cheese_session(action=environment)`).
             "keeps_nothing": scoped_session is not None
             and not await session_keeps_work(db, scoped_session),
         }

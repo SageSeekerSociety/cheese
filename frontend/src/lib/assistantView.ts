@@ -5,7 +5,7 @@ import type { AssistantProposal, AssistantStep, AssistantSubagent } from '@/stor
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
-import { toolLabel } from '@/lib/toolLabels'
+import { toolKey, toolLabel } from '@/lib/toolLabels'
 
 export interface PanelStep {
   key: string
@@ -179,31 +179,29 @@ export interface PanelResult {
 /** 每种工具这一行跟的那个参数。 */
 const STEP_ARG: Record<string, string> = {
   cheese_task_search: 'query',
-  cheese_problem_write: 'name',
+  'cheese_problem.write': 'name',
   cheese_file_read: 'pages',
-  cheese_docs_search: 'query',
-  cheese_docs_read: 'page',
-  cheese_chat_search: 'query',
+  'cheese_chat.search': 'query',
   cheese_project_search: 'query',
   cheese_task_draft: 'title',
   cheese_read: 'ref',
   cheese_find: 'query',
   cheese_help: 'query',
-  cheese_message_send: 'where',
-  cheese_task_open: 'title',
-  cheese_review_decide: 'ref',
-  cheese_inbox_respond: 'ref',
-  cheese_member_set: 'who',
-  cheese_channel_create: 'title',
-  cheese_web_fetch: 'url',
-  cheese_web_search: 'query',
+  chat_send: 'where',
+  'cheese_task.open': 'title',
+  'cheese_card.decide': 'ref',
+  'cheese_inbox.respond': 'ref',
+  'cheese_room.member': 'who',
+  'cheese_room.create': 'title',
+  'cheese_web.fetch': 'url',
+  'cheese_web.search': 'query',
   cheese_routine: 'title',
-  cheese_notify_me: 'text',
+  cheese_notify: 'text',
   cheese_memory: 'description',
   cheese_subagent_start: 'description',
   cheese_subagent_send: 'message',
-  cheese_file_give: 'name',
-  cheese_file_to_computer: 'ref',
+  'cheese_library.give': 'name',
+  'cheese_library.take': 'ref',
   // 这段对话自己那台电脑上的（pi 自己的工具）。
   bash: 'command',
   read: 'path',
@@ -246,12 +244,12 @@ export function stepView(step: AssistantStep): PanelStep {
       hidden: true,
       checklist: checklistIn(step.args),
     }
-  const key = STEP_ARG[step.name]
+  const key = STEP_ARG[toolKey(step.name, step.args)] ?? STEP_ARG[step.name]
   // 读到的东西有名字时写名字，不写编号。
   const arg = step.shown ?? (key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : '')
   return {
     key: step.call,
-    verb: toolLabel(step.name),
+    verb: toolLabel(step.name, step.args),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
     error: step.error === undefined ? undefined : stepError(step.error),

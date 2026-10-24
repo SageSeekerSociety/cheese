@@ -80,6 +80,7 @@ const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 const { mdAndUp } = useDisplay()
 useAgentContext(() => ({
   page: { kind: 'task', id: taskId.value },
+  label: taskData.value?.name ? t('tasks.assistant.page.problem', { name: taskData.value.name }) : undefined,
   intro: t('tasks.assistant.reads'),
   greeting: t('tasks.assistant.greeting'),
   starters: (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)),

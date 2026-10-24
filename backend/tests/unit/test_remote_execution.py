@@ -384,8 +384,8 @@ def test_a_platform_tools_pictures_reach_the_model_in_the_messages_api_shape():
                                      data: 'd2lkZQ=='}},
           ]})},
         };
-        const call = {tool: 'mcp__native__cheese_app_save', tool_use_id: 'save',
-                      code: '<p>x</p>'};
+        const call = {tool: 'mcp__native__cheese_app', tool_use_id: 'save',
+                      action: 'save', code: '<p>x</p>'};
         assert.deepEqual(await handlers['tool.call'](api, call), {
           result: [
             {type: 'text', text: '已保存小程序 k1 的第 1 版。'},

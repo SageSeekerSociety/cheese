@@ -11,6 +11,7 @@ the computer would.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from urllib.parse import urlsplit
 
@@ -65,11 +66,24 @@ def _give(client, cheese: dict, name: str, data: bytes) -> dict:
         headers=cheese,
     )
     assert slot.status_code == 200, slot.text
-    put = client.put(_here(slot.json()["data"]["url"]), content=data)
+    upload = slot.json()["data"]["upload"]
+    digest = hashlib.md5(data).hexdigest()
+    address = client.post(
+        "/assistant/agent/files/part",
+        json={"upload": upload, "part": 1, "md5": digest},
+        headers=cheese,
+    )
+    assert address.status_code == 200, address.text
+    put = client.put(_here(address.json()["data"]["url"]), content=data)
     assert put.status_code == 200, put.text
     handed = client.post(
         "/assistant/agent/files/handed",
-        json={"upload": slot.json()["data"]["upload"], "name": name},
+        json={
+            "upload": upload,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "parts": [digest],
+            "name": name,
+        },
         headers=cheese,
     )
     assert handed.status_code == 200, handed.text

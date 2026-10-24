@@ -13,7 +13,6 @@ import {
   envelope,
   newer,
   server,
-  uploadFile,
 } from './requestContract.spec.helper'
 
 contractEnvironment()
@@ -29,22 +28,6 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     label: 'update',
     name: 'update',
     test: { method: 'PATCH', path: '/tasks/42', args: [42, { name: '新名' }], body: { name: '新名' } },
-  },
-  {
-    label: 'listAttachments',
-    name: 'listAttachments',
-    test: { method: 'GET', path: '/tasks/42/attachments', args: [42] },
-  },
-  {
-    label: 'uploadAttachment',
-    name: 'uploadAttachment',
-    // The file is built inside the test (after the File stub is in place); see the runner below.
-    test: { method: 'POST', path: '/tasks/42/attachments', args: [42], fileFields: {} },
-  },
-  {
-    label: 'removeAttachment',
-    name: 'removeAttachment',
-    test: { method: 'DELETE', path: '/tasks/42/attachments/9', args: [42, 9] },
   },
   { label: 'del', name: 'del', test: { method: 'DELETE', path: '/tasks/42', args: [42] } },
   {
@@ -220,9 +203,8 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
 describe('题目 browser contract', () => {
   it.each(cases)('$label preserves the request and returns the payload', async ({ name, test }) => {
     const { TaskBoardApi: next } = await import('./taskBoard')
-    const args = name === 'uploadAttachment' ? [42, uploadFile()] : test.args
     await contractRequest(test, () =>
-      (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
+      (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...test.args)
     )
   })
 })

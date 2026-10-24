@@ -40,18 +40,18 @@ MAX_BATCH = 10
 STEPS = "\n".join(
     (
         "逐条处理：",
-        "1. 用 cheese_feedback_get 读全文和评论。",
-        "2. 用 cheese_feedback_claim 领下来；领不到（已经有人在修，或者已经办完）"
+        "1. 用 cheese_feedback(action=get) 读全文和评论。",
+        "2. 用 cheese_feedback(action=claim) 领下来；领不到（已经有人在修，或者已经办完）"
         "就跳过这一条。",
         "3. 调查：复现、读代码、查日志，判断是不是真问题、根因在哪。",
         "4. 能修的先用 cheese_ask 问规则的主人要不要建任务修，一条反馈一道题，选项"
-        "「建任务」「不修」；他选了「建任务」，再用 cheese_task 另开一件任务（owner 填"
+        "「建任务」「不修」；他选了「建任务」，再用 cheese_task(action=open) 另开一件任务（owner 填"
         "他），写清根因、修法和反馈编号。任务里修好的提交单独一行写 "
         "`Fixes-feedback: FB-<编号>`，合并上线后平台会自动记「已修复」「已上线」。"
         "这次不改代码。",
         "5. 修不了或不该修（设计如此、复现不了、要别人拍板）：不要改它的状态。"
         "把你的判断和建议（例如「建议标为不修复，因为……」）写进交回结果的 summary，"
-        "由规则的主人决定；不再跟进的用 cheese_feedback_release 放掉。",
+        "由规则的主人决定；不再跟进的用 cheese_feedback(action=release) 放掉。",
         "交回结果时逐条写清：编号、结论（创建的任务 / 建议 / 跳过）和理由。",
     )
 )

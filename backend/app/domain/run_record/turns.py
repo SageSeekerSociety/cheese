@@ -47,6 +47,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     Integer,
+    String,
     Uuid,
     cast,
     column,
@@ -66,6 +67,7 @@ _turns = table(
     column("conversation_id", Uuid),
     column("started_at", DateTime(timezone=True)),
     column("stopped_at", DateTime(timezone=True)),
+    column("stop_reason", String(32)),
 )
 
 #: 房间里的块（`block.models.Block`，表 `blocks`）。失败事件和提示计数都落在这。
@@ -120,6 +122,9 @@ class TurnOut(BaseModel):
     started_at: str
     #: 空 = 这一轮还开着（`stopped_at IS NULL` 就是「在跑」），不是「不知道」。
     stopped_at: str | None
+    #: 谁让这一轮停的（`agent.models.STOP_*`），由关掉它的那段代码写下。
+    #: 空有两种来路：这一列加上之前就结束的行，或者这一轮还没结束。
+    stop_reason: str | None = None
     #: 这一轮的终态失败事件类别，或者空 —— 空是「没记录过失败」，或者这一轮只落了
     #: 提示（`severity=info`），见模块 docstring。
     failure_event: str | None
@@ -258,6 +263,7 @@ async def of_turn(session: AsyncSession, turn_id: uuid.UUID) -> dict[str, Any] |
                 _turns.c.conversation_id,
                 _turns.c.started_at,
                 _turns.c.stopped_at,
+                _turns.c.stop_reason,
             ).where(_turns.c.id == turn_id)
         )
     ).one_or_none()
@@ -272,6 +278,7 @@ async def of_turn(session: AsyncSession, turn_id: uuid.UUID) -> dict[str, Any] |
         "conversation_id": str(row.conversation_id),
         "started_at": row.started_at.isoformat(),
         "stopped_at": row.stopped_at.isoformat() if row.stopped_at else None,
+        "stop_reason": row.stop_reason,
         "failure_event": failure,
         # No terminal failure event is "nothing was recorded", not success.
         # `stopped_at` is when the row closed, not evidence it finished: the
@@ -318,6 +325,7 @@ async def in_window(
                 _turns.c.conversation_id,
                 _turns.c.started_at,
                 _turns.c.stopped_at,
+                _turns.c.stop_reason,
             )
             .where(*within)
             .order_by(_turns.c.started_at.desc(), _turns.c.id.desc())
@@ -339,9 +347,10 @@ async def in_window(
                 "conversation_id": str(conversation_id),
                 "started_at": started_at.isoformat(),
                 "stopped_at": stopped_at.isoformat() if stopped_at else None,
+                "stop_reason": stop_reason,
                 "failure_event": failures.get(turn_id),
                 "prompt_attempts": attempts.get(turn_id),
             }
-            for turn_id, conversation_id, started_at, stopped_at in page
+            for turn_id, conversation_id, started_at, stopped_at, stop_reason in page
         ],
     }

@@ -277,7 +277,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 用户说「这道题」「表单」，指这道题。",
             "- 用户只附上文件、没说要做什么时，按文件内容修改这道题（给 draft），"
             "不新建草稿。",
-            "- 用户说保存时，用 cheese_problem_publish 保存修改。",
+            "- 用户说保存时，用 cheese_problem(action=publish) 保存修改。",
         ]
     else:
         lines = [
@@ -289,7 +289,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 这份草稿尚未填写时，文件里的第一道题写进它（给 draft），不要另建；其余每道"
             "题各新建一份草稿（给 space，source 写文件名）。草稿已经填写了，就不要覆盖它，"
             "文件里的题都新建。",
-            "- 用户说发布时，用 cheese_problem_publish 发布。",
+            "- 用户说发布时，用 cheese_problem(action=publish) 发布。",
         ]
     return "<这一页>\n" + "\n".join(lines) + "\n</这一页>"
 

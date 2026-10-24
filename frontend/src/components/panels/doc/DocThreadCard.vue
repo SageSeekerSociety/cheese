@@ -77,16 +77,17 @@ function told(message: DocComment): RefNames {
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
-  cheese_doc_get: 'reading',
-  cheese_doc_edit: 'editing',
+  // 一个对象的动词按键说（`cheese_doc.edit`）：动作写出来之前说「在回答」。
+  'cheese_doc.get': 'reading',
+  'cheese_doc.edit': 'editing',
   read: 'readingCode',
   ls: 'readingCode',
   find: 'readingCode',
   grep: 'readingCode',
   git: 'readingCode',
   cheese_project_search: 'searching',
-  cheese_memory_read: 'readingMemory',
-  cheese_attachment_read: 'readingAttachment',
+  'cheese_memory.project': 'readingMemory',
+  'cheese_library.read': 'readingAttachment',
 }
 
 const step = computed(() => {

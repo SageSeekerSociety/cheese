@@ -160,21 +160,23 @@ def socket_path(state: Path) -> str:
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
-#: The platform tools that read the room's own messages: let through, and no answer.
+#: The platform tools that read the room's own messages: let through, and no
+#: answer. Each is one verb of `cheese_chat`, by its key (`<tool>.<action>`):
+#: editing a message of one's own is in the same tool and answers nobody.
 REPLY_READS = (
-    "cheese_chat_list",
-    "cheese_chat_get",
-    "cheese_chat_search",
-    "cheese_chat_replies",
+    "cheese_chat.list",
+    "cheese_chat.get",
+    "cheese_chat.search",
+    "cheese_chat.replies",
 )
 REPLY_OWED = (
     "A person in this conversation has sent a message you have not answered yet. "
     "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
     "what you will do next — and if they asked you to stop, stop. If you have "
-    "not seen what they wrote, read the conversation with cheese_chat_list (or "
-    "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
-    "tool is refused until you have replied."
+    "not seen what they wrote, read the conversation with cheese_chat "
+    "(action=list, or get / search / replies); every other tool is refused "
+    "until you have replied."
 )
 
 

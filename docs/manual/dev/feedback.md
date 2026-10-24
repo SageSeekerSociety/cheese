@@ -38,9 +38,9 @@ covers:
 
 ## 提案：芝士举手，人决定 {#proposals}
 
-`cheese_feedback_propose`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
+`cheese_feedback(action=propose)`（`backend/sandbox/cheese`）打的落点是 `POST /topics/{topic_id}/feedback-proposals`，落的**不是**一条反馈，而是频道里的一条消息块（`Block`），payload 塞在 `Block.meta.feedback_proposal` 里 —— 那就是人看到的那张卡。`proposal_meta` 把正文连同 `fingerprint` 一起写进卡里，指纹跟着卡走，`dismiss` 端点于是不必从可能已被前端重排过的文本里重算它。
 
-**agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback_propose`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
+**agent 不能自己发布**（`FeedbackService.create`）：命中 `IdentityService.is_agent` 就直接 `ForbiddenError`，报错文案点名 `cheese_feedback(action=propose)`，给模型一个下一步而不是死胡同。同一个判断收掉了另一扇门 —— agent 去发送一张已有的卡，仍是 agent 在发布自己，只是分两步走。作者从卡上取（`Block.author`），提交者取验证过的调用者，客户端两样都说了不算。
 
 卡本身不落表：它是消息，历史就是历史。落表的只有「不用」——`FeedbackProposalDismissal`（`topic_id` + `fingerprint`）。原型里「不用」只把组件状态置成 dismissed，刷新就回来；服务端不落一行的话，同一个问题每轮都会再问一遍，而它会让人对整张卡产生免疫。「这张卡已经发过了」也不落表，它是卡自己的状态，写在卡自己的 `meta` 上（`ACCEPTED_FEEDBACK_KEY`）跟着卡走。
 
@@ -106,7 +106,7 @@ covers:
 
 领取存在只为一件事：**别让两个人修同一个问题**。所以第二个人的领取必须失败，回 409（`feedbackClaimedByOther`），原话里点名持有人，`error.data.holder` 也带着他——他下一步是去找那个人，不是换个说法再领一次。判「有没有人领着」之前先 `SELECT … FOR UPDATE` 锁住这一行（`claims.lock`）：两个同时到的领取，后到的那个在锁上等先到的提交，再读到它写下的名字。不锁的话两个都读到「没人」，后写的悄悄盖掉先到的，两个人都以为是自己在修。持有人自己再领一次是空操作。
 
-谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback_claim` / `cheese_feedback_release` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
+谁能领（`FeedbackService.may_claim`）：看得见这条（看不见的照旧 404），并且是反馈管理员，或者在做这个平台本身——判据和开发文档同一个，`settings.docs_dev_repositories` 里那个仓库所在的项目（`docs_site.library.platform_projects`）。人看他能不能进其中一个项目；agent 带上 `?topic=<房间>`（见[下一节](#agent-reads)），看房间的项目。agent 用的是 `cheese_feedback(action=claim)` / `cheese_feedback(action=release)` 两样工具（`backend/sandbox/cheese`），领不到时把原因原样转给它，并告诉它不要修。
 
 领取走 `advance` 记「处理中」。已经办完的（`CLOSED_STATUSES` = 已修复 + 已上线 + 不修复）不接领取：回 409（`feedbackClaimClosed`），不改持有人、不写时间线——领取记的是「谁在修」，这几档已经没有要修的了，挂一个处理人只会让详情自相矛盾。同样也不接放弃：回 409（`feedbackReleaseClosed`），持有人保持原样；领取和放弃是修这件事的两端，办完就一起关掉。管理员要清掉挂错的人，走管理端的改派（`patch_admin` 把 `assignee_handle` 置空），那是数据修正，不是放弃领取。放弃清掉持有人，并把「处理中」退回「已收录」：领取把一条反馈推成「处理中」，放弃之后就没有人在修了，留着「处理中」会让详情自相矛盾（状态说有人在弄，处理人却是空的）。退回和它那条时间线一起写（`set_status` 走唯一的 `_move`），历史里读得到是谁在什么时候放下的；本来就不在「处理中」的不动。详情上的 `can_claim` / `can_release` 由服务端用同一处判据算好（两者都要求状态没办完），详情页右栏「处理人」那一格照它画「领取」「放弃」两个按钮；办完且没人领着的，那一格不出现，有人领着的只显示处理人。
 
@@ -116,9 +116,9 @@ agent 的凭据只认一个房间：不说房间的 `/feedback/*` 请求会被�
 
 | 入口 | 作用 | agent 的工具 |
 | --- | --- | --- |
-| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback_list` |
-| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback_get` |
-| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback_get` 在评论多于一页时接着取 |
+| `GET /feedback` | 公开列表，栏位和 `q` / `status` / `kind` / `author` / `since` 筛选和页面同一份 | `cheese_feedback(action=list)` |
+| `GET /feedback/{ref}` | 一条的详情：正文、时间线、第一页评论、`can_claim`。`ref` 是 `FB-12` 或 uuid | `cheese_feedback(action=get)` |
+| `GET /feedback/{id}/comments` | 往下翻评论 | `cheese_feedback(action=get)` 在评论多于一页时接着取 |
 
 带了房间，就只认做平台本身的项目里的房间（`FeedbackService.require_platform_room`，和领取同一个判据 `claims.is_platform_project`）；别的房间回 403（`feedbackReadPlatformRoomsOnly`）。反馈中心装的是平台本身的活，在别的项目里的 agent 一条也领不了，读到的只会是它不该动手的东西，所以直接告诉它为什么读不到。
 
@@ -170,7 +170,7 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。
 - **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
 - **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据），别处建或改成这样的规则会被拒：那里的队友领不了反馈。
-- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine_draft` 起草或直接调 `POST /topics/{id}/routines`。
+- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine(action=create)` 起草或直接调 `POST /topics/{id}/routines`。
 
 ## 栏位是过滤器，不是分区 {#tabs}
 

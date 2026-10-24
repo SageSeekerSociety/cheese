@@ -31,7 +31,6 @@ task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
 task_access_domain_seq = Sequence("task_access_domain_seq")
-task_attachment_seq = Sequence("task_attachment_seq")
 
 
 class Task(Base):
@@ -352,6 +351,9 @@ class TaskSubmission(Base):
     submitter_id: Mapped[int] = mapped_column(
         "submitter_id", Integer, nullable=False
     )  # references user.id
+    #: Which version of the 题目 this was handed in under
+    #: (``TaskPackageRevision.number``); None for the ones from before versions.
+    package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -454,44 +456,46 @@ class TaskSubmissionReview(Base):
     )
 
 
-class TaskAttachment(Base):
-    """一个文件挂在一道题上 —— 出题时带上的材料，领取者与审核者可以下载。
+class TaskPackageRevision(Base):
+    """One version of what a 题目 hands its takers (#4767 §一): its description,
+    what to hand in, its 评分要点 and its files. The first is written when the
+    题目 is published; every change to any of those writes the next, saying in
+    ``changes`` what changed, so a project taken from it can say 「题目已更新到第
+    N 版」 and what that version changed. A submission records the version it
+    was made under (``TaskSubmission.package_revision``).
 
-    **不是** ``attachment`` 表本身，也不是它的替代：那一行文件仍然在
-    ``attachment`` 里（type/url/meta，meta 里带着 filename / contentType /
-    storageKey / size / uploaderId），由 ``POST /attachments`` 上传、由
-    ``app.core.storage`` 落到存储上。这张表只回答「它属于哪道题」以及题目这一侧
-    的事情（下载次数、什么时候挂上、什么时候被拿下来）。两件事分开，是因为同一个
-    文件在不同的上下文里可以是不同东西：交作业时附上的那份属于某个 ``submission``，
-    出题人放在题目上的那份属于某道 ``task``，共用一行文件记录不等于共用一个语义。
-
-    删除是**软删这一行**，存储上的对象留着 —— 见 ``TaskAttachmentService.remove``
-    的说明。
+    ``changes`` names the parts: ``published`` on the first; ``description``,
+    ``submission``, ``rubric`` when those changed; ``files`` with the names
+    ``added``, ``replaced`` and ``removed``.
     """
 
-    __tablename__ = "task_attachment"
+    __tablename__ = "task_package_revisions"
+    __table_args__ = (
+        Index(
+            "uq_task_package_revisions_task_id_number",
+            "task_id",
+            "number",
+            unique=True,
+        ),
+    )
 
-    id: Mapped[int] = mapped_column(BigInteger, task_attachment_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("task.id"), nullable=False
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_task_package_revisions_task_id_task",
+        ),
+        nullable=False,
     )
-    # ``attachment.id`` 是 Integer（autoincrement），外键类型必须一致。
-    attachment_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("attachment.id"), nullable=False
-    )
-    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
+    #: 第几版，从 1 数。
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Who made the change (``user.id``).
+    author_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
 
 

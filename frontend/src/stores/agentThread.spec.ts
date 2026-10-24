@@ -63,6 +63,56 @@ describe('和芝士的那一条对话', () => {
     expect(a.busy.value).toBe(false)
   })
 
+  it('words said mid-answer that the answer ended without hearing are asked on their own, not written twice', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const answers = [
+      events(
+        ['delta', { text: '先读一遍。' }],
+        ['unheard', { said: [{ text: '只看第 3 份', files: [{ path: '报告/3.pdf', name: '3.pdf' }] }] }],
+        ['done', {}]
+      ),
+      events(['delta', { text: '好，只看第 3 份。' }], ['done', {}]),
+    ]
+    serve(() => answers.shift() as Response)
+    const fetched = globalThis.fetch
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/ask')) bodies.push(JSON.parse(String(init?.body)))
+      return fetched(url, init)
+    })
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('把报告打分', '答不上来')
+
+    expect(bodies.map((b) => [b.question, b.kept ?? false, b.files ?? []])).toEqual([
+      ['把报告打分', false, []],
+      ['只看第 3 份', true, [{ path: '报告/3.pdf', name: '3.pdf' }]],
+    ])
+    expect(a.messages.value.map((m) => [m.role, m.text])).toEqual([
+      ['user', '把报告打分'],
+      ['assistant', '先读一遍。'],
+      ['assistant', '好，只看第 3 份。'],
+    ])
+    expect(a.busy.value).toBe(false)
+  })
+
+  it('words said mid-answer are not asked again when the person stopped the answer', async () => {
+    const answers = [
+      events(
+        ['delta', { text: '先读一遍。' }],
+        ['unheard', { said: [{ text: '只看第 3 份' }] }],
+        ['done', { stopped: true }]
+      ),
+    ]
+    const asked = serve(() => answers.shift() ?? new Response('', { status: 500 }))
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('把报告打分', '答不上来')
+
+    expect(asked).toEqual(['把报告打分'])
+  })
+
   it("says the server's reason for a refused question and keeps nothing of it", async () => {
     serve(
       () =>

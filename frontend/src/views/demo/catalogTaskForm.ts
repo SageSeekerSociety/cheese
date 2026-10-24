@@ -421,6 +421,20 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '添加文件',
       },
       {
+        name: '改题时：每一份都能换成新的一版',
+        note: '换上去的是新的一版，旧的一版留在题目资料库的历史里，题目跟着记一版。',
+        props: {
+          files: [
+            { id: '实验指导书.pdf', name: '实验指导书.pdf', size: 2_400_000 },
+            { id: 'starter.zip', name: 'starter.zip', size: 12_400_000 },
+          ],
+          uploading: false,
+          maxFileBytes: 100 * 1024 * 1024,
+          replaceable: true,
+        },
+        expect: 'starter.zip',
+      },
+      {
         name: '挂了两份、正在传第三份',
         note: '传的时候「添加文件」按住，免得同一份传两遍。',
         props: {

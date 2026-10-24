@@ -1,4 +1,4 @@
-// 芝士写题目时说的话（`cheese_problem_write` 的参数，后端 `drafts.AGENT_FIELDS`）怎么
+// 芝士写题目时说的话（`cheese_problem(action=write)` 的参数，后端 `drafts.AGENT_FIELDS`）怎么
 // 落到发题表单上。
 //
 // 参数是边写边流过来的：页面读到一截就先把能确定的那几格填上（`previewOf`），指针
@@ -11,7 +11,7 @@ import type { SpaceTeaching, TaskDraftField, TaskDraftFields, TaskSubmissionEntr
 import dayjs from 'dayjs'
 
 /** 芝士的字段名，按表单从上到下的顺序，各落在表单的哪几格。 */
-/** `cheese_problem_write` 的参数怎么放（`lib/typist.ts`）：详情、改详情时换上的那段、评分
+/** `cheese_problem(action=write)` 的参数怎么放（`lib/typist.ts`）：详情、改详情时换上的那段、评分
  *  标准写起来长；草稿 id、要替换的原文这些只用来定位。 */
 export const DRAFT_WRITE_PACE: TypistPace = {
   long: ['description', 'replace', 'criteria'],

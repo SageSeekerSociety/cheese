@@ -71,6 +71,7 @@ class TaskSubmissionRepository:
         submitter_id: int,
         version: int,
         stage: int = 0,
+        package_revision: int | None = None,
     ) -> TaskSubmission:
         now = datetime.now(UTC)
         submission = TaskSubmission(
@@ -78,6 +79,7 @@ class TaskSubmissionRepository:
             submitter_id=submitter_id,
             version=version,
             stage=stage,
+            package_revision=package_revision,
             created_at=now,
             updated_at=now,
             deleted_at=None,

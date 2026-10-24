@@ -366,3 +366,38 @@ def test_team_devices_form_one_sandbox_pool_regardless_of_enroller(client):
     specs = client.portal.call(enroll_and_offer)
     [pool] = [spec for spec in specs if spec["spec"] == "team_devices"]
     assert pool["label"] == "团队设备"
+
+
+def test_each_platform_spec_says_the_hourly_price_it_is_charged_at(client, monkeypatch):
+    """选规格的人看到的价格，就是那种算力实际按小时扣的额度：标准沙箱一个价，
+    虚拟机按配置的创建规格（核数、内存）定价；没定价的规格照实说它起不来。"""
+    from app.core.config import settings
+    from app.domain.machine import environments
+    from app.domain.project.models import Project
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", 55)
+    monkeypatch.setattr(settings, "cloud_vm_cores", 4)
+    monkeypatch.setattr(settings, "cloud_vm_memory_mb", 8192)
+    monkeypatch.setattr(settings, "cloud_sandbox_credits_per_hour", 7.5)
+    monkeypatch.setattr(
+        settings, "cloud_vm_credits_per_hour", {"2c4g": 9, "4c8g": 20.0}
+    )
+    pid, _ = project(client)
+
+    async def offer():
+        async with client.test_factory() as db:
+            return await environments.offered_specs(
+                db, await db.get(Project, uuid.UUID(pid))
+            )
+
+    about = {s["spec"]: s["description"] for s in client.portal.call(offer)}
+    assert "每小时 7.5 点" in about["standard"]
+    assert "4 核 8 GiB" in about["vm"] and "每小时 20 点" in about["vm"]
+
+    monkeypatch.setattr(settings, "cloud_sandbox_credits_per_hour", None)
+    monkeypatch.setattr(settings, "cloud_vm_credits_per_hour", {"2c4g": 9})
+    about = {s["spec"]: s["description"] for s in client.portal.call(offer)}
+    assert "点" not in about["standard"] and "无法启动" in about["standard"]
+    assert "点" not in about["vm"] and "无法启动" in about["vm"]

@@ -30,8 +30,9 @@
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
 #                      existing images.
-#   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
-#   DEPLOY_PULL_BACKOFF_SECONDS  waits between pull attempts       (default "5 15")
+#   DEPLOY_PULL_BUDGET_SECONDS   how long the pulls keep being retried, counted
+#                                from the first pull                (default 600)
+#   DEPLOY_PULL_BACKOFF_CAP_SECONDS  the longest wait between attempts (default 30)
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
 #                      prune, see retain_ci_service_images() below (defaults
 #                      match test.yml/e2e.yml `services:`)
@@ -58,16 +59,29 @@ HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 # "owner never becomes healthy" path without waiting the real minute.
 OWNER_HEALTH_SECONDS="${DEPLOY_OWNER_HEALTH_SECONDS:-60}"
 APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
-# Three attempts, 5s then 15s apart. A pull dies here for transient reasons far
-# more often than for real ones — a ghcr blip, or containerd failing to commit a
-# downloaded layer because its ingest file vanished mid-pull (Deploy run #174,
-# 2026-08-09: `rename …/ingest/…/data -> …/blobs/sha256/…: no such file or
-# directory`). A fresh pull opens a NEW ingest record rather than re-committing
-# the broken one, so a retry clears exactly that class of failure. The 20s total
-# is deliberately small: a genuinely unavailable image must still fail this
-# deploy quickly instead of holding the box's single shared runner.
-PULL_ATTEMPTS="${DEPLOY_PULL_ATTEMPTS:-3}"
-PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
+# The pulls are retried until 600s after the first one started, waiting 5s,
+# 10s, 20s and then 30s between attempts. A pull dies here for transient reasons
+# far more often than for real ones. The dev box reaches ghcr through a link
+# that resets connections in bursts lasting minutes (2026-10-24: six dev deploy
+# attempts gave up on the old three attempts 37-57s after their first pull, each
+# on `read: connection reset by peer`), and containerd sometimes fails to commit
+# a downloaded layer because its ingest file vanished mid-pull (Deploy run #174,
+# 2026-08-09) — a fresh pull opens a NEW ingest record, so a retry clears that
+# too. The 30s cap means a pull resumes at most half a minute after a burst
+# ends. The budget is shared by every pull of one deploy and sized against the
+# tighter of the two jobs that run this script: prod's 30-minute limit
+# (deploy-prod.yml; dev's is 180). No prod release has run this version yet; on
+# dev it took 4-7.5 minutes in the 22 successful runs of 2026-10-24
+# (UTC, every pull included) after about a minute of earlier steps, and the one
+# prod release of its first version took 10 minutes, so 10 minutes of retrying
+# plus a last attempt still ends in this script's own error and its reclaim,
+# not in the runner killing the job. An image that does not exist at all is
+# not what this waits out: both workflows refuse a release
+# whose image build did not succeed before this script runs
+# (deploy/check-auto-deploy.py), so the full budget is spent only on a manual
+# release of a commit that has no images, holding the box's runner 10 minutes.
+PULL_BUDGET_SECONDS="${DEPLOY_PULL_BUDGET_SECONDS:-600}"
+PULL_BACKOFF_CAP_SECONDS="${DEPLOY_PULL_BACKOFF_CAP_SECONDS:-30}"
 # This box's only runner also serves test.yml/e2e.yml, whose `services:`
 # postgres/redis images are pulled straight by Docker for the job and belong
 # to no container once it ends — `docker image prune -af` below reclaims them
@@ -827,8 +841,11 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   _slot_args=(-f "$SLOTS_OVERLAY")
 fi
 
-case "$PULL_ATTEMPTS" in
-  ''|*[!0-9]*|0) fail "DEPLOY_PULL_ATTEMPTS must be a positive integer (got: '$PULL_ATTEMPTS')" ;;
+case "$PULL_BUDGET_SECONDS" in
+  ''|*[!0-9]*) fail "DEPLOY_PULL_BUDGET_SECONDS must be a whole number of seconds (got: '$PULL_BUDGET_SECONDS')" ;;
+esac
+case "$PULL_BACKOFF_CAP_SECONDS" in
+  ''|*[!0-9]*) fail "DEPLOY_PULL_BACKOFF_CAP_SECONDS must be a whole number of seconds (got: '$PULL_BACKOFF_CAP_SECONDS')" ;;
 esac
 
 # Disk watermark around every pull and every reclaim. Triaging the 2026-08-09
@@ -941,55 +958,77 @@ on_exit() {
   exit "$rc"
 }
 
-# Backoff for the Nth failed attempt; the last configured value repeats if there
-# are more attempts than delays.
+# Wait after the Nth failed attempt: 5s doubling each time, capped.
 pull_backoff_delay() {
-  local attempt="$1" i=0 delay=0 candidate
-  for candidate in $PULL_BACKOFF_SECONDS; do
+  local attempt="$1" delay=5 i=1
+  while [ "$i" -lt "$attempt" ] && [ "$delay" -lt "$PULL_BACKOFF_CAP_SECONDS" ]; do
+    delay=$((delay * 2))
     i=$((i + 1))
-    delay="$candidate"
-    [ "$i" -ge "$attempt" ] && break
   done
+  [ "$delay" -le "$PULL_BACKOFF_CAP_SECONDS" ] || delay="$PULL_BACKOFF_CAP_SECONDS"
   printf '%s' "$delay"
 }
+
+# Set by the first retry_pull of the deploy: every pull after it shares the
+# budget that is left.
+PULL_STARTED=""
 
 # retry_pull <description> <command…>
 #
 # Keeps `set -euo pipefail` semantics intact: failures are captured explicitly
-# rather than swallowed, and once the attempts are spent this still calls fail(),
-# so the deploy exits non-zero exactly as it did before. The docker output of
-# each attempt streams to the deploy log as it happens (capturing it would kill
-# the progress lines that made the #174 stall diagnosable), so the summary names
-# the attempts and their exit codes and points at that output.
+# rather than swallowed, and once the budget is spent this still calls fail(), so
+# the deploy exits non-zero exactly as it did before. The budget decides only
+# whether another attempt starts; an attempt already running is not cut short.
+# The docker output of each attempt streams to the deploy log as it happens
+# (the progress lines are what made the #174 stall diagnosable) and is also kept
+# for the attempt, to tell a full disk from everything else.
+#
+# Only a full disk reclaims before the next attempt. `docker image prune -af`
+# deletes every image no container uses yet, which includes this release's
+# images pulled moments before. Dev deploy run 40108853373 (attempt 5,
+# 2026-10-24) pulled backend and frontend, pruned them when the collab pull was
+# reset, and then died pulling backend again for `dc run`. After a dropped
+# connection that prune only throws away progress; ENOSPC, which docker reports
+# as "no space left on device", is the one failure that freeing space cures.
 retry_pull() {
   local what="$1"
   shift
-  local attempt=1 rc=0 delay errors=""
+  local attempt=1 rc delay elapsed out errors=""
+  [ -n "$PULL_STARTED" ] || PULL_STARTED="$SECONDS"
+  out="$(mktemp)"
   while :; do
     rc=0
-    "$@" || rc=$?
+    "$@" 2>&1 | tee "$out" || rc=$?
+    elapsed=$((SECONDS - PULL_STARTED))
     if [ "$rc" -eq 0 ]; then
-      [ "$attempt" -eq 1 ] || log "$what: succeeded on attempt $attempt/$PULL_ATTEMPTS"
+      [ "$attempt" -eq 1 ] \
+        || log "$what: succeeded on attempt $attempt, ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget"
+      rm -f "$out"
       return 0
     fi
     errors="${errors:+$errors; }attempt $attempt exited $rc"
     log_disk "$what failed, attempt $attempt"
-    [ "$attempt" -lt "$PULL_ATTEMPTS" ] || break
     delay="$(pull_backoff_delay "$attempt")"
-    log "$what: attempt $attempt/$PULL_ATTEMPTS failed (exit $rc); reclaiming disk, retrying in ${delay}s"
-    # Idempotent and safe on a live box: prune only removes what nothing
-    # references. Deliberately NOT touching containerd's ingest area, stopping
-    # dockerd, or killing containers — a failed retry is recoverable, a wedged
-    # box is not.
-    if [ "$APP_IMAGE_SOURCE" = registry ]; then
-      reclaim_docker_disk "before pull retry" true
+    [ $((elapsed + delay)) -lt "$PULL_BUDGET_SECONDS" ] || break
+    if grep -qi 'no space left on device' "$out"; then
+      log "$what: attempt $attempt failed (exit $rc) on a full disk, ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget; reclaiming disk, retrying in ${delay}s"
+      # Idempotent and safe on a live box: prune only removes what nothing
+      # references. Deliberately NOT touching containerd's ingest area, stopping
+      # dockerd, or killing containers — a failed retry is recoverable, a wedged
+      # box is not.
+      if [ "$APP_IMAGE_SOURCE" = registry ]; then
+        reclaim_docker_disk "before pull retry" true
+      else
+        reclaim_docker_disk "before pull retry" false
+      fi
     else
-      reclaim_docker_disk "before pull retry" false
+      log "$what: attempt $attempt failed (exit $rc), ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget; retrying in ${delay}s"
     fi
     sleep "$delay"
     attempt=$((attempt + 1))
   done
-  fail "$what failed after $PULL_ATTEMPTS attempts ($errors); see each attempt's docker output above for the underlying error"
+  rm -f "$out"
+  fail "$what failed after $attempt attempts in ${elapsed}s, the pulls' ${PULL_BUDGET_SECONDS}s budget spent ($errors); see each attempt's docker output above for the underlying error"
 }
 
 # Capture the exact currently-running images so rollback also works when an

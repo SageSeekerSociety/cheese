@@ -368,7 +368,7 @@ def test_a_sync_by_hand_still_restores_a_snapshot_waiting_for_its_checkout(devic
 def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
     device, tmp_path
 ):
-    """The hand-off (`cheese_accept_request`) syncs the task this way. A
+    """The hand-off (`cheese_card(action=request)`) syncs the task this way. A
     checkout whose every commit is on the branch of a step that has since
     landed still has work for the next one: the sync carries it over and
     delivers it there."""

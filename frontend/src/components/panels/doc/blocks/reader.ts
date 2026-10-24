@@ -223,17 +223,40 @@ function serializer(doc: PMNode, later: Later, opts: ReadOptions): DOMSerializer
       room.className = 'doc-chart__canvas'
       dom.append(bar, room, data)
       later(dom, () => {
-        const { canvas, destroy } = chartCanvas(() => ({
-          kind: node.attrs.kind,
-          horizontal: Boolean(node.attrs.horizontal),
-          rows: tableRows(node),
-        }))
+        const { canvas, destroy } = chartCanvas(
+          () => ({
+            kind: node.attrs.kind,
+            horizontal: Boolean(node.attrs.horizontal),
+            rows: tableRows(node),
+          }),
+          // A copy being made for paper is not watched while it draws: it is
+          // copied the moment it is drawn, and a chart mid-animation copies
+          // with its bars at no height.
+          { still: opts.eager }
+        )
         room.replaceWith(canvas)
         return destroy
       })
       return { dom, contentDOM: data }
     },
     app(node) {
+      if (opts.print) {
+        // Paper cannot run it. What the block is and what it says stays
+        // readable; the app itself is only in the document.
+        const dom = document.createElement('div')
+        dom.dataset.block = 'app'
+        dom.className = 'doc-app doc-app--printed'
+        const name = document.createElement('div')
+        name.className = 'doc-app__name'
+        name.textContent = `[${t('work.room.doc.blocks.plain.app')}] ${node.attrs.title as string}`.trim()
+        const text = document.createElement('div')
+        text.className = 'doc-app__text'
+        const note = document.createElement('div')
+        note.className = 'doc-app__note'
+        note.textContent = t('work.room.doc.blocks.printApp')
+        dom.append(name, text, note)
+        return { dom, contentDOM: text }
+      }
       const block = appBlock({
         app: node.attrs.app as string,
         version: node.attrs.version as number,
@@ -343,6 +366,12 @@ export interface ReadOptions {
   names?: RefNames
   /** Put a 复制 button on each code block. */
   copyCode?: boolean
+  /** Draw every deferred block now instead of when it comes near the screen:
+   *  a copy made to be printed has no screen to come near. */
+  eager?: boolean
+  /** What a printed page cannot have: a mini-app is named rather than run,
+   *  and a video stays its address. */
+  print?: boolean
 }
 
 const NO_NAMES: RefNames = { mentionNames: {}, topicTitles: {} }
@@ -361,9 +390,10 @@ export function mountMarkdown(host: HTMLElement, md: string, opts: ReadOptions =
   chips(host, opts.names ?? NO_NAMES)
 
   const stops: (() => void)[] = []
-  // Where nothing reports what is on screen (a test page), draw everything now.
+  // Where nothing reports what is on screen (a test page), or where the copy is
+  // going somewhere that has no screen at all, draw everything now.
   const seen =
-    typeof IntersectionObserver === 'undefined'
+    opts.eager || typeof IntersectionObserver === 'undefined'
       ? null
       : new IntersectionObserver(
           (entries) => {

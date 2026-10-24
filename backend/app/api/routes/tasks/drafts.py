@@ -31,7 +31,6 @@ from app.api.routes.tasks._writes import create_task_from, update_task
 from app.api.space_deps import get_space_service
 from app.api.task_deps import (
     _attachment_service,
-    _task_attachment_service,
     get_task_service,
 )
 from app.api.task_serialization import (
@@ -57,9 +56,10 @@ from app.domain.agent.personal import service as assistant
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
+from app.domain.library import records as library_records
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
-from app.domain.task import drafts
+from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.user.services import timezones_by_ids
@@ -363,18 +363,11 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
         answer = await create_task_from(creating, db=db, user_id=user_id)
     else:
         assert task_id is not None and changing is not None
+        # The files 芝士 added to the changes (``attachmentIds``) go into the
+        # 题目's materials with them, as one version.
         answer = await update_task(
             task_id, changing, db=db, service=service, user_id=user_id
         )
-        # A published 题目's files are kept on it as they are uploaded; the
-        # ones 芝士 added to its changes go on when they are saved.
-        added = form.get("attachmentIds") or []
-        task = await service.get_task(task_id) if added else None
-        if task is not None:
-            await _task_attachment_service(db).attach_uploaded(
-                task=task, user_id=user_id, attachment_ids=added
-            )
-            await db.commit()
     return {**answer, "draftId": row.id}
 
 
@@ -400,7 +393,7 @@ class SearchIn(BaseModel):
 async def agent_search(
     body: SearchIn, resolver: ActorResolverDep, db=Depends(get_db)
 ) -> dict:
-    """cheese_task_search: the space's 题目 whose name or intro has every word
+    """`cheese_find` in a space (`where=spaces/<id>`): the space's 题目 whose name or intro has every word
     of the query, and the person's drafts there."""
     user_id = await _person(resolver)
     await _publishable_space(db, body.space, user_id)
@@ -446,7 +439,7 @@ class ReadIn(BaseModel):
 async def agent_read(
     body: ReadIn, resolver: ActorResolverDep, spaces: Spaces, db=Depends(get_db)
 ) -> dict:
-    """cheese_task_get: a draft, or a published 题目, in 芝士's words."""
+    """`cheese_read` of `drafts/<id>` or `spaces/<id>/tasks/<id>`: a draft, or a published 题目, in 芝士's words."""
     user_id = await _person(resolver)
     if body.draft is not None:
         row = await drafts.mine(db, user_id, body.draft)
@@ -486,7 +479,7 @@ async def agent_write(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_write: write fields of a draft — a new one in a space, the
+    """cheese_problem(action=write): write fields of a draft — a new one in a space, the
     one named, or the person's changes to a published 题目 — and tell the
     page."""
     user_id = await _person(resolver)
@@ -620,7 +613,7 @@ async def agent_publish(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_publish: publish a draft as the person would."""
+    """cheese_problem(action=publish): publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
     missing = drafts.missing(
@@ -662,23 +655,36 @@ def _pictures() -> bool:
 
 
 class FileIn(BaseModel):
-    file: int
+    #: A file the person handed over (``files/<id>``) ...
+    file: int | None = None
+    #: ... or one of a 题目's materials (``spaces/<s>/tasks/<task>/files/<name>``).
+    task: int | None = None
+    name: str | None = None
     pages: str | None = None
 
 
 @router.post("/agent/file", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_file(body: FileIn, resolver: ActorResolverDep, db=Depends(get_db)):
-    """cheese_file_read: a file the person handed over (or one on a 题目 they
-    can read), as text, a range of pages at a time."""
+    """`cheese_read` of `files/<id>` (a file the person handed over) or of
+    `spaces/<s>/tasks/<t>/files/<name>` (one of the materials of a 题目 they
+    may download), as text, a range of pages at a time."""
     user_id = await _person(resolver)
+    if body.task is not None and body.name:
+        task = await TaskService.of(db).get_task(body.task)
+        if task is None:
+            raise NotFoundError.for_resource("task", body.task)
+        await ensure_task_readable(session=db, task=task, user_id=user_id)
+        await package.refuse_unless_downloader(db, task, user_id)
+        content = await library_records.read(db, package.shelf(task.id), body.name)
+        return ok(
+            read_document(content, body.name, pages=body.pages, pictures=_pictures())
+        )
+    if body.file is None:
+        raise BadRequestError(say("draftNeedsTarget"))
     files = _attachment_service(db)
     attachment = await files.get(body.file)
     if not files.is_uploader(attachment, user_id):
-        on_task = await _task_attachment_service(db).may_read_file(
-            attachment_id=attachment.id, user_id=user_id
-        )
-        if on_task is not True:
-            raise ForbiddenError(say("draftFileNotYours"))
+        raise ForbiddenError(say("draftFileNotYours"))
     content, filename, _ = await files.download(body.file)
     return ok(read_document(content, filename, pages=body.pages, pictures=_pictures()))
 
@@ -693,7 +699,7 @@ class MaterialsIn(BaseModel):
 async def agent_materials(
     body: MaterialsIn, resolver: ActorResolverDep, db=Depends(get_db)
 ):
-    """cheese_space_materials: the space's materials the person can read, or
+    """`cheese_read` of `spaces/<id>` or `spaces/<id>/materials/<id>`: the space's materials the person can read, or
     one of them as text."""
     user_id = await _person(resolver)
     materials = SpaceMaterialService(session=db, storage=get_storage_backend())
