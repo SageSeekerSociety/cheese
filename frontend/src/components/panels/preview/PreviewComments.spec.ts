@@ -7,6 +7,10 @@
  * 每一张卡上写作者名、画作者头像，名字和头像都从名册那一包来（和文档评论栏同
  * 一处）。`nameOf`/`avatarOf` 曾经是选填的：不传不报错，卡上就显示 handle、画成
  * 色块——预览这一格当时正是这样，类型检查、测试、CI 全都不响。
+ *
+ * 这两条只测这一栏自己：把函数递给它，它就叫、就画。**出事的那一层不在这一栏**，
+ * 在接线处（`PanelPreviewView` 把名册接进来的那两句）——把那里换回占位值，这两条
+ * 照样绿。接线那一段由 `../PanelPreview.comments.spec.ts` 盯着（挂的是这一格本身）。
  */
 import type { DocThread, DocThreadActions, DocThreadState } from '../../../lib/docThreadTypes'
 
