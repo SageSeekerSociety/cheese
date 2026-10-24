@@ -141,7 +141,9 @@ function comment(event: MouseEvent) {
 @container (max-width: 440px) {
   .locator {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    /* 输入框一行，剩下的一排放两条出口和关闭——出口可能只有一条（挂不了评论的文件），
+       所以末列用 auto 让它自己收。 */
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
   .locator__where {
     grid-column: 1 / -1;
@@ -155,6 +157,10 @@ function comment(event: MouseEvent) {
   }
   .locator__input {
     width: 100%;
+  }
+  /* 失败那一句占满一整行，不然它会被塞进一格按钮里。 */
+  .locator__error {
+    grid-column: 1 / -1;
   }
 }
 .locator-enter-active {
