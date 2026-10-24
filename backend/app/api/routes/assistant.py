@@ -119,7 +119,7 @@ def _read_topic_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         at, _, of = cursor.partition("|")
         return datetime.fromisoformat(at), uuid.UUID(of)
     except ValueError as error:
-        raise BadRequestError("bad cursor") from error
+        raise BadRequestError(say("listCursorUnreadable")) from error
 
 
 @router.get("/conversations", **typed_response(ConversationsOut))
