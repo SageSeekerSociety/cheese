@@ -61,7 +61,7 @@ describe('题目上等你处理的', () => {
   it('有领取待批准时去「领取者」页签', () => {
     const view = show(2, 0)
 
-    view.getByText('2 份领取待批准')
+    view.getByText('2 份申请待通过')
     expect(view.getByText('缓存模拟器').closest('a')?.getAttribute('href')).toBe('/spaces/7/tasks/88/participants')
   })
 })

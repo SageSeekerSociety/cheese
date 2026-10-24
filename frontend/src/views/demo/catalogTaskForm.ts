@@ -150,7 +150,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有导师',
-        note: '勾上后从空间管理员里挑导师，默认是出题人自己；领取者领取前会看到并同意。',
+        note: '勾上后从空间管理员里挑导师，默认是出题人自己；申请的人申请前会看到并同意。',
         props: participation({
           mentorsJoin: true,
           mentors: ['zhoulq'],
@@ -159,7 +159,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
             { title: '刘洋', value: 'liuyang' },
           ],
         }),
-        expect: '把导师加入领取者的项目',
+        expect: '把导师加入参与者的项目',
       },
       {
         name: '最多比最少还少（标红）',
@@ -177,7 +177,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-mentor-notice',
     title: 'TaskMentorNotice',
-    about: '领取确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    about: '申请确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
     file: 'src/components/tasks/TaskMentorNotice.vue',
     component: TaskMentorNotice,
     needs: UI_T,
@@ -235,7 +235,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-time',
     title: 'TaskFormTime',
-    about: '「时间」那一节：报名开始与截止（都可空）、领取后几天内完成。',
+    about: '「时间」那一节：报名开始与截止（都可空）、限时几天。',
     file: 'src/components/tasks/form/TaskFormTime.vue',
     component: TaskFormTime,
     needs: UI_T,
@@ -248,7 +248,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '完成期限没填（标红）',
-        note: '完成期限是必填的：领取那一刻按它算这个人的截止时间。',
+        note: '完成期限是必填的：从开始做那天起按它算这个人的截止时间。',
         props: time({ defaultDeadline: undefined, defaultDeadlineControl: red('未填写完成期限') }),
         expect: '未填写完成期限',
       },
@@ -279,7 +279,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-more',
     title: 'TaskFormMore',
-    about: '「更多设置」：可领取范围、实名、AI 指导。默认收起，收起时那一行写明现在设成了什么。',
+    about: '「更多设置」：可参与范围、实名、AI 指导。默认收起，收起时那一行写明现在设成了什么。',
     file: 'src/components/tasks/form/TaskFormMore.vue',
     component: TaskFormMore,
     needs: UI_T,
@@ -288,7 +288,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         name: '收起（全是默认）',
         note: '多数题目一样都不用改，所以收起；那一行不用点开就看得见现在是什么。',
         props: more(),
-        expect: '全部成员可领取',
+        expect: '全部成员可参与',
       },
       {
         name: '收起（限了邮箱、要实名、单独写了指导）',
