@@ -23,6 +23,7 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { toast } from 'vuetify-sonner'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -37,6 +38,7 @@ import { exportMarkdown } from '../../lib/docSchema'
 import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
+import { documentPrintHtml } from './doc/blocks/print'
 import DocBacklinks from './doc/DocBacklinks.vue'
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
@@ -128,6 +130,10 @@ const props = withDefaults(
     fetchDocNodes: () => Promise<Block[]>
     /** 文档里引用的一张图拿什么画。 */
     imageSrc: (src: string) => Promise<string>
+    /** 导出 PDF 时那张图放进纸里的地址：自带字节的 data: URL。取不到时给空串。 */
+    imageData?: (src: string) => Promise<string>
+    /** 把排好的一页交给平台印成 PDF 并下载；没接这一条时「⋯」里不给「导出 PDF」。 */
+    savePdf?: (html: string, filename: string) => Promise<void>
     /** 文档里的画布拿什么读写。 */
     canvas?: CanvasData | null
     // ---- 动作 ----
@@ -195,6 +201,8 @@ const props = withDefaults(
     restoreVersion: undefined,
     mentionOutside: null,
     canvas: null,
+    imageData: undefined,
+    savePdf: undefined,
   }
 )
 
@@ -422,6 +430,29 @@ function exportDoc() {
   link.download = `${docTitle.value || 'document'}.md`
   link.click()
   URL.revokeObjectURL(url)
+  // 文件悄悄落进下载文件夹，不说一句就像没导出。
+  toast(t('work.room.doc.exportedMarkdown'))
+}
+/** 文档名能当文件名：每个系统都不收的那几个字符换成空格。 */
+function fileName(title: string): string {
+  return Array.from(title, (ch) => ('\\/:*?"<>|'.includes(ch) ? ' ' : ch)).join('')
+}
+/** 导出 PDF：同一份正文，排成一页纸交给平台的打印浏览器。菜单在点下去时已经关了，
+ *  所以失败要说出来，不然这一下就成了没反应。 */
+async function exportPdf() {
+  if (!props.session || !props.savePdf) return
+  try {
+    const html = await documentPrintHtml({
+      title: docTitle.value || 'document',
+      markdown: exportMarkdown(props.session.doc),
+      names: { mentionNames: props.mentionNames ?? {}, topicTitles: {} },
+      image: props.imageData,
+    })
+    await props.savePdf(html, `${fileName(docTitle.value || 'document')}.pdf`)
+    toast(t('work.room.doc.exportedPdf'))
+  } catch (cause) {
+    props.setError(cause instanceof Error && cause.message ? cause.message : t('work.room.doc.exportPdfFailed'))
+  }
 }
 watch(
   () => suggestions.list.value.map((s) => s.id).join(' '),
@@ -533,6 +564,7 @@ defineExpose({
             :headings="outlineHeadings"
             :find-open="findOpen"
             :deletable="!!document && !readOnly && !suggestOnly"
+            :pdfable="!!savePdf"
             :suggest-only="suggestOnly"
             :suggesting="suggesting"
             @delete="emit('delete')"
@@ -544,6 +576,7 @@ defineExpose({
             @set-suggesting="(on: boolean) => setSuggesting?.(on)"
             @history="historyOpen = true"
             @export="exportDoc"
+            @export-pdf="exportPdf"
             @open-thread="locateComment"
             @toggle-find="toggleFind"
             @outline-select="goHeading"
