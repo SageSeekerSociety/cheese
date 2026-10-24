@@ -17,24 +17,21 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，49 样 {#table}
+## 一张表，20 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 49 样，任务和验收卡各是一样对象工具（见[一个对象一样工具](#objects)）：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 20 样，一个对象一样，括号里是它的动词（见[一个对象一样工具](#objects)）：
 
 | 类别 | 工具 |
 | --- | --- |
-| 对话 | `chat_send`、`chat_edit`、`todo_write` |
-| 读房间 | `cheese_chat_list`、`cheese_chat_search`、`cheese_chat_get`、`cheese_chat_replies` |
-| 文档 | `cheese_doc_get`、`cheese_doc_set`、`cheese_doc_edit`、`cheese_doc_new`、`cheese_doc_list`、`cheese_app_save`、`cheese_app_get`、`cheese_canvas_get`、`cheese_canvas_edit` |
+| 对话 | `chat_send`、`todo_write`、`cheese_ask`、`cheese_chat`（list / search / get / replies / edit） |
+| 文档 | `cheese_doc`（get / set / edit / new / list）、`cheese_app`（save / get）、`cheese_canvas`（get / edit） |
 | 任务与验收 | `cheese_task`（open / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
-| 记录 | `cheese_title` |
-| 通知与拍板 | `cheese_notify`、`cheese_ask` |
-| 资料 | `cheese_fetch`、`cheese_web_search`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
-| 房间状态 | `cheese_members`、`cheese_status` |
-| 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at`、`cheese_compact`（部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
-| 例行事务 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
-| 项目技能 | `cheese_skill_draft`、`cheese_skill_update`、`skills_search`、`skills_read` |
-| 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
+| 房间 | `cheese_room`（members / rename）、`cheese_notify` |
+| 会话 | `cheese_session`（status / environment / wait / compact / note / deliver_at；compact 要部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
+| 资料 | `cheese_web`（fetch / search）、`cheese_help`、`cheese_library`（list） |
+| 例行事务 | `cheese_routine`（create / list / update / pause / report） |
+| 技能 | `cheese_skill`（search / read / propose / update） |
+| 反馈 | `cheese_feedback`（propose / list / get / claim / release） |
 | 运行记录 | `cheese_run_records`（只在平台自己的项目里读得到，见[运行记录](/dev/run-records#retention)） |
 | 其余的平台接口 | `platform_request` |
 
@@ -56,23 +53,9 @@ covers:
 
 调用按键分派：`<工具>.<action>`（`cheese_task.close`），只做一件事的工具就是它的名字。`request_plan`、`_STEPS`、`_SAY` 都按这个键查。
 
-同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。
+同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。`chat_send` 也是这样：房间里发在这里，个人芝士手里的那一样以用户的名义发到 `where`，经过授权判断。
 
-### 退役的名字 {#retired}
-
-会话记录里的调用永远是当时的名字和写法，所以读记录的地方（现场那一行的动词和参数预览）都按键读：`app/domain/session_record/tool_keys.py` 的 `tool_key(name, args)`，前端 `toolLabels.ts` 的 `toolKey`。`RETIRED` 记着并进某个对象、成了它一个动词的旧名字各自变成了哪个键（还在表上、后来才收 `action` 的名字也在，给它收 action 以前的调用）；直接删掉、什么也没变成的工具不在这里，它的旧记录用自己的标签。前端那份副本由 `tests/unit/test_tool_labels.py` 对齐。这张表描述的是库里已有的记录，所以一直留着。
-
-## 一个对象一样工具 {#objects}
-
-一个对象有几个动词时，它是表上的一行（`_object`），`action` 选做哪一件，每个动词（`_verb`）有自己的说明和参数。schema 是扁平的：`action` 枚举排第一、也是唯一的必填项，后面是各动词参数的并集，每个参数的说明写着哪几件收它、哪几件必填。不用 `oneOf` / `anyOf`：同一份 schema 要过三种骨架的工具机制和它们背后的 Anthropic 兼容网关。
-
-一个动词收什么，在调用时查（`run_platform_tool` 里的 `_checked`），发出任何请求之前：
-
-- 没给 `action`，或者给的不是表上的：`<工具> 要 action：<各动词>`。
-- 缺这个动词的必填参数：`<工具>(action=<动词>) 缺少参数：<参数>`。
-- 带了这个动词不收的参数，直接拒，并说出哪件收它：`<工具>(action=<动词>) 不收 <参数>：<参数> 是 <另一样>(action=<动词>) 的参数`，后面列出这个动词收的参数。只给了空值的参数等于没给，不算。
-
-调用按键分派：`<工具>.<action>`，只做一件事的工具就是它的名字。`request_plan`、`_STEPS`、`_SAY` 都按这个键查。
+一个会话也可以只拿一个对象的几个动词：会话的名单里写键（文档芝士写 `cheese_doc.get`、`cheese_doc.edit`、`cheese_doc.set`），`schemas_of` 给它的 `cheese_doc` 就只有这几个动词，runner 也只放行这几个（`pi/runner.py` 的 `_platform_tool`）。工具的说明是对象的名字加上每个动词一行，由 `ToolTable.narrowed` 按留下的动词重新写，所以没给的动词在说明里一个字也不出现：没开压缩开关的房间读不到「压缩上下文」，文档芝士的 `cheese_memory` 只说读项目记忆。调了没给的动词，回的是这个会话有的那几个（`cheese_memory 要 action：project`），和没写 `action` 时一样（`ask_for_action`）；房间里没开开关时调 compact，三种骨架都经 `run_platform_tool` 拿到同一句，后面跟着它有的那几个动词。
 
 ### 退役的名字 {#retired}
 
@@ -101,7 +84,7 @@ covers:
 
 Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/list`，只留 `NATIVE_TOOLS` 那九个，再把平台表整个并进来；命重当场报错，不猜谁该赢。调用时按路由分两路：平台工具走 `run_platform_tool` 原地打后端，执行器自己的工具走 `invoke`。项目的 MCP 服务器不在这张表里，由 Codex 自己的 MCP 客户端连会话的网关。
 
-平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），既带平台工具表也带 CLI 的命令树，随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` = `PLATFORM_TOOLS.schemas()` + `cli_worker._tools(parser)`。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机；其余的是 CLI 命令，在执行机上、在工作区里跑。`catalog.argv()` 把调用翻回命令行并交给 argparse 复核，`SystemExit` 转成 `ValueError`：不管它，`SystemExit` 会从 socket 处理器里走出去，把 runner 的事件循环一起带走。
+平台工具在 pi 里作为 extension 工具注册进去（`platform.ts` 的 `registerPlatformTools`）。送到的是它们由来的那个文件：平台的 `cheese`（`backend/sandbox/cheese`），随 runner 的归档一起送到中心机（`pi/bundle.py`）。`catalog.tools()` 就是 `offered_tools()`，和另外两种骨架拿到的是同一份表。一次调用经 socket 回到 runner（`runner.py` 的 `run_cli`）：平台表里的工具在 runner 里原地打后端，要从机器上取的东西（文件内容、推送）才去房间的执行机。CLI 自己的命令（`cheese worktree`、`cheese sync`……）不是工具：pi 房间和另外两种骨架一样，用机器上的 `bash` 跑 `cheese …`，靠 `cheese --help` 发现。把调用名当成工具名调（`cheese_worktree`）会拿到「没有这个工具」。
 
 项目的 MCP 服务器由 pi 自己的 MCP 客户端（`builtin:mcp`）连会话的网关，扩展只负责把它们一个个注册给 pi（`registerMcpServers`）；pi 开着 codemode，模型可以写一段脚本一次调好几个工具，脚本调过哪些工具记在那一步上（`meta.calls`）。见[项目的 MCP 服务器](/dev/remote-mcp#gateway)。
 
@@ -132,5 +115,5 @@ Codex 那条路走 `RemoteTools.discover`：向执行器问 `native` 的 `tools/
 房间里的施工现场按工具名给动作分级，而同一个平台动作有三种拼法（MCP 前缀、pi 的目录名、`chat_send` 这种别名），所以归一在 `chat.py`：
 
 - `_short_tool_name(raw)` 用 `_MCP_PREFIX`（`^mcp__[a-z0-9_]+__`）去前缀，`mcp__native__chat_send` → `chat_send`。**认服务器名而不是写死某一个**：写死一个的话，服务器改名那天这里会静默失效，而失效的样子和时间线正常的样子一模一样。
-- `_PLATFORM_PREFIXES` 是「这是平台动作」的三种前缀：`mcp__cheese__`（历史拼法，老行还躺在库里）、`mcp__native__`、`cheese_`。`_PLATFORM_ALIASES` 收名字里没有 `cheese_` 的那几个：`chat_send`、`chat_edit`、`todo_write`、`platform_request`，加 Claude Code 传输自己的 `send_user_file`。
+- `_PLATFORM_PREFIXES` 是「这是平台动作」的三种前缀：`mcp__cheese__`（历史拼法，老行还躺在库里）、`mcp__native__`、`cheese_`。`_PLATFORM_ALIASES` 收名字里没有 `cheese_` 的那几个：`chat_send`、`cheese_chat(action=edit)`、`todo_write`、`platform_request`，加 Claude Code 传输自己的 `send_user_file`。
 - `_NOT_A_PLATFORM_TOOL` 只有一条：`mcp__native__invoke`。它底下**不都是平台动作**——`invoke` 是搬运读写与命令的通道，把它算成平台动作会在时间线上点一颗琥珀色的点，而那只是读了一个文件。

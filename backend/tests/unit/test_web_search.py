@@ -2,7 +2,7 @@
 
 Codex and pi have none, and Claude Code's WebSearch returns nothing on an
 upstream that does not run it, so agents there opened search engines' result
-pages with `cheese_fetch` — 153 times in two weeks — and got block pages back.
+pages with `cheese_web(action=fetch)` — 153 times in two weeks — and got block pages back.
 The search is asked of the gateway on the caller's own key; these tests pin
 what the gateway is asked and what the agent reads.
 """

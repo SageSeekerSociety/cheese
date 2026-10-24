@@ -28,6 +28,7 @@ answered or not: it was spent either way.
 """
 
 import logging
+import re
 import uuid
 from dataclasses import asdict
 
@@ -46,6 +47,9 @@ from app.domain.agent.session_host.answer import (
     Answer,
     Said,
     Tool,
+    ToolArgs,
+    ToolDone,
+    ToolFailed,
     Waiting,
 )
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
@@ -240,6 +244,9 @@ async def answer(
     )
 
 
+#: A call's `action`, once the model has written it whole.
+_ACTION = re.compile(r'"action"\s*:\s*"(\w+)"')
+
 #: A comment thread's question, to the questions the platform reads to the end
 #: (``session_host.consumptions``); its key is the thread.
 KIND = "doc-thread"
@@ -253,6 +260,9 @@ class Replies:
     def __init__(self, chat: ChatService, factory: async_sessionmaker[AsyncSession]):
         self._chat = chat
         self._factory = factory
+        #: The calls whose verb is not written yet, by call: their tool and
+        #: what of their arguments has come.
+        self._writing: dict[str, tuple[str, str]] = {}
 
     stopped = staticmethod(question.is_stopped)
 
@@ -267,6 +277,22 @@ class Replies:
             await _tell(asked.subject, thread_id, "queued")
         elif isinstance(item, Tool):
             await _tell(asked.subject, thread_id, "working", item.name)
+            if item.call:
+                self._writing[item.call] = (item.name, "")
+        elif isinstance(item, ToolArgs) and item.call in self._writing:
+            # One of an object's verbs (`cheese_doc`, reading or editing) is
+            # told again once its `action` is written: the reader sees which.
+            name, written = self._writing[item.call]
+            written += item.text
+            action = _ACTION.search(written)
+            if action is None:
+                self._writing[item.call] = (name, written)
+            else:
+                del self._writing[item.call]
+                key = f"{name}.{action.group(1)}"
+                await _tell(asked.subject, thread_id, "working", key)
+        elif isinstance(item, ToolDone | ToolFailed):
+            self._writing.pop(item.call, None)
 
     async def ended(
         self,

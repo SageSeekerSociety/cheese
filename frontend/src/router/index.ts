@@ -8,7 +8,7 @@ import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
-import { carryLoginRedirect } from './loginRedirect'
+import { carryLoginRedirect, leaveAppForPagesItHasNot } from './loginRedirect'
 import QuestionRoutes from './question'
 import SharedRoutes from './shared'
 import SpacesRoutes from './spaces'
@@ -170,6 +170,7 @@ const router = createRouter({
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
+router.beforeEach(leaveAppForPagesItHasNot)
 // 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
 router.beforeEach((to) => (myId() ? canonicalAddress(to) : noteSignedOut(to)))
 

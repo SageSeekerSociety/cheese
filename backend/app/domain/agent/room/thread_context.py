@@ -54,7 +54,7 @@ async def thread_context(
             "测试、临时改文件，看这台机器归不归你独占：归你独占时都能；和别的"
             "会话或机器主人共用时只能读文件，跑命令会被拒（那不是故障，重试"
             "结果一样）。要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
-            "`cheese_chat_search` 加 `channel` 搜整个频道。",
+            "`cheese_chat(action=search)` 加 `channel` 搜整个频道。",
             "",
             "支线挂在主线的这条消息下面：",
             line(root),

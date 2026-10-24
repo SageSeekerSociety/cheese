@@ -449,7 +449,7 @@ def task_summary_prompt(*, title: str) -> str:
     return (
         f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
         "只做三件事：\n"
-        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
         "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"

@@ -114,28 +114,32 @@ async def _ask(sessions, started, text, credential: str = "") -> list:
 @pytest.mark.anyio
 async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, platform):
     hub, sessions = host
-    fake = platform([{"tool": "cheese_doc_get"}, {"text": "读过了。"}])
+    fake = platform(
+        [{"tool": "cheese_doc", "arguments": {"action": "get"}}, {"text": "读过了。"}]
+    )
     started = _session()
     acting = _credential()
 
     events = await _ask(sessions, started, "这里的范围指什么？", acting)
 
     assert events[-1] == Answer("读过了。")
-    assert any(isinstance(e, Tool) and e.name == "cheese_doc_get" for e in events)
+    assert any(isinstance(e, Tool) and e.name == "cheese_doc" for e in events)
     first = fake.requests[0]
     # The document's own tools (its text and its mini-apps) and the project
-    # lookups; no machine is lent here, so none of pi's own. `cheese_doc_set`
-    # writes a blank document whole; the platform refuses it over written text.
+    # lookups; no machine is lent here, so none of pi's own. `set` writes a
+    # blank document whole; the platform refuses it over written text.
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "cheese_app_get",
-        "cheese_app_save",
-        "cheese_attachment_read",
-        "cheese_doc_edit",
-        "cheese_doc_get",
-        "cheese_doc_set",
-        "cheese_memory_read",
+        "cheese_app",
+        "cheese_doc",
+        "cheese_library",
+        "cheese_memory",
         "cheese_project_search",
     ]
+    # It reads and edits this document; making or listing the project's
+    # documents is the room's, and the tool it is handed offers neither.
+    [doc] = [t for t in first["tools"] if t["function"]["name"] == "cheese_doc"]
+    verbs = doc["function"]["parameters"]["properties"]["action"]["enum"]
+    assert sorted(verbs) == ["edit", "get", "set"]
     system = first["messages"][0]["content"]
     system = system if isinstance(system, str) else system[0]["text"]
     assert "本项目做存储选型。" in system

@@ -507,10 +507,11 @@ def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transpo
     response = process.call(
         "tools/call",
         {
-            "name": "cheese_app_save",
+            "name": "cheese_app",
             "arguments": {
                 "id": "save",
                 "session_id": "fixture",
+                "action": "save",
                 "code": "<p>x</p>",
                 "title": "试算",
                 "document": "fixture-doc",

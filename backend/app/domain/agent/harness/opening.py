@@ -133,7 +133,7 @@ def teaching_section(context: TeachingContext) -> str | None:
         # 只给标题，正文按 id 读：一份文档可以有多长，不是这门课说了算的，prompt
         # 不跟着别人写的东西长。
         parts.append(
-            "### 阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
+            "### 阅读材料（要正文用 cheese_doc(action=get, document=id) 去读）\n"
             + "\n".join(
                 f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )
@@ -423,18 +423,18 @@ def build_session_opening(
             "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
             "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
             "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
-            f"了才改，用 `cheese_doc_edit`{where}。\n"
+            f"了才改，用 `cheese_doc(action=edit)`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint=f"用 `cheese_doc_get`{where}读全文",
+                full_read_hint=f"用 `cheese_doc(action=get)`{where}读全文",
             )
         )
     if doc:
         sections["doc"] = "## 实况文档现在的内容\n\n" + fit_doc_to_budget(
             doc,
             TOPIC_DOC_CHAR_BUDGET,
-            full_read_hint="用 `cheese_doc_get` 读全文",
+            full_read_hint="用 `cheese_doc(action=get)` 读全文",
         )
     elif doc is not None:
         sections["doc"] = "## 实况文档现在的内容\n\n这里还没有实况文档。"
@@ -480,6 +480,6 @@ def task_opening_prompt(
         f"{put}"
         f"{accepted}"
         "按讨论动手，在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "实况文档边做边写，用 cheese_doc_set：最要紧的一两句放在最上面，讨论里否掉的"
+        "实况文档边做边写，用 cheese_doc(action=set)：最要紧的一两句放在最上面，讨论里否掉的"
         "做法也记下来，写明没采用和原因。要人决定的事，用 cheese_ask 问负责人。"
     )

@@ -557,9 +557,9 @@ describe('发题页：和芝士一起写', () => {
   it('芝士写的几格填进表单，改动卡上能撤销；撤销由服务端以人的名义写回，表单照着填', async () => {
     await boardAs(MEMBER)
     script = [
-      ['tool', { name: 'cheese_problem_write', call: 'c1' }],
-      ['tool_args', { call: 'c1', text: '{"draft":61,"name":"Lab 3 缓', at: 0 }],
-      ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 26 }],
+      ['tool', { name: 'cheese_problem', call: 'c1' }],
+      ['tool_args', { call: 'c1', text: '{"action":"write","draft":61,"name":"Lab 3 缓', at: 0 }],
+      ['tool_args', { call: 'c1', text: '存模拟器","difficulty":"中级"}', at: 44 }],
       [
         'change',
         {
