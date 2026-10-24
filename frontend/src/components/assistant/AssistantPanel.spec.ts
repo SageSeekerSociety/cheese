@@ -68,6 +68,20 @@ describe('AssistantPanel', () => {
     expect(view.emitted('new')).toBeUndefined()
   })
 
+  it('takes files while 芝士 is answering, and sends them into that answer', async () => {
+    const view = mount({
+      busy: true,
+      streaming: '常见起点是',
+      canAttach: true,
+      files: [{ name: '第3份.pdf', mime: 'application/pdf', uploading: false }],
+    })
+    expect(view.getByRole('button', { name: '更多操作' })).toBeTruthy()
+    await fireEvent.click(view.getByRole('button', { name: '发送' }))
+
+    expect(view.emitted('send')).toEqual([['']])
+    expect(view.emitted('stop')).toBeUndefined()
+  })
+
   it('stops the answer being written, and asks nothing new', async () => {
     const view = mount({ busy: true, streaming: '常见起点是' })
     await fireEvent.click(view.getByRole('button', { name: '停止' }))

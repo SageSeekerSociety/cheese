@@ -1005,7 +1005,7 @@ def test_an_answer_stopped_at_its_ceiling_says_why(client, gateway, monkeypatch)
     ]
 
 
-def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step(
+def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step_with_its_files(
     client, gateway
 ):
     me = _auth(client, "steerer")
@@ -1030,14 +1030,19 @@ def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step(
 
     said = client.post(
         f"/assistant/conversations/{conversation}/say",
-        json={"text": "只看第 3 份"},
+        json={
+            "text": "只看第 3 份",
+            "files": [{"path": "报告/第3份.pdf", "name": "第3份.pdf"}],
+        },
         headers=me,
     )
     assert said.status_code == 200, said.text
     gateway.release.set()
     asking.join(60)
 
-    assert "只看第 3 份" in json.dumps(gateway.requests[-1], ensure_ascii=False)
+    # A file handed over with it is read the way one handed with a question is.
+    heard = json.dumps(gateway.requests[-1], ensure_ascii=False)
+    assert "只看第 3 份" in heard and "library/报告/第3份.pdf" in heard
     got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     texts = [(m["role"], m["text"]) for m in got["data"]["messages"]]
     assert ("user", "只看第 3 份") in texts

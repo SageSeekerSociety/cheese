@@ -232,12 +232,12 @@ export function resetAgent() {
 
 /** 说一句话：带上已经传好的文件。 */
 export async function askAgent(text: string) {
-  // 芝士还在答：这一句插进正在答的这一轮（`say`），不另问一个问题；附件留着，下一问再带。
-  if (agentThread.busy.value) return agentThread.say(text, t('tasks.assistant.failed'))
   const handed = agentFiles.value
     .filter((f) => !f.uploading)
     .map((f) => (f.path !== null ? { path: f.path, name: f.name } : { id: f.id as number, name: f.name }))
   agentFiles.value = []
+  // 芝士还在答：这一句连同附件插进正在答的这一轮（`say`），不另问一个问题。
+  if (agentThread.busy.value) return agentThread.say(text, t('tasks.assistant.failed'), handed)
   await agentThread.ask(text, t('tasks.assistant.failed'), handed)
 }
 

@@ -712,21 +712,28 @@ export function createAssistant(opts: AssistantOptions = {}) {
 
   /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
    *  这时恰好答完了，就当作一个新问题问。 */
-  async function say(text: string, fallback: string) {
+  async function say(
+    text: string,
+    fallback: string,
+    files: ({ id: number; name: string } | { path: string; name: string })[] = []
+  ) {
     const words = text.trim()
     const id = current.value
-    if (!words) return
-    if (!id || !busy.value) return ask(words, fallback)
+    if (!words && !files.length) return
+    if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
-    messages.value = [...messages.value, { role: 'user', text: words, at }]
+    messages.value = [
+      ...messages.value,
+      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
+    ]
     try {
       await request(`/assistant/conversations/${id}/say`, {
         method: 'POST',
-        body: JSON.stringify({ text: words }),
+        body: JSON.stringify({ text: words, files }),
       })
     } catch {
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      if (!busy.value) return ask(words, fallback)
+      if (!busy.value) return ask(words, fallback, files)
       notice.value = fallback
     }
   }

@@ -475,7 +475,10 @@ def _stream(questions: Consumptions, work: str, after: str = "0") -> StreamingRe
 
 
 class SayIn(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
+    #: Empty when files are handed over alone.
+    text: str = Field(default="", max_length=4000)
+    #: Files handed over with it, as with a question.
+    files: list[FileIn] = Field(default_factory=list, max_length=10)
 
     @field_validator("text")
     @classmethod
@@ -511,14 +514,20 @@ async def say_in(
         if get_redis_client() is not None
         else None
     )
-    if answering is None or not body.text:
+    if answering is None or not (body.text or body.files):
         raise ConflictError(say("assistantNotAnswering"))
-    await assistant.AssistantConversations(db).append(row, "user", body.text)
+    files = [(f.ref, f.name) for f in body.files]
+    await assistant.AssistantConversations(db).append(
+        row,
+        "user",
+        body.text,
+        parts={"files": [name for _, name in files]} if files else None,
+    )
     await db.commit()
     ref, _, _ = conversation_session(auth.user_id, row.id)
     await people.steer(
         ref,
-        Prompt(uuid.uuid4(), body.text),
+        Prompt(uuid.uuid4(), body.text + assistant.files_said(files)),
         work_id=uuid.UUID(answering.work_id),
     )
     return ok({"said": True})

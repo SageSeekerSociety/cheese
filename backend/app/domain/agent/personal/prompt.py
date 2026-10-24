@@ -211,6 +211,15 @@ def page(context: str) -> str:
     return f"<当前页面>\n{context}\n</当前页面>" if context else ""
 
 
+def files_said(files: list[tuple[str, str]]) -> str:
+    """The files handed over with something the person says, as ``(ref, name)``."""
+    if not files:
+        return ""
+    return "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
+        f"- {name}（{ref}）" for ref, name in files
+    )
+
+
 def earlier(messages: list[AssistantMessage]) -> str:
     """What was said before, for a session that has not heard it: the latest
     of it, whole messages only."""

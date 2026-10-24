@@ -215,9 +215,9 @@
           :can-send="ready"
           :show-image-picker="canAttach && !mdAndUp"
           :enter-sends="true"
-          :no-files="!canAttach || busy"
+          :no-files="!canAttach"
           :files-label="t('tasks.assistant.files.add')"
-          :busy="busy && !draft.trim()"
+          :busy="busy && !draft.trim() && !files.length"
           @files="emit('attach', $event)"
           @send="submit"
           @stop="emit('stop')"
@@ -440,7 +440,7 @@ const chips = computed<PendingAttachment[]>(() =>
 // 拖一段文字经过不亮。
 const dragOver = ref(false)
 function onDragOver(e: DragEvent) {
-  if (!props.canAttach || props.busy || !e.dataTransfer?.types.includes('Files')) return
+  if (!props.canAttach || !e.dataTransfer?.types.includes('Files')) return
   dragOver.value = true
 }
 function onDragLeave(e: DragEvent) {
@@ -460,8 +460,8 @@ const starterList = computed(
 )
 const ready = computed(
   () =>
-    // 芝士还在答时也能说：打了字就插进这一轮；只附文件得等它答完。
-    (draft.value.trim().length > 0 || (props.files.length > 0 && !props.busy)) && !props.files.some((f) => f.uploading)
+    // 芝士还在答时也能说：字和附件都插进这一轮。
+    (draft.value.trim().length > 0 || props.files.length > 0) && !props.files.some((f) => f.uploading)
 )
 
 function render(text: string): string {

@@ -40,7 +40,13 @@ from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing, loops
 from app.domain.agent.personal.keys import person_key
-from app.domain.agent.personal.prompt import about, earlier, now_line, page
+from app.domain.agent.personal.prompt import (
+    about,
+    earlier,
+    files_said,
+    now_line,
+    page,
+)
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
     PAST_CEILING,
@@ -834,10 +840,7 @@ async def ask(
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
         said = "\n\n".join(part for part in (page(context), question) if part)
-        if files:
-            said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
-                f"- {name}（{ref}）" for ref, name in files
-            )
+        said += files_said(files or [])
         if decided:
             said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(
                 f"- {proposals.outcome(card)}" for card in decided
