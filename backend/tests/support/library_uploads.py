@@ -2,8 +2,8 @@
 library page does.
 
 The page asks for an upload, puts each part at the address it is handed for
-that part, and then registers what arrived with the SHA-256 of the whole and of
-each part. A test that only cares that a file is in the library calls
+that part, and then registers what arrived with the SHA-256 of the whole and the
+MD5 of each part. A test that only cares that a file is in the library calls
 :func:`put_in` or :func:`replace`; the answer is the first refusal on the way,
 or the registration's answer.
 """
@@ -25,11 +25,11 @@ def send_parts(client, base: str, slot: dict, data: bytes, headers=None):
     digests = []
     for number in range(1, slot["parts"] + 1):
         piece = data[(number - 1) * step : number * step]
-        digest = hashlib.sha256(piece).hexdigest()
+        digest = hashlib.md5(piece).hexdigest()
         digests.append(digest)
         address = client.post(
             f"{base}/uploads/part",
-            json={"upload": slot["upload"], "part": number, "sha256": digest},
+            json={"upload": slot["upload"], "part": number, "md5": digest},
             headers=headers,
         )
         if address.status_code != 200:

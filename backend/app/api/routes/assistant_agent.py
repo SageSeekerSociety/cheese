@@ -1339,7 +1339,7 @@ async def agent_file_slot(
 class FilePartIn(BaseModel):
     upload: str
     part: int = Field(ge=1)
-    sha256: str
+    md5: str
 
 
 @router.post("/files/part", include_in_schema=False)
@@ -1347,15 +1347,15 @@ async def agent_file_part(
     body: FilePartIn, resolver: ActorResolverDep, db: DbSession
 ) -> dict:
     """cheese_file_give 的第二步：一段的地址，电脑把这一段原样 PUT 过去，带上给的
-    请求头；字节的 SHA-256 对不上的存储不收。"""
+    请求头；字节的 MD5 对不上的存储不收。"""
     _, shelf = await _my_library(resolver, db)
-    part = await library_records.upload_part(shelf, body.upload, body.part, body.sha256)
+    part = await library_records.upload_part(shelf, body.upload, body.part, body.md5)
     return ok({**part, "url": _reachable(part["url"])})
 
 
 class FileHandedIn(BaseModel):
     upload: str
-    #: 整份和每一段（按顺序）的 SHA-256，十六进制。
+    #: 整份的 SHA-256，和每一段（按顺序）的 MD5，十六进制。
     sha256: str
     parts: list[str]
     name: str = Field(min_length=1, max_length=512)

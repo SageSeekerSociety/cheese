@@ -6,7 +6,7 @@ With the files bucket, each part goes straight into the bucket at a presigned
 address. A local store has no such address of its own, so it hands out this one
 (``blob_store.LocalStore.part_address``): the token in the path is the
 permission, the way a presigned address's signature is, and it allows exactly
-one part of one upload, one size and one SHA-256, for an hour. Who may upload
+one part of one upload, one size and one MD5, for an hour. Who may upload
 was decided when the upload was handed out.
 """
 
@@ -35,7 +35,7 @@ class IncomingFileOut(BaseModel):
 )
 async def put_incoming_file(token: str, request: Request) -> dict:
     """The bytes of one part, exactly as many as its address allows, and only
-    if they are the SHA-256 it names."""
+    if they are the MD5 it names."""
     part = blob_store.open_part(token)
     if part is None or part.location != blob_store.LOCAL:
         raise UnprocessableEntityError(say("uploadExpired"))

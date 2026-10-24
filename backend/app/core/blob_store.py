@@ -12,8 +12,8 @@ Two locations: ``local`` is a directory tree under ``workspace_root``;
 An upload from a browser or a machine does not pass through the backend, and
 however large it is it arrives the same way: in parts of :func:`part_bytes_for`
 bytes, each put straight into the store at an address the store hands out for
-that one part (:meth:`BlobStore.part_address`) and carrying its SHA-256, which
-the store checks the bytes against. Once every part is in, the backend joins
+that one part (:meth:`BlobStore.part_address`) and carrying its MD5
+(``Content-MD5``), which the store checks the bytes against. Once every part is in, the backend joins
 them into the object at the key it was given from the start
 (:meth:`BlobStore.finish_upload`): the bytes never move after they land, so an
 object of any size needs no copy. On the bucket this is S3's multipart upload,
@@ -101,15 +101,20 @@ class PartAddress:
 
 @dataclass(frozen=True)
 class PartReceipt:
-    """What one part is meant to be: how many bytes, and their SHA-256 (hex)."""
+    """What one part is meant to be: how many bytes, and their MD5 (hex).
+
+    MD5 and not SHA-256: R2 answers a part carrying ``x-amz-checksum-sha256``
+    with 501 NotImplemented, and ``Content-MD5`` is the part check it, S3 and
+    every S3-compatible store enforce (BadDigest on a mismatch). A part's MD5
+    is also its ETag, so the store's own listing says which bytes arrived."""
 
     size: int
-    sha256: str
+    md5: str
 
 
-def _base64_digest(sha256: str) -> str:
-    """A hex SHA-256 the way S3's ``x-amz-checksum-sha256`` says it."""
-    return base64.b64encode(bytes.fromhex(sha256)).decode()
+def _content_md5(md5: str) -> str:
+    """A hex MD5 the way the ``Content-MD5`` header says it."""
+    return base64.b64encode(bytes.fromhex(md5)).decode()
 
 
 class BlobStore(ABC):
@@ -158,7 +163,7 @@ class BlobStore(ABC):
         self, key: str, upload_id: str, number: int, part: PartReceipt
     ) -> PartAddress:
         """Where to PUT part ``number`` (from 1) of an upload: exactly
-        ``part.size`` bytes, refused unless their SHA-256 is ``part.sha256``.
+        ``part.size`` bytes, refused unless their MD5 is ``part.md5``.
         A path starting with ``/`` is this backend's own."""
 
     @abstractmethod
@@ -167,7 +172,7 @@ class BlobStore(ABC):
     ) -> None:
         """Join the parts into the bytes under ``key``. Refused
         (``uploadIncomplete``) unless every part arrived as ``parts`` says, in
-        size and SHA-256; :class:`BlobMissingError` for an upload this store
+        size and MD5; :class:`BlobMissingError` for an upload this store
         does not know, finished or dropped."""
 
     @abstractmethod
@@ -277,10 +282,10 @@ class LocalStore(BlobStore):
         return self._path(f"{INCOMING}{upload_id}")
 
     @staticmethod
-    def _part_name(number: int, sha256: str) -> str:
+    def _part_name(number: int, md5: str) -> str:
         # The digest is in the name, so a part is found only as the bytes it
         # was checked to be.
-        return f"{number}-{sha256}"
+        return f"{number}-{md5}"
 
     async def begin_upload(self, key: str) -> str:
         upload_id = uuid.uuid4().hex
@@ -290,22 +295,22 @@ class LocalStore(BlobStore):
     async def part_address(
         self, key: str, upload_id: str, number: int, part: PartReceipt
     ) -> PartAddress:
-        token = seal_part(SealedPart(LOCAL, upload_id, number, part.size, part.sha256))
+        token = seal_part(SealedPart(LOCAL, upload_id, number, part.size, part.md5))
         return PartAddress(f"/files/incoming/{token}")
 
     async def receive_part(
         self, part: "SealedPart", body: AsyncIterator[bytes]
     ) -> None:
         """Write a part that came to this backend's address for it
-        (:meth:`part_address`): exactly ``part.size`` bytes whose SHA-256 is
-        ``part.sha256``, or nothing."""
+        (:meth:`part_address`): exactly ``part.size`` bytes whose MD5 is
+        ``part.md5``, or nothing."""
         folder = self._parts(part.upload_id)
         if not await asyncio.to_thread(folder.is_dir):
             raise UnprocessableEntityError(say("uploadExpired"))
-        target = folder / self._part_name(part.number, part.sha256)
+        target = folder / self._part_name(part.number, part.md5)
         staging = self._staging(target)
         handle = await asyncio.to_thread(staging.open, "wb")
-        digest = hashlib.sha256()
+        digest = hashlib.md5()
         written = 0
         try:
             try:
@@ -317,7 +322,7 @@ class LocalStore(BlobStore):
                     await asyncio.to_thread(handle.write, piece)
             finally:
                 await asyncio.to_thread(handle.close)
-            if written != part.size or digest.hexdigest() != part.sha256:
+            if written != part.size or digest.hexdigest() != part.md5:
                 raise _incomplete()
             await asyncio.to_thread(staging.replace, target)
         finally:
@@ -328,7 +333,7 @@ class LocalStore(BlobStore):
         if not folder.is_dir():
             raise BlobMissingError(upload_id)
         pieces = [
-            folder / self._part_name(number, part.sha256)
+            folder / self._part_name(number, part.md5)
             for number, part in enumerate(parts, start=1)
         ]
         if any(
@@ -408,9 +413,10 @@ class BucketStore(BlobStore):
     async def part_address(
         self, key: str, upload_id: str, number: int, part: PartReceipt
     ) -> PartAddress:
-        # The length and the checksum are signed in: the bucket refuses a PUT
-        # of any other size, and one whose bytes are not that SHA-256.
-        checksum = _base64_digest(part.sha256)
+        # The length and the MD5 are signed in: the bucket refuses a PUT of any
+        # other size or without the header (403, the signature no longer
+        # matches), and one whose bytes are not that MD5 (400 BadDigest).
+        checksum = _content_md5(part.md5)
         url = await self.bucket.presign(
             key,
             "upload_part",
@@ -418,9 +424,9 @@ class BucketStore(BlobStore):
             UploadId=upload_id,
             PartNumber=number,
             ContentLength=part.size,
-            ChecksumSHA256=checksum,
+            ContentMD5=checksum,
         )
-        return PartAddress(url, {"x-amz-checksum-sha256": checksum})
+        return PartAddress(url, {"Content-MD5": checksum})
 
     async def finish_upload(
         self, key: str, upload_id: str, parts: Sequence[PartReceipt]
@@ -431,17 +437,15 @@ class BucketStore(BlobStore):
         arrived = {int(part["PartNumber"]): part for part in found}
         if set(arrived) != set(range(1, len(parts) + 1)) or any(
             int(arrived[number]["Size"]) != part.size
+            or str(arrived[number]["ETag"]).strip('"') != part.md5
             for number, part in enumerate(parts, start=1)
         ):
             raise _incomplete()
-        # Each part's checksum is named again: the bucket joins the parts only
-        # if those are the checksums it checked them against on arrival.
+        # A part's ETag is its MD5: named by the MD5 each part was meant to
+        # have, the bucket joins the parts only if those are the bytes it holds
+        # (InvalidPart otherwise).
         joined = [
-            {
-                "PartNumber": number,
-                "ETag": arrived[number]["ETag"],
-                "ChecksumSHA256": _base64_digest(part.sha256),
-            }
+            {"PartNumber": number, "ETag": f'"{part.md5}"'}
             for number, part in enumerate(parts, start=1)
         ]
         try:
@@ -478,7 +482,7 @@ class SealedPart:
     upload_id: str
     number: int
     size: int
-    sha256: str
+    md5: str
 
 
 @dataclass(frozen=True)
@@ -553,7 +557,7 @@ def seal_part(part: SealedPart) -> str:
             "upload_id": part.upload_id,
             "number": part.number,
             "size": part.size,
-            "sha256": part.sha256,
+            "md5": part.md5,
         },
         bound_to=INCOMING,
         seconds=PART_URL_SECONDS,
@@ -573,7 +577,7 @@ def open_part(token: str) -> SealedPart | None:
                 upload_id=str(claims["upload_id"]),
                 number=int(claims["number"]),
                 size=int(claims["size"]),
-                sha256=str(claims["sha256"]),
+                md5=str(claims["md5"]),
             )
         )
     except (KeyError, TypeError, ValueError):

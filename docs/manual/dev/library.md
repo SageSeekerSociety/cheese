@@ -51,13 +51,15 @@ covers:
 
 `library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。两条放进来的路都经过 `records.add`：从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
 
-资料库页上传的字节不经过后端，多大的文件都按段传（`blob_store` 的分段上传；文件桶上就是 S3 的 multipart upload）。页面先领一次上传的凭据（`POST /projects/{id}/library/uploads`，带名字和大小，超过上限的不给），回答里有每段多长（`part_bytes`，64 MiB 起，段数不超过 10,000）、一共几段。页面一段一段读文件，每段算出 SHA-256，按段领地址（`POST …/library/uploads/part`，带段号和这段的 SHA-256），把这一段连同回答里的请求头原样 PUT 过去；几段同时在路上，一段碰上网络错误或 5xx 重发这一段。全部传完，拿凭据、整份的 SHA-256 和每段的 SHA-256 来登记（`POST …/library` 放进新的一份，`PUT …/library?path=` 换成新版本）。
+资料库页上传的字节不经过后端，多大的文件都按段传（`blob_store` 的分段上传；文件桶上就是 S3 的 multipart upload）。页面先领一次上传的凭据（`POST /projects/{id}/library/uploads`，带名字和大小，超过上限的不给），回答里有每段多长（`part_bytes`，64 MiB 起，段数不超过 10,000）、一共几段。页面一段一段读文件，每段算出 MD5，同一遍里算整份的 SHA-256，按段领地址（`POST …/library/uploads/part`，带段号和这段的 MD5），把这一段连同回答里的请求头原样 PUT 过去；几段同时在路上，一段碰上网络错误或 5xx 重发这一段。全部传完，拿凭据、整份的 SHA-256 和每段的 MD5 来登记（`POST …/library` 放进新的一份，`PUT …/library?path=` 换成新版本）。
 
-每段的地址只收那一段那么多字节、只收那个 SHA-256：文件桶是签进了 `Content-Length` 和 `x-amz-checksum-sha256` 的预签名地址（上传按 `ChecksumAlgorithm=SHA256` 开，桶收每段时自己对哈希），本地存储是后端自己的 `PUT /files/incoming/<凭据>`（`routes/file_uploads.py`），收的时候边写边算。登记时（`records._put` → `finish_upload`）后端向存储核对每一段都到了、大小对得上，再把每段的 SHA-256 报一遍让存储拼起来——文件桶只在这些正是它收下时对过的哈希时才拼。所以后端不把字节读回来算哈希：只有一段的文件，整份的哈希就是存储对过的那一个；切成几段的，每段都对过，整份的那个是上传的一方算的（S3 和 R2 对整份只给得出 CRC 或「哈希的哈希」，给不出整份的 SHA-256）。拼出来的对象就在这一行的键下，不再挪动，所以几 GB 的文件也不需要复制。凭据封着资料库，别的资料库登记不了；一次上传只能登记一次。
+每段的地址只收那一段那么多字节、只收那个 MD5：文件桶是签进了 `Content-Length` 和 `Content-MD5` 的预签名地址——字节不是那个 MD5 的，桶答 400 BadDigest；不带这个头、或长度不对，签名对不上，答 403——本地存储是后端自己的 `PUT /files/incoming/<凭据>`（`routes/file_uploads.py`），收的时候边写边算。登记时（`records._put` → `finish_upload`）后端列出存储收下的段，核对每一段都到了、大小对得上、ETag 就是说好的那个 MD5（一段的 ETag 就是它的 MD5），再按这些 MD5 让存储拼起来——拼的时候报的 ETag 和它收下的对不上，桶答 InvalidPart，后端说成 422 `uploadIncomplete`。所以后端不把字节读回来算哈希。整份的 SHA-256 是上传的一方算的：存储对每段只认 MD5，对拼起来的整份给不出 SHA-256。
+
+**每段的校验用 `Content-MD5`，不用 SHA-256 的段校验。** R2 对带 `x-amz-checksum-sha256` 的 UploadPart 一律答 501 NotImplemented（「Header 'x-amz-checksum-sha256' … not implemented」），字节对不对都一样；这个头又签进了地址，去掉它就是 403 SignatureDoesNotMatch——用它，文件桶上每一次上传都传不进去。R2 对 `CreateMultipartUpload` 的 `ChecksumAlgorithm=SHA256` 答成功但不记，对 `CompleteMultipartUpload` 里报错的 `ChecksumSHA256` 也照收不误。`Content-MD5` 是 R2、S3 和 MinIO 都在 UploadPart 上真的会查的那一个（2026-10 对 R2 实测：对的 200、错的 400 BadDigest、缺的 403）。测试里的 moto 不查 `Content-MD5`，但拼的时候查 ETag，所以「错的字节拼不成文件」在 moto 上也看得见（`tests/unit/test_blob_store.py`）。拼出来的对象就在这一行的键下，不再挪动，所以几 GB 的文件也不需要复制。凭据封着资料库，别的资料库登记不了；一次上传只能登记一次。
 
 领了凭据却没登记的那次上传不产生对象：文件桶上只有它的几段，由桶的生命周期规则丢掉（R2 默认在发起七天后丢掉没拼完的上传）；本地存储上它们留在 `.incoming/<上传编号>/`。拼不起来（缺段、段的大小或哈希不对）的那次，登记时当场放掉。
 
-文件桶的 CORS 要放行浏览器 PUT 时带的 `x-amz-checksum-sha256` 请求头。
+文件桶的 CORS 要放行浏览器 PUT 时带的 `Content-MD5` 请求头。
 
 一份文件存进文件桶时最大 `files_bucket_file_max_bytes`（默认 20 GB）；存在服务器本地盘上的照旧按房间文件的上限（10 MB，视频 200 MB；团队的资料库按附件的 100 MB）。几 GB 的文件不整份读进内存：超过 `records.READ_WHOLE_MAX_BYTES`（200 MB）的，读成文本时只回「太大」，预览、按名字读字节都拒（`libraryFileTooLargeToOpen`）；下载按段从存储直接给，项目导出一段一段写进压缩包，恢复旧版是存储里的复制（超过 5 GiB 的按段复制）。
 

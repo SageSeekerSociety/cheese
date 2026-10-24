@@ -1,7 +1,7 @@
 // Putting a file into the library: the bytes go, part by part, to the addresses
 // the server hands out, never through the backend's own upload body, and the
-// file is registered with the token that came with the upload and the SHA-256
-// of the whole file and of each part, so the server never reads it back.
+// file is registered with the token that came with the upload, the SHA-256 of
+// the whole file and the MD5 of each part, so the server never reads it back.
 import { createHash } from 'node:crypto'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +16,7 @@ interface Seen {
 }
 
 const sha = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
+const md5 = (data: string | Uint8Array) => createHash('md5').update(data).digest('hex')
 
 /** A server that cuts uploads into parts of `partBytes` and hands each part an
  *  address under `address` (`<address>/<part>`). */
@@ -37,8 +38,8 @@ function fakeServer(address: string, partBytes = 1024) {
         return json({ upload: 'sealed-token', part_bytes: partBytes, parts: Math.ceil(size / partBytes) })
       }
       if (url.endsWith('/library/uploads/part')) {
-        const { part, sha256 } = JSON.parse(String(init?.body))
-        return json({ url: `${address}/${part}`, headers: { 'x-amz-checksum-sha256': sha256 } })
+        const { part, md5: digest } = JSON.parse(String(init?.body))
+        return json({ url: `${address}/${part}`, headers: { 'Content-MD5': digest } })
       }
       if (url.includes(address)) return new Response(null, { status: 200 })
       return json({ path: '合同/报价.xlsx', bytes: 5 })
@@ -65,14 +66,14 @@ describe('uploading a library file', () => {
     const [put] = puts(seen)
     expect(put.url).toBe('https://bucket.example/up/1')
     expect(text(put.body)).toBe('hello')
-    expect(put.headers).toEqual({ 'x-amz-checksum-sha256': sha('hello') })
+    expect(put.headers).toEqual({ 'Content-MD5': md5('hello') })
     const registered = seen.at(-1)!
     expect(registered.method).toBe('POST')
     expect(registered.url).toMatch(/\/projects\/p1\/library$/)
     expect(JSON.parse(String(registered.body))).toEqual({
       upload: 'sealed-token',
       sha256: sha('hello'),
-      parts: [sha('hello')],
+      parts: [md5('hello')],
       filename: '报价.xlsx',
       folder: '合同',
     })
@@ -93,7 +94,7 @@ describe('uploading a library file', () => {
     expect(sent.map((s) => text(s.body)).join('')).toBe(content)
     const body = JSON.parse(String(seen.at(-1)!.body))
     expect(body.sha256).toBe(sha(content))
-    expect(body.parts).toEqual(['abcd', 'efgh', 'ij'].map(sha))
+    expect(body.parts).toEqual(['abcd', 'efgh', 'ij'].map((piece) => md5(piece)))
   })
 
   it('sends the bytes to the backend address when files are kept on its disk', async () => {
@@ -115,7 +116,7 @@ describe('uploading a library file', () => {
     expect(JSON.parse(String(registered.body))).toEqual({
       upload: 'sealed-token',
       sha256: sha('v2'),
-      parts: [sha('v2')],
+      parts: [md5('v2')],
     })
   })
 

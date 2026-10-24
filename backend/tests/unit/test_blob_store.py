@@ -49,7 +49,7 @@ async def _all(store: BlobStore, key: str, start: int, end: int) -> bytes:
 
 
 def _receipt(data: bytes) -> PartReceipt:
-    return PartReceipt(len(data), hashlib.sha256(data).hexdigest())
+    return PartReceipt(len(data), hashlib.md5(data).hexdigest())
 
 
 async def _body(data: bytes):
@@ -157,15 +157,18 @@ async def test_a_part_of_another_size_never_becomes_the_file(store: BlobStore):
     assert await store.size(key) is None
 
 
-async def test_a_part_whose_bytes_are_not_its_digest_is_refused(tmp_path):
-    """The bucket checks a part against its ``x-amz-checksum-sha256`` itself;
-    the test bucket does not, so this holds the local store to the same."""
-    store = LocalStore(tmp_path)
+async def test_a_part_whose_bytes_are_not_its_digest_never_becomes_the_file(
+    store: BlobStore,
+):
+    """Bytes other than the MD5 a part was given are refused: a real bucket
+    refuses the PUT (BadDigest); the test bucket takes it, and the parts are
+    then not joined, because a part's ETag is the MD5 of what arrived."""
     key = ".library-blobs/p/forged"
     upload_id = await store.begin_upload(key)
     address = await store.part_address(key, upload_id, 1, _receipt(b"hello"))
 
-    assert not await _put_part(store, address, b"jello")
+    await _put_part(store, address, b"jello")
+
     with pytest.raises(UnprocessableEntityError):
         await store.finish_upload(key, upload_id, [_receipt(b"hello")])
     assert await store.size(key) is None

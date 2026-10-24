@@ -326,11 +326,11 @@ class LibraryUploadSlot(BaseModel):
 
 
 class LibraryUploadPartIn(BaseModel):
-    """第 ``part`` 段（从 1 数）的字节的 SHA-256，十六进制。"""
+    """第 ``part`` 段（从 1 数）的字节的 MD5，十六进制。"""
 
     upload: str
     part: int = Field(ge=1)
-    sha256: str
+    md5: str
 
 
 class LibraryUploadPart(BaseModel):
@@ -343,7 +343,7 @@ class LibraryUploadPart(BaseModel):
 
 class LibraryUploaded(BaseModel):
     """一次传完的上传：领凭据时拿到的 ``upload``，整份的 SHA-256，和每一段的
-    SHA-256（按段的顺序），都是十六进制。"""
+    MD5（按段的顺序），都是十六进制。"""
 
     upload: str
     sha256: str
@@ -397,11 +397,11 @@ async def library_upload_part(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """一次上传里一段的地址：只收这一段，字节的 SHA-256 对不上的存储不收。"""
+    """一次上传里一段的地址：只收这一段，字节的 MD5 对不上的存储不收。"""
     await _library_keeper(project_id, db, resolver)
     return ok(
         await library_records.upload_part(
-            _shelf(project_id), body.upload, body.part, body.sha256
+            _shelf(project_id), body.upload, body.part, body.md5
         )
     )
 
@@ -734,7 +734,7 @@ async def team_library_upload_part(
     await _team_member(team_id, db, resolver)
     return ok(
         await library_records.upload_part(
-            _team_shelf(team_id), body.upload, body.part, body.sha256
+            _team_shelf(team_id), body.upload, body.part, body.md5
         )
     )
 

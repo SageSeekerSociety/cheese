@@ -113,14 +113,12 @@ def test_an_upload_that_did_not_arrive_whole_is_not_registered(client, new_files
     project_id = _project(client)
     new_files_go_to("bucket")
     slot = _slot(client, project_id, "a.md", 10).json()["data"]
-    digest = hashlib.sha256(b"0123456789").hexdigest()
-
     r = client.post(
         f"/projects/{project_id}/library",
         json={
             "upload": slot["upload"],
-            "sha256": digest,
-            "parts": [digest],
+            "sha256": hashlib.sha256(b"0123456789").hexdigest(),
+            "parts": [hashlib.md5(b"0123456789").hexdigest()],
             "filename": "a.md",
         },
     )
@@ -164,19 +162,16 @@ def test_an_upload_for_one_project_cannot_be_registered_in_another(
 
 
 def test_a_file_registered_with_another_digest_is_refused(client, new_files_go_to):
-    """The parts carry the SHA-256 they were sent with; registering them as
-    other bytes is refused, and the file is not in the library."""
+    """The parts carry the MD5 they were sent with; registering them as other
+    bytes is refused, and the file is not in the library."""
     project_id = _project(client)
     new_files_go_to("local")
     base = f"/projects/{project_id}/library"
     slot = _slot(client, project_id, "a.md", 2).json()["data"]
     _, uploaded = library_uploads.send_parts(client, base, slot, b"hi")
-    other = hashlib.sha256(b"ho").hexdigest()
+    other = hashlib.md5(b"ho").hexdigest()
 
-    r = client.post(
-        base,
-        json={**uploaded, "sha256": other, "parts": [other], "filename": "a.md"},
-    )
+    r = client.post(base, json={**uploaded, "parts": [other], "filename": "a.md"})
 
     assert r.status_code == 422
     assert _library(client, project_id) == []
@@ -264,10 +259,10 @@ def test_an_upload_to_this_server_needs_no_credential_but_its_address(
     new_files_go_to("local")
     base = f"/projects/{project_id}/library"
     slot = _slot(client, project_id, "a.md", 2).json()["data"]
-    digest = hashlib.sha256(b"hi").hexdigest()
+    digest = hashlib.md5(b"hi").hexdigest()
     address = client.post(
         f"{base}/uploads/part",
-        json={"upload": slot["upload"], "part": 1, "sha256": digest},
+        json={"upload": slot["upload"], "part": 1, "md5": digest},
     ).json()["data"]
     credential = client.headers.pop("Authorization")
 
@@ -281,7 +276,7 @@ def test_an_upload_to_this_server_needs_no_credential_but_its_address(
         base,
         json={
             "upload": slot["upload"],
-            "sha256": digest,
+            "sha256": hashlib.sha256(b"hi").hexdigest(),
             "parts": [digest],
             "filename": "a.md",
         },

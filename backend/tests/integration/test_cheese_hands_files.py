@@ -67,10 +67,10 @@ def _give(client, cheese: dict, name: str, data: bytes) -> dict:
     )
     assert slot.status_code == 200, slot.text
     upload = slot.json()["data"]["upload"]
-    digest = hashlib.sha256(data).hexdigest()
+    digest = hashlib.md5(data).hexdigest()
     address = client.post(
         "/assistant/agent/files/part",
-        json={"upload": upload, "part": 1, "sha256": digest},
+        json={"upload": upload, "part": 1, "md5": digest},
         headers=cheese,
     )
     assert address.status_code == 200, address.text
@@ -78,7 +78,12 @@ def _give(client, cheese: dict, name: str, data: bytes) -> dict:
     assert put.status_code == 200, put.text
     handed = client.post(
         "/assistant/agent/files/handed",
-        json={"upload": upload, "sha256": digest, "parts": [digest], "name": name},
+        json={
+            "upload": upload,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "parts": [digest],
+            "name": name,
+        },
         headers=cheese,
     )
     assert handed.status_code == 200, handed.text

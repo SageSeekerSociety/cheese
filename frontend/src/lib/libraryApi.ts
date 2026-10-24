@@ -2,7 +2,7 @@
 //
 // 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
 // 读字节、版本列表、按版本下载、恢复旧版。
-import { createSHA256, sha256 } from 'hash-wasm'
+import { createSHA256, md5 } from 'hash-wasm'
 
 import { authToken, BASE, libraryBase, libraryFileRawUrl, type LibraryShelf, request } from '../api'
 import { t } from '../i18n'
@@ -87,7 +87,7 @@ interface UploadSlot {
   parts: number
 }
 
-/** 登记一次传完的上传要交回的：凭据，整份和每一段的 SHA-256（十六进制）。 */
+/** 登记一次传完的上传要交回的：凭据，整份的 SHA-256 和每一段的 MD5（十六进制）。 */
 interface Uploaded {
   upload: string
   sha256: string
@@ -104,12 +104,12 @@ async function putPart(
   base: string,
   upload: string,
   part: number,
-  sha256: string,
+  digest: string,
   bytes: Uint8Array<ArrayBuffer>
 ): Promise<void> {
   const address = await request<{ url: string; headers: Record<string, string> }>(`${base}/uploads/part`, {
     method: 'POST',
-    body: JSON.stringify({ upload, part, sha256 }),
+    body: JSON.stringify({ upload, part, md5: digest }),
   })
   const url = address.url.startsWith('/') ? `${BASE}${address.url}` : address.url
   for (let attempt = 1; ; attempt++) {
@@ -128,10 +128,10 @@ async function putPart(
 
 /** 把一份文件的字节传上去，交回登记要用的凭据和哈希。
  *
- *  字节不经过后端：先领一次上传的凭据，再按它说的段长一段一段读出来，每段算出 SHA-256、
+ *  字节不经过后端：先领一次上传的凭据，再按它说的段长一段一段读出来，每段算出 MD5、
  *  领一个只收这一段的地址，原样 PUT 过去——对象存储的预签名地址，或者文件存在服务器本地
- *  盘时后端自己的一个地址（以 `/` 开头）。存储收每一段时自己对哈希；整份的 SHA-256 在
- *  读的同一遍里算出来，几 GB 的文件也只读一遍，不整份进内存。 */
+ *  盘时后端自己的一个地址（以 `/` 开头）。存储收每一段时自己对 MD5（`Content-MD5`）；整份
+ *  的 SHA-256 在读的同一遍里算出来，几 GB 的文件也只读一遍，不整份进内存。 */
 async function sendLibraryBytes(shelf: LibraryShelf, file: File): Promise<Uploaded> {
   const base = libraryBase(shelf)
   const slot = await request<UploadSlot>(`${base}/uploads`, {
@@ -146,7 +146,7 @@ async function sendLibraryBytes(shelf: LibraryShelf, file: File): Promise<Upload
     const start = (part - 1) * slot.part_bytes
     const bytes = new Uint8Array(await file.slice(start, start + slot.part_bytes).arrayBuffer())
     whole.update(bytes)
-    const digest = await sha256(bytes)
+    const digest = await md5(bytes)
     parts.push(digest)
     const sending: Promise<void> = putPart(base, slot.upload, part, digest, bytes)
       .catch((error: unknown) => {

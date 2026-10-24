@@ -38,15 +38,15 @@ cheese = _load()
 
 @pytest.fixture
 def storage():
-    """Keeps what is PUT at a path, refusing bytes that are not the SHA-256 the
+    """Keeps what is PUT at a path, refusing bytes that are not the MD5 the
     PUT names, as the bucket does; answers a GET with it."""
     kept: dict[str, bytes] = {}
 
     class Handler(BaseHTTPRequestHandler):
         def do_PUT(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
-            named = self.headers.get("x-amz-checksum-sha256")
-            if named is not None and named != hashlib.sha256(body).hexdigest():
+            named = self.headers.get("Content-MD5")
+            if named is not None and named != hashlib.md5(body).hexdigest():
                 self.send_response(400)
                 self.end_headers()
                 return
@@ -109,8 +109,8 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
     tmp_path, storage
 ):
     """The computer cuts the file into the parts the platform asks for, puts
-    each at its own address with its SHA-256, and hands the file over with
-    the SHA-256 of the whole and of each part."""
+    each at its own address with its MD5, and hands the file over with the
+    SHA-256 of the whole and the MD5 of each part."""
     origin, kept = storage
     content = bytes(range(256)) * 10 + b"tail"
     (tmp_path / "out").mkdir()
@@ -125,7 +125,7 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
             },
             "/assistant/agent/files/part": lambda body: {
                 "url": f"{origin}/slot-1/{body['part']}",
-                "headers": {"x-amz-checksum-sha256": body["sha256"]},
+                "headers": {"Content-MD5": body["md5"]},
             },
             "/assistant/agent/files/handed": lambda body: {
                 "path": body["name"],
@@ -145,7 +145,7 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
     assert handed["upload"] == "sealed-1"
     assert handed["sha256"] == hashlib.sha256(content).hexdigest()
     assert handed["parts"] == [
-        hashlib.sha256(content[i : i + 1024]).hexdigest() for i in (0, 1024, 2048)
+        hashlib.md5(content[i : i + 1024]).hexdigest() for i in (0, 1024, 2048)
     ]
     assert "library/数据结构/成绩分布.png" in said
 

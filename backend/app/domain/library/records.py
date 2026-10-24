@@ -6,8 +6,8 @@
 字节写失败了，这一行随事务回滚，不会留下一行说着一份不存在的文件。
 
 资料库页上传的文件不经过后端：浏览器先领一次上传的凭据（`upload_slot`），按段领
-地址（`upload_part`），把每一段连同它的 SHA-256 直接放进存储，再拿凭据和每段的哈希
-来登记（`received`）。存储收每一段时就对过哈希，登记时把这几段拼成那一行的字节，
+地址（`upload_part`），把每一段连同它的 MD5 直接放进存储，再拿凭据、整份的 SHA-256
+和每段的 MD5 来登记（`received`）。存储收每一段时就对过哈希，登记时把这几段拼成那一行的字节，
 拼在领凭据时就定下的键下：几 GB 的文件既不整份读回来算哈希，也不在存储里挪动。
 
 名字里的 `/` 是文件夹。一个名字不能同时是一份文件和一个文件夹：`报告` 是文件时，
@@ -247,17 +247,17 @@ def _sealed(shelf: Shelf, token: str) -> blob_store.SealedUpload:
     return sealed
 
 
-def _digest(value: str) -> str:
-    """一个十六进制写的 SHA-256，原样；不是的就拒。"""
+def _hex(value: str, length: int) -> str:
+    """一个 ``length`` 位十六进制写的哈希，原样；不是的就拒。"""
     digest = value.strip().lower()
-    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+    if len(digest) != length or any(c not in "0123456789abcdef" for c in digest):
         raise UnprocessableEntityError(say("uploadIncomplete"))
     return digest
 
 
-async def upload_part(shelf: Shelf, token: str, number: int, sha256: str) -> dict:
+async def upload_part(shelf: Shelf, token: str, number: int, md5: str) -> dict:
     """第 ``number`` 段（从 1 数）的地址：``url`` 收这一段恰好那么多字节，PUT 时
-    带上 ``headers``；字节的 SHA-256 不是 ``sha256`` 的，存储不收。"""
+    带上 ``headers``；字节的 MD5 不是 ``md5`` 的，存储不收。"""
     sealed = _sealed(shelf, token)
     sizes = blob_store.part_sizes(sealed.size, sealed.part_bytes)
     if not 1 <= number <= len(sizes):
@@ -266,29 +266,29 @@ async def upload_part(shelf: Shelf, token: str, number: int, sha256: str) -> dic
         sealed.key,
         sealed.upload_id,
         number,
-        blob_store.PartReceipt(sizes[number - 1], _digest(sha256)),
+        blob_store.PartReceipt(sizes[number - 1], _hex(md5, 32)),
     )
     return {"url": address.url, "headers": address.headers}
 
 
 def received(shelf: Shelf, token: str, sha256: str, parts: list[str]) -> Upload:
-    """`upload_slot` 给出去的那一次上传，拿来登记的样子：整份的 SHA-256，和每一段的。
+    """`upload_slot` 给出去的那一次上传，拿来登记的样子：整份的 SHA-256，和每一段的
+    MD5。
 
-    每一段的字节存储在收的时候就对过它的 SHA-256，登记时（`_put`）再对一遍这里说的
-    每一段确实是收下的那些，所以不必把整份读回来算哈希。只有一段的，整份就是那一段，
-    整份的哈希也就是存储对过的那一个；切成几段的，整份的哈希是传的那一方算的。"""
+    每一段的字节存储在收的时候就对过它的 MD5，登记时（`_put`）再对一遍这里说的每一段
+    确实是收下的那些，所以不必把整份读回来算哈希。整份的 SHA-256 是传的那一方算的：
+    存储对一段只认 MD5（R2 不收带 SHA-256 的段），对整份给不出 SHA-256。"""
     sealed = _sealed(shelf, token)
     sizes = blob_store.part_sizes(sealed.size, sealed.part_bytes)
-    digests = [_digest(part) for part in parts]
-    whole = _digest(sha256)
-    if len(digests) != len(sizes) or (len(sizes) == 1 and digests[0] != whole):
+    digests = [_hex(part, 32) for part in parts]
+    if len(digests) != len(sizes):
         raise UnprocessableEntityError(say("uploadIncomplete"))
     return Upload(
         location=sealed.location,
         key=sealed.key,
         upload_id=sealed.upload_id,
         size=sealed.size,
-        sha256=whole,
+        sha256=_hex(sha256, 64),
         parts=tuple(
             blob_store.PartReceipt(size, digest)
             for size, digest in zip(sizes, digests, strict=True)

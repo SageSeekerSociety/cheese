@@ -408,13 +408,10 @@ class S3StorageBackend(StorageBackend):
         return True
 
     async def start_parts(self, key: str) -> str:
-        """Begin an object put together from parts, each carrying its SHA-256
-        (the bucket refuses a part whose bytes do not match it); the upload's
-        id. Nothing is at ``key`` until :meth:`join_parts`."""
+        """Begin an object put together from parts; the upload's id. Nothing
+        is at ``key`` until :meth:`join_parts`."""
         async with self._get_client() as client:
-            answer = await client.create_multipart_upload(
-                Bucket=self._bucket, Key=key, ChecksumAlgorithm="SHA256"
-            )
+            answer = await client.create_multipart_upload(Bucket=self._bucket, Key=key)
         return str(answer["UploadId"])
 
     async def parts(self, key: str, upload_id: str) -> list[dict] | None:
@@ -436,7 +433,7 @@ class S3StorageBackend(StorageBackend):
 
     async def join_parts(self, key: str, upload_id: str, parts: list[dict]) -> None:
         """Make the object at ``key`` from these parts (``PartNumber``,
-        ``ETag``, ``ChecksumSHA256``), in that order."""
+        ``ETag``), in that order."""
         async with self._get_client() as client:
             await client.complete_multipart_upload(
                 Bucket=self._bucket,
