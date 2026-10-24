@@ -14,11 +14,13 @@
         <p class="t-meta-read shared-meta">{{ t('publicSite.sharedDoc.updated', { time: updated }) }}</p>
         <MarkdownView class="md-content t-reading" :source="doc.content" />
         <footer class="shared-colophon">
-          <span>{{ t('publicSite.sharedDoc.colophon.brand') }}</span>
+          <span>{{ colophonText }}</span>
           <NavLink v-if="invite" :to="invite.to" class="shared-colophon__link" data-testid="colophon-invite">
-            {{ t('publicSite.sharedDoc.colophon.seats', { name: invite.name, n: invite.seats }) }} →
+            {{ t('publicSite.sharedDoc.colophon.enter') }} →
           </NavLink>
-          <NavLink v-else to="/" class="shared-colophon__link">{{ t('publicSite.aboutCheese') }} →</NavLink>
+          <NavLink v-else to="/" class="shared-colophon__link"
+            >{{ t('publicSite.sharedDoc.colophon.enter') }} →</NavLink
+          >
         </footer>
       </template>
     </article>
@@ -44,13 +46,26 @@ const props = defineProps<{
 
 const updated = computed(() => (props.doc ? absDateTime(Date.parse(props.doc.updated_at)) : ''))
 
+const sharerName = computed(() => {
+  const by = props.doc?.shared_by
+  if (!by) return ''
+  return by.nickname || `@${by.handle}`
+})
+
+const hasInteractiveApp = computed(() => /(?:^|\n):::app\b/.test(props.doc?.content ?? ''))
+
+const colophonText = computed(() => {
+  if (!sharerName.value) return t('publicSite.sharedDoc.colophon.brand')
+  return hasInteractiveApp.value
+    ? t('publicSite.sharedDoc.colophon.byWithApp', { name: sharerName.value })
+    : t('publicSite.sharedDoc.colophon.by', { name: sharerName.value })
+})
+
 /** The way in on the sharer's own invite code, while it still has seats; otherwise none. */
 const invite = computed(() => {
   const by = props.doc?.shared_by
   if (!by?.code || by.seats_left <= 0) return null
   return {
-    name: by.nickname || `@${by.handle}`,
-    seats: by.seats_left,
     to: { path: '/account/signup', query: { code: by.code } },
   }
 })

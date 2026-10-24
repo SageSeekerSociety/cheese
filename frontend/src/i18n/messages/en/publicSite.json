@@ -329,7 +329,9 @@
     "loadFailed": "Failed to load the document",
     "colophon": {
       "brand": "Cheese · where people and AI teammates work together",
-      "seats": "{name} has {n} invited seats left · Join with this link"
+      "by": "Written by {name} with their AI teammate in Cheese",
+      "byWithApp": "Interactive models and text built by {name} with Cheese",
+      "enter": "About Cheese"
     }
   }
 }

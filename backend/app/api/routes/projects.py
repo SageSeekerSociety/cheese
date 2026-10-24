@@ -96,6 +96,7 @@ from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage import referrals
 from app.domain.usage.adapters import ComputeCredits
 
 logger = logging.getLogger("cheesex.projects")
@@ -257,6 +258,9 @@ async def create_project(
         project_id=body.id,
         owner_handle=who.handle,
     )
+    user_id = getattr(who, "user_id", None)
+    if user_id is not None:
+        await referrals.on_onboarded(db, user_id)
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
