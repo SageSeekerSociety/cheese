@@ -212,7 +212,9 @@ The text to give it is:
 写清「要跑哪条命令、预期什么结果」。
 
 预算（先花完再说结束；花完了就交回已有的）：
-- 整个组最多 100 次工具调用；到第 100 次要交回手上的候选，不要再来一轮。
+- 整个组最多 20 次工具调用；到第 20 次要交回手上的候选，不要再来一轮。一次调用约
+  15–20 秒的模型时间，20 次就是一个五分钟的组；要覆盖更多文件，交给分组，不要靠
+  一个分身多读。
 - 单组累计最多提 30 条候选；到 30 条就停止提新的，交回。
 - 同一个工具连续失败 3 次，这一组里不再用它。
 - 连续 3 轮没有新候选就结束这一组。
@@ -269,11 +271,12 @@ A smaller group skips it.
 The plan is for the reviewer itself: it changes what the passes look at, and
 its `→` lines are intent, not calls. No tool is called to produce it.
 
-**Passes.** A reviewer makes at most as many passes over `review_files` as
-the effort names — 1 at `low`, 2 at `medium`, 3 at `high` — and stops early
-when a pass adds no new candidate. Each pass returns its new candidates; a
-pass that returns none ends the group's review. Every pass's new candidates go
-through step 3b before the next pass starts.
+**Passes.** A reviewer makes at most 2 passes over `review_files` (1 at
+`low`), and stops early when a pass adds no new candidate. Each pass returns
+its new candidates; a pass that returns none ends the group's review. Every
+pass's new candidates go through step 3b before the next pass starts. The
+third pass is not worth its wall-clock: a group that needs it should have been
+two groups.
 
 **What each candidate carries:** `severity` (`blocker`, `major`, or `minor`),
 `kind` (`runtime`, `test`, `ci`, `rule`), `file`, `line` at the pinned SHA,
