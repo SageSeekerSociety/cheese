@@ -1,9 +1,9 @@
-"""A session at work whose room shows nothing is reminded, whatever turn is open.
+"""A session at work that owes a person an answer, or whose checklist stopped,
+is reminded, whatever turn is open.
 
-Two things in a room are what the people in it can see: what the agent says,
-and its checklist. A session that read a person's message and has said nothing
-since is told so; one whose own checklist stopped moving is asked to write it
-again (`QuietSessionReminders`). What decides is the session — the seat this
+A session that read a person's message and has said nothing since is told so;
+once it has answered it works on quietly. One whose own checklist stopped
+moving is asked to write it again (`QuietSessionReminders`). What decides is the session — the seat this
 process holds whose runner says it is working, the input it read, the messages
 it wrote, the checklist its current work wrote — not a turn the platform holds
 open: the work here is handed to the session directly, so there is none.
