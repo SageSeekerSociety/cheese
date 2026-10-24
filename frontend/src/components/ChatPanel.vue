@@ -305,6 +305,7 @@ const {
   togglePicker,
   bar,
   barBlock,
+  kbdNav,
   reactionPickerFor,
   timeShownId,
   arrived,
@@ -496,6 +497,7 @@ useComposerShortcut({
             :bar="bar"
             :bar-block="barBlock"
             :bar-editable="barEditable"
+            :kbd-nav="kbdNav"
             :reaction-picker-for="reactionPickerFor"
             :loading-history="loadingHistory"
             :has-more="hasMore"
