@@ -38,7 +38,14 @@ from sqlalchemy import DateTime, String, column, exists, or_, select, table, upd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.agent.models import AgentTurn, Base
+from app.domain.agent.models import (
+    STOP_SWEEP,
+    STOP_TAKEN_OVER,
+    STOP_TASK_CLOSED,
+    STOP_UNDELIVERED,
+    AgentTurn,
+    Base,
+)
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
@@ -345,7 +352,7 @@ async def _retire(db: AsyncSession, *, turn_id: uuid.UUID, at: datetime) -> None
     """End the interval. `stopped_at` is the whole of it — never a
     completion, never hook-work accounting."""
 
-    await AgentTurnRepository(db).close([turn_id], at)
+    await AgentTurnRepository(db).close([turn_id], at, reason=STOP_TAKEN_OVER)
 
 
 async def ensure_interval_and_input(
@@ -427,7 +434,7 @@ async def retire_failed_interval(
     closer. Exactly this id: a failure retires nobody else's interval.
     """
 
-    await AgentTurnRepository(db).close([turn_id], at)
+    await AgentTurnRepository(db).close([turn_id], at, reason=STOP_UNDELIVERED)
 
 
 async def open_interval_with_input(
@@ -492,7 +499,9 @@ async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
     """
 
     async with session_factory() as session:
-        claimed = await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        claimed = await AgentTurnRepository(session).close(
+            turn_ids, datetime.now(UTC), reason=STOP_SWEEP
+        )
         await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
         await session.commit()
         return claimed
@@ -613,7 +622,7 @@ async def open_turns(session_factory) -> dict:
             )
         )
         if ended:
-            await turns.close(ended, datetime.now(UTC))
+            await turns.close(ended, datetime.now(UTC), reason=STOP_TASK_CLOSED)
             await terminate_inputs_of_dead_works(session, ended, reason="task_closed")
             await session.commit()
         rows = await turns.open_turns()
