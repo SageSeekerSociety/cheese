@@ -38,9 +38,10 @@
 #   OCR_VERSION          open-code-review version to install and run (1.13.3)
 #
 # The binary is not committed: it is 54 MB, and a pinned npm install into a
-# per-version cache takes about seven seconds. The sha256 of the binary is
-# checked before it runs, so a published artifact that changed under the same
-# version does not silently become this repo's reviewer.
+# per-version cache takes about seven seconds. Before anything runs, the native
+# binary's sha256 and the package's own version are both checked, so a published
+# artifact that changed under the same version number does not silently become
+# this repo's reviewer.
 #
 # Exit status: 0 review ran (partial results included), 1 setup or run failed.
 set -euo pipefail
