@@ -374,7 +374,7 @@ class AssistantRun(UuidPk, Base):
     cost_usd: Mapped[float] = mapped_column(nullable=False, default=0.0)
     #: How many actions it left for the person to confirm.
     asked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    #: 芝士 sent the person a notification itself (``cheese_notify_me``), so
+    #: 芝士 sent the person a notification itself (``cheese_notify``), so
     #: its end is not announced again.
     told: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()

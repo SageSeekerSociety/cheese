@@ -130,9 +130,9 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     # blank document whole; the platform refuses it over written text.
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
         "cheese_app",
-        "cheese_attachment_read",
         "cheese_doc",
-        "cheese_memory_read",
+        "cheese_library",
+        "cheese_memory",
         "cheese_project_search",
     ]
     # It reads and edits this document; making or listing the project's

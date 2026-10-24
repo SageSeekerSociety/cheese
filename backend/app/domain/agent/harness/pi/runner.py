@@ -153,7 +153,7 @@ class Runner(runner.Runner[Journal]):
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
@@ -729,7 +729,7 @@ class Runner(runner.Runner[Journal]):
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
             # A person's 芝士 works on a computer of its own and moves files
-            # between it and their library (`cheese_file_give`): the commands
+            # between it and their library (`cheese_library(action=give)`): the commands
             # run there, the requests go out under the question's credential.
             # One that only reads a room's machine (a document's 芝士) runs
             # nothing on it.
@@ -1193,7 +1193,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

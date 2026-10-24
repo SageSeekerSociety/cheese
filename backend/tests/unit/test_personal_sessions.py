@@ -48,7 +48,7 @@ from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = ("cheese_read", "cheese_docs_search")
+TOOLS = ("cheese_read", "cheese_help")
 
 
 #: What the platform's routes answer a tool's request with, by path prefix.
@@ -346,7 +346,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "cheese_docs_search",
+        "cheese_help",
         "cheese_read",
         "cheese_subagent_send",
         "cheese_subagent_start",

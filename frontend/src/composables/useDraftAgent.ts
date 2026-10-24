@@ -13,6 +13,7 @@ import { ApiError } from '@/api'
 import { t } from '@/i18n'
 import { proposalView, stepView } from '@/lib/assistantView'
 import { fieldLabel, panelMessages, resultView, writesView } from '@/lib/draftChangeView'
+import { partialStringField } from '@/lib/partialJson'
 import { partialValue } from '@/lib/partialJson'
 import { AGENT_FIELDS, DRAFT_WRITE_PACE } from '@/lib/taskDraftAgent'
 import { createTypist } from '@/lib/typist'
@@ -53,6 +54,8 @@ export function useDraftAgent(options: DraftAgentOptions) {
 
   // 芝士写的参数按打字的节奏放进表单（见 lib/typist.ts）；调用结束、写进草稿、发布都排在
   // 放完之后。
+  // The calls writing a draft (`cheese_problem(action=write)`), by call id.
+  const writes = new Set<string>()
   const typist = createTypist(
     (_call, raw, held) => void draft.preview(partialValue(raw), options.terms(), held),
     DRAFT_WRITE_PACE
@@ -121,12 +124,14 @@ export function useDraftAgent(options: DraftAgentOptions) {
     },
     on: {
       toolArgs: (call, name, raw) => {
-        if (name !== 'cheese_problem_write') return
+        // Writing a draft is one verb of `cheese_problem`; publishing it is another.
+        if (name !== 'cheese_problem' || partialStringField(raw, 'action')?.text !== 'write') return
+        writes.add(call)
         typist.feed(call, raw)
         aimOf(raw)
       },
-      toolEnded: (_call, name, failed) => {
-        if (name !== 'cheese_problem_write') return
+      toolEnded: (call, _name, failed) => {
+        if (!writes.delete(call)) return
         then(() => void draft.ended(failed))
         if (failed) writingTarget.value = null
       },

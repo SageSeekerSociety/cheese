@@ -140,13 +140,21 @@ CALLS = {
         "POST",
         "/projects/fixture-project/alerts",
     ),
-    "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
-    "cheese_web_search": ({"query": "芝士"}, "GET", "/web-search"),
-    "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
-    "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
+    "cheese_web.fetch": (
+        {"action": "fetch", "url": "https://example.test"},
+        "POST",
+        "/fetch",
+    ),
+    "cheese_web.search": ({"action": "search", "query": "芝士"}, "GET", "/web-search"),
+    "cheese_help": ({"query": "验收"}, "POST", "/docs/agent/search"),
+    "cheese_help.page": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_room.members": ({"action": "members"}, "GET", f"/topics/{TOPIC}/members"),
-    "cheese_status": ({}, "GET", f"/topics/{TOPIC}/status"),
-    "cheese_library_ls": ({}, "GET", "/projects/fixture-project/library"),
+    "cheese_session.status": ({"action": "status"}, "GET", f"/topics/{TOPIC}/status"),
+    "cheese_library.list": (
+        {"action": "list"},
+        "GET",
+        "/projects/fixture-project/library",
+    ),
     "cheese_ask": (
         {
             "questions": [
@@ -159,8 +167,9 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/asks",
     ),
-    "cheese_feedback_propose": (
+    "cheese_feedback.propose": (
         {
+            "action": "propose",
             "title": "工具清单短了一截",
             "kind": "bug",
             "visibility": "public",
@@ -169,32 +178,49 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/feedback-proposals",
     ),
-    "cheese_feedback_list": ({"query": "保存"}, "GET", "/feedback"),
-    "cheese_feedback_get": ({"feedback": "FB-12"}, "GET", "/feedback/FB-12"),
-    "cheese_feedback_claim": (
-        {"feedback": "FB-12"},
+    "cheese_feedback.list": ({"action": "list", "query": "保存"}, "GET", "/feedback"),
+    "cheese_feedback.get": (
+        {"action": "get", "feedback": "FB-12"},
+        "GET",
+        "/feedback/FB-12",
+    ),
+    "cheese_feedback.claim": (
+        {"action": "claim", "feedback": "FB-12"},
         "POST",
         "/feedback/FB-12/claim",
     ),
-    "cheese_feedback_release": (
-        {"feedback": "FB-12"},
+    "cheese_feedback.release": (
+        {"action": "release", "feedback": "FB-12"},
         "DELETE",
         "/feedback/FB-12/claim",
     ),
     "cheese_run_records": ({"group": "errors"}, "GET", "/run-records"),
-    "cheese_environment": ({}, "GET", f"/topics/{TOPIC}/environment"),
-    "cheese_note": (
-        {"thread": "9f8e7d6c-0000-0000-0000-000000000000", "content": "口径改了"},
+    "cheese_session.environment": (
+        {"action": "environment"},
+        "GET",
+        f"/topics/{TOPIC}/environment",
+    ),
+    "cheese_session.note": (
+        {
+            "action": "note",
+            "thread": "9f8e7d6c-0000-0000-0000-000000000000",
+            "content": "口径改了",
+        },
         "POST",
         f"/topics/{TOPIC}/note",
     ),
-    "cheese_deliver_at": (
-        {"at": "2026-09-21T14:00:00+00:00", "content": "回来看一眼那条 PR"},
+    "cheese_session.deliver_at": (
+        {
+            "action": "deliver_at",
+            "at": "2026-09-21T14:00:00+00:00",
+            "content": "回来看一眼那条 PR",
+        },
         "POST",
         f"/topics/{TOPIC}/deliveries",
     ),
-    "cheese_routine_draft": (
+    "cheese_routine.create": (
         {
+            "action": "create",
             "title": "每周整理一次进展",
             "instructions": "把这一周的进展整理成一页",
             "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
@@ -203,20 +229,29 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/routines",
     ),
-    "cheese_routine_list": ({}, "GET", "/projects/fixture-project/routines"),
-    "cheese_routine_update": (
-        {"routine": "r-1", "timezone": "UTC"},
+    "cheese_routine.list": (
+        {"action": "list"},
+        "GET",
+        "/projects/fixture-project/routines",
+    ),
+    "cheese_routine.update": (
+        {"action": "update", "routine": "r-1", "timezone": "UTC"},
         "PATCH",
         "/routines/r-1",
     ),
-    "cheese_routine_pause": ({"routine": "r-1"}, "POST", "/routines/r-1/pause"),
-    "cheese_routine_report": (
-        {"run": "run-1", "status": "failed", "summary": "接口挂了"},
+    "cheese_routine.pause": (
+        {"action": "pause", "routine": "r-1"},
+        "POST",
+        "/routines/r-1/pause",
+    ),
+    "cheese_routine.report": (
+        {"action": "report", "run": "run-1", "status": "failed", "summary": "接口挂了"},
         "POST",
         "/routine-runs/run-1/report",
     ),
-    "cheese_skill_draft": (
+    "cheese_skill.propose": (
         {
+            "action": "propose",
             "name": "weekly-report",
             "title": "周报",
             "description": "用户要这周的周报时",
@@ -227,13 +262,26 @@ CALLS = {
         "POST",
         f"/topics/{TOPIC}/skills",
     ),
-    "cheese_skill_update": (
-        {"skill": "m-1", "body": "先写变坏的指标", "reason": "顺序反了"},
+    "cheese_skill.update": (
+        {
+            "action": "update",
+            "skill": "m-1",
+            "body": "先写变坏的指标",
+            "reason": "顺序反了",
+        },
         "PATCH",
         "/skills/m-1",
     ),
-    "skills_search": ({"query": "周报"}, "POST", "/agent/skills/search"),
-    "skills_read": ({"name": "weekly-report"}, "POST", "/agent/skills/read"),
+    "cheese_skill.search": (
+        {"action": "search", "query": "周报"},
+        "POST",
+        "/agent/skills/search",
+    ),
+    "cheese_skill.read": (
+        {"action": "read", "name": "weekly-report"},
+        "POST",
+        "/agent/skills/read",
+    ),
     "platform_request": (
         {
             "method": "PUT",
@@ -255,7 +303,7 @@ NEEDS_THE_MACHINE = {
 }
 
 #: 只等那台机器、什么也不写到平台上的那一样。
-WAITS_FOR_THE_MACHINE = {"cheese_wait_environment"}
+WAITS_FOR_THE_MACHINE = {"cheese_session.wait"}
 
 #: 这条传输自己的三个口子，不是产品动作。
 TRANSPORT = {
@@ -405,6 +453,15 @@ def _tool(key):
     return key.partition(".")[0]
 
 
+def _verbs(process):
+    """Each tool on the listing, and each verb of an object by its key."""
+    keys = set()
+    for tool in process.call("tools/list", {})["tools"]:
+        verbs = tool["inputSchema"].get("properties", {}).get("action", {}).get("enum")
+        keys |= {f"{tool['name']}.{v}" for v in verbs} if verbs else {tool["name"]}
+    return keys
+
+
 def _listing(process):
     return [tool["name"] for tool in process.call("tools/list", {})["tools"]]
 
@@ -523,7 +580,9 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
     process, platform_calls, executor_calls = machine_is_gone
 
     outcome = _call(
-        process, "cheese_routine_draft", {**arguments, "owner_handle": "alice"}
+        process,
+        "cheese_routine",
+        {"action": "create", **arguments, "owner_handle": "alice"},
     )
 
     assert said in outcome["deny"], outcome
@@ -569,7 +628,7 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
         (
             "cheese_doc",
             {"action": "get", "query": "范围"},
-            "cheese_doc(action=get) 不收 query：query 是 cheese_chat(action=search) 的参数。",
+            "cheese_doc(action=get) 不收 query：query 是 cheese_chat(action=search)、",
         ),
         # Making a channel or changing who is in one is a person's 芝士's, as
         # the person: the room's own room tool has neither.
@@ -621,7 +680,7 @@ def test_waiting_for_a_machine_that_is_gone_says_so_at_once(machine_is_gone):
     """等一台够不着的机器，当场说够不着，不把 agent 晾到超时。"""
     process, platform_calls, _ = machine_is_gone
 
-    outcome = _call(process, "cheese_wait_environment", {})
+    outcome = _call(process, "cheese_session", {"action": "wait"})
 
     assert outcome == {"deny": MACHINE_OUT_OF_REACH}
     assert platform_calls == []
@@ -631,7 +690,7 @@ def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
     """机器在：等它就是在它上面跑一条什么也不做的命令，跑通就是就绪。"""
     process, _, executor_calls = machine_is_here
 
-    outcome = _call(process, "cheese_wait_environment", {})
+    outcome = _call(process, "cheese_session", {"action": "wait"})
 
     assert "deny" not in outcome, outcome
     assert "执行环境已就绪" in json.dumps(outcome, ensure_ascii=False)
@@ -707,7 +766,7 @@ def test_the_feedback_tool_says_when_to_use_it(machine_is_gone):
     """这个工具**唯一的说明就是那段文字**，所以触发时机必须出现在模型读到的工具说明
     里——四条触发时机、「什么时候不该提」、以及它是提案所以不打断。"""
     process, _, _ = machine_is_gone
-    description = _tools_by_name(process)["cheese_feedback_propose"]["description"]
+    description = _tools_by_name(process)["cheese_feedback"]["description"]
 
     for trigger in (
         "某个工具或命令反复失败",
@@ -737,7 +796,7 @@ def test_the_task_state_tool_offers_exactly_the_states_the_platform_takes():
 
 
 def test_the_switch_decides_whether_the_tool_is_on_the_listing(tmp_path, runner_socket):
-    """`cheese_compact` 默认关着，这一条钉的是**清单**：会话侧那份 `tools/list`
+    """`cheese_session(action=compact)` 默认关着，这一条钉的是**清单**：会话侧那份 `tools/list`
     里没有它，agent 连它的名字都看不到；部署在会话的环境里写下那一句，它才在清单
     上。表本身两种情况下都完整（上面那条用例读的就是它）。"""
     server, _, _ = _serve(lambda _: (503, b""))
@@ -756,10 +815,9 @@ def test_the_switch_decides_whether_the_tool_is_on_the_listing(tmp_path, runner_
             runner_socket=runner_socket,
         )
         try:
-            assert "cheese_compact" not in _listing(off)
-            assert "cheese_compact" in _listing(on)
-            # 别的行不受影响：开关动的只有这一样。
-            assert set(_listing(off)) == set(_listing(on)) - {"cheese_compact"}
+            # 开关动的是 cheese_session 的一个动词：关着时它的 action 里没有 compact。
+            assert _verbs(off) == _verbs(on) - {"cheese_session.compact"}
+            assert "cheese_session.compact" in _verbs(on)
         finally:
             off.close()
             on.close()

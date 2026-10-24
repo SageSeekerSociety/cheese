@@ -387,7 +387,9 @@ def test_the_team_memory_is_read_in_full(client, sessions):
     read: dict[str, str] = {}
 
     async def recall(credential, question):
-        response = await _tool(credential, "cheese_memory_read", {"name": "deploy.md"})
+        response = await _tool(
+            credential, "cheese_memory.project", {"name": "deploy.md"}
+        )
         assert response.status_code == 200, response.text
         read["text"] = next(
             row["content"]

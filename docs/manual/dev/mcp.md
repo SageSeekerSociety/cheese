@@ -17,22 +17,21 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己的 MCP 服务器，见[项目的 MCP 服务器](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，38 样 {#table}
+## 一张表，20 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 38 样；对话、文档、小程序、画布、任务、验收卡、房间各是一样对象工具，括号里是它的动词（见[一个对象一样工具](#objects)）：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 20 样，一个对象一样，括号里是它的动词（见[一个对象一样工具](#objects)）：
 
 | 类别 | 工具 |
 | --- | --- |
-| 对话 | `chat_send`、`todo_write`、`cheese_chat`（list / search / get / replies / edit） |
+| 对话 | `chat_send`、`todo_write`、`cheese_ask`、`cheese_chat`（list / search / get / replies / edit） |
 | 文档 | `cheese_doc`（get / set / edit / new / list）、`cheese_app`（save / get）、`cheese_canvas`（get / edit） |
 | 任务与验收 | `cheese_task`（open / state / close / reopen）、`cheese_card`（request / describe / redeliver / ready） |
-| 通知与拍板 | `cheese_notify`、`cheese_ask` |
-| 资料 | `cheese_fetch`、`cheese_web_search`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
-| 房间 | `cheese_room`（members / rename）、`cheese_status` |
-| 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at`、`cheese_compact`（部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
-| 例行事务 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
-| 项目技能 | `cheese_skill_draft`、`cheese_skill_update`、`skills_search`、`skills_read` |
-| 反馈 | `cheese_feedback_propose`、`cheese_feedback_list`、`cheese_feedback_get`、`cheese_feedback_claim`、`cheese_feedback_release` |
+| 房间 | `cheese_room`（members / rename）、`cheese_notify` |
+| 会话 | `cheese_session`（status / environment / wait / compact / note / deliver_at；compact 要部署打开 `CHEESE_COMPACT_TOOL` 才在清单上） |
+| 资料 | `cheese_web`（fetch / search）、`cheese_help`、`cheese_library`（list） |
+| 例行事务 | `cheese_routine`（create / list / update / pause / report） |
+| 技能 | `cheese_skill`（search / read / propose / update） |
+| 反馈 | `cheese_feedback`（propose / list / get / claim / release） |
 | 运行记录 | `cheese_run_records`（只在平台自己的项目里读得到，见[运行记录](/dev/run-records#retention)） |
 | 其余的平台接口 | `platform_request` |
 
@@ -57,22 +56,6 @@ covers:
 同一个名字在两张表上可以是两样东西：房间的 `cheese_task` 有 open / state / close / reopen，个人芝士的 `cheese_task` 只有 open，而且以用户的名义、经过授权判断去开；`cheese_card` 在房间里是递卡和维护卡，在个人芝士手里是以审阅人身份 decide。是哪一样看凭证：个人芝士和文档芝士的调用都带代行凭证，pi runner 调 `run_platform_tool(..., delegated=True)`，先查 `DELEGATED_TOOLS`；`catalog.schemas_of` 给这些会话列的也是代行那一样。`chat_send` 也是这样：房间里发在这里，个人芝士手里的那一样以用户的名义发到 `where`，经过授权判断。
 
 一个会话也可以只拿一个对象的几个动词：会话的名单里写键（文档芝士写 `cheese_doc.get`、`cheese_doc.edit`、`cheese_doc.set`），`schemas_of` 给它的 `cheese_doc` 就只有这几个动词，runner 也只放行这几个（`pi/runner.py` 的 `_platform_tool`）。
-
-### 退役的名字 {#retired}
-
-会话记录里的调用永远是当时的名字和写法，所以读记录的地方（现场那一行的动词和参数预览）都按键读：`app/domain/session_record/tool_keys.py` 的 `tool_key(name, args)`，前端 `toolLabels.ts` 的 `toolKey`。`RETIRED` 记着并进某个对象、成了它一个动词的旧名字各自变成了哪个键（还在表上、后来才收 `action` 的名字也在，给它收 action 以前的调用）；直接删掉、什么也没变成的工具不在这里，它的旧记录用自己的标签。前端那份副本由 `tests/unit/test_tool_labels.py` 对齐。这张表描述的是库里已有的记录，所以一直留着。
-
-## 一个对象一样工具 {#objects}
-
-一个对象有几个动词时，它是表上的一行（`_object`），`action` 选做哪一件，每个动词（`_verb`）有自己的说明和参数。schema 是扁平的：`action` 枚举排第一、也是唯一的必填项，后面是各动词参数的并集，每个参数的说明写着哪几件收它、哪几件必填。不用 `oneOf` / `anyOf`：同一份 schema 要过三种骨架的工具机制和它们背后的 Anthropic 兼容网关。
-
-一个动词收什么，在调用时查（`run_platform_tool` 里的 `_checked`），发出任何请求之前：
-
-- 没给 `action`，或者给的不是表上的：`<工具> 要 action：<各动词>`。
-- 缺这个动词的必填参数：`<工具>(action=<动词>) 缺少参数：<参数>`。
-- 带了这个动词不收的参数，直接拒，并说出哪件收它：`<工具>(action=<动词>) 不收 <参数>：<参数> 是 <另一样>(action=<动词>) 的参数`，后面列出这个动词收的参数。只给了空值的参数等于没给，不算。
-
-调用按键分派：`<工具>.<action>`，只做一件事的工具就是它的名字。`request_plan`、`_STEPS`、`_SAY` 都按这个键查。
 
 ### 退役的名字 {#retired}
 

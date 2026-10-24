@@ -190,7 +190,10 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
     ]
 
     _due_now(client, routine.id)
-    gateway.script = [("tool", "cheese_inbox", {}), ("text", "今天没有待办。")]
+    gateway.script = [
+        ("tool", "cheese_inbox", {"action": "list"}),
+        ("text", "今天没有待办。"),
+    ]
     _tick(client, gateway)
     [run] = _ended(client, user_id)
 

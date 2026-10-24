@@ -129,7 +129,7 @@ def _by_title(text: str, skills: list[ProjectSkill]) -> str:
     skill's title.
 
     A teammate knows the project's skills by the id at the end of each one
-    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    (it is what it passes to `cheese_skill(action=update)`), so the closest skill it
     names on a proposal card arrives as an id; the person deciding reads
     titles.
     """

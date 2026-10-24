@@ -105,7 +105,6 @@ BRANCHES = True
 
 TOOLS = (
     "cheese_inbox",
-    "cheese_inbox_respond",
     "cheese_read",
     "cheese_find",
     "cheese_help",
@@ -113,17 +112,19 @@ TOOLS = (
     "cheese_task",
     "cheese_card",
     "cheese_room",
-    "cheese_settings_set",
+    "cheese_settings",
     "cheese_routine",
-    "cheese_notify_me",
+    "cheese_notify",
     "cheese_todo",
-    "cheese_memory",
-    "cheese_file_give",
-    "cheese_file_to_computer",
-    "cheese_web_fetch",
-    "cheese_web_search",
-    "cheese_problem_write",
-    "cheese_problem_publish",
+    # 记忆是用户的：记下、读、删掉。项目共享记忆是文档芝士读的。
+    "cheese_memory.save",
+    "cheese_memory.read",
+    "cheese_memory.forget",
+    # 资料：在电脑和用户的资料库之间交文件；读附件是文档芝士的。
+    "cheese_library.give",
+    "cheese_library.take",
+    "cheese_web",
+    "cheese_problem",
 )
 
 
