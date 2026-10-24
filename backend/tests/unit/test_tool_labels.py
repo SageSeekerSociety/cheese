@@ -23,8 +23,8 @@ import re
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.core import tool_keys
 from app.domain.agent import cli_worker
+from app.domain.session_record import tool_keys
 
 ROOT = Path(__file__).resolve().parents[3]
 CLI = ROOT / "backend/sandbox/cheese"
@@ -103,9 +103,8 @@ def test_every_tool_the_extension_adds_has_a_verb():
 
 def test_the_frontend_reads_a_retired_name_as_the_backend_does():
     """A record keeps a call under the name it was made by. The backend reads
-    it as the action it became (`app.core.tool_keys`) and so does 现场; were
+    it as the action it became (`session_record.tool_keys`) and so does 现场; were
     the two copies to differ, the same old call would read as one thing in the
     record's preview and another in its verb."""
     frontend = _frontend_table("RETIRED")
-    backend = {name: key for name, (key, _) in tool_keys.RETIRED.items()}
-    assert frontend == backend
+    assert frontend == tool_keys.RETIRED

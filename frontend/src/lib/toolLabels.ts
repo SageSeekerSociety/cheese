@@ -184,9 +184,9 @@ export function mcpServerOf(name: string): string {
   return /^mcp__([a-z0-9_-]+?)__/.exec(name)?.[1] ?? ''
 }
 
-/** 平台工具表上已经没有的名字，和它变成的那个动作（`<工具>.<action>`）；还在表上、
+/** 并进某个对象、成了它一个动词的旧名字，和它变成的那个动作（`<工具>.<action>`）；还在表上、
  *  后来才收 `action` 的名字也在，给它收 action 以前的那些调用。记录里的调用永远是当时
- *  的写法，所以这张表一直留着。它是 `backend/app/core/tool_keys.py` 里 `RETIRED` 的
+ *  的写法，所以这张表一直留着。它是 `backend/app/domain/session_record/tool_keys.py` 里 `RETIRED` 的
  *  副本，两份由 backend/tests/unit/test_tool_labels.py 对齐。 */
 export const RETIRED: Record<string, string> = {}
 

@@ -58,9 +58,7 @@ covers:
 
 ### 退役的名字 {#retired}
 
-记录里的调用永远是当时的名字和写法，所以读记录的地方（现场那一行的动词和参数预览）都按键读：`app/core/tool_keys.py` 的 `tool_key(name, args)`，前端 `toolLabels.ts` 的 `toolKey`。`RETIRED` 记着表上已经没有的名字各自变成了哪个动作（还在表上、后来才收 `action` 的名字也在，给它收 action 以前的调用），参数改了名的一并记下。前端那份副本由 `tests/unit/test_tool_labels.py` 对齐。
-
-这张表一直留着，不是过渡期的兼容层：Codex 的线程开线程时拿到的工具清单会一直跟着它，`thread/resume` 不收新清单（钉的 0.154.0 和 0.163.0 都是），而清单上没有的名字 Codex 自己就拒了，到不了 runner。所以一条老线程会一直用旧名字调，`harness/codex/tools.py` 用 `as_called_now` 把它换成今天的那次调用再路由。Claude Code 和 pi 续上会话时拿的是新清单，不用这一步。
+会话记录里的调用永远是当时的名字和写法，所以读记录的地方（现场那一行的动词和参数预览）都按键读：`app/domain/session_record/tool_keys.py` 的 `tool_key(name, args)`，前端 `toolLabels.ts` 的 `toolKey`。`RETIRED` 记着并进某个对象、成了它一个动词的旧名字各自变成了哪个键（还在表上、后来才收 `action` 的名字也在，给它收 action 以前的调用）；直接删掉、什么也没变成的工具不在这里，它的旧记录用自己的标签。前端那份副本由 `tests/unit/test_tool_labels.py` 对齐。这张表描述的是库里已有的记录，所以一直留着。
 
 ## 其余的平台接口：platform_request {#rest}
 
