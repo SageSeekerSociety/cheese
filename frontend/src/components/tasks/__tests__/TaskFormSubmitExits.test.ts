@@ -288,3 +288,34 @@ describe('发题表单：改题时那条截止时间', () => {
     expect(payload.hasDeadline).toBeUndefined()
   })
 })
+
+describe('发题表单：分了阶段时没指阶段的提交项和评分要点', () => {
+  it('归第一个阶段：在那一组里看得到，交出去也写着那个阶段', async () => {
+    const view = mountForm({
+      isEditing: true,
+      initialData: {
+        ...FILLED,
+        stages: [
+          { id: 'need', name: '需求分析', description: '', dueAt: null },
+          { id: 'impl', name: '实现', description: '', dueAt: null },
+        ],
+        submissionSchema: [
+          { prompt: '需求文档', type: 'TEXT', stage: null },
+          { prompt: '代码', type: 'FILE', stage: 'impl' },
+        ],
+        rubric: [{ item: '完整', points: 10, criteria: '', stage: null }],
+      },
+    })
+
+    const groups = view.getByTestId('task-form-submission-items').children
+    expect((groups[0].querySelector('input') as HTMLInputElement).value).toBe('需求文档')
+    expect(view.getByTestId('task-form-rubric').children[0].querySelector('input')).not.toBeNull()
+
+    const sent = await submitted(view)
+    expect(sent.submissionSchema).toEqual([
+      { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+      { prompt: '代码', type: 'FILE', stage: 'impl' },
+    ])
+    expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: 'need' }])
+  })
+})

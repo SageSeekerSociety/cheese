@@ -17,7 +17,7 @@ nothing.
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import case, delete, select, update
@@ -95,10 +95,10 @@ def stage_lines(raw: list[dict]) -> list[StageLine]:
                 raise BadRequestError(say("taskTimeInvalid", field="dueAt")) from exc
         key = str(entry.get("id") or "").strip() or None
         if key is not None and not _KEY.fullmatch(key):
-            raise BadRequestError(say("stageReferenceUnknown"))
+            raise BadRequestError(say("stageIdInvalid", id=key))
         # Two stages cannot both be the same one.
         if key in claimed:
-            raise BadRequestError(say("stageReferenceUnknown"))
+            raise BadRequestError(say("stageIdDuplicate", id=key))
         if key is not None:
             claimed.add(key)
         lines.append(
@@ -165,6 +165,7 @@ async def replace_stages(
     refused, before anything is written."""
     old = await list_stages(session, task_id)
     old_count = stage_count(old)
+    lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
     by_key = {stage.key: stage.index for stage in old}
     # Where each old stage went, by its id. Without stages, the one implicit
     # stage is the first stage of whatever replaces it, and the reverse.
@@ -275,16 +276,44 @@ def stage_ref(index: int, keys: Sequence[str]) -> str | None:
     return keys[index] if 0 <= index < len(keys) else None
 
 
-def stage_index(ref: object, keys: Sequence[str]) -> int:
-    """The position of the stage an item, line or hand-in names by id. On a
-    task without stages there is one stage and nothing to name; on a task
-    with stages the id must be one of them."""
+def keyed_by_name(
+    lines: Sequence[StageLine], known: Sequence[tuple[str, str]]
+) -> list[StageLine]:
+    """A stage written without an id is the stage the task already has under
+    that name, when exactly one has it and no other line claims it; otherwise
+    it is new. ``known`` is the existing stages as ``(id, name)``."""
+    taken = {line.key for line in lines if line.key}
+    out = []
+    for line in lines:
+        if line.key is None:
+            same = [key for key, name in known if name == line.name]
+            if len(same) == 1 and same[0] not in taken:
+                line = replace(line, key=same[0])
+                taken.add(same[0])
+        out.append(line)
+    return out
+
+
+def settled_stage(ref: object, keys: Sequence[str]) -> str | None:
+    """The one rule for which stage an item or rubric line belongs to, on every
+    path — the form, a draft, 芝士, the API: on a task without stages it has
+    none; on a task with stages, one that names none belongs to the first
+    stage. An id it names is kept as it is, to be checked against ``keys``."""
     if not keys:
-        if ref in (None, ""):
-            return 0
-        raise BadRequestError(say("stageReferenceUnknown"))
-    if isinstance(ref, str) and ref in keys:
-        return list(keys).index(ref)
+        return None
+    if ref in (None, ""):
+        return keys[0]
+    return str(ref)
+
+
+def stage_index(ref: object, keys: Sequence[str]) -> int:
+    """The position of the stage an item, line or hand-in names by id (after
+    ``settled_stage``). Refused when it names a stage the task does not have."""
+    settled = settled_stage(ref, keys)
+    if settled is None:
+        return 0
+    if settled in keys:
+        return list(keys).index(settled)
     raise BadRequestError(say("stageReferenceUnknown"))
 
 

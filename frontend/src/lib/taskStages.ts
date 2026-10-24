@@ -63,6 +63,14 @@ export function moveStage(form: StagedForm, from: number, to: number): StagedFor
   return { ...form, stages }
 }
 
+/** 一项提交内容或评分要点属于哪个阶段 —— 和后端 `stages.settled_stage` 同一条规矩：
+ *  不分阶段时没有阶段；分了阶段时，没指阶段的（或指着一个已经没有的阶段的）归第一个
+ *  阶段。画、存、发都按它，所以哪一条路都不会把一项弄丢。 */
+export function settledStage(stages: TaskStage[], ref: string | null | undefined): string | null {
+  if (!stages.length) return null
+  return stages.some((stage) => stage.id === ref) ? (ref as string) : stages[0].id ?? null
+}
+
 /** 状态的那一组色调，配 `stage-status` 的样式。 */
 export const STAGE_TONE: Record<TaskStageStatus, 'muted' | 'warn' | 'ok' | 'danger'> = {
   NOT_SUBMITTED: 'muted',

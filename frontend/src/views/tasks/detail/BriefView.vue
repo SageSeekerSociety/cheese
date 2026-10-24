@@ -89,6 +89,7 @@ import { useI18n } from 'vue-i18n'
 import TaskAttachmentList from '@/components/tasks/TaskAttachmentList.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
+import { settledStage } from '@/lib/taskStages'
 
 const props = withDefaults(
   defineProps<{
@@ -114,7 +115,7 @@ function grouped<T extends { stage?: string | null }>(rows: T[]) {
   return stages.value.map((stage, index) => ({
     index,
     title: t('tasks.stages.numbered', { n: index + 1, name: stage.name }) as string | null,
-    rows: rows.filter((row) => row.stage === stage.id),
+    rows: rows.filter((row) => settledStage(stages.value, row.stage) === stage.id),
   }))
 }
 

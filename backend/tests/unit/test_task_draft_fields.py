@@ -151,6 +151,41 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
     assert "  2. 实现（id: a1b2c3）｜截止 不设" in view
 
 
+def test_a_draft_says_which_items_name_a_stage_it_does_not_have():
+    row = TaskDraft(
+        id=6,
+        user_id=1,
+        space_id=7,
+        version=1,
+        fields={
+            "name": "分阶段",
+            "descriptionMarkdown": "要求",
+            "submitterType": "USER",
+            "rank": 2,
+            "stages": [{"id": "a1", "name": "一"}],
+            "submissionSchema": [{"prompt": "代码", "type": "FILE", "stage": None}],
+            "rubric": [{"item": "正确", "points": 1, "stage": "gone"}],
+        },
+    )
+
+    # No stage is the first stage's; a stage the draft does not have is not.
+    assert drafts.missing(row) == ["rubric"]
+
+
+def test_two_stages_of_one_name_cannot_be_named_by_it():
+    with pytest.raises(BadRequestError) as refused:
+        drafts.from_agent(
+            {
+                "stages": [{"name": "实验"}, {"name": "实验"}],
+                "rubric": [{"item": "正确", "points": 60, "stage": "实验"}],
+            },
+            SPACE,
+            {},
+        )
+
+    assert refused.value.args and "实验" in str(refused.value)
+
+
 def test_an_item_naming_a_stage_the_draft_does_not_have_is_refused():
     with pytest.raises(BadRequestError) as refused:
         drafts.from_agent(

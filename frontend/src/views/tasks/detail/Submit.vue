@@ -247,6 +247,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { settledStage } from '@/lib/taskStages'
 import { fmtFileSize } from '@/lib/usageFormat'
 import { useEvents } from '@/views/tasks/events'
 
@@ -321,7 +322,7 @@ const canSubmit = computed(() => {
 // 提交数据：这个阶段的那几项（不分阶段时就是全部）。换了阶段，填的内容重新开始。
 const submissionSchema = computed(() =>
   (props.taskData?.submissionSchema || []).filter(
-    (entry) => (entry.stage ?? null) === (stages.value[stage.value]?.id ?? null)
+    (entry) => settledStage(stages.value, entry.stage) === (stages.value[stage.value]?.id ?? null)
   )
 )
 const submissionContent = ref<{ contentText?: string; contentAttachment?: File }[]>([])

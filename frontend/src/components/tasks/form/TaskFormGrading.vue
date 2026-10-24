@@ -16,6 +16,7 @@ import TaskFormSection from './TaskFormSection.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import { settledStage } from '@/lib/taskStages'
 
 const props = withDefaults(
   defineProps<{
@@ -48,8 +49,12 @@ const groups = computed(() => {
       key: id ?? 'none',
       stage: id,
       title: stage ? t('tasks.form.grading.stageTitle', { n: index + 1, name: stage.name || '' }) : null,
-      items: items.value.map((entry, at) => ({ entry, at })).filter(({ entry }) => (entry.stage ?? null) === id),
-      lines: rubric.value.map((line, at) => ({ line, at })).filter(({ line }) => (line.stage ?? null) === id),
+      items: items.value
+        .map((entry, at) => ({ entry, at }))
+        .filter(({ entry }) => settledStage(props.stages, entry.stage) === id),
+      lines: rubric.value
+        .map((line, at) => ({ line, at }))
+        .filter(({ line }) => settledStage(props.stages, line.stage) === id),
     }
   })
 })

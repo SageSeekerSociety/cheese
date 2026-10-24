@@ -30,6 +30,7 @@ import { z } from 'zod'
 import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
+import { settledStage } from '@/lib/taskStages'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
 export interface TaskFormProps {
@@ -262,7 +263,7 @@ export function useTaskForm(
       return
     }
     const written = submissionSchema.value
-      .map((entry) => ({ ...entry, stage: entry.stage ?? null, prompt: entry.prompt.trim() }))
+      .map((entry) => ({ ...entry, stage: settledStage(stages.value, entry.stage), prompt: entry.prompt.trim() }))
       .filter((entry) => entry.prompt)
     // 每个阶段都至少交一样东西：一样都没写的阶段交一个文件。
     const stageIds = stages.value.length ? stages.value.map((stage) => stage.id ?? null) : [null]
@@ -301,7 +302,7 @@ export function useTaskForm(
         item: line.item.trim(),
         points: Number(line.points) || 0,
         criteria: line.criteria.trim(),
-        stage: line.stage ?? null,
+        stage: settledStage(stages.value, line.stage),
       })),
       rubricPublic: rubricPublic.value,
       stages: stages.value.map((stage) => ({

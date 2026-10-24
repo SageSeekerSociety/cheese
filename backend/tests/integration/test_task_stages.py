@@ -349,11 +349,13 @@ def test_an_item_naming_a_stage_the_task_does_not_have_is_refused(api_client, bo
             "description": "description",
             "space": board["space"]["id"],
             "categoryId": board["space"]["defaultCategoryId"],
+            "stages": STAGES,
             "submissionSchema": [{"prompt": "a", "type": "TEXT", "stage": "nope"}],
         },
         headers=_headers(board["teacher"]),
     )
     assert resp.status_code == 400, resp.text
+    assert resp.json()["error"]["i18n"]["key"] == "stageReferenceUnknown"
 
 
 def test_a_task_without_stages_is_one_stage(api_client, board):
@@ -561,3 +563,113 @@ def test_cheese_renaming_a_published_task_leaves_its_form_as_it_is(api_client, b
     assert after["submissionSchema"] == before["submissionSchema"]
     assert after["rubric"] == before["rubric"]
     assert after["stages"] == before["stages"]
+
+
+def _cheese_writes(api_client, board, **args) -> dict:
+    written = api_client.post(
+        "/task-drafts/agent/write", json=args, headers=_as_cheese(board["teacher"])
+    )
+    assert written.status_code == 200, written.text
+    return written.json()["data"]
+
+
+def _cheese_publishes(api_client, board, draft_id: int):
+    return api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": draft_id},
+        headers=_as_cheese(board["teacher"]),
+    )
+
+
+TWO_STAGES = [
+    {"name": "需求分析", "description": "交需求"},
+    {"name": "实现", "description": "交代码"},
+]
+
+
+def test_items_written_before_the_stages_belong_to_the_first_stage(api_client, board):
+    """芝士 writes the items in one call and the stages in a later one: the
+    items, which name no stage, are the first stage's, in the draft and in the
+    published 题目 alike."""
+    first = _cheese_writes(
+        api_client,
+        board,
+        space=board["space"]["id"],
+        name="分阶段的实验",
+        description="## 要求\n\n写一个缓存模拟器。",
+        difficulty="中级",
+        form="个人",
+        submission=[{"name": "代码", "kind": "文件"}],
+        rubric=[{"item": "正确", "points": 60}],
+    )
+    second = _cheese_writes(api_client, board, draft=first["draft"], stages=TWO_STAGES)
+    assert second["missing"] == []
+
+    published = _cheese_publishes(api_client, board, first["draft"])
+    assert published.status_code == 200, published.text
+    task = _read(api_client, board, published.json()["data"]["task"]["id"])
+    need = task["stages"][0]["id"]
+    assert [e["stage"] for e in task["submissionSchema"]] == [need]
+    assert [r["stage"] for r in task["rubric"]] == [need]
+
+
+def test_splitting_a_published_task_into_stages_keeps_its_items_and_hand_ins(
+    api_client, board
+):
+    """A published task without stages, split by 芝士 writing only the stages:
+    its items and what was handed in are the first stage's."""
+    task_id = _publish(
+        api_client,
+        board,
+        stages=[],
+        submissionSchema=[{"prompt": "代码", "type": "TEXT"}],
+        rubric=[{"item": "正确", "points": 60, "criteria": ""}],
+    )
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, None, ["hello"]))
+
+    written = _cheese_writes(api_client, board, task=task_id, stages=TWO_STAGES)
+    assert written["missing"] == []
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 200, saved.text
+
+    task = _read(api_client, board, task_id)
+    need = task["stages"][0]["id"]
+    assert [e["stage"] for e in task["submissionSchema"]] == [need]
+    assert [r["stage"] for r in task["rubric"]] == [need]
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "PENDING_REVIEW",
+        "NOT_SUBMITTED",
+    ]
+
+
+def test_stages_restated_without_their_ids_stay_the_same_stages(api_client, board):
+    """芝士 writes the stages again by name only, in another order: each is
+    the stage of that name, so its id, items, rubric and hand-ins stay with it."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, NEED, ["需求"]))
+
+    written = _cheese_writes(
+        api_client,
+        board,
+        task=task_id,
+        stages=[{"name": "实现"}, {"name": "需求分析"}],
+    )
+    assert written["missing"] == []
+    saved = _cheese_publishes(api_client, board, written["draft"])
+    assert saved.status_code == 200, saved.text
+
+    task = _read(api_client, board, task_id)
+    assert [(s["id"], s["name"]) for s in task["stages"]] == [
+        (IMPL, "实现"),
+        (NEED, "需求分析"),
+    ]
+    assert {r["item"]: r["stage"] for r in task["rubric"]} == {
+        "完整": NEED,
+        "正确": IMPL,
+    }
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "NOT_SUBMITTED",
+        "PENDING_REVIEW",
+    ]
