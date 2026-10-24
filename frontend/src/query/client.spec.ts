@@ -35,22 +35,26 @@ it('a refresh does not cancel a read someone else starts right after it', async 
 it('patching a key nobody has read yet leaves the read in flight alone', async () => {
   const KEY = ['project', 'p', 'topics']
   let reads = 0
-  const queryFn = vi.fn(
-    () =>
-      new Promise((resolve) => {
-        reads += 1
-        setTimeout(() => resolve({ data: [`第 ${reads} 次读回来`] }), 20)
-      })
-  )
+  // 这一次读什么时候落地由用例说了算：靠「先等一小会儿再改」的时序会随机器快慢翻转，
+  // 读落到了前面，改动前后都会绿，这条用例就白写了。
+  let land: () => void = () => {}
+  const queryFn = vi.fn(() => {
+    reads += 1
+    return new Promise((resolve) => {
+      land = () => resolve({ data: ['第 1 次读回来'] })
+    })
+  })
   const scope = effectScope()
   scope.run(() => useQuery({ queryKey: KEY, queryFn }, queryClient))
   await flush()
   expect(reads).toBe(1)
+  expect(queryClient.getQueryData(KEY)).toBeUndefined()
 
   // 标已读顺手熄灯：缓存里还没有这份数据，这一改无事可做。
   await patchQuery(KEY, (rows: unknown) => rows)
 
   // 那次读照常在飞：它落地时东西就在手上了。
+  land()
   await vi.waitFor(() => expect(queryClient.getQueryData(KEY)).toEqual({ data: ['第 1 次读回来'] }))
   expect(reads).toBe(1)
   scope.stop()
