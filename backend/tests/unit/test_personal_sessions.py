@@ -534,6 +534,37 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
 
 
 @pytest.mark.anyio
+async def test_a_runner_gone_before_it_is_asked_what_it_heard_is_started_again(
+    host, platform
+):
+    """A backend that never spoke to the session (one just deployed) finds it
+    running, and its runner goes (it let the idle session go) before it is
+    asked whether anything was said to it: it is started again and told,
+    rather than the answer failing on a runner that is not there."""
+    hub, _ = host
+    platform([{"text": "记住了。"}])
+    launch = _launch(7)
+    await _ask(SessionHost(hub), launch, "The password is PINEAPPLE.")
+
+    fresh = SessionHost(hub)
+    await fresh.start(launch.ref, launch.spec, launch.access)
+    stop_all(hub.home)
+    work = uuid.uuid4()
+    await fresh.send(
+        launch.ref,
+        Prompt(
+            work,
+            "What was the password?",
+            acting=question_credential(launch.user),
+            preface="（之前的对话）",
+        ),
+        work_id=work,
+    )
+
+    assert hub.alive(launch.ref.state)
+
+
+@pytest.mark.anyio
 async def test_a_third_session_lets_the_least_recently_used_one_go(host, platform):
     hub, sessions = host
     platform([])
