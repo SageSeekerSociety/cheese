@@ -46,9 +46,8 @@ function pane(content: number, height = 400) {
 
 afterEach(() => vi.unstubAllGlobals())
 
-async function mounted(content: number) {
+async function mountOn(el: HTMLElement) {
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
-  const box = pane(content)
   let scroll!: ReturnType<typeof useChatScroll>
   render(
     defineComponent({
@@ -58,10 +57,15 @@ async function mounted(content: number) {
       },
     })
   )
-  scroll.scrollRef.value = box.el
+  scroll.scrollRef.value = el
   scroll.contentRef.value = document.createElement('div')
   await nextTick()
-  return { box, scroll }
+  return scroll
+}
+
+async function mounted(content: number) {
+  const box = pane(content)
+  return { box, scroll: await mountOn(box.el) }
 }
 
 /** 读的人往上滚了一段，停在这一栏中间：这是「记下的位置不是底部」的来路。
@@ -111,6 +115,71 @@ describe('回到一段对话时内容还没长够', () => {
     box.grow(2400)
     fire()
     expect(box.el.scrollTop).toBe(box.el.scrollHeight - box.el.clientHeight)
+  })
+
+  // 只按像素摆是不够的：行的高度一变，同一个偏移就是另一条消息了。真机上剩下的那半屏
+  // 偏移就是这么来的——回来时上面的行还在估计高度上，记下的像素指到了别处。所以还记
+  // 顶边那一行，按它摆回去。
+  it('按顶边那一行摆回去：上面的行还在估计高度上也不指错', async () => {
+    const paneHeight = 400
+    const el = document.createElement('div')
+    el.style.height = `${paneHeight}px`
+    const heights = [100, 100, 100, 100, 100, 100, 100, 100]
+    let scrollTop = 0
+    const rows = heights.map((_, i) => {
+      const row = document.createElement('div')
+      row.dataset.rowId = `r${i}`
+      row.getBoundingClientRect = () => {
+        const above = heights.slice(0, i).reduce((a, b) => a + b, 0)
+        const top = -scrollTop + above
+        return { top, bottom: top + heights[i], height: heights[i], left: 0, right: 300, width: 300, x: 0, y: top }
+      }
+      el.appendChild(row)
+      return row
+    })
+    el.getBoundingClientRect = () => ({
+      top: 0,
+      bottom: paneHeight,
+      height: paneHeight,
+      left: 0,
+      right: 300,
+      width: 300,
+      x: 0,
+      y: 0,
+    })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => paneHeight })
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => heights.reduce((a, b) => a + b, 0) })
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = Math.max(0, Math.min(v, heights.reduce((a, b) => a + b, 0) - paneHeight))
+      },
+    })
+
+    const scroll = await mountOn(el)
+
+    // 停在「顶边被 r2 压住 30px」的那一处
+    el.scrollTop = el.scrollHeight - paneHeight
+    scroll.rememberScroll('room') // 停在底部
+    el.scrollTop = 230
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    scroll.rememberScroll('room')
+
+    // 回来时每行只报 50（估计高度），整段因此比这一屏还矮：
+    // 像素 230 放不进去，会被卡到 0——那正是「屏幕上换成另一条消息」的来路。
+    heights.fill(50)
+    scroll.restoreScroll('room')
+    await nextTick()
+    expect(scroll.atBottom.value).toBe(false)
+
+    // 真实高度回来：顶边又是 r2，还压进去 30px。
+    heights.fill(100)
+    fire()
+
+    const rect = rows[2].getBoundingClientRect()
+    expect(Math.round(rect.top)).toBe(-30)
+    expect(scroll.atBottom.value).toBe(false)
   })
 
   it('人自己动过手，就听他的，不再回填', async () => {
