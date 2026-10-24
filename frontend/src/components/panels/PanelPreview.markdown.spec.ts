@@ -6,6 +6,8 @@
  * 三分支走的是同一套事件（`PanelPreview.document.spec.ts` 里另有端到端的一条），
  * 这里只盯这两条规则，所以直接挂 `PanelPreviewView`、把 props 递进去。
  */
+import type { Ref } from 'vue'
+
 import { computed, reactive, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -435,4 +437,126 @@ it('拿不到文件身份时退回拼一句话那条老路', async () => {
   const [payload] = ui.emitted().locate as { message: string }[][]
   expect(payload[0].message).toContain('重试 3 次')
   expect(payload[0].message).toContain('改这句')
+})
+
+// ---- 已有的评论画在文件上 ----
+//
+// 哪几条画得出来，是在面板这一层定的：锚点里那段原文要找得回来，而且记的得是**这一版**。
+// 找位置那一步在 `markdownAnchors` 里（那一份自己有一串用例），这里盯的是选哪些锚点、
+// 画出来之后点它开到哪一条。
+
+const TEXT_RANGE = {
+  kind: 'text-range',
+  path: 'output/说明.md',
+  source: 'live',
+  version: 'v1',
+  task_id: null,
+  text: '重试 3 次',
+  heading: '配置',
+  prefix: '失败以后',
+  suffix: '。',
+}
+
+/** 评论那一包：几条线程各挂一个锚点，栏本身关着（读者点标记才该把它打开）。 */
+function commentsWithOpen(anchors: (Record<string, unknown> | null)[], open: Ref<boolean>) {
+  return {
+    target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({
+        threads: anchors.map((anchor, at) => ({
+          comment: {
+            id: `c${at + 1}`,
+            author: 'li',
+            content: `第 ${at + 1} 条评论`,
+            anchor_quote: null,
+            anchor,
+            created_at: '2026-10-24T00:00:00Z',
+          },
+          revision: 1,
+          state: 'open',
+          replies: [],
+        })),
+        activity: {},
+        errors: {},
+        busy: false,
+        unknown: null,
+      }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async () => {},
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+}
+
+/** 正文上那一颗标记，画出来要等正文自己加载完。 */
+function markIn(md: HTMLElement, id: string): Promise<HTMLElement> {
+  return waitFor(() => {
+    const found = md.querySelector<HTMLElement>(`mark[data-file-comment="${id}"]`)
+    expect(found).toBeTruthy()
+    return found!
+  })
+}
+
+it('只画这一版上记的正文锚点，别的版本记的和不是正文的那几种都不画', async () => {
+  // 三条线程：一条记在这一版上（画），一条记在上一版（不画——那一段话在这一版里可能
+  // 已经挪走或改过，照旧位置画会指到另一句话上），一条是另一种锚点（不画——幻灯片的
+  // 整页文字也带 `text`，但那是「第几页」，不是正文里的一处；拿它在正文里找会画出个
+  // 不相干的地方）。
+  const open = ref(false)
+  const onOtherVersion = { ...TEXT_RANGE, version: 'v0' }
+  const onASlide = {
+    kind: 'slide-page',
+    path: 'output/说明.md',
+    source: 'live',
+    version: 'v1',
+    task_id: null,
+    page: 1,
+    text: '重试 3 次',
+  }
+  const ui = mount({ comments: commentsWithOpen([TEXT_RANGE, onOtherVersion, onASlide], open) })
+
+  const md = ui.getByTestId('markdown')
+  const drawn = await markIn(md, 'c1')
+  expect(drawn.textContent).toBe('重试 3 次')
+  expect(md.querySelectorAll('mark[data-file-comment]')).toHaveLength(1)
+})
+
+it('点正文上的标记，把那一串评论打开，而且开的就是这一条', async () => {
+  // 标记画在正文里，评论栏在另一侧。点它得有反应，而且是开到**被点的那一条**：
+  // 只把栏打开、不指出是哪条，一屏好几条评论时读者还得自己找。
+  const open = ref(false)
+  const ui = mount({ comments: commentsWithOpen([TEXT_RANGE], open) })
+  const drawn = await markIn(ui.getByTestId('markdown'), 'c1')
+  expect(open.value).toBe(false)
+
+  await fireEvent.click(drawn)
+
+  await waitFor(() => expect(open.value).toBe(true))
+  const column = await ui.findByLabelText('评论')
+  expect(column.querySelector('.doc-thread-card.is-active')?.textContent).toContain('第 1 条评论')
+})
+
+it('在栏里换了另一条在看，正文上画重的那一处跟着换', async () => {
+  // 两边说的是同一件事「现在看的是哪一条」。栏里换了卡、正文还亮着上一条，读者会以为
+  // 点差了；反过来也一样——所以这条是双向的，不是只从正文往栏里传一次。
+  const open = ref(false)
+  const second = { ...TEXT_RANGE, text: '失败以后', heading: '配置', prefix: '', suffix: '重试 3 次' }
+  const ui = mount({ comments: commentsWithOpen([TEXT_RANGE, second], open) })
+  const md = ui.getByTestId('markdown')
+  await fireEvent.click(await markIn(md, 'c1'))
+  const column = await ui.findByLabelText('评论')
+  await waitFor(() => expect(column.querySelector('[data-thread="c1"].is-active')).toBeTruthy())
+
+  await fireEvent.click(column.querySelector<HTMLElement>('[data-thread="c2"]')!)
+
+  await waitFor(() =>
+    expect(md.querySelector('mark[data-file-comment="c2"]')?.classList.contains('is-active')).toBe(true)
+  )
+  expect(md.querySelector('mark[data-file-comment="c1"]')?.classList.contains('is-active')).toBe(false)
+  expect(column.querySelector('[data-thread="c2"].is-active')).toBeTruthy()
 })

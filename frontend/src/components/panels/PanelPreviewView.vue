@@ -224,6 +224,46 @@ async function commentHere() {
 const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
 const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
 
+// ---- 把已有的评论画在文件上 ----
+//
+// 只画正文里真能找回位置的那一种（`text-range`），而且只画**这一版**上记的：评论记的
+// 是哪一版 + 哪一处，换了一版那段话可能已经挪走或改过，照旧位置画会指到另一句话上。
+// 找不回来的（正文改了）就不画——比画错强。
+const focusedThread = ref<string | null>(null)
+const threadAnchors = computed(() =>
+  (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
+    const anchor = thread.comment.anchor as
+      | {
+          kind?: string
+          version?: string
+          text?: string
+          heading?: string | null
+          prefix?: string
+          suffix?: string
+        }
+      | null
+      | undefined
+    if (!anchor || anchor.kind !== 'text-range' || !anchor.text) return []
+    if (!anchor.version || anchor.version !== commentTarget.value?.version) return []
+    return [
+      {
+        id: thread.comment.id,
+        quote: {
+          text: anchor.text,
+          heading: anchor.heading ?? null,
+          prefix: anchor.prefix ?? '',
+          suffix: anchor.suffix ?? '',
+        },
+      },
+    ]
+  })
+)
+/** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
+function openAnchor(id: string) {
+  focusedThread.value = id
+  if (!props.comments?.open.value) props.comments?.toggle()
+}
+
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
 defineExpose({ handleEscape, handlePick: pick.fromFrame })
@@ -345,6 +385,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :revs="revs"
       :file-history="fileHistory"
       :show-history="showHistory"
+      :anchors="threadAnchors"
+      :active-anchor="focusedThread"
+      @anchor="openAnchor"
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
@@ -414,6 +457,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :thread-state="props.comments!.threads.state"
       :thread-actions="props.comments!.threads.actions"
       :pick="commentPick"
+      :focus-id="focusedThread"
       :writable="true"
       :post="postFileComment"
       :name-of="commentNameOf"
@@ -421,6 +465,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :agent-name="agentName"
       @clear-pick="clearLocator"
       @close="props.comments?.toggle()"
+      @update:open-id="focusedThread = $event"
     />
 
     <PreviewLocator

@@ -1402,6 +1402,23 @@ button:not(.v-btn) {
   border-left: 2px solid var(--line-2);
   color: var(--muted);
 }
+/* 有人在预览里评过的那几个字（`.md-content` 这块正文里，`markdownAnchors` 包出来的）。
+   和文档正文的同一种标记（`DocProse.vue` 的 `.doc-comment-mark`）：浅琥珀底加一道琥珀
+   下划线，正看着的那一串更重。两处不共用一条规则是因为它们挂在两套不同的正文容器上
+   （这里是 `v-html` 渲染的阅读视图，那里是编辑器），但那对颜色必须一致——同一个东西
+   在两处长得不一样，读者会以为是两种标记。 */
+.file-comment-mark {
+  background: color-mix(in srgb, var(--accent-wash) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.file-comment-mark:hover,
+.file-comment-mark.is-active {
+  background: var(--accent-wash);
+  border-bottom-color: var(--accent);
+}
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。
    定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/refChip 一处
