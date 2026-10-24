@@ -371,6 +371,9 @@ export function previewBundle(
       toggle: noop,
       threads: docThreadsBundle(),
       post: noopAsync,
+      // 名册那一包给的：演示里照 handle 显示，头像交给首字母。
+      nameOf: (handle: string) => handle,
+      avatarOf: () => '',
     },
     revs: v.revs,
     editing: ref(v.editing),
