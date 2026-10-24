@@ -70,9 +70,10 @@ APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
 # too. The 30s cap means a pull resumes at most half a minute after a burst
 # ends. The budget is shared by every pull of one deploy and sized against the
 # tighter of the two jobs that run this script: prod's 30-minute limit
-# (deploy-prod.yml; dev's is 180). No prod release has run this script yet; on
-# dev it took 4-7.5 minutes on 2026-10-24 (nine successful runs, every pull
-# included) after about a minute of earlier steps, so 10 minutes of retrying
+# (deploy-prod.yml; dev's is 180). No prod release has run this version yet; on
+# dev it took 4-7.5 minutes in the 22 successful runs of 2026-10-24
+# (UTC, every pull included) after about a minute of earlier steps, and the one
+# prod release of its first version took 10 minutes, so 10 minutes of retrying
 # plus a last attempt still ends in this script's own error and its reclaim,
 # not in the runner killing the job. An image that does not exist at all is
 # not what this waits out: both workflows refuse a release
