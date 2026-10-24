@@ -1,10 +1,11 @@
 """平台在会话还在干活时，自己往会话里说的两句话；和做任务的会话还在跑时，问它任务
 做到哪了的那一句（`StaleProgressReminder`）。
 
-两句话问的是同一件事的两半：会话在干活，而房间里看得见的东西停在原地。看得见的有两
-样——话，和步骤清单——所以是两句，不是一句。分开，是因为它们能分开停：会话可以一直
-在说话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也成立。
-`QuietSessionReminders.silence` 管前一样，`QuietSessionReminders.checklist` 管后一样。
+两句话问的是两件事。`QuietSessionReminders.silence` 问话：有人对它说了话，它读到
+以后一句没回。回过一句它就安心干活，不再催它说话：干活的过程在现场看得到，做到哪了
+看清单和任务状态，对话里只说要人出手的事、大家该知道的变化和做完的结果。
+`QuietSessionReminders.checklist` 问清单：会话在干活，清单却停在原地。它们能分开停：
+会话可以回过话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也成立。
 
 判据都是平台核得了的事，不看轮次：会话此刻在不在干活（这台进程持有的座位、它的
 runner 说在干活，`ComputePool.working_conversations`），它为手上这段工作读进去的输入
@@ -144,16 +145,19 @@ async def _asked(
 
 async def _said_since(
     session: AsyncSession, conversation: uuid.UUID, acting: str, since: datetime
-) -> datetime | None:
-    """``acting`` 在这里最近一次说话的时刻，只算 ``since`` 之后的：别的队友说话
-    不算它说了。"""
-    return await session.scalar(
-        select(func.max(Block.created_at)).where(
-            Block.conversation_id == conversation,
-            Block.kind == BlockKind.message,
-            participant_blocks(),
-            Block.author == acting,
-            Block.created_at > since,
+) -> bool:
+    """``acting`` 在 ``since`` 之后有没有在这里说过话：别的队友说话不算它说了。"""
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    Block.conversation_id == conversation,
+                    Block.kind == BlockKind.message,
+                    participant_blocks(),
+                    Block.author == acting,
+                    Block.created_at > since,
+                )
+            )
         )
     )
 
@@ -213,9 +217,9 @@ class QuietSessionReminders:
             return False
 
     async def silence(self, now: datetime) -> int:
-        """在回一个人的话、却从读到那句话起（或上一次说话起）一直没出声的座位，
-        每过 `chat_progress_reminder_after_s` 听到一次。读进去的不是人话的会话
-        （平台叫它做的检查、别的队友的话）有它自己的通知规矩，这里不管。"""
+        """读到一个人的话之后一句都没回的座位，每过 `chat_progress_reminder_after_s`
+        听到一次。回过以后不再叫它：之后它在干活时不出声是该有的样子。读进去的不是
+        人话的会话（平台叫它做的检查、别的队友的话）有它自己的通知规矩，这里不管。"""
         threshold = settings.chat_progress_reminder_after_s
         seats = self._at_work()
         if not seats:
@@ -228,12 +232,14 @@ class QuietSessionReminders:
                 asked = await _asked(session, conversation, acting, work)
                 if asked is None:
                     continue
-                spoke = await _said_since(session, conversation, acting, asked.read_at)
-                quiet_since = spoke or asked.read_at
-                since = max(quiet_since, self._silence_reminded.get(seat, quiet_since))
+                if await _said_since(session, conversation, acting, asked.read_at):
+                    continue
+                since = max(
+                    asked.read_at, self._silence_reminded.get(seat, asked.read_at)
+                )
                 if (now - since).total_seconds() < threshold:
                     continue
-                minutes = int((now - quiet_since).total_seconds() // 60)
+                minutes = int((now - asked.read_at).total_seconds() // 60)
                 due.append((seat, minutes, await language_of(session, asked.author)))
 
         async def remind(seat: Seat, minutes: int, language: str | None) -> bool:

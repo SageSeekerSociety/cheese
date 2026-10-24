@@ -376,8 +376,11 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "chat_send",
             "Publish a message to the current Cheese room. "
-            "Use for user-visible updates and replies; "
-            "ordinary model output is not published. "
+            "Use it to answer people, and for what they need to know: you need "
+            "a person or are blocked, filed a card, changed plan, found "
+            "something that changes the task, or are done. Do not narrate "
+            "progress; people watch the work live. "
+            "Ordinary model output is not published. "
             "Pictures go out with the message through `attachments`, shown in the "
             "conversation itself — no page to open.",
             {

@@ -88,7 +88,7 @@ def test_the_site_keeps_the_words_and_drops_the_repeat(client):
     ]
     assert "先看分页接口" in said
     assert not any(PLATFORM_NOTICE in text for text in said), said
-    assert not any("分钟没听到你说话" in text for text in said), said
+    assert not any("分钟了还没回" in text for text in said), said
 
     # The record is untouched: 现场 is a projection, not an edit.
     records = [str((block.get("meta") or {}).get("record")) for block in blocks]
