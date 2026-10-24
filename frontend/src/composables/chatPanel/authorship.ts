@@ -64,10 +64,11 @@ export function usePanelAuthorship(deps: {
   }
   const pendingBlock = (item: Outgoing) => pendingMessageBlock(item, deps.author)
 
-  // 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
+  // 时间那一格说的是送达状态。断网时当场说等待连接；正常连接下超过阈值还没回来才说发送中；失败那行自己会说原因。
   function outgoingState(item: Outgoing): string {
     if (item.state === 'failed') return ''
-    return deps.connected.value ? t('work.room.chat.sending') : t('work.room.chat.waitingConnection')
+    if (!deps.connected.value) return t('work.room.chat.waitingConnection')
+    return item.slow ? t('work.room.chat.sending') : ''
   }
 
   // Every visible row asks for its time on each timeline render, and

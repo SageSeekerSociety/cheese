@@ -30,6 +30,8 @@ wiring lives in ``app.api.auth``.
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from app.core.sentences import say
+
 # Adapters injected at the trust boundary.
 TokenVerifier = Callable[[str], "TokenIdentity | None"]  # bearer/query token → identity
 CheeseVerifier = Callable[[], Awaitable[bool]]  # X-Cheese-Token valid for THIS route?
@@ -61,6 +63,22 @@ class Actor:
         """True when the actor came from a verified credential (token or the
         agent's scoped token), False for the anonymous placeholder."""
         return self.via in ("token", "cheese", "delegated")
+
+    @property
+    def by_assistant(self) -> bool:
+        """A 芝士 is acting for this person (a delegated credential): what it
+        writes is theirs, with their authority, and is marked as done by it on
+        their behalf wherever the write is attributed (`acted_by`,
+        ``meta.by_assistant``) — the person's own 芝士 is not the person
+        (docs/agent-principles.md 一、四)."""
+        return self.via == "delegated"
+
+
+def acted_by(handle: str, *, by_assistant: bool) -> str:
+    """How a room line names whoever did something: the person (``<@handle>``),
+    or 「芝士代 <@handle>」 when their own 芝士 did it for them."""
+    mention = f"<@{handle}>"
+    return say("actedByAssistant", person=mention) if by_assistant else mention
 
 
 async def resolve_actor(

@@ -46,11 +46,11 @@ _RULES = (
     "不用之后再告诉你结果。照结果说：没有执行的不要说已执行。不要为了通过判断换个说法再试。"
     "哪几类操作始终需要确认、哪些无需确认，用户在个人设置的「芝士」页自己设置，你不能替"
     "用户改。\n"
-    "6. 项目里的文档和代码你不改：要改，用 cheese_task_open 开任务交给项目的 AI 队友。\n"
+    "6. 项目里的文档和代码你不改：要改，用 cheese_task(action=open) 开任务交给项目的 AI 队友。\n"
     "7. 你写下的改动（题目草稿）页面会逐项列给用户看，回复里一两句话说做了什么，不要逐项复述。\n"
     "8. 用户要你定时做一件事、在某件事发生时做一件事，或过一会儿提醒用户，用 cheese_routine "
     "建例行事务；到时平台开一段新对话让你做，以「<平台>」开头的那条是平台的说明，不是用户"
-    "的话。要马上告诉用户一件事，用 cheese_notify_me。\n"
+    "的话。要马上告诉用户一件事，用 cheese_notify。\n"
     "9. 你有一份关于用户的记忆：对话开头「关于这个人」里列着每条的一句描述，要用正文时用 "
     "cheese_memory 读。以后的对话用得上、平台上又读不到的事，用 cheese_memory 记下：用户"
     "是谁、在做什么，做事的要求（怎么写、用什么格式、怎么称呼），纠正过你的和认可过的做法，"
@@ -81,8 +81,8 @@ _COMPUTER = (
     "14. 电脑闲置一段时间后回收，上面的文件全部清空，下次用是一台新电脑。工具结果说沙箱"
     "环境已换成新的时，之前的文件和装过的软件都没有了，要用就重新生成；用户问起，如实说明。\n"
     "15. 用户的文件在用户的资料库里：用户附给你的文件、你交给用户的文件都在，换个话题也在"
-    "（cheese_read library 列出来）。要用代码处理一份，先用 cheese_file_to_computer 放进"
-    "电脑。电脑上的文件用户看不到：做出来的图、表格、文档要交给用户，用 cheese_file_give，"
+    "（cheese_read library 列出来）。要用代码处理一份，先用 cheese_library(action=take) 放进"
+    "电脑。电脑上的文件用户看不到：做出来的图、表格、文档要交给用户，用 cheese_library(action=give)，"
     "回答下方会显示这份文件，不要只把内容贴进回答。电脑连不到用户的项目。"
 )
 
@@ -113,12 +113,13 @@ def task_brief(
     *,
     claim: TaskMembership | None = None,
     timezone: str | None = None,
-    materials: list[tuple[int, str]] | None = None,
+    materials: list[str] | None = None,
     materials_readable: bool = False,
 ) -> str:
     """The task as 芝士 is shown it: what anyone who can open the task page
     reads there, and its materials by name (``materials``: what
-    ``cheese_read`` reads as ``files/<id>``, when the asker may) — plus the asker's own claim
+    ``cheese_read`` reads as ``spaces/<s>/tasks/<t>/files/<name>``, when the
+    asker may download them) — plus the asker's own claim
     (``app.domain.task.claims.own_claim``) when they have one. Times are on the
     asker's clock (``timezone``, the one their browser reported). Wrapped so
     the rules can call it material rather than instructions."""
@@ -148,7 +149,10 @@ def task_brief(
             if materials_readable
             else "材料（领取获批后才能读取，现在读不到）："
         )
-        lines += [f"- {name}（files/{file_id}）" for file_id, name in materials]
+        lines += [
+            f"- {name}（spaces/{task.space_id}/tasks/{task.id}/files/{name}）"
+            for name in materials
+        ]
     return (
         TASK_SCENE
         + "\n"

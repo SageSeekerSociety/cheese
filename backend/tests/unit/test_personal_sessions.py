@@ -38,6 +38,7 @@ from app.domain.agent.session_host.answer import (
     Subagents,
     Thinking,
     Tool,
+    ToolArgs,
     ToolDone,
     Words,
     ask,
@@ -47,13 +48,14 @@ from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = ("cheese_my_tasks", "cheese_docs_search")
+TOOLS = ("cheese_read", "cheese_help")
 
 
 #: What the platform's routes answer a tool's request with, by path prefix.
 ANSWERS = {
     "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
     "/topics/": {"content": "文档正文", "doc_version": 3},
+    "/assistant/agent/read": {"text": "任务「报名说明」（ml/tasks/12），进行中\n正文"},
 }
 
 
@@ -130,6 +132,9 @@ class Platform:
                         if index < len(outer.steps)
                         else {"text": "好。"}
                     )
+                # A step that answers only once the test lets it.
+                if isinstance(step.get("held"), threading.Event):
+                    step["held"].wait(60)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close")
@@ -194,22 +199,27 @@ def _chunks(index: int, step: dict) -> list[dict]:
         }
 
     usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-    if "tool" in step:
-        call = {
-            "index": 0,
-            "id": f"call_{index}",
-            "type": "function",
-            "function": {
-                "name": step["tool"],
-                "arguments": json.dumps(step.get("arguments", {})),
-            },
-        }
+    if "tool" in step or "tools" in step:
+        # Several calls in one message (``tools``), or one.
+        made = step.get("tools") or [step]
+        calls = [
+            {
+                "index": n,
+                "id": f"call_{index}_{n}",
+                "type": "function",
+                "function": {
+                    "name": made_one["tool"],
+                    "arguments": json.dumps(made_one.get("arguments", {})),
+                },
+            }
+            for n, made_one in enumerate(made)
+        ]
         # What it says before the call, in the same message.
         said = [chunk({"content": step["say"]})] if step.get("say") else []
         return [
             chunk({"role": "assistant", "content": None if not said else ""}),
             *said,
-            chunk({"tool_calls": [call]}),
+            chunk({"tool_calls": calls}),
             chunk({}, "tool_calls", usage=usage),
         ]
     text = step["text"]
@@ -311,7 +321,10 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
     hub, sessions = host
     first_words_seen = threading.Event()
     fake = platform(
-        [{"tool": "cheese_my_tasks"}, {"text": "你领了一道题：图像分类基线复现。"}],
+        [
+            {"tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "你领了一道题：图像分类基线复现。"},
+        ],
         rest_held_until=first_words_seen,
     )
     launch = _launch(7)
@@ -325,7 +338,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     said = "".join(e.text for e in events if isinstance(e, Words))
     assert said == "你领了一道题：图像分类基线复现。"
-    assert any(isinstance(e, Tool) and e.name == "cheese_my_tasks" for e in events)
+    assert any(isinstance(e, Tool) and e.name == "cheese_read" for e in events)
     assert events[-1] == Answer("你领了一道题：图像分类基线复现。")
     # More than one piece: the first words were handed on while the model was
     # still writing the rest.
@@ -333,8 +346,8 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "cheese_docs_search",
-        "cheese_my_tasks",
+        "cheese_help",
+        "cheese_read",
         "cheese_subagent_send",
         "cheese_subagent_start",
         "cheese_subagent_stop",
@@ -367,7 +380,7 @@ async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_r
     _hub, sessions = host
     platform(
         [
-            {"say": "我先查一下。", "tool": "cheese_my_tasks"},
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
             {"text": "你领了一道题。"},
         ]
     )
@@ -391,13 +404,42 @@ async def test_a_call_is_placed_after_what_was_said_before_it_and_told_when_it_r
 
 
 @pytest.mark.anyio
+async def test_a_read_comes_back_with_the_name_of_what_it_read_and_its_whole_arguments(
+    host, platform
+):
+    """A reader shows what was read by name, not by the reference it was
+    given, and the call's arguments whole however little of them the message
+    showed while it was written."""
+    _hub, sessions = host
+    platform(
+        [
+            {"tool": "cheese_read", "arguments": {"ref": "ml/tasks/12"}},
+            {"text": "读完了。"},
+        ]
+    )
+
+    events = await _ask(sessions, _launch(7), "报名说明写了什么？")
+
+    returned = next(e for e in events if isinstance(e, ToolDone))
+    assert returned.shown == "任务「报名说明」"
+    args = ""
+    for e in events:
+        if isinstance(e, ToolArgs) and e.call == returned.call:
+            args = args[: e.at] + e.text
+    assert json.loads(args) == {"ref": "ml/tasks/12"}
+
+
+@pytest.mark.anyio
 async def test_a_credential_renewed_mid_answer_is_what_the_next_call_acts_with(
     host, platform
 ):
     _hub, sessions = host
     spoke = threading.Event()
     fake = platform(
-        [{"say": "我先查一下。", "tool": "cheese_my_tasks"}, {"text": "好。"}],
+        [
+            {"say": "我先查一下。", "tool": "cheese_read", "arguments": {"ref": "me"}},
+            {"text": "好。"},
+        ],
         rest_held_until=spoke,
     )
     launch = _launch(7)
@@ -444,6 +486,69 @@ async def test_a_branch_works_in_the_background_and_its_conclusion_is_gone_on_wi
     # The conclusion came to 芝士 as the platform's, before it summed up.
     assert "第 1 份 85 分" in json.dumps(fake.requests[-1], ensure_ascii=False)
     assert len(fake.branch_requests) == 1
+
+
+@pytest.mark.anyio
+async def test_the_answer_goes_on_while_cheese_waits_for_a_branch(host, platform):
+    """芝士 says it will wait and stops; its branch is still at work. The
+    answer is not over: once the branch comes back, 芝士 goes on with it."""
+    _hub, sessions = host
+    slow = threading.Event()
+    platform(
+        [
+            {
+                "tool": "cheese_subagent_start",
+                "arguments": {"description": "读频道", "prompt": "读综合频道"},
+            },
+            {"text": "等它读完。"},
+            {"text": "汇总：综合频道在修 CI。"},
+        ],
+        branch_steps=[{"text": "综合频道在修 CI。", "held": slow}],
+    )
+
+    asking = asyncio.ensure_future(_ask(sessions, _launch(7), "写周报"))
+    await asyncio.sleep(3)
+    assert not asking.done(), "the answer ended while its branch was still at work"
+    slow.set()
+    events = await asking
+
+    assert events[-1].text.endswith("汇总：综合频道在修 CI。")
+
+
+@pytest.mark.anyio
+async def test_branches_started_together_each_keep_their_own_and_both_come_back(
+    host, platform
+):
+    _hub, sessions = host
+    fake = platform(
+        [
+            {
+                "tools": [
+                    {
+                        "tool": "cheese_subagent_start",
+                        "arguments": {"description": "打第 1 份", "prompt": "第 1 份"},
+                    },
+                    {
+                        "tool": "cheese_subagent_start",
+                        "arguments": {"description": "打第 2 份", "prompt": "第 2 份"},
+                    },
+                ]
+            },
+            {"text": "等它们。"},
+            {"text": "收到一个。"},
+            {"text": "汇总。"},
+        ],
+        branch_steps=[{"text": "第 1 份 85 分。"}, {"text": "第 2 份 90 分。"}],
+    )
+
+    events = await _ask(sessions, _launch(7), "给两份报告打分")
+
+    told = [e for e in events if isinstance(e, Subagents)][-1].branches
+    assert sorted(b["description"] for b in told) == ["打第 1 份", "打第 2 份"]
+    assert len({b["id"] for b in told}) == 2
+    assert all(b["status"] == "done" for b in told)
+    heard = json.dumps(fake.requests, ensure_ascii=False)
+    assert "第 1 份 85 分" in heard and "第 2 份 90 分" in heard
 
 
 @pytest.mark.anyio
@@ -531,6 +636,37 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
     assert "The password is PINEAPPLE." in asked
     # It was started again, on the conversation it had.
     assert ["python3", "-"] in hub.execs[launched:]
+
+
+@pytest.mark.anyio
+async def test_a_runner_gone_before_it_is_asked_what_it_heard_is_started_again(
+    host, platform
+):
+    """A backend that never spoke to the session (one just deployed) finds it
+    running, and its runner goes (it let the idle session go) before it is
+    asked whether anything was said to it: it is started again and told,
+    rather than the answer failing on a runner that is not there."""
+    hub, _ = host
+    platform([{"text": "记住了。"}])
+    launch = _launch(7)
+    await _ask(SessionHost(hub), launch, "The password is PINEAPPLE.")
+
+    fresh = SessionHost(hub)
+    await fresh.start(launch.ref, launch.spec, launch.access)
+    stop_all(hub.home)
+    work = uuid.uuid4()
+    await fresh.send(
+        launch.ref,
+        Prompt(
+            work,
+            "What was the password?",
+            acting=question_credential(launch.user),
+            preface="（之前的对话）",
+        ),
+        work_id=work,
+    )
+
+    assert hub.alive(launch.ref.state)
 
 
 @pytest.mark.anyio

@@ -71,6 +71,8 @@ export interface Outgoing {
   quotedContext?: QuotedContext
   /** queued = 还没送出去（排在前一条后面，或连不上在等重试）; sending = 请求在路上; failed = 后端拒了 */
   state: 'queued' | 'sending' | 'failed'
+  /** 发送在路上已超过阈值（或曾中断重试）：此时才露出「发送中…」与半透明态。 */
+  slow?: boolean
   /** 服务端拒了这一条时它说的话。 */
   error?: string
 }

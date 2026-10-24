@@ -25,6 +25,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task import package
 from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
@@ -830,6 +831,8 @@ class TaskSubmissionService:
             "member": member_summary,
             "submitter": submitter_summary,
             "version": submission.version,
+            # 交的是题目的第几版；有版本之前交的是 None。
+            "packageRevision": submission.package_revision,
             "createdAt": created_ms,
             "updatedAt": updated_ms,
             "content": content_dtos,
@@ -909,6 +912,12 @@ class TaskSubmissionService:
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
+            # 交的是题目的哪一版：题目之后再改，这一份按它交的那一版看。
+            package_revision=(
+                await package.current_number(self._session, participant.task_id)
+                if self._session is not None
+                else None
+            ),
         )
 
         await self._entry_repo.create_entries(

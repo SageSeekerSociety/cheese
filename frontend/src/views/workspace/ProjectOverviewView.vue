@@ -29,6 +29,7 @@ import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { revisionSummary } from '@/lib/taskRevision'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
@@ -83,6 +84,8 @@ const emit = defineEmits<{
   'open-artifact': [artifactId: string]
   'all-tasks': []
   'retry-progress': []
+  /** 看题目的材料：项目资料库的 `题目/`。 */
+  'open-task-folder': []
 }>()
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
@@ -136,10 +139,13 @@ const progressDays = computed(() => {
 function progressTitle(item: ProgressItem): string {
   if (item.kind === 'version')
     return t('work.overview.versionOf', { name: item.artifactName, version: item.version ?? 0 })
+  if (item.kind === 'revised')
+    return t('work.overview.revisedOf', { version: item.version ?? 0, changes: revisionSummary(item.changes) })
   return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
+  else if (item.kind === 'revised') emit('open-task-folder')
   else if (item.taskId && item.roomId) emit('open-task', { taskId: item.taskId, roomId: item.roomId })
 }
 

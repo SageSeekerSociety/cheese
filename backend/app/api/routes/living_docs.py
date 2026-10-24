@@ -3,7 +3,7 @@
 The document itself is edited live in the collaboration service. This module
 signs the ticket a browser opens it with, answers that service when it loads
 and stores a document, and turns the writes that do not come from an editor
-(an HTTP PUT — 芝士's ``cheese_doc_set`` among them — and a restore) into
+(an HTTP PUT — 芝士's ``cheese_doc(action=set)`` among them — and a restore) into
 changes the service applies to the live document. None of them writes the
 database directly: the service's store is the one place a version is recorded.
 """

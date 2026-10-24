@@ -109,7 +109,7 @@ async def test_a_replace_takes_the_name_lock_before_it_reads(project):
 
     await records.replace(
         session,
-        shelf=Shelf.of_project(project),
+        shelf=Shelf.of_project(project, with_task=False),
         name="预算.xlsx",
         data=b"v2",
         by="user-1",
@@ -129,7 +129,7 @@ async def test_a_lost_race_comes_back_as_a_conflict_not_a_crash(project):
     with pytest.raises(ConflictError) as refused:
         await records.replace(
             session,
-            shelf=Shelf.of_project(project),
+            shelf=Shelf.of_project(project, with_task=False),
             name="预算.xlsx",
             data=b"v2",
             by="user-1",

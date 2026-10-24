@@ -431,8 +431,13 @@ def test_a_task_state_report_names_the_run_its_runner_says_it_is_in(
     result = process.call(
         "tools/call",
         {
-            "name": "cheese_task_state",
-            "arguments": {"id": "state", "session_id": "fixture", "state": "blocked"},
+            "name": "cheese_task",
+            "arguments": {
+                "id": "state",
+                "session_id": "fixture",
+                "action": "state",
+                "state": "blocked",
+            },
         },
     )
     assert "deny" not in json.loads(result["content"][0]["text"])
@@ -502,10 +507,11 @@ def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transpo
     response = process.call(
         "tools/call",
         {
-            "name": "cheese_app_save",
+            "name": "cheese_app",
             "arguments": {
                 "id": "save",
                 "session_id": "fixture",
+                "action": "save",
                 "code": "<p>x</p>",
                 "title": "试算",
                 "document": "fixture-doc",

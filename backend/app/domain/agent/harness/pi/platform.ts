@@ -134,9 +134,9 @@ function text(body: string) {
 // --- the platform's own tools ------------------------------------------------
 //
 // These arrive as extension tools. The catalog is the runner's, read from the
-// platform's own file: the platform's tool table (the same one the other
-// harnesses serve) plus the CLI commands that run on the room's machine as a
-// process.
+// platform's own file: the platform's tool table, the same one the other
+// harnesses serve. The CLI's own commands are no tools here: a room runs them
+// with its bash, `cheese …`, as every other harness does.
 
 function registerPlatformTools(pi: any, spec: Manifest) {
   for (const tool of spec.tools) {
@@ -904,7 +904,10 @@ function holdToAnswering(pi: any) {
     if (!debt) return;
     // Reading the room is on the way to answering it, and answers nothing.
     if (!debt.answers.includes(event.toolName)) {
-      if (debt.reads.includes(event.toolName)) return;
+      // A read is one verb of an object, by its key (`cheese_chat.list`).
+      const action = event.input?.action;
+      const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
+      if (debt.reads.includes(key)) return;
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;
@@ -1330,7 +1333,7 @@ function withoutHands(pi: any, spec: Manifest) {
 // its own ~130MB of a session's 512), with a context of its own, so forty
 // reports read by four branches never fill 芝士's own. They behave as Claude
 // Code's subagents do, named as the rest of 芝士's tools are (an object, then
-// what is done to it; `SendMessage` would read as `cheese_message_send`,
+// what is done to it; `SendMessage` would read as `chat_send`,
 // which speaks as the person): `cheese_subagent_start` starts one in the
 // background and returns at once, so 芝士 goes on (and several run at a time);
 // `cheese_subagent_send` says more to one that is running, or takes up again
@@ -1355,9 +1358,10 @@ const BRANCH_TOOLS = new Set([
   "cheese_read",
   "cheese_find",
   "cheese_help",
-  "cheese_inbox",
-  "cheese_web_fetch",
-  "cheese_web_search",
+  // One of an object's verbs by its key: a branch reads the inbox but answers
+  // nothing in it, which is done as the person.
+  "cheese_inbox.list",
+  "cheese_web",
   "read",
   "write",
   "edit",
@@ -1382,7 +1386,7 @@ type Branch = {
   call: string;
   description: string;
   status: "running" | "done" | "failed" | "stopped";
-  steps: { name: string; args: string }[];
+  steps: { name: string; args: string; shown?: string }[];
   session: any;
   // What it sent 芝士 mid-way that 芝士 has not been given yet.
   untold: string[];
@@ -1392,6 +1396,9 @@ type Branch = {
 
 function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
   const branches = new Map<string, Branch>();
+  // Numbered as they are started, before anything is awaited: several started
+  // in one message start at once, and each keeps a number of its own.
+  let started = 0;
   let woken: (() => void) | null = null;
   // The main session's context, for whether 芝士 is working right now.
   let main: any = null;
@@ -1475,7 +1482,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
   const stopAll = () => {
     for (const branch of running()) {
       branch.status = "stopped";
-      void branch.session.abort?.();
+      void branch.session?.abort?.();
     }
     tell();
     wake();
@@ -1506,8 +1513,9 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
           ...text(`同时最多 ${BRANCHES_AT_ONCE} 个分身在做，等一个交回结论再派。`),
           isError: true,
         };
+      started += 1;
       const branch: Branch = {
-        id: `branch-${branches.size + 1}`,
+        id: `branch-${started}`,
         call,
         description: String(params.description ?? ""),
         status: "running",
@@ -1517,19 +1525,26 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
         ended: null,
       };
       main = ctx ?? main;
-      branch.session = await branchSession(
-        tools,
-        ctx,
-        (step) => {
-          branch.steps.push(step);
-          tell();
-        },
-        (message) => {
-          branch.untold.push(message);
-          arrived();
-        },
-      );
+      // Counted at once, so the limit holds for several started together.
       branches.set(branch.id, branch);
+      try {
+        branch.session = await branchSession(
+          tools,
+          ctx,
+          (step) => {
+            if (step) branch.steps.push(step);
+            tell();
+          },
+          (message) => {
+            branch.untold.push(message);
+            arrived();
+          },
+        );
+      } catch (error) {
+        branches.delete(branch.id);
+        throw error;
+      }
+      if (branch.status !== "running") return text(`分身 ${branch.id} 还没开始就停下了。`);
       run(branch, String(params.prompt ?? ""));
       return {
         ...text(
@@ -1561,6 +1576,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       if (!branch) return { ...text(`没有编号是 ${params.to} 的分身。`), isError: true };
       const said = String(params.message ?? "");
       if (branch.status === "running") {
+        if (!branch.session) return { ...text(`分身 ${branch.id} 还在启动，稍后再发。`), isError: true };
         await branch.session.steer(said);
         return text(`已告诉分身 ${branch.id}，它下一步之前会读到。`);
       }
@@ -1588,7 +1604,7 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
       if (!branch) return { ...text(`没有编号是 ${params.id} 的分身。`), isError: true };
       if (branch.status !== "running") return text(`分身 ${branch.id} 已经不在做了。`);
       branch.status = "stopped";
-      await branch.session.abort?.();
+      await branch.session?.abort?.();
       tell();
       wake();
       return text(`已停下分身 ${branch.id}。`);
@@ -1639,7 +1655,8 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
 async function branchSession(
   tools: Map<string, any>,
   ctx: any,
-  stepped: (step: { name: string; args: string }) => void,
+  // A step it made, or null when one it made changed (what it read came back).
+  stepped: (step: { name: string; args: string; shown?: string } | null) => void,
   sent: (message: string) => void,
 ) {
   let calls = 0;
@@ -1662,12 +1679,17 @@ async function branchSession(
       return text("已发给芝士。");
     },
   };
+  const mayCall = (name: string, action?: unknown) =>
+    BRANCH_TOOLS.has(name) || (typeof action === "string" && BRANCH_TOOLS.has(`${name}.${action}`));
   const given = [...tools.values()]
-    .filter((tool) => BRANCH_TOOLS.has(tool.name))
+    .filter((tool) => BRANCH_TOOLS.has(tool.name) || [...BRANCH_TOOLS].some((k) => k.startsWith(`${tool.name}.`)))
     .map((tool) => ({
       ...tool,
       label: tool.label ?? tool.name,
       async execute(...args: any[]) {
+        const action = args[1]?.action;
+        if (!mayCall(tool.name, action))
+          return { ...text(`分身不做 ${tool.name}(action=${action})：这是以用户的名义做的事，留给芝士。`), isError: true };
         calls += 1;
         if (calls > BRANCH_CALLS)
           return {
@@ -1704,13 +1726,24 @@ async function branchSession(
     sessionManager: SessionManager.inMemory(ctx?.cwd ?? process.cwd()),
     settingsManager: SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 3 } }),
   });
+  // What it reads, by name, once it comes back: what came back opens with
+  // the thing's name (as the runner reads it for 芝士's own calls, `named`).
+  const steps = new Map<string, { name: string; args: string; shown?: string }>();
   session.subscribe((event: any) => {
-    if (
-      event.type === "tool_execution_start" &&
-      !event.parentToolCallId &&
-      event.toolName !== sendBack.name
-    )
-      stepped({ name: event.toolName, args: JSON.stringify(event.args ?? {}) });
+    if (event.parentToolCallId || event.toolName === sendBack.name) return;
+    if (event.type === "tool_execution_start") {
+      const step = { name: event.toolName, args: JSON.stringify(event.args ?? {}) };
+      steps.set(String(event.toolCallId ?? ""), step);
+      stepped(step);
+    } else if (event.type === "tool_execution_end") {
+      const step = steps.get(String(event.toolCallId ?? ""));
+      const read = (event.result?.content ?? []).find((b: any) => b?.type === "text")?.text ?? "";
+      const found = /^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)/.exec(String(read).trimStart());
+      if (step && found) {
+        step.shown = found[1];
+        stepped(null);
+      }
+    }
   });
   return session;
 }

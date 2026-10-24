@@ -135,7 +135,7 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。每一种都带一句它是什么、怎么收费（`description`），项目设置里选默认环境时就写在那一项旁边。平台的两种写的是每小时多少点，数取自计费本身用的价格（`usage.compute.hourly_price`，即 `CLOUD_SANDBOX_CREDITS_PER_HOUR`，和 `CLOUD_VM_CREDITS_PER_HOUR` 里配置的虚拟机创建规格 `cloud_vm_cores` / `cloud_vm_memory_mb`），虚拟机还写出它的核数和内存；没定价的规格照实说它暂时无法启动。
 
 ## 三、放不下的时候
 
@@ -173,7 +173,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 ## 六、已定但还没做完的
 
-**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_ready` 把它标成可评审、用 `cheese_accept_request` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
+**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_card(action=ready)` 把它标成可评审、用 `cheese_card(action=request)` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
 ## 七、归档退掉什么
 
@@ -233,6 +233,6 @@ Installation and storage configuration are described in
 - `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
 - `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，机器的那端在这里
 - `backend/app/api/preview_relay.py` — 运行环境预览：平台这一半，浏览器的另一端和两端共用的 hub
-- `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案
+- `backend/app/domain/machine/environments.py` — 能选的规格（`offered_specs`），以及没人选过时用哪个
 - `backend/app/domain/device/supply.py` — 可见性两档与「哪档真能跑」
 - `docs/device-self-hosting.md` — 自托管设备那条路的完整说明

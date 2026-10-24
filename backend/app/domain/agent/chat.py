@@ -57,6 +57,7 @@ from app.domain.agent.gateway_usage import (
     charge_turn_spend,
     project_gateway_key,
 )
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.input_registration import confirm_receipt
 
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
@@ -133,6 +134,7 @@ from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
+from app.domain.agent.turn.store.session_inputs import forget_opening
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.delivery.input_identity import InputReceipt
@@ -355,6 +357,15 @@ class ChatService(
             harness,
             native,
             read=read,
+        )
+
+    async def context_compacted(self, session: SessionRef) -> None:
+        """``session`` compacted its context (`turn.store.forget_opening`)."""
+        await forget_opening(
+            self._sessions,
+            conversation_id=session.conversation_id,
+            agent_handle=session.agent_handle,
+            harness=session.harness,
         )
 
     async def result_landed(self, report: Report) -> None:

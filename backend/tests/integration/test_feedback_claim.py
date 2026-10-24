@@ -379,7 +379,7 @@ def test_an_agent_on_the_platform_claims_with_its_tool_and_a_person_is_then_refu
     topic = _topic(client, platform, DEV)
     agent = AgentHost(client, platform, topic)
 
-    said = agent.run("cheese_feedback_claim", feedback=row["display_id"])
+    said = agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert row["display_id"] in said
     assert "记在你名下" in said
@@ -391,7 +391,7 @@ def test_an_agent_on_the_platform_claims_with_its_tool_and_a_person_is_then_refu
     assert refused.status_code == 409
     assert seat in refused.json()["error"]["message"]
 
-    agent.run("cheese_feedback_release", feedback=row["display_id"])
+    agent.run("cheese_feedback", action="release", feedback=row["display_id"])
     assert _view(client, REPORTER, row["id"])["assignee_handle"] is None
 
 
@@ -402,7 +402,7 @@ def test_an_agent_is_told_not_to_fix_what_someone_else_holds(client, platform):
     agent = AgentHost(client, platform, topic)
 
     with pytest.raises(cheese.PlatformToolError) as refusal:
-        agent.run("cheese_feedback_claim", feedback=row["display_id"])
+        agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert "不要修" in str(refusal.value)
     assert DEV2 in str(refusal.value)
@@ -416,7 +416,7 @@ def test_an_agent_outside_the_platform_cannot_claim(client, platform):
     agent = AgentHost(client, elsewhere, topic)
 
     with pytest.raises(cheese.PlatformToolError) as refusal:
-        agent.run("cheese_feedback_claim", feedback=row["display_id"])
+        agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert "不要修" in str(refusal.value)
     assert _view(client, REPORTER, row["id"])["assignee_handle"] is None

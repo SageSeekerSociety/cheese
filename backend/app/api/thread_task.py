@@ -2,7 +2,7 @@
 
 Two roads lead here and they do the same thing: a person turns the 支线
 (`POST /blocks/{block}/upgrade` on the message it hangs under, which the 支线's
-「转为任务」 is), or its AI teammate does on someone's word (`cheese_task` with
+「转为任务」 is), or its AI teammate does on someone's word (`cheese_task(action=open)` with
 ``here``). The task takes the 支线's id, so the conversation, its AI teammate's
 session and everything said in it carry on; from the next turn the session
 keeps its work (`Place.keeps_work`).

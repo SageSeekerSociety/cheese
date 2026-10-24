@@ -97,7 +97,7 @@ class Runner(runner.Runner[Journal]):
         # print is said to the session through `tell`.
         self.monitors: Monitors | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once app-server has the request and the
         # thread's compaction has not finished. Set from the thread the tool
         # call runs on (`tools.RemoteTools`), read here.
@@ -348,7 +348,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

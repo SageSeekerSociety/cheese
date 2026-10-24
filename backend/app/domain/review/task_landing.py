@@ -422,7 +422,7 @@ def task_next_step_prompt(*, title: str, task_id) -> str:
         f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
         f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "对照实况文档接着做下一步，做完再用 cheese_card(action=request) 递一次交付；"
         "这一步做完任务目标就全部达成时 completes_task 填 true，"
         "还有没做完的就填 false，并在交付说明里写下一步做什么。"
     )
@@ -437,9 +437,9 @@ def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
         "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
-        "再用 cheese_accept_request 把它作为下一步递交，"
+        "再用 cheese_card(action=request) 把它作为下一步递交，"
         "做完任务目标就全部达成时 completes_task 填 true。"
-        "新做的东西如果不需要交付，就用 cheese_close_task 关闭任务，结论里写明。"
+        "新做的东西如果不需要交付，就用 cheese_task(action=close) 关闭任务，结论里写明。"
     )
 
 
@@ -449,13 +449,13 @@ def task_summary_prompt(*, title: str) -> str:
     return (
         f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
         "只做三件事：\n"
-        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
         "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
         "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
         "写明是什么、没有交付。"
         "没什么可补的，只写一句结果。\n"
-        "3. 用 cheese_close_task 关闭任务，结论写一句结果。\n"
+        "3. 用 cheese_task(action=close) 关闭任务，结论写一句结果。\n"
         "不要改动文件，不要提交审阅。"
     )

@@ -3,7 +3,14 @@
 // 能重新打开。
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { __resetProjectTourForTests, GUIDE_STEPS, noteFacts, replayTour, useProjectTour } from './useProjectTour'
+import {
+  __resetProjectTourForTests,
+  GUIDE_STEPS,
+  noteFacts,
+  replayTour,
+  resolveGuideStep,
+  useProjectTour,
+} from './useProjectTour'
 
 const none = { asked: false, answered: false, accepted: false, learned: false }
 const at = (key: string) => GUIDE_STEPS.findIndex((s) => s.key === key)
@@ -126,5 +133,66 @@ describe('新手引导的后半程', () => {
     replayTour()
     expect(guide.active.value).toBe(true)
     expect(guide.stop.value).toBe(0)
+  })
+})
+
+describe('导览这一站指哪里', () => {
+  // 同一个名字永远是同一个元素：`toBe` 比的是它自己被指到没有。
+  const els = new Map<string, HTMLElement>()
+  const el = (name: string) => {
+    if (!els.has(name)) els.set(name, { name } as unknown as HTMLElement)
+    return els.get(name)!
+  }
+  const onPageEls =
+    (...anchors: string[]) =>
+    (name: string) =>
+      anchors.includes(name) ? el(name) : null
+
+  it('到了任务页就是整块区域：不画圈，浮窗落在页面上', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page'))
+    expect(stop?.target).toBe(el('task-page'))
+    expect(stop?.text).toBe('text')
+    expect(stop?.area).toBe(true)
+  })
+
+  it('还只在支线右半边时，圈的是「整页打开」那颗按钮', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-open-page'))
+    expect(stop?.target).toBe(el('task-open-page'))
+    expect(stop?.area).toBe(false)
+  })
+
+  it('任务页和按钮都在时，按锚点顺序认任务页', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-page', 'task-open-page'))
+    expect(stop?.area).toBe(true)
+  })
+
+  it('任务还没出现时指着任务卡等，不画圈', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('taskPage')], onPageEls('task-row'))
+    expect(stop?.target).toBe(el('task-row'))
+    expect(stop?.text).toBe('textWaiting')
+    expect(stop?.area).toBe(true)
+  })
+
+  it('该出现的东西出了错时用重试那句', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('reply')], onPageEls('reply-failed'))
+    expect(stop?.text).toBe('textFailed')
+  })
+
+  it('一个能指的都没有时不出浮窗', () => {
+    expect(resolveGuideStep(GUIDE_STEPS[at('taskPage')], () => null)).toBeNull()
+  })
+
+  it('重播时目标没开着就落到时间线上，而且每一站都能往下走', () => {
+    const send = GUIDE_STEPS[at('send')]
+    expect(resolveGuideStep(send, onPageEls('timeline'))).toBeNull()
+    const stop = resolveGuideStep(send, onPageEls('timeline'), { replaying: true })
+    expect(stop?.target).toBe(el('timeline'))
+    expect(stop?.area).toBe(true)
+    expect(stop?.action).toBe(false)
+  })
+
+  it('不是重播时，动作步做到了才算完，没有「下一步」', () => {
+    const stop = resolveGuideStep(GUIDE_STEPS[at('send')], onPageEls('composer-send'))
+    expect(stop?.action).toBe(true)
   })
 })

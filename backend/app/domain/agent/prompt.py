@@ -42,7 +42,9 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
+from app.domain.library import mount
 from app.domain.library import records as library_records
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_CONTEXT_COMPACT,
     SEVERITY_INFO,
@@ -50,6 +52,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.task import package
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -123,7 +126,7 @@ def _session_opening_lines(
     complaint was 29 turns timing out against a 900s ceiling nobody had been
     told about. Two things happened to it. The ceiling went away (there is no
     countdown; saying there was one made the agent rush — dev, 2026-08-08), and
-    `cheese_status` — added in that same commit, for that same complaint — took
+    `cheese_session(action=status)` — added in that same commit, for that same complaint — took
     over the rest: cards, gate output and disk are all one call away, and the
     header was restating them every turn, from a snapshot that stopped being
     true after the first one. What is left is the part no call and no turn can
@@ -162,8 +165,8 @@ def _session_opening_lines(
     if earlier_messages:
         lines.append(
             f"- 这里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
-            "动手之前先用 `cheese_chat_list` 读最近的记录；"
-            "要找某句原话或某个决定，用 `cheese_chat_search`。"
+            "动手之前先用 `cheese_chat(action=list)` 读最近的记录；"
+            "要找某句原话或某个决定，用 `cheese_chat(action=search)`。"
         )
     return lines
 
@@ -260,6 +263,20 @@ async def live_inputs(
     return stored, replied
 
 
+async def _reads_task_files(
+    session: AsyncSession, project_id: uuid.UUID, paths: list[str]
+) -> bool:
+    """Whether the room's agent reads the `题目/` files among ``paths``: as the
+    project's owner may (`package.mount_for_agents`). No question asked when
+    none of them is one."""
+    if not any(
+        (name := library.library_name(path)) is not None and mount.under(name)
+        for path in paths
+    ):
+        return False
+    return await package.mount_for_agents(session, project_id)
+
+
 async def model_images(
     session: AsyncSession,
     project_id: uuid.UUID,
@@ -300,6 +317,9 @@ async def model_images(
         room_id,
         [path for path, _ in wanted],
         max_bytes=MODEL_IMAGE_MAX_BYTES,
+        with_task=await _reads_task_files(
+            session, project_id, [path for path, _ in wanted]
+        ),
     )
     undecodable.update(too_large)
     for path, claimed in wanted:
@@ -334,7 +354,13 @@ async def offered_attachments(
     # One answer for the whole message: asking per attachment was a query and a
     # disk call each, on the first-byte path of every turn.
     present_paths = await library_records.attachments_present(
-        session, project_id, room_id, [b.content for b in attachments]
+        session,
+        project_id,
+        room_id,
+        [b.content for b in attachments],
+        with_task=await _reads_task_files(
+            session, project_id, [b.content for b in attachments]
+        ),
     )
     gone = {b.id for b in attachments if b.content not in present_paths}
     present = [b for b in attachments if b.content in present_paths]

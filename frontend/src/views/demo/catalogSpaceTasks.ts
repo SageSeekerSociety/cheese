@@ -12,7 +12,12 @@
  * `CatalogEntry`、`CatalogNeed` 是 type-only 引用：`catalog.ts` 反过来要分册的值，
  * 运行时不构成循环。
  */
+import type { Citable } from '@/types/citable'
 import type { CatalogEntry, CatalogNeed } from './catalog'
+
+import { ref } from 'vue'
+
+import { MOST_CITED, useCitePicker } from '@/composables/useCitePicker'
 
 import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
@@ -42,6 +47,7 @@ import {
 } from './catalogViewSettingsWorkspaceFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import CiteMenu from '@/components/assistant/CiteMenu.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
@@ -56,6 +62,33 @@ import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
 import AssistantView from '@/views/user/settings/AssistantView.vue'
+
+/** @ 菜单的例子候选（假数据），眼前是项目「知是」。 */
+const CITE_ITEMS: Citable[] = [
+  { id: 'a1', kind: 'task', title: '接入搜索', where: '知是', place: '后端' },
+  { id: 'a2', kind: 'task', title: '修复回答中插话', where: '知是', place: '后端' },
+  { id: 'a3', kind: 'task', title: '接入数据集', where: '机器学习课程设计', place: '实验' },
+  { id: 'c1', kind: 'channel', title: '设计', where: '知是' },
+  { id: 'd1', kind: 'doc', title: '10 月周报', where: '知是' },
+  { id: 'd2', kind: 'doc', title: '搜索接入方案', where: '知是' },
+  { id: 'file-f1', kind: 'file', title: 'cheese自建周报-2026-10-19.md', where: '我的资料库' },
+]
+
+/** @ 菜单的一格：输入框里打着 `text`，候选是上面几样，眼前是项目「知是」。 */
+function citeDemo(text: string) {
+  const items = CITE_ITEMS
+  return useCitePicker({
+    draft: ref(text),
+    caret: ref(text.length),
+    items: () => items,
+    recents: () => ['a1', 'd1', 'c1', 'a3', 'file-f1'],
+    project: () => '知是',
+    most: MOST_CITED,
+    opened: () => {},
+    picked: () => {},
+    scrollActiveIntoView: () => {},
+  })
+}
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -477,6 +510,109 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           ],
         },
         expect: '芝士没有给出回答',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s13.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s13.note')
+        },
+        // 在频道「后端」里：上一句引用了一份文档和一个任务、带着选中的一段；输入框上方是
+        // 「当前页面」和这一次又选中的一段。
+        props: {
+          pageLabel: '频道「后端」',
+          selection: '首个字要等很久，所以超时设成 600 秒',
+          messages: [
+            {
+              role: 'user',
+              text: '<#d1> 里说的超时和 <#a1> 改的是一回事吗？',
+              at: '2026-10-24T09:00:00Z',
+              askedOn: '频道「后端」',
+              selection: '超时设成 600 秒',
+              cited: [
+                { id: 'd1', kind: 'doc', title: '搜索接入方案' },
+                { id: 'a1', kind: 'task', title: '接入搜索' },
+              ],
+            },
+            {
+              role: 'assistant',
+              text: '是一回事：方案里写的 600 秒就是任务「接入搜索」里改的模型代理读超时。',
+              at: '2026-10-24T09:00:20Z',
+            },
+          ],
+        },
+        expect: '超时设成 600 秒',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s14.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s14.note')
+        },
+        props: { pageLabel: '频道「后端」', pageOff: true },
+        expect: '频道「后端」',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s15.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s15.note')
+        },
+        // 在输入框里打 @ 就弹出菜单（候选是例子数据）。
+        props: {
+          pageLabel: '频道「后端」',
+          project: '知是',
+          citable: CITE_ITEMS,
+          recents: ['a1', 'd1', 'c1', 'a3', 'file-f1'],
+          cited: { d2: { kind: 'doc', title: '搜索接入方案' } },
+        },
+        expect: '频道「后端」',
+      },
+    ],
+  },
+  {
+    id: 'cite-menu',
+    title: 'CiteMenu',
+    get about() {
+      return t('catalog.citeMenu.about')
+    },
+    file: 'src/components/assistant/CiteMenu.vue',
+    component: CiteMenu,
+    needs: UI_T,
+    args: { picker: citeDemo('@'), project: '知是', most: MOST_CITED },
+    states: [
+      {
+        get name() {
+          return t('catalog.citeMenu.s1.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s1.note')
+        },
+        props: {},
+        expect: '最近去过',
+      },
+      {
+        get name() {
+          return t('catalog.citeMenu.s2.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s2.note')
+        },
+        props: { picker: citeDemo('@接入') },
+        expect: '搜索接入方案',
+      },
+      {
+        get name() {
+          return t('catalog.citeMenu.s3.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s3.note')
+        },
+        props: { picker: citeDemo('<#a> <#b> <#c> <#d> <#e> @') },
+        expect: '最多引用 5 样',
       },
     ],
   },
@@ -919,7 +1055,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     file: 'src/views/tasks/detail/BriefView.vue',
     component: BriefView,
     needs: UI_T,
-    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloadingId: null },
+    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloading: null },
     states: [
       {
         get name() {

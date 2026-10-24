@@ -1,11 +1,9 @@
 <template>
   <ul class="ta">
-    <li v-for="file in attachments" :key="file.id" class="ta__row" data-testid="task-attachment">
+    <li v-for="file in attachments" :key="file.name" class="ta__row" data-testid="task-attachment">
       <v-icon size="16" class="ta__icon">mdi-file-outline</v-icon>
       <span class="ta__name">{{ file.name }}</span>
-      <span class="ta__meta t-num">{{
-        t('tasks.attachments.meta', { size: fmtFileSize(file.size), n: file.downloadCount })
-      }}</span>
+      <span class="ta__meta t-num">{{ fmtFileSize(file.size) }}</span>
       <!-- 看得见清单不等于拿得到文件。这一行由服务端的 canDownload 决定，
            前端不拿自己的角色去猜 —— 判据只有一份。 -->
       <BaseButton
@@ -13,7 +11,7 @@
         kind="ghost"
         size="sm"
         prepend-icon="mdi-download"
-        :loading="downloadingId === file.id"
+        :loading="downloading === file.name"
         @click="emit('download', file)"
       >
         {{ t('tasks.attachments.download') }}
@@ -24,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskAttachmentData } from '@/types/taskBoard'
+import type { TaskFileData } from '@/types/taskBoard'
 
 import { useI18n } from 'vue-i18n'
 
@@ -33,12 +31,13 @@ import { fmtFileSize } from '@/lib/usageFormat'
 
 /** 一道题的材料清单。清单和能不能下载都由外面给，这里只画和报「要下载哪一个」。 */
 defineProps<{
-  attachments: TaskAttachmentData[]
+  attachments: TaskFileData[]
   canDownload: boolean
-  downloadingId?: number | null
+  /** 正在下载的那一份（名字）。 */
+  downloading?: string | null
 }>()
 
-const emit = defineEmits<{ download: [file: TaskAttachmentData] }>()
+const emit = defineEmits<{ download: [file: TaskFileData] }>()
 
 const { t } = useI18n()
 </script>

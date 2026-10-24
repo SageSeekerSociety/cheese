@@ -71,8 +71,8 @@ class CreateTaskRequest(BaseModel):
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
     )
-    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
-    # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
+    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时拷进题目
+    # 资料库（``package.add_uploads``）：题目还没建好时没有资料库可放。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
@@ -175,6 +175,10 @@ class PatchTaskRequest(BaseModel):
     default_role: str | None = Field(default=None, alias="defaultRole")
     # The whole list of mentors; omitted leaves it as it is.
     mentors: list[str] | None = None
+    # Files the person uploaded (``POST /attachments``) to add to the 题目's
+    # materials with this change: the ones 芝士 put into the changes it wrote.
+    # A published 题目's own files page adds them one at a time instead.
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
 class CreateSubmissionReviewRequest(BaseModel):

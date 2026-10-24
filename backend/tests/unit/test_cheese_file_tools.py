@@ -1,7 +1,7 @@
 """A person's 芝士 moves a file between its computer and the person's library
 by having the computer itself put it to, or fetch it from, the address the
-platform gives for that one file (`cheese_file_give`,
-`cheese_file_to_computer`): the bytes go straight between the computer and
+platform gives for that one file (`cheese_library(action=give)`,
+`cheese_library(action=take)`): the bytes go straight between the computer and
 the storage, and the computer holds no credential.
 
 The computer here is this machine's shell in a scratch directory, and the
@@ -135,9 +135,10 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
     )
 
     said = cheese.run_platform_tool(
-        "cheese_file_give",
-        {"path": "out/成绩分布.png", "name": "数据结构/成绩分布.png"},
+        "cheese_library",
+        {"action": "give", "path": "out/成绩分布.png", "name": "数据结构/成绩分布.png"},
         computer,
+        delegated=True,
     )
 
     assert b"".join(kept[f"/slot-1/{n}"] for n in (1, 2, 3)) == content
@@ -153,7 +154,12 @@ def test_a_file_made_on_the_computer_is_put_to_its_address_and_handed_over(
 def test_a_file_not_on_the_computer_is_said_so_and_nothing_is_asked(tmp_path):
     computer = Computer(tmp_path, {})
     with pytest.raises(cheese.PlatformToolError, match="没有这份文件"):
-        cheese.run_platform_tool("cheese_file_give", {"path": "nope.png"}, computer)
+        cheese.run_platform_tool(
+            "cheese_library",
+            {"action": "give", "path": "nope.png"},
+            computer,
+            delegated=True,
+        )
     assert computer.asked == []
 
 
@@ -172,7 +178,10 @@ def test_a_file_of_the_persons_is_fetched_onto_the_computer(tmp_path, storage):
     )
 
     said = cheese.run_platform_tool(
-        "cheese_file_to_computer", {"ref": "library/成绩.csv"}, computer
+        "cheese_library",
+        {"action": "take", "ref": "library/成绩.csv"},
+        computer,
+        delegated=True,
     )
 
     assert (tmp_path / "files" / "成绩.csv").read_bytes() == b"name,score\nan,92\n"
@@ -193,9 +202,10 @@ def test_a_failed_transfer_is_an_error_not_a_file(tmp_path, storage):
     )
     with pytest.raises(cheese.PlatformToolError):
         cheese.run_platform_tool(
-            "cheese_file_to_computer",
-            {"ref": "library/a.txt", "path": "a.txt"},
+            "cheese_library",
+            {"action": "take", "ref": "library/a.txt", "path": "a.txt"},
             computer,
+            delegated=True,
         )
     assert not (tmp_path / "a.txt").exists()
 

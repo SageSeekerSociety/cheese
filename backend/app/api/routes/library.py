@@ -1,7 +1,9 @@
 """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
 
 清单、名字和来源在记录表里，字节按每一行的键存放（`app.domain.library.records`）。
-名字里的 `/` 是文件夹。读的是人和芝士；放进、替换、挪动、扔掉的只有人。
+名字里的 `/` 是文件夹。读的是人和芝士；放进、替换、挪动、扔掉的只有人。从题目来的
+项目还有一个只读的 `题目/`：题目的材料和题目说明（`app.domain.library.mount`），这里
+每一条读的路都读得到它，写的路都拒绝它。
 """
 
 import uuid
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.byte_response import blob_response
 from app.api.place import readable_rooms
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
@@ -58,6 +61,8 @@ class LibraryFileOut(BaseModel):
     room: LibraryRoom | None
     replaced: int
     references: int
+    #: 从题目来的那一份（`题目/` 底下）：只能读。
+    readonly: bool
     rank: str
 
 
@@ -116,7 +121,12 @@ async def library_file_raw(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     return await _raw(
-        db, _shelf(project_id), _library_path(path), version, preview_pdf, request
+        db,
+        await shelf_for(db, project_id, actor),
+        _library_path(path),
+        version,
+        preview_pdf,
+        request,
     )
 
 
@@ -156,7 +166,9 @@ async def _raw(
 
 
 def _shelf(project_id: uuid.UUID) -> Shelf:
-    return Shelf.of_project(project_id)
+    # 写的那几条路用它：`题目/` 底下谁都写不进去（`mount.refuse_write`），
+    # 读的路一律按读的人取（`shelf_for`）。
+    return Shelf.of_project(project_id, with_task=False)
 
 
 def _library_path(raw: str) -> str:
@@ -173,9 +185,10 @@ async def library_file_link(
 ) -> dict:
     """一份资料的下载地址，几分钟内开始取都有效：给 `cheese library get`，字节从
     存储直接到机器上，不经过这里，也不整份读进谁的内存。文件存在本服务器盘上时，
-    地址是本后端自己的一条（``/files/outgoing/…``），照样按段给。"""
-    await _reader(project_id, db, resolver)
-    shelf = _shelf(project_id)
+    地址是本后端自己的一条（``/files/outgoing/…``），照样按段给。`题目/` 底下的
+    那几份按读的人取（`shelf_for`），和下载那一条一样。"""
+    actor = await _reader(project_id, db, resolver)
+    shelf = await shelf_for(db, project_id, actor)
     name = _library_path(path.strip().removeprefix("library/"))
     stored = await library_records.stored_file(db, shelf, name)
     url = await library_records.download_url(db, shelf, name)
@@ -194,7 +207,7 @@ async def list_library_versions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     versions = await library_records.versions(
-        db, _shelf(project_id), _library_path(path)
+        db, await shelf_for(db, project_id, actor), _library_path(path)
     )
     return ok({"versions": versions})
 
@@ -241,7 +254,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        _shelf(project_id),
+        await shelf_for(db, project_id, actor),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -260,21 +273,22 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    return ok(
-        await library_listing.one(db, _shelf(project_id), rooms, _library_path(path))
-    )
+    shelf = await shelf_for(db, project_id, actor)
+    return ok(await library_listing.one(db, shelf, rooms, _library_path(path)))
 
 
 @router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
 async def library_file_text(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
+    """一份资料读成文本，给芝士读（`cheese_library(action=read)` 读 `library/` 开头的地址）：
     文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
-    await _reader(project_id, db, resolver)
+    actor = await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(db, _shelf(project_id), name)
+    found = await library_records.read_text(
+        db, await shelf_for(db, project_id, actor), name
+    )
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
@@ -509,6 +523,8 @@ class LibraryFolderOut(BaseModel):
     name: str
     count: int
     modified: float
+    #: `题目` 那个文件夹和它底下的：只能读。
+    readonly: bool
     rank: str
 
 

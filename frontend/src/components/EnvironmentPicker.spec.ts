@@ -7,7 +7,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { setLocale } from '../i18n'
+import { loadPlatformSentences, setLocale } from '../i18n'
 
 import EnvironmentPicker from './EnvironmentPicker.vue'
 
@@ -63,6 +63,37 @@ describe('环境选择', () => {
     await fireEvent.update(radio('env-spec-team_devices'))
     await fireEvent.click(submit())
     expect(emitted().select).toEqual([[{ kind: 'sandbox', spec: 'team_devices' }]])
+  })
+
+  // 选规格的地方就是读到它是什么、每小时扣多少点的地方：价格是接口按计费用的那个数给的，
+  // 读者换成哪种语言都照着这个数说。
+  it('每种规格旁边写着它是什么、每小时多少点', async () => {
+    await loadPlatformSentences()
+    setLocale('en')
+    render(Picker, {
+      props: {
+        current: { kind: 'sandbox', spec: 'standard' },
+        devices: DEVICES,
+        specs: [
+          {
+            spec: 'standard',
+            label: 'Standard sandbox',
+            description: '每位 AI 队友一个沙箱……每小时 7.5 点。',
+            i18n: { description: { key: 'specStandardAbout', params: { credits: 7.5 } } },
+          },
+          {
+            spec: 'vm',
+            label: 'VM sandbox',
+            description: '一整台虚拟机……4 核 8 GiB，每小时 20 点。',
+            i18n: { description: { key: 'specVmAbout', params: { cores: 4, memory: 8, credits: 20 } } },
+          },
+        ],
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    const row = (spec: string) => document.querySelector(`[data-testid="env-spec-${spec}"]`)?.textContent ?? ''
+    expect(row('standard')).toContain('7.5 pts per hour')
+    expect(row('vm')).toContain('4 cores, 8 GiB: 20 pts per hour')
   })
 
   it('取消：只说取消，不发选择', async () => {

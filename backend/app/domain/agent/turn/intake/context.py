@@ -55,7 +55,9 @@ async def living_doc_text(
     # document's note takes is left, so that second fit has nothing to cut.
     room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
     return (
-        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
+        fit_doc_to_budget(
+            text, room, full_read_hint="用 `cheese_doc(action=get)` 读全文"
+        )
         + canvases
     )
 
@@ -136,6 +138,9 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 从题目来的项目里「题目」那一段（`task.package.section_for_project`）：第几版、
+    # 材料在哪、这一版改了什么。别的项目是 None，开场里没有这一段。
+    task_package: str | None
     # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
     # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
     # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
