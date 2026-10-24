@@ -91,14 +91,16 @@ async def cite(reader: pages.Reader, ids: list[str]) -> Citing:
             continue
         if found is None:
             continue
-        kind, name, told = found
+        kind, name, told, title = found
         out.told.append(told)
-        out.kept.append({"id": token, "kind": kind, "title": name})
+        out.kept.append({"id": token, "kind": kind, "title": title})
         out.named[token] = name
     return out
 
 
-async def _one(reader: pages.Reader, token: str) -> tuple[str, str, str] | None:
+async def _one(reader: pages.Reader, token: str) -> tuple[str, str, str, str] | None:
+    """The thing's kind, what 芝士 calls it in the question, what it is told
+    of it, and its bare title for the panel's chip."""
     if token.startswith(FILE):
         return await _file(reader, _uuid(token.removeprefix(FILE)))
     if token.startswith(PROBLEM):
@@ -122,8 +124,14 @@ def _uuid(raw: str) -> uuid.UUID | None:
 async def _topic(reader: pages.Reader, topic_id: uuid.UUID):
     place = await pages.judge(reader).topic(topic_id)
     what, here, label = await pages.named_place(reader, place)
-    kind = "task" if place.task else "thread" if place.thread else "channel"
-    return kind, label, f"{what}：读它的对话用 cheese_read {here}。"
+    kind, title = (
+        ("task", place.task.title)
+        if place.task
+        else ("thread", place.thread.title)
+        if place.thread
+        else ("channel", place.room.title)
+    )
+    return kind, label, f"{what}：读它的对话用 cheese_read {here}。", title
 
 
 async def _document(reader: pages.Reader, document_id: uuid.UUID):
@@ -131,7 +139,8 @@ async def _document(reader: pages.Reader, document_id: uuid.UUID):
     doc = await Documents(reader.session).get(document_id)
     if doc is None:
         return None
-    name = f"《{doc.title or '未命名'}》"
+    title = doc.title or "未命名"
+    name = f"《{title}》"
     if doc.project_id is None:
         team = await pages.judge(reader).team(doc.team_id)
         return (
@@ -139,9 +148,10 @@ async def _document(reader: pages.Reader, document_id: uuid.UUID):
             name,
             f"团队「{team.name}」的文档{name}：你没有读团队文档的工具，正文如下。\n"
             + pages.excerpt(doc.content),
+            title,
         )
     here = await pages.ref_of(reader, address.Numbered.document, doc.id, doc.project_id)
-    return "doc", name, f"文档{name}（{here}）：读全文用 cheese_read {here}。"
+    return "doc", name, f"文档{name}（{here}）：读全文用 cheese_read {here}。", title
 
 
 async def _file(reader: pages.Reader, file_id: uuid.UUID | None):
@@ -167,17 +177,19 @@ async def _file(reader: pages.Reader, file_id: uuid.UUID | None):
                 row.name,
                 f"用户资料库里的文件「{row.name}」（{pages.size(row.bytes)}）："
                 f"读它用 cheese_read library/{row.name}。",
+                row.name,
             )
         shelf, where = Shelf.of_team(row.team_id), f"团队「{team.name}」的资料库"
     read = await library_records.read_text(reader.session, shelf, row.name)
     head = f"{where}里的文件「{row.name}」（{pages.size(row.bytes)}）"
     if read["binary"]:
-        return "file", row.name, f"{head}：二进制文件，读不出文字。"
+        return "file", row.name, f"{head}：二进制文件，读不出文字。", row.name
     return (
         "file",
         row.name,
         f"{head}：你没有读这个资料库的工具，内容如下。\n"
         + pages.excerpt(str(read["content"])),
+        row.name,
     )
 
 
@@ -190,7 +202,7 @@ async def _problem(reader: pages.Reader, task_id: int):
     )
     here = refs.problem(task.space_id, task.id)
     name = f"题目「{task.name}」"
-    return "problem", name, f"{name}（{here}）：读它用 cheese_read {here}。"
+    return "problem", name, f"{name}（{here}）：读它用 cheese_read {here}。", task.name
 
 
 #: How many of each kind the @ menu is handed, the latest first.

@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import AssistantPanel from './AssistantPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { composerText, typeInComposer } from '@/test/composerInput'
+import { composerText, pressInComposer, typeInComposer } from '@/test/composerInput'
 
 const SAID: PanelMessage[] = [
   { role: 'user', text: '学习率一般设多少？', at: '2026-10-01T08:00:00Z' },
@@ -283,5 +283,59 @@ describe('AssistantPanel', () => {
     })
     expect(view.getByText('例行事务「每日待办」开始运行')).toBeTruthy()
     expect(view.queryByText(/<平台>/)).toBeNull()
+  })
+})
+
+describe('AssistantPanel: what a question carries', () => {
+  const CITABLE = [
+    { id: 'a1', kind: 'task' as const, title: '接入搜索', where: '知是', place: '后端' },
+    { id: 'd1', kind: 'doc' as const, title: '搜索接入方案', where: '知是' },
+  ]
+
+  it('a question that cited things shows them by name, where it was asked, and that it carried a selection', () => {
+    const view = mount({
+      messages: [
+        {
+          role: 'user',
+          text: '比较 <#d1> 和 <#file-f1>',
+          at: '2026-10-24T08:00:00Z',
+          askedOn: '频道「后端」',
+          selection: '超时设成 600 秒',
+          cited: [
+            { id: 'd1', kind: 'doc', title: '搜索接入方案' },
+            { id: 'file-f1', kind: 'file', title: '数据集说明.pdf' },
+          ],
+        },
+      ],
+    })
+
+    expect(view.getByText('搜索接入方案')).toBeTruthy()
+    expect(view.getByText('数据集说明.pdf')).toBeTruthy()
+    expect(view.queryByText(/<#/)).toBeNull()
+    expect(view.getByText('在频道「后端」')).toBeTruthy()
+    expect(view.getByText('附：选中的一段')).toBeTruthy()
+  })
+
+  it('the page can be left out and put back, and a selection taken off, above the box', async () => {
+    const view = mount({ pageLabel: '频道「后端」', selection: '超时设成 600 秒' })
+
+    await fireEvent.click(view.getByRole('button', { name: /当前页面/ }))
+    await fireEvent.click(view.getByRole('button', { name: '去掉选中的内容' }))
+
+    expect(view.emitted('togglePage')).toHaveLength(1)
+    expect(view.emitted('clearSelection')).toHaveLength(1)
+  })
+
+  it('@ opens the menu, letters narrow it, and Enter writes the reference where the @ was', async () => {
+    const view = mount({ citable: CITABLE, project: '知是' })
+
+    await typeInComposer(view.container, '比较 @jrss')
+    await waitFor(() => expect(view.getByRole('listbox')).toBeTruthy())
+    expect(view.emitted('citeOpen')).toBeTruthy()
+    pressInComposer(view.container, 'Enter')
+
+    await waitFor(() => expect(composerText(view.container)).toBe('比较 <#a1> '))
+    expect(view.emitted('cite')).toEqual([[CITABLE[0]]])
+    expect(view.emitted('send')).toBeUndefined()
   })
 })

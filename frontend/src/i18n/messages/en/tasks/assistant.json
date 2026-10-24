@@ -25,7 +25,12 @@
     "failed": "Call failed"
   },
   "changes": {
-    "memory": {"title": "Memory", "saved": "Remembered", "changed": "Updated", "forgotten": "Forgotten"},
+    "memory": {
+      "title": "Memory",
+      "saved": "Remembered",
+      "changed": "Updated",
+      "forgotten": "Forgotten"
+    },
     "title": "Form changes",
     "created": "New draft",
     "untitled": "Untitled task",
@@ -137,5 +142,48 @@
   },
   "run": {
     "routine": "Routine “{title}” started"
+  },
+  "page": {
+    "channel": "Channel “{name}”",
+    "task": "Task “{name}”",
+    "thread": "Thread “{name}”",
+    "doc": "“{name}”",
+    "project": "Project “{name}”",
+    "problem": "Problem “{name}”",
+    "publish": "Publishing a problem",
+    "library": "My library",
+    "teamLibrary": "{name}'s library"
+  },
+  "context": {
+    "page": "This page",
+    "pageOn": "Cheese reads this page. Click to leave it out",
+    "pageOff": "This question leaves the page out. Click to include it",
+    "selection": "Selected",
+    "removeSelection": "Remove selected text",
+    "askedOn": "On {page}",
+    "withSelection": "With selected text",
+    "askSelection": "Ask Cheese"
+  },
+  "cite": {
+    "title": "Cite a task, channel, document or file",
+    "recent": "Recent",
+    "inProject": "In {name}",
+    "everywhere": "Your projects",
+    "search": "Searching “{query}”",
+    "empty": "No matches",
+    "back": "Back",
+    "button": "Cite ({'@'})",
+    "tooMany": "Cite at most {most} things",
+    "move": "Move",
+    "pick": "Cite",
+    "close": "Close",
+    "loading": "Loading",
+    "kinds": {
+      "task": "Tasks",
+      "channel": "Channels",
+      "doc": "Documents",
+      "file": "Library files",
+      "problem": "Problems"
+    }
   }
 }

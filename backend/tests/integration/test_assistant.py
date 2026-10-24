@@ -1640,9 +1640,7 @@ def test_what_a_question_cites_is_told_by_name_and_what_the_person_cannot_open_i
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     asked = kept["data"]["messages"][0]
     assert asked["text"] == f"比较 <#{room}> 和 <#{hidden}>"
-    assert asked["parts"]["cited"] == [
-        {"id": room, "kind": "channel", "title": "频道「话题」"}
-    ]
+    assert asked["parts"]["cited"] == [{"id": room, "kind": "channel", "title": "话题"}]
 
 
 def test_more_than_five_things_cited_at_once_are_refused(client, gateway):
