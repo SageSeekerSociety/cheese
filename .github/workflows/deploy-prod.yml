@@ -9,9 +9,7 @@ name: Deploy (prod RUC box)
 # it fires on a published GitHub Release (or a manual dispatch of a specific
 # ref) and requires a human approval before anything runs.
 #
-# prod deploys RELEASES, not main commits — its current release is v0.16.4
-# (whose images live under the pre-rename `cheese-backend-py/*` path; future
-# releases build under `cheese/*` and need no override).
+# prod deploys RELEASES, not main commits.
 
 on:
   release:
@@ -93,7 +91,7 @@ jobs:
           approvers: andylizf
           minimum-approvals: 1
           issue-title: "Approve prod (RUC) deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
-          issue-body: "Deploying to cheese.ruc.edu.cn (prod RUC box). Comment `approve` to proceed or `deny` to cancel."
+          issue-body: "Deploying to cheese.ruc.edu.cn (prod RUC box). While prod's database is still on the 0.16.x line (alembic b1c2d3e4f5a6), this deploy first cuts it over (deploy/cutover-ruc-016-to-main.sh): the 0.16.x backend stops, then backup, UTF8 rebuild, archive of what main drops, bridge, and the deploy's migrations; the site is down until the new release is healthy. Comment `approve` to proceed or `deny` to cancel."
 
   # Everyday CI runs the backend layers on arm64 runners (test.yml); production
   # runs on x64. So before a release reaches it, the same suite runs once on
@@ -117,7 +115,8 @@ jobs:
     # deploy job that is not a broken deploy.
     outputs:
       refused: ${{ steps.recheck.outputs.refused }}
-    timeout-minutes: 30
+    # The deploy's 30 plus the cutover's 15.
+    timeout-minutes: 45
     steps:
       # Deploy TOOLING (deploy-docker.sh + compose) always comes from the DEFAULT
       # branch — release branches/tags don't carry it (checking out the release
@@ -144,6 +143,23 @@ jobs:
           git fetch --depth=1 origin "$REF"
           echo "sha=$(bash deploy/image-tag.sh FETCH_HEAD)" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse FETCH_HEAD^{commit})" >> "$GITHUB_OUTPUT"
+
+      # Moves the database off the 0.16.x line onto main's chain, so the deploy's
+      # `alembic upgrade head` can take it the rest of the way. It acts only
+      # while the database is at 0.16.x's head and the release is on main's
+      # chain; any other run reads the version, says so, and changes nothing.
+      # A dry run runs its read-only checks.
+      - name: Cut the database over from 0.16.x
+        timeout-minutes: 15
+        env:
+          SHA: ${{ steps.img.outputs.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            bash deploy/cutover-ruc-016-to-main.sh --dry-run "$SHA"
+          else
+            bash deploy/cutover-ruc-016-to-main.sh "$SHA"
+          fi
 
       - name: Deploy (or dry-run)
         env:
@@ -189,7 +205,7 @@ jobs:
           ENVIRONMENT: prod（cheese.ruc.edu.cn）
           COMMIT: ${{ needs.gate.outputs.sha || inputs.ref }}
           # The deploy job's own timeout-minutes, so a hang that used it all up pages.
-          TIMEOUT_MINUTES: '30'
+          TIMEOUT_MINUTES: '45'
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           # Validation that regressed while the release waited for approval
           # leaves prod on the release it had; that is CI's news, not a broken
