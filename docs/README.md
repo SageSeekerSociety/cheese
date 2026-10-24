@@ -14,7 +14,7 @@
 | [`i18n-glossary.md`](i18n-glossary.md) | 核心术语的中英对照；**写英文译文前先查它**，防止同一个中文词译出两个英文词 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |
 | [`workflows.md`](workflows.md) | 这个项目实际怎么开发、测试、迭代 UI |
-| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试、怎么用 `task dev:sandbox` 把整套跑起来看；provider 凭据那条红别再重新诊断 |
+| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试、怎么用 `task dev:sandbox` 把整套跑起来看 |
 
 ## 当前是什么样（描述现状）
 
