@@ -100,6 +100,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_settings_set: 'toolLabels.cheeseSettingsSet',
   cheese_routine: 'toolLabels.cheeseRoutine',
   cheese_notify_me: 'toolLabels.cheeseNotifyMe',
+  cheese_todo: 'toolLabels.cheeseTodo',
   cheese_memory: 'toolLabels.cheeseMemory',
   cheese_file_give: 'toolLabels.cheeseFileGive',
   cheese_file_to_computer: 'toolLabels.cheeseFileToComputer',

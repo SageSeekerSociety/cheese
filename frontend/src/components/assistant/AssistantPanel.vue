@@ -67,6 +67,7 @@
             <AssistantTurn
               class="ap__text"
               :pieces="interleave(m.text, m.steps ?? [])"
+              :checklist="checklistOf(m.steps ?? [])"
               :changes="m.changes ?? []"
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
@@ -121,6 +122,7 @@
           <AssistantTurn
             class="ap__text"
             :pieces="interleave(m.text, m.steps ?? [])"
+            :checklist="checklistOf(m.steps ?? [])"
             :changes="m.changes ?? []"
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
@@ -154,6 +156,7 @@
           class="ap__text"
           live
           :pieces="livePieces"
+          :checklist="checklistOf(steps)"
           :changes="changes"
           :results="results"
           :proposals="proposals"
@@ -248,7 +251,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
-import { interleave } from '@/lib/assistantView'
+import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
 export interface PanelTopic {

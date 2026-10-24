@@ -85,6 +85,13 @@
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
   "olderMessages": "Earlier messages",
+  "checklist": {
+    "pending": "To do",
+    "inProgress": "In progress",
+    "completed": "Done",
+    "folded": "{done} of {total} done",
+    "label": "Checklist"
+  },
   "dock": "Pin to the right",
   "undock": "Unpin",
   "anywhere": {

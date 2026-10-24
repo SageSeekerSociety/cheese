@@ -1246,6 +1246,31 @@ class NotifyMeIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
+class TodoItemIn(BaseModel):
+    content: str = Field(min_length=1, max_length=200)
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class TodoIn(BaseModel):
+    todos: list[TodoItemIn] = Field(max_length=30)
+
+
+@router.post("/todo", include_in_schema=False)
+async def agent_todo(body: TodoIn, resolver: ActorResolverDep) -> dict:
+    """cheese_todo: the steps of a long piece of work and how far it got. The
+    panel shows them from the call itself, as it is written, and keeps them
+    with the answer; here they are only checked and counted back."""
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    done = sum(1 for item in body.todos if item.status == "completed")
+    going = [item for item in body.todos if item.status == "in_progress"]
+    told = f"清单已更新：{done}/{len(body.todos)} 项已完成。"
+    if len(going) > 1:
+        told += "同时只该有一项进行中。"
+    return ok({"text": told})
+
+
 @router.post("/notify-me", include_in_schema=False)
 async def agent_notify_me(
     body: NotifyMeIn, resolver: ActorResolverDep, db: DbSession

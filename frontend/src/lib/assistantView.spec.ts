@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { interleave, type PanelStep, stepError, stepView } from './assistantView'
+import { checklistOf, interleave, type PanelStep, stepError, stepView } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -211,5 +211,32 @@ describe('interleave', () => {
 
   it('shows steps alone when nothing was written', () => {
     expect(shape('', [step('a', 0)])).toEqual(['a'])
+  })
+})
+
+describe('进度清单', () => {
+  const todo = (call: string, todos: unknown, state: 'run' | 'done' = 'done') =>
+    stepView({ call, name: 'cheese_todo', args: JSON.stringify({ todos }), state, at: 0 })
+
+  it('is drawn from the last list written, and writing it is not a step of its own', () => {
+    const first = todo('t1', [{ content: '读评分标准', status: 'in_progress' }])
+    const read = stepView({ call: 'r1', name: 'cheese_read', args: '{"ref":"library/a.pdf"}', state: 'done', at: 0 })
+    const second = todo('t2', [
+      { content: '读评分标准', status: 'completed' },
+      { content: '打分', status: 'in_progress' },
+    ])
+
+    expect(checklistOf([first, read, second])).toEqual([
+      { content: '读评分标准', status: 'completed' },
+      { content: '打分', status: 'in_progress' },
+    ])
+    expect(interleave('', [first, read, second]).flatMap((p) => (p.kind === 'steps' ? p.steps : []))).toEqual([read])
+  })
+
+  it('keeps the last whole list while the next one is still being written', () => {
+    const whole = todo('t1', [{ content: '读评分标准', status: 'in_progress' }])
+    const half = stepView({ call: 't2', name: 'cheese_todo', args: '{"todos":[{"content":"读', state: 'run' })
+
+    expect(checklistOf([whole, half])).toEqual([{ content: '读评分标准', status: 'in_progress' }])
   })
 })

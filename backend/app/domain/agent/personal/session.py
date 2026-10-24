@@ -112,6 +112,7 @@ TOOLS = (
     "cheese_settings_set",
     "cheese_routine",
     "cheese_notify_me",
+    "cheese_todo",
     "cheese_memory",
     "cheese_file_give",
     "cheese_file_to_computer",

@@ -3,6 +3,28 @@
        calls, one line each); what it wrote into a draft, as a card with an undo per field; what it
        asks the person to confirm; what it published. -->
   <div class="at">
+    <section v-if="checklist?.length" class="at__todo" :aria-label="t('tasks.assistant.checklist.label')">
+      <button
+        v-if="checklistFoldable"
+        type="button"
+        class="at__fold"
+        :aria-expanded="checklistOpen"
+        @click="checklistOpen = !checklistOpen"
+      >
+        <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': checklistOpen }">mdi-chevron-right</v-icon>
+        {{ t('tasks.assistant.checklist.folded', { done: checklistDone, total: checklist.length }) }}
+      </button>
+      <ol v-if="!checklistFoldable || checklistOpen" class="at__todo-list">
+        <li v-for="(item, i) in checklist" :key="i" class="at__todo-item" :class="`at__todo-item--${item.status}`">
+          <span class="at__todo-mark" role="img" :aria-label="t(CHECKLIST_SAID[item.status])">
+            <v-icon v-if="item.status === 'completed'" size="14">mdi-check</v-icon>
+            <span v-else-if="item.status === 'in_progress'" class="at__todo-dot" />
+            <span v-else class="at__todo-ring" />
+          </span>
+          <span data-user-content>{{ item.content }}</span>
+        </li>
+      </ol>
+    </section>
     <template v-for="piece in pieces" :key="piece.key">
       <slot v-if="piece.kind === 'text'" name="text" :text="piece.text" />
       <template v-else>
@@ -159,7 +181,7 @@
 // 是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个「查看题目」。默认
 // 插槽放话后面的一句（已停止、排队中）；再后面是它交给人的文件（一份一张卡，点了下载），
 // 和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
-import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
+import type { ChecklistItem, PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { AssistantHanded } from '@/stores/agentThread'
 
 import { computed, ref } from 'vue'
@@ -175,6 +197,8 @@ const props = withDefaults(
   defineProps<{
     /** 说的话和调的工具，按发生的顺序；话由外面那一层用 `text` 插槽画。 */
     pieces: TurnPiece[]
+    /** 这一轮最后写下的进度清单，画在最上面。 */
+    checklist?: ChecklistItem[] | null
     changes: PanelChange[]
     results: PanelResult[]
     /** 替人起草、等人确认的消息和任务。 */
@@ -186,7 +210,7 @@ const props = withDefaults(
     /** 这一轮还在答：步骤不收起。 */
     live?: boolean
   }>(),
-  { proposals: () => [], files: () => [], sending: null, live: false }
+  { proposals: () => [], files: () => [], sending: null, live: false, checklist: null }
 )
 
 const emit = defineEmits<{
@@ -204,6 +228,20 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+/** 读屏念出每一项做到哪了。 */
+const CHECKLIST_SAID = {
+  pending: 'tasks.assistant.checklist.pending',
+  in_progress: 'tasks.assistant.checklist.inProgress',
+  completed: 'tasks.assistant.checklist.completed',
+} as const
+
+const checklistOpen = ref(false)
+const checklistDone = computed(() => (props.checklist ?? []).filter((item) => item.status === 'completed').length)
+/** 答完了、每一项都做完了：清单收成一行，点开再看。 */
+const checklistFoldable = computed(
+  () => !props.live && !!props.checklist?.length && checklistDone.value === props.checklist.length
+)
+
 /** 点开看过的那几组步骤。 */
 const opened = ref(new Set<string>())
 
@@ -238,6 +276,70 @@ function undoable(change: PanelChange): number {
 </script>
 
 <style scoped>
+.at__todo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.at__todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.at__todo-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+.at__todo-item--completed {
+  color: var(--muted);
+}
+
+.at__todo-item--in_progress {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.at__todo-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.at__todo-item--completed .at__todo-mark {
+  color: var(--ok-ink);
+}
+
+.at__todo-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.at__todo-ring {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--faint);
+  border-radius: 50%;
+}
+
 .at {
   display: flex;
   flex-direction: column;

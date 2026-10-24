@@ -175,6 +175,39 @@ describe('AssistantPanel', () => {
     expect(view.emitted('olderMessages')).toEqual([[null]])
   })
 
+  it('shows the checklist above an answer under way, and folds it to a line once all is done', () => {
+    const list = (status: 'in_progress' | 'completed') =>
+      JSON.stringify({
+        todos: [
+          { content: '读评分标准', status: 'completed' },
+          { content: '给 40 份报告打分', status },
+        ],
+      })
+    const step = (status: 'in_progress' | 'completed') => ({
+      key: 't1',
+      verb: '更新进度清单',
+      arg: '',
+      state: 'done' as const,
+      hidden: true,
+      checklist: JSON.parse(list(status)).todos,
+    })
+
+    const going = mount({ busy: true, streaming: '', steps: [step('in_progress')] })
+    expect(going.getByText('给 40 份报告打分')).toBeTruthy()
+    expect(going.getByRole('img', { name: '进行中' })).toBeTruthy()
+    expect(going.queryByText('更新进度清单')).toBeNull()
+    going.unmount()
+
+    const done = mount({
+      messages: [
+        { role: 'user', text: '打分', at: '2026-10-04T08:00:00Z' },
+        { role: 'assistant', text: '打完了。', at: '2026-10-04T08:00:05Z', steps: [step('completed')] },
+      ],
+    })
+    expect(done.getByRole('button', { name: /2\/2 项已完成/ })).toBeTruthy()
+    expect(done.queryByText('给 40 份报告打分')).toBeNull()
+  })
+
   it('asks a starter question in one click when the conversation is empty', async () => {
     const view = mount({ messages: [] })
     await fireEvent.click(view.getByRole('button', { name: '做这道题要先会什么？' }))

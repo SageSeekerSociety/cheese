@@ -85,6 +85,13 @@
   "newTopic": "新话题",
   "olderTopics": "更早的话题",
   "olderMessages": "更早的消息",
+  "checklist": {
+    "pending": "待做",
+    "inProgress": "进行中",
+    "completed": "已完成",
+    "folded": "{done}/{total} 项已完成",
+    "label": "进度清单"
+  },
   "dock": "固定到右侧",
   "undock": "取消固定",
   "anywhere": {

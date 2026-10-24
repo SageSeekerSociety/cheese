@@ -17,6 +17,40 @@ export interface PanelStep {
   thinking?: boolean
   /** 它前面回答已经写了多少字：步骤排在这些字后面。旧的回答没有。 */
   at?: number
+  /** 不在步骤里画出来的一步：写进度清单，清单另画在这一轮的最上面。 */
+  hidden?: boolean
+  /** 这一步写下的进度清单。 */
+  checklist?: ChecklistItem[]
+}
+
+/** 进度清单的一项：这一步做什么，做到哪了。 */
+export interface ChecklistItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+const CHECKLIST_STATES = new Set(['pending', 'in_progress', 'completed'])
+
+/** 一次写清单的调用写下的清单；参数还没写完、读不出来时没有。 */
+function checklistIn(args: string): ChecklistItem[] | undefined {
+  try {
+    const todos = (JSON.parse(args) as { todos?: unknown }).todos
+    if (!Array.isArray(todos)) return undefined
+    return todos
+      .filter(
+        (item): item is ChecklistItem =>
+          typeof item?.content === 'string' && CHECKLIST_STATES.has(item?.status as string)
+      )
+      .map((item) => ({ content: item.content, status: item.status }))
+  } catch {
+    return undefined
+  }
+}
+
+/** 这一轮最后写下的那份进度清单；没写过就没有。 */
+export function checklistOf(steps: PanelStep[]): ChecklistItem[] | null {
+  for (let i = steps.length - 1; i >= 0; i--) if (steps[i].checklist) return steps[i].checklist ?? null
+  return null
 }
 
 /** 一轮回答按发生的顺序排开：说的一段话，或接连做的几步。 */
@@ -33,6 +67,7 @@ export function interleave(text: string, steps: PanelStep[]): TurnPiece[] {
     from = to
   }
   for (const step of steps) {
+    if (step.hidden) continue
     const at = Math.min(Math.max(step.at ?? 0, from), text.length)
     if (at > from) say(at)
     const last = pieces[pieces.length - 1]
@@ -177,6 +212,15 @@ export function stepView(step: AssistantStep): PanelStep {
       state: step.state,
       thinking: true,
       ...(step.at === undefined ? {} : { at: step.at }),
+    }
+  if (step.name === 'cheese_todo')
+    return {
+      key: step.call,
+      verb: toolLabel(step.name),
+      arg: '',
+      state: step.state,
+      hidden: true,
+      checklist: checklistIn(step.args),
     }
   const key = STEP_ARG[step.name]
   const arg = key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : ''

@@ -1634,6 +1634,31 @@ DELEGATED_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
+            "cheese_todo",
+            "进度清单，用户在面板上看着它。一件事要做好几步、要做几分钟以上时，先列出步骤，"
+            "之后每开始或做完一步就更新一次；一问一答、两三步就做完的事不要列。每次写整份"
+            "清单（todos），每项写 content（这一步做什么，一句话）和 status：pending 待做、"
+            "in_progress 进行中（同时只有一项）、completed 已完成。最多 30 项。",
+            {
+                "todos": {
+                    "type": "array",
+                    "maxItems": 30,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": _text("这一步做什么，一句话"),
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                            },
+                        },
+                        "required": ["content", "status"],
+                    },
+                }
+            },
+            ["todos"],
+        ),
+        _tool(
             "cheese_memory",
             "你关于用户的记忆，只有用户自己的面板里用。action：save 记下或改写一条（同名就"
             "改写原来那条），read 读一条的正文，forget 删掉一条。name 是英文短名（小写字母、"
@@ -2288,6 +2313,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": "/assistant/agent/notify-me",
             "body": _given(args, "text"),
+        }
+    if tool == "cheese_todo":
+        return {
+            "method": "POST",
+            "path": "/assistant/agent/todo",
+            "body": _given(args, "todos"),
         }
     if tool == "cheese_memory":
         body = _given(args, "action", "name", "description", "type", "text")
@@ -4725,6 +4756,7 @@ _SAY = {
     "cheese_routine": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_notify_me": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_memory": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_todo": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_find": lambda a, d, e: (
         _say_task_search(a, d, e)
         if "tasks" in (d or {})
