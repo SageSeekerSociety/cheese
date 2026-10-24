@@ -148,6 +148,32 @@ describe('正文被就地改写', () => {
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(1300)
   })
+
+  // 在对话区点一下（点一条消息、点住又松手）位置一个像素都没动，那不是人在滚。
+  // 曾经 `pointerdown` 一按就记「人在滚」，于是下面那条改写兜底失效：停住的人被留在
+  // 半路，「回到最新」冒出来（真机 2026-10-24 反馈：拖到最下面又回弹一点）。
+  it('只在面板上点一下、位置没动：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    await rewrite(box, scroll.contentRef.value!, 1600 - 306)
+    scroll.rememberScroll('t-tap')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+  })
+
+  // 拖滚动条（按住并真的挪动了位置）仍算人在滚：位置一直变，那一下不该被拽回底部。
+  it('按住拖动了位置：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    box.el.scrollTop = 1300
+    window.dispatchEvent(new PointerEvent('pointermove'))
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-drag')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
 })
 
 // 滚动框底下那一块（输入框、「谁在忙」那一行）在同一个任务里没了又回来：这一下滚动框

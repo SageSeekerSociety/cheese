@@ -122,19 +122,32 @@ export function useChatScroll(
   let lastHeight = 0
   let readerInputAt = -Infinity
   let pointerHeld = false
+  let pointerTop = 0
   let rewrittenAt = -Infinity
   const touched = () => (readerInputAt = performance.now())
   for (const type of ['wheel', 'touchmove'] as const) useEventListener(scrollRef, type, touched, { passive: true })
+  // 「人在滚」= 位置真的动了。按一下不是滚：单击一条消息、点住又松手、手指在消息上
+  // 点一下，位置一个像素都没动，可按住期间这一份却被当成读者在滚，于是下面那条「刚被
+  // 改写、没人动却往上挪」的兜底失效，停住的人被留在半路（「回到最新」冒出来，真机
+  // 2026-10-24 反馈）。所以按住之后要位置变了才算。
   useEventListener(scrollRef, 'pointerdown', () => {
     pointerHeld = true
+    pointerTop = scrollRef.value?.scrollTop ?? 0
+  })
+  useEventListener(window, 'pointermove', () => {
+    const el = scrollRef.value
+    if (!pointerHeld || !el || el.scrollTop === pointerTop) return
+    pointerTop = el.scrollTop
     touched()
   })
   useEventListener(window, ['pointerup', 'pointercancel'], () => {
-    if (!pointerHeld) return
     pointerHeld = false
-    touched()
   })
-  useEventListener(window, 'keydown', touched)
+  // 键盘同理：只有会挪滚动位置的那几个键算。打字、Esc、落在消息行上的方向键都不挪。
+  const MOVES_THE_PANE = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'])
+  useEventListener(window, 'keydown', (e) => {
+    if (MOVES_THE_PANE.has(e.key)) touched()
+  })
   // The pane's column too: the composer zone under the pane leaving and coming back in
   // one task clamps it the same way, with the timeline untouched. The pane's direct
   // parent is not that column: the timeline sits in its own wrapper (the floating
