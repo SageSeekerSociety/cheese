@@ -118,13 +118,16 @@ it('屏幕上换成另一份文件时，这条指认自己撤掉', async () => {
   expect(ui.emitted().locate).toBeUndefined()
 })
 
-/** 在「配置」那一节里选中「重试 3 次」这一段，和上面两条一样。 */
-async function selectPassage(ui: ReturnType<typeof mount>) {
+/** 在「配置」那一节里选中「重试 3 次」这一段，和上面两条一样。
+ *
+ *  `from`／`to` 换一对数就是另一处（同一段正文里换一段）。「读者换了一处」那两条要
+ *  的是「另一处」这个事实，用同一段重选一遍只是又指了同一处，测不到那个场景。 */
+async function selectPassage(ui: ReturnType<typeof mount>, from = 4, to = 10) {
   const md = ui.getByTestId('markdown')
   const node = await firstLine(md)
   const range = document.createRange()
-  range.setStart(node, 4)
-  range.setEnd(node, 10)
+  range.setStart(node, from)
+  range.setEnd(node, to)
   const selection = window.getSelection()!
   selection.removeAllRanges()
   selection.addRange(range)
@@ -280,6 +283,7 @@ it('评论发着的时候读者按了取消：回来时不再替他打开评论�
   // 他刚按了取消，明确表示不想留在这儿；这时把评论栏弹出来会盖住他正在做的事。
   // 评论本身已经挂上去了（那条请求没有中断），所以只是别动他的界面。
   let release: () => void = () => {}
+  let posted = 0
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
@@ -291,7 +295,11 @@ it('评论发着的时候读者按了取消：回来时不再替他打开评论�
       actions: {},
       refresh: async () => {},
     },
-    post: () => new Promise<void>((resolve) => (release = resolve)),
+    post: () =>
+      new Promise<void>((resolve) => {
+        posted += 1
+        release = resolve
+      }),
     nameOf: (h: string) => h,
     avatarOf: () => '',
   }
@@ -302,6 +310,8 @@ it('评论发着的时候读者按了取消：回来时不再替他打开评论�
   const bar = input.closest('.locator')!
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
   await fireEvent.click(commentBtn)
+  // 先确认这一按真的发出去了：没有这一步，一个「按了评论什么都不发」的退化也能让下面绿。
+  await waitFor(() => expect(posted).toBe(1))
   // 还没回来，读者按了条上的取消。
   const closeBtn = [...bar.querySelectorAll('button')].at(-1)!
   await fireEvent.click(closeBtn)
@@ -341,9 +351,9 @@ it('换了另一处指认，上一次那句「评论失败」不跟着过来', a
   await fireEvent.click(commentBtn)
   await waitFor(() => expect(bar.querySelector('[role="alert"]')).toBeTruthy())
 
-  // 直接另选一处（不按取消）：条上那颗取消本来就清这句话，所以只有「指认自己变了就清」
-  // 才盖得住这条路——上一版正是只清了取消那条，这里会留着上一处的失败。
-  await selectPassage(ui)
+  // 直接另选一处（不按取消，而且换的是另一段）：条上那颗取消本来就清这句话，所以只有
+  // 「指认自己变了就清」才盖得住这条路——上一版正是只清了取消那条，这里会留着上一处的失败。
+  await selectPassage(ui, 0, 4)
   expect(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('[role="alert"]')).toBeNull()
 })
 
@@ -351,6 +361,7 @@ it('发失败时读者已经换了一处：那句失败不落在新的一处上'
   // 失败是发生在 await 之后的，这期间读者完全可能已经去指别处了。这句话说的是上一处，
   // 落在新的这一处下面，会让人以为新指的这处也发失败了。
   let reject: (e: Error) => void = () => {}
+  let posted = 0
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
@@ -362,7 +373,11 @@ it('发失败时读者已经换了一处：那句失败不落在新的一处上'
       actions: {},
       refresh: async () => {},
     },
-    post: () => new Promise<void>((_resolve, rej) => (reject = rej)),
+    post: () =>
+      new Promise<void>((_resolve, rej) => {
+        posted += 1
+        reject = rej
+      }),
     nameOf: (h: string) => h,
     avatarOf: () => '',
   }
@@ -374,9 +389,10 @@ it('发失败时读者已经换了一处：那句失败不落在新的一处上'
     (b) => b.textContent?.trim() === '评论'
   )!
   await fireEvent.click(commentBtn)
+  await waitFor(() => expect(posted).toBe(1))
 
-  // 还没回来，读者就换了一处。
-  await selectPassage(ui)
+  // 还没回来，读者就换了一处——真的换一处（另一段文字），不是把同一段再选一遍。
+  await selectPassage(ui, 0, 4)
   reject(new Error('评论失败'))
   await Promise.resolve()
   await Promise.resolve()
