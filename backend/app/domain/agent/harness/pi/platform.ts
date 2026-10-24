@@ -1449,10 +1449,11 @@ function registerBranches(pi: any, spec: Manifest, tools: Map<string, any>) {
     name: "cheese_subagent_start",
     label: "cheese_subagent_start",
     description:
-      "派出一个分身，把一件交代清楚、能独立做完的事交给它：它有自己的上下文，只能读、搜、" +
-      "上网查和用你的电脑。派出后立刻返回它的编号，它在后台做，你接着做别的；它做完，平台" +
-      "把结论交给你。要同时做几件就派几个，同时最多 " +
-      `${BRANCHES_AT_ONCE} 个。prompt 写清要做什么、材料在哪（编号）、交回什么；` +
+      "派出一个分身，把一件能独立做完的事交给它：它有自己的上下文，只能读、搜、上网查和用" +
+      "你的电脑，看不到你和用户的对话。派出后立刻返回它的编号，它在后台做，你接着做别的；" +
+      "它做完，平台把结论交给你。要同时做几件就在同一条消息里派几个，同时最多 " +
+      `${BRANCHES_AT_ONCE} 个。只读一两样知道编号的东西不要派，直接读。prompt 要自成一体：` +
+      "写清要做什么、材料在哪（编号）、要交回什么；" +
       "description 用几个字说它做什么，用户在面板上看到。以用户名义发消息、改设置、发布这类" +
       "事只能你自己做。给它补充要求或让做完的它接着做，用 cheese_subagent_send；停下它用 cheese_subagent_stop。",
     parameters: {

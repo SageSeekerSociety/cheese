@@ -79,6 +79,7 @@ TASKS: list[Task] = [
         "read",
         ("实验频道里张伟问我什么了？",),
         checks=(
+            ("一问一答不列清单", lambda o: "cheese_todo" not in o.tools),
             (
                 "提到显存和 batch size",
                 lambda o: (
@@ -553,6 +554,27 @@ TASKS: list[Task] = [
         ),
         points="照记忆用正式的书面语、开头称呼「李老师」，告诉李明中期报告周五前发给他。",
         holdout=True,
+    ),
+    # --- 长的事：清单、分身 -----------------------------------------------------
+    Task(
+        "t42",
+        "long_work",
+        (
+            "把视觉问答课题组每个频道这几天的消息各整理一段摘要，最后合成一份周报给我，"
+            "先别发到频道里。",
+        ),
+        checks=(
+            ("列了进度清单", lambda o: "cheese_todo" in o.tools),
+            (
+                "每个频道都写到了",
+                lambda o: all(
+                    name in o.answer
+                    for name in ("综合", "组会", "实验", "论文写作", "导师沟通")
+                ),
+            ),
+            ("没有发出去", lambda o: not o.sent_anywhere),
+        ),
+        points="五个频道各一段摘要：综合、组会、实验、论文写作、导师沟通，写清谁说了什么、要谁做什么；最后合成一份周报，只给她看，不发到频道；读不到的如实说，不编造。",
     ),
 ]
 

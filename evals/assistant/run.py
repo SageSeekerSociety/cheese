@@ -537,12 +537,23 @@ def main() -> None:
     parser.add_argument("only", nargs="*")
     parser.add_argument("--no-judge", action="store_true")
     parser.add_argument("--keep", action="store_true", help="keep the databases")
+    parser.add_argument(
+        "--no-subagents",
+        action="store_true",
+        help="芝士 without subagents: run once with and once without to see whether they earn their keep",
+    )
     args = parser.parse_args()
 
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + (
+        "-no-subagents" if args.no_subagents else ""
+    )
     run_dir = ROOT / "evals" / "results" / f"assistant-{stamp}"
     run_dir.mkdir(parents=True)
     platform = boot.prepare(run_dir)
+    if args.no_subagents:
+        from app.domain.agent.personal import session as personal_session
+
+        personal_session.BRANCHES = False
 
     import httpx
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
