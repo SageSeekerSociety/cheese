@@ -343,12 +343,11 @@ class SpaceMemberPublishingService:
             if latest_submission is None:
                 continue
 
+            # Passed and sent back are the completion axis's to say: on a task in
+            # stages one accepted stage is not the claim passed, so the latest
+            # review alone cannot count a participant as successful or failed.
             if completion_status in PENDING_REVIEW_STATUSES or review is None:
                 pending_review_count += 1
-            elif review.accepted:
-                successful_participant_count += 1
-            else:
-                failed_participant_count += 1
 
         submission_conversion_rate = (
             submitted_participant_count / approved_participant_count

@@ -29,6 +29,7 @@
   "revisedOf": "第 {version} 版：{changes}",
   "revisedPartDescription": "说明",
   "revisedPartRubric": "评分要点",
+  "revisedPartStages": "阶段",
   "revisedPartSubmission": "提交内容",
   "revisedPublished": "题目发布",
   "revisedRemoved": "删除 {names}",

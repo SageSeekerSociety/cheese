@@ -9,6 +9,7 @@ export const TASK_FOLDER = '题目' // i18n-data: the folder's name in library p
 export interface TaskRevisionChanges {
   published?: boolean
   description?: boolean
+  stages?: boolean
   submission?: boolean
   rubric?: boolean
   files?: { added?: string[]; replaced?: string[]; removed?: string[] }
@@ -16,6 +17,7 @@ export interface TaskRevisionChanges {
 
 const PARTS = [
   ['description', 'work.overview.revisedPartDescription'],
+  ['stages', 'work.overview.revisedPartStages'],
   ['submission', 'work.overview.revisedPartSubmission'],
   ['rubric', 'work.overview.revisedPartRubric'],
 ] as const

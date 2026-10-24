@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -216,6 +218,50 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+    # Which of the task's stages (``TaskStage.index``) this item is handed in
+    # under. 0 on a task without stages: it is one implicit stage.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
+
+
+def new_stage_key() -> str:
+    """A stage's id: stable for the stage's life, unique within its task."""
+    return secrets.token_hex(6)
+
+
+class TaskStage(Base):
+    """One stage of a task, as its publisher set it: a name, what it asks for,
+    and when it is due. A task's submission items and rubric lines each belong
+    to a stage, and a claim hands work in stage by stage; a stage is done when
+    one of its submissions is accepted (``submission_state``). A task without
+    rows here is one implicit stage, due by the claim's own deadline. Replaced
+    as a whole, like the submission form (``app.domain.task.stages``)."""
+
+    __tablename__ = "task_stages"
+    __table_args__ = (
+        UniqueConstraint("task_id", "key", name="uq_task_stages_task_id_key"),
+    )
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_stages_task_id_task"),
+        primary_key=True,
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    # The stage's id, stable across reorders: what a writer sends back so the
+    # submissions under a stage follow it (``stages.replace_stages``).
+    key: Mapped[str] = mapped_column(
+        "key", String(16), nullable=False, default=lambda: new_stage_key()
+    )
+    name: Mapped[str] = mapped_column("name", String(64), nullable=False)
+    description: Mapped[str] = mapped_column(
+        "description", Text, nullable=False, default=""
+    )
+    due_at: Mapped[datetime | None] = mapped_column(
+        "due_at", DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskRubricItem(Base):
@@ -236,6 +282,10 @@ class TaskRubricItem(Base):
     item: Mapped[str] = mapped_column("item", String(64), nullable=False)
     points: Mapped[int] = mapped_column("points", Integer, nullable=False)
     criteria: Mapped[str] = mapped_column("criteria", Text, nullable=False, default="")
+    # The stage (``TaskStage.index``) whose submissions this line scores.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
 
 
 class TaskMentor(Base):
@@ -293,6 +343,11 @@ class TaskSubmission(Base):
         BigInteger, ForeignKey("task_membership.id"), nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The stage (``TaskStage.index``) this version hands in. Versions count
+    # across stages, so a membership's version still names one submission.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
     submitter_id: Mapped[int] = mapped_column(
         "submitter_id", Integer, nullable=False
     )  # references user.id

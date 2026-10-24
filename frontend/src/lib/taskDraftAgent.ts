@@ -22,6 +22,7 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   name: ['name'],
   description: ['description', 'descriptionMarkdown'],
   attachments: ['attachmentIds', 'attachmentFiles'],
+  stages: ['stages'],
   submission: ['submissionSchema'],
   rubric: ['rubric'],
   rubric_public: ['rubricPublic'],
@@ -87,6 +88,15 @@ function text(value: unknown): string | null {
 
 function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
+}
+
+/** 芝士按阶段的 id 或名称指一个阶段；表单按 id 归组。名称在这次写的阶段里找得到
+ *  id 就换成 id，找不到先照写，等服务端那一份（后端 `drafts._stage_ref`）。 */
+function stageRef(value: unknown, stages: { id?: unknown; name?: unknown }[]): string | null {
+  const said = text(value)
+  if (!said) return null
+  const found = stages.find((stage) => stage.id === said || stage.name === said)
+  return typeof found?.id === 'string' ? found.id : said
 }
 
 /** 参数写到这里时，表单上能确定的那几格。`markdown` 是详情现在的样子：只改几处
@@ -181,23 +191,42 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
       .map((tag) => terms.topics.find((topic) => topic.name === tag)?.id)
       .filter((id): id is number => id !== undefined)
   }
+  if (Array.isArray(given.stages)) {
+    fields.stages = given.stages
+      .map((stage) => stage as { id?: unknown; name?: unknown; description?: unknown; due?: unknown })
+      .filter((stage) => typeof stage.name === 'string')
+      .map((stage) => {
+        const found = WHEN.exec(text(stage.due)?.trim() ?? '')
+        const [, y, m, d, hh, mm] = found ?? []
+        const at = found ? dayjs(`${y}-${m}-${d}T${hh ?? '23'}:${mm ?? '59'}`) : null
+        return {
+          id: text(stage.id) || null,
+          name: String(stage.name),
+          description: text(stage.description) ?? '',
+          dueAt: at?.isValid() ? at.valueOf() : null,
+        }
+      })
+  }
+  const written = Array.isArray(given.stages) ? (given.stages as { id?: unknown; name?: unknown }[]) : []
   if (Array.isArray(given.submission)) {
     fields.submissionSchema = given.submission
-      .map((item) => item as { name?: unknown; kind?: unknown })
+      .map((item) => item as { name?: unknown; kind?: unknown; stage?: unknown })
       .filter((item) => typeof item.name === 'string')
       .map((item) => ({
         prompt: String(item.name),
         type: KINDS[String(item.kind)] ?? 'FILE',
+        stage: stageRef(item.stage, written),
       }))
   }
   if (Array.isArray(given.rubric)) {
     fields.rubric = given.rubric
-      .map((line) => line as { item?: unknown; points?: unknown; criteria?: unknown })
+      .map((line) => line as { item?: unknown; points?: unknown; criteria?: unknown; stage?: unknown })
       .filter((line) => typeof line.item === 'string')
       .map((line) => ({
         item: String(line.item),
         points: count(line.points) ?? 0,
         criteria: text(line.criteria) ?? '',
+        stage: stageRef(line.stage, written),
       }))
   }
   if (typeof given.rubric_public === 'boolean') fields.rubricPublic = given.rubric_public
@@ -206,8 +235,10 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   return { fields, writing: last === 'description_edits' ? 'description' : last, passage }
 }
 
-/** 发布前还缺的格子（芝士的字段名），和后端 `drafts.missing` 同一条规矩：名称、详情、参与方式、难度。 */
-export function missingOf(fields: TaskDraftFields): string[] {
+/** 发布前还缺的格子（芝士的字段名），和后端 `drafts.missing` 同一条规矩：名称、详情、参与方式、难度，
+ *  指着草稿里没有的阶段的提交项和评分要点，以及把已发布题目的提交项全删光的改动
+ *  （`publishedItems` 是那道题现在有几个提交项；新题目是 0）。 */
+export function missingOf(fields: TaskDraftFields, publishedItems = 0): string[] {
   const out: string[] = []
   if (!fields.name?.trim()) out.push('name')
   const markdown = fields.descriptionMarkdown?.trim()
@@ -215,6 +246,22 @@ export function missingOf(fields: TaskDraftFields): string[] {
   if (!markdown && !doc) out.push('description')
   if (fields.submitterType !== 'USER' && fields.submitterType !== 'TEAM') out.push('form')
   if (fields.rank !== 1 && fields.rank !== 2 && fields.rank !== 3) out.push('difficulty')
+  if (publishedItems && Array.isArray(fields.submissionSchema) && !fields.submissionSchema.length) {
+    out.push('submission')
+  }
+  // An item or line naming a stage the draft does not have: what the publish would refuse.
+  const ids = (fields.stages ?? []).map((stage) => String(stage.id))
+  for (const [rows, word] of [
+    [fields.submissionSchema ?? [], 'submission'],
+    [fields.rubric ?? [], 'rubric'],
+  ] as const) {
+    const stray = rows.some((row) => {
+      if (!ids.length) return false
+      const ref = row.stage || ids[0]
+      return !ids.includes(ref)
+    })
+    if (stray) out.push(word)
+  }
   return out
 }
 

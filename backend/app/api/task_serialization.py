@@ -31,12 +31,18 @@ from app.domain.task.models import (
 from app.domain.task.repositories import (
     TaskMembershipRepository,
     TaskMentorRepository,
-    TaskSubmissionRepository,
     TaskSubmissionSchemaRepository,
     TopicRepository,
 )
+from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskMembershipService
-from app.domain.task.submission_state import claim_state
+from app.domain.task.stages import (
+    list_stages_for_tasks,
+    stage_count,
+    stage_ref,
+    stages_to_api,
+)
+from app.domain.task.submission_state import claim_state, handed_in_for, stage_states
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
@@ -78,6 +84,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         # 评分要点只在详情与改题的响应里填（见 lifecycle）；列表不带。
         "rubric": [],
         "rubricPublic": task.rubric_public,
+        # 阶段同样只在详情与改题的响应里填（见 app.domain.task.stages）。
+        "stages": [],
         "space": {"id": task.space_id},
         "category": {"id": task.category_id, "name": ""},
         "categoryId": task.category_id,
@@ -110,16 +118,34 @@ _SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
 
 
 def _submission_schema_to_api(
-    entries: Sequence[TaskSubmissionSchemaEntry],
+    entries: Sequence[TaskSubmissionSchemaEntry], keys: Sequence[str]
 ) -> list[dict]:
-    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。每一项用
+    阶段的 id 指它属于哪个阶段（``keys`` 是这道题的阶段 id，按顺序；不分阶段时是空的，
+    这一格是 None）。"""
     return [
         {
             "prompt": entry.description,
             "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
+            "stage": stage_ref(entry.stage, keys),
         }
         for entry in entries
     ]
+
+
+async def _task_requirements(service, task_id: int) -> dict:
+    """What a 题目 asks of whoever takes it, as the detail, the edit form and
+    the change draft read it: its stages, its submission items and its rubric,
+    the items and lines naming their stage by the stage's id."""
+    stage_rows = await service.list_stages(task_id)
+    keys = [stage.key for stage in stage_rows]
+    return {
+        "stages": stages_to_api(stage_rows),
+        "submissionSchema": _submission_schema_to_api(
+            await service.list_submission_schema(task_id), keys
+        ),
+        "rubric": rubric_to_api(await service.list_rubric(task_id), keys),
+    }
 
 
 async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
@@ -140,12 +166,13 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
     grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
         task_ids
     )
+    stages = await list_stages_for_tasks(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
             continue
         task_model["submissionSchema"] = _submission_schema_to_api(
-            grouped.get(model_id, [])
+            grouped.get(model_id, []), [s.key for s in stages.get(model_id, [])]
         )
 
 
@@ -464,9 +491,9 @@ async def _enrich_task_user_state(
         return team_summary(teams_map.get(team_id), fallback_id=team_id)
 
     # 我在每道题上走到哪一步（卡片上那格「我的领取档位」）。只问我**本人**那条
-    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。判决照
+    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。按各阶段的状态照
     # `app.domain.task.submission_state` 的 `claim_state` 算 —— 它和
-    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按判决直接翻，
+    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按提交直接翻，
     # 而不是读那一列。整页一次查询，不按题各发一条。
     my_membership_by_task_id = {
         task_id: state["user_membership"].id
@@ -474,11 +501,10 @@ async def _enrich_task_user_state(
         if state["user_membership"] is not None
         and state["user_membership"].approved != 1
     }
-    verdicts_by_membership_id = await TaskSubmissionRepository(
-        session=db
-    ).list_review_verdicts_for_memberships(
-        membership_ids=list(my_membership_by_task_id.values())
+    handed_in_by_membership_id = await handed_in_for(
+        db, list(my_membership_by_task_id.values())
     )
+    stages_by_task_id = await list_stages_for_tasks(db, list(my_membership_by_task_id))
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -531,7 +557,10 @@ async def _enrich_task_user_state(
         my_claim_status: str | None = None
         if my_membership_id is not None:
             my_claim_status = claim_state(
-                verdicts_by_membership_id.get(my_membership_id, [])
+                stage_states(
+                    handed_in_by_membership_id.get(my_membership_id, []),
+                    stage_count(stages_by_task_id.get(task_id, [])),
+                )
             )
 
         task_model.update(
