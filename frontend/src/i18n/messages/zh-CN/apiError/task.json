@@ -19,6 +19,7 @@
   "draftNumberRange": "{field} 需要是 {low} 到 {high} 之间的整数",
   "draftSubmissionEmpty": "至少要有一项提交内容",
   "draftSubmissionKind": "提交内容的类型只能是文件或文字",
+  "draftStageChoice": "阶段只能是这道题已有的，写它的 id 或名称：{names}",
   "draftTagChoice": "标签 {unknown} 不在这个空间里，可用的有：{names}",
   "draftTaskNotYours": "只有出题人和空间管理员可以修改这道题",
   "draftTemplateChoice": "模板只能是这个空间已有的：{names}",

@@ -7,11 +7,12 @@ and so do the students unless the task keeps it to the graders
 course may score out of 100, out of 10, or not at all.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.core.errors import BadRequestError
 from app.core.sentences import say
-from app.domain.task.stages import stage_of
+from app.domain.task.stages import stage_of, stage_ref
 
 #: Lines a rubric may have. A rubric is read at a glance; past this it is a
 #: grading guide, which belongs in the description or an attachment.
@@ -69,8 +70,15 @@ def rubric_lines(raw: list[dict]) -> list[RubricLine]:
     return lines
 
 
-def rubric_to_api(rows) -> list[dict]:
+def rubric_to_api(rows, keys: Sequence[str]) -> list[dict]:
+    """The lines as readers get them: each names its stage by the stage's id
+    (``keys``, the task's stage ids in order), None on a task without stages."""
     return [
-        {"item": r.item, "points": r.points, "criteria": r.criteria, "stage": r.stage}
+        {
+            "item": r.item,
+            "points": r.points,
+            "criteria": r.criteria,
+            "stage": stage_ref(r.stage, keys),
+        }
         for r in rows
     ]

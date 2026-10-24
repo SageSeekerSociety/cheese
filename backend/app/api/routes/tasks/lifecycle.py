@@ -26,7 +26,7 @@ from app.api.task_serialization import (
     _enrich_task_topics,
     _enrich_task_user_state,
     _membership_to_api_model,
-    _submission_schema_to_api,
+    _task_requirements,
     _task_to_api_model,
 )
 from app.api.write_access import ROUTE_DECIDES
@@ -52,14 +52,12 @@ from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
     map_approve_type_to_int,
 )
-from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
     count_distinct_participants,
     ensure_task_readable,
 )
-from app.domain.task.stages import stages_to_api
 from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
@@ -310,17 +308,15 @@ async def get_task(
                 )
             )
 
-    # Fetch submissionSchema
-    schema_entries = await service.list_submission_schema(task_id)
-    task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
-
-    # 评分要点：批改的人（出题人、空间管理员）总能读到；别人只在它公开时读到。
+    # 阶段、提交表单与评分要点。评分要点：批改的人（出题人、空间管理员）总能读到；
+    # 别人只在它公开时读到。
+    requirements = await _task_requirements(service, task_id)
     may_grade = auth_user.user_id > 0 and await may_teach_task(
         session=db, task=task, user_id=auth_user.user_id
     )
-    if task.rubric_public or may_grade:
-        task_dict["rubric"] = rubric_to_api(await service.list_rubric(task_id))
-    task_dict["stages"] = stages_to_api(await service.list_stages(task_id))
+    if not (task.rubric_public or may_grade):
+        requirements["rubric"] = []
+    task_dict.update(requirements)
 
     # Fetch topics if queryTopics is true
     if queryTopics:

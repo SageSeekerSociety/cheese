@@ -114,8 +114,10 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
 
 
 def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
-    """芝士 counts stages from 1; the form keeps them from 0. A due date is on
-    the person's clock, as the task's deadline is."""
+    """A due date is on the person's clock, as the task's deadline is. A stage
+    the task has keeps its id; a new one gets an id at once, so items and lines
+    — which 芝士 points at a stage by its id or its name — carry the stage's id
+    and follow it however the stages are later reordered."""
     fields = drafts.from_agent(
         {
             "stages": [
@@ -123,10 +125,10 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
                 {"id": "a1b2c3", "name": "实现"},
             ],
             "submission": [
-                {"name": "需求文档", "kind": "文字", "stage": 1},
-                {"name": "代码", "kind": "文件", "stage": 2},
+                {"name": "需求文档", "kind": "文字", "stage": "需求分析"},
+                {"name": "代码", "kind": "文件", "stage": "a1b2c3"},
             ],
-            "rubric": [{"item": "正确", "points": 60, "stage": 2}],
+            "rubric": [{"item": "正确", "points": 60, "stage": "实现"}],
         },
         SPACE,
         {},
@@ -136,17 +138,31 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
     # The last minute of 1 November in Shanghai.
     assert fields["stages"][0]["dueAt"] == 1793548740000
     assert fields["stages"][1]["dueAt"] is None
-    # A stage the task already has keeps its id, so its hand-ins follow it.
-    assert [s["id"] for s in fields["stages"]] == [None, "a1b2c3"]
-    assert [e["stage"] for e in fields["submissionSchema"]] == [0, 1]
-    assert fields["rubric"][0]["stage"] == 1
+    new_id = fields["stages"][0]["id"]
+    assert new_id and fields["stages"][1]["id"] == "a1b2c3"
+    assert [e["stage"] for e in fields["submissionSchema"]] == [new_id, "a1b2c3"]
+    assert fields["rubric"][0]["stage"] == "a1b2c3"
 
     view = drafts.agent_view(
         TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields), SPACE
     )
-    assert "  1. 需求分析（新阶段）｜截止 2026-11-01 23:59｜交需求" in view
-    assert "  - 代码（文件）｜阶段 2" in view
+    assert f"  1. 需求分析（id: {new_id}）｜截止 2026-11-01 23:59｜交需求" in view
+    assert "  - 代码（文件）｜阶段 实现（a1b2c3）" in view
     assert "  2. 实现（id: a1b2c3）｜截止 不设" in view
+
+
+def test_an_item_naming_a_stage_the_draft_does_not_have_is_refused():
+    with pytest.raises(BadRequestError) as refused:
+        drafts.from_agent(
+            {
+                "stages": [{"id": "a1b2c3", "name": "实现"}],
+                "rubric": [{"item": "正确", "points": 60, "stage": 2}],
+            },
+            SPACE,
+            {},
+        )
+
+    assert "实现（a1b2c3）" in str(refused.value)
 
 
 def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():

@@ -36,8 +36,14 @@ from app.domain.task.repositories import (
     TaskSubmissionSchemaRepository,
     TopicRepository,
 )
+from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskMembershipService
-from app.domain.task.stages import list_stages_for_tasks, stage_count
+from app.domain.task.stages import (
+    list_stages_for_tasks,
+    stage_count,
+    stage_ref,
+    stages_to_api,
+)
 from app.domain.task.submission_state import claim_state, handed_in_for, stage_states
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
@@ -114,17 +120,34 @@ _SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
 
 
 def _submission_schema_to_api(
-    entries: Sequence[TaskSubmissionSchemaEntry],
+    entries: Sequence[TaskSubmissionSchemaEntry], keys: Sequence[str]
 ) -> list[dict]:
-    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。每一项用
+    阶段的 id 指它属于哪个阶段（``keys`` 是这道题的阶段 id，按顺序；不分阶段时是空的，
+    这一格是 None）。"""
     return [
         {
             "prompt": entry.description,
             "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
-            "stage": entry.stage,
+            "stage": stage_ref(entry.stage, keys),
         }
         for entry in entries
     ]
+
+
+async def _task_requirements(service, task_id: int) -> dict:
+    """What a 题目 asks of whoever takes it, as the detail, the edit form and
+    the change draft read it: its stages, its submission items and its rubric,
+    the items and lines naming their stage by the stage's id."""
+    stage_rows = await service.list_stages(task_id)
+    keys = [stage.key for stage in stage_rows]
+    return {
+        "stages": stages_to_api(stage_rows),
+        "submissionSchema": _submission_schema_to_api(
+            await service.list_submission_schema(task_id), keys
+        ),
+        "rubric": rubric_to_api(await service.list_rubric(task_id), keys),
+    }
 
 
 async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
@@ -145,12 +168,13 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
     grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
         task_ids
     )
+    stages = await list_stages_for_tasks(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
             continue
         task_model["submissionSchema"] = _submission_schema_to_api(
-            grouped.get(model_id, [])
+            grouped.get(model_id, []), [s.key for s in stages.get(model_id, [])]
         )
 
 

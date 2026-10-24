@@ -19,6 +19,7 @@
   "draftNumberRange": "{field} must be a whole number from {low} to {high}",
   "draftSubmissionEmpty": "At least one submission item is required",
   "draftSubmissionKind": "A submission item is a file or text, as the form names them",
+  "draftStageChoice": "A stage has to be one the task has, by its id or name: {names}",
   "draftTagChoice": "The tags {unknown} are not in this space; it has: {names}",
   "draftTaskNotYours": "Only the publisher and the space's admins can change this task",
   "draftTemplateChoice": "The template must be one this space has: {names}",

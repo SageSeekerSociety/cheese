@@ -13,7 +13,7 @@ from app.api.routes.tasks._common import (
 from app.api.task_deps import _task_attachment_service
 from app.api.task_serialization import (
     _enrich_task_models,
-    _submission_schema_to_api,
+    _task_requirements,
     _task_to_api_model,
 )
 from app.api.task_teaching import (
@@ -36,13 +36,13 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task.inputs import map_approve_type
-from app.domain.task.rubric import rubric_lines, rubric_to_api
+from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.stages import stage_lines, stages_to_api
+from app.domain.task.stages import stage_lines, with_stage_index
 from app.domain.task.submission_state import refresh_task_claims
 from app.domain.task_notices import notices as task_notices
 
@@ -268,27 +268,27 @@ async def update_task(
 
     # 领过这道题的人要知道提交内容、评分要点或阶段变了：先记下改之前的样子，和改之后比。
     # 发布页保存时整份带上这两样，没改也一样，所以比的是内容，不是带没带。
-    requirements_before = (
-        _submission_schema_to_api(await service.list_submission_schema(task.id)),
-        rubric_to_api(await service.list_rubric(task.id)),
-        stages_to_api(await service.list_stages(task.id)),
-    )
+    requirements_before = await _task_requirements(service, task.id)
 
-    # 阶段先写：已交的提交、提交项和评分要点跟着它们的阶段挪到新位置，再由下面两份
-    # （若给了）整份替换。
+    # 阶段先写：已交的提交、提交项和评分要点按阶段的 id 跟着它们的阶段挪到新位置，
+    # 再由下面两份（若给了）整份替换 —— 那两份也按 id 指阶段，所以不会和阶段错开。
     if payload.stages is not None:
         await service.replace_stages(task.id, stage_lines(payload.stages))
+    keys = await service.stage_keys(task.id)
 
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
-        await service.replace_submission_schema(task.id, payload.submission_schema)
+        await service.replace_submission_schema(
+            task.id, with_stage_index(payload.submission_schema, keys)
+        )
 
     # 评分要点：同样整份替换。
     if payload.rubric is not None:
-        await service.replace_rubric(task.id, rubric_lines(payload.rubric))
+        await service.replace_rubric(
+            task.id, rubric_lines(with_stage_index(payload.rubric, keys))
+        )
     if payload.rubric_public is not None:
         task.rubric_public = payload.rubric_public
-    await service.check_stage_references(task.id)
 
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if payload.topics is not None:
@@ -306,14 +306,10 @@ async def update_task(
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
-    requirements_after = (
-        _submission_schema_to_api(await service.list_submission_schema(task.id)),
-        rubric_to_api(await service.list_rubric(task.id)),
-        stages_to_api(await service.list_stages(task.id)),
-    )
+    requirements_after = await _task_requirements(service, task.id)
     # A stage added, dropped, moved or given another due date changes what every
     # claim derives to; re-derive them in this same transaction.
-    if requirements_after[2] != requirements_before[2]:
+    if requirements_after["stages"] != requirements_before["stages"]:
         await refresh_task_claims(db, task.id)
     if requirements_after != requirements_before and task.approved == 0:
         await task_notices.requirements_changed(
@@ -325,12 +321,8 @@ async def update_task(
     # Same reason as the commit in ``create_task``.
     await db.commit()
 
-    # Fetch submissionSchema for response
-    schema_entries = await service.list_submission_schema(task.id)
     task_response = _task_to_api_model(task, include_private_teaching=True)
-    task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
-    task_response["rubric"] = rubric_to_api(await service.list_rubric(task.id))
-    task_response["stages"] = stages_to_api(await service.list_stages(task.id))
+    task_response.update(await _task_requirements(service, task.id))
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]

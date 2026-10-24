@@ -26,7 +26,7 @@
       v-if="taskData && currentParticipantId"
       :task-id="taskData.id"
       :participant-id="currentParticipantId"
-      :stage="stages.length ? stage : null"
+      :stage="stages[stage]?.id ?? null"
       :reviewable="false"
       hide-title
       :highlight-latest="true"

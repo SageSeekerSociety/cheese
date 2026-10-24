@@ -197,8 +197,8 @@ interface Props {
   outlined?: boolean
   highlightLatest?: boolean
   isDialog?: boolean
-  /** 只看这个阶段的提交（从 0 数）；`null` = 不分阶段。 */
-  stage?: number | null
+  /** 只看这个阶段（阶段的 id）的提交；`null` = 不分阶段。 */
+  stage?: string | null
 }
 
 const props = withDefaults(defineProps<Props>(), {

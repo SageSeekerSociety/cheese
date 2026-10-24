@@ -41,6 +41,7 @@ from app.domain.task.repositories import (
     TaskSubmissionReviewRepository,
     TaskSubmissionSchemaRepository,
 )
+from app.domain.task.stages import list_stages_for_tasks, stage_keys, stage_ref
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
     refresh_completion_status,
@@ -741,6 +742,12 @@ class TaskSubmissionService:
             session=session,
         )
 
+    async def _stage_keys(self, task_id: int) -> list[str]:
+        """The task's stage ids in order; none without a session to read them."""
+        if self._session is None:
+            return []
+        return await stage_keys(self._session, task_id)
+
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
         return {
@@ -785,6 +792,7 @@ class TaskSubmissionService:
         membership: TaskMembership,
         entries: list[TaskSubmissionEntry],
         review: TaskSubmissionReview | None,
+        keys: Sequence[str],
     ) -> dict:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
@@ -830,7 +838,8 @@ class TaskSubmissionService:
             "member": member_summary,
             "submitter": submitter_summary,
             "version": submission.version,
-            "stage": submission.stage,
+            # The stage it hands in, by the stage's id (None without stages).
+            "stage": stage_ref(submission.stage, keys),
             "createdAt": created_ms,
             "updatedAt": updated_ms,
             "content": content_dtos,
@@ -942,6 +951,7 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
 
     async def stage_of_version(self, participant_id: int, version: int) -> int | None:
@@ -1016,6 +1026,7 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
 
     async def list_submissions(
@@ -1071,6 +1082,7 @@ class TaskSubmissionService:
             else {}
         )
 
+        keys = await self._stage_keys(task_id)
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
@@ -1085,6 +1097,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=keys,
             )
             items.append(dto)
 
@@ -1130,6 +1143,11 @@ class TaskSubmissionService:
             submission_ids
         )
 
+        stages_by_task = (
+            await list_stages_for_tasks(self._session, list({t.id for _, _, t in rows}))
+            if self._session is not None
+            else {}
+        )
         items: list[dict] = []
         for submission, membership, task in rows:
             entries = entries_by_submission.get(submission.id, [])
@@ -1139,6 +1157,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=[stage.key for stage in stages_by_task.get(task.id, [])],
             )
             dto["taskId"] = task.id
             dto["taskTitle"] = task.name

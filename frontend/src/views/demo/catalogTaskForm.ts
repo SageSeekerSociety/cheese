@@ -231,16 +231,16 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '提交项和评分要点按阶段分组，每组下面加的那一项属于这个阶段，各阶段分别合计。',
         props: {
           stages: [
-            { name: '需求分析', description: '', dueAt: null },
-            { name: '实现', description: '', dueAt: null },
+            { id: 'need', name: '需求分析', description: '', dueAt: null },
+            { id: 'impl', name: '实现', description: '', dueAt: null },
           ],
           submissionSchema: [
-            { prompt: '需求文档', type: 'TEXT', stage: 0 },
-            { prompt: 'csim.c 源文件', type: 'FILE', stage: 1 },
+            { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+            { prompt: 'csim.c 源文件', type: 'FILE', stage: 'impl' },
           ],
           rubric: [
-            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 0 },
-            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 1 },
+            { item: '完整性', points: 20, criteria: '覆盖题目列出的全部功能', stage: 'need' },
+            { item: '正确性', points: 80, criteria: '8 组访存记录全对', stage: 'impl' },
           ],
         },
         expect: '阶段 2：实现',

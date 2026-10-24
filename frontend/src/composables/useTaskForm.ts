@@ -262,13 +262,16 @@ export function useTaskForm(
       return
     }
     const written = submissionSchema.value
-      .map((entry) => ({ ...entry, stage: entry.stage ?? 0, prompt: entry.prompt.trim() }))
+      .map((entry) => ({ ...entry, stage: entry.stage ?? null, prompt: entry.prompt.trim() }))
       .filter((entry) => entry.prompt)
     // 每个阶段都至少交一样东西：一样都没写的阶段交一个文件。
-    const items = Array.from({ length: Math.max(1, stages.value.length) }, (_, stage) => {
-      const own = written.filter((entry) => entry.stage === stage)
-      return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
-    }).flat()
+    const stageIds = stages.value.length ? stages.value.map((stage) => stage.id ?? null) : [null]
+    const items = stageIds
+      .map((stage) => {
+        const own = written.filter((entry) => entry.stage === stage)
+        return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
+      })
+      .flat()
     const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
@@ -298,7 +301,7 @@ export function useTaskForm(
         item: line.item.trim(),
         points: Number(line.points) || 0,
         criteria: line.criteria.trim(),
-        stage: line.stage ?? 0,
+        stage: line.stage ?? null,
       })),
       rubricPublic: rubricPublic.value,
       stages: stages.value.map((stage) => ({

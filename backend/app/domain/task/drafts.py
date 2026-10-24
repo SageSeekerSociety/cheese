@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.task.models import TaskDraft
+from app.domain.task.models import TaskDraft, new_stage_key
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
 
@@ -457,10 +457,13 @@ def from_agent(
         out["topics"] = [space.tags[n] for n in names]
     if "stages" in args:
         out["stages"] = _stages(args["stages"], space.zone)
+    # Items and lines name their stage by its id; 芝士 may name it by its id or
+    # its name, among the stages this write gives or the draft already has.
+    stages = out.get("stages", current.get("stages") or [])
     if "submission" in args:
-        out["submissionSchema"] = _submission(args["submission"])
+        out["submissionSchema"] = _submission(args["submission"], stages)
     if "rubric" in args:
-        out["rubric"] = _rubric(args["rubric"])
+        out["rubric"] = _rubric(args["rubric"], stages)
     if "rubric_public" in args:
         out["rubricPublic"] = bool(args["rubric_public"])
     if "real_name" in args:
@@ -602,7 +605,8 @@ def _stages(items, zone: tzinfo) -> list[dict]:
     """The stages 芝士 lists, in order: a name, what it asks for, and when it
     is due on the person's clock. A stage the task already has keeps its
     ``id`` (as the draft view shows it), so what was handed in under it
-    follows it; one written without an id is a new stage
+    follows it; one written without an id is a new stage, and gets its id
+    here so the items and lines in the same write can name it
     (``app.domain.task.stages``)."""
     out = []
     for item in items or []:
@@ -612,7 +616,7 @@ def _stages(items, zone: tzinfo) -> list[dict]:
             continue
         out.append(
             {
-                "id": str(item.get("id") or "").strip() or None,
+                "id": str(item.get("id") or "").strip() or new_stage_key(),
                 "name": name,
                 "description": str(item.get("description") or "").strip(),
                 "dueAt": _deadline(item.get("due"), zone),
@@ -621,15 +625,28 @@ def _stages(items, zone: tzinfo) -> list[dict]:
     return out
 
 
-def _stage_index(item: dict) -> int:
-    """The stage 芝士 names, counted from 1, as the form keeps it: from 0."""
-    try:
-        return max(0, int(item.get("stage") or 1) - 1)
-    except (TypeError, ValueError):
-        return 0
+def _stage_ref(item: dict, stages: list) -> str | None:
+    """The id of the stage 芝士 names for an item or line — by the stage's id
+    or its name. None on a task without stages."""
+    if not stages:
+        return None
+    said = str(item.get("stage") or "").strip()
+    for stage in stages:
+        if isinstance(stage, dict) and said in (stage.get("id"), stage.get("name")):
+            return stage.get("id")
+    raise BadRequestError(
+        say(
+            "draftStageChoice",
+            names="、".join(
+                f"{s.get('name')}（{s.get('id')}）"
+                for s in stages
+                if isinstance(s, dict)
+            ),
+        )
+    )
 
 
-def _submission(items) -> list[dict]:
+def _submission(items, stages: list) -> list[dict]:
     out = []
     for item in items or []:
         name = str((item or {}).get("name") or "").strip()
@@ -639,14 +656,18 @@ def _submission(items) -> list[dict]:
         if kind not in KINDS:
             raise BadRequestError(say("draftSubmissionKind"))
         out.append(
-            {"prompt": name[:255], "type": KINDS[kind], "stage": _stage_index(item)}
+            {
+                "prompt": name[:255],
+                "type": KINDS[kind],
+                "stage": _stage_ref(item or {}, stages),
+            }
         )
     if not out:
         raise BadRequestError(say("draftSubmissionEmpty"))
     return out
 
 
-def _rubric(lines) -> list[dict]:
+def _rubric(lines, stages: list) -> list[dict]:
     out = []
     for line in lines or []:
         line = line or {}
@@ -659,7 +680,7 @@ def _rubric(lines) -> list[dict]:
                 "item": str(line.get("item") or "").strip(),
                 "points": points,
                 "criteria": str(line.get("criteria") or "").strip(),
-                "stage": _stage_index(line),
+                "stage": _stage_ref(line, stages),
             }
         )
     return out
@@ -837,7 +858,8 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
     def in_stage(entry: dict) -> str:
         if not stages:
             return ""
-        return f"｜阶段 {int(entry.get('stage') or 0) + 1}"
+        named = next((s for s in stages if s.get("id") == entry.get("stage")), {})
+        return f"｜阶段 {named.get('name', '?')}（{entry.get('stage')}）"
 
     lines = [
         open_tag,
@@ -887,7 +909,7 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         "stages:" + ("" if stages else " （不分阶段）"),
         *(
             f"  {n}. {s.get('name')}"
-            + (f"（id: {s.get('id')}）" if s.get("id") else "（新阶段）")
+            + f"（id: {s.get('id')}）"
             + f"｜截止 {when(s.get('dueAt')) or '不设'}"
             + (f"｜{s.get('description')}" if s.get("description") else "")
             for n, s in enumerate(stages, start=1)

@@ -98,7 +98,7 @@ describe('participant submission', () => {
     expect(mocks.getParticipants).not.toHaveBeenCalled()
     await fireEvent.update(view.getByRole('textbox', { name: '成果说明' }), '共同完成的计划')
     await fireEvent.submit(view.container.querySelector('form')!)
-    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(12, 99, [{ text: '共同完成的计划' }], 0))
+    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(12, 99, [{ text: '共同完成的计划' }], null))
     expect(mocks.push).toHaveBeenCalledWith({ name: 'TasksSubmissions', params: { spaceId: 4, taskId: 12 } })
     view.unmount()
   })
@@ -148,8 +148,8 @@ describe('a task split into stages', () => {
           resubmittable: true,
           stages,
           submissionSchema: [
-            { type: 'TEXT', prompt: '需求文档', stage: 0 },
-            { type: 'TEXT', prompt: '代码说明', stage: 1 },
+            { type: 'TEXT', prompt: '需求文档', stage: 'need' },
+            { type: 'TEXT', prompt: '代码说明', stage: 'impl' },
           ],
         } as Task,
         participationInfo: {
@@ -167,21 +167,21 @@ describe('a task split into stages', () => {
 
   it('opens on the first stage not yet passed, and hands in that stage with its own items', async () => {
     const view = staged([
-      { name: '需求分析', description: '', dueAt: null },
-      { name: '实现', description: '', dueAt: null },
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: null },
     ])
 
     expect(view.queryByRole('textbox', { name: '需求文档' })).toBeNull()
     await fireEvent.update(view.getByRole('textbox', { name: '代码说明' }), '写完了')
     await fireEvent.submit(view.container.querySelector('form')!)
-    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(21, 8, [{ text: '写完了' }], 1))
+    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(21, 8, [{ text: '写完了' }], 'impl'))
     view.unmount()
   })
 
   it('switches to another stage when it is picked on the timeline', async () => {
     const view = staged([
-      { name: '需求分析', description: '', dueAt: null },
-      { name: '实现', description: '', dueAt: null },
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: null },
     ])
 
     await fireEvent.click(view.getByRole('button', { name: /需求分析/ }))
@@ -192,8 +192,8 @@ describe('a task split into stages', () => {
 
   it('takes nothing for a stage past its due date', async () => {
     const view = staged([
-      { name: '需求分析', description: '', dueAt: null },
-      { name: '实现', description: '', dueAt: Date.now() - 86400000 },
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: Date.now() - 86400000 },
     ])
 
     await fireEvent.click(view.getByRole('button', { name: /实现/ }))

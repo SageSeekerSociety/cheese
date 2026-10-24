@@ -218,15 +218,20 @@ export namespace TaskBoardApi {
       true
     )
 
-  /** 交一版：`stage` 是交第几个阶段（从 0 数），不分阶段的题是 0。 */
+  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。 */
   export const createSubmission = (
     taskId: number,
     participantId: number,
     data: PostTaskSubmissionRequestData[],
-    stage = 0
+    stage: string | null = null
   ) =>
     axiosRequest<{ submission: TaskSubmission }>(
-      { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'POST', data, params: { stage } },
+      {
+        url: `/tasks/${taskId}/participants/${participantId}/submissions`,
+        method: 'POST',
+        data,
+        params: stage ? { stage } : undefined,
+      },
       true
     )
 
@@ -255,8 +260,8 @@ export namespace TaskBoardApi {
       sort_by: 'createdAt' | 'updatedAt'
       sort_order: 'asc' | 'desc'
       queryReview?: boolean
-      /** 只要这个阶段的提交。 */
-      stage?: number
+      /** 只要这个阶段（阶段的 id）的提交。 */
+      stage?: string
     }
   ) =>
     axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(

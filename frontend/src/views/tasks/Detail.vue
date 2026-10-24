@@ -451,7 +451,7 @@ onMounted(() => {
       <TaskSubmissionHistory
         :task-id="taskData.id"
         :participant-id="reviewing.id"
-        :stage="stages.length ? reviewStage : null"
+        :stage="stages[reviewStage]?.id ?? null"
         :reviewable="true"
         :is-dialog="true"
         :outlined="true"

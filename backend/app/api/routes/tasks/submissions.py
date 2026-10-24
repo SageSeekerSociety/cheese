@@ -45,7 +45,7 @@ from app.domain.task.services import (
     TaskSubmissionService,
     ensure_task_readable,
 )
-from app.domain.task.stages import open_stage, stages_to_api
+from app.domain.task.stages import open_stage, stage_index, stages_to_api
 from app.domain.task.submission_state import (
     past_deadline,
     stage_distribution,
@@ -127,7 +127,7 @@ async def get_task_progress(
 async def get_task_submissions(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
-    stage: int | None = Query(default=None, ge=0),
+    stage: str | None = Query(default=None, max_length=16),
     allVersions: bool = Query(default=False),
     queryReview: bool = Query(default=False),
     reviewed: bool | None = Query(default=None),
@@ -174,7 +174,11 @@ async def get_task_submissions(
     items, total = await submission_service.list_submissions(
         task_id=task_id,
         participant_id=participant_id,
-        stage=stage,
+        stage=(
+            stage_index(stage, await task_service.stage_keys(task_id))
+            if stage is not None
+            else None
+        ),
         all_versions=allVersions,
         query_review=queryReview,
         reviewed=reviewed,
@@ -207,7 +211,7 @@ async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
-    stage: int = Query(default=0, ge=0),
+    stage: str | None = Query(default=None, max_length=16),
     db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
@@ -235,8 +239,10 @@ async def post_task_submission(
     # late hand-in is let through.
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
-    # Each stage is handed in on its own, and closes at its own due date.
-    await open_stage(db, task_id, stage, datetime.now(UTC))
+    # Each stage is handed in on its own, named by its id, and closes at its
+    # own due date.
+    stage_at = stage_index(stage, await task_service.stage_keys(task_id))
+    await open_stage(db, task_id, stage_at, datetime.now(UTC))
 
     if membership.is_team:
         is_member = await team_service.is_team_member(
@@ -252,7 +258,7 @@ async def post_task_submission(
         existing, _ = await submission_service.list_submissions(
             task_id=task_id,
             participant_id=participant_id,
-            stage=stage,
+            stage=stage_at,
             all_versions=False,
             query_review=False,
             limit=1,
@@ -265,7 +271,7 @@ async def post_task_submission(
         participant_id=participant_id,
         submitter_id=auth_user.user_id,
         contents=contents,
-        stage=stage,
+        stage=stage_at,
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in

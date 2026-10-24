@@ -34,7 +34,12 @@ from app.api.task_deps import (
     _task_attachment_service,
     get_task_service,
 )
-from app.api.task_serialization import _enrich_task_models, _task_to_api_model
+from app.api.task_serialization import (
+    _enrich_task_models,
+    _enrich_task_topics,
+    _task_requirements,
+    _task_to_api_model,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.space_access import may_publish_in_space, may_teach_task
 from app.core import model_roles
@@ -56,9 +61,7 @@ from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
 from app.domain.task import drafts
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
-from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskService, ensure_task_readable
-from app.domain.task.stages import stages_to_api
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/task-drafts", tags=["Tasks"])
@@ -171,12 +174,14 @@ async def _editable_task(db, task_id: int, user_id: int):
 
 
 async def _task_as_form(db, task) -> dict:
-    """The published 题目 as its edit form starts out."""
+    """The published 题目 as its edit form starts out: every field the form
+    saves back, so a change draft saved with one field changed leaves the rest
+    as they are — its stages, submission items, rubric and tags included."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=True)
-    model["rubric"] = rubric_to_api(await service.list_rubric(task.id))
-    model["stages"] = stages_to_api(await service.list_stages(task.id))
+    model.update(await _task_requirements(service, task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
+    await _enrich_task_topics(db, [model])
     return drafts.task_form(model)
 
 

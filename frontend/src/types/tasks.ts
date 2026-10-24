@@ -53,8 +53,8 @@ export interface ParticipationEligibility {
 export interface TaskSubmissionSchemaEntry {
   prompt: string
   type: TaskSubmissionEntryType
-  /** 属于第几个阶段（从 0 数）；不分阶段的题都是 0。 */
-  stage?: number
+  /** 属于哪个阶段：阶段的 id；不分阶段的题是 null。 */
+  stage?: string | null
 }
 
 /** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
@@ -62,14 +62,14 @@ export interface TaskRubricLine {
   item: string
   points: number
   criteria: string
-  /** 评的是第几个阶段的提交（从 0 数）。 */
-  stage?: number
+  /** 评的是哪个阶段的提交：阶段的 id；不分阶段的题是 null。 */
+  stage?: string | null
 }
 
 /** 题目的一个阶段（`app/domain/task/stages.py`）：名称、要做到什么、截止时间。 */
 export interface TaskStage {
-  /** 题目给这个阶段的 id，调整先后也不变；新加、还没保存的阶段没有。改题时原样带回去，
-   *  已交的提交跟着它走。 */
+  /** 阶段的 id，调整先后也不变：提交项、评分要点和已交的提交都按它指这个阶段。新加的
+   *  阶段由表单当场给一个（`lib/taskStages.ts`）。 */
   id?: string | null
   name: string
   description: string
@@ -177,8 +177,8 @@ export interface TaskSubmission {
   member: TaskParticipantSummary
   submitter: User
   version: number
-  /** 这一版交的是第几个阶段（从 0 数）。 */
-  stage: number
+  /** 这一版交的是哪个阶段：阶段的 id；不分阶段的题是 null。 */
+  stage: string | null
   index: number
   createdAt: number
   updatedAt: number

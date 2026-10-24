@@ -108,13 +108,13 @@ const { t } = useI18n()
 
 const stages = computed(() => props.taskData?.stages ?? [])
 
-/** 分了阶段时按阶段分组（带阶段的标题）；不分阶段是一组，没有标题。 */
-function grouped<T extends { stage?: number }>(rows: T[]) {
+/** 分了阶段时按阶段分组（带阶段的标题，按阶段的 id 归组）；不分阶段是一组，没有标题。 */
+function grouped<T extends { stage?: string | null }>(rows: T[]) {
   if (!stages.value.length) return [{ index: 0, title: null as string | null, rows }]
   return stages.value.map((stage, index) => ({
     index,
     title: t('tasks.stages.numbered', { n: index + 1, name: stage.name }) as string | null,
-    rows: rows.filter((row) => (row.stage ?? 0) === index),
+    rows: rows.filter((row) => row.stage === stage.id),
   }))
 }
 

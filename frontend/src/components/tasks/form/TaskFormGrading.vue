@@ -38,20 +38,20 @@ const typeOptions = computed(() => [
   { value: 'TEXT' as const, label: t('tasks.form.grading.typeText') },
 ])
 
-const stageOf = (entry: { stage?: number }) => entry.stage ?? 0
-
-/** 每组：一个阶段（不分阶段时是唯一的那一组，没有标题），和它的提交项、评分要点在
- *  整份列表里的位置。 */
+/** 每组：一个阶段（不分阶段时是唯一的那一组，没有标题，阶段是 null），和按阶段的 id
+ *  归到它下面的提交项、评分要点在整份列表里的位置。 */
 const groups = computed(() => {
-  const count = Math.max(1, props.stages.length)
-  return Array.from({ length: count }, (_, stage) => ({
-    stage,
-    title: props.stages.length
-      ? t('tasks.form.grading.stageTitle', { n: stage + 1, name: props.stages[stage].name || '' })
-      : null,
-    items: items.value.map((entry, at) => ({ entry, at })).filter(({ entry }) => stageOf(entry) === stage),
-    lines: rubric.value.map((line, at) => ({ line, at })).filter(({ line }) => stageOf(line) === stage),
-  }))
+  const stages = props.stages.length ? props.stages : [null]
+  return stages.map((stage, index) => {
+    const id = stage?.id ?? null
+    return {
+      key: id ?? 'none',
+      stage: id,
+      title: stage ? t('tasks.form.grading.stageTitle', { n: index + 1, name: stage.name || '' }) : null,
+      items: items.value.map((entry, at) => ({ entry, at })).filter(({ entry }) => (entry.stage ?? null) === id),
+      lines: rubric.value.map((line, at) => ({ line, at })).filter(({ line }) => (line.stage ?? null) === id),
+    }
+  })
 })
 
 const staged = computed(() => props.stages.length > 0)
@@ -59,7 +59,7 @@ const staged = computed(() => props.stages.length > 0)
 function setItem(index: number, patch: Partial<TaskSubmissionSchemaEntry>) {
   items.value = items.value.map((entry, i) => (i === index ? { ...entry, ...patch } : entry))
 }
-function addItem(stage: number) {
+function addItem(stage: string | null) {
   items.value = [...items.value, { prompt: '', type: 'FILE', stage }]
 }
 function removeItem(index: number) {
@@ -69,7 +69,7 @@ function removeItem(index: number) {
 function setLine(index: number, patch: Partial<TaskRubricLine>) {
   rubric.value = rubric.value.map((line, i) => (i === index ? { ...line, ...patch } : line))
 }
-function addLine(stage: number) {
+function addLine(stage: string | null) {
   rubric.value = [...rubric.value, { item: '', points: 0, criteria: '', stage }]
 }
 function removeLine(index: number) {
@@ -85,7 +85,7 @@ const nameMissing = (line: TaskRubricLine) => props.missingName && !line.item.tr
   <TaskFormSection :title="t('tasks.form.grading.title')">
     <BaseField data-agent-field="submission" :label="t('tasks.form.grading.items')">
       <div class="tfg__groups" data-testid="task-form-submission-items">
-        <div v-for="group in groups" :key="group.stage" class="tfg__items" :data-stage="group.stage">
+        <div v-for="group in groups" :key="group.key" class="tfg__items">
           <p v-if="group.title" class="tfg__stage t-eyebrow-read" data-user-content>{{ group.title }}</p>
           <div v-for="({ entry, at }, n) in group.items" :key="at" class="tfg__item">
             <span class="tfg__n t-num">{{ n + 1 }}</span>
@@ -136,7 +136,7 @@ const nameMissing = (line: TaskRubricLine) => props.missingName && !line.item.tr
       :error="missingName ? t('tasks.form.grading.nameRequired') : undefined"
     >
       <div class="tfg__groups" data-testid="task-form-rubric">
-        <div v-for="group in groups" :key="group.stage" class="tfg__rubric" :data-stage="group.stage">
+        <div v-for="group in groups" :key="group.key" class="tfg__rubric">
           <p v-if="group.title" class="tfg__stage t-eyebrow-read" data-user-content>{{ group.title }}</p>
           <p v-if="!group.lines.length" class="tfg__empty t-meta-read">{{ t('tasks.form.grading.rubricEmpty') }}</p>
           <template v-else>

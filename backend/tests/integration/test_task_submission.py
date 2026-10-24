@@ -890,7 +890,7 @@ class TestTaskSubmissionIntegration:
         )
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["task"]["submissionSchema"] == [
-            {"prompt": "Text Entry", "type": "TEXT", "stage": 0}
+            {"prompt": "Text Entry", "type": "TEXT", "stage": None}
         ]
 
     def test_list_reports_submission_schema_when_asked(
@@ -949,10 +949,10 @@ class TestTaskSubmissionIntegration:
         assert patch_resp.status_code == 200, patch_resp.text
 
         assert detail_schema_of(task_id) == [
-            {"prompt": "Text Entry", "type": "TEXT", "stage": 0}
+            {"prompt": "Text Entry", "type": "TEXT", "stage": None}
         ]
         assert detail_schema_of(other_id) == [
-            {"prompt": "Other Entry", "type": "FILE", "stage": 0}
+            {"prompt": "Other Entry", "type": "FILE", "stage": None}
         ]
 
         # 不问就不给：这是既有行为，不改其它调用方的收包。

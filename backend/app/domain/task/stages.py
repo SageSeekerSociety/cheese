@@ -15,6 +15,7 @@ holds submissions is refused, since those submissions would then belong to
 nothing.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,6 +39,8 @@ from app.domain.task.models import (
 MAX_STAGES = 12
 MAX_NAME_CHARS = 64
 MAX_DESCRIPTION_CHARS = 2000
+#: What a stage id looks like: short, lowercase, URL-safe.
+_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,15}")
 
 
 @dataclass(frozen=True)
@@ -59,8 +62,10 @@ def stage_lines(raw: list[dict]) -> list[StageLine]:
     """The stages as sent (``{id, name, description, dueAt}``), checked and
     trimmed.
 
-    ``id`` is the id the task gave the stage (``stages_to_api``); a stage sent
-    without one is new. ``dueAt`` is milliseconds or empty. A row with neither
+    ``id`` is the stage's id: the one the task gave it (``stages_to_api``),
+    or, for a new stage, one the writer chose so that the items and rubric
+    lines it sends with it can name it. A new stage sent without one gets one,
+    and nothing in the same write can name it. ``dueAt`` is milliseconds or empty. A row with neither
     a name nor a description is a stage the publisher added and left empty, so
     it is dropped.
     """
@@ -89,9 +94,11 @@ def stage_lines(raw: list[dict]) -> list[StageLine]:
             except (TypeError, ValueError, OverflowError, OSError) as exc:
                 raise BadRequestError(say("taskTimeInvalid", field="dueAt")) from exc
         key = str(entry.get("id") or "").strip() or None
-        # Two stages cannot both be the same one; the second is new.
+        if key is not None and not _KEY.fullmatch(key):
+            raise BadRequestError(say("stageReferenceUnknown"))
+        # Two stages cannot both be the same one.
         if key in claimed:
-            key = None
+            raise BadRequestError(say("stageReferenceUnknown"))
         if key is not None:
             claimed.add(key)
         lines.append(
@@ -228,37 +235,13 @@ async def replace_stages(
             TaskStage(
                 task_id=task_id,
                 index=index,
-                key=line.key if line.key in by_key else new_stage_key(),
+                key=line.key or new_stage_key(),
                 name=line.name,
                 description=line.description,
                 due_at=line.due_at,
             )
         )
     await session.flush()
-
-
-def refuse_unknown_stages(count: int, *entries: Sequence[object]) -> None:
-    """Refuse items or lines (dicts as sent, or rows) that name a stage past
-    ``count``: what a create checks before it writes anything."""
-    for rows in entries:
-        for row in rows:
-            stage = stage_of(row) if isinstance(row, dict) else getattr(row, "stage", 0)
-            if stage >= count:
-                raise BadRequestError(say("stageReferenceUnknown"))
-
-
-async def check_stage_references(session: AsyncSession, task_id: int) -> None:
-    """Every submission item and rubric line belongs to a stage the task has.
-    Called once the task's stages, form and rubric are all written."""
-    count = stage_count(await list_stages(session, task_id))
-    for model in (TaskSubmissionSchemaEntry, TaskRubricItem):
-        stray = await session.scalar(
-            select(model.stage)
-            .where(model.task_id == task_id, model.stage >= count)
-            .limit(1)
-        )
-        if stray is not None:
-            raise BadRequestError(say("stageReferenceUnknown"))
 
 
 async def open_stage(
@@ -281,9 +264,40 @@ async def open_stage(
 
 
 def stage_of(entry: dict) -> int:
-    """The stage a submission item or rubric line, as sent, names: 0 when it
-    names none, as on a task without stages."""
-    try:
-        return max(0, int(entry.get("stage") or 0))
-    except (TypeError, ValueError):
-        return 0
+    """The stage index of an item or line once its reference was resolved
+    (``with_stage_index``)."""
+    return int(entry.get("stage") or 0)
+
+
+def stage_ref(index: int, keys: Sequence[str]) -> str | None:
+    """How an item or line names its stage to a reader: the stage's id, or
+    None on a task without stages."""
+    return keys[index] if 0 <= index < len(keys) else None
+
+
+def stage_index(ref: object, keys: Sequence[str]) -> int:
+    """The position of the stage an item, line or hand-in names by id. On a
+    task without stages there is one stage and nothing to name; on a task
+    with stages the id must be one of them."""
+    if not keys:
+        if ref in (None, ""):
+            return 0
+        raise BadRequestError(say("stageReferenceUnknown"))
+    if isinstance(ref, str) and ref in keys:
+        return list(keys).index(ref)
+    raise BadRequestError(say("stageReferenceUnknown"))
+
+
+def with_stage_index(entries: Sequence[object], keys: Sequence[str]) -> list[dict]:
+    """Items or lines as sent, each with its stage id replaced by the stage's
+    position, which is what the rows store."""
+    return [
+        {**entry, "stage": stage_index(entry.get("stage"), keys)}
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+async def stage_keys(session: AsyncSession, task_id: int) -> list[str]:
+    """The task's stage ids, in order; empty for a task without stages."""
+    return [stage.key for stage in await list_stages(session, task_id)]

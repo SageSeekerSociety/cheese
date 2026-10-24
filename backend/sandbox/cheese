@@ -1324,7 +1324,7 @@ TASK_WRITE_DESCRIPTION = (
     "rubric 评分要点；rubric_public 评分要点是否对学生可见；stages 阶段，按顺序列出"
     "每个阶段的名称、要求和截止时间（due，格式同 deadline），整组替换，不分阶段就不给；"
     "草稿里已有的阶段带上它的 id（调整先后、改名都带着），已经有人交过的阶段去掉会被拒；"
-    "分了阶段时 submission 和 rubric 的每一项用 stage 写它属于第几个阶段（从 1 数）；"
+    "分了阶段时 submission 和 rubric 的每一项用 stage 写它属于哪个阶段（阶段的 id 或名称）；"
     "form 个人或团队；"
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
     "人数上限（0 是不限）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
@@ -1384,7 +1384,7 @@ TASK_WRITE_FIELDS = {
             "properties": {
                 "name": {"type": "string", "description": "要交的东西"},
                 "kind": {"type": "string", "enum": ["文件", "文字"]},
-                "stage": {"type": "integer", "description": "第几个阶段，从 1 数"},
+                "stage": {"type": "string", "description": "所属阶段的 id 或名称"},
             },
             "required": ["name", "kind"],
         },
@@ -1397,7 +1397,7 @@ TASK_WRITE_FIELDS = {
                 "item": {"type": "string", "description": "评什么，不超过 64 字"},
                 "points": {"type": "integer"},
                 "criteria": {"type": "string", "description": "怎样算做到"},
-                "stage": {"type": "integer", "description": "第几个阶段，从 1 数"},
+                "stage": {"type": "string", "description": "所属阶段的 id 或名称"},
             },
             "required": ["item", "points"],
         },

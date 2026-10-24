@@ -90,10 +90,13 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
 }
 
-/** 芝士从 1 数阶段，表单从 0 数（后端 `drafts._stage_index` 同一条）。 */
-function stageIndex(value: unknown): number {
-  const n = count(value)
-  return n !== null && n > 0 ? n - 1 : 0
+/** 芝士按阶段的 id 或名称指一个阶段；表单按 id 归组。名称在这次写的阶段里找得到
+ *  id 就换成 id，找不到先照写，等服务端那一份（后端 `drafts._stage_ref`）。 */
+function stageRef(value: unknown, stages: { id?: unknown; name?: unknown }[]): string | null {
+  const said = text(value)
+  if (!said) return null
+  const found = stages.find((stage) => stage.id === said || stage.name === said)
+  return typeof found?.id === 'string' ? found.id : said
 }
 
 /** 参数写到这里时，表单上能确定的那几格。`markdown` 是详情现在的样子：只改几处
@@ -204,6 +207,7 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
         }
       })
   }
+  const written = Array.isArray(given.stages) ? (given.stages as { id?: unknown; name?: unknown }[]) : []
   if (Array.isArray(given.submission)) {
     fields.submissionSchema = given.submission
       .map((item) => item as { name?: unknown; kind?: unknown; stage?: unknown })
@@ -211,7 +215,7 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
       .map((item) => ({
         prompt: String(item.name),
         type: KINDS[String(item.kind)] ?? 'FILE',
-        stage: stageIndex(item.stage),
+        stage: stageRef(item.stage, written),
       }))
   }
   if (Array.isArray(given.rubric)) {
@@ -222,7 +226,7 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
         item: String(line.item),
         points: count(line.points) ?? 0,
         criteria: text(line.criteria) ?? '',
-        stage: stageIndex(line.stage),
+        stage: stageRef(line.stage, written),
       }))
   }
   if (typeof given.rubric_public === 'boolean') fields.rubricPublic = given.rubric_public

@@ -4,6 +4,7 @@
 搬去了 ``app/api/task_deps.py`` —— 那道装配不只题目路由在用（见那个模块的说明）。
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,7 +36,7 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.stages import refuse_unknown_stages, stage_count, stage_lines
+from app.domain.task.stages import new_stage_key, stage_lines, with_stage_index
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -331,19 +332,22 @@ async def _create_task_entity(
         rubric_public = bool(payload.get("rubricPublic", True))
         stages_raw = payload.get("stages") or []
 
+    # Every stage gets its id now, so the items and lines sent with it can name
+    # it; one naming a stage the task will not have is refused before anything
+    # is written.
+    stages = [
+        replace(line, key=line.key or new_stage_key())
+        for line in stage_lines(
+            [e for e in stages_raw if isinstance(e, dict)]
+            if isinstance(stages_raw, list)
+            else []
+        )
+    ]
+    keys = [line.key for line in stages if line.key]
+    submission_schema = with_stage_index(submission_schema, keys)
     rubric = rubric_lines(
-        [e for e in rubric_raw if isinstance(e, dict)]
-        if isinstance(rubric_raw, list)
-        else []
+        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys)
     )
-    stages = stage_lines(
-        [e for e in stages_raw if isinstance(e, dict)]
-        if isinstance(stages_raw, list)
-        else []
-    )
-    # Every item and line belongs to a stage the task has; refused before the
-    # task is written.
-    refuse_unknown_stages(stage_count(stages), submission_schema, rubric)
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")

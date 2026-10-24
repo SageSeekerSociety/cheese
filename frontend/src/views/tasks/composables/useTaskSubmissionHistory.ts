@@ -20,7 +20,7 @@ import { TaskBoardApi } from '@/api/taskBoard'
  * 每个阶段单独批改，「最新那一版」是这个阶段的。
  */
 export function useTaskSubmissionHistory(
-  ids: { taskId: () => number; participantId: () => number; stage?: () => number | null },
+  ids: { taskId: () => number; participantId: () => number; stage?: () => string | null },
   onChanged: () => void = () => undefined
 ) {
   const { t } = useI18n()

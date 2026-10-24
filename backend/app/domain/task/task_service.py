@@ -244,8 +244,8 @@ class TaskService:
     ) -> None:
         await stages.replace_stages(self._require_session(), task_id, lines)
 
-    async def check_stage_references(self, task_id: int) -> None:
-        await stages.check_stage_references(self._require_session(), task_id)
+    async def stage_keys(self, task_id: int) -> list[str]:
+        return await stages.stage_keys(self._require_session(), task_id)
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]
