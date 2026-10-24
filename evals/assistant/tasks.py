@@ -419,7 +419,7 @@ TASKS: list[Task] = [
         "t33",
         "web",
         ("看看 https://arxiv.org/abs/2301.12597 讲了什么。",),
-        checks=(("读了网页", lambda o: "cheese_web_fetch" in o.tools),),
+        checks=(("读了网页", lambda o: "cheese_web" in o.tools),),
         points="读网页并概括 BLIP-2 论文（这是 BLIP-2 的论文地址）；网页读不到时如实说。",
     ),
     Task(
