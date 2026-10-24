@@ -79,18 +79,20 @@ def _comments(room: str) -> str:
     return f"/topics/{room}/files/comments"
 
 
-def _comment(client, room: str, content: str, *, by: str = "alice") -> str:
+def _comment(
+    client, room: str, content: str, *, by: str = "alice", path: str = PATH
+) -> str:
     response = client.post(
         _comments(room),
         json={
-            "path": PATH,
+            "path": path,
             "content": content,
             # 读者指着一处说的一句话：面板把「哪一页」和「页面上的哪一点」拼在一起
             # 存进 anchor_quote（见 PanelPreviewView 的 commentPick）。
             "quote": "第 2 页 · 从左 40%、从上 60%",
             "anchor": {
                 "kind": "page-pin",
-                "path": PATH,
+                "path": path,
                 "source": "live",
                 "version": "0123456789abcdef",
                 "task_id": None,
@@ -105,26 +107,57 @@ def _comment(client, room: str, content: str, *, by: str = "alice") -> str:
     return response.json()["data"]["id"]
 
 
-def _thread(client, room: str, root: str) -> dict:
+def _thread(client, room: str, root: str, *, path: str = PATH) -> dict:
     return client.get(
         f"{_comments(room)}/{root}/thread",
-        params={"path": PATH},
+        params={"path": path},
         headers=session_auth_headers("alice"),
     ).json()["data"]
 
 
-def _answers(client, room: str, root: str, seat: str, count: int = 1) -> list[str]:
+def _answers(
+    client, room: str, root: str, seat: str, count: int = 1, *, path: str = PATH
+) -> list[str]:
     """The agent's replies in the thread, once there are ``count`` of them."""
     deadline = time.monotonic() + 20
     while True:
         replies = [
             r["comment"]["content"]
-            for r in _thread(client, room, root)["replies"]
+            for r in _thread(client, room, root, path=path)["replies"]
             if r["comment"]["author"] == seat
         ]
         if len(replies) >= count or time.monotonic() > deadline:
             return replies
         time.sleep(0.1)
+
+
+def test_a_pdf_is_read_as_its_text_so_it_can_answer_about_a_page(client, sessions):
+    """A delivered report is usually a PDF, and the comment points at a page of
+    it: the session has to read its text layer, not "binary file, 12 KB"."""
+    import fitz
+
+    room, project, seat = _room_with_file(client)
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 96), "completion this quarter: 42 percent", fontname="helv")
+    library.write_room_file(
+        uuid.UUID(project),
+        uuid.UUID(room),
+        "output/报告.pdf",
+        pdf.tobytes(),
+    )
+    pdf.close()
+
+    root = _comment(
+        client,
+        room,
+        f"<@{seat}> is the number on this page right?",
+        path="output/报告.pdf",
+    )
+
+    assert _answers(client, room, root, seat, path="output/报告.pdf") == ["好的。"]
+    [(_, question)] = sessions.asked
+    assert "completion this quarter: 42 percent" in question
 
 
 def test_a_comment_naming_the_agent_is_answered_in_its_thread(client, sessions):
