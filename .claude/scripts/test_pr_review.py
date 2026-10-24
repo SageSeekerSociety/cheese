@@ -410,60 +410,49 @@ class PrReview(unittest.TestCase):
         self.assertIn("一路全新上下文找茬", text)
         self.assertIn("f.txt（实现代码）", text)
 
-    def test_the_method_says_what_a_finder_must_not_spend_time_on(self):
-        # The prompt is what a finder reads, so the rules this method added have to be in
-        # it: start from the precomputed facts, do not re-run what CI already checks,
-        # do not file an auxiliary case that passes on the baseline, and file only rung-4
-        # blocker/major findings. Asserted by phrase, not by line: rewording that keeps the
+    def test_the_method_says_what_the_review_must_not_spend_time_on(self):
+        # The method is what the seat reads, so the rules that keep it from filing noise
+        # have to be in REVIEW.md itself: do not re-run what CI already checks, file only
+        # rung-4 blocker/major findings, and treat what OCR never selected as uncovered
+        # rather than as fine. Asserted by phrase, not by line: rewording that keeps the
         # rule stays green, and removing it goes red.
         _, text = self.prepare()
-        for needle in ("PRECOMPUTED.md", "`ruff`", "`eslint`",
-                       "auxiliary case that also passes on the baseline",
-                       "the result takes only `blocker` and `major`"):
+        for needle in ("`ruff`", "`eslint`", "the result takes only",
+                       "`blocker` and `major`", "refuses a result that names a `minor`",
+                       "not_covered", "Not checked is not the same as fine"):
             self.assertIn(needle, text)
 
-    def test_the_method_carries_the_grouped_pipeline(self):
-        # The grouped method is prose a subagent follows, so the rules that make it
-        # mechanical have to be in REVIEW.md itself: the grouping constants, the five
-        # prompt bodies, the read-only rule, the coverage ledger, the coordinator's own
-        # experiments, and the cross-group duty. Asserted by phrase, not by section
-        # number, so rewording that keeps the rule stays green.
+    def test_the_method_runs_open_code_review(self):
+        # The finding is one open-code-review run; the method has to say how to start it,
+        # what it cannot run against, and that a partial or failed run is not a verdict.
+        # Asserted by phrase, not by section number, so rewording that keeps the rule
+        # stays green.
         _, text = self.prepare()
         for needle in (
-            "你是文件分组助理",
-            "Fewer than 4 files and fewer than 200 changed lines",
-            "4 or more files: semantic groups, at most 10 files in each",
-            "frontend/src/i18n/messages/en/ask.json",
-            "What lives across groups is yours",
-            "你是代码审查助手",
-            "你是代码审查任务规划专家",
-            "可以读文件、可以 grep",
-            "你是代码审查评论的事实核查员",
-            "默认答案是全部放行",
-            "默认判 REFUTED",
+            "open-code-review's (OCR)",
+            ".claude/scripts/ocr-review.sh",
+            "--from <merge base> --to HEAD",
+            "needs a full object store",
+            "partial",
+            "A failed run is not a finding",
+            "OCR does not read tests or docs by default",
             "Bring the survivors to evidence rung 4",
-            "skipped with a reason",
-            "整个组最多 20 次工具调用",
-            "一轮里把互不依赖的读取和搜索一起发出去",
-            "单组累计最多提 30 条候选",
-            "同一个工具连续失败 3 次",
-            "50 changed lines in one file",
-            "never more than the environment allows",
+            "not let a program, or OCR, decide the verdict",
+            "how many files OCR selected",
         ):
             self.assertIn(needle, text)
 
     def test_prepare_prints_the_topology_that_tier_spends(self):
-        # The topology is what the tier costs in subagents; it is written where the reviewer
-        # reads it, next to the tier it belongs to. PR 7 is small enough for the B fast
-        # path: one finder, and at most one refuter spent on blockers and majors.
+        # The topology is what the tier costs; it is written where the reviewer reads it,
+        # next to the tier it belongs to. PR 7 is small enough for the B fast path: one
+        # group, one OCR run, one lane.
         _, text = self.prepare()
         line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
         self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [1, 1])
         # The effort is an enum the tier spends, not a phrase: rewording the sentence around
         # it must not go red, and dropping it must.
         self.assertIn("high", line)
-        for severity in ("blocker", "major"):
-            self.assertIn(severity, line)
+        self.assertIn("跑一次 OCR", line)
 
     def test_a_b_change_over_the_size_buys_the_second_finder_back(self):
         # The fast path is a claim about how much one reader can cover. Seven files is

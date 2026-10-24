@@ -405,7 +405,7 @@ def _widened_once() -> str:
     )
     widened = widened.replace(
         "[([1, 2], 3), ([2], 2), ([1], 2), ([1], 2), ([1], 2)]",
-        "[([1, 2, 6], 3), ([2], 2), ([1], 2), ([1], 2), ([1], 2)]",
+        "[([1, 6], 3), ([2], 2), ([1], 2), ([1], 2), ([1], 2)]",
     )
     if widened == GOOD_TIERS or "finders\": 6" not in widened:
         raise AssertionError("这次变异没改成：tiers.py 的拓扑表变了，先更新这里的替换串")

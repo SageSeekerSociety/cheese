@@ -334,8 +334,7 @@ PY
 ## Incremental review
 
 This is a delta review of \`${since:0:12}..${sha:0:12}\`, not of the whole PR. It
-changes the grouping and the brief of steps 2 and 3 as follows; steps 3b to 7
-stand.
+changes step 2's range as follows; steps 3 to 7 stand.
 
 - The previous round reviewed ${since:0:12}. Its blocker and major findings
   are in $dir/previous.md if that file exists, otherwise in the review
@@ -346,15 +345,13 @@ stand.
   empty diff means the base branch's own version is what arrived. A merge that
   resolved a conflict wrote code of the author's and is in scope; a log walk
   that skips merges cannot see it, so do not use one to decide scope.
-- Group the increment with the same rules as step 2. An increment is almost
-  always one group, and one main reviewer reads all of its files.
-- That reviewer is handed, besides its own files, the last round's blocker and
-  major findings. For each it says whether the failure is gone at
-  ${sha:0:12}, what it read to decide, or the command the coordinator should
-  run; then it reviews what the increment adds, inside the increment only.
-- The conclusion filter, refutation and the coordinator's runs are as in steps
-  3b, 4 and 4b. Findings about code outside the increment are out of scope,
-  even if they were missed last time.
+- Run OCR over that range, not over the whole PR. An increment is almost
+  always one group, and it costs a fraction of step 2's wall clock.
+- Then, besides judging what OCR reports about the increment, go through the
+  last round's blocker and major findings one by one: say whether the failure
+  is gone at ${sha:0:12}, what you read to decide, or the command that settles
+  it. Findings about code outside the increment are out of scope, even if they
+  were missed last time.
 - The result's summary says, finding by finding, which of the last round's
   blockers and majors are fixed, and which are not.
 EOF
@@ -365,9 +362,9 @@ EOF
 
 $tier_txt
 
-档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改你花多少
-力气——尤其是不改 step 4 的证伪规矩，blocker 和 major 一律要有独立证伪分身。
-档位 A 时把最危险的几包排在最前面，不要只按文件顺序读。
+档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改 OCR 跑多
+少力气——把拓扑行里的 effort、墙钟和并发照抄到 step 2 的那条命令上。
+档位 A 的改动最危险，step 3 里它的每条结论都要自己看过；档位低的可以快一点。
 EOF
   if [ -n "$spec_txt" ]; then
     cat >> "$dir/REVIEW.md" <<EOF

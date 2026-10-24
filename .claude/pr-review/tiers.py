@@ -583,14 +583,16 @@ def topology_line(top):
     It names counts and effort, never a seat or a model: which of those a session has
     changes between sessions, and a review must run on whatever it was handed."""
     if not top["finders"]:
-        return "不派分身"
-    parts = ["按包分组，每组一路主审查"]
-    if top["refuters"]:
-        parts.append(f"最多 {top['refuters']} 路证伪（只对 blocker 或 major）")
+        return "不跑 OCR"
+    # The finding is one open-code-review run: it groups the change by package and
+    # gives each group its own loop, so the counts below are the concurrency inside
+    # that run, not subagents this seat starts. Refutation is no longer a stage —
+    # the coordinator runs the commands that settle a candidate (method step 4).
+    parts = [f"跑一次 OCR，它按包分组、每组一路主审查（最多 {top['finders']} 路并行）"]
     if top["claim"]:
         parts.append(f"{top['claim']} 路单查需求契约")
     return (f"单轮最多 {max_in_flight(top)} 路并发："
-            + "，".join(parts) + f"；子代理 effort 用 {top['effort']}")
+            + "，".join(parts) + f"；审查 effort 用 {top['effort']}")
 
 
 def block(letter, detail, top=None):
@@ -702,25 +704,23 @@ def self_test():
           [2, 2, 1, 1, 1, 0])
     check("G 档不派任何分身", topology("G"),
           {"finders": 0, "refuters": 0, "claim": 0, "effort": "low"})
-    # A change filed under the wrong tier loses a finder, but it must not lose the
-    # independent verdict on its serious findings: every reviewing tier keeps a refuter.
-    check("A–E 每一档都留着证伪这一路", [topology(l)["refuters"] for l in "ABCDE"],
-          [2, 2, 1, 1, 1])
+    # Refutation is gone (method step 4 runs the commands), so the refuter counts stay
+    # in the table only because the tier table is not this change's to reshape; what
+    # the line must still say is that the finding is one OCR run and at what effort.
     check("每一档的块里都写了拓扑", [("子代理拓扑" in block(l, "x")) for l in "ABCDEG"],
           [True] * 6)
     # What the line has to say, not the sentence saying it: the numbers are the tier's own
-    # topology numbers and the severities are the ones a refuter is spent on, so a rewording
-    # that keeps the rules keeps the test green, and a count that drifts does not.
+    # topology numbers, so a rewording that keeps the rules keeps the test green, and a
+    # count that drifts does not.
     check("拓扑行里的数字就是这一档拓扑的数字",
           [(sorted({int(n) for n in re.findall(r"\d+", topology_line(topology(l)))}),
             len(re.findall(r"\d+", topology_line(topology(l))))) for l in "ABCDE"],
           [([1, 2], 3), ([2], 2), ([1], 2), ([1], 2), ([1], 2)])
-    check("带证伪的档都在拓扑行里点名 blocker 和 major",
-          [all(s in topology_line(topology(l)) for s in ("blocker", "major"))
-           for l in "ABCDE"], [True] * 5)
+    check("A–E 的拓扑行都说跑一次 OCR",
+          [("跑一次 OCR" in topology_line(topology(l))) for l in "ABCDE"], [True] * 5)
     check("拓扑行报出这一档的 effort",
           [topology(l)["effort"] in topology_line(topology(l)) for l in "ABCDE"], [True] * 5)
-    check("G 档的拓扑行说不派分身", "- 子代理拓扑：不派分身" in block("G", "x"), True)
+    check("G 档的拓扑行说不跑 OCR", "- 子代理拓扑：不跑 OCR" in block("G", "x"), True)
 
     # B 档的快路径：它换的是拓扑，不换档位字母。字母是结论行、render.py 与 sweep 读回去的
     # 那个字段，改成 B-fast 就会让三处都认不出来；而拓扑写进 REVIEW.md，是 reviewer 真正
