@@ -51,7 +51,7 @@ class Permission(enum.StrEnum):
     speak = "speak"
     #: Ask the project's AI teammates for an answer, a document, a piece of work.
     ask_agent = "ask_agent"
-    #: Create tasks and review what they hand back.
+    #: Create tasks, review what they hand back, and reopen closed ones.
     tasks = "tasks"
     #: Create, change and delete documents and files, and save them to the library.
     edit_content = "edit_content"

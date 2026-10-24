@@ -49,6 +49,12 @@ async def serve(state: Path) -> None:
         stop = asyncio.create_task(stopped.wait())
         waits = [process, stop]
         await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        if process.done() and not stop.done():
+            # Claude Code ended on its own: the platform is told so before
+            # this runner goes (``Runner.linger``).
+            lingering = asyncio.create_task(runner.linger())
+            waits.append(lingering)
+            await asyncio.wait({lingering, stop}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         for task in waits:
             task.cancel()

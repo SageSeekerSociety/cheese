@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.feedback.models import (
     Feedback,
+    FeedbackAttachment,
     FeedbackComment,
     FeedbackKind,
     FeedbackNote,
@@ -62,6 +63,16 @@ def display_id(row: Feedback) -> str:
 #: reads ``ConfigDict(from_attributes=True, **OUTPUT)`` as that keyword twice.
 #: ``TimelineOut`` writes its one extra flag out instead.
 OUTPUT = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+#: 一条反馈最多带几个附件。文件先传、报告后提交，所以这个数只在**提交那一刻**判：
+#: 用户选了十二张截图，表单上那十二行都传得上去，提交会被退回 —— 退的是「这条反馈太多
+#: 了」，而不是「第三张传失败」。上限写在 schema 上（`Field(max_length=…)`），于是路由
+#: 和 service 都不必各判一次，前端也从这个数出发拦在前面。
+#:
+#: 单份文件多大由 `library.MAX_FILE_BYTES`（10MB）管 —— 和房间文件、资料库是同一条
+#: 线，这里不再写第二个数。
+MAX_ATTACHMENTS = 10
 
 
 class FeedbackCreate(BaseModel):
@@ -95,11 +106,22 @@ class FeedbackCreate(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
     environment: str | None = Field(default=None, max_length=255)
     tags: list[str] = Field(default_factory=list, max_length=20)
+    #: Files already uploaded through ``POST /feedback/attachments``. The ids are
+    #: all the client sends — the bytes have been on the server since the file
+    #: was picked — and the service refuses any id the caller did not upload
+    #: itself. The order they are listed in is **not** the order they show in:
+    #: the report shows them in upload order, which is the order the form drew
+    #: them and the order a reader expects to page through them. A list that
+    #: reordered the report would be a second source of truth for something the
+    #: rows already answer.
+    attachment_ids: list[uuid.UUID] = Field(
+        default_factory=list, max_length=MAX_ATTACHMENTS
+    )
 
 
 class FeedbackProposalIn(BaseModel):
     """The body of ``POST /topics/{topic_id}/feedback-proposals`` — and therefore
-    what `cheese_feedback_propose` sends.
+    what `cheese_feedback(action=propose)` sends.
 
     The shape is cc's `SendFeedback` draft (§5.0/§5.5), which the requirement
     asked us to copy: a fixed skeleton, bullets rather than prose, and —
@@ -323,6 +345,35 @@ class FeedbackCounts(BaseModel):
     unread: int = 0
 
 
+class FeedbackAttachmentOut(BaseModel):
+    """One file a report carries. **Not the bytes** — the reader asks
+    ``GET /feedback/attachments/{id}`` for those, which is where the same
+    ``may_see`` judgement runs. Handing out a URL here instead would put the
+    visibility check somewhere the client could skip it, and a URL is exactly
+    what §8.7 said a private report's files must not have.
+
+    ``content_type`` is what the server will serve it as, decided from the
+    bytes for images (see the model's docstring) — the client uses it only to
+    tell an image from a download.
+    """
+
+    model_config = OUTPUT
+
+    id: uuid.UUID
+    name: str
+    content_type: str
+    bytes: int
+
+    @classmethod
+    def from_row(cls, row: FeedbackAttachment) -> FeedbackAttachmentOut:
+        return cls(
+            id=row.id,
+            name=row.name,
+            content_type=row.content_type,
+            bytes=row.bytes,
+        )
+
+
 class FeedbackCard(BaseModel):
     """A list row. Counters are required args of ``from_row`` by design."""
 
@@ -402,6 +453,11 @@ class FeedbackDetail(FeedbackCard):
     environment: str | None
     topic_id: uuid.UUID | None
     project_id: uuid.UUID | None
+    #: Screenshots and files the report carries, oldest first. Present on every
+    #: detail response (empty when there are none) — the service is what decides
+    #: who may read the row at all, and the bytes behind each id ask the same
+    #: question again on every request (see `FeedbackAttachmentOut`).
+    attachments: list[FeedbackAttachmentOut]
     timeline: list[TimelineOut]
     thread: list[CommentOut]
     #: 顶层评论还有下一页时，这里是下一页的游标（不透明字符串，原样带回来即可）；
@@ -416,8 +472,8 @@ class FeedbackDetail(FeedbackCard):
     #: 与平台管理员各一档。客户端自己拼一遍 `handle == mine || isAdmin` 就是「按钮
     #: 画得出来、点下去 403」的来源，评论那一层已经为此付过学费。
     can_delete: bool = False
-    #: 调用者此刻能不能**领取**这条（没人领着，且他是反馈管理员或在做知是本身的
-    #: 人）、能不能**放弃**它（他就是持有人，或是反馈管理员）。服务端算，和
+    #: 调用者此刻能不能**领取**这条（还没办完、没人领着，且他是反馈管理员或在做
+    #: 知是本身的人）、能不能**放弃**它（这条还没办完，且他就是持有人，或是反馈管理员）。服务端算，和
     #: `POST` / `DELETE /feedback/{ref}/claim` 共用 `may_claim` 一处判据。持有人
     #: 本身是卡片上的 `assignee_handle`。
     can_claim: bool = False
@@ -433,6 +489,7 @@ class FeedbackDetail(FeedbackCard):
         supported: bool,
         avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
+        attachments: list[FeedbackAttachment] | None = None,
         timeline: list[FeedbackTimeline] | None = None,
         thread: list[CommentOut] | None = None,
         thread_next_cursor: str | None = None,
@@ -462,6 +519,7 @@ class FeedbackDetail(FeedbackCard):
             environment=row.environment,
             topic_id=row.topic_id,
             project_id=row.project_id,
+            attachments=[FeedbackAttachmentOut.from_row(x) for x in attachments or []],
             timeline=[TimelineOut.model_validate(x) for x in timeline or []],
             # Comments arrive already built. Their `from_row` needs more than the
             # avatar map now — a like count and two per-viewer answers, one of
@@ -512,6 +570,13 @@ class FeedbackMeta(BaseModel):
     hot_score: float
     hot_half_life_days: float
     hot_min_items: int
+    #: What an attachment upload will be refused for — the two ceilings, asked
+    #: before the upload rather than after (same reason `GET /attachments/limits`
+    #: exists). `max_file_bytes` is `library.MAX_FILE_BYTES`, the ceiling the
+    #: upload itself enforces; a second copy here would be a number that can go
+    #: stale while still being shown to the reader.
+    max_attachments: int
+    max_attachment_bytes: int
     #: Whether the caller administers feedback (the triage queue, private
     #: reports). The client asks instead of guessing from a role string it can
     #: only get wrong.

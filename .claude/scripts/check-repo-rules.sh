@@ -107,8 +107,12 @@ check_supply_reverse_lookup() {
   local hits=""
   local dirs="$ROOT/backend/app/domain/device $ROOT/backend/app/domain/agent"
   # (a) the device/agent layers must not reach into the machine table at all.
+  # The import is spelled out to its boundary (`machine import` / `machine.`) so
+  # a sibling package whose name merely starts with it — `machine_skill` — is not
+  # read as the machine domain. A bare prefix matched that one and failed the
+  # guard on a legitimate import.
   hits="$(grep -rn --include='*.py' \
-    -e 'CloudHostRepository' -e 'from app.domain.machine' \
+    -e 'CloudHostRepository' -e 'from app.domain.machine import' -e 'from app.domain.machine\.' \
     $dirs 2>/dev/null || true)"
   # (b) and nowhere in app/ may a function be DEFINED that infers the answer.
   hits="$hits
@@ -186,7 +190,7 @@ check_platform_cli_in_claude_md() {
   # knowledge filed under one gets loaded on an unrelated criterion.
   for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
   [ ${#targets[@]} -eq 0 ] && return 0
-  # A tool (`cheese_doc_set`) and a subcommand (`cheese sync`) name the same
+  # A tool (`cheese_doc(action=set)`) and a subcommand (`cheese sync`) name the same
   # kind of thing, and either spelling in AGENTS.md is the leak. `|| true`: a
   # skill or CLI with no names must leave this guard inert, not abort the
   # script under `set -e`.

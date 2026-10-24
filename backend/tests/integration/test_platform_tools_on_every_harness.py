@@ -1,7 +1,7 @@
 """The room's checklist, message edits and the silence rule are the same on
 every harness.
 
-`todo_write`, `chat_send` and `chat_edit` are platform tools, and each harness
+`todo_write`, `chat_send` and `cheese_chat` are platform tools, and each harness
 reaches the backend through code of its own: Claude Code through the plugin
 module that takes the model's tool call (`proxy.js`) and the session's MCP
 transport process it hands the call to, Codex through the handler app-server
@@ -40,6 +40,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -47,7 +48,8 @@ from tests.integration.conftest import (
     room_socket,
 )
 from tests.support.room_machine import NO_MACHINE
-from tests.support.session_records import wait_for_record
+from tests.support.session_records import wait_for_read, wait_for_record
+from tests.support.session_runner import standing_runner
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 HARNESSES = ["claude-code", "codex", "pi"]
@@ -164,13 +166,21 @@ def harness(request, client, room, tmp_path, monkeypatch):
             )
         )
         log = (tmp_path / "central.log").open("w")
+        # The session's runner, which names the run each platform call is made
+        # in (`executor_transport.PlatformHost.run`): a real session has one.
+        runner = standing_runner("claude-code/1/1")
+        runner_socket = runner.__enter__()
         process = mcp_process.MCPProcess(
             [sys.executable, central.__file__, "transport", str(config)],
             str(tmp_path),
-            {**os.environ, **env},
+            {**os.environ, **env, "CHEESE_SESSION_SOCKET": runner_socket},
             log,
         )
-        closers[:0] = [process.close, log.close]
+        closers[:0] = [
+            process.close,
+            log.close,
+            lambda: runner.__exit__(None, None, None),
+        ]
         module = release.hook_module(
             Path(central.__file__).with_name("proxy.js").read_text(),
             {"central_config": str(tmp_path), "session_workspace": str(tmp_path)},
@@ -222,7 +232,7 @@ def harness(request, client, room, tmp_path, monkeypatch):
         # then exactly the platform's table.
         tools.client.call = lambda method, params: {"tools": []}
         listed = asyncio.run(tools.discover())
-        assert {"todo_write", "chat_send", "chat_edit"} <= {
+        assert {"todo_write", "chat_send", "cheese_chat"} <= {
             tool["name"] for tool in listed
         }
 
@@ -283,7 +293,12 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
     [sent] = [b for b in blocks if b["content"] == "先看 issue"]
     with room_socket(client, topic, "alice") as ws:
         harness(
-            "chat_edit", {"message_id": sent["id"], "content": "先看 issue，再写测试"}
+            "cheese_chat",
+            {
+                "action": "edit",
+                "message_id": sent["id"],
+                "content": "先看 issue，再写测试",
+            },
         )
         edited = _next(ws, "block_updated")
     assert edited["id"] == sent["id"]
@@ -294,36 +309,22 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
 def test_a_message_through_any_harness_silences_the_reminder(
     client, stub_hooks, room, harness, monkeypatch
 ):
-    """`remind_silent_turns` picks the turns that owe the room a word by when it
-    last heard one. That clock moves when `chat_send` lands, so it has to land
-    the same way from every harness — or one harness is reminded forever, or
-    never."""
-    from app.domain.agent import chat as chat_module
-    from app.domain.agent.turn.intake import assistant as assistant_module
-    from app.domain.agent.turn.steps import send as send_module
-    from app.domain.agent.turn.store import session_inputs as session_inputs_module
-
+    """`QuietSessionReminders.silence` picks the sessions that owe a person an
+    answer: read their message, said nothing since. The answer is a `chat_send`
+    landing, so it has to land the same way from every harness — or one
+    harness is reminded forever, or never."""
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
+    quiet = QuietSessionReminders(chat, chat.compute)
     clock = datetime.now(UTC)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(send_module, "datetime", Clock)
-    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
-    monkeypatch.setattr(assistant_module, "datetime", Clock)
     threshold = settings.chat_progress_reminder_after_s
     notices: list[str] = []
 
-    async def notice(topic_id, text):
+    async def notice(topic_id, text, **_kwargs):
         notices.append(text)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", notice)
+    monkeypatch.setattr(chat, "notify_running_session", notice)
 
     def begin(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
@@ -334,17 +335,17 @@ def test_a_message_through_any_harness_silences_the_reminder(
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         wait_for_record(client, topic, lambda record: "Internal output" in str(record))
+        wait_for_read(client, topic)
+        clock = datetime.now(UTC)
         clock += timedelta(seconds=threshold)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert client.portal.call(quiet.silence, clock) == 1
         assert "chat_send" in notices[0] and "todo_write" in notices[0]
 
         harness("chat_send", {"content": "我先核对一下当前流程。"})
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        # A checklist is not a word to the room: it does not reset the clock.
-        harness("todo_write", {"todos": PLAN})
+        assert client.portal.call(quiet.silence, clock) == 0
         clock += timedelta(seconds=threshold)
-        assert client.portal.call(chat.remind_silent_turns) == 1
-        assert len(notices) == 2
+        assert client.portal.call(quiet.silence, clock) == 0
+        assert len(notices) == 1
 
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished")
         while ws.receive_json()["type"] != "done":

@@ -12,8 +12,9 @@ import type { PanelChangesProps } from './types'
 
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-import { downloadFile, listFiles, readFile, workspaceFileRawUrl } from '../../api'
+import { downloadFile, listFiles, readFile, RequestTimeoutError, workspaceFileRawUrl } from '../../api'
 import { parseDiffLines } from '../../lib/diff'
+import { useRawImage } from '../useRawImage'
 import { useTopicMemory } from '../useTopicMemory'
 
 import { usePanelFileSave } from './fileSave'
@@ -157,8 +158,8 @@ export function usePanelFilePane(deps: FilePaneDeps) {
   }
   const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
 
-  // Raw bytes of the open file: what <img> renders for an image, and what the
-  // download button hands over for anything else that can't be shown as text.
+  // Raw bytes of the open file: the image below is fetched from it, and the
+  // download button hands it over for anything else that can't be shown as text.
   const openRawUrl = computed(() =>
     openPath.value && props.projectId
       ? workspaceFileRawUrl(
@@ -170,6 +171,9 @@ export function usePanelFilePane(deps: FilePaneDeps) {
         )
       : ''
   )
+  // <img> cannot carry Authorization, and /file/raw answers an anonymous read with
+  // 404: the image is fetched with the header and shown from an object URL.
+  const openImage = useRawImage(() => (openIsImage.value ? openRawUrl.value : ''))
   async function downloadOpenFile() {
     if (!openRawUrl.value || !openPath.value) return
     try {
@@ -255,6 +259,10 @@ export function usePanelFilePane(deps: FilePaneDeps) {
       if (openPath.value && !listed.some((f) => f.path === openPath.value)) openPath.value = null
     } catch (e) {
       if (epoch() !== epochAt || opts.silent) return
+      // 现场工作区没在读取预算里答上来：树上的文件来自差异，清单只是「打开其他
+      // 文件」用的。拿一句请求超时把整格顶掉，比少一份清单糟得多；组合根会把来源
+      // 切到已提交版本，再读一次这份清单。
+      if (fileSource.value === 'live' && e instanceof RequestTimeoutError) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       done?.()
@@ -392,7 +400,8 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     openDiffLines,
     effectiveView,
     openIsImage,
-    openRawUrl,
+    openImageSrc: openImage.src,
+    openImageError: openImage.error,
     draftCount: computed(() => drafts.size),
     keepDraft,
     loadFiles,

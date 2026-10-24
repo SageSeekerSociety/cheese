@@ -14,6 +14,7 @@ from collections.abc import Collection
 
 from app.core import raster_images
 from app.domain.agent.harness.notices import strip_platform_notice
+from app.domain.block.authorship import speaker
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.identity.handles import recipient_seat
@@ -49,7 +50,7 @@ def attachment_prompt_line(
         # The file was deleted after the message (see `offered_attachments`).
         return (
             f"[{author}] 发过一个文件 {path}，但这份文件已经不在了"
-            f"（多半是从资料库里删掉了），这一轮读不到它的内容。"
+            f"（多半是从资料库里删掉了），这次读不到它的内容。"
             f"需要它的话，请对方重新发一份。"
         )
     if undecodable:
@@ -121,9 +122,7 @@ def message_prompt_line(
     )
 
 
-def addressee(
-    b, *, recipient: str | None, recipient_instance_id=None
-) -> str | None:
+def addressee(b, *, recipient: str | None, recipient_instance_id=None) -> str | None:
     """The seat a block names, when that is not the reader; else None.
 
     ``recipient``/``recipient_instance_id`` are who is reading. A caller that
@@ -178,7 +177,7 @@ def prompt_line(
     longer exists; ``undecodable`` that it looks like a picture and is not one."""
     if b.kind == BlockKind.attachment:
         line = attachment_prompt_line(
-            b.author,
+            speaker(b),
             b.content,
             embeds_images=embeds_images,
             mime=b.mime_type or "",
@@ -187,7 +186,7 @@ def prompt_line(
         )
     else:
         line = message_prompt_line(
-            b.author,
+            speaker(b),
             b.content,
             (b.meta or {}).get("quoted_context"),
             addressed_to=addressee(
@@ -227,7 +226,7 @@ def live_input_lines(
     ]
     lines.extend(
         attachment_prompt_line(
-            author,
+            speaker(stored) if stored is not None else author,
             f["path"],
             embeds_images=True,
             mime=f["media_type"],

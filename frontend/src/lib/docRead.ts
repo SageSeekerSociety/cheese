@@ -33,9 +33,25 @@ function manager(as: ReadAs): MarkdownManager {
   return m
 }
 
+const MAX_CACHE = 256
+const parsedCache = new Map<string, PMNode>()
+const plainCache = new Map<string, string>()
+
+function cacheSet<T>(cache: Map<string, T>, key: string, value: T): T {
+  if (cache.size >= MAX_CACHE) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) cache.delete(oldest)
+  }
+  cache.set(key, value)
+  return value
+}
+
 /** Markdown read into the document's blocks. */
 export function readMarkdown(md: string, as: ReadAs = 'doc'): PMNode {
-  return schema.nodeFromJSON(manager(as).parse(md))
+  const key = `${as}:${md}`
+  const hit = parsedCache.get(key)
+  if (hit) return hit
+  return cacheSet(parsedCache, key, schema.nodeFromJSON(manager(as).parse(md)))
 }
 
 // ---- Plain text: one line of it, for a quote or a preview
@@ -73,5 +89,8 @@ function blockText(node: PMNode): string {
 /** What the text says, as one line of words: no Markdown marks, a status
  *  tag as its sign and words, a chart or a diagram as what it is. */
 export function plainText(md: string, as: ReadAs = 'doc'): string {
-  return blockText(readMarkdown(md, as)).replace(/\s+/g, ' ').trim()
+  const key = `${as}:${md}`
+  const hit = plainCache.get(key)
+  if (hit !== undefined) return hit
+  return cacheSet(plainCache, key, blockText(readMarkdown(md, as)).replace(/\s+/g, ' ').trim())
 }

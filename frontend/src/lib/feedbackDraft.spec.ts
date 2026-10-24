@@ -33,6 +33,7 @@ function draft(over: Partial<FeedbackDraft> = {}): FeedbackDraft {
     repro: '',
     expectation: '',
     tags: [],
+    attachments: [],
     attachContext: false,
     visibility: 'public',
     ...over,

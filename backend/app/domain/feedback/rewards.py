@@ -27,6 +27,8 @@ async def reward_feedback(
         key=f"feedback:{row.id}",
         user_id=user.id,
         credits=FEEDBACK_CREDITS,
+        # 积分和额度是同一个数（《反馈激励机制（内测）》）。
+        points=FEEDBACK_CREDITS,
         reason=f"Accepted feedback FB-{row.display_no}",
         actor=actor,
     )

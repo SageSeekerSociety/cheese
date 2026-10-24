@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
-// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名归负责人和协作者，转交、
-// 关闭只归负责人）。
+// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名、关闭归负责人和协作者，
+// 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
+import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
@@ -13,43 +14,54 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
+import { takesPartInTask, taskActions } from '@/commands/taskActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { taskPhraseLabel } from '@/lib/board'
 import { environmentName } from '@/lib/environment'
+import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
-const props = defineProps<{
-  room: Topic
-  task: RoomTask | null
-  memberNames: Record<string, string>
-  agentName: string
-  people: TopicMemberRow[]
-  /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
-  agents: TopicMemberRow[]
-  machine: TopicEnvironment | null
-  machineError: boolean
-  actionError: string | null
-  connected?: boolean
-  close: (conclusion: string) => Promise<boolean>
-  reopen: () => Promise<boolean>
-  handOver: (owner: string) => Promise<boolean>
-  rename: (title: string) => Promise<boolean>
-  setCollaborators: (handles: string[]) => Promise<boolean>
-  setAgent: (handle: string | null) => Promise<boolean>
-  loadMachine: () => Promise<void>
-  /** 换这个任务里一条会话的环境；换「新会话默认」。 */
-  setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
-  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
-  panelOpen?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    room: Topic
+    task: RoomTask | null
+    memberNames: Record<string, string>
+    agentName: string
+    people: TopicMemberRow[]
+    /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
+    agents: TopicMemberRow[]
+    machine: TopicEnvironment | null
+    machineError: boolean
+    actionError: string | null
+    connected?: boolean
+    close: (conclusion: string) => Promise<boolean>
+    reopen: () => Promise<boolean>
+    handOver: (owner: string) => Promise<boolean>
+    rename: (title: string) => Promise<boolean>
+    setCollaborators: (handles: string[]) => Promise<boolean>
+    setAgent: (handle: string | null) => Promise<boolean>
+    loadMachine: () => Promise<void>
+    /** 换这个任务里一条会话的环境；换「新会话默认」。 */
+    setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
+    /** 右侧面板是不是开着——「概览」那颗开关读它。 */
+    panelOpen?: boolean
+    /** 复制这件任务的链接。页面给：这一层不认路由（组件只凭 props 画）。 */
+    copyLink?: () => void
+    /** 我的角色有「新建任务和审阅」：关了的任务我能重新打开。页面从项目的 `my_permissions` 读。 */
+    worksTasks?: boolean
+  }>(),
+  // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
+  { connected: true }
+)
 
 const emit = defineEmits<{
   (e: 'open-room'): void
@@ -60,7 +72,7 @@ const { mdAndUp } = useDisplay()
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
-const takesPart = computed(() => isOwner.value || (!!props.task && (props.task.contributor_handles ?? []).includes(ME)))
+const takesPart = computed(() => !!props.task && takesPartInTask(props.task, ME))
 const ownerName = computed(() => {
   const handle = props.task?.owner_handle ?? ''
   return props.memberNames[handle] || handle
@@ -68,6 +80,28 @@ const ownerName = computed(() => {
 const taskAgentName = computed(() => {
   const handle = props.task?.agent_handle
   return (handle && props.memberNames[handle]) || props.agentName
+})
+// 状态那一格（`lib/taskState.ts`）和它后面那一句：在做什么、已做多久，在等什么，卡在哪
+// （没留话时说一句打开看看），待谁审阅、第几版。队友报的原话照写，悬停看谁什么时候报的。
+// 它报完之后会话结束了，旁边写「已离开」，不改它报的。
+const state = computed(() =>
+  props.task ? taskState(props.task, { viewer: ME, nameOf, agentName: taskAgentName.value }) : null
+)
+const progressNote = computed(() => (isOpen.value ? props.task?.progress_note ?? '' : ''))
+const agentLeft = computed(() => isOpen.value && !!props.task?.progress_state && !!props.task?.agent_left_at)
+// 「已离开」说的是报那一句的那位，不是任务现在的队友：任务换过人时，两处名字不是同一个，
+// 照着任务当前的队友写，就把「离开」栽到了别人的头上。
+const leftName = computed(() => {
+  const by = props.task?.progress_set_by
+  if (!by) return taskAgentName.value
+  // 名册上查不到就用 handle 本身：退回默认的队友名字等于又把别人的名字栽上去。
+  return props.memberNames[by] || by
+})
+const progressTitle = computed(() => {
+  const by = props.task?.progress_set_by
+  const at = props.task?.progress_set_at
+  if (!isOpen.value || !by || !at) return undefined
+  return t('work.task.progress.said', { name: props.memberNames[by] || taskAgentName.value, time: relTime(at) })
 })
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
@@ -178,6 +212,36 @@ async function confirmHandOver() {
     handingOver.value = false
   }
 }
+
+// ⋯ 里的清单和侧栏任务行是同一份（`commands/taskActions.ts`）：这里露出全部，侧栏
+// 只留「重命名」「复制链接」。权限也在那一份里判，不再在这几个模板分支里各写一遍。
+const menuActions = computed<MenuCommand[]>(() =>
+  props.task
+    ? taskActions(
+        props.task,
+        {
+          rename: () => (renameOpen.value = true),
+          handOver: () => (handOverOpen.value = true),
+          close: () => (closeOpen.value = true),
+          reopen: () => void props.reopen(),
+        },
+        {
+          me: ME,
+          canHandOver: otherPeople.value.length > 0,
+          copyLink: props.copyLink ?? null,
+          worksTasks: props.worksTasks,
+        }
+      )
+    : []
+)
+// ⋯ 给参加这件活的人，和能重新打开这件关了的任务的人；只剩「复制链接」时不摆。
+const showsMenu = computed(() => takesPart.value || menuActions.value.some((action) => action.id === 'task.reopen'))
+// 两条既有用例按这两个 test id 找按钮：其余项不必有。
+function actionTestId(id: string): string | undefined {
+  if (id === 'task.rename') return 'task-rename'
+  if (id === 'task.reopen') return 'task-reopen'
+  return undefined
+}
 </script>
 
 <template>
@@ -191,7 +255,26 @@ async function confirmHandOver() {
         task ? taskTitle(task) : ''
       }}</span>
       <span class="task-header__meta">
-        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
+        <TaskStateMark
+          v-if="state"
+          class="task-header__state"
+          data-testid="task-phrase"
+          :title="progressTitle"
+          :state="state"
+          :emphasis="task?.needs_my_action === true"
+          :size="13"
+        />
+        <span
+          v-if="state?.line"
+          class="task-header__note"
+          data-testid="task-progress-note"
+          :data-user-content="progressNote ? '' : undefined"
+          :title="progressTitle ?? state?.line"
+          >{{ state?.line }}</span
+        >
+        <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
+          t('work.task.progress.left', { name: leftName })
+        }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>
@@ -365,7 +448,7 @@ async function confirmHandOver() {
     </v-menu>
 
     <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
-    <v-menu v-if="task && takesPart" location="bottom end">
+    <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
           v-bind="menuProps"
@@ -379,26 +462,13 @@ async function confirmHandOver() {
       </template>
       <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
         <v-list-item
+          v-for="action in menuActions"
+          :key="action.id"
           role="menuitem"
-          :title="t('work.task.rename')"
-          data-testid="task-rename"
-          @click="renameOpen = true"
-        />
-        <template v-if="isOwner && isOpen">
-          <v-list-item
-            v-if="otherPeople.length"
-            role="menuitem"
-            :title="t('work.task.handOver')"
-            @click="handOverOpen = true"
-          />
-          <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
-        </template>
-        <v-list-item
-          v-else-if="isOwner"
-          role="menuitem"
-          :title="t('work.task.reopen')"
-          data-testid="task-reopen"
-          @click="reopen()"
+          :title="action.title"
+          :prepend-icon="action.icon"
+          :data-testid="actionTestId(action.id)"
+          @click="action.run?.()"
         />
       </v-list>
     </v-menu>
@@ -542,9 +612,26 @@ async function confirmHandOver() {
   font-size: 12px;
   font-weight: 600;
 }
+/* 队友报状态时留的那一句：它的原话，可能很长，截在一行里，悬停看全（`title`）。 */
+.task-header__note {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-header__left {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
 .task-header__disconnected {
   flex: 0 0 auto;
-  color: var(--warn-ink);
+  color: var(--muted);
   font-size: 12px;
 }
 .task-header__owner {

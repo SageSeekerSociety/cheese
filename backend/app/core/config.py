@@ -185,6 +185,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a browser could already send starts being refused. That nginx line is a
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
+    # A team's own library (a person's is their personal team's): how much it
+    # holds in all, the versions a file was replaced from included, and how
+    # large one file in it may be. A file's ceiling is the attachment one, so
+    # what a person attaches to 芝士 can always land in their library.
+    team_library_bytes: int = 1024 * 1024 * 1024
     redis_url: str = "redis://localhost:6379/0"
     # Per-client request limits (`app/core/request_limits.py`). Measured on the
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
@@ -293,6 +298,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # through the Anthropic-compatible gateway (spec §9: 不绑定模型). For Zhipu
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     agent_model: str = "glm-5.2"
     # Which models each harness that does NOT speak the platform gateway may
     # be pointed at ({"codex": ["gpt-5.2"]}). A harness that speaks the gateway
@@ -322,6 +329,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
+    # 每个会话多一样工具 `cheese_session(action=compact)`：agent 可以请平台压缩自己这个会话的
+    # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
+    # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
+    # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
+    agent_compact_tool: bool = False
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -422,6 +434,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The gateway model 问芝士 answers with. Its virtual key is minted through
     # `llm_gateway_admin_base`; what it spends is charged to the asker's
     # personal credits, so the model must be priced on the gateway.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     docs_assistant_model: str = "deepseek-flash"
     # Whether 问芝士 searches and reads the docs itself, over the three tools in
     # `docs_site/tools.py`, instead of answering from one round of retrieval.
@@ -433,6 +447,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # --- A person's 芝士 outside any project (app/domain/agent/personal, #2285) ---
     # The gateway model it answers with; charged to the asker's personal
     # credits at what the gateway spent, so the model must be priced there.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     assistant_model: str = "deepseek-flash"
     docs_question_retention_days: int = 90
     # How long a docs sign-in lasts before the reader goes through the
@@ -443,11 +459,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
-    # session is reminded to name it with `cheese_title`.
+    # session is reminded to name it with `cheese_room(action=rename)`.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
     # 「让芝士看看」：环境准备失败时，读日志和两段脚本给出原因和改法的那一问。
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
@@ -456,6 +476,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # small model that tidies the transcript into a message. Recorded per
     # person in voice_inputs and per project in resource_usage; while
     # voice_input_charged is off the rows cost the project no credits.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     voice_asr_model: str = "qwen-audio-asr"
     voice_polish_model: str = "deepseek-flash"
     voice_input_charged: bool = False
@@ -474,25 +496,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # even without a signal (an accept card, a changed document).
     topic_naming_follow_messages: int = 30
 
-    # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
-    # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
-    # API key). base_url unset → Anthropic's default endpoint. Not the multi-user
-    # product path — that defaults to the pool (see app/domain/agent/profiles.py).
-    claude_model: str = "claude-opus-4-8"
-    claude_base_url: str | None = None
-    claude_auth_token: str | None = None
-    # Subscription auth (走订阅): a long-lived OAuth token from `claude setup-token`
-    # (a personal Max/Pro seat — ToS-compliant for dogfooding). Preferred over an
-    # API key; when set, the sandbox `claude` runs on the subscription, not pay-
-    # per-use API credits. Injected as CLAUDE_CODE_OAUTH_TOKEN.
-    claude_oauth_token: str | None = None
-    # ExecutionProfile "claude-fable" (tier=testing): the Fable frontier model on
-    # the same personal seat/credentials as claude-opus — a second dogfooding
-    # channel so we can compare models on real platform work.
-    fable_model: str = "claude-fable-5"
-    # Owner handles allowed to select tier=testing profiles (dogfooding only —
-    # see profiles.py / review Finding 7). Comma-separated in env.
-    dogfood_owner_handles: list[str] = []
     # Handles that are platform administrators — the people who run the admin
     # screens (members, models, stats, spaces, integrations). Feedback triage is
     # a separate roster, `feedback_triage_handles` below. JSON list in env,
@@ -545,7 +548,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a
@@ -563,11 +566,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # tester. Not shared with the proposal cap above: that one is per TOPIC and
     # protects a room's reading; this one is per PERSON and protects the list.
     feedback_reports_per_author_per_day: int = 30
-    # Which registered profile is the platform default ("our AI pool"). Normally
-    # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
-    # whole platform on the subscription seat — e.g. a demo where the GLM pool is
-    # out of balance. The chosen profile must have credentials or boot fails fast.
-    agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的频道、任务、决策和进展。用自然清楚的语言交流，"
@@ -634,6 +632,20 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a session at work may produce nothing at all — no output, no
+    # tool call, nothing running on it — before the runner calls it stuck and
+    # reports its ending itself. The other two clocks both need something to
+    # go on (something said recently, an input still unread); a process that
+    # is alive but whose build stopped answering has neither, and without this
+    # clock nothing ever reports that it stopped. A tool in flight does not
+    # count as silence: that is a long command working, not a build dying.
+    agent_stuck_silence_s: float = 1800.0
+    # How long a Claude Code runner another release started may go on with the
+    # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
+    # counted from when the drain began (`agent_sessions.drain_started_at`). It
+    # gets nothing new meanwhile, and the seat's messages wait; past this its
+    # work is interrupted and resumed on a runner of this release.
+    runner_drain_s: float = 1800.0
 
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no
@@ -659,6 +671,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # script, and the deploy overlay mounts the proxy's cert read-only and points
     # this at it.
     subscription_ca_backend_path: str = ""
+    # ponytail: 本地开发的逃生口，默认关；开着时屏幕不经计费代理，直接把 `agent_env()`
+    # 的网关交给它。不拿 `environment == development` 当判据（测试也在 development 上，
+    # 会读成绿灯假象）。上限：无计费与模型改写；升级路径：配好 CA 与 meter 后无需再开。
+    agent_direct_gateway: bool = False
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
     # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
     # is refused before it is forwarded once the window's completed turns plus
@@ -789,6 +805,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # Seconds between reads of the platform model roles an administrator
+    # pointed (`app.core.model_roles`), in every process. Another process sees
+    # a role change within this; the key behind a role is narrowed after it
+    # (`gateway_models.roles.NARROW_AFTER_SECONDS`). 0 turns it off (tests).
+    platform_model_roles_refresh_interval_s: float = 30.0
+    # Seconds between reads of every model's spend cap against the gateway's
+    # ledger, saying on the alert webhook when one crosses 80% or reaches it
+    # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
+    model_spend_cap_alert_interval_s: float = 300.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no
@@ -830,6 +855,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+    # 公开 GitHub 读取（技能市场、「从网上取一份技能」导入）的只读凭据；不替代上面的
+    # App——那个是按安装授权的。不设也能读，只是与全站共用每小时 60 次的匿名额度。
+    github_token: str = ""
 
     forgejo_url: str = ""
     forgejo_api_url: str = ""
@@ -870,6 +898,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     memory_migration_timeout_s: float = 600.0
     # The gateway model that sorts old memories, and what its key may spend per
     # 30 days: the platform runs it, so no person's credits pay for it.
+    # Fallback of the platform model role of the same name: read only while
+    # no administrator has pointed the role (app.core.model_roles).
     memory_migration_model: str = "deepseek-flash"
     memory_migration_budget_usd: float = 10.0
     # 一次问模型的旧记忆条数（见 `migration.MIGRATION_CHUNK`）。
@@ -973,6 +1003,22 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     s3_region: str = "us-east-1"
     s3_public_url: str | None = None
 
+    # --- Project files (#2114, `app.core.blob_store`) ---
+    # Where the bytes of a file the platform keeps for a project are written
+    # when it is first saved: "local" (under `workspace_root`) or "bucket"
+    # (the bucket below). A file's record says where its own bytes are, so
+    # changing this moves nothing that is already stored.
+    files_store: Literal["local", "bucket"] = "local"
+    # A bucket of its own, with a key that reaches only it: these are private
+    # files, and the key is not the one the public and transcript buckets use.
+    # A browser puts an upload straight into it, so its CORS rules must let the
+    # site's origin PUT.
+    files_bucket: str = ""
+    files_bucket_endpoint_url: str | None = None
+    files_bucket_access_key: str | None = None
+    files_bucket_secret_key: str | None = None
+    files_bucket_region: str = "auto"
+
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
     # Enforce topic access (成员/角色/项目 checks). Ops kill-switch: set false to
     # disable the membership check entirely if a token rollout surfaces an
@@ -980,20 +1026,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     authz_enforce_topic_access: bool = True
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
-    # (PDF task drafts, rank checks, email/notifications, real-name
-    # encryption) read these off settings. The merge dropped them, so those code
+    # (rank checks, email/notifications, real-name encryption) read these off
+    # settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
-    # The gateway model that turns an uploaded PDF into task drafts; each page
-    # is one call, charged to the publisher's personal credits.
-    task_draft_model: str = "deepseek-flash"
-    task_draft_max_tokens: int = 4096
-    task_draft_timeout_s: float = 300.0
-    pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
-    pdf_import_max_concurrency: int = Field(
-        default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
-    )
-
+    # 为没有自带 SKILL.md 的仓库生成草稿的网关模型；一次一 call，记管理员额度。
+    skill_draft_model: str = "deepseek-flash"
+    skill_draft_max_tokens: int = 4096
+    skill_draft_timeout_s: float = 120.0
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")
@@ -1101,6 +1141,23 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """The commit this process runs as: the release a deploy named, else
         the commit its image was built from."""
         return self.app_release or self.app_version
+
+    @model_validator(mode="after")
+    def _files_bucket_named_when_new_files_go_there(self) -> "Settings":
+        """Refuse to boot when new files are to go to a bucket nobody named:
+        otherwise the first upload after the deploy is where it shows."""
+        if self.files_store == "bucket" and not (
+            self.files_bucket
+            and self.files_bucket_endpoint_url
+            and self.files_bucket_access_key
+            and self.files_bucket_secret_key
+        ):
+            # i18n-exempt: refuses the boot; read by an operator in the log
+            raise ValueError(
+                "FILES_STORE=bucket needs FILES_BUCKET, FILES_BUCKET_ENDPOINT_URL, "
+                "FILES_BUCKET_ACCESS_KEY and FILES_BUCKET_SECRET_KEY"
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_on_deployment(self) -> "Settings":

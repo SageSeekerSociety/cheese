@@ -294,8 +294,8 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
         },
     ).json()["data"]
     assert result["supply"]["model"] == "deepseek-flash"
-    # 换到订阅池：claude-opus-5 在目录里（旧队友语义下没有队友绑它就吃拒
-    # 绝），目录语义直接绑得上 —— 但档位是 premium，过 tier 策略闸时被拒。
+    # 项目把分身默认配成订阅的 opus：claude-opus-5 由此可指定（供给跟着模型
+    # 走）—— 但档位是 premium，过 tier 策略闸时被拒。
     from app.domain.project.repositories import ProjectRepository
 
     async with client.test_factory() as session:
@@ -303,7 +303,7 @@ async def test_explicit_native_child_models_are_validated_against_catalog_and_po
         assert orm_project is not None
         orm_project.settings = {
             **(orm_project.settings or {}),
-            "supply": "subscription",
+            "default_subagent_model": "opus",
         }
         await session.commit()
     premium = client.post(
@@ -411,9 +411,9 @@ async def test_a_subagent_naming_the_parents_model_runs_on_it(client):
 async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_pools(
     client,
 ):
-    """父会话是绑了订阅模型的队友，项目在网关池：分身指定同一个模型照样绑上。
+    """父会话是绑了订阅模型的队友：分身指定同一个模型照样绑上。
 
-    这个模型本来不在项目池的可指定范围里，但父会话此刻就在这个席位上跑着
+    订阅模型本来不在可随意指定的范围里（那里只有平台池的模型），但父会话此刻就在这个席位上跑着
     它 —— 「让分身和我同模型」不该被拒，更不该被悄悄换成分身默认。"""
     project = create(client)
     pid = project["id"]
@@ -443,7 +443,7 @@ async def test_a_subagent_naming_its_teammate_parents_model_runs_on_it_across_po
 async def test_a_subagent_asking_outside_the_projects_pool_is_refused_by_name(
     client,
 ):
-    """目录里有、但不在本项目池里的模型：可指定范围按池算，跨池吃拒绝。"""
+    """目录里有、但不在可指定范围里的订阅模型：没被项目或席位选中就吃拒绝。"""
     project = create(client)
     pid = project["id"]
     body = client.post(

@@ -23,6 +23,7 @@ of those replacements in silence; the facade is the only place a replacement is
 seen (``app/domain/review/services`` reads its own patch points the same way).
 """
 
+import copy
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
@@ -60,6 +61,7 @@ from app.core.sentences import say
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
+from app.domain.assistant import passes
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.conversation import services as conversations
 from app.domain.identity.actor import Actor, resolve_actor
@@ -90,8 +92,13 @@ class ActorResolver:
         screen_token: str = "",
         writes: bool = False,
         endpoint: str | None = None,
+        gate_pass: str = "",
     ):
         self._session = session
+        # What a person's 芝士 shows at a gated route (``GATED_ROUTES``), and
+        # whether it has already been let through this request.
+        self._gate_pass = gate_pass
+        self._through_gate = False
         # Which route this is (``module.function``), for a delegated credential,
         # which opens only the routes in ``DELEGATED_ROUTES``.
         self._endpoint = endpoint
@@ -111,6 +118,14 @@ class ActorResolver:
         self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
+    def for_reading(self) -> "ActorResolver":
+        """The same caller, judged as a read: for a request that changes
+        something of its own (asking 芝士) but only reads where it looks (the
+        page it was asked from, which an archived project still shows)."""
+        reader = copy.copy(self)
+        reader._writes = False
+        return reader
+
     def credential_conversation(self) -> uuid.UUID | None:
         """The conversation the presented credential was minted in: a room, or
         a task its session works — where what the agent does elsewhere in the
@@ -119,6 +134,11 @@ class ActorResolver:
         claims = scoped_token_claims(self._cheese_token) if self._cheese_token else None
         named = (claims or {}).get("t")
         return uuid.UUID(named) if named else None
+
+    def credential_claims(self) -> dict | None:
+        """The claims of the presented session credential (a scoped token);
+        None for anything else."""
+        return scoped_token_claims(self._cheese_token) if self._cheese_token else None
 
     def credential_project(self) -> uuid.UUID | None:
         """The project the presented session credential was minted in; None for
@@ -132,7 +152,12 @@ class ActorResolver:
         conversation — not its room, not another task — even the session-wide
         one that otherwise reaches across its project. Routes that name no
         conversation (the project's library, its documents) it reaches as any
-        session of the project does."""
+        session of the project does.
+
+        The refusal points the way out rather than naming the rule: a session
+        that stopped here once stood still for a task next to its own, while
+        what the task said stays readable through the channel-scoped search.
+        """
         if not self._cheese_token or topic_id is None:
             return
         claims = scoped_token_claims(self._cheese_token)
@@ -140,7 +165,7 @@ class ActorResolver:
         if not named or named == str(topic_id):
             return
         if await conversations.is_task(self._session, uuid.UUID(named)):
-            raise ForbiddenError("This credential works another conversation")
+            raise ForbiddenError(say("taskCredentialOtherConversation"))
 
     def delegation(self) -> DelegatedClaims | None:
         """The question the presented credential acts for, when it is a valid
@@ -165,17 +190,43 @@ class ActorResolver:
                 "Delegated credential is invalid or expired"
             )
         writes = pkg.DELEGATED_ROUTES.get(self._endpoint or "")
+        if (
+            writes is None
+            and (self._endpoint or "") in pkg.GATED_ROUTES
+            and claims.agent is None
+            and claims.topic_id is None
+        ):
+            # A person's own 芝士, only as far as its gate let it through
+            # (`assistant.passes`).
+            if topic_id is not None and project_id is None:
+                project_id = await self.project_of_topic(topic_id)
+            if not self._through_gate:
+                self._through_gate = await passes.use(
+                    self._gate_pass,
+                    work=claims.work,
+                    endpoint=self._endpoint or "",
+                    places={str(p) for p in (topic_id, project_id) if p is not None},
+                )
+            if not self._through_gate:
+                raise ForbiddenError(say("assistantGateNotPassed"))
+            writes = True
         if writes is None:
             raise ForbiddenError("This credential does not open this route")
         if writes and claims.read_only:
             raise ForbiddenError("This question may only be answered, not act")
         if topic_id is not None and project_id is None:
             project_id = await self.project_of_topic(topic_id)
-        if claims.project_id is None:
+        if claims.agent is None and claims.topic_id is None:
+            # A person's own 芝士 (no agent, no room) reads and acts wherever the
+            # person may, as them: the route judges the person, the credential
+            # holds it to no project. The project it was minted in is only
+            # where the question was asked.
+            pass
+        elif claims.project_id is None:
             if topic_id is not None or project_id is not None:
                 raise ForbiddenError(say("tokenOtherProject"))
         elif project_id is None and topic_id is None:
-            # Minted for a room, and this route names none to hold it to.
+            # One minted for a room has nothing here to hold it to.
             raise ForbiddenError("This credential is restricted to one room")
         else:
             if project_id is not None and str(project_id) != claims.project_id:

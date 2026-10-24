@@ -11,7 +11,7 @@ covers:
   - backend/app/domain/agent/session_host/
   - backend/app/core/sandbox_auth.py
   - backend/app/api/auth/
-  - backend/app/domain/living_doc/work_edits.py
+  - backend/app/domain/assistant/changes.py
 ---
 
 # 文档里的芝士 {#doc-agent}
@@ -84,15 +84,15 @@ covers:
 
 | 工具 | 做什么 |
 |---|---|
-| `cheese_doc_get` | 读实况文档最新全文 |
-| `cheese_doc_edit` | 改文档里的几处文字（原文只出现一次，有一处用不上就一处都不改） |
+| `cheese_doc(action=get)` | 读实况文档最新全文 |
+| `cheese_doc(action=edit)` | 改文档里的几处文字（原文只出现一次，有一处用不上就一处都不改） |
 | `cheese_project_search` | 按关键词搜项目：频道名、消息、文档段落、评论、周报、任务卡、资料库文件名、产物，和搜索面板同一个接口。只搜提问人能看的频道 |
-| `cheese_memory_read` | 读项目共享记忆里一条的正文（系统提示词里只有索引） |
-| `cheese_attachment_read` | 读消息附件或资料库里的文件，只读文本，最多 3 万字 |
+| `cheese_memory(action=project)` | 读项目共享记忆里一条的正文（系统提示词里只有索引） |
+| `cheese_library(action=read)` | 读消息附件或资料库里的文件，只读文本，最多 3 万字 |
 | `read`、`ls`、`find`、`grep` | pi 自己的读文件工具，读任务工作电脑上的代码；只有任务的电脑开着时才有，见[任务的工作电脑](#machine) |
 | `git` | 看任务工作目录的 git：状态、提交记录、和某个分支比的改动（可以从分出来的地方算起，即「这个分支相对主干改了什么」，含没提交的）、某次提交、每行是谁改的；同样只有任务的电脑开着时才有 |
 
-改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；改了哪几处记在这次回答的编号下（`living_doc/work_edits.py`），输入框拿它显示改动和撤销。这一问不许改时，改文档被拒；回答结束、凭据过期后，工具一律被拒。
+改动以队友的名义直接改，记成「某某让队友改」，某某是问的那个人；改了哪几处记在这次回答的编号下（`assistant/changes.py`，见[改动与撤销](/dev/assistant#changes)），输入框拿它显示改动；撤销、恢复走 `/assistant/changes/{id}/undo`、`/redo`，以问的人的名义把那几段换回去。这一问不许改时，改文档被拒；回答结束、凭据过期后，工具一律被拒。
 
 ## 回答 {#answer}
 

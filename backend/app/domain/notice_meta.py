@@ -84,6 +84,9 @@ EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: 芝士自己的事：一条记忆是 agent 写下的一份观察，没有人在等它，所以谁也不点。
 #: 改动本身收进 `detail`，按树的归属分别说进项目总览 / 本人的私聊。
 EVENT_MEMORY_CHANGED: Final = "memory_changed"
+#: Someone edited a message the room's agent had already read; the agent is told,
+#: and the members read the same line in 现场.
+EVENT_MESSAGE_EDITED: Final = "message_edited"
 #: A message written into the running session whose arrival is still being
 #: checked. It is not sent again.
 EVENT_DELIVERY_CHECKING: Final = "delivery_checking"
@@ -199,6 +202,10 @@ EVENT_FILE_EDITED: Final = "file_edited"
 #: 是改的人或 AI 队友；改的是一位 AI 队友的设置时，`meta.agent` 是它的 handle。
 #: 这一行就是这次改动的记录，没有另一张表。
 EVENT_SETTING_CHANGED: Final = "setting_changed"
+#: AI 队友的运行程序正在下载到一个人自己的电脑上（`machine/install_progress.py`）。
+#: 一台电脑在一段对话里只占一行，下载的进度原地更新，装好或停下时同一行改成结果
+#: （`meta.state`）。
+EVENT_EXECUTOR_INSTALL: Final = "executor_install"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -268,6 +275,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MENTION_FUSED,
         EVENT_FILE_EDITED,
         EVENT_SETTING_CHANGED,
+        EVENT_EXECUTOR_INSTALL,
     }
 )
 
@@ -290,6 +298,7 @@ RUN_RECORD_EVENTS: Final = frozenset(
         "cloud_provisioning",
         "sandbox_asleep",
         EVENT_MEMORY_CHANGED,
+        EVENT_MESSAGE_EDITED,
         "backend_error",
         "frontend_error",
     }

@@ -29,7 +29,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
-from app.domain.identity.actor import Actor
+from app.domain.identity.actor import Actor, acted_by
 from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_CARD_REJECTED,
@@ -62,7 +62,7 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService, ReviewerAdmission
-from app.domain.room_task import naming
+from app.domain.room_task import heard, naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, place_or_404
 from app.domain.room_task.services import TaskService
@@ -149,6 +149,18 @@ async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Ac
     return actor
 
 
+def _requested_reviewers(
+    body: AcceptCardCreate | AcceptCardReassign,
+) -> list[str] | None:
+    """请求体里点名递给谁：集合优先，其次是单个；都没给就是 None（爬默认阶梯）。"""
+    handles = getattr(body, "reviewer_handles", None)
+    if handles:
+        return handles
+    if body.reviewer_handle:
+        return [body.reviewer_handle]
+    return None
+
+
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
     """「这个房间会放卡上那个人进来吗」——递给 `AcceptService` 的那道判据。
 
@@ -182,7 +194,7 @@ async def create_accept_card(
         # 个读点），问的是卡上那个人而不是调用者。见 `_require_reviewer_in_room`。
         admits_reviewer=_reviewer_admission(actor, resolver),
         topic_id=topic_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
         focus=body.focus,
         change_subject=body.change_subject,
         change_body=body.change_body,
@@ -257,6 +269,9 @@ async def describe_card(
     递卡那一刻的快照——#735 就是这么在 `1c298199a` 里留下一句与事实不符的
     历史陈述的。
 
+    审阅重点也走这里：它是审阅人的核对清单，推了新提交之后可能已经过期。它
+    不进 PR 正文，所以改它不必碰 GitHub。
+
     署名（`Link:` 与各条署名）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
@@ -266,6 +281,7 @@ async def describe_card(
         actor=actor.handle,
         change_subject=body.change_subject,
         change_body=body.change_body,
+        focus=body.focus,
     )
     await db.commit()
     return ok(await _accept_service(db).describe(card))
@@ -480,6 +496,7 @@ async def accept_card(
         decided_by=actor.handle,
         head_sha=body.head_sha,
         deliverable_revision=body.deliverable_revision,
+        by_assistant=actor.by_assistant,
     )
     return ok(await svc.describe(card))
 
@@ -499,7 +516,8 @@ async def reassign_card(
     card = await svc.reassign(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
+        by=actor.handle,
     )
     return ok(await svc.describe(card))
 
@@ -518,7 +536,12 @@ async def reject_card(
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("returnSignIn"))
     svc = _accept_service(db)
-    card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    card = await svc.reject(
+        card_id=card_id,
+        decided_by=actor.handle,
+        note=body.note,
+        by_assistant=actor.by_assistant,
+    )
     sent = await ReviewCommentService(db).send(card, actor.handle, body.comment_ids)
     described = await svc.describe(card)
     topic_id = card.topic_id
@@ -526,16 +549,18 @@ async def reject_card(
     reason = (card.note or "").strip()
     # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
     reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    who = acted_by(decided_by, by_assistant=card.decided_by_assistant)
     if sent:
         reason_line += "\n" + await comment_instruction(db, sent)
     task = await TaskService(db).get(card.task_id) if card.task_id else None
     actionable = task is not None and task.status == TaskStatus.open
     action = (
+        f"{heard.BACK_TO_WORK}\n"
         f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
         "照着理由和批注改，改完重新递卡（驳回不阻塞重递）。"
         "理由看不懂或者你不同意，在对话里说清分歧，请人决定。"
         if actionable
-        else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+        else heard.TASK_CLOSED
     )
 
     topic = await svc._topic_or_404(topic_id)
@@ -543,12 +568,13 @@ async def reject_card(
         topic=topic,
         task=task,
         content=(
-            f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
+            f"{decided_by}{' 的芝士代他' if card.decided_by_assistant else ' '}"
+            f"驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=decided_by)
+            say("cardRejectedFixing", who=who)
             if actionable
-            else say("cardRejectedClosed", who=decided_by)
+            else say("cardRejectedClosed", who=who)
         ),
         meta=notice(
             EVENT_CARD_REJECTED,
@@ -567,7 +593,12 @@ async def reject_card(
 
 @router.post("/accept-cards/{card_id}/void", dependencies=[ROUTE_DECIDES])
 async def void_card(
-    card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: VoidDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
 
@@ -589,7 +620,12 @@ async def void_card(
         raise AuthenticationRequiredError(say("voidSignIn"))
     svc = _accept_service(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
-    return ok(await svc.describe(card))
+    described = await svc.describe(card)
+    # The task's teammate was told in the void's own transaction; it is woken
+    # once that has committed, as a return wakes it.
+    await db.commit()
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok(described)
 
 
 @router.post("/accept-cards/{card_id}/merge-anyway", dependencies=[ROUTE_DECIDES])

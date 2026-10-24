@@ -18,13 +18,14 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import ActorResolverDep
-from app.api.request_deps import DbSession
 from app.api.refusal import refuse
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
+from app.core import model_roles
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import async_session_factory
 from app.core.errors import (
@@ -246,7 +247,9 @@ async def ask(
         return refuse(503, say("askCheeseDocsUnreadable"), 30)
 
     # The question is the asker's, so its cost comes out of their credits.
-    rates = Rates.of(settings.docs_assistant_model, await pricing.model_rates())
+    rates = Rates.of(
+        model_roles.model("docs_assistant_model"), await pricing.model_rates()
+    )
     if rates is None:
         await limits.release(auth.user_id)
         return refuse(503, say("askCheeseNotOpen"), 60)
@@ -255,7 +258,9 @@ async def ask(
     if refused is not None:
         await limits.release(auth.user_id)
         response = refuse(429, refused.message, refused.retry_after_s())
-        response.headers["X-Credits-Path"] = f"/teams/{quote(auth.handle, safe='')}/credits"
+        response.headers["X-Credits-Path"] = (
+            f"/teams/{quote(auth.handle, safe='')}/credits"
+        )
         return response
 
     if settings.docs_assistant_agentic:
@@ -376,7 +381,7 @@ async def _settle(
                 await Ledger(session).charge_priced(
                     await payer_for_person(session, user_id),
                     user_id=user_id,
-                    model=settings.docs_assistant_model,
+                    model=model_roles.model("docs_assistant_model"),
                     rates=rates,
                     input_tokens=result.prompt_tokens,
                     output_tokens=result.completion_tokens or 0,
@@ -389,7 +394,7 @@ async def _settle(
         logger.warning("settling a docs question failed", exc_info=True)
 
 
-# ---------- the docs, for AI teammates: cheese_docs_search / cheese_docs_read ----
+# ---------- the docs, for AI teammates: cheese_help / cheese_help ----
 
 
 class AgentDocsIn(BaseModel):
@@ -425,7 +430,7 @@ async def _agent_scope(
 async def agent_search_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_search: the best sections of the manual for a query."""
+    """cheese_help: the best sections of the manual for a query."""
     if not body.query or not body.query.strip():
         raise ValidationError(say("queryRequired"))
     dev = await _agent_scope(body, db, actor)
@@ -454,7 +459,7 @@ async def agent_search_docs(
 async def agent_read_docs(
     body: AgentDocsIn, db: DbSession, actor: ActorResolverDep
 ) -> dict:
-    """cheese_docs_read: one page's Markdown, as readers fetch it."""
+    """cheese_help: one page's Markdown, as readers fetch it."""
     if not body.page or not body.page.strip():
         raise ValidationError(say("pageRequired"))
     dev = await _agent_scope(body, db, actor)

@@ -195,7 +195,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       error: null,
     },
     states: [
-      { name: '管理员', note: '团队管理员管理每次接入。', props: {}, expectSelector: 'input' },
+      { name: '管理员', note: '团队管理员改名、移除每次接入。', props: {}, expect: '重命名' },
       { name: '成员', note: '成员只读。', props: { canManage: false }, expect: '书房的 Mac mini' },
       { name: '读取中', note: '正在读取。', props: { loading: true }, expectSelector: '.v-progress-circular' },
       {
@@ -270,7 +270,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamDetailView.s4.note')
         },
         props: { teamData: undefined, failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '团队信息没读出来',
+        expect: '团队信息加载失败',
       },
       {
         get name() {
@@ -639,7 +639,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       link: { token: 'kJ3f9a21Xw', approval: true },
       busy: false,
       error: '',
-      handleError: '',
       copied: false,
     },
     states: [
@@ -682,16 +681,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
         },
         props: { link: null, error: '操作失败，请重试' },
         expect: '操作失败，请重试',
-      },
-      {
-        get name() {
-          return t('catalog.teamJoinLinkCard.s5.name')
-        },
-        get note() {
-          return t('catalog.teamJoinLinkCard.s5.note')
-        },
-        props: { handleError: '这个地址已被占用' },
-        expect: '这个地址已被占用',
       },
     ],
   },

@@ -105,21 +105,20 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <!-- The person's own assistant: one panel for the whole app (stores/agent.ts). -->
+    <AgentHost />
     <DeviceConnect />
     <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
-         挂在最外层：任务页、支线里也要接着带。 -->
+         挂在最外层：任务页、支线里也要接着带。队友写项目给它起的名字：「界面导览」在改过名的项目里也能重走。 -->
     <GuideBubble
       v-if="guideStep"
       :target="guideStep.target"
       :ring="!guideStep.area"
-      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: workspace.agentName })"
       :text="
-        t(
-          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
-          {
-            agent: t('work.room.defaultAgentName'),
-          }
-        )
+        t(`welcome.guide.${guideStep.key}.${guideStep.text}`, {
+          agent: workspace.agentName,
+        })
       "
       :step="guide.stop.value + 1"
       :total="guide.total"
@@ -127,6 +126,24 @@
       @next="guide.next()"
       @back="guide.back()"
       @skip="guide.skip()"
+    />
+    <!-- 「知是正在内测」：每个账号说一次有哪些额度可拿（composables/useBetaNotice.ts）。 -->
+    <BetaNoticeDialog
+      v-if="betaNotice.offer.value"
+      :open="betaNotice.open.value"
+      :offer="betaNotice.offer.value"
+      :claiming="betaNotice.claiming.value"
+      :claim-failed="betaNotice.claimFailed.value"
+      @claim="betaNotice.claim()"
+      @dismiss="betaNotice.dismiss()"
+    />
+    <!-- 第一次采纳之后提醒一次：可以邀请好友了（composables/useInvitePrompt.ts）。 -->
+    <InvitePromptCard
+      v-if="invitePrompt.open.value"
+      open
+      :invites-to="{ name: 'UserSettingsInvites' }"
+      @copy-link="invitePrompt.copySignupLink()"
+      @dismiss="invitePrompt.dismiss()"
     />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
@@ -154,11 +171,13 @@ import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
+import { useBetaNotice } from '@/composables/useBetaNotice'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
+import { useInvitePrompt } from '@/composables/useInvitePrompt'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
-import { useProjectTour } from '@/composables/useProjectTour'
+import { resolveGuideStep, useProjectTour } from '@/composables/useProjectTour'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -182,6 +201,7 @@ import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { t } from '@/i18n'
+import AgentHost from '@/layouts/AgentHost.vue'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { rememberRailCount } from '@/lib/bootShape'
@@ -263,6 +283,8 @@ const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/Com
 const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
 const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
 const LeaveProjectDialog = defineAsyncComponent(() => import('@/components/LeaveProjectDialog.vue'))
+const InvitePromptCard = defineAsyncComponent(() => import('@/components/invites/InvitePromptCard.vue'))
+const BetaNoticeDialog = defineAsyncComponent(() => import('@/components/usage/BetaNoticeDialog.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -414,6 +436,7 @@ watch(awaitingCount, desktopBadge)
 // 协议实质变更后的重新同意（#1486）：取数在 composable 里，这里只把它接到弹窗上。
 const {
   pending: pendingConsents,
+  checked: consentsChecked,
   accepting: acceptingConsents,
   error: consentError,
   accept: acceptConsents,
@@ -468,6 +491,19 @@ onBeforeUnmount(
 // 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
 // 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
 const guide = useProjectTour()
+// 新手引导还在带、或者协议弹窗还开着，邀请提醒就等一等，不和它们抢。
+const invitePrompt = useInvitePrompt(() => guide.active.value || pendingConsents.value.length > 0)
+// 内测说明等协议问完、新手引导确定不带（走完了，或者问回来这个人已经会了）、邀请小卡
+// 不在了才出来，免得刚出来又被别的盖住。反过来不用等：说明是个模态框，开着的时候采纳
+// 不了，邀请小卡也就到不了期。
+const betaNotice = useBetaNotice(
+  () =>
+    !consentsChecked.value ||
+    pendingConsents.value.length > 0 ||
+    guide.active.value ||
+    (!guide.done.value && guide.facts.value === null) ||
+    invitePrompt.open.value
+)
 const guideRevision = useGuideAnchorRevision()
 const guideHas = (name: string) => !!guideAnchor(name)
 watch(
@@ -481,19 +517,7 @@ const guideStep = computed(() => {
   void guideRevision.value
   const step = guide.current.value
   if (!guide.active.value || !step) return null
-  const hit = step.anchors.find((name) => guideAnchor(name))
-  const target = hit ? guideAnchor(hit) : null
-  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
-  const at = target ?? waitingAt
-  if (!at) return null
-  return {
-    key: step.key,
-    target: at,
-    waiting: !target,
-    failed: !!hit && hit === step.failed,
-    area: !!step.area || !target,
-    action: !!step.done,
-  }
+  return resolveGuideStep(step, guideAnchor, { replaying: guide.replaying.value })
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens the new-project dialog (views/workspace/NewProjectDialog.vue).
@@ -603,9 +627,10 @@ onBeforeUnmount(
 .skip-link {
   position: fixed;
   /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
-     `env()` 是 0，位置不变。 */
+     `env()` 是 0，位置不变。桌面版 macOS 里还要让开三颗窗口按钮（style.css 的
+     --window-buttons-inset，别处恒为 0）——它们画在网页上层，会让这一颗被盖住。 */
   top: calc(10px + env(safe-area-inset-top, 0px));
-  left: calc(16px + env(safe-area-inset-left, 0px));
+  left: max(calc(16px + env(safe-area-inset-left, 0px)), var(--window-buttons-inset));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;

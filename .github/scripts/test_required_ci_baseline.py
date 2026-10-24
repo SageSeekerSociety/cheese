@@ -1,4 +1,4 @@
-"""The queue's scope covers every unlanded entry, not just its last hop."""
+"""The scope CLI diffs a pull request from the base it names; check failures link the run."""
 
 import json
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("required-ci.py")
 
 
-class QueueBaselineTests(unittest.TestCase):
+class PullRequestBaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -23,21 +23,22 @@ class QueueBaselineTests(unittest.TestCase):
         self.env.update(
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=os.devnull,
-            GIT_AUTHOR_NAME="Queue fixture",
-            GIT_AUTHOR_EMAIL="queue@example.invalid",
-            GIT_COMMITTER_NAME="Queue fixture",
-            GIT_COMMITTER_EMAIL="queue@example.invalid",
+            GIT_AUTHOR_NAME="Fixture",
+            GIT_AUTHOR_EMAIL="fixture@example.invalid",
+            GIT_COMMITTER_NAME="Fixture",
+            GIT_COMMITTER_EMAIL="fixture@example.invalid",
         )
         self.git("init", "-b", "main")
-        self.landed = self.commit("README.md")
-        self.git("checkout", "-b", "gh-readonly-queue/main/prefix")
-        self.prefix = self.commit("backend/app/queued.py")
-        self.head = self.commit(".claude/scripts/narrow.py")
-        self.git("remote", "add", "origin", str(self.repo))
+        self.commit("README.md")
+        self.git("checkout", "-b", "change")
+        # A backend change the named base already contains, then a change only
+        # the guards read: the diff from the named base holds the second alone.
+        self.base = self.commit("backend/app/queued.py")
+        self.commit(".claude/scripts/narrow.py")
 
-    def git(self, *args, cwd=None):
+    def git(self, *args):
         return subprocess.check_output(
-            ["git", *args], cwd=cwd or self.repo, env=self.env, stderr=subprocess.PIPE
+            ["git", *args], cwd=self.repo, env=self.env, stderr=subprocess.PIPE
         ).decode().strip()
 
     def commit(self, name):
@@ -48,131 +49,45 @@ class QueueBaselineTests(unittest.TestCase):
         self.git("commit", "-m", "fixture change")
         return self.git("rev-parse", "HEAD")
 
-    def scope(self, event="merge_group", cwd=None):
+    def scope(self, draft):
         output = self.root / "output"
         output.write_text("")
-        env = dict(self.env, GITHUB_EVENT_NAME=event, GITHUB_OUTPUT=str(output))
-        # No ambient event file or main-ref override may alter the fixture.
-        env.pop("GITHUB_EVENT_PATH", None)
-        env.pop("MERGE_GROUP_MAIN_REF", None)
+        event = self.root / "event.json"
+        event.write_text(json.dumps({"pull_request": {"draft": draft}}))
+        env = dict(self.env, GITHUB_EVENT_NAME="pull_request", GITHUB_EVENT_PATH=str(event),
+                   GITHUB_OUTPUT=str(output))
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "scope", self.prefix],
-            cwd=cwd or self.repo,
-            check=False,
-            env=env,
-            capture_output=True,
-            text=True,
+            [sys.executable, str(SCRIPT), "scope", self.base],
+            cwd=self.repo, check=False, env=env, capture_output=True, text=True,
         )
-        return result, dict(line.split("=", 1) for line in output.read_text().splitlines())
-
-    def assert_cumulative(self, outputs):
-        self.assertEqual(outputs["backend"], "true")
-        self.assertEqual(outputs["guards"], "true")
-        # Selecting everything would hide a broken baseline just as well.
-        self.assertEqual(outputs["frontend"], "false")
-        self.assertEqual(outputs["tier"], "full")
-
-    def test_queue_includes_backend_prefix_before_guard_only_successor(self):
-        result, outputs = self.scope()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
-        self.assertIn(f"Event base: {self.prefix}", result.stdout)
-        self.assertIn(f"Effective base: {self.landed}", result.stdout)
-        self.assertIn("unlanded queue prefix", result.stdout)
-        self.assertIn("whose changes remain in coverage", result.stdout)
+        return dict(line.split("=", 1) for line in output.read_text().splitlines())
 
-    def test_receipt_base_is_the_base_used_by_the_suite_diff(self):
-        result, outputs = self.scope()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        receipt_base = next(
-            line.partition(": ")[2]
-            for line in result.stdout.splitlines()
-            if line.startswith("Effective base: ")
-        )
-        changed = set(
-            self.git("diff", "--name-only", "--no-renames", receipt_base, self.head).splitlines()
-        )
-        self.assertEqual(
-            changed,
-            {"backend/app/queued.py", ".claude/scripts/narrow.py"},
-        )
-        self.assertEqual(outputs["backend"], "true")
-        self.assertEqual(outputs["frontend"], "false")
-
-    def test_non_queue_keeps_the_supplied_base(self):
-        result, outputs = self.scope(event="pull_request")
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_a_ready_pull_request_diffs_from_the_base_it_names(self):
+        outputs = self.scope(draft=False)
+        self.assertEqual(outputs["tier"], "pr")
+        self.assertEqual(outputs["base"], self.base)
         self.assertEqual(
             {suite for suite, value in outputs.items() if value == "true"}, {"guards"}
         )
 
-    def test_landed_prefix_no_longer_needs_backend(self):
-        self.git("update-ref", "refs/heads/main", self.prefix)
-        result, outputs = self.scope()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(outputs["backend"], "false")
-        self.assertEqual(outputs["guards"], "true")
-
-    def test_main_advanced_on_another_branch_uses_common_ancestor(self):
-        self.git("checkout", "main")
-        self.commit("frontend/landed.ts")
-        self.git("checkout", self.head)
-        result, outputs = self.scope()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
-
-    def test_depth_one_checkout_and_base_fetch_still_cover_prefix(self):
-        checkout = self.root / "checkout"
-        self.git(
-            "clone", "--depth=1", "--no-local", "--branch",
-            "gh-readonly-queue/main/prefix", str(self.repo), str(checkout),
-        )
-        self.git("fetch", "--depth=1", "origin", self.prefix, cwd=checkout)
-        self.assertEqual(self.git("rev-parse", "--is-shallow-repository", cwd=checkout), "true")
-        # actions/checkout's single-branch clone has no origin/main yet.
-        self.assertNotEqual(
-            subprocess.run(
-                ["git", "rev-parse", "--verify", "refs/remotes/origin/main"],
-                cwd=checkout, env=self.env, check=False, capture_output=True,
-            ).returncode,
-            0,
-        )
-        result, outputs = self.scope(cwd=checkout)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_cumulative(outputs)
-
-    def test_unavailable_main_fails_without_publishing_partial_scope(self):
-        self.git("update-ref", "-d", "refs/heads/main")
-        result, outputs = self.scope()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(outputs, {})
-
-    def test_unrelated_main_fails_without_falling_back_to_last_hop(self):
-        self.git("checkout", "--orphan", "unrelated")
-        self.git("rm", "-rf", ".")
-        unrelated = self.commit("unrelated.txt")
-        self.git("update-ref", "refs/heads/main", unrelated)
-        self.git("checkout", self.head)
-        result, outputs = self.scope()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(outputs, {})
+    def test_a_draft_pull_request_selects_nothing(self):
+        outputs = self.scope(draft=True)
+        self.assertEqual(outputs["tier"], "draft")
+        self.assertNotIn("true", outputs.values())
 
     def check(self, **github_values):
         env = dict(self.env)
-        for key in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID"):
+        for key in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_EVENT_PATH"):
             env.pop(key, None)
         env.update(
-            GITHUB_EVENT_NAME="merge_group",
+            GITHUB_EVENT_NAME="push",
             CI_NEEDS=json.dumps({"scope": {"result": "success", "outputs": {"tier": "full"}}}),
             **github_values,
         )
         return subprocess.run(
             [sys.executable, str(SCRIPT), "check"],
-            cwd=self.repo,
-            check=False,
-            env=env,
-            capture_output=True,
-            text=True,
+            cwd=self.repo, check=False, env=env, capture_output=True, text=True,
         )
 
     def test_check_failure_without_run_environment_says_no_link(self):

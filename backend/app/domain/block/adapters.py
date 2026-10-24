@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
@@ -56,6 +56,7 @@ class DecisionLine:
         conversation_id: uuid.UUID,
         author: str,
         content: str,
+        by_assistant: bool = False,
     ) -> dict:
         block = await BlockRepository(self._session).add(
             project_id=project_id,
@@ -64,6 +65,7 @@ class DecisionLine:
             author_type=AuthorType.participant,
             content=content,
             kind=BlockKind.message,
+            meta={BY_ASSISTANT_META_KEY: True} if by_assistant else None,
         )
         return BlockOut.model_validate(block).model_dump(mode="json")
 
@@ -78,6 +80,7 @@ async def platform_line(
     room_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
     thread_id: uuid.UUID | None = None,
+    meta: dict | None = None,
 ) -> None:
     """`app.domain.topic.ports.PlatformLine`：平台在某条对话上说一句话。
 
@@ -88,6 +91,9 @@ async def platform_line(
 
     ``landing()`` 的三种 id 原样收下：`topic` 手里同时有房间、卡和支线三种 id，而
     四档里哪几样是必给的，正是那张表要说清的事。
+
+    ``meta`` 加在「这是平台说的」旁边：说给任务的 AI 队友、房间里不显示的那一句
+    （`room_task.heard.inform`）就是这么落的。
     """
     landed = landing(
         about,
@@ -103,5 +109,5 @@ async def platform_line(
         author_type=AuthorType.platform,
         content=content,
         kind=BlockKind.event,
-        meta={"platform": True},
+        meta={**(meta or {}), "platform": True},
     )

@@ -2,18 +2,11 @@
 teammate knows about them; the guide in the project reads what has really
 happened."""
 
-from tests.support.devices import enrollment_team
-
-import re
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import event
-
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake.rooms import room_roster
-from app.domain.device.supply import Supply
-from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 
 
@@ -66,7 +59,7 @@ def test_finishing_the_guide_makes_the_project_and_keeps_the_answers(
 ):
     person = user_client.create_user()
     token = _token(api_client, person)
-    done = _finish(api_client, token, nickname="林小满")
+    done = _finish(api_client, token)
 
     assert [(p["id"], p["name"]) for p in _projects(api_client, token)] == [
         (done["project_id"], "数据库课程报告")
@@ -75,15 +68,12 @@ def test_finishing_the_guide_makes_the_project_and_keeps_the_answers(
     me = _me(api_client, token)
     assert me["onboarded_at"]
     assert (me["work_role"], me["organization"]) == ("student", "中国人民大学")
-    assert me["nickname"] == "林小满"
 
 
-def test_someone_working_alone_reviews_their_own_teammates_work(
-    api_client, user_client
-):
+def test_the_person_reviews_their_own_teammates_work(api_client, user_client):
     person = user_client.create_user()
     token = _token(api_client, person)
-    done = _finish(api_client, token, solo=True)
+    done = _finish(api_client, token)
     rules = api_client.get(
         f"/projects/{done['project_id']}/branch-protection", headers=_headers(token)
     ).json()["data"]
@@ -97,71 +87,6 @@ def test_a_retry_after_a_lost_answer_makes_no_second_project(api_client, user_cl
     _finish(api_client, token, project_id=same)
     _finish(api_client, token, project_id=same)
     assert len(_projects(api_client, token)) == 1
-
-
-def test_people_named_are_invited_and_unknown_names_are_reported(
-    api_client, user_client
-):
-    person, friend = user_client.create_user(), user_client.create_user()
-    token = _token(api_client, person)
-    done = _finish(
-        api_client,
-        token,
-        solo=False,
-        invitees=[friend.username, "nobody-by-this-name"],
-    )
-    assert done["not_invited"] == ["nobody-by-this-name"]
-    invited = api_client.get(
-        f"/projects/{done['project_id']}/invitations", headers=_headers(token)
-    )
-    assert invited.status_code == 200, invited.text
-    assert friend.username in invited.text
-
-
-# An account lookup matches on the lowered username or email; counting either
-# catches a lookup that batches one of the two and loops over the other.
-_ACCOUNT_LOOKUP = re.compile(r'lower\("user"\.(username|email)\)', re.IGNORECASE)
-
-
-def _account_lookups(api_client, db_session, user_client, invite: int) -> int:
-    """How many account lookups finishing the guide sends when it names
-    ``invite`` people: half real accounts (one by email), half nobody."""
-    person = user_client.create_user()
-    token = _token(api_client, person)
-    friends = [user_client.create_user() for _ in range(invite // 2)]
-    named = [f.username for f in friends]
-    named[0] = friends[0].email.upper()
-    named += [f"nobody-{i}-{uuid.uuid4().hex[:6]}" for i in range(invite - len(named))]
-
-    statements: list[str] = []
-
-    def record(conn, cursor, statement, parameters, context, executemany):
-        statements.append(statement)
-
-    engine = db_session.bind.sync_engine
-    event.listen(engine, "before_cursor_execute", record)
-    try:
-        done = _finish(api_client, token, solo=False, invitees=named)
-    finally:
-        event.remove(engine, "before_cursor_execute", record)
-
-    assert done["not_invited"] == named[len(friends) :]
-    invited = api_client.get(
-        f"/projects/{done['project_id']}/invitations", headers=_headers(token)
-    ).text
-    assert all(f.username in invited for f in friends)
-    return sum(1 for s in statements if _ACCOUNT_LOOKUP.search(s))
-
-
-def test_everyone_named_is_looked_up_in_one_statement(
-    api_client, db_session, user_client
-):
-    """Naming more people does not add lookups: the guide finds every invitee
-    at once, not one round-trip per name inside the request's transaction.
-    Ten is the most the guide accepts."""
-    few = _account_lookups(api_client, db_session, user_client, 3)
-    many = _account_lookups(api_client, db_session, user_client, 10)
-    assert few == many == 1
 
 
 def test_every_ai_teammate_reads_who_the_person_said_they_are(
@@ -178,53 +103,6 @@ def test_every_ai_teammate_reads_who_the_person_said_they_are(
     rows = _portal.call(roster)
     mine = next(r for r in rows if r["handle"] == person.username)
     assert mine["about"] == "学生，中国人民大学"
-
-
-def _computer(db_session, _portal, owner_id: int) -> str:
-    async def enroll() -> str:
-        devices = sql_device_service(db_session)
-        device = await devices.approve(
-            await devices.start("laptop"),
-            owner_user_id=owner_id,
-            supply=Supply.self_hosted,
-            team_id=await enrollment_team(devices, owner_id),
-        )
-        await db_session.flush()
-        return device.device_id
-
-    return _portal.call(enroll)
-
-
-def _room_default(api_client, token, room) -> dict | None:
-    resp = api_client.get(f"/topics/{room}/environment", headers=_headers(token))
-    assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["default"]
-
-
-def test_from_the_desktop_app_the_teammate_works_on_this_computer(
-    api_client, user_client, db_session, _portal
-):
-    person = user_client.create_user()
-    token = _token(api_client, person)
-    computer = _computer(db_session, _portal, person.user_id)
-    done = _finish(api_client, token, device_id=computer)
-    assert done["on_device"] is True
-    assert _room_default(api_client, token, done["root_topic_id"]) == {
-        "kind": "sandbox",
-        "spec": "team_devices",
-    }
-
-
-def test_someone_elses_computer_is_not_used_and_the_project_is_made_anyway(
-    api_client, user_client, db_session, _portal
-):
-    person, other = user_client.create_user(), user_client.create_user()
-    token = _token(api_client, person)
-    computer = _computer(db_session, _portal, other.user_id)
-    done = _finish(api_client, token, device_id=computer)
-    assert done["on_device"] is False
-    assert _room_default(api_client, token, done["root_topic_id"]) is None
-    assert done["project_id"] in [p["id"] for p in _projects(api_client, token)]
 
 
 def test_start_steps_follow_what_happened(api_client, user_client, db_session, _portal):

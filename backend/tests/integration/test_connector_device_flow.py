@@ -10,7 +10,6 @@ import socket
 import time
 import uuid
 
-
 import httpx
 import pytest
 import uvicorn

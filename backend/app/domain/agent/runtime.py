@@ -26,7 +26,7 @@ from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
 from app.domain.addressing import Addressed, addressed_to_agent
-from app.domain.agent import checkout_sweep, dispatch_log, runtime_orphans
+from app.domain.agent import dispatch_log, runtime_orphans
 from app.domain.agent.admission import (
     queued,
 )
@@ -338,9 +338,6 @@ class AgentWorkRunner:
             self._last_frame_at[str(turn_id)] = time.monotonic()
             return
 
-    def running_topic_ids(self) -> set[uuid.UUID]:
-        return self._status.running_topic_ids()
-
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         return self._status.live_work_for_topic(topic_id)
 
@@ -418,14 +415,7 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            work = run_attempt(
-                chat_service.session_factory,
-                delivery_id,
-                turn_id,
-                work,
-                chat=chat_service,
-                machines=checkout_sweep.sweep,
-            )
+            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",
@@ -449,6 +439,7 @@ class AgentWorkRunner:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -461,6 +452,7 @@ class AgentWorkRunner:
             quoted_context=quoted_context,
             may_summon=may_summon,
             handoff=handoff,
+            by_assistant=by_assistant,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:

@@ -21,7 +21,7 @@ from app.domain.agent.harness.pi.runner import Runner, socket_path
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.nonce import new_nonce
 from tests.support.hang import HANG_S
-from tests.support.room_machine import NO_MACHINE, room_machine
+from tests.support.room_machine import NO_MACHINE
 
 FAKE = Path(__file__).resolve().parents[1] / "support/fake_pi.py"
 FIXTURE = Path(__file__).parent / "fixtures/pi-entries.json"
@@ -435,11 +435,13 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
         await step("steer")
         live = await shown(mark)
         assert live["work_id"] == work
-        assert live["blocks"] == [{"type": "text", "text": "Hel"}]
+        # That it reasoned shows; what it reasoned does not.
+        assert live["blocks"] == [{"type": "thinking"}, {"type": "text", "text": "Hel"}]
 
         await step("steer")
         live = await shown(live["mark"])
         assert live["blocks"] == [
+            {"type": "thinking"},
             {"type": "text", "text": "Hello"},
             {
                 "type": "tool",
@@ -451,7 +453,7 @@ async def test_the_message_pi_is_writing_is_shown_as_it_grows_and_never_kept(
 
         await step("steer")
         live = await shown(live["mark"])
-        assert json.loads(live["blocks"][1]["arguments"]) == {"text": "Hi there"}
+        assert json.loads(live["blocks"][2]["arguments"]) == {"text": "Hi there"}
 
         await step("steer")
         while live["blocks"]:
@@ -590,11 +592,6 @@ async def test_steering_is_not_a_second_turn_and_abort_stops_the_work(tmp_path):
 # where pi and the extension will look.
 EXTENSION = {"index.ts": "export default function () {}\n"}
 
-ECHOING_CLI = """#!/usr/bin/env python3
-import json, os, sys
-json.dump({"argv": sys.argv[1:], "cwd": os.getcwd()}, sys.stdout)
-"""
-
 
 async def with_tools(tmp_path, target=NO_MACHINE):
     runner = Runner(tmp_path / "state")
@@ -611,7 +608,9 @@ async def with_tools(tmp_path, target=NO_MACHINE):
 
 
 @pytest.mark.anyio
-async def test_the_room_is_given_the_platforms_tools_and_the_clis_commands(tmp_path):
+async def test_the_room_is_given_the_platforms_tools_and_no_cli_command(tmp_path):
+    """The CLI's commands run as `cheese …` in the room's bash, as on every
+    other harness; none of them is a tool of its own."""
     runner = await with_tools(tmp_path)
     try:
         spec = json.loads(
@@ -620,14 +619,10 @@ async def test_the_room_is_given_the_platforms_tools_and_the_clis_commands(tmp_p
         assert not spec["unavailable"]
         assert spec["socket"] == socket_path(runner.state)
         published = {tool["name"] for tool in spec["tools"]}
-        # The platform's table, under the names every harness uses, and the
-        # commands that run on the machine as a process.
-        assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
-        assert {"cheese_worktree", "cheese_sync"} <= published
+        # The platform's table, under the names every harness uses.
+        assert {"chat_send", "cheese_doc", "cheese_notify"} <= published
+        assert not {"cheese_worktree", "cheese_sync"} & published
         assert "cheese_chat_send" not in published
-        worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")
-        # The CLI's own help, so the description cannot drift from the command.
-        assert worktree["inputSchema"]["properties"]["task_id"]["description"]
     finally:
         await runner.close()
 
@@ -655,55 +650,19 @@ async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
 
 
 @pytest.mark.anyio
-async def test_a_command_runs_as_the_cli_in_the_checkout_on_the_machine(tmp_path):
-    bindir = tmp_path / "machine-bin"
-    bindir.mkdir()
-    (bindir / "cheese").write_text(ECHOING_CLI)
-    (bindir / "cheese").chmod(0o755)
-    path = f"{bindir}:{os.environ['PATH']}"
-    with room_machine(tmp_path / "machine", env={"PATH": path}) as target:
-        runner = await with_tools(tmp_path, target)
-        try:
-            result = await call(
-                runner.state,
-                "cli",
-                {
-                    "tool": "cheese_worktree",
-                    "arguments": {"task_id": "t-1"},
-                    "cwd": target["workspace"],
-                },
-            )
-            assert result["status"] == 0, result
-            ran = json.loads(result["stdout"])
-            assert ran["argv"][0] == "worktree"
-            assert "t-1" in ran["argv"]
-            # Where the agent is working, not where the runner happens to be:
-            # half of what the CLI does is about this checkout.
-            assert ran["cwd"] == target["workspace"]
-        finally:
-            await runner.close()
-
-
-@pytest.mark.anyio
-async def test_a_call_the_cli_would_refuse_is_refused_without_ending_the_session(
+async def test_a_cli_command_called_as_a_tool_is_refused_and_the_session_goes_on(
     tmp_path,
 ):
-    """argparse answers a bad command line by exiting the process.
-
-    `SystemExit` is not an `Exception`, so left alone it walks out through the
-    handler meant to report it and takes the runner's event loop with it — a
-    model that guessed one field wrong would end the room's session. What comes
-    back instead is what the CLI would have printed, and the session is still
-    answering afterwards.
-    """
+    """A model that remembers the commands as tools (`cheese_worktree`) is told
+    there is no such tool, and the session is still answering afterwards; the
+    command itself is `cheese worktree` in its bash."""
     runner = await with_tools(tmp_path)
     try:
-        with pytest.raises(RuntimeError, match="Unknown Cheese tool"):
-            await call(runner.state, "cli", {"tool": "cheese_nope", "arguments": {}})
-        with pytest.raises(RuntimeError, match="required"):
-            await call(
-                runner.state, "cli", {"tool": "cheese_worktree", "arguments": {}}
-            )
+        result = await call(
+            runner.state, "cli", {"tool": "cheese_worktree", "arguments": {}}
+        )
+        assert result["status"] == 1
+        assert "no such tool" in result["stderr"]
         assert (await call(runner.state, "ping"))["alive"] is True
     finally:
         await runner.close()
@@ -720,11 +679,13 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     received = []
+    runs = []
 
     class API(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append((self.path, self.headers["X-Cheese-Token"], body))
+            runs.append(self.headers.get("X-Cheese-Run"))
             answer = json.dumps({"data": {"id": "m-9", "content": body["content"]}})
             self.send_response(200)
             self.send_header("Content-Length", str(len(answer.encode())))
@@ -758,8 +719,60 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
             "room-token",
             "第一版好了",
         )
+        # pi's runner reports no session lifecycle, so it names no run.
+        assert runs == [None]
     finally:
         await runner.close()
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+# --- the session compacting itself ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_an_idle_session_compacts_itself_through_pi(tmp_path):
+    """`cheese_session(action=compact)` reaches this runner as `request_compact`, and the ask
+    goes to pi as its own `compact` command. Nothing is running, so it goes at
+    once, and what the room reads is the compaction pi reported."""
+    runner, _ = await running(tmp_path)
+    try:
+        assert runner.request_compact() == "requested"
+        for _ in range(200):
+            if not runner.compact_request:
+                break
+            await asyncio.sleep(0.02)
+
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 1
+        entries = (await call(runner.state, "entries"))["entries"]
+        assert any(entry["type"] == "cheese_compacting" for entry in entries)
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_request_made_mid_turn_waits_for_that_turn_to_settle(tmp_path):
+    """pi's `compact` aborts whatever operation it finds running, so the ask
+    waits for the turn that made it to settle — and twice in one turn asks
+    once, because one request already waiting is one request."""
+    runner, _ = await running(tmp_path)
+    try:
+        runner.working = True
+        assert runner.request_compact() == "requested"
+        await asyncio.sleep(0.05)
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 0
+        assert runner.request_compact() == "already"
+
+        # The turn settles; the request goes then.
+        await runner.observe({"type": "agent_settled"})
+        for _ in range(200):
+            if not runner.compact_request:
+                break
+            await asyncio.sleep(0.02)
+        stats = await runner.client.request("get_session_stats")
+        assert stats["compactions"] == 1
+    finally:
+        await runner.close()

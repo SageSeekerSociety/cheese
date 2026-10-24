@@ -18,9 +18,8 @@ is one the room went on refusing (``REFUSED_TIMES``), with its id in the error
 log.
 
 What a harness supplies is what its protocol decides: how to pull from its
-runner, how to read its mirror, which records open and close a turn, what to do
-with a record produced before the first input, and — where the harness reports
-it — which record says an input was read.
+runner, how to read its mirror, which records open and close a turn, and what to do
+with a record produced before the first input.
 
 The mirror is a sqlite file that commits synchronously, and every room on a
 backend shares one event loop, so no read or write of the mirror runs on that
@@ -56,14 +55,6 @@ from app.domain.agent.service import (
     AgentStepFailed,
     AgentToolResult,
     AgentToolUse,
-)
-from app.domain.delivery.input_identity import (
-    CompletionConsumer,
-    InputReceipt,
-    ReceiptConsumer,
-    TerminationConsumer,
-    WorkCompletion,
-    WorkTermination,
 )
 
 #: What a record says about a working session, for the liveness rules
@@ -166,17 +157,11 @@ class Subscription[B: Backlog]:
         consume: EventConsumer,
         activity: SeatActivity,
         *,
-        receipts: ReceiptConsumer | None = None,
-        completions: CompletionConsumer | None = None,
-        terminations: TerminationConsumer | None = None,
         moved: Moved | None = None,
         records: Records | None = None,
     ):
         self.session, self.path, self.call = session, path, call
         self.consume, self.activity = consume, activity
-        self.receipts = receipts
-        self.completions = completions
-        self.terminations = terminations
         self.moved = moved
         self.records = records
         self.lock = asyncio.Lock()
@@ -314,46 +299,6 @@ class Subscription[B: Backlog]:
         """A record from before the first input, which no turn owns."""
         raise NotImplementedError
 
-    def receipt(self, record: dict) -> InputReceipt | None:
-        """Native evidence for a specific input, distinct from RPC acceptance."""
-        return None
-
-    def completion(self, record: dict) -> WorkCompletion | None:
-        return None
-
-    def termination(self, record: dict) -> WorkTermination | None:
-        """The work interval this record says ended without completing.
-
-        Only a harness can answer this: whether a result is an error, or was
-        interrupted, and which inputs that work owned, are its facts. The
-        default knows nothing and frees nothing.
-        """
-        return None
-
-    async def reconcile_history(self) -> None:
-        """A harness may reconcile retained facts behind its landing cursor."""
-
-    async def settle_termination(self, record: dict) -> WorkTermination | None:
-        termination = self.termination(record)
-        if termination is not None:
-            if self.terminations is None:
-                raise RuntimeError("Termination consumer is not bound")
-            await self.terminations(termination)
-        return termination
-
-    async def settle_completion(self, record: dict) -> WorkCompletion | None:
-        # A terminated work is not a completion, and a record settles at most
-        # one of the two. Termination goes first so an error or a Stop can never
-        # fall through to the completion consumer.
-        if await self.settle_termination(record) is not None:
-            return None
-        completion = self.completion(record)
-        if completion is not None:
-            if self.completions is None:
-                raise RuntimeError("Completion consumer is not bound")
-            await self.completions(completion)
-        return completion
-
     def marks(self, record: dict, events: list[AgentEvent]) -> set[str]:
         """What this record says about the turn. The events answer most of it;
         a harness adds what its records say and the vocabulary does not (a tool
@@ -393,16 +338,6 @@ class Subscription[B: Backlog]:
                 while page := await self.on_disk(reader.unread):
                     for entry in page:
                         assert isinstance(entry.record, dict)
-                        receipt = self.receipt(entry.record)
-                        if receipt is not None:
-                            # Settlement is never subject to output-age or poison
-                            # record skipping. Failure leaves this cursor replayable.
-                            if self.receipts is None:
-                                raise RuntimeError("Receipt consumer is not bound")
-                            await self.receipts(receipt)
-                        # Settlement precedes age/poison handling even when the
-                        # runner is idle and this process never saw the start.
-                        completion = await self.settle_completion(entry.record)
                         if entry.age_s >= STALE_S:
                             stale += 1
                             if self.ends_turn(entry.record, reader):
@@ -411,8 +346,6 @@ class Subscription[B: Backlog]:
                             try:
                                 delivered += await self._deliver(entry, reader)
                             except Exception:
-                                if completion is not None:
-                                    raise
                                 if not await self.on_disk(
                                     reader.refused,
                                     entry.key,
@@ -542,10 +475,6 @@ class Subscription[B: Backlog]:
                     work_id,
                     True,
                 )
-            # The input receipt is not emitted here: the drain loop emits it
-            # before the age/poison checks, so that a settlement never rides on
-            # a record the room may step over. Emitting it here as well would
-            # deliver the same receipt twice.
             if self.moved is not None:
                 await self.moved(work_id, frozenset(self.marks(record, list(events))))
             for event in events:

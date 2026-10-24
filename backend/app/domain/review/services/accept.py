@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.identity.actor import acted_by
 from app.domain.review import (
     archive,
     merge_state,
@@ -20,6 +21,7 @@ from app.domain.review import (
     pr_text,
 )
 from app.domain.review import forge as forge_mod
+from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import (
     AcceptCard,
@@ -28,6 +30,7 @@ from app.domain.review.models import (
 )
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.usage import referrals
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -55,11 +58,13 @@ from app.domain.review.services._shared import (
     WHO_HUMAN,
     WHO_PLATFORM,
     _GitHubCredentials,
+    _hold_deliverable,
     approvals_required_of,
     logger,
     notice,
-    _deliverable_revision,
-    _hold_deliverable,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 
 
@@ -70,7 +75,10 @@ async def accept(
     decided_by: str,
     head_sha: str | None = None,
     deliverable_revision: str | None = None,
+    by_assistant: bool = False,
 ) -> AcceptCard:
+    """``by_assistant``: the reviewer's own 芝士 accepts for them; the card
+    and the lines announcing it say so (``AcceptCard.decided_by_assistant``)."""
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
     if card.status == AcceptStatus.pending_gate:
@@ -84,7 +92,7 @@ async def accept(
         raise ValidationError(say("reviewEndedNoAccept"))
     # 递给某个具体的人 (spec §4.4): only the routed reviewer may accept —
     # decided_by is the caller's verified actor handle, never body-trusted.
-    if decided_by != card.reviewer_handle:
+    if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
@@ -131,6 +139,9 @@ async def accept(
             say("approvalsShort", left=required - votes, n=votes, of=required)
         )
 
+    # Everything below that records the decision records ``decided_by``'s: this
+    # is whose hand it was.
+    card.decided_by_assistant = by_assistant
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
 
@@ -190,6 +201,7 @@ async def _accept_discussion(
     notes.clear(card)
     await self._stamp_delivery(card, topic, by=decided_by, at=now)
     await self._mark_task_merged(card)
+    await referrals.on_accepted(self._session, decided_by)
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -472,6 +484,9 @@ async def _settle_external_merge(
     fact, and since #206 that fact is the whole of what the platform waits
     for."""
     card.pr_merged_at = status.merged_at or datetime.now(UTC)
+    # 平台没点过采纳（`decided_by` 空）：把 GitHub 报的合并人留下来，项目
+    # 总览那一行才有经手人可显示。`{}` 是「问过了、没报人」的记号。
+    card.merged_by = merge_actor(status)
     await self._mark_task_merged(card, delivered_head=status.head_sha)
     if status.merge_commit_sha:
         # Nice to have, not required: nothing downstream looks a run up by
@@ -556,10 +571,16 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
+    await referrals.on_accepted(self._session, by)
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
-        say("acceptDone", actor=by, pr=card.pr_number, how=how)
+        say(
+            "acceptDone",
+            actor=acted_by(by, by_assistant=card.decided_by_assistant),
+            pr=card.pr_number,
+            how=how,
+        )
         if by
         else say("acceptDoneNoActor", pr=card.pr_number, how=how)
     )
@@ -707,7 +728,7 @@ async def _stop_accept_title_disagrees(
     卡片仍是落地的唯一源头，绕过它等于让一个外部可改的字段对永久历史有发言权。
 
     `_notify_merge_result` 走自己的会话（模块级的 factory）且点名任务，所以回滚
-    不会带走它，执行者照样被叫起来改卡片。它是唯一该醒的人：`cheese_describe`
+    不会带走它，执行者照样被叫起来改卡片。它是唯一该醒的人：`cheese_card(action=describe)`
     会同时把 GitHub 上的 PR 标题改成新的一行，仓库的检查按新标题重跑。
 
     Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is
@@ -739,11 +760,9 @@ async def _stop_accept_title_disagrees(
         ),
     )
     note = (
-        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和卡片标题"
-        f"（{subject}）不是同一行。平台按卡片标题落 squash 提交标题，而仓库自己的"
-        "检查评判的是 PR 上那个标题；合下去会往历史里写一行没人检查过的字，所以"
-        "停下了。用 cheese_describe 把这张卡的标题改成该落的那一行（平台会同时"
-        "改掉 PR 标题，检查会按新标题重跑），绿了之后重新采纳。"
+        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和提交审阅时的标题"
+        f"（{subject}）不一致。现在合并会把一行仓库检查没看过的标题写进历史，所以"
+        "停下了；两个标题改成同一行、检查通过后再采纳。"
     )
     await self._session.rollback()
     await self._note_outside_accept_txn(

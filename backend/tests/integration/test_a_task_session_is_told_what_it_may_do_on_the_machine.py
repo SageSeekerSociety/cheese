@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
+from app.domain.agent.session_state import running_conversations
 from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
@@ -28,6 +29,19 @@ from tests.integration.conftest import (
 
 THE_TASK = "## 这个任务"
 BECAME = "这条支线已经转为任务"
+
+
+def _idle(client, conversation: uuid.UUID) -> bool:
+    """Whether the session working this conversation has gone idle, as its
+    runner declared (`session_state`)."""
+
+    async def read() -> bool:
+        async with client.test_request_factory() as session:
+            return conversation not in await running_conversations(
+                session, [conversation]
+            )
+
+    return client.portal.call(read)
 
 
 def _until(predicate, what: str) -> None:
@@ -80,7 +94,10 @@ def test_a_thread_session_hears_once_that_its_thread_became_a_task(client):
     _until(lambda: any("先看看现状" in p for p in heard), "the 支线 never had a turn")
     assert not any(THE_TASK in prompt for prompt in heard)
     _until(
-        lambda: all(row.completed_at for row in _inputs(client, thread_id)),
+        lambda: (
+            all(row.echoed_at for row in _inputs(client, thread_id))
+            and _idle(client, thread_id)
+        ),
         "the 支线's turn never finished",
     )
 
@@ -99,7 +116,10 @@ def test_a_thread_session_hears_once_that_its_thread_became_a_task(client):
     assert any(BECAME in prompt for prompt in told)
 
     _until(
-        lambda: all(row.completed_at for row in _inputs(client, thread_id)),
+        lambda: (
+            all(row.echoed_at for row in _inputs(client, thread_id))
+            and _idle(client, thread_id)
+        ),
         "the task's turn never finished",
     )
     again = len(heard)

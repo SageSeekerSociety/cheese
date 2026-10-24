@@ -10,28 +10,27 @@
 
 入口那一侧量两件事：**先限读、再拒**（读回来的长度只到上限多一个字节，不是整份
 body），以及**拒在碰服务之前** —— 两个服务桩是那个「走过去了」的哨兵，真的走到服务
-就会炸。拟稿 PDF 那条还多一条：发题那道门在读 PDF 之前，所以板外的人被拒时一个字节
-都还没读（它自己的注释就写着「门放在读 PDF 之前」）。
+就会炸。
 
 这一份量的是不需要数据库的那一半。入口那几条路由的集成测试在 ``tests/integration/``
 （``test_materials.py``、``test_space_materials.py``、``test_avatars.py``、
-``test_pdf_preview_publish_authz.py``、``test_attachment_upload_limits.py``）。
+``test_attachment_upload_limits.py``）。
 """
 
 import io
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from starlette.datastructures import UploadFile
 
 from app.api.routes import avatars, materials, spaces_materials
-from app.api.routes.tasks import publish_pdf
+from app.core import blob_store
 from app.core.config import settings
-from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
-from app.domain.library import blobs, records, service
+from app.core.errors import UnprocessableEntityError
+from app.domain.library import records, service
 from app.domain.library.models import LibraryFileRecord
+from app.domain.library.shelf import Shelf
 
 # 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少，而报出去的那个
 # 数要能在断言里认出来。超限与「正好等于上限」都真跑一遍，所以上限压到几 MB 才发得动。
@@ -98,7 +97,7 @@ def _current_row(project: uuid.UUID, name: str) -> LibraryFileRecord:
         name=name,
         bytes=2,
         sha256="0" * 64,
-        location=blobs.LOCAL,
+        location=blob_store.LOCAL,
         blob_key=f".library/{project}/{name}",
     )
 
@@ -189,7 +188,7 @@ async def test_a_library_replace_over_the_ceiling_is_refused_before_bytes_are_st
     with pytest.raises(UnprocessableEntityError) as refused:
         await records.replace(
             session,
-            project_id=project,
+            shelf=Shelf.of_project(project, with_task=False),
             name="预算.xlsx",
             data=b"x" * (CEILING + 1),
             by="user-1",
@@ -269,61 +268,3 @@ async def test_an_avatar_under_the_ceiling_gets_all_the_way_through(
 
         assert result["code"] == 200
         assert (tmp_path / "7").read_bytes() == content
-
-
-# --- 拟稿 PDF 那条 -----------------------------------------------------
-
-
-class _SpaceRepo:
-    """板那一次查询的替身：这一段只判「板在不在」，给个不是 None 的就够。"""
-
-    def __init__(self, session) -> None:
-        pass
-
-    async def get_by_id(self, space_id: int):
-        return object()
-
-
-async def _preview(file: UploadFile):
-    # 门要用到调用者的 id；别的两个依赖走到那一步之前都用不上。
-    caller = SimpleNamespace(user_id=1)
-    return await publish_pdf.preview_task_from_pdf(
-        space_id=1, pdf_file=file, db=None, auth_user=caller, draft_service=None
-    )
-
-
-async def test_a_pdf_from_outside_the_board_costs_nothing_to_refuse(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """板外的人被拒时，PDF 一个字节都还没读：门在那之前。"""
-
-    async def refuse(**kwargs) -> bool:
-        return False
-
-    monkeypatch.setattr(publish_pdf, "SpaceRepository", _SpaceRepo)
-    monkeypatch.setattr(publish_pdf, "may_publish_in_space", refuse)
-    file = _upload(b"%PDF-1.4\n" + b"x" * 1024, name="卷子.pdf")
-
-    with pytest.raises(ForbiddenError):
-        await _preview(file)
-
-    assert file.file.tell() == 0
-
-
-async def test_a_pdf_over_the_ceiling_is_refused_without_reading_it_all(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """15MB 这个数不变，但判的是「读回来多了一个字节」，不是「已经分配了多少」。"""
-
-    async def allow(**kwargs) -> bool:
-        return True
-
-    monkeypatch.setattr(publish_pdf, "SpaceRepository", _SpaceRepo)
-    monkeypatch.setattr(publish_pdf, "may_publish_in_space", allow)
-    monkeypatch.setattr(publish_pdf, "MAX_PDF_BYTES", CEILING)
-    file = _upload(b"%PDF-1.4\n" + b"x" * (CEILING * 2), name="卷子.pdf")
-
-    with pytest.raises(BadRequestError):
-        await _preview(file)
-
-    assert file.file.tell() == CEILING + 1

@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.notices import blocked_report_reminder
 from app.domain.agent.harness.prompt import (
     UNTITLED_TASK,
     build_session_opening,
@@ -109,9 +110,16 @@ async def converse(
     # on what is producing the output, not on the machine underneath it.
     runtime = provider
     yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
+    # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）：
+    # 空串时 system prompt 与只有平台指引时逐字节相同。
+    skills = (
+        f"{prep.skills}\n\n---\n\n{prepared.skill_bodies}"
+        if prepared.skill_bodies
+        else prep.skills
+    )
     system_prompt = session_system_prompt(
         prep.base_prompt,
-        prep.skills,
+        skills,
         needs_place=needs_place,
         has_doc=doc_text is not None,
         role=role,
@@ -134,6 +142,7 @@ async def converse(
         overview_doc=overview_doc_text,
         overview_doc_id=prepared.overview_doc_id,
         teaching=teaching,
+        package=prepared.task_package,
         environment=_session_opening_lines(
             unconnected_mcp=(
                 await unconnected_mcp(
@@ -168,6 +177,15 @@ async def converse(
         prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
+    # 人说的话叫起来的那一轮（和 `send.py` 里 `summoned` 同一个判据）：重发、平台
+    # 自己叫的都不算，那时没有人回过它，问它「还卡不卡」问的不是这回事。
+    summoned = user_block_id is not None and not is_resume and not platform_turn
+    if prepared.blocked_report and summoned:
+        # 「卡住了」通常是它在轮次末尾报的；有人回话开的那一轮正是它该重新报一次
+        # 的时候。只问，不替它改：人回话不等于解除了卡住。
+        prompt_text = (
+            f"{platform_prompt(blocked_report_reminder(language))}\n\n{prompt_text}"
+        )
     prompt_text = publication_prompt(prompt_text, language)
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=prompt_built "

@@ -6,7 +6,7 @@ import type { SiteState, SiteStatus } from './siteStatus'
 import { t } from '@/i18n'
 
 // 键名写全，不拼：拼出来的键谁也搜不到，目录那道闸门会把它们当成没人用的。
-const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
+const PLAIN: Record<Exclude<SiteState, 'retrying'>, string> = {
   thinking: 'work.room.site.status.thinking',
   compacting: 'work.room.site.status.compacting',
   waiting: 'work.room.site.status.waiting',
@@ -14,8 +14,6 @@ const PLAIN: Record<Exclude<SiteState, 'acting' | 'retrying'>, string> = {
 
 export function siteStatusLabel(s: SiteStatus): string {
   switch (s.state) {
-    case 'acting':
-      return t('work.room.site.status.acting', { verb: s.verb ?? '' })
     case 'retrying':
       return s.attempt
         ? t('work.room.site.status.retryingCount', { attempt: s.attempt })

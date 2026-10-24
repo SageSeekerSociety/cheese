@@ -9,12 +9,10 @@ room is reached through `TopicService.place_or_404`. The module mounts itself:
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.room_task_rows import task_out
@@ -26,8 +24,8 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
+from app.domain.room_task import heard
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -43,10 +41,9 @@ async def set_title(
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
-    own session naming it (`cheese_title`, only where the platform cannot).
+    own session naming it (`cheese_room(action=rename)`, only where the platform cannot).
 
     A channel is renamed by whoever manages it: its own admin, or someone whose
     role manages every channel (#3830). Being able to reach the room at all is
@@ -73,23 +70,33 @@ async def set_title(
         if not own_session and not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
         # A task's own session names it to the same width a teammate creating
-        # one is held to (`cheese_title`): told, not cut. A person renaming a
+        # one is held to (`cheese_room(action=rename)`): told, not cut. A person renaming a
         # task is left to `title[:80]` — the width rule is about what an AI
         # teammate writes, and a person can be trusted to know what they meant.
         if own_session and not title_fits(title):
             raise UnprocessableEntityError(
                 say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(title))
             )
+        previous = task.title
         TaskService(db).rename(
             task,
             title[:80],
             by=actor.handle,
             by_person=not own_session,
         )
+        if not own_session and task.title != previous:
+            # Its own session named it, and read that in the tool's reply.
+            await heard.inform(
+                db,
+                task,
+                heard.task_renamed(
+                    by=actor.handle, title=task.title, previous=previous
+                ),
+            )
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await task_out(db, chat, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     # A channel's name is one of its settings, like its 说明 and who sees it

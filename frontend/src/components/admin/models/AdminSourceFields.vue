@@ -16,7 +16,8 @@ import {
   wouldLead,
 } from '@/lib/adminSources'
 
-// 一条线路的那组字段：协议、上游模型、地址、密钥、优先级、免费、单价、请求头、会话头。
+// 一条线路的那组字段：协议、上游模型、地址、密钥、优先级、免费、单价、消费上限（只在编辑时）、
+// 请求头、会话头。
 // 新建模型（第一条线路）和添加 / 编辑线路两个框都用它，所以它只收一份草稿、只往上发
 // 改过的草稿 —— 什么时候提交、提交给谁，是外面那个框的事。
 //
@@ -205,10 +206,42 @@ function headerRowBad(h: HeaderDraft): boolean {
         hide-details
         @update:model-value="patchPrice('cacheCreation', $event)"
       />
+      <v-text-field
+        :model-value="draft.prices.cacheCreation1h"
+        autocomplete="off"
+        type="number"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.price.cacheCreation1h')"
+        hide-details
+        @update:model-value="patchPrice('cacheCreation1h', $event)"
+      />
     </div>
     <p v-if="problems.free" class="asf__hint asf__hint--bad t-meta-read">
       {{ t('models.source.field.zeroNeedsFree') }}
     </p>
+    <p v-if="problems.unpriced" class="asf__hint asf__hint--bad t-meta-read">
+      {{ t('models.source.field.needsPrices') }}
+    </p>
+    <p v-if="problems.cleared" class="asf__hint asf__hint--bad t-meta-read">
+      {{ t('models.source.field.priceCleared') }}
+    </p>
+
+    <!-- 消费上限只在编辑时给：加线路时服务端从同一上游的线路抄过来，这里填了也是另一个数。 -->
+    <v-text-field
+      v-if="editing"
+      :model-value="draft.spendCap"
+      autocomplete="off"
+      type="number"
+      variant="outlined"
+      density="comfortable"
+      :label="t('models.source.field.spendCap')"
+      :hint="t('models.source.field.spendCapHint')"
+      :error="problems.spendCap"
+      persistent-hint
+      hide-details="auto"
+      @update:model-value="patch({ spendCap: $event })"
+    />
 
     <p class="asf__group t-eyebrow-read">{{ t('models.source.field.headers') }}</p>
     <p class="asf__hint t-meta-read">{{ t('models.source.field.headersPublic') }}</p>

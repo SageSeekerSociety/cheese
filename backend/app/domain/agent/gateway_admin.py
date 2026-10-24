@@ -75,7 +75,7 @@ from app.domain.agent.gateway_admin_types import (
     FREE,  # noqa: F401
     NO_EXPLICIT_CACHE,  # noqa: F401
     SESSION_HEADER,  # noqa: F401
-    SPEND_CAP,  # noqa: F401
+    SPEND_CAP,
     UPSTREAM_HEADERS,  # noqa: F401
     AdminKey,
     AdminModel,
@@ -251,7 +251,9 @@ class GatewayAdmin:
         """窗口内的用量。按模型归因取 ``breakdown.model_groups``——它的键正好是
         ``/model/info`` 的 ``model_name``;``breakdown.models`` 用的是另一个名字,用错
         整张表就对不上号。按项目取 ``breakdown.api_keys``(键是 key 的 sha256,与
-        ``/key/list`` 的 ``token`` 一致)。窗口是闭区间,``end_date`` 当天含在内。
+        ``/key/list`` 的 ``token`` 一致)。``breakdown.models`` 另记一份进
+        ``by_upstream``,只给消费上限用:上限按上游模型名计账。窗口是闭区间,
+        ``end_date`` 当天含在内。
         """
         response = await self._request(
             "GET",
@@ -266,6 +268,7 @@ class GatewayAdmin:
         daily: list[dict] = []
         by_model: dict[str, ModelUsage] = {}
         by_key: dict[str, ModelUsage] = {}
+        by_upstream: dict[str, ModelUsage] = {}
         for row in results:
             if not isinstance(row, dict):
                 continue
@@ -277,6 +280,8 @@ class GatewayAdmin:
                 _accumulate(by_model, model_name, usage)
             for key_hash, entry in _entries(breakdown, "api_keys").items():
                 _accumulate(by_key, key_hash, _usage(_metrics_of(entry)))
+            for upstream, entry in _entries(breakdown, "models").items():
+                _accumulate(by_upstream, upstream, _usage(_metrics_of(entry)))
             daily.append(
                 {
                     "date": str(row.get("date") or ""),
@@ -291,6 +296,7 @@ class GatewayAdmin:
             by_model=by_model,
             by_key=by_key,
             daily=daily,
+            by_upstream=by_upstream,
         )
 
     async def add_model(
@@ -426,6 +432,7 @@ class GatewayAdmin:
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
+        spend_cap_usd: float | None = None,
     ) -> None:
         """改一条运行时部署(一个模型的一条线路)。``None`` 一律表示「这次不动它」。
 
@@ -443,6 +450,9 @@ class GatewayAdmin:
         编辑界面不回显上游凭据,所以 ``api_key=None`` 必须意味着保持原样,而不是把
         key 清空——把 key 清成空,这条模型下一次调用就直接失败了。这份「保持原样」
         由网关的合并语义兑现:字段不出现,库里旧值就不动。
+
+        ``spend_cap_usd=0`` clears the cap: the merge drops a null, and
+        ``spend_cap.declared_cap`` reads a cap of 0 or less as none.
         """
         info: dict[str, object] = {}
         if label is not None:
@@ -455,6 +465,8 @@ class GatewayAdmin:
             info["cheese_overseas"] = bool(overseas)
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
+        if spend_cap_usd is not None:
+            info[SPEND_CAP] = spend_cap_usd
         params: dict[str, object] = {}
         if order is not None:
             params["order"] = order
@@ -498,3 +510,23 @@ class GatewayAdmin:
             "/key/update",
             json={"key": key_hash, "max_budget": max_budget_usd},
         )
+
+    async def set_key_models(self, alias: str, models: list[str]) -> bool:
+        """Which models the virtual key under ``alias`` may call. False when no
+        key holds the alias yet (it is minted on first use, already with the
+        role's model).
+
+        By ``key_alias``: the platform's own keys are found by the alias they
+        were minted under (``service_keys.KeySpec.alias``), and LiteLLM 1.103.3's
+        ``/key/update`` looks a key up by it when ``key`` is left out, answering
+        404 when none holds it.
+        """
+        try:
+            await self._request(
+                "POST", "/key/update", json={"key_alias": alias, "models": models}
+            )
+        except GatewayRefused as exc:
+            if exc.status == 404:
+                return False
+            raise
+        return True

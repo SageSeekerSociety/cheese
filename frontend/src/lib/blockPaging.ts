@@ -158,6 +158,40 @@ export function capWindow(blocks: Block[], max = MAX_WINDOW): { keep: Block[]; d
   return { keep: blocks.slice(0, max), dropped: blocks.slice(max) }
 }
 
+/** 裁窗口时该围着谁：
+ *  - `'newest'`：读者停在末尾——留最新那一截，裁掉离他最远的那些更早的行。
+ *  - `'oldest'`：不知道读者在哪——留最旧那一截（他刚往上翻出来的那几页不能删）。
+ *  - 一个下标：读者此刻读着的那一行——它尽量落在窗口中段，上下各留半窗。 */
+export type CapFocus = 'newest' | 'oldest' | number
+
+/**
+ * 窗口涨过上限时按读者的位置裁：留他最需要的那一截，裁的落到离他最远的那一头（或者
+ * 两头都裁）。
+ *
+ * 和上面 `capWindow` 是两回事：那里是对话栏的规矩——读者在那条时间线上是**往上翻**
+ * 的，最新那一头裁下来收进 `newestHeld`，等他回到底部再拼回去（useTimeline）。现场
+ * 没有这只口袋：裁掉的要按游标再读一遍才有，所以裁的位置只能跟着读者走。
+ *
+ * 两头各裁掉多少分开报：最旧那一头裁下来的还是可读的（`hasOlder` 立着、游标退到新的
+ * 头一条，往上翻就从那儿接着读），最新那一头裁下来才是真的断了（窗口下面还有一段没
+ * 取过的，`hasNewer`）。
+ */
+export function capAround(
+  blocks: Block[],
+  max = MAX_WINDOW,
+  focus: CapFocus = 'oldest'
+): { keep: Block[]; droppedOlder: number; droppedNewer: number } | null {
+  if (blocks.length <= max) return null
+  const slack = blocks.length - max
+  const start =
+    focus === 'newest' ? slack : focus === 'oldest' ? 0 : Math.min(Math.max(focus - Math.floor(max / 2), 0), slack)
+  return {
+    keep: blocks.slice(start, start + max),
+    droppedOlder: start,
+    droppedNewer: slack - start,
+  }
+}
+
 /**
  * Merge a freshly fetched newest page into a window the user may have already
  * paged back through.

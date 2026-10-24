@@ -174,14 +174,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
         # api/doc_agent.py 时就有，挪进领域层才进了这本账。
         ("app.domain.agent.document.question", "app.domain.block.repositories"),
-        # agent.turn.steps.reminders 是从 agent.chat 里挪出来的那一块（平台往正
-        # 在跑的一轮里说话的两条扫底：沉默提醒、清单停着提醒）。它摸的
-        # repository 只有 block 一个，正是原先 chat.py 里 `remind_silent_turns` 那
-        # 一段跟着它走的：读一条消息、拿提问的人是谁（定这一句话用哪种语言）。
-        # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
-        # 一件事。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
-        # reminders.py，所以按同一笔债入账。
-        ("app.domain.agent.turn.steps.reminders", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
@@ -203,7 +195,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.identity.services", "app.domain.user.repositories"),
         ("app.domain.knowledge.services", "app.domain.team.repositories"),
         ("app.domain.knowledge.services", "app.domain.user.repositories"),
-        ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
         # --- notification（项目收件箱：写入前核项目在不在。拍板时把决定发回房间
         #     那一条已经收进 `notification/ports.py` 的口子，落话的是
@@ -336,14 +327,15 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
+        # Moved with the body of PATCH /tasks/{id} out of lifecycle, which still
+        # reads them for its other routes: the same debt, a second importer.
+        ("app.api.routes.tasks._writes", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.space.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.task.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.user.repositories"),
-        ("app.api.routes.tasks.publish_pdf", "app.domain.space.repositories"),
-        ("app.api.routes.tasks.publish_pdf", "app.domain.tag.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),

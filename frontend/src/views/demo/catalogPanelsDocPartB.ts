@@ -229,7 +229,13 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocSuggestionStrip.s1.note')
         },
-        props: { agentName: DOC_AGENT, count: 3, decided: { accepted: 0, rejected: 0 }, editable: true },
+        props: {
+          author: DOC_AGENT,
+          decidedAuthor: DOC_AGENT,
+          count: 3,
+          decided: { accepted: 0, rejected: 0 },
+          editable: true,
+        },
         expect: '还有 3 处待处理',
       },
       {
@@ -239,7 +245,13 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocSuggestionStrip.s2.note')
         },
-        props: { agentName: DOC_AGENT, count: 0, decided: { accepted: 2, rejected: 1 }, editable: true },
+        props: {
+          author: null,
+          decidedAuthor: DOC_AGENT,
+          count: 0,
+          decided: { accepted: 2, rejected: 1 },
+          editable: true,
+        },
         expect: '接受 2 处，拒绝 1 处',
       },
     ],
@@ -262,8 +274,10 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.panelDocSuggestionCard.s1.note')
         },
         props: {
-          agentName: DOC_AGENT,
-          agentHandle: DOC_AGENT_HANDLE,
+          authorName: DOC_AGENT,
+          authorHandle: DOC_AGENT_HANDLE,
+          authorAgent: true,
+          authorAvatar: '',
           index: 0,
           total: 2,
           reason: '把「翻倍」改成「翻了三倍」更准。',
@@ -279,8 +293,10 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.panelDocSuggestionCard.s2.note')
         },
         props: {
-          agentName: DOC_AGENT,
-          agentHandle: DOC_AGENT_HANDLE,
+          authorName: DOC_AGENT,
+          authorHandle: DOC_AGENT_HANDLE,
+          authorAgent: true,
+          authorAvatar: '',
           index: 1,
           total: 2,
           reason: null,
@@ -365,7 +381,7 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           thread: docThreadState().threads[0],
           active: true,
           place: docPlaceOf(),
-          activity: { state: 'working', tool: 'cheese_doc_edit' },
+          activity: { state: 'working', tool: 'cheese_doc.edit' },
           busy: false,
           unknown: false,
           agentName: DOC_AGENT,
@@ -387,7 +403,7 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           thread: docThreadState().threads[0],
           active: false,
           place: docPlaceOf(),
-          activity: { state: 'working', tool: 'cheese_doc_edit' },
+          activity: { state: 'working', tool: 'cheese_doc.edit' },
           busy: false,
           unknown: false,
           agentName: DOC_AGENT,

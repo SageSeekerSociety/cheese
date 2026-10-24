@@ -21,7 +21,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
 from app.domain.agent.gateway_usage import (
@@ -50,7 +50,7 @@ async def drain_dream_spend(
         gateway,
         ProjectGatewayKey(project_id, dream=True),
         Charge(
-            model=settings.agent_model,
+            model=model_roles.model("agent_model"),
             kind=dream.DREAM_KIND,
             topic_id=topic_id,
             turn_id=turn_id,
@@ -76,7 +76,11 @@ async def record_dream_usage(
     written."""
     if drained:
         return
-    model = usage.model if usage is not None and usage.model else settings.agent_model
+    model = (
+        usage.model
+        if usage is not None and usage.model
+        else model_roles.model("agent_model")
+    )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=0.0,

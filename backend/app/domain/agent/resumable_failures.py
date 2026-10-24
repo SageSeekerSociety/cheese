@@ -35,7 +35,11 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-from app.domain.agent.platform_failures import is_request_refused
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    is_provider_out_of_credit,
+    is_request_refused,
+)
 
 #: One kind of transient failure, and how the platform waits it out.
 #:
@@ -52,6 +56,10 @@ class Policy:
     cap_s: float
     attempts: int
     needs_reset: bool = False
+    #: The platform cut the turn short, not the agent or its service failing:
+    #: it neither counts towards a streak's ``attempts`` nor is held to them
+    #: (`turn_resume.after_failure`).
+    platform: bool = False
 
 
 RATE_LIMITED: Final = "rate_limited"
@@ -61,6 +69,11 @@ UNREACHABLE: Final = "unreachable"
 EGRESS_OFFLINE: Final = "egress_offline"
 SUBSCRIPTION_COOLING: Final = "subscription_cooling"
 QUOTA_RESET: Final = "quota_reset"
+#: The platform's upgrade replaced the runner a turn was running in
+#: (``platform_failures.RUNNER_REPLACED_CODE``): the conversation goes on in
+#: the new one, so the turn is started again at once, whatever the streak of
+#: resumes before it (``Policy.platform``).
+RUNNER_REPLACED: Final = "runner_replaced"
 
 POLICIES: Final[dict[str, Policy]] = {
     RATE_LIMITED: Policy(base_s=60, cap_s=30 * 60, attempts=6),
@@ -72,6 +85,7 @@ POLICIES: Final[dict[str, Policy]] = {
     # Unreadable snapshot: the accounts' thaw is unknown, so ask rarely.
     SUBSCRIPTION_COOLING: Policy(base_s=15 * 60, cap_s=2 * 3600, attempts=3),
     QUOTA_RESET: Policy(base_s=0, cap_s=0, attempts=2, needs_reset=True),
+    RUNNER_REPLACED: Policy(base_s=5, cap_s=5, attempts=0, platform=True),
 }
 
 
@@ -86,17 +100,19 @@ class Resumable:
         return POLICIES[self.kind]
 
 
-# Ruled out before anything else is read. Each names a state no wait changes.
+# Ruled out before anything else is read. Each names a state no wait changes;
+# so does a provider account out of credit (`is_provider_out_of_credit`).
 _NEVER = re.compile(
-    r"insufficient[ _](balance|quota|funds)"
-    r"|余额不足|请充值|\bbilling\b"
-    r"|quota (exceeded|exhausted)"
-    r"|usage limit (exceeded|reached)|UsageLimitError"
+    r"usage limit (exceeded|reached)|UsageLimitError"
     r"|(reached|hit) your (usage )?limit"
-    r"|\bsuspended\b"
     r"|invalid[ _](api[ _]key|x-api-key|request|_request_error)"
     r"|authentication_error|permission_error|\bunauthori[sz]ed\b"
-    r"|credit balance is too low",
+    # Our own gateway's lifetime cap on an upstream key
+    # (`deploy/gateway/spend_cap.py`): past it every call is refused until
+    # somebody raises the cap or moves the model off that key. LiteLLM words
+    # the refusal as a rate limit, so without this it resumes until the streak
+    # runs out (2026-10-21, gemini-4-argon at $1005.08 of $1000).
+    r"|\bspend[ _]cap\b",
     re.I,
 )
 # A 4xx other than "too many requests" / "request timeout" is the request or the
@@ -185,6 +201,7 @@ def classify(
     *,
     api_error_status: int | None = None,
     reset_wait_s: float | None = None,
+    failure_code: str | None = None,
 ) -> Resumable | None:
     """The transient kind this failure is, or None when the platform must not
     start the turn again by itself.
@@ -192,10 +209,18 @@ def classify(
     ``reset_wait_s`` is a window reset the session reported in structure (the
     seconds until ``rate_limit.resetsAt``); it wins over anything read from the
     text."""
+    if failure_code == RUNNER_REPLACED_CODE:
+        # The platform's own typed failure, not a service's words.
+        return Resumable(RUNNER_REPLACED)
     said = (text or "").strip()
     if not said:
         return None
-    if _NEVER.search(said) or is_request_refused(said) or _CLIENT_ERROR.search(said):
+    if (
+        is_provider_out_of_credit(said)
+        or _NEVER.search(said)
+        or is_request_refused(said)
+        or _CLIENT_ERROR.search(said)
+    ):
         stated = reset_wait_s if reset_wait_s is not None else stated_wait(said)
         # A quota that names its own reset is a wait after all.
         if stated is not None and _QUOTA_WITH_RESET.search(said):

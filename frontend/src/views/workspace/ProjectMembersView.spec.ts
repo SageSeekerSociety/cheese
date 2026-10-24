@@ -482,4 +482,29 @@ describe('成员页：邀请', () => {
     expect(pending.textContent).not.toContain('@zhangheng')
     await waitFor(() => expect(pending.innerHTML).toContain('/avatars/42'))
   })
+
+  it('设了个人备注的队友显示「备注名 (原昵称)」，且按备注名或原名都能搜到', async () => {
+    members = [
+      { user_handle: 'alice', name: '爱丽丝', source: 'owner', role: 'owner' },
+      { user_handle: 'ligan', name: '李干', remark: '前端组件-李工', source: 'team', role: 'member' },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        user_handle: `m${i}`,
+        name: `成员${i}`,
+        source: 'team' as const,
+        role: 'member' as const,
+      })),
+    ]
+    const { container, findByText } = mount()
+    await findByText('前端组件-李工')
+    expect(container.textContent).toContain('(李干)')
+
+    const search = container.querySelector('.v-text-field input') as HTMLInputElement
+    expect(search).toBeTruthy()
+    await fireEvent.update(search, '李干')
+    expect(container.textContent).toContain('前端组件-李工')
+    expect(container.textContent).not.toContain('成员0')
+
+    await fireEvent.update(search, '前端组件')
+    expect(container.textContent).toContain('前端组件-李工')
+  })
 })

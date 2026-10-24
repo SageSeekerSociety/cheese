@@ -9,7 +9,7 @@
 
 - 资料库项目级、按原名寻址、只读。「上周那份预算表」这句话里名字就是身份，所以
   这里不放随机串；名字里的 `/` 是文件夹。清单和名字在记录表里，字节按每一行自己
-  的键存放（:mod:`app.domain.library.records`、:mod:`app.domain.library.blobs`），
+  的键存放（:mod:`app.domain.library.records`、:mod:`app.core.blob_store`），
   这里只管名字长什么样。
 - 房间文件（`.room-files/<project>/<room>/`）只属于一个房间：贴进来的截图没有名
   字，`image.png` 是浏览器替它编的，它只属于那条消息。发布出来的预览产物同理。
@@ -116,13 +116,16 @@ def max_bytes_for(name: str | None) -> int:
     return MAX_FILE_BYTES
 
 
-def refuse_oversize(size: int, name: str | None = None) -> None:
+def refuse_oversize(
+    size: int, name: str | None = None, limit: int | None = None
+) -> None:
     """超过这一类文件上限的字节不落地，报「超限」而不是别的，带着那一类的上限。
 
     房间文件和资料库的每一个字节都从这里过，所以上限只有一处、也只有一层：调用方
-    漏判也好、直连后端绕开网关也好，字节都写不进去。
+    漏判也好、直连后端绕开网关也好，字节都写不进去。``limit`` 是另有上限的地方
+    （团队的资料库）自己的那一条。
     """
-    limit = max_bytes_for(name)
+    limit = max_bytes_for(name) if limit is None else limit
     if size > limit:
         raise UnprocessableEntityError(say("fileTooLarge", mb=limit // (1024 * 1024)))
 

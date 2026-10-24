@@ -22,7 +22,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { editMessage, hearVoice as hearVoiceIn, summonAgent } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
-import { isAgentBlock } from '../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { frozenQuote } from '../lib/quotedContext'
@@ -166,17 +166,23 @@ export function useChatComposer(deps: ChatComposerDeps) {
       text: t(`work.room.chat.starter.${key}Text`),
     }))
   )
-  // 起手区块什么时候退休：芝士在这个房间里说过第一句话之后。
+  // 起手区块什么时候退休：有人跟芝士说上话之后——芝士在主线上开过口，或者某条消息
+  // 下面的支线里芝士接过一轮（回了、正在回、或者这一轮出了错）。
   //
   // 退休判据**不是「房间里有东西」**。平台自己发的公告、赛题报名写进去的简报、
   // 用户对着同事说的那几句，都能把房间填满，但一件都不能替代「跟芝士说上话」这
   // 件事本身；照旧判据，新用户只要先说了句没 @ 的话，这个入口就没了，而他要找的
-  // 恰恰是「我该跟它说什么」。
+  // 恰恰是「我该跟它说什么」。出了错的那一轮也算：人已经知道该跟它说什么了，这时
+  // 再把四张卡摆回他自己那条消息上面，只会挡住失败原因和「重试」。
   //
   // 只看 message / attachment：芝士也可能留下 event 行（「芝士处理中」那类），
   // 那是它干活的过程，不是它对这个人开过口。
   const startersRetired = computed(() =>
-    blocks.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
+    blocks.value.some(
+      (b) =>
+        (isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment')) ||
+        (!!b.thread && (!!b.thread.failed || !!b.thread.replying?.length || b.thread.participants.some(isAgentHandle)))
+    )
   )
 
   const showStarters = computed(
@@ -242,7 +248,10 @@ export function useChatComposer(deps: ChatComposerDeps) {
     try {
       const res = await summonAgent(id)
       if (res.started) awaitingReply.value = true
+      else if (res.reason === 'working') errorMsg.value = t('work.room.retry.working')
       else if (res.reason === 'nothing_pending') errorMsg.value = t('work.room.retry.nothingPending')
+      // 说不清为什么没开起来的那一种也要说一句：按了没反应是最糟的结果。
+      else errorMsg.value = t('work.room.retry.failed')
     } catch (e) {
       errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
     } finally {

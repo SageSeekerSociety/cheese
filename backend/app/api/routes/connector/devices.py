@@ -25,7 +25,6 @@ import asyncio
 import contextlib
 import logging
 import time
-from app.core.errors import ForbiddenError
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -50,7 +49,7 @@ from app.api.routes.connector.schemas import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core import background
 from app.core.config import settings
-from app.core.errors import UnauthorizedError
+from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.sentences import say
 from app.domain.agent import checkout_sweep
 from app.domain.agent.device_hub import (
@@ -64,10 +63,10 @@ from app.domain.device import owner_reads, sandbox
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
-from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import push_grants_on_connect
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.team.services import team_service
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)

@@ -111,6 +111,30 @@ def test_a_result_frame_carries_the_machines_own_words(fixture) -> None:
     assert ("error" in frame) is bool(error)
 
 
+def test_the_backend_writes_the_streamed_exec_in_the_fixture() -> None:
+    fixture = _only("exec")
+    meaning = fixture["meaning"]
+    assert (
+        device_link.exec_cmd(
+            exec_id=meaning["exec_id"],
+            command=meaning["command"],
+            timeout=meaning["timeout_seconds"],
+            stdin=meaning["stdin"],
+            stream=meaning["stream"],
+        )
+        == fixture["frame"]
+    )
+
+
+def test_an_output_frame_carries_one_stderr_line_of_its_exec() -> None:
+    fixture = _only("exec.output")
+
+    parsed = device_link.LinkMsg.parse(fixture["frame"])
+
+    assert parsed.id == fixture["meaning"]["exec_id"]
+    assert parsed.stderr == fixture["meaning"]["line"]
+
+
 async def test_the_heartbeat_the_connector_writes_keeps_its_link_watched() -> None:
     """The connector's heartbeat is what lets the hub tell a link that went
     quiet from one that is merely idle; a frame the hub did not recognise as

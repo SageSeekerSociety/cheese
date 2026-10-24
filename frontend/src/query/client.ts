@@ -44,8 +44,15 @@ if (import.meta.env.DEV) window.__queryClient = queryClient
 /**
  * 改缓存里的一份之前先作废正在路上的那次读：它是改之前发出去的，回来会把刚改的
  * 盖回旧样子。改完通常再标一次过期，让服务器那份最终说了算。手上没有这一份就不改。
+ *
+ * 「手上没有」时连那一次读也不能动：没有可被覆盖的东西，取消它只是把这一份永远留在
+ * 「还没读过」——取消之后既没有数据写下去，也没有谁再发一次，等着它的人就一直等
+ * （打开项目直接落在频道页那一路上，清单请求正是这样被标已读那一步掐掉的，侧栏随后
+ * 停在骨架屏上，只有推送连上时的重读才救得回来）。
  */
 export async function patchQuery<T>(queryKey: readonly unknown[], change: (current: T) => T): Promise<void> {
+  // 这份还没读过：没有可被覆盖的东西，别去动在途那次读（见上面那段）。
+  if (queryClient.getQueryData<T>(queryKey) === undefined) return
   await queryClient.cancelQueries({ queryKey, exact: true })
   queryClient.setQueryData<T>(queryKey, (current) => (current === undefined ? current : change(current)))
 }

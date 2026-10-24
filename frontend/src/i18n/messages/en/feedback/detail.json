@@ -4,6 +4,11 @@
     "support": "Support this feedback",
     "supported": "Supported"
   },
+  "attachments": {
+    "download": "Download",
+    "open": "View {name} larger",
+    "title": "Attachments"
+  },
   "aside": {
     "comments": "Comments",
     "progress": "Progress",

@@ -118,11 +118,15 @@ class RunnerIntake:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
         ``may_summon`` is False for a person whose role does not let them use the
         project's AI teammates (#3830): the message is said, and wakes nobody.
+
+        ``by_assistant``: the person's own 芝士 wrote it for them
+        (`Actor.by_assistant`), and the message says so (``meta.by_assistant``).
 
         Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
@@ -147,6 +151,7 @@ class RunnerIntake:
             client_id=client_id,
             quoted_context=quoted_context,
             handoff=handoff,
+            by_assistant=by_assistant,
         )
         turn_id = user_block_id
         recipient = next(
@@ -158,18 +163,6 @@ class RunnerIntake:
             None,
         )
         recipient_handle = (recipient or {}).get("handle")
-        # Was this message meant to reach a session that was already running?
-        # Asked of the RECIPIENT's own seat, never of the room: teammates in one
-        # room run side by side, so a message @-ing an idle one queues beside
-        # another one's live turn — that is the ordinary path, not a degraded
-        # delivery, and claiming otherwise put a false 「未能送达」 line in the
-        # room. The handle is the same key `merge_into_running_turn` filters on,
-        # so "a live handoff was expected" and "the handoff failed" answer with
-        # one key rather than two that can disagree.
-        live_delivery_expected = (
-            recipient_handle is not None
-            and await chat_service.has_running_turn(topic_id, recipient_handle)
-        )
         mentioned = may_summon and any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
             for payload in payloads
@@ -181,11 +174,10 @@ class RunnerIntake:
         # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
         # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
         #
-        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
+        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_session`
         # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = self._address_agent(
-            recipient_seat(recipient) if mentioned else None
-        )
+        seat = recipient_seat(recipient) if mentioned else None
+        addressed = self._address_agent(seat)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(
@@ -201,11 +193,18 @@ class RunnerIntake:
         if duplicate:
             return turn_id
         # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        answer_in = (
+            topic_id
+            if not mentioned
+            or (
+                handoff is not None
+                and handoff.place is not None
+                and handoff.place.inner_id is not None
+            )
+            else await answer_place(
+                chat_service.session_factory, user_block_id, topic_id
+            )
         )
-        if answer_in != topic_id:
-            live_delivery_expected = await chat_service.has_running_turn(answer_in)
         self._schedule_message(
             chat_service,
             answer_in,
@@ -225,7 +224,6 @@ class RunnerIntake:
             attachments=attachments,
             landed_user_block_id=user_block_id,
             landed_user_block_ids=user_block_ids,
-            live_delivery_expected=live_delivery_expected,
             recipient_handle=recipient_handle,
         )
         return turn_id
@@ -264,7 +262,7 @@ class RunnerIntake:
                 if not self._is_addressed(message["addressed"]):
                     if message["content"] or message["attachments"]:
                         # Heard, not asked: nothing here is the agent's to answer.
-                        await chat_service.merge_into_running_turn(
+                        await chat_service.merge_into_running_session(
                             topic_id,
                             message["landed_user_block_ids"] or [turn_id],
                             message["content"],
@@ -284,7 +282,6 @@ class RunnerIntake:
                     topic_id,
                     turn_id,
                     recipient_handle=message["recipient_handle"],
-                    live_delivery_expected=message["live_delivery_expected"],
                     landed_user_block_id=message["landed_user_block_id"],
                     landed_user_block_ids=message["landed_user_block_ids"],
                     content=message["content"],
@@ -541,7 +538,6 @@ class RunnerIntake:
         turn_id,
         *,
         recipient_handle: str | None = None,
-        live_delivery_expected: bool = False,
         landed_user_block_id: uuid.UUID | None = None,
         landed_user_block_ids: list[uuid.UUID] | None = None,
         content="",
@@ -554,7 +550,7 @@ class RunnerIntake:
                 if recipient_handle is not None
                 else {}
             )
-            delivered = await chat_service.merge_into_running_turn(
+            delivered = await chat_service.merge_into_running_session(
                 topic_id,
                 landed_user_block_ids or [landed_user_block_id],
                 content,
@@ -574,14 +570,14 @@ class RunnerIntake:
                 # `confirm_prompt_receipt` 统一落记号——两处都打会变成同一条消息
                 # 上先后出现两个来源不同、含义不同的同一个符号。
                 return True
-            if delivered is False or live_delivery_expected:
+            if delivered is False:
+                # The seat's session was working and the message did not reach
+                # it; ``None`` (no session of that seat working here) is the
+                # ordinary path to a queue, not a degraded delivery.
                 logger.warning(
-                    "live delivery fell back to the queue (topic=%s, "
-                    "block=%s, delivered=%s, live_expected=%s)",
+                    "live delivery fell back to the queue (topic=%s, block=%s)",
                     topic_id,
                     landed_user_block_id,
-                    delivered,
-                    live_delivery_expected,
                 )
                 fallback_text, fallback_meta = delivery_fallback_notice()
                 await self._post_event(
@@ -629,13 +625,13 @@ class RunnerIntake:
         await self._wait_to_start()
         await self._wait_for_replay(chat_service, topic_id, turn_id)
         if delivery_id is not None:
-            # A ledger delivery joins the turn its seat is already running
-            # here, as a person's mid-turn message does, instead of waiting for
-            # a turn of its own behind it (`join_running_turn`). Taken, or of
-            # unknown outcome, it is that turn's now; not taken, it goes on to
-            # be admitted and refused like any attempt, and is retried.
+            # A ledger delivery joins its seat's session when that session is
+            # already working here, as a person's mid-work message does,
+            # instead of waiting behind it (`join_running_session`). Taken, or
+            # of unknown outcome, it is that session's now; not taken, it goes
+            # on to be admitted and refused like any attempt, and is retried.
             try:
-                joined = await chat_service.join_running_turn(delivery_id, turn_id)
+                joined = await chat_service.join_running_session(delivery_id, turn_id)
             except DeliveryTargetChanged:
                 return
             if joined is not None and joined is not False:
@@ -703,6 +699,7 @@ class RunnerIntake:
                 post_admission_event,
                 topic_id,
                 delivery_id,
+                draining=chat_service,
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,

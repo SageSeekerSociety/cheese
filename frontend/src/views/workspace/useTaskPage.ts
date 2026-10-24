@@ -4,10 +4,12 @@ import type { RoomTask, TopicMemberRow } from '@/cx_types'
 import type { Environment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { ApiError, setEnvironmentDefault, setSessionEnvironment } from '@/api'
 import { closeTask, renameTask, reopenTask, updateTask } from '@/api/tasks'
+import { copyTaskLink } from '@/commands/taskLink'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
@@ -66,7 +68,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
   // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
   const people = computed(() => opts.people().filter((m) => !m.agent))
 
-  // ---- 负责人：转交、关闭、重新打开 ----
+  // ---- 转交（负责人）、关闭（负责人和协作者）、重新打开（角色有「新建任务和审阅」的人）----
   const actionError = ref<string | null>(null)
   async function close(conclusion: string): Promise<boolean> {
     if (!task.value) return false
@@ -170,12 +172,18 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
 
   // 任务页头部（TaskHeader）要的那一半：这件任务和能对它做的事。另一半（在哪个房间、
   // 谁在场、面板开没开）是页面的，由页面补上。
+  // 复制链接要 router——组件那一层不认路由，所以地址在这里算好，交一个动作进去。
+  const router = useRouter()
   const headerProps = computed(() => ({
     task: task.value,
     people: people.value,
     machine: machine.value,
     machineError: machineError.value,
     actionError: actionError.value,
+    copyLink: () => {
+      const row = task.value
+      if (row) copyTaskLink(router, row)
+    },
     close,
     reopen,
     handOver,

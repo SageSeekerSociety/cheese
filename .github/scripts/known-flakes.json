@@ -38,20 +38,6 @@
       ]
     },
     {
-      "id": "merge-group-synthetic-run",
-      "title": "合并队列的合成 CI（merge_group）红了",
-      "match": {
-        "workflow": [".github/workflows/required-ci.yml"],
-        "event": ["merge_group"]
-      },
-      "rerun": false,
-      "action": "重跑这遍没有意义（PR 已被移出队列）；先读 PR 的 state/mergedAt，别 push-fix 加提交——重新采纳让 PR 回队即可。自己的 run 红了也不等于没落地：更深的队列条目跑绿会把整段前缀一起落地。",
-      "symptoms": [
-        "remote / windows：t.TempDir RemoveAll cleanup 撞上还没退出的 ping 子进程占着日志文件（unlinkat: The process cannot access the file because it is being used by another process；测试体全过、红在收尾）",
-        "tests/integration/test_claude_session_records.py::test_a_message_after_a_dead_runner_gets_a_turn 的 orphaned 断言"
-      ]
-    },
-    {
       "id": "required-ci-pull-request-intermittents",
       "title": "Required CI 的 PR 运行：重跑失败 job 是标准处置",
       "match": {
@@ -61,7 +47,6 @@
       "rerun": true,
       "action": "重跑失败 job（上限 3 次）；同一个 head 上再红就按真实回归读日志，别当偶发收场。",
       "symptoms": [
-        "backend / integration：tests/integration/test_a_last_step_lands_while_work_goes_on.py::test_a_message_sent_while_the_task_is_written_up_is_not_dropped[turn-waiting] 红在 assert 'closed' == 'open'，重跑就过",
         "backend / integration：tests/integration/test_claude_session_records.py::test_a_message_after_a_dead_runner_gets_a_turn 的 orphaned 断言，--reruns 1 无效，重新采纳进队"
       ]
     },

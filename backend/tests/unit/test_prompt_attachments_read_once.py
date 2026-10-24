@@ -6,6 +6,7 @@ attachment cost one query and one thread-pool hop each, on the first-byte path
 of every turn.
 """
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 
@@ -90,7 +91,7 @@ class _Store:
         self._blobs = blobs
         self.read: list[str] = []
 
-    def get(self, key):
+    async def get(self, key):
         self.read.append(key)
         return self._blobs[key]
 
@@ -98,7 +99,7 @@ class _Store:
 @pytest.fixture
 def store(monkeypatch):
     blobs = _Store({"blob-one": LIBRARY_BYTES})
-    monkeypatch.setattr(library_records.blobs, "store", lambda _location: blobs)
+    monkeypatch.setattr(library_records.blob_store, "store", lambda _location: blobs)
     return blobs
 
 
@@ -130,7 +131,9 @@ def thread_calls(monkeypatch):
     # Only the records module's reference is replaced: `prompt` still decodes
     # bytes on the real pool.
     monkeypatch.setattr(
-        library_records, "asyncio", SimpleNamespace(to_thread=to_thread)
+        library_records,
+        "asyncio",
+        SimpleNamespace(to_thread=to_thread, gather=asyncio.gather),
     )
     return calls
 
@@ -171,8 +174,8 @@ async def test_a_message_reads_the_library_once_and_the_room_once(
 
     # Presence and bytes each ask the library table once for the whole message.
     assert session.executes == 2
-    # The room's existence check is one hop, and the byte reads are another.
-    assert thread_calls == ["_room_files_present", "_read_attachment_bytes"]
+    # The room's existence check is one hop, and its byte reads are another.
+    assert thread_calls == ["_room_files_present", "_read_room_files"]
     assert store.read == ["blob-one"]
     assert [image.data for image in images] == [LIBRARY_BYTES, ROOM_BYTES]
     assert undecodable == set()

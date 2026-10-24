@@ -5,9 +5,10 @@ platform job, not the AI teammate's: one structured call to a small model
 through the gateway, off the agent's turn, at three moments —
 
 * **name**: a still-unnamed task gets its first real message from a person (in
-  parallel with the turn it starts), or its first turn ends — and for a task
+  parallel with the work it starts), or its session goes idle as its runner
+  reports it — and for a task
   turned from a message, that message is its first (`naming_material._origin`);
-* **calibrate**, once: the first turn ended, or three people's messages are in
+* **calibrate**, once: its session went idle, or three people's messages are in
   — the opening line is rarely the whole story;
 * **follow**: something suggests the task changed direction (its document was
   rewritten, work was handed in for acceptance) or many messages went by.
@@ -23,7 +24,7 @@ where the old one did, and a person who disagrees renames the task. A project
 can turn automatic naming off (``settings.task_naming = "manual"``).
 
 Where the platform cannot name at all (no gateway), an unnamed task's own
-session is reminded to name it with `cheese_title` (`agent/room/turn.py`).
+session is reminded to name it with `cheese_room(action=rename)` (`agent/room/turn.py`).
 
 Everything here fails quietly: no gateway, no key, a timeout or an unusable
 answer means the task keeps its title until the next trigger. Quiet is not the
@@ -52,12 +53,15 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.live_frames import show_once_committed
 from app.core.redis import get_redis_client
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
+from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
+from app.domain.room_task import heard
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -111,14 +115,14 @@ from app.domain.service_keys import KeySpec, service_key
 
 logger = logging.getLogger(__name__)
 
-Reason = Literal["message", "turn", "signal"]
+Reason = Literal["message", "idle", "signal"]
 Stage = Literal["name", "calibrate", "follow"]
 
 SETTINGS_KEY = "task_naming"
 MODES = ("auto", "manual")
 
 # The opening line has to say something before it is worth naming a task by:
-# 「在吗」「@芝士」 wait for the next message or the end of the first turn. What
+# 「在吗」「@芝士」 wait for the next message or the session going idle. What
 # counts is what `_said` has left, and a mention there is only the handle
 # (`naming_material._said`), so an `@` inside a sentence is not mistaken for a
 # mention and does not read as an empty opener.
@@ -135,7 +139,7 @@ def _key_spec() -> KeySpec:
     return KeySpec(
         name="topic-naming-gateway-key",
         alias="topic-naming",
-        model=settings.topic_naming_model,
+        model=model_roles.model("topic_naming_model"),
         budget_usd=settings.topic_naming_budget_usd,
         rpm=300,
     )
@@ -198,11 +202,32 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
     """Which judgement, if any, this trigger calls for."""
     if task.title_source == TaskTitleSource.placeholder:
         lines = await _conversation(session, task)
-        people = [line for line in lines if line.person]
-        if not people:
+        people = [line for line in lines if line.person and line.attachment is None]
+        has_attachment = any(
+            line.person and line.attachment is not None for line in lines
+        )
+        if not people and not has_attachment:
             return Asked(why="no_person_in_the_task_yet")
+        if has_attachment:
+            # Naming cannot read the attachment. Wait for an explanation rather
+            # than making the opener's length stand in for knowing its subject.
+            last_attachment = max(
+                index
+                for index, line in enumerate(lines)
+                if line.person and line.attachment is not None
+            )
+            explained = any(
+                line.attachment is None and len(_said(line.text)) >= _SUBSTANTIVE_CHARS
+                for line in lines[last_attachment + 1 :]
+            )
+            if not explained and task.document_id is not None:
+                doc = await Documents(session).get(task.document_id)
+                explained = bool(doc and (doc.content or "").strip())
+            if not explained:
+                return Asked(why="awaiting_attachment_context")
         if (
-            reason == "turn"
+            reason == "idle"
+            or has_attachment
             or len(people) > 1
             or any(len(_said(line.text)) >= _SUBSTANTIVE_CHARS for line in people)
         ):
@@ -210,10 +235,13 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
         return Asked(why="opener_says_too_little")
 
     if not task.title_calibrated:
-        if reason == "turn":
+        if reason == "idle":
             return Asked(stage="calibrate")
         lines = await _conversation(session, task)
-        if sum(line.person for line in lines) >= _CALIBRATE_AFTER_PEOPLE:
+        if (
+            sum(line.person and line.attachment is None for line in lines)
+            >= _CALIBRATE_AFTER_PEOPLE
+        ):
             return Asked(stage="calibrate")
         return Asked(why="few_people_since_it_opened")
 
@@ -308,6 +336,13 @@ async def _write(
             reason=stage,
             by=None,
         )
+    )
+    await heard.inform(
+        session,
+        task,
+        heard.task_renamed(
+            by=None, title=verdict.title, previous="" if stage == "name" else previous
+        ),
     )
     _tell_pages(session, task.id, task.room_id)
     await session.commit()

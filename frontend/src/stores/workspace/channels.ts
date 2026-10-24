@@ -17,6 +17,7 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
+import { renameTask as renameTaskApi } from '@/api/tasks'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { patchQuery } from '@/query/client'
@@ -160,14 +161,14 @@ export function useChannelActions(deps: ChannelDeps) {
     markTopicRead(topicId, me.value).catch(() => {})
   }
 
-  // 「点开过就灭」：点开的那一行（频道或一件活）交付完的长绿当场灭掉，连同那一行
+  // 「点开过就灭」：点开的那一行（频道或一件活）交付完的绿灯当场灭掉，连同那一行
   // 「有人回复了我」的黄灯（两者都是跟着已读位走的，一次点开一起灭）。这正是上面那
   // 一次 `markTopicRead` 在服务端记下的同一笔——差别只是服务端要等下一次清单回来，
   // 而这两个灯是「你刚点开」当场就该变的。
   //
   // 两种点开都算，和后端算这一位时比的同一个东西（那儿把已读位和采纳时刻取
   // `GREATEST`）：开那个频道，或者开它名下的一件活。所以点开一件活时，灭掉的是挂着
-  // 它的那个频道那一行——长绿只画在频道行上（活一关就从侧栏消失，只剩它的频道）。
+  // 它的那个频道那一行——绿灯只画在频道行上（活一关就从侧栏消失，只剩它的频道）。
   // 黄灯跟进的是这间房自己的已读位：打开这个频道就算处理了，所以点开的正是这个频道
   // 时它当场灭。点开它名下的一件活推的是活自己那一位，动不了它（点开一条支线在服务
   // 端也算处理了，那一条要等下一次清单回来才灭）。
@@ -192,8 +193,8 @@ export function useChannelActions(deps: ChannelDeps) {
     )
   }
 
-  /** 这一行上跟着已读位走的两盏灯灭掉（长绿；「有人回复了我」的黄灯），含它名下那几
-   *  件活的长绿；本来就没亮的原样返回，省掉一次整行重画。 */
+  /** 这一行上跟着已读位走的两盏灯灭掉（绿灯；「有人回复了我」的黄灯），含它名下那几
+   *  件活的绿灯；本来就没亮的原样返回，省掉一次整行重画。 */
   function clearReadLights(topic: Topic): Topic {
     const my = topic.my_tasks
     if (!my) {
@@ -228,6 +229,33 @@ export function useChannelActions(deps: ChannelDeps) {
     try {
       const updated = await setTopicTitle(topicId, title)
       await patchRows(topicId, (topic) => ({ ...topic, title: updated.title }))
+    } catch (e) {
+      reportError(e, t('shell.workspaceErrors.rename'))
+    }
+  }
+
+  /** 给一件任务改名（侧栏任务行 ⋯ 里那一项）。任务行挂在频道的 `my_tasks` 里，
+   *  侧栏读的就是这一份：改名成功后把那一行就地换成新名字，不等房间推来的帧。 */
+  async function renameTask(taskId: string, roomId: string, title: string) {
+    try {
+      const updated = await renameTaskApi(taskId, title)
+      const project = projectId.value
+      if (!project) return
+      await patchTopics(project, (rows) =>
+        rows.map((topic) => {
+          const my = topic.my_tasks
+          if (topic.id !== roomId || !my) return topic
+          const at = my.shown.findIndex((task) => task.id === taskId)
+          if (at < 0) return topic
+          return {
+            ...topic,
+            my_tasks: {
+              ...my,
+              shown: my.shown.map((task, i) => (i === at ? { ...task, title: updated.title } : task)),
+            },
+          }
+        })
+      )
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.rename'))
     }
@@ -323,6 +351,7 @@ export function useChannelActions(deps: ChannelDeps) {
     markRead,
     markDmRead,
     renameTopic,
+    renameTask,
     archive,
     unarchive,
     removeChannel,

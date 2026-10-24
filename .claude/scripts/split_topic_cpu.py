@@ -181,7 +181,7 @@ TOPIC_LEAVES = [
     ("managed_ids", "app.api.routes.topics.TopicMemberService.managed_topic_ids"),
     ("awaiting_answer", "app.api.routes.topics._awaiting_an_answer"),
     ("member_waits", "app.api.routes.topics.MemberWaits.for_rooms"),
-    ("working_in_threads", "app.api.routes.topics.topics_signals.working_in_threads"),
+    ("at_work", "app.api.routes.topics.topics_signals.at_work"),
     ("moving_topics", "app.api.routes.topics.moving_topics"),
     ("unseen", "app.api.routes.topics.TaskService.unseen_deliveries"),
     ("replied_to_me", "app.api.routes.topics.TopicService.replied_to_me"),
@@ -203,7 +203,6 @@ AWAITING_LEAVES = [
     ("alerts", "app.api.awaiting_deps.ProjectNotificationService.still_open"),
     ("tasks.rows", "app.api.awaiting_deps.TaskRepository.listed_by_ids"),
     ("topics.rows", "app.api.awaiting_deps.TopicRepository.listed_by_ids"),
-    ("running", "app.api.awaiting_deps.running_tasks"),
     ("waiting_items", "app.api.awaiting_deps.waiting_items"),
 ]
 

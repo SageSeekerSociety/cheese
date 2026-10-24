@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
 from app.domain.block.repositories import BlockRepository as BlockRepository
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_ACCEPT_CONFLICT as EVENT_ACCEPT_CONFLICT,
 )
@@ -79,7 +80,6 @@ from app.domain.notice_meta import (
 )
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
-from app.domain.library import service as library
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -177,7 +177,7 @@ async def _hold_deliverable(session: AsyncSession, card: AcceptCard) -> None:
     )
 
 
-def _deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:
+def deliverable_revision(project_id: uuid.UUID, card: AcceptCard) -> str | None:
     """卡上交出去的那一份是哪一版：卡面带着它，采纳的请求要原样带回来。
 
     待处理的卡交出去的文件或地址可以原地换（`redeliver`），而采纳的那一刻合的
@@ -277,8 +277,8 @@ async def _github_enforces(repo: str, token: str | None) -> bool:
 # `accepted` having delivered nothing at all.
 _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.pending: (
-        "已有待处理的验收卡，不要再递一张：换交出去的文件或地址用 cheese_redeliver，"
-        "改标题或正文用 cheese_describe，代码的新提交用 cheese push-fix；"
+        "已有待处理的验收卡，不要再递一张：换交出去的文件或地址用 cheese_card(action=redeliver)，"
+        "改标题或正文用 cheese_card(action=describe)，代码的新提交用 cheese push-fix；"
         "换验收人由人在卡上改"
     ),
     AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",

@@ -43,7 +43,7 @@ from app.core.sentences import say
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.block.schemas import BlockOut, reply_preview
 from app.domain.identity.actor import Actor
 from app.domain.membership.roster import Member
 from app.domain.project.repositories import ProjectRepository
@@ -59,6 +59,7 @@ __all__ = [
     "BlockRepository",
     "ProjectRepository",
     "UsageRepository",
+    "reply_preview",
 ]
 
 

@@ -933,9 +933,7 @@ def image_acceptance(options, root: Path) -> int:
                     except httpx.HTTPStatusError as exc:
                         assert exc.response.status_code == 409
                         assert "X-Device-Id" not in exc.response.headers
-                        async with httpx.AsyncClient(
-                            base_url=url, timeout=10
-                        ) as probe:
+                        async with httpx.AsyncClient(base_url=url, timeout=10) as probe:
                             health = await probe.get("/healthz")
                             assert health.status_code == 503
                             assert health.json()["draining"] is True

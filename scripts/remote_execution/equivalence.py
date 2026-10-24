@@ -536,9 +536,9 @@ def reference(binary, layout, port):
 
 
 class RunnerSocket:
-    """The runner's socket, standing in: the one request the session's own
-    helpers make of it, `control`, passed to the session on its stdin as the
-    runner passes it (`claude_code.runner.Runner.dispatch`)."""
+    """The runner's socket, standing in: the requests the session's own helpers
+    make of it, passed to the session on its stdin as the runner passes them
+    (`claude_code.runner.Runner.dispatch`)."""
 
     def __init__(self, path):
         self.path = str(path)
@@ -548,12 +548,24 @@ class RunnerSocket:
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
                 request = json.loads(self.rfile.readline())
-                if request.get("method") != "control" or owner.session is None:
+                method = request.get("method")
+                params = request.get("params") or {}
+                if method == "apply_hooks" and owner.session is not None:
+                    # The helper that attaches a machine hands the session the
+                    # project's tool hooks; the runner applies them as flag
+                    # settings, so the next tool call fires them.
+                    answer = {
+                        "result": owner.session.control(
+                            {
+                                "subtype": "apply_flag_settings",
+                                "settings": {"hooks": params["hooks"]},
+                            }
+                        )
+                    }
+                elif method != "control" or owner.session is None:
                     answer = {"error": "Unknown Claude Code session operation"}
                 else:
-                    answer = {
-                        "result": owner.session.control(request["params"]["request"])
-                    }
+                    answer = {"result": owner.session.control(params["request"])}
                 self.wfile.write(json.dumps(answer).encode() + b"\n")
 
         self.server = socketserver.ThreadingUnixStreamServer(self.path, Handler)
@@ -1072,10 +1084,13 @@ def step_timeout(run):
     # task: a timeout close to it made that report a race between the runs.
     turn(run, bash("sleep 304", timeout=8000))
     gone = settle(lambda: not alive("sleep 304"))
+    # The two TERM-ignoring commands are looked at after the same five seconds
+    # in every run: what is compared is the state both runs are in then, and a
+    # longer look is only a longer wait for the same answer.
     turn(run, bash("trap '' TERM; sleep 305", timeout=8000))
-    stubborn_gone = settle(lambda: not alive("sleep 305"), timeout=15)
+    stubborn_gone = settle(lambda: not alive("sleep 305"), timeout=5)
     turn(run, bash("(trap '' TERM; sleep 306) & sleep 307", timeout=8000))
-    time.sleep(12)
+    time.sleep(5)
     return {
         "gone after": gone,
         "TERM-ignoring command gone after": stubborn_gone,
@@ -1107,8 +1122,11 @@ def step_stdin_close(run):
     run.session.wait(is_("result"), 60, mark)
     before = settle(lambda: alive("sleep 309"))
     run.session.close_stdin()
-    _, eof = run.session.wait(is_("_eof"), 60, mark)
-    gone = settle(lambda: not alive("sleep 309"))
+    # A session with a task still running outlives its closed input in the
+    # pinned build, so these windows are what both runs are compared over,
+    # not a deadline either one is expected to meet.
+    _, eof = run.session.wait(is_("_eof"), 10, mark)
+    gone = settle(lambda: not alive("sleep 309"), timeout=5)
     return {
         "running before": before,
         "gone after": gone,

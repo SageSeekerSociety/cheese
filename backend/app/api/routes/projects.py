@@ -453,7 +453,6 @@ async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
     status: Annotated[Literal["open", "closed"] | None, Query()] = None,
     accepted: Annotated[bool | None, Query()] = None,
@@ -537,7 +536,7 @@ async def list_project_tasks(
             db, [t.id for t in tasks if t.status == "open"]
         )
         items = await project_task_rows(
-            db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+            db, actor.handle or "", tasks, incomplete_of=incomplete.get
         )
         last = page_rows[-1] if page_rows and has_more else None
         return await conditional_json(
@@ -556,7 +555,7 @@ async def list_project_tasks(
     )
     incomplete = await incomplete_tasks(db, [t.id for t in tasks if t.status == "open"])
     items = await project_task_rows(
-        db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
+        db, actor.handle or "", tasks, incomplete_of=incomplete.get
     )
     return await conditional_json(ok(page(items, len(items))), if_none_match)
 

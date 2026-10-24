@@ -1,12 +1,18 @@
 <script setup lang="ts">
-// 正文上方那一条：AI 队友提的修改建议还有几处，上一处 / 下一处，一次全部决定。
+// 正文上方那一条：修改建议还有几处，上一处 / 下一处，一次全部决定。
 // 全部处理完了，说一声各接受、拒绝了几处。
+//
+// 建议是人提的还是 AI 队友提的都有可能。全出自一个人时写那个人的名字；混着
+// 几个人时不写名字，只说是修改建议。
 import DocEditButton from './DocEditButton.vue'
 
 import { t } from '@/i18n'
 
 defineProps<{
-  agentName: string
+  /** 待处理的建议全是同一个人的时那个人的名字；混着几个人时是 null。 */
+  author: string | null
+  /** 刚处理完的这一批建议全是同一个人的时那个人的名字；混着几个人时是 null。 */
+  decidedAuthor: string | null
   /** 还有几处待处理。 */
   count: number
   /** 这一次自己决定了几处；都处理完时说出来。 */
@@ -27,12 +33,14 @@ const emit = defineEmits<{
     v-if="count > 0"
     class="doc-suggestion-strip"
     role="region"
-    :aria-label="t('work.room.docSuggest.title', { agent: agentName })"
+    :aria-label="author ? t('work.room.docSuggest.title', { author }) : t('work.room.docSuggest.titleMixed')"
   >
     <span class="doc-suggestion-strip__lead">
       <span class="doc-suggestion-strip__dot" aria-hidden="true" />
       <span class="doc-suggestion-strip__text">{{
-        t('work.room.docSuggest.pending', { agent: agentName, n: count })
+        author
+          ? t('work.room.docSuggest.pending', { author, n: count })
+          : t('work.room.docSuggest.pendingMixed', { n: count })
       }}</span>
       <button
         type="button"
@@ -64,7 +72,16 @@ const emit = defineEmits<{
     role="status"
   >
     <span class="doc-suggestion-strip__text">{{
-      t('work.room.docSuggest.allDone', { agent: agentName, accepted: decided.accepted, rejected: decided.rejected })
+      decidedAuthor
+        ? t('work.room.docSuggest.allDone', {
+            author: decidedAuthor,
+            accepted: decided.accepted,
+            rejected: decided.rejected,
+          })
+        : t('work.room.docSuggest.allDoneMixed', {
+            accepted: decided.accepted,
+            rejected: decided.rejected,
+          })
     }}</span>
     <span class="doc-suggestion-strip__spacer" />
     <button

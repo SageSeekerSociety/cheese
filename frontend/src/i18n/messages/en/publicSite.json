@@ -190,8 +190,8 @@
       "item2Body": "When students claim a challenge, approve or decline them under Participants",
       "item3Title": "Review submissions",
       "item3Body": "Go through each one, mark it passed or not, and give a score and a comment",
-      "item4Title": "Tell the AI teammate where the class is",
-      "item4Body": "In the AI teammate guidance, give the current week, what has been covered and the reference material. The AI teammate in each student project works from it",
+      "item4Title": "Set how the AI teammate helps",
+      "item4Body": "In AI teammate guidance, pick how it helps, add your requirements and the reference material. The AI teammate in each student project works from it",
       "docs": "Publishing and reviewing challenges (in Chinese)"
     },
     "students": {
@@ -326,6 +326,10 @@
     "pageTitle": "Shared document",
     "updated": "Updated {time}",
     "gone": "This share link no longer works",
-    "loadFailed": "Failed to load the document"
+    "loadFailed": "Failed to load the document",
+    "colophon": {
+      "brand": "Cheese · where people and AI teammates work together",
+      "seats": "{name} has {n} invited seats left · Join with this link"
+    }
   }
 }

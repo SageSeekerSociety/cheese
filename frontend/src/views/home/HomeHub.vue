@@ -27,13 +27,10 @@ const {
   joinBusy,
   joinError,
   joinSpace,
-  editing,
-  editingBusy,
-  editingError,
-  editingNameError,
-  edit,
-  clearErrors,
-  saveProfile,
+  createOpen,
+  createBusy,
+  createError,
+  createSpace,
   disbanding,
   disbandBusy,
   disbandError,
@@ -52,17 +49,14 @@ const {
 
 <template>
   <HomeHubView
-    v-model:editing="editing"
     v-model:disbanding="disbanding"
     v-model:transferring="transferring"
     v-model:join-open="joinOpen"
+    v-model:create-open="createOpen"
     :teams="teams"
     :spaces="spaces"
     :awaiting="awaiting"
     :current-handle="currentHandle"
-    :editing-busy="editingBusy"
-    :editing-error="editingError"
-    :editing-name-error="editingNameError"
     :disband-busy="disbandBusy"
     :disband-error="disbandError"
     :transfer-candidates="transferCandidates"
@@ -71,14 +65,14 @@ const {
     :transfer-error="transferError"
     :join-busy="joinBusy"
     :join-error="joinError"
-    @edit="edit"
-    @clear-errors="clearErrors"
-    @save-profile="saveProfile"
+    :create-busy="createBusy"
+    :create-error="createError"
     @open-disband="openDisband"
     @confirm-disband="confirmDisband"
     @open-transfer="openTransfer"
     @confirm-transfer="confirmTransfer"
     @leave="leaveTeam"
     @join="joinSpace"
+    @create-space="createSpace"
   />
 </template>

@@ -100,3 +100,23 @@ class SessionRecord(UuidPk, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class SiteEventArchive(UuidPk, Base):
+    """One batch of the retired 现场 rows `retired_site` moved out of `blocks`:
+    the object in the private bucket that holds them, and how many rows it took.
+    A row is written in the transaction that deletes those rows, so the table
+    lists exactly what has left the database and where it went."""
+
+    __tablename__ = "site_event_archives"
+
+    # The conversation the rows were in, without a foreign key: the archive
+    # outlives the conversation, as its object does.
+    conversation_id: Mapped[uuid.UUID] = mapped_column()
+    object_key: Mapped[str] = mapped_column(String(512))
+    rows: Mapped[int] = mapped_column(Integer)
+    # The object's size: gzip JSONL, one row a line.
+    bytes: Mapped[int] = mapped_column(BigInteger)
+    archived_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

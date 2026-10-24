@@ -7,8 +7,9 @@ unchanged except that credentials are taken out. And the record only grows:
 reading the journal again, from a fresh mirror or after the records were moved
 to the bucket, adds nothing twice, and what was there stays as it was.
 
-Each case drives the real mirror and subscription of the harness against a
-runner journal written here, and reads back through the route a viewer uses.
+Each case drives the real reading of the harness (Codex's mirror and
+subscription, Claude Code's lifecycle reading) against a runner journal written
+here, and reads back through the route a viewer uses.
 """
 
 import base64
@@ -27,9 +28,9 @@ from sqlalchemy.exc import DBAPIError
 from app.core.storage import StorageBackend
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, SessionRef
 from app.domain.agent.harness.claude_code import journal as claude_journal
-from app.domain.agent.harness.claude_code import subscription as claude
 from app.domain.agent.harness.codex import journal as codex_journal
 from app.domain.agent.harness.codex import subscription as codex
+from app.domain.agent.harness.driven.reporting import Reading, Whose
 from app.domain.session_record import service
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
@@ -179,6 +180,16 @@ def _codex_records(work: str) -> list[dict]:
     ]
 
 
+def _claude_input(text: str, work: str) -> list[dict]:
+    return [
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+            "cheese": {"work_id": work},
+        }
+    ]
+
+
 HARNESSES = {
     CLAUDE_CODE: (claude_journal.Journal, _claude_records),
     CODEX: (codex_journal.Journal, _codex_records),
@@ -231,16 +242,30 @@ class _Session:
         finally:
             journal.close()
 
-    def drain(self, *, fresh_mirror: bool = False) -> None:
-        """One drain by the backend; a fresh mirror reads the runner from the start."""
+    def drain(self, *, fresh_mirror: bool = False, pages: int = 1) -> None:
+        """Drains by the backend; a fresh mirror reads the runner from the start.
+
+        One drain takes one journal page (the journal's `PAGE`); a journal with
+        more records than that needs as many drains to be taken whole.
+        """
         if fresh_mirror or not self.mirrors:
             self.mirrors += 1
         mirror = self.tmp_path / f"mirror-{self.mirrors}.sqlite"
 
         async def remote(method: str, params: dict) -> dict:
-            assert method == "events"
             journal = self.journal_type(self.runner)
             try:
+                if method == "read":
+                    # A runner that reports in the lifecycle protocol: its
+                    # records past what was taken, from the start for a reader
+                    # that names nothing.
+                    return {
+                        "worker_epoch": 1,
+                        "events": [],
+                        "records": journal.read(params.get("records_after") or 0),
+                        "state": {},
+                    }
+                assert method == "events"
                 return {"events": journal.read(params["after"])}
             finally:
                 journal.close()
@@ -249,20 +274,17 @@ class _Session:
             return None
 
         keep = functools.partial(service.append, self.client.test_request_factory)
+        reading: Reading | codex.Subscription
         if self.harness == CLAUDE_CODE:
-            reading = claude.Subscription(
-                self.ref,
-                mirror,
+            reading = Reading(
+                Whose(self.ref, "cheese", self.ref.topic_id, "cheese", CLAUDE_CODE, ""),
                 remote,
-                nothing,
-                nothing,
-                session_id="s1",
-                recipient_handle="cheese",
-                announce=nothing,
-                receipts=nothing,
-                completions=nothing,
-                terminations=nothing,
+                epoch=lambda: 1,
+                assemble=lambda record: [],
+                show=nothing,
+                hand=nothing,
                 records=keep,
+                controls=nothing,
             )
         else:
             reading = codex.Subscription(
@@ -271,7 +293,8 @@ class _Session:
 
         async def run() -> None:
             try:
-                await reading.drain()
+                for _ in range(pages):
+                    await reading.drain()
             finally:
                 await reading.release()
 
@@ -433,14 +456,18 @@ def test_agent_history_tools_read_search_and_page_complete_raw_records(
 
     host = Host()
     found = tools.run_platform_tool(
-        "cheese_chat_search", {"kind": "event", "query": "HEAD OF THE OUTPUT"}, host
+        "cheese_chat",
+        {"action": "search", "kind": "event", "query": "HEAD OF THE OUTPUT"},
+        host,
     )
     record_id = re.search(r"id=(record:[A-Za-z0-9_-]+)", found)[1]
     result = ""
     offset = 0
     while True:
         text = tools.run_platform_tool(
-            "cheese_chat_get", {"message_id": record_id, "offset": offset}, host
+            "cheese_chat",
+            {"action": "get", "message_id": record_id, "offset": offset},
+            host,
         )
         result += text
         more = re.search(r"offset=(\d+)", text)
@@ -516,8 +543,13 @@ def test_channel_record_search_crosses_task_conversations_without_paging_gaps(
             return response.json()
 
     result = tools.run_platform_tool(
-        "cheese_chat_search",
-        {"kind": "event", "query": "channel-evidence child-two", "channel": True},
+        "cheese_chat",
+        {
+            "action": "search",
+            "kind": "event",
+            "query": "channel-evidence child-two",
+            "channel": True,
+        },
         Host(),
     )
     assert "channel-evidence child-two" in result
@@ -729,6 +761,105 @@ def test_a_record_nested_deep_is_kept_and_read_back(client, tmp_path):
     assert json.dumps([i["record"] for i in kept], sort_keys=True) == json.dumps(
         expected, sort_keys=True
     )
+
+
+@pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])
+def test_the_lines_read_out_is_what_a_transcript_holds(client, tmp_path, harness):
+    """`lines=true` is the shape `cheese transcript` writes to a file: one row
+    per record, the same keys whichever harness wrote it, and the subagent's
+    thread named."""
+    session = _Session(client, tmp_path, harness, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(session.records(work))
+    session.drain()
+
+    response = client.get(
+        f"/topics/{session.ref.topic_id}/session-records",
+        params={"lines": True, "turn_id": work, "limit": 500},
+    )
+    assert response.status_code == 200, response.text
+    rows = response.json()["data"]["items"]
+    assert rows
+    assert len({tuple(sorted(row)) for row in rows}) == 1
+    assert all(row["turn"] == work for row in rows)
+    assert all(row["harness"] == harness for row in rows)
+    # The subagent's moment is in the same file, marked as its own thread.
+    assert any(row["thread"] == "toolu_task" for row in rows) or any(
+        row["parent_thread"] for row in rows
+    )
+    # A tool call and its return are readable without the raw record.
+    assert any(
+        part["kind"] == "tool"
+        for row in rows
+        for part in row["parts"]
+        if part.get("name")
+    )
+    # Raw records are not in this answer; they are what a caller asks without
+    # `lines` for.
+    assert all("record" not in row for row in rows)
+
+
+def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
+    """What an input carries is the person's words and the platform's own; a
+    transcript is written to be read, so only the person's come through. Claude
+    Code is the harness that journals an input at all."""
+    from app.domain.agent.harness.notices import (
+        platform_prompt,
+        publication_prompt,
+        silence_reminder,
+    )
+
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    work = str(uuid.uuid4())
+    session.write(
+        _claude_input(
+            publication_prompt("照我说的做")
+            + "\n\n"
+            + platform_prompt(silence_reminder(10)),
+            work,
+        )
+    )
+    session.drain()
+
+    rows = client.get(
+        f"/topics/{session.ref.topic_id}/session-records",
+        params={"lines": True, "turn_id": work, "limit": 500},
+    ).json()["data"]["items"]
+    said = [part["text"] for row in rows for part in row["parts"]]
+    assert "照我说的做" in said
+    assert not any("分钟了还没回" in text for text in said)
+    # The journal still holds every word: this is the file's projection only.
+    whole = json.dumps(session.read(turn_id=work), ensure_ascii=False)
+    assert "分钟了还没回" in whole
+
+
+def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):
+    """A transcript is this conversation's; another room's records are not
+    reachable through its topic, and a stranger reaches neither."""
+    mine = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    mine.write(_claude_records(str(uuid.uuid4())))
+    mine.drain()
+    other = tmp_path / "other"
+    other.mkdir()
+    theirs = _Session(client, other, CLAUDE_CODE, _room_for(client))
+    theirs.write(_claude_records(str(uuid.uuid4())))
+    theirs.drain()
+
+    rows = client.get(
+        f"/topics/{mine.ref.topic_id}/session-records", params={"lines": True}
+    ).json()["data"]["items"]
+    assert rows
+    assert {row["conversation"] for row in rows} == {None}
+    assert all(row["author"] == mine.ref.agent_handle for row in rows)
+
+    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    for params in ({}, {"lines": True}):
+        refused = client.get(
+            f"/topics/{mine.ref.topic_id}/session-records",
+            params=params,
+            headers=stranger,
+        )
+        assert refused.status_code in (401, 403, 404), refused.text
 
 
 def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):

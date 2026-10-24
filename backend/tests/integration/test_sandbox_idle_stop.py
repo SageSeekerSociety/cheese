@@ -67,6 +67,8 @@ class Hosts:
         self.after = None
         # Commands each host's executors report running in the background.
         self.background: dict[str, int] = {}
+        # Stops sent to those commands, in order: (host, command, signal).
+        self.signals: list[tuple[str, str, int]] = []
 
     def is_online(self, device_id):
         return device_id in self.online
@@ -116,9 +118,23 @@ class Hosts:
         }
 
     async def executor(self, target, method, params, **_kwargs):
+        device_id = target["device_id"]
         if method == "ping":
-            return {"running_commands": self.background.get(target["device_id"], 0)}
+            running = self.background.get(device_id, 0)
+            return {
+                "running_commands": running,
+                # Named, as the executor names them: the sweep stops one that
+                # outlasts the cap instead of destroying the sandbox.
+                "running_command_ids": [f"task-{index}" for index in range(running)],
+            }
         if method == "control":
+            if params.get("subtype") == "shell" and params.get("operation") == "signal":
+                self.signals.append(
+                    (device_id, str(params["command_id"]), int(params["signal"]))
+                )
+                left = self.background.get(device_id, 0)
+                self.background[device_id] = max(0, left - 1)
+                return {"value": {"running": False}}
             # A push that went through, as `cheese sync --all` reports one.
             return {"value": {"stdout": "", "stderr": "", "interrupted": False}}
         return {}
@@ -263,7 +279,12 @@ def host_comes_up(case, seat, device_id):
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
-            await repo.mark_enrolled(host, device_id=device_id, when=datetime.now(UTC))
+            await repo.mark_enrolled(
+                host,
+                device_id=device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=host.sandbox_disk_gb,
+            )
             await db.commit()
 
     run(case, enrol)
@@ -717,9 +738,13 @@ def test_a_whole_vms_wait_does_not_press_the_pool(cloud, monkeypatch):
     assert home_of(cloud, seat) is not None
 
 
-def test_a_background_command_keeps_a_sandbox_up_only_until_the_cap(cloud):
+def test_a_background_command_past_the_cap_is_stopped_not_the_sandbox(cloud):
+    """A command still running when the cap expires is stopped; the sandbox
+    stays. The cap exists so a hung command cannot hold a host for good, and
+    stopping the command does that without taking the home, the uncommitted
+    work in it, and the place the waking session's next tool call lands."""
     seat = cloud.seats[0]
-    working_on(cloud, seat, "host-a")
+    home = working_on(cloud, seat, "host-a")
     cloud.hosts.background["host-a"] = 1
 
     time_passes(cloud, seat, timedelta(minutes=30))
@@ -727,7 +752,64 @@ def test_a_background_command_keeps_a_sandbox_up_only_until_the_cap(cloud):
 
     lifecycle._asked.clear()
     time_passes(cloud, seat, timedelta(minutes=61))
-    assert sweep(cloud)["destroyed"] == 1
+    assert sweep(cloud)["destroyed"] == 0
+    assert cloud.hosts.signals == [("host-a", "task-0", lifecycle.TERM)]
+    assert home_of(cloud, seat) is not None
+    assert (home / "room" / "notes.md").exists()
+
+
+def test_a_command_that_ends_before_the_sweep_keeps_its_sandbox(cloud, monkeypatch):
+    """The end of a background command is the session waking to read it, not
+    silence: the sweep that finds the command gone gives the home a fresh idle
+    window instead of taking it in the seconds before the next tool call.
+
+    Dev, 2026-10-21 23:08 (+08:00): a full test run of 15m05s outlived the
+    15-minute cap by five seconds, and the sandbox was destroyed while the
+    agent was already reading the result and asking for its first command.
+    """
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-a")
+    # Every sweep asks: the just-ended command is recognised by the previous
+    # answer, not by when the sweep happened to be allowed to ask.
+    monkeypatch.setattr(lifecycle, "RECHECK", timedelta(0))
+    cloud.hosts.background["host-a"] = 1
+
+    time_passes(cloud, seat, timedelta(minutes=30))
+    assert sweep(cloud)["destroyed"] == 0
+
+    # The command ended between the two sweeps; the session is waking.
+    cloud.hosts.background["host-a"] = 0
+    time_passes(cloud, seat, timedelta(minutes=31))
+    assert sweep(cloud)["destroyed"] == 0
+    assert home_of(cloud, seat) is not None
+    assert (home / "room" / "notes.md").exists()
+
+
+def test_a_turn_that_starts_after_the_pick_keeps_the_sandbox(cloud):
+    """The sweep picks a home from a look taken before the room's lock. A turn
+    that starts in between — the session waking to a background command's
+    result — is at work, and the destroy backs off when it takes the lock and
+    sees it."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    time_passes(cloud, seat, timedelta(minutes=11))
+    current = home_of(cloud, seat)
+    assert current is not None
+    turn_runs(cloud, seat.room)
+
+    async def destroy():
+        async with cloud.client.test_request_factory() as db:
+            return await lifecycle.SandboxLifecycle(db, hub=cloud.hosts)._destroy(
+                current.id,
+                current.topic_id,
+                "host-a",
+                timedelta(minutes=11),
+                idle_for=timedelta(minutes=10),
+            )
+
+    assert run(cloud, destroy) is False
+    assert home_of(cloud, seat) is not None
+    assert cloud.hosts.actions == []
 
 
 def test_a_destroyed_sandbox_frees_its_slot_for_another_session(cloud):

@@ -19,7 +19,7 @@ slug: team-project
 1. 点最左侧一列顶部的「首页」，再点左侧栏「团队」下的「新建或加入团队」。
 2. 点右上角的「创建团队」。
 3. 在「团队名称」中填写「B 树小组」，点「创建团队」。页面进入这个团队的「项目」页。
-4. 点左侧栏团队下的「成员」，再点「团队链接」处的「复制链接」，把链接发到你们的群里。
+4. 点左侧栏团队那一行的「⋯」，选「设置」，再点「成员」。在「加入方式」的「团队链接」处点「复制链接」，把链接发到你们的群里。
 5. 同学申请后，打开「待办」，在「等你处理」里每条「〈名字〉 申请加入团队」上点「批准」。
 
 ```demo-panel
@@ -95,7 +95,7 @@ parts:
     at: 4
     until: 5
   - kind: line
-    text: 谁能找到这个团队
+    text: 谁能找到
     at: 4
     until: 5
   - kind: head
@@ -227,7 +227,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 进行中
+    status: 在做
     owner: 你 负责
     at: 2
     until: 3
@@ -261,7 +261,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
@@ -295,7 +295,7 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 进行中
+    status: 在做
     owner: 你 负责
   - kind: bars
     lines: 2
@@ -384,7 +384,7 @@ parts:
   - kind: task
     title: B 树的删除
     owner: 陈默 负责
-    status: 待你审阅
+    status: 待审阅
     at: 1
     until: 3
   - kind: line
@@ -394,13 +394,13 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 1
     until: 2
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 芝士在做
+    status: 在做
     at: 1
     until: 2
   - kind: head
@@ -416,7 +416,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 进行中
+    status: 在做
     at: 3
   - kind: bars
     who: 陈默
@@ -425,7 +425,7 @@ parts:
   - kind: task
     title: B 树的删除
     owner: 陈默 负责
-    status: 待你审阅
+    status: 待审阅
     at: 3
   - kind: bars
     who: 王珊
@@ -434,12 +434,12 @@ parts:
   - kind: task
     title: 实验报告
     owner: 王珊 负责
-    status: 芝士在做
+    status: 在做
     at: 3
 ```
 :::
 
-「待处理」里的任务在等某个人，状态写成「待你审阅」「待你回答」等。「总览」里的「最近进展」按天列出最近两周新建和采纳的任务。各分组的含义见[全部任务](/tasks#board)。
+「待处理」里在等人审阅或回答的任务，状态后面那一行写在等谁，等你时写「等你」。「总览」里的「最近进展」按天列出最近两周新建和采纳的任务。各分组的含义见[全部任务](/tasks#board)。
 
 ## 分工的建议 {#tips}
 

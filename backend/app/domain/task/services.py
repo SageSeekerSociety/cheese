@@ -25,6 +25,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task import package
 from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
@@ -830,6 +831,8 @@ class TaskSubmissionService:
             "member": member_summary,
             "submitter": submitter_summary,
             "version": submission.version,
+            # 交的是题目的第几版；有版本之前交的是 None。
+            "packageRevision": submission.package_revision,
             "createdAt": created_ms,
             "updatedAt": updated_ms,
             "content": content_dtos,
@@ -909,6 +912,12 @@ class TaskSubmissionService:
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
+            # 交的是题目的哪一版：题目之后再改，这一份按它交的那一版看。
+            package_revision=(
+                await package.current_number(self._session, participant.task_id)
+                if self._session is not None
+                else None
+            ),
         )
 
         await self._entry_repo.create_entries(
@@ -1190,8 +1199,14 @@ class TaskSubmissionReviewService:
             session=session,
         )
 
-    async def get_review_dto(self, submission_id: int) -> dict:
-        review = await self._review_repo.get_by_submission_id(submission_id)
+    async def get_review_dto(
+        self, submission_id: int, reviewer_id: int | None = None
+    ) -> dict:
+        """这一版的评审 DTO。给了 `reviewer_id` 就是那个人的那一条，否则是最早的
+        一条 —— 一版可以有多位老师各判一份。"""
+        review = await self._review_repo.get_by_submission_id(
+            submission_id, reviewer_id
+        )
         if review is None:
             return {"reviewed": False}
         return {
@@ -1207,12 +1222,14 @@ class TaskSubmissionReviewService:
         self,
         *,
         submission_id: int,
+        reviewer_id: int,
         accepted: bool,
         score: int,
         comment: str,
     ) -> dict:
         review = await self._review_repo.create_review(
             submission_id=submission_id,
+            reviewer_id=reviewer_id,
             accepted=accepted,
             score=score,
             comment=comment,
@@ -1224,7 +1241,7 @@ class TaskSubmissionReviewService:
         )
         # 判通过就该是 SUCCESS，驳回就该是「可重交」—— 这一步是这条轴真正的推进者。
         await self._refresh_membership_status(submission_id)
-        dto = await self.get_review_dto(review.submission_id)
+        dto = await self.get_review_dto(review.submission_id, reviewer_id)
         dto["hasUpgradedParticipantRank"] = has_upgraded
         return dto
 
@@ -1232,11 +1249,20 @@ class TaskSubmissionReviewService:
         self,
         *,
         submission_id: int,
+        reviewer_id: int | None = None,
         accepted: bool | None = None,
         score: int | None = None,
         comment: str | None = None,
     ) -> dict:
-        review = await self._review_repo.get_by_submission_id(submission_id)
+        """改一条评审。给了 `reviewer_id` 就改那个人的那份，没给就是最早的一份
+        （单评审时两者是同一份）。
+
+        ponytail: 一版多人时「最早那一份」是个封顶 —— 真要按人改，路径上要带上
+        谁的那一份；今天调用方还没带，所以留这个默认。
+        """
+        review = await self._review_repo.get_by_submission_id(
+            submission_id, reviewer_id
+        )
         if review is None:
             raise NotFoundError.for_resource("review", submission_id)
         previous_accepted = review.accepted
@@ -1255,12 +1281,16 @@ class TaskSubmissionReviewService:
         )
         # 改判也要跟上：通过改成驳回，这条领取就从 SUCCESS 退回「可重交」。
         await self._refresh_membership_status(submission_id)
-        dto = await self.get_review_dto(submission_id)
+        dto = await self.get_review_dto(submission_id, reviewer_id)
         dto["hasUpgradedParticipantRank"] = has_upgraded
         return dto
 
-    async def delete_review(self, *, submission_id: int) -> None:
-        review = await self._review_repo.get_by_submission_id(submission_id)
+    async def delete_review(
+        self, *, submission_id: int, reviewer_id: int | None = None
+    ) -> None:
+        review = await self._review_repo.get_by_submission_id(
+            submission_id, reviewer_id
+        )
         if review is None:
             return
         await self._review_repo.soft_delete(review)

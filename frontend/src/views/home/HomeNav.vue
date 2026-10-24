@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 首页那一格的目录：待办、我所在的团队、我加入的空间。
+// 首页那一格的目录：待办、我所在的团队、我加入的空间，和挨着空间的市场。
 //
 // 桌面上它是首页侧栏的正文（HomeSidebar），手机上是底栏「首页」那一格的整页
 // （HomeHub）——同一份目录，两端不各写一份。
@@ -15,7 +15,7 @@
 // 留在这里的是**画面自己的状态**：哪几行摊开、记在这台浏览器上（`OPEN_KEY`），
 // 每一行 ⋯ 里的操作清单长什么样。
 import type { MenuAction } from '@/components/common/menuAction'
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 
@@ -23,6 +23,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
+import CreateSpaceDialog from './CreateSpaceDialog.vue'
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -31,7 +32,6 @@ import { t } from '@/i18n'
 import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
-import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 const props = defineProps<{
@@ -39,17 +39,12 @@ const props = defineProps<{
   inbox?: boolean
   /** 我所在的团队（含自己名下那一个）。 */
   teams: Team[]
-  /** 我加入的空间。 */
-  spaces: { id: number; name: string }[]
+  /** 我加入的空间，加上我建的、还没过审的那几个。 */
+  spaces: SpaceLink[]
   /** 待我处理的件数；0 或没给就不画那颗角标。 */
   awaiting?: number
   /** 正在看的是哪个团队（`/teams/<handle>/…`）——那一个必须是展开的。 */
   currentHandle?: string | null
-  /** 正在改资料的团队；null 就是没在改。 */
-  editing: Team | null
-  editingBusy?: boolean
-  editingError?: string
-  editingNameError?: string
   /** 正在解散的团队；null 就是没在解散。 */
   disbanding: Team | null
   disbandBusy?: boolean
@@ -64,16 +59,12 @@ const props = defineProps<{
   joinOpen: boolean
   joinBusy?: boolean
   joinError?: string
+  createOpen: boolean
+  createBusy?: boolean
+  createError?: string
 }>()
 
 const emit = defineEmits<{
-  /** 点了「编辑团队资料」：改资料这件事由外面开。 */
-  edit: [team: Team]
-  'update:editing': [team: Team | null]
-  /** 「保存」按下去了：payload 是弹窗里填的那三样。 */
-  saveProfile: [payload: { name: string; intro: string; avatarFile?: File }]
-  /** 人在名字那一格里动了一下：外面把上一次那两句报错撤掉。 */
-  clearErrors: []
   /** 点了「解散团队」。 */
   openDisband: [team: Team]
   'update:disbanding': [team: Team | null]
@@ -87,6 +78,9 @@ const emit = defineEmits<{
   'update:joinOpen': [open: boolean]
   /** 「加入」按下去了：邀请码在里面输好了。 */
   join: [code: string]
+  'update:createOpen': [open: boolean]
+  /** 「提交审核」按下去了：payload 是弹窗里填的那三样。 */
+  createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
 }>()
 
 // 自己名下（只有自己的那个团队，以自己的昵称出现）一组，真团队一组，后一组才有「团队」小标题。
@@ -123,26 +117,29 @@ watch(
 )
 const isOpen = (team: Team) => open.value.some((h) => h.toLowerCase() === team.handle.toLowerCase())
 
+// 侧栏上只留常去的两样：项目，和资料库（文档和文件都在里面，同项目的资料库）。成员、
+// 设备、模型、额度这些偶尔才去的收在 ⋯ 里的「设置」，盖在窗口上的一层（`teams/TeamSettings.vue`）。
 const TEAM_PAGES = [
   { name: 'TeamsDetailDefault', label: 'home.nav.teamProjects', exact: true },
-  { name: 'TeamsDetailMembers', label: 'home.nav.teamMembers', exact: false },
-  { name: 'TeamsDetailDocs', label: 'home.nav.teamDocs', exact: false },
-  { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', exact: false },
-  { name: 'TeamsDetailModels', label: 'home.nav.teamModels', exact: false },
-  { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', exact: false },
+  { name: 'TeamsDetailLibrary', label: 'home.nav.teamLibrary', exact: false },
 ] as const
-// 自己名下谁也加不进来（后端拒），「成员」一页就不列；自己的额度在个人设置里，「额度」
-// 一页也不列。
-const PERSONAL_HIDDEN: readonly string[] = ['TeamsDetailMembers']
-const pagesOf = (team: Team) =>
-  team.personal ? TEAM_PAGES.filter((page) => !PERSONAL_HIDDEN.includes(page.name)) : TEAM_PAGES
+// 自己名下的设备、模型和额度在「个人设置」里，那一行的「设置」打开它。
+const settingsOf = (team: Team) =>
+  team.personal ? { name: 'UserSettingsCompute' } : { name: 'TeamsDetailSettings', params: { handle: team.handle } }
 
 const isAdmin = (team: Team) => team.role === 'OWNER' || team.role === 'ADMIN'
 
-/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料；不是所有者的能退出。 */
+/** 一个团队那一行的 ⋯（和右键）里能做的事：管理员邀请、改资料（打开设置的「基本信息」）；
+ *  不是所有者的能退出。 */
 function teamActions(team: Team): MenuAction[] {
-  if (team.personal) return []
-  const actions: MenuAction[] = []
+  const settings: MenuAction = {
+    key: 'settings',
+    label: t('home.nav.teamSettings'),
+    icon: 'mdi-cog-outline',
+    to: settingsOf(team),
+  }
+  if (team.personal) return [settings]
+  const actions: MenuAction[] = [settings]
   if (isAdmin(team))
     actions.push(
       {
@@ -155,7 +152,7 @@ function teamActions(team: Team): MenuAction[] {
         key: 'edit',
         label: t('work.teamProfile.edit'),
         icon: 'mdi-pencil-outline',
-        onSelect: () => emit('edit', team),
+        to: { name: 'TeamsDetailProfile', params: { handle: team.handle } },
       }
     )
   // 所有者退不掉（后端拒：先转让或解散），所以他看到的是那两条出路。
@@ -192,12 +189,15 @@ const rowMenu = useRowMenu<number>()
 // 弹窗自己那一格开合：外面给的是「在编辑哪个团队」，这里翻成 `v-model` 要的布尔。
 // 关掉（点了取消、按了 Esc）就是把那一格交回空。
 const joinModel = computed({ get: () => props.joinOpen, set: (value: boolean) => emit('update:joinOpen', value) })
-const editingModel = computed({
-  get: () => props.editing !== null,
-  set: (value: boolean) => {
-    if (!value) emit('update:editing', null)
-  },
+const createModel = computed({
+  get: () => props.createOpen,
+  set: (value: boolean) => emit('update:createOpen', value),
 })
+
+/** 过审的空间点进去是它自己的目录；还在审核或被驳回的，点进去是这份申请。 */
+function spaceTo(space: SpaceLink) {
+  return space.review ? { name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } } : spaceEntryRoute(space)
+}
 const disbandModel = computed({
   get: () => props.disbanding !== null,
   set: (value: boolean) => {
@@ -281,7 +281,7 @@ const transferModel = computed({
         </v-list-item>
         <template v-if="isOpen(team)">
           <v-list-item
-            v-for="page in pagesOf(team)"
+            v-for="page in TEAM_PAGES"
             :key="page.name"
             rounded="lg"
             class="home-nav__leaf"
@@ -301,15 +301,26 @@ const transferModel = computed({
     />
 
     <v-list-subheader>{{ t('navigation.spaces') }}</v-list-subheader>
-    <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceEntryRoute(space)">
+    <v-list-item v-for="space in spaces" :key="space.id" rounded="lg" :to="spaceTo(space)">
       <template #prepend>
-        <!-- 空间头像也走 UserAvatar（org = 圆角方块）：它只拿到 id 和名字，没有头像图，
-             所以画的是按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。 -->
-        <UserAvatar size="22" class="home-nav__mark" :name="space.name" :seed="String(space.id)" kind="org" />
+        <!-- 空间头像也走 UserAvatar（org = 圆角方块）：挑过就画上传的那张，没挑过 /
+             取不到就画按 id 派生的彩色首字母，和团队、人的那几格同一套形状规则。
+             getAvatarUrl(null) 回空串，所以没图的空间不会去打一个注定 404 的请求。 -->
+        <UserAvatar
+          size="22"
+          class="home-nav__mark"
+          :avatar="getAvatarUrl(space.avatarId)"
+          :name="space.name"
+          :seed="String(space.id)"
+          kind="org"
+        />
       </template>
       <v-list-item-title class="home-nav__name" data-user-content>{{ space.name }}</v-list-item-title>
       <template #append>
-        <v-icon size="16" class="home-nav__meta">mdi-chevron-right</v-icon>
+        <span v-if="space.review" class="home-nav__review" :class="`home-nav__review--${space.review}`">{{
+          t(`home.nav.spaceReview.${space.review}`)
+        }}</span>
+        <v-icon v-else size="16" class="home-nav__meta">mdi-chevron-right</v-icon>
       </template>
     </v-list-item>
     <v-list-item
@@ -322,23 +333,28 @@ const transferModel = computed({
     <v-list-item
       rounded="lg"
       class="home-nav__action"
-      prepend-icon="mdi-view-grid-outline"
-      :to="{ name: 'HomeSpaces' }"
-      exact
-      :title="t('work.allSpaces')"
+      prepend-icon="mdi-plus"
+      :title="t('spaces.create.open')"
+      @click="emit('update:createOpen', true)"
+    />
+
+    <!-- 市场：技能、插件、MCP、Agent 模板，全站一份、不属于哪个团队或空间。入口只在这份目录
+         里（桌面侧栏和手机「首页」整页都是它），挨着空间那一段，不占 rail 的格子。 -->
+    <v-divider class="my-2" />
+    <v-list-item
+      rounded="lg"
+      prepend-icon="mdi-storefront-outline"
+      :to="{ name: 'market' }"
+      :title="t('navigation.market')"
     />
   </v-list>
 
   <JoinSpaceDialog v-model="joinModel" :busy="joinBusy" :error="joinError" @submit="(code) => emit('join', code)" />
-  <TeamProfileEditDialog
-    v-if="editing"
-    v-model="editingModel"
-    :team="editing"
-    :busy="editingBusy"
-    :error="editingError"
-    :name-error="editingNameError"
-    @save="(payload) => emit('saveProfile', payload)"
-    @clear-errors="emit('clearErrors')"
+  <CreateSpaceDialog
+    v-model="createModel"
+    :busy="createBusy"
+    :error="createError"
+    @submit="(payload) => emit('createSpace', payload)"
   />
   <DisbandTeamDialog
     v-if="disbanding"
@@ -425,6 +441,26 @@ const transferModel = computed({
 .home-nav__meta {
   font-size: 12px;
   color: var(--faint);
+}
+
+/* 还没过审的空间那一行：右边一枚小标签说是哪一种。待审核是在等人，用警示那一组；
+   被驳回要他自己动手，用危险那一组的字色，底是中性的。 */
+.home-nav__review {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.home-nav__review--PENDING {
+  background: var(--warn-wash);
+  color: var(--warn-ink);
+}
+
+.home-nav__review--REJECTED {
+  background: var(--fill-2);
+  color: var(--danger-ink);
 }
 
 .home-nav__more {

@@ -4,6 +4,7 @@ import {
   desktopListenForNotices,
   desktopStopNotices,
   goAuthorize,
+  markTitleBarOverlay,
   signInInBrowser,
   takeSignInVerifier,
   tellDesktopTheme,
@@ -23,6 +24,24 @@ function desktopApp(about?: object) {
 afterEach(() => {
   delete (window as AppWindow).__TAURI__
   delete (window as AppWindow).__CHEESE_APP__
+  document.documentElement.classList.remove('title-bar-overlay')
+})
+
+describe('markTitleBarOverlay', () => {
+  it('marks the page when the app draws its window buttons over it', () => {
+    desktopApp({ origin: 'https://okcheese.com', titleBar: 'overlay' })
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(true)
+  })
+
+  it('leaves a window whose title bar is native alone, and a browser too', () => {
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(false)
+
+    desktopApp({ origin: 'https://okcheese.com', titleBar: 'native' })
+    markTitleBarOverlay()
+    expect(document.documentElement.classList.contains('title-bar-overlay')).toBe(false)
+  })
 })
 
 describe('tellDesktopTheme', () => {
@@ -101,6 +120,15 @@ describe('authorizing from the app', () => {
       .replace(/\//g, '_')
       .replace(/=+$/, '')
     expect(opened.searchParams.get('challenge')).toBe(hash)
+  })
+
+  it("carries a friend's invite code to the browser, and nothing when there is none", async () => {
+    desktopApp(app)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await signInInBrowser('signup', '/', 'K7Q2M9')
+    expect(new URL(String(open.mock.calls[0][0])).searchParams.get('invite')).toBe('K7Q2M9')
+    await signInInBrowser('signup', '/')
+    expect(new URL(String(open.mock.calls[1][0])).searchParams.has('invite')).toBe(false)
   })
 
   it('uses the secret at most once', async () => {

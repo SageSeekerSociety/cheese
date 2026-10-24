@@ -10,6 +10,7 @@
 
 from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import post_project, session_auth_headers
+from tests.support import library_uploads
 
 
 def _project(client) -> str:
@@ -390,10 +391,7 @@ def test_the_library_page_takes_a_file_directly(client):
     project_id = _project(client)
 
     def put_in(name: str, content: bytes) -> str:
-        r = client.post(
-            f"/projects/{project_id}/library",
-            files={"file": (name, content, "application/octet-stream")},
-        )
+        r = library_uploads.put_in(client, project_id, name, content)
         assert r.status_code == 200, r.text
         return r.json()["data"]["path"]
 
@@ -414,11 +412,7 @@ def test_replacing_a_file_is_what_every_reference_now_reads(client):
     topic_id = _topic(client, project_id, "房间一")
     att = _upload(client, topic_id, "说明.md", b"old")
 
-    r = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "说明.md"},
-        files={"file": ("说明-新.md", b"new", "application/octet-stream")},
-    )
+    r = library_uploads.replace(client, project_id, "说明.md", b"new")
     assert r.status_code == 200, r.text
 
     [row] = _library(client, project_id)
@@ -448,17 +442,10 @@ def test_the_agent_cannot_put_in_or_replace_a_file(client):
     _upload(client, topic_id, "预算表.xlsx", b"budget")
 
     agent = _agent_in(client, project_id, topic_id)
-    upload = client.post(
-        f"/projects/{project_id}/library",
-        files={"file": ("新.txt", b"x", "text/plain")},
-        headers=agent,
-    )
+    upload = library_uploads.put_in(client, project_id, "新.txt", b"x", headers=agent)
     assert upload.status_code == 403
-    replace = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "预算表.xlsx"},
-        files={"file": ("预算表.xlsx", b"x", "text/plain")},
-        headers=agent,
+    replace = library_uploads.replace(
+        client, project_id, "预算表.xlsx", b"x", headers=agent
     )
     assert replace.status_code == 403
     move = client.post(

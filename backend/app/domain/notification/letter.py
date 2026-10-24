@@ -102,7 +102,7 @@ class Letter:
     headline: str
     #: 别人的原话（芝士的问题另有标题位，不重复放这里）。
     quote: str = ""
-    #: (标签, 值)，比如 ("房间", "登录页改版")。
+    #: (标签, 值)，比如 ("频道", "登录页改版")。
     details: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     action: str = "到芝士里查看"
     link: str = ""
@@ -153,9 +153,9 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             subject=f"{agent} 问你：{_clip(question, _SUBJECT_LIMIT)}"
             if question
             else f"{agent} 有一个问题待你回答",
-            eyebrow=f"{agent} 在等你回答，这一轮已暂停",
+            eyebrow=f"{agent} 在等你回答，你回答后它接着做",
             headline=question or "有一个问题待你回答",
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="去回答",
             link=link,
         )
@@ -174,6 +174,25 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
             details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
             action="查看文档",
+            link=link,
+        )
+    if type_ == "MENTION" and _text(payload, "roomPath"):
+        # 一份房间文件上的一条评论（`api.routes.file_comments`）：是哪个文件，比
+        # 在哪个频道要紧。
+        who = _text(payload, "authorName") or _text(payload, "author") or "有人"
+        name = _text(payload, "documentTitle")
+        headline = (
+            f"{who} 在文件「{name}」里提到了你"
+            if name
+            else f"{who} 在一份文件里提到了你"
+        )
+        return Letter(
+            subject=headline,
+            eyebrow="有人提到了你",
+            headline=headline,
+            quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
+            details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
+            action="查看文件",
             link=link,
         )
     if type_ in ("MENTION", "THREAD_REPLY") and room:
@@ -195,13 +214,45 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ in ("TASK_NOTICE", "TASK_DUE_SOON"):
+        # 空间里一道题目上的事（`task_notices`）：那句话就是标题，按钮去题目页。
+        content = _text(payload, "content") or "题目有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow=_text(payload, "spaceName") or "题目",
+            headline=content,
+            details=tuple(
+                (k, v)
+                for k, v in (
+                    ("空间", _text(payload, "spaceName")),
+                    ("题目", _text(payload, "taskName")),
+                )
+                if v
+            ),
+            action="查看题目",
+            link=link,
+        )
+
+    if type_ == "ASSISTANT_NOTICE":
+        # 个人芝士自己做的事（`routine.personal`）：那句话就是标题，芝士说的放引文，
+        # 按钮打开那段对话。
+        content = _text(payload, "content") or "芝士有一条新消息"
+        return Letter(
+            subject=_clip(content, _SUBJECT_LIMIT),
+            eyebrow="你的芝士",
+            headline=content,
+            quote=_clip(_text(payload, "quote"), _QUOTE_LIMIT),
+            action="查看对话" if _text(payload, "assistantConversation") else "查看",
+            link=link,
+        )
+
     if type_ == "ROOM_NOTICE":
         content = _text(payload, "content") or "平台有一条提示"
         return Letter(
             subject=_clip(content, _SUBJECT_LIMIT),
             eyebrow=f"「{room}」需要你处理" if room else "需要你处理",
             headline=content,
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="打开房间",
             link=link,
         )
@@ -266,8 +317,11 @@ def _dark_css() -> str:
     return f"@media (prefers-color-scheme:dark){{{body}}}"
 
 
-def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
-    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。"""
+def _page(
+    *, title: str, preview: str, card: list[str], why: str, inbox: bool = True
+) -> str:
+    """外框：画布、卡片（标志在最上面，`card` 接在它下面）、卡片下面一行来由。
+    ``inbox`` 时来由后面接一个「查看全部通知」：一封不是从通知来的信不接。"""
     c = _LIGHT
     e = html.escape
     base = settings.frontend_url.rstrip("/")
@@ -299,8 +353,13 @@ def _page(*, title: str, preview: str, card: list[str], why: str) -> str:
             "</td></tr>",
             f'<tr><td class="c-faint" style="padding:20px 36px 0;font-family:{_FONT};'
             f'font-size:12px;line-height:20px;color:{c["faint"]};">{e(why)}'
-            f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
-            f'style="color:{c["faint"]};">查看全部通知</a></td></tr>',
+            + (
+                f'<a href="{e(base, quote=True)}/inbox" class="c-faint" '
+                f'style="color:{c["faint"]};">查看全部通知</a>'
+                if inbox
+                else ""
+            )
+            + "</td></tr>",
             "</table></td></tr></table></body></html>",
         ]
     )

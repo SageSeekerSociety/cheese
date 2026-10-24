@@ -60,6 +60,7 @@ defineEmits<{
       :model-value="formOpen"
       :routine="editing"
       :room-name="roomName"
+      :agent-name="agentName"
       :templates="templates"
       :saving="saving"
       :error="formError"

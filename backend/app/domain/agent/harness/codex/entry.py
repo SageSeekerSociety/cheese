@@ -33,6 +33,9 @@ async def serve(state: Path, config: dict) -> None:
         place=lambda command: tools.on_the_machine({"command": command})["command"],
     )
     runner.checkpointer = tools.client.checkpoint
+    # The one platform tool that acts on the session itself rather than on the
+    # room: it is the runner that holds the thread (`cheese_session(action=compact)`).
+    tools.compact = runner.request_compact
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

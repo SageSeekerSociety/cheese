@@ -32,23 +32,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import (
-    AuthenticationRequiredError,
-    ForbiddenError,
     NotFoundError,
     ValidationError,
 )
-from app.core.sentences import say
 from app.domain.agent import environment
-from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
-from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine import holder as holders
+from app.domain.machine.holder import SandboxHolder
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.machine.models import (
@@ -80,13 +76,10 @@ from app.domain.machine.reaper import (
     free_slots,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import pick_offering
+from app.domain.machine.supply import data_disk_gb, pick_offering
 from app.domain.machine.warm import WarmPoolService
-from app.domain.membership.roster import roster
-from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.team.services import team_service
 from app.domain.usage.compute import VM, admit_start, vm_spec
-from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheese.machine")
 
@@ -122,7 +115,6 @@ class HostPool(PoolSweep):
 
         self._session = session
         self._repo = CloudHostRepository(session)
-        self._projects = ProjectRepository(session)
         self._client = client or MicroCloudClient()
         self._devices = sql_device_service(session)
         self._hub = hub or device_hub
@@ -132,46 +124,10 @@ class HostPool(PoolSweep):
     def available(self) -> bool:
         return self._client.configured
 
-    # --- who may run on cloud ------------------------------------------------
-
-    async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Being on the project authorizes running its sessions on cloud.
-
-        The project's roster is the whole question: its owner, its team's members
-        (agents seated on the team included) and its external members. What is
-        still required is a signed-in identity to look up on that roster.
-        """
-        user_id = actor.user_id
-        if actor.via == "cheese":
-            user = await user_by_handle(self._session, actor.handle)
-            user_id = user.id if user else None
-        elif actor.via != "token":
-            raise AuthenticationRequiredError("Login required to use cloud compute")
-        if user_id is None:
-            raise AuthenticationRequiredError("Login required to use cloud compute")
-        project = await self._projects.get(project_id)
-        if project is None:
-            raise NotFoundError("Project not found")
-
-        if not any(
-            m.handle == actor.handle
-            for m in await roster(self._session, project_id, team=project_team)
-        ):
-            raise ForbiddenError(say("cloudMembersOnly"))
-
     # --- placement -----------------------------------------------------------
 
-    async def _lock_room(self, topic_id: uuid.UUID):
-        # deferred-import: tests replace this name on app.domain.topic.services
-        from app.domain.topic.services import TopicService
-
-        topic = await TopicService(self._session).lock_for_execution(topic_id)
-        # The archive path takes the same lock. Re-read after waiting so a
-        # session cannot be placed from the stale pre-lock `active` state.
-        await self._session.refresh(topic)
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("archived topic cannot run on cloud")
-        return topic
+    async def _lock_holder(self, holder_id: uuid.UUID) -> SandboxHolder:
+        return await holders.lock_for_work(self._session, holder_id)
 
     async def place(
         self,
@@ -195,16 +151,18 @@ class HostPool(PoolSweep):
 
         Starting a sandbox, or creating a whole VM, is charged as cloud
         compute: it raises ``ComputeRefused`` when no price is set for it or
-        the project's credits are spent. A sandbox already running is not
-        refused, so the turn using it finishes.
+        its holder's payer has no credits left (``holder``). A sandbox already
+        running is not refused, so the turn using it finishes.
         """
 
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
-        topic_id = await room_of(self._session, agent_session.conversation_id)
-        topic = await self._lock_room(topic_id)
-        await self.require_use_authority(topic.project_id, actor)
+        holder_id = await holders.holder_of(
+            self._session, agent_session.conversation_id
+        )
+        holder = await self._lock_holder(holder_id)
+        await holder.require_use(self._session, actor)
 
         home = await self._repo.current_home(session_id)
         if home is not None and home.stopped_at is not None:
@@ -221,7 +179,7 @@ class HostPool(PoolSweep):
                 # finish_claim commits around the provider call, which lets go
                 # of the locks above; take them again before deciding.
                 await self._warm_pool.finish_claim(host)
-                topic = await self._lock_room(topic_id)
+                holder = await self._lock_holder(holder_id)
                 await self._session.refresh(host)
                 await self._session.refresh(home)
             elif host.machine_id is None and host.released_at is None:
@@ -232,7 +190,7 @@ class HostPool(PoolSweep):
                 await self._session.commit()
                 async with _create_locks.setdefault(host.id, asyncio.Lock()):
                     pass
-                topic = await self._lock_room(topic_id)
+                holder = await self._lock_holder(holder_id)
                 await self._session.refresh(host)
                 await self._session.refresh(home)
             if _still_moving(host) and host.released_at is None:
@@ -253,7 +211,7 @@ class HostPool(PoolSweep):
         if home is None and not whole_machine:
             # A whole VM is admitted at its own price once its size is known
             # (``_place_on_own_vm``).
-            await admit_start(self._session, topic.project_id)
+            await admit_start(self._session, await holder.payer(self._session))
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is not None:
@@ -290,14 +248,12 @@ class HostPool(PoolSweep):
                 )
         home = {
             "spec": environment.VM if whole_machine else environment.STANDARD,
-            "project_id": topic.project_id,
-            "topic_id": topic.id,
-            "room_resource_id": str(topic.resource_id or topic.id),
+            **holder.home(),
             "resource_id": resource_id,
             "session_id": session_id,
         }
         if whole_machine:
-            return await self._place_on_own_vm(session_id, topic_id, home)
+            return await self._place_on_own_vm(session_id, holder, home)
         avoid = await self._moved_off(session_id)
         host = await self._place_on_free(home, avoid)
         if host is not None:
@@ -306,8 +262,8 @@ class HostPool(PoolSweep):
         # admission may have added a host meanwhile, so look again after.
         await self._require_room_to_grow()
         await self._session.commit()
-        body = await self._host_body()
-        await self._lock_room(topic_id)
+        body, data_disk = await self._host_body()
+        await self._lock_holder(holder_id)
         await self._repo.lock_pool()
         if await self._repo.current_home(session_id) is not None:
             return await self.place(session_id, actor=actor, resource_id=resource_id)
@@ -315,26 +271,27 @@ class HostPool(PoolSweep):
         if host is not None:
             return host
         await self._require_room_to_grow()
-        return await self._acquire(body, home)
+        return await self._acquire(body, home, data_disk)
 
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
 
     async def _place_on_own_vm(
-        self, session_id: uuid.UUID, topic_id: uuid.UUID, home: dict
+        self, session_id: uuid.UUID, holder: SandboxHolder, home: dict
     ) -> CloudHost:
         """Create a whole cloud VM for the session, with its home on it. Called
-        holding the room and the pool; the provider is read with neither held."""
+        holding the holder and the pool; the provider is read with neither
+        held."""
         await self._require_room_to_grow(whole_machine=True)
         await self._session.commit()
         body = await self._vm_body()
         await admit_start(
             self._session,
-            home["project_id"],
+            await holder.payer(self._session),
             kind=VM,
             spec=vm_spec(body["cores"], body["memoryMb"]),
         )
-        await self._lock_room(topic_id)
+        await self._lock_holder(holder.id)
         await self._repo.lock_pool()
         existing = await self._repo.current_home(session_id)
         if existing is not None and existing.host_id is not None:
@@ -426,15 +383,18 @@ class HostPool(PoolSweep):
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
-    async def _host_body(self) -> dict:
-        """What every new host is asked for. Reads the provider: call it with
-        no lock held."""
-        return await self._body(
-            await pick_offering(self._client),
+    async def _host_body(self) -> tuple[dict, int]:
+        """What every new host is asked for, and the data disk its offering
+        gives it, in GB. Reads the provider: call it with no lock held."""
+        offering = await pick_offering(self._client)
+        disk = data_disk_gb(offering)
+        body = await self._body(
+            offering,
             cores=settings.microcloud_default_cores,
             memory_mb=settings.microcloud_default_memory_mb,
             disk_gb=settings.microcloud_default_disk_gb,
         )
+        return body, disk
 
     async def _vm_body(self) -> dict:
         """What every whole cloud VM is asked for. Reads the provider: call it
@@ -472,14 +432,16 @@ class HostPool(PoolSweep):
             **spec,
         }
 
-    async def _acquire(self, body: dict, home: dict | None) -> CloudHost:
+    async def _acquire(
+        self, body: dict, home: dict | None, data_disk: int
+    ) -> CloudHost:
         """One more host for the pool, holding ``home`` if given: a warm machine
-        when one is ready, else a new one. Called holding the pool; returns
-        with no transaction open."""
+        when one is ready, else a new one with a data disk of ``data_disk`` GB.
+        Called holding the pool; returns with no transaction open."""
         warm = await self._warm_pool.reserve(body=body, home=home)
         if warm is not None:
             return warm
-        return await self._create(body, home)
+        return await self._create(body, home, data_disk=data_disk)
 
     async def _create(
         self,
@@ -487,6 +449,7 @@ class HostPool(PoolSweep):
         home: dict | None,
         *,
         whole_machine: bool = False,
+        data_disk: int | None = None,
     ) -> CloudHost:
         host_id = uuid.uuid4()
         prefix = "vm" if whole_machine else "host"
@@ -517,6 +480,8 @@ class HostPool(PoolSweep):
             cores=body["cores"],
             memory_mb=body["memoryMb"],
             disk_gb=body["diskGb"],
+            # The offering's word until the host enrolls and says what it has.
+            sandbox_disk_gb=data_disk,
             status=MachineStatus.provisioning,
             ai_mode="none",
             ai_status=AiStatus.unknown,
@@ -619,27 +584,6 @@ class HostPool(PoolSweep):
             key: value for key, value in request.items() if key != LEFT_HOST_KEY
         }
 
-    async def ran_out_of_space(self, host_id: uuid.UUID) -> None:
-        """Record that a write on this host was refused for want of space
-        (``session_work._install``).
-
-        A sandbox's home is on the host's disk, shared with its other
-        sandboxes, and a host with none to spare cannot run one. The mark is
-        the disk guard's own (``CloudHost.disk_full_since``): no new sandbox is
-        placed on a marked host (``accepting``), and the guard's next reading —
-        every minute, and it reads a marked host even with no sandbox left on
-        it — takes the mark off again when the disk has room."""
-        host = await self._repo.get(host_id)
-        if host is None or host.disk_full_since is not None:
-            return
-        host.disk_full_since = datetime.now(UTC)
-        await self._session.commit()
-        logger.warning(
-            "host %s ran out of space: no new sandbox is placed on it until a "
-            "reading finds room",
-            host.id,
-        )
-
     async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
         """Move the session off a host that cannot run its sandbox, when
         another host of the pool can: an install there timed out or its
@@ -704,7 +648,7 @@ class HostPool(PoolSweep):
         self,
         session_id: uuid.UUID,
         *,
-        topic: Topic,
+        holder: SandboxHolder,
         device_id: str,
         spec: str,
         resource_id: str,
@@ -712,7 +656,7 @@ class HostPool(PoolSweep):
         """The session's sandbox is on ``device_id``, a person's computer: its
         home there is kept up to date, or made. Every tool call of the session
         comes through here, as it does through ``place`` on a host, with its
-        room ``topic`` already locked. Raises ``SandboxRemoving`` while its
+        ``holder`` already locked. Raises ``SandboxRemoving`` while its
         previous sandbox is being destroyed."""
 
         home = await self._repo.current_home(session_id)
@@ -729,9 +673,7 @@ class HostPool(PoolSweep):
             device_id,
             {
                 "spec": spec,
-                "project_id": topic.project_id,
-                "topic_id": topic.id,
-                "room_resource_id": str(topic.resource_id or topic.id),
+                **holder.home(),
                 "resource_id": resource_id,
                 "session_id": session_id,
             },
@@ -883,7 +825,10 @@ class HostPool(PoolSweep):
         # `link connect` was answered 403 (unknown device token) on 2026-09-02.
         await self._session.commit()
         script = enrollment.bootstrap_script(
-            origin=origin, token=device.token, device_id=device.device_id
+            origin=origin,
+            token=device.token,
+            device_id=device.device_id,
+            sandbox_disk=not host.whole_machine,
         )
         try:
             output = await enrollment.run_bootstrap(
@@ -891,7 +836,9 @@ class HostPool(PoolSweep):
                 login_user=host.login_user,
                 private_key=host.bootstrap_key,
                 script=script,
+                sandboxes=not host.whole_machine,
             )
+            disk_gb = None if host.whole_machine else enrollment.sandbox_disk_gb(output)
         except enrollment.EnrollmentError as exc:
             # Never let the token reach a log line or an API error body.
             reason = enrollment.redact(str(exc), device.token)
@@ -911,7 +858,10 @@ class HostPool(PoolSweep):
             enrollment.redact(output, device.token)[-200:],
         )
         return await self._repo.mark_enrolled(
-            host, device_id=device.device_id, when=datetime.now(UTC)
+            host,
+            device_id=device.device_id,
+            when=datetime.now(UTC),
+            sandbox_disk_gb=disk_gb,
         )
 
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:

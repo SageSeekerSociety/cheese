@@ -31,6 +31,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.addressing import Event, Hand, address
+from app.domain.authz.policy import can_manage_project_members
 from app.domain.delivery_events import (
     Deliver,
     DeliveryEvent,
@@ -56,8 +57,8 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectTransfer,
 )
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.reads import project_or_404
+from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
@@ -116,6 +117,36 @@ class MemberService:
         a handle, not an authenticated actor; :meth:`require` is the gate for a
         request."""
         return await may(self._session, project_id, handle, permission)
+
+    async def _team_admin(self, project: Project, handle: str) -> bool:
+        user = await user_by_handle(self._session, handle)
+        if user is None:
+            return False
+        return await team_service(self._session).is_team_at_least_admin(
+            project.team_id, user.id
+        )
+
+    async def require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
+        """Only the project's owner or an owner/admin of its team (verified by
+        token) may manage it. Called AFTER ``_ensure_project`` so a missing
+        project still reads as 404 rather than 403 for everyone."""
+
+        async def owner_of(pid: uuid.UUID) -> str | None:
+            project = await self._projects.get(pid)
+            return project.owner_handle if project is not None else None
+
+        async def team_manager(pid: uuid.UUID, handle: str) -> bool:
+            project = await self._projects.get(pid)
+            return project is not None and await self._team_admin(project, handle)
+
+        allowed = await can_manage_project_members(
+            actor,
+            project_id=project_id,
+            project_owner=owner_of,
+            team_manager=team_manager,
+        )
+        if not allowed:
+            raise ForbiddenError(say("projectManageForbidden"))
 
     async def require(
         self, project_id: uuid.UUID, actor: Actor, permission: Permission
@@ -329,6 +360,11 @@ class InvitationService:
             raise ValidationError(say("inviteWhom"))
         if actor.handle == invitee_handle:
             raise ValidationError(say("inviteSelf"))
+        if await user_by_handle(self._session, invitee_handle) is None:
+            # An invitation is answered by the account it names. One to a
+            # handle nobody holds reaches no one, and would admit whoever took
+            # that handle later.
+            raise ValidationError(say("inviteNoSuchPerson", handle=invitee_handle))
         await _reject_execution_identity(self._session, invitee_handle)
         if await self._is_on_project_roster(project_id, invitee_handle):
             # Someone on the team is already in every project of it; an invitation
@@ -346,6 +382,7 @@ class InvitationService:
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
             role=role.value,
+            invited_by_assistant=actor.by_assistant,
         )
         await self._notify_invitee(invitation, project)
         return invitation

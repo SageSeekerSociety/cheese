@@ -1,6 +1,6 @@
 """替换一份资料：同一个名字上的替换排成队，写坏的那一半不留下来。
 
-替换是「写到旁边再换过去」（`blobs.LocalBlobs.put`）：读的人不会读到半份。写了一半
+替换是「写到旁边再换过去」（`blob_store.LocalStore.put`）：读的人不会读到半份。写了一半
 的那一份也不能留下——它的键是记录那一行的 id，留下之后谁也认不出它、谁也不去删它，
 只会一直占着地方。
 
@@ -21,39 +21,43 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.core import blob_store
 from app.core.errors import ConflictError
-from app.domain.library import blobs, records
+from app.domain.library import records
 from app.domain.library.models import LibraryFileRecord
+from app.domain.library.shelf import Shelf
 
 
 @pytest.fixture
 def project(monkeypatch, tmp_path) -> uuid.UUID:
-    monkeypatch.setattr(blobs.settings, "workspace_root", str(tmp_path))
+    monkeypatch.setattr(blob_store.settings, "workspace_root", str(tmp_path))
     return uuid.uuid4()
 
 
 def _stored(project: uuid.UUID) -> list[str]:
     """存储里现在有哪些键（叶子名），按名字排。"""
-    root = Path(blobs.settings.workspace_root) / ".library-blobs" / str(project)
+    root = Path(blob_store.settings.workspace_root) / ".library-blobs" / str(project)
     if not root.is_dir():
         return []
     return sorted(entry.name for entry in root.rglob("*") if entry.is_file())
 
 
-def test_a_put_leaves_only_the_bytes_it_put(project):
-    blobs.store(blobs.LOCAL).put(blobs.new_key(project, uuid.uuid4()), b"v1")
+@pytest.mark.anyio
+async def test_a_put_leaves_only_the_bytes_it_put(project):
+    await blob_store.local().put(f".library-blobs/{project}/{uuid.uuid4()}", b"v1")
 
     assert len(_stored(project)) == 1
 
 
-def test_a_put_that_dies_halfway_leaves_nothing_behind(project, monkeypatch):
+@pytest.mark.anyio
+async def test_a_put_that_dies_halfway_leaves_nothing_behind(project, monkeypatch):
     def die(self, data):
         raise OSError("disk full")
 
     monkeypatch.setattr(Path, "write_bytes", die)
 
     with pytest.raises(OSError):
-        blobs.store(blobs.LOCAL).put(blobs.new_key(project, uuid.uuid4()), b"v1")
+        await blob_store.local().put(f".library-blobs/{project}/{uuid.uuid4()}", b"v1")
 
     assert _stored(project) == []
 
@@ -65,7 +69,7 @@ def _current_row(project: uuid.UUID, name: str) -> LibraryFileRecord:
         name=name,
         bytes=2,
         sha256="0" * 64,
-        location=blobs.LOCAL,
+        location=blob_store.LOCAL,
         blob_key=f".library/{project}/{name}",
     )
 
@@ -104,7 +108,11 @@ async def test_a_replace_takes_the_name_lock_before_it_reads(project):
     session = _Recorder(current=_current_row(project, "预算.xlsx"))
 
     await records.replace(
-        session, project_id=project, name="预算.xlsx", data=b"v2", by="user-1"
+        session,
+        shelf=Shelf.of_project(project, with_task=False),
+        name="预算.xlsx",
+        data=b"v2",
+        by="user-1",
     )
 
     first, params = session.calls[0]
@@ -120,7 +128,11 @@ async def test_a_lost_race_comes_back_as_a_conflict_not_a_crash(project):
 
     with pytest.raises(ConflictError) as refused:
         await records.replace(
-            session, project_id=project, name="预算.xlsx", data=b"v2", by="user-1"
+            session,
+            shelf=Shelf.of_project(project, with_task=False),
+            name="预算.xlsx",
+            data=b"v2",
+            by="user-1",
         )
 
     assert refused.value.status_code == 409

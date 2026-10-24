@@ -320,7 +320,7 @@ request()
         # The debt entry itself is the location, listed under the fix.
         self.assertIn("NEW: src/views/P.vue", routes.stdout)
 
-        # --json (what ci:fast calls) stays the one record line on stdout, with
+        # --json (what the snapshot collector calls) stays the one record line on stdout, with
         # the same failing verdict, and carries the same fix and entries on stderr.
         result = self.run_gate("--kind", "routes", "--json", rc=1)
         lines = result.stdout.strip().splitlines()

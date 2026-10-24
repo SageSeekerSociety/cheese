@@ -1,6 +1,7 @@
 {
   "home": "首页",
   "inbox": "待办",
+  "market": "市场",
   "newProject": "新建{project}",
   "project": {
     "library": "资料库",
@@ -28,9 +29,11 @@
     "unread": "帮助与反馈，有未读更新",
     "center": "反馈中心",
     "mine": "我的反馈",
+    "mineUnread": "我的反馈，{n} 条未读更新",
     "admin": "管理后台",
     "guide": "新手引导",
-    "tour": "界面导览"
+    "tour": "界面导览",
+    "tourStartsInGeneral": "导览从项目的「综合」频道开始：进那里再点一次。"
   },
   "admin": {
     "queue": "反馈",
@@ -65,12 +68,13 @@
     "appearance": "外观",
     "language": "语言",
     "logout": "退出登录",
-    "noIntro": "暂无个人简介",
     "theme": {
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
     },
+    "invites": "邀请好友",
+    "seatsLeft": "剩 {n} 个",
     "archivedProjects": "已归档的项目",
     "download": "下载客户端",
     "usePhone": "在手机上使用"
@@ -131,7 +135,8 @@
     "searchIn": "项目内搜索",
     "leaveScope": "移除项目范围，跨项目搜索名称",
     "searchAll": "查看全部结果",
-    "weekly": "周报"
+    "weekly": "周报",
+    "spaceTasks": "题目"
   },
   "sidebar": {
     "resize": "拖动调整宽度",
@@ -151,7 +156,7 @@
     "checking": "正在检查更新…",
     "downloading": "正在下载新版本 {version}…",
     "latest": "已是最新版本",
-    "failed": "没能检查更新，稍后再试",
+    "failed": "检查更新失败，稍后重试",
     "ready": "新版本 {version} 已下载",
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",

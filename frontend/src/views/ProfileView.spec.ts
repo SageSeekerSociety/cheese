@@ -12,7 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProfileView from './ProfileView.vue'
 
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import {
+  deleteUnderstanding,
+  getMemberSummary,
+  getUserProfile,
+  getUserTopics,
+  listProjectAgents,
+  setUserRemark,
+} from '@/api'
 import i18n, { setLocale } from '@/i18n'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))
@@ -21,7 +28,9 @@ vi.mock('@/api', () => ({
   getUserProfile: vi.fn(),
   getUserTopics: vi.fn(),
   getMemberSummary: vi.fn(),
+  listProjectAgents: vi.fn(),
   deleteUnderstanding: vi.fn(),
+  setUserRemark: vi.fn(),
 }))
 vi.mock('@/me', () => ({ myHandle: () => me.handle }))
 vi.mock('@/api/avatars', () => ({
@@ -93,6 +102,7 @@ beforeEach(() => {
   me.handle = 'lin'
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.mocked(getMemberSummary).mockResolvedValue(null as never)
+  vi.mocked(listProjectAgents).mockResolvedValue({ data: [], total: 0 } as never)
 })
 afterEach(() => {
   cleanup()
@@ -263,5 +273,28 @@ describe('opened from a project’s roster', () => {
 
     await view.findAllByRole('heading', { name: '林知远' })
     expect(view.queryByRole('link', { name: '私聊' })).toBeNull()
+  })
+
+  it('lets you add, edit, and clear a personal remark on someone else’s page', async () => {
+    me.handle = 'chen'
+    vi.mocked(getUserProfile).mockResolvedValue(profileOf('lin', { name: '林知远', remark: null }))
+    vi.mocked(setUserRemark).mockResolvedValue({ handle: 'lin', remark: '后端接口-林工' })
+    const view = await renderPage('lin')
+
+    await view.findByRole('heading', { name: '林知远' })
+    await fireEvent.click(view.getByTestId('profile-remark-trigger'))
+    const input = view.getByTestId('profile-remark-input') as HTMLInputElement
+    await fireEvent.update(input, '后端接口-林工')
+    await fireEvent.click(view.getByTestId('profile-remark-save'))
+
+    await waitFor(() => expect(setUserRemark).toHaveBeenCalledWith('lin', '后端接口-林工'))
+    expect(await view.findByRole('heading', { name: '后端接口-林工' })).toBeTruthy()
+    expect(view.getByText(/原名：林知远/)).toBeTruthy()
+
+    vi.mocked(setUserRemark).mockResolvedValue({ handle: 'lin', remark: null })
+    await fireEvent.click(view.getByTestId('profile-remark-trigger'))
+    await fireEvent.click(view.getByTestId('profile-remark-clear'))
+    await waitFor(() => expect(setUserRemark).toHaveBeenCalledWith('lin', ''))
+    expect(await view.findByRole('heading', { name: '林知远' })).toBeTruthy()
   })
 })

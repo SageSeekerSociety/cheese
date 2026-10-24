@@ -40,7 +40,7 @@ from app.domain.agent.document import box, question, thread
 from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.comments import CommentThreads, OnDocument
 from app.domain.living_doc.overview import pointed_overview
 from app.domain.living_doc.schemas import AgentAskIn
 
@@ -97,7 +97,7 @@ async def ask_agent(
     """Ask, streamed as server-sent events: ``conversation`` (its id, first),
     ``queued``, ``working``, then once asked ``answering`` (the question's id,
     to read on from elsewhere), ``delta``, ``tool``, then ``done`` (``answer``,
-    ``edits``, ``stopped``) or ``error``. Each event from ``answering`` on
+    ``changes``, ``stopped``) or ``error``. Each event from ``answering`` on
     carries its place in the question's stream (``id``)."""
     reached, actor, redis = await _asker(db, resolver, document_id)
     preset = box.PRESETS.get(body.preset or "") if body.preset else None
@@ -239,7 +239,7 @@ async def reply_in_thread(
     held = await box.owned(
         redis, conversation, asker=actor.handle, document_id=document_id
     )
-    root = await CommentThreads(db).root(document_id, thread_id)
+    root = await CommentThreads(db).root(OnDocument(document_id), thread_id)
     if root.author != actor.handle:
         raise ForbiddenError("Only the thread you started takes this answer")
     if not held.answer:

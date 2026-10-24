@@ -55,9 +55,7 @@ def test_each_refused_attempt_waits_longer_up_to_a_cap(client):
         for _ in range(8):
             [(delivery_id, attempt_id)] = recorder.attempts
             recorder.attempts.clear()
-            await run_attempt(
-                factory, delivery_id, attempt_id, _refused(), chat=object()
-            )
+            await run_attempt(factory, delivery_id, attempt_id, _refused())
             async with factory() as session:
                 row = await session.get(Delivery, delivery_id)
                 assert row.state == "pending" and row.sent_at is None

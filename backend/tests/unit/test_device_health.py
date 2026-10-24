@@ -8,8 +8,6 @@ machine, what clears it, and what happens to a machine that has been judged.
 Behaviour only — driven through ``DeviceService`` with the in-memory repo, no DB.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -22,6 +20,7 @@ from app.domain.device.health import DEFAULT_QUARANTINE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team, place_in_project_team
 
 OWNER = 1
 T0 = datetime(2026, 8, 12, 9, 0, tzinfo=UTC)

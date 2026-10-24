@@ -28,10 +28,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
-import { UserAuthApi } from '@/api/userAuth'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
@@ -58,7 +58,7 @@ vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
-vi.mock('../lib/desktopApp', () => ({ desktopCan: () => false, goAuthorize }))
+vi.mock('../lib/desktopApp', () => ({ desktopCan: () => false, goAuthorize, titleBarOverlay: () => false }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 
 /** 分支保护的 GET 形状：可写的那几项 + 两块只读附注。 */

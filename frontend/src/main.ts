@@ -32,6 +32,7 @@ import './style.css'
 
 import { createApp, createSSRApp, watch } from 'vue'
 
+import { ensureStackBehind } from './router/pageStack'
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
@@ -42,6 +43,7 @@ import { docAppShotUrl, getDocApp, getDocAppVersion } from '@/api/docApps'
 import i18n, { loadPlatformSentences, localeReady } from '@/i18n'
 import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { firstPageReady, stylesheetsLoaded } from '@/lib/bootReady'
+import { markTitleBarOverlay } from '@/lib/desktopApp'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { answerDocAppsWith } from '@/lib/docApps'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
@@ -62,6 +64,10 @@ persistProjectList()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()
+
+// macOS 桌面版把红黄绿三颗窗口按钮画在页面上：给 <html> 挂个类，样式表据此让位
+// （style.css 的 --window-buttons-inset）。别的平台不挂，值和位置都不动。
+markTitleBarOverlay()
 
 // 公开页的 HTML 是构建时预渲染的（scripts/prerender.mjs）。启动脚本认定来的正是它渲染
 // 给的那位访客（index.html 的 data-boot="page"）时，应用在这份 HTML 上接管（hydrate），
@@ -110,7 +116,10 @@ installAppRuntime(app, router)
 // 哪一样都不会让挂载失败，都有自己的期限：挂载不能卡在网络上。
 void Promise.all([
   localeReady,
-  firstPageReady(AccountService.sessionRestored, router.isReady()),
+  // 第一页定下来之后、挂载之前，把页面栈垫进浏览器历史（见 router/pageStack.ts）：
+  // 手机冷开落在任务页时，身后那条来路要在系统返回键按下去之前就位，而中间那几屏
+  // 正被启动骨架盖着，谁也看不见。
+  firstPageReady(AccountService.sessionRestored, router.isReady()).then(() => ensureStackBehind(router)),
   stylesheetsLoaded(),
 ]).then(() => {
   app.mount('#app')

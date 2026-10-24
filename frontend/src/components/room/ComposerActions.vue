@@ -44,6 +44,12 @@ const props = defineProps<{
   voice?: VoiceState
   /** 刚说进来一段：能换成哪一种写法（`raw` 原话 / `polished` 整理后的）；没有就是 null。 */
   voiceSwap?: 'raw' | 'polished' | null
+  /** 这里不收文件（题目页问芝士）：「+」不画。 */
+  noFiles?: boolean
+  /** 「+」里传文件那一项的字（芝士面板走的是另一条上传，限额不同）；不给就是频道的那句。 */
+  filesLabel?: string
+  /** 对方正在答（芝士面板）：发送键换成停止。 */
+  busy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +65,7 @@ const emit = defineEmits<{
    */
   (e: 'voice', how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number, x?: number): void
   (e: 'voice-swap'): void
+  (e: 'stop'): void
 }>()
 
 const slots = useSlots()
@@ -84,7 +91,7 @@ const plusActions = computed<MenuAction[]>(() => {
   const list: MenuAction[] = [
     {
       key: 'files',
-      label: t('work.room.composer.attachFiles'),
+      label: props.filesLabel ?? t('work.room.composer.attachFiles'),
       icon: 'mdi-paperclip',
       onSelect: () => fileInput.value?.click(),
     },
@@ -216,7 +223,7 @@ const sendDisabled = computed(() => {
       @change="onFilePicked"
     />
     <div class="composer-actions__start">
-      <AdaptiveMenu v-model="plusOpen" :actions="plusActions" location="top start">
+      <AdaptiveMenu v-if="!noFiles" v-model="plusOpen" :actions="plusActions" location="top start">
         <template #activator="{ props: menu }">
           <BaseButton
             v-bind="menu"
@@ -263,6 +270,17 @@ const sendDisabled = computed(() => {
            例外：这一刻发出去会少带附件，所以要等，并在 title 里说清为什么按不动。
            录音时它原地变成 ✓（说完了），整理中转圈。 -->
       <BaseButton
+        v-if="busy"
+        class="composer-send"
+        kind="primary"
+        size="sm"
+        icon="mdi-stop"
+        :title="t('work.room.composer.stop')"
+        :aria-label="t('work.room.composer.stop')"
+        @click="emit('stop')"
+      />
+      <BaseButton
+        v-else
         v-guide-anchor="guided ? 'composer-send' : ''"
         class="composer-send"
         kind="primary"

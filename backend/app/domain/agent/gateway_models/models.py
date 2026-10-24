@@ -18,13 +18,23 @@ from sqlalchemy import select
 from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.agent.gateway_admin import UsageWindow
+from app.domain.agent.gateway_models import roles
 from app.domain.agent.gateway_models._shared import _MID_SYSTEM, _WRITE_ERRORS
+from app.domain.agent.gateway_models.guards import (
+    _refuse_unlisting,
+    _refuse_unserving,
+)
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
+    _capped,
     _daily_model_row,
+    _offered,
     _prices_for_gateway,
+    _refuse_cleared_prices,
     _refuse_config_write,
+    _require_another_offered,
     _require_price_when_selectable,
+    _require_prices,
     _source_prices,
     _translated_to_chat,
     _upstream_of,
@@ -63,7 +73,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
                 "reachable": False,
                 "readiness": None,
                 "admin_configured": False,
-                "detail": "未配置网关管理凭据（llm_gateway_admin_base / key）",
+                "detail": "未配置网关管理密钥（llm_gateway_admin_base / key）",
                 "fetched_at": fetched_at,
             },
             "window": window,
@@ -75,6 +85,8 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
     # 就没有「部分正确」可给：一张空表会被读成「这里一个模型都没有」。
     models = await service._require_models()
     usage = await service._usage_window(start, end)
+    ledger = await service._ledger_window(end) if _capped(models) else None
+    await roles.refresh(service._db)
     return {
         "gateway": {
             "reachable": True,
@@ -85,7 +97,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
         },
         "window": window,
         "totals": _usage_to_dict(usage.totals),
-        "models": [service._item(m, usage) for m in models],
+        "models": [service._item(m, usage, ledger) for m in models],
     }
 
 
@@ -93,8 +105,10 @@ async def detail(service: pkg.GatewayModelsService, *, name: str, days: int) -> 
     start, end, since, until = service._window(days)
     model = await service._current_model(name)
     usage = await service._usage_window(start, end)
+    ledger = await service._ledger_window(end) if _capped([model]) else None
+    await roles.refresh(service._db)
     return {
-        "model": service._item(model, usage),
+        "model": service._item(model, usage, ledger),
         "series": service._series(name, usage),
         "platform_usage": await service._platform_usage(name, since, until),
     }
@@ -205,7 +219,7 @@ async def _add(service: pkg.GatewayModelsService, name: str, data: dict) -> dict
     selectable = bool(data.get("selectable"))
     free = bool(data.get("free"))
     prices = _source_prices(data.get("prices"), free)
-    _require_price_when_selectable(selectable, prices, free)
+    _require_prices(prices, free)
 
     models = await service._require_models()
     if any(m.name == name for m in models):
@@ -278,12 +292,18 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
     # 不变式永远看**合并之后**的样子：把已上架模型的单价删成一半，和一开始就
     # 没价，对刹车是同一种损坏。有几条线路就逐个看。
     selectable = bool(data.get("selectable", current.selectable))
+    if current.selectable and not selectable:
+        await _refuse_unlisting(service, current)
+    if _offered(current) and not selectable:
+        _require_another_offered(await service._require_models(), name)
     prices = data.get("prices")
     for source in current.sources:
-        effective = (
-            source.prices if prices is None else _source_prices(prices, source.free)
-        )
-        _require_price_when_selectable(selectable, effective, source.free)
+        if prices is None:
+            _require_price_when_selectable(selectable, source.prices, source.free)
+            continue
+        effective = _source_prices(prices, source.free)
+        _refuse_cleared_prices(source.prices, effective)
+        _require_prices(effective, source.free)
 
     wanted = (data.get("capabilities") or {}).get(_MID_SYSTEM)
     if wanted is not False and any(
@@ -349,6 +369,7 @@ async def delete(service: pkg.GatewayModelsService, *, handle: str, name: str) -
 async def _delete(service: pkg.GatewayModelsService, name: str) -> None:
     current = await service._current_model(name)
     _refuse_config_write(current)
+    await _refuse_unserving(service, current)
     for source in current.sources:
         await service._admin.delete_model(  # type: ignore[union-attr]
             source.source_id
@@ -391,6 +412,8 @@ async def _set_blocked(
     # 网关不支持停用 config 模型 —— 页面上它对停用是只读的，这里也如实拒绝，
     # 而不是做一个只改平台数据的假象。
     _refuse_config_write(current, toggle=True)
+    if blocked:
+        await _refuse_unserving(service, current)
     for source in current.sources:
         await service._admin.set_blocked(  # type: ignore[union-attr]
             source.source_id, blocked

@@ -230,12 +230,12 @@ _DOCKER_REFUSALS = {
         "Unable to find image 'cheese-private-executor:2.1.299' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor, repository does not exist.",
-        "Claude Code 启动失败：环境里缺少执行容器的镜像",
+        "Claude Code 启动失败：环境里缺少运行用的容器镜像",
     ),
     "name": (
         "docker: Error response from daemon: Conflict. The container name "
         '"/cheese-private-0f0f" is already in use by container "abc123".',
-        "Claude Code 启动失败：上一个执行容器还没有清理掉",
+        "Claude Code 启动失败：上一个运行用的容器还没有清理掉",
     ),
     "daemon": (
         "docker: Cannot connect to the Docker daemon at "
@@ -244,7 +244,7 @@ _DOCKER_REFUSALS = {
     ),
     "other": (
         "docker: Error response from daemon: OCI runtime create failed.",
-        "Claude Code 启动失败：执行容器没能创建",
+        "Claude Code 启动失败：运行用的容器没能创建",
     ),
 }
 

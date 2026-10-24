@@ -5,7 +5,7 @@
 // 这一行**不长**：每加一格频道就往下挪，几个版本之后又是一摞入口
 // （.claude/rules/project-sidebar.md）。摆哪几格由 `lib/shell` 的 `projectPageLayout`
 // 算好传进来，点了去哪儿由父级决定。
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
@@ -31,6 +31,30 @@ const emit = defineEmits<{
   (e: 'cancel-prefetch'): void
 }>()
 
+// 点下去到那一页出来之间，这一行一直亮着：只靠按下的那一下，手指抬起后又变回原样，
+// 等得久的人会以为没点到（同 TopicRailRow）。
+const pendingKey = ref<string | null>(null)
+let pendingTimer: number | undefined
+function openPage(key: string): void {
+  // 点的就是当前这一页：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.routeName === key) {
+    emit('open-page', key)
+    return
+  }
+  pendingKey.value = key
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => (pendingKey.value = null), 10_000)
+  emit('open-page', key)
+}
+watch(
+  () => props.routeName,
+  () => {
+    pendingKey.value = null
+    window.clearTimeout(pendingTimer)
+  }
+)
+onBeforeUnmount(() => window.clearTimeout(pendingTimer))
+
 const entries = computed(() =>
   props.pages.map((p) => ({
     key: p.key,
@@ -42,7 +66,7 @@ const entries = computed(() =>
 </script>
 
 <template>
-  <!-- 和「# 综合」、频道行同一种行：同一个 16px 图标槽、同一条文字左缘。 -->
+  <!-- Keep the same title column as root and channel rows. -->
   <v-list
     v-if="!page && entries.length"
     density="compact"
@@ -58,11 +82,11 @@ const entries = computed(() =>
       tabindex="0"
       rounded="lg"
       class="nav-row pinned-row"
-      :class="{ 'is-active': e.active }"
+      :class="{ 'is-active': e.active, 'is-pending': pendingKey === e.key }"
       :style="{ paddingInlineStart: '8px' }"
       :active="e.active"
       :aria-current="e.active ? 'page' : undefined"
-      @click="emit('open-page', e.key)"
+      @click="openPage(e.key)"
       @mouseenter="emit('hover-page', e.key)"
       @mouseleave="emit('cancel-prefetch')"
       @focusin="emit('hover-page', e.key)"
@@ -100,6 +124,14 @@ const entries = computed(() =>
 .nav-row.is-active:hover {
   background: var(--line-2);
 }
+/* 按下那一帧就换底色：触屏没有 hover，点了之后要等一下才换页。 */
+.nav-row:active {
+  background: var(--line-2);
+}
+/* 手指抬起之后到那一页出来之前，这一行保持亮着。 */
+.nav-row.is-pending {
+  background: var(--line-2);
+}
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
 }
@@ -117,7 +149,19 @@ const entries = computed(() =>
 .row-glyph {
   color: var(--faint);
 }
-.nav-row.pinned-row {
-  min-height: 36px;
+.nav-row.pinned-row,
+.nav-row.pinned-row.v-list-item.v-list-item,
+.v-list.v-list .nav-row.pinned-row.v-list-item--nav {
+  min-height: 32px;
+  padding-block: 0;
+  padding-inline-end: 12px;
+  margin-block: 1px;
+}
+@media (hover: none) {
+  .nav-row.pinned-row,
+  .nav-row.pinned-row.v-list-item.v-list-item,
+  .v-list.v-list .nav-row.pinned-row.v-list-item--nav {
+    min-height: 44px;
+  }
 }
 </style>

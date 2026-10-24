@@ -6,7 +6,7 @@ Principles that no tool will enforce, so they hold by being read. Two limits kee
 
 Cheese hosts other people's repositories, and a hosted repository must never have to change to be hosted: no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. The rule governs a repository's contents, not a machine's: a machine enrolled to run agents was enrolled for exactly that. When you build a platform feature here, that is the constraint it must meet.
 
-So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md`, a rule true only for platform-run agents on this repo in the description of the platform tool it concerns — not into this file. When unsure: a rule that is false outside a session the platform runs is platform knowledge.
+So a rule is filed by who it is true for. A rule true of every hosted repo goes to the platform side — per-turn rules in the system prompt's platform rules (`backend/app/domain/agent/harness/prompt.py`), on-demand procedures in `backend/sandbox/skills/cheese/SKILL.md` — not into this file. A rule true only of this repo goes here, even when only sessions the platform runs ever meet it: a platform tool's description and the platform's prompts are read by the agents of every hosted repo. When unsure: a rule that is false outside a session the platform runs, and true of every hosted repo, is platform knowledge.
 
 ## Production changes go through CI/CD
 
@@ -42,9 +42,15 @@ Concurrently, in this repo, on adjacent files. Look for an open PR already makin
 
 ## Test behaviour, never the implementation
 
-Write functional tests. Do not read the source to decide what to assert: a test derived from the implementation passes by construction and proves nothing, including after the implementation breaks. A test earns its place by guarding a rule someone could state before the code existed — a product, security or data rule that a person who has never read the implementation can judge right or wrong. That holds at every layer: a component test that cancelling a dialog leaves the operation unrun is worth keeping; one that the dialog renders a particular sentence, class or DOM shape is not. Assert what a user or caller can observe, at the lowest layer where the rule is observable without faking most of the system — a test that goes red when the copy changes, or stays green when the rule breaks, costs more than it protects.
+A test guards a rule someone could state before the code existed — a product, security or data rule that a person who has never read the implementation can judge right or wrong — and checks it through what a user or caller can observe, at the lowest layer where the rule is observable without faking most of the system. Ask two questions of every test before you keep it: if the code stopped keeping its promise, would this go red? If the code were rewritten to keep the same promise another way, would it stay green? Both must be yes — behaviour-sensitive and structure-insensitive. A test that fails the second is a change detector: it reddens on every refactor, charges every later change an edit, and protects nothing. A component test that cancelling a dialog leaves the operation unrun passes both; one that the dialog renders a particular sentence, class or DOM shape fails the second.
+
+So none of these is a test here, however its docstring argues: a scan of the source tree for "defined once", "stays deleted" or "called N times"; an assertion on what a workflow, compose file, Dockerfile or deploy script says; a run against fakes whose assertion is the exact command line or call the code made; a mock's `assert_called_with` standing in for an outcome; a CSS class, DOM shape or element count. A structural rule worth holding — an import boundary, a banned API — belongs to the linter built for it (`backend/.importlinter`, ruff, eslint). Ruff and eslint refuse source reads in tests; their allowlists only shrink, and nothing is added to them.
+
+Not every change gets a test. A refactor, rename, deduplication or deletion, and a change to CI, configuration or a deploy script, leaves nothing a caller can observe: it is finished when the old code is gone and CI is green. A fix whose rule a caller can observe gets a regression test.
 
 A test written to guard a fix has to be observed failing without that fix, and you are the one who observes it: run it against the code as it was and see the assertion go red, then against your change and see it go green. A regression test that was never red is the one case no reader can tell apart from a real one — it passes whether the bug is there or not — and the PR body's claim is the only place that pair of runs would ever be recorded. `.claude/scripts/prove-regression.py <node id> --without <revision>` runs both halves for you; it knows the pytest and vitest layouts and refuses a third rather than guess a runner, so pass it `--command`. It is a convenience, not a gate, and nothing checks whether you used it.
+
+An existing test that goes red on your change is one of two things. If the behaviour changed on purpose, change the assertion to the new behaviour. If it did not, the test is a change detector: rewrite it to assert the outcome, or ask the person who gave you the task whether to delete it — name the test and the question it fails — and delete it only on their yes. Do not update its expected strings to match your change.
 
 ## A task can start before its machine exists
 
@@ -58,15 +64,15 @@ The shell is on the work machine; the session's own files — `~/.cheese/memory/
 
 Coming back from a context compaction, make your next tool call in that same turn, or send one line saying where the work stands and what comes next. Everyone watching the task — the person who asked for it, the seat waiting on it — reads a silent session exactly as a dead one, and pays for the silence twice: with the wait, and with whatever it runs to find out.
 
-## Run `task ci:fast` before you commit
+## The pull request's CI is the verdict
 
-**Never run a whole-tree frontend type check in a sandbox — `pnpm run typecheck`, that same script invoked by hand (`node scripts/typecheck.mjs` from `frontend/`), or `vue-tsc`: the sandbox's memory cap kills it.** The tier's frontend type check covers only the files you changed, and that is the one to run.
+A ready pull request runs every suite its diff selects except the post-merge ones (e2e, remote execution, the MCP suites), with the backend's integration layer narrowed to the test files the diff reaches; a draft runs none, and marking it ready starts that run. `CI required` green on the head is the verdict a hand-off rests on. What runs where: `docs/manual/dev/ci.md`.
 
-**The same goes for the whole backend unit suite.** A sandbox is missing what parts of it need, so a whole `backend/tests/unit` run reddens on the environment rather than on your change, and reading those failures one at a time costs more than the suite does. Run the test files your change touches; the full suite belongs to CI.
+Locally, run the test files your change touches, to find a failure faster than a CI round would — not to stand in for one.
 
-What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it on the pending change before creating the commit, not between commit and push: a commit may already trigger a push and a CI round. Fix checks that actually failed and rerun them before publishing the change; an unavailable check stays unverified, not a reason to discard or leave work unpushed. If the Task runner is missing, run `python3 .github/scripts/ci-fast.py --tier quick` directly.
+**Never run a whole-tree frontend type check in a sandbox — `pnpm run typecheck`, that same script invoked by hand (`node scripts/typecheck.mjs` from `frontend/`), or `vue-tsc`: the sandbox's memory cap kills it.** The pull request's CI type-checks the whole tree.
 
-Exit 0 means the selected checks ran and passed, nothing more: an `unknown` or `blocked` result, and any check reported as not run, is not green — the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. On the runner, `CI required` on a PR can end green despite `unknown` or `blocked` results; it writes every unjudged item into the step summary. Its green is not a judgement of the full suites; those run on main after the merge. Required CI remains the merge gate.
+**The same goes for the whole backend unit suite.** A sandbox is missing what parts of it need, so a whole `backend/tests/unit` run reddens on the environment rather than on your change, and reading those failures one at a time costs more than the suite does. The full suite belongs to CI.
 
 ## Report real bugs, not theoretical ones
 
@@ -75,6 +81,10 @@ An audit finding needs a way to actually happen — a crash, corruption, a secur
 ## Name the feedback a fix closes
 
 A commit that completes a fix for a report in the dev feedback center (okcheese.com) carries `Fixes-feedback: FB-<n>` as a line of its own, flush left, in its commit message — several numbers comma-separated. Only commit messages reach main, never the PR description; a production report's number names a different report and never goes in this line.
+
+## A task's last merge posts its record
+
+When a task in this repository closes after its last delivery merged, post, before closing it, one message of its own whose first line is 【留痕记录】, then: the task name, the PR number and link, its title, its merge time in the reader's local time, and 正文： followed by the full PR body verbatim. The team copies it whole into its work-record sheet, so it repeats the PR body on purpose and is neither folded into the write-up nor split.
 
 ## Fix bugs freely; propose product and interaction changes first
 

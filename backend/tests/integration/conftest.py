@@ -460,7 +460,7 @@ def teammate_task(
     said_by: str = "alice",
 ) -> dict:
     """A task the room's AI teammate made from a 支线 on someone's word
-    (``cheese_task``): a new task under the message the 支线 hangs under."""
+    (``cheese_task(action=open)``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -591,6 +591,17 @@ def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
     assert r.status_code == 200, r.text
     rows = r.json()["data"]["notifications"]
     return rows if kind is None else [row for row in rows if row["type"] == kind]
+
+
+def as_read(line: str, names: dict[str, str] | None = None) -> str:
+    """A room line as a notification about it reads: each ``<@handle>`` token
+    the room draws as a name chip, written out as that person's name. Accounts
+    the tests seed have no nickname, so their name is their handle."""
+    import re
+
+    return re.sub(
+        r"<@([\w-]+)>", lambda m: (names or {}).get(m.group(1), m.group(1)), line
+    )
 
 
 def mail(client, token: str, kind: str) -> list[dict]:

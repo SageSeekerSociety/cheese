@@ -11,6 +11,22 @@
   padding: 24px 0 48px;
 }
 
+.settings-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* The page's actions sit on the title's line, its one main action last. */
+.settings-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .settings-page__lede {
   margin-top: 4px;
   font-size: 14px;
@@ -98,6 +114,17 @@
   color: var(--text);
 }
 
+/* A row with no label — a note and the one action on it, as in a card whose
+   title already names the action. Without this the note lands in the 180px
+   label column and wraps a few characters a line; it takes the label's column
+   as well, so the action stays at the row's end where every other row has it.
+   Placed explicitly because the phone layout below moves `.srow__v` to a row
+   of its own, which would put the action above the note it is about. */
+.srow > .srow__v:first-child {
+  grid-row: 1;
+  grid-column: 1 / -2;
+}
+
 /* The last row of a card that holds a FORM: its one main action, at the end of
    the thing it submits. A card of a LIST page has no foot — its actions belong
    to a row, or to the toolbar above. */
@@ -138,6 +165,11 @@
 @media (max-width: 767.98px) {
   .settings-page {
     padding: 16px 0 32px;
+  }
+
+  /* 手机上这一栏的名字已经写在浮层的顶栏上，标题只出现一次。 */
+  .settings-page__head .t-page-title {
+    display: none;
   }
 
   .srow {

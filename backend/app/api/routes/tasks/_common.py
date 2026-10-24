@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
+    apply_task_default_role,
     apply_task_teaching,
     coerce_teaching,
     validate_task_teaching,
@@ -28,6 +29,7 @@ from app.domain.task.inputs import (
     map_submitter_type,
 )
 from app.domain.task.mentors import require_consent, set_mentors
+from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
     ensure_domain_groups_belong_to_space,
@@ -36,13 +38,6 @@ from app.domain.task.services import (
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
-
-
-class ConfirmTaskPublishFromPdfRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    drafts: list[dict]
-    task_options: dict = Field(alias="taskOptions")
 
 
 class CreateTaskRequest(BaseModel):
@@ -69,16 +64,22 @@ class CreateTaskRequest(BaseModel):
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
     )
+    # 评分要点：每行 ``{item, points, criteria}``，见 app.domain.task.rubric。
+    rubric: list[dict] = Field(default_factory=list)
+    rubric_public: bool = Field(default=True, alias="rubricPublic")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
     )
-    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
-    # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
+    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时拷进题目
+    # 资料库（``package.add_uploads``）：题目还没建好时没有资料库可放。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
     teaching: TeachingRequest | None = None
+    # 这道题自己的默认队友类型名 (#944)，盖过 项目集 那份。省略 = 不设（沿用上层）；
+    # 给了（含空串 = 明说「不要」）就整份替换掉这一格。
+    default_role: str | None = Field(default=None, alias="defaultRole")
     # Who joins every claimer's project as a mentor (#3830): the publisher or
     # an admin of the space. Empty = nobody.
     mentors: list[str] = Field(default_factory=list)
@@ -153,6 +154,9 @@ class PatchTaskRequest(BaseModel):
     team_locking_policy: str | None = Field(default=None, alias="teamLockingPolicy")
     category_id: int | None = Field(default=None, alias="categoryId")
     submission_schema: list[dict] | None = Field(default=None, alias="submissionSchema")
+    # 评分要点：给了就整份替换，省略不动。
+    rubric: list[dict] | None = None
+    rubric_public: bool | None = Field(default=None, alias="rubricPublic")
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
@@ -166,8 +170,15 @@ class PatchTaskRequest(BaseModel):
     # config — the protocol's whole-key semantics; omitting it leaves it exactly
     # as it is, so a PATCH that only renames a 题目 does not wipe the 指导.
     teaching: TeachingRequest | None = None
+    # 这道题自己的默认队友类型名 (#944)。省掉 = 不动；给了（含空串）就替换这一格，
+    # 与 `teaching` 同一条整键语义。
+    default_role: str | None = Field(default=None, alias="defaultRole")
     # The whole list of mentors; omitted leaves it as it is.
     mentors: list[str] | None = None
+    # Files the person uploaded (``POST /attachments``) to add to the 题目's
+    # materials with this change: the ones 芝士 put into the changes it wrote.
+    # A published 题目's own files page adds them one at a time instead.
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -215,7 +226,10 @@ async def _create_task_entity(
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
+        rubric_raw = payload.rubric
+        rubric_public = payload.rubric_public
         teaching = coerce_teaching(payload.teaching)
+        default_role = payload.default_role
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -307,6 +321,17 @@ async def _create_task_entity(
 
         # The PDF path carries `teaching` as free-form JSON, not a typed body.
         teaching = coerce_teaching(payload.get("teaching"))
+        default_role_raw = payload.get("defaultRole")
+        default_role = default_role_raw if isinstance(default_role_raw, str) else None
+
+        rubric_raw = payload.get("rubric") or []
+        rubric_public = bool(payload.get("rubricPublic", True))
+
+    rubric = rubric_lines(
+        [e for e in rubric_raw if isinstance(e, dict)]
+        if isinstance(rubric_raw, list)
+        else []
+    )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
@@ -343,9 +368,8 @@ async def _create_task_entity(
     # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
-    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里而不是两个
-    # 路由各写一遍，是因为 ``POST /tasks`` 与 PDF 批量发布
-    # （``publish/from-pdf/confirm``）都从这里走，漏掉任一条就等于少了半道门。
+    # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
+    # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
     if not await may_publish_in_space(
         session=db, space_id=space_id, user_id=creator_user_id
     ):
@@ -388,6 +412,9 @@ async def _create_task_entity(
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
     apply_task_teaching(task, teaching)
+    # 题目级默认队友 (#944)：同一份覆盖里的另一格，语义同上；省掉 = 不写。
+    apply_task_default_role(task, default_role)
+    task.rubric_public = rubric_public
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
@@ -415,6 +442,8 @@ async def _create_task_entity(
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
+    if rubric:
+        await task_service.replace_rubric(task.id, rubric)
 
     return task
 

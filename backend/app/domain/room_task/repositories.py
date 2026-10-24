@@ -27,6 +27,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import (
     Task,
+    TaskProgress,
     TaskStatus,
     TaskTitleSource,
     people_of,
@@ -58,6 +59,18 @@ class ListedTask:
     title: str
     title_source: TaskTitleSource
     status: TaskStatus
+    progress_state: TaskProgress | None
+    #: 报那个状态的座位、和它是在那个座位的哪一次跑里报的：那位队友在另一次跑里
+    #: 跑着，那句话就让位（`presentation`）。
+    progress_set_by: str | None
+    progress_run_harness: str | None
+    progress_run_epoch: int | None
+    progress_run_seq: int | None
+    #: 队友报那个状态时附的一句（`Task.progress_note`）：「待我处理」里卡住那一行
+    #: 的第二行说的就是它要你做什么。
+    progress_note: str | None
+    #: 做它的队友坐的那个座位（`Task.agent_handle`）；空的时候是频道的那位。
+    agent_handle: str | None
     owner_handle: str | None
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
@@ -163,6 +176,13 @@ class TaskRepository:
                 Task.title,
                 Task.title_source,
                 Task.status,
+                Task.progress_state,
+                Task.progress_set_by,
+                Task.progress_run_harness,
+                Task.progress_run_epoch,
+                Task.progress_run_seq,
+                Task.progress_note,
+                Task.agent_handle,
                 Task.owner_handle,
                 Task.reporter_handle,
                 Task.contributor_handles,
@@ -183,6 +203,13 @@ class TaskRepository:
                 title=row.title,
                 title_source=row.title_source,
                 status=row.status,
+                progress_state=row.progress_state,
+                progress_set_by=row.progress_set_by,
+                progress_run_harness=row.progress_run_harness,
+                progress_run_epoch=row.progress_run_epoch,
+                progress_run_seq=row.progress_run_seq,
+                progress_note=row.progress_note,
+                agent_handle=row.agent_handle,
                 owner_handle=row.owner_handle,
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),
@@ -580,11 +607,8 @@ class TaskRepository:
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
-        """每条活最后一次说话是什么时候，一次查完 —— 看板的心跳。
-
-        `Task.last_turn_at` 只在一轮**开始**时盖一次，跑起来之后不再刷新，所以它
-        回答不了「这一轮现在还在动吗」。一轮里每一步都会落 block，这才是持续的
-        信号：在这条活自己身上实测，一轮之内 block 间隔中位数 8 秒、p90 34 秒。
+        """每条活最后一次有人或芝士说话是什么时候，一次查完 —— 侧栏按它排「最近
+        有动静」，安静提醒也读它。
 
         每条活单独取一次最大值：PostgreSQL 会把它变成在
         `ix_blocks_conversation_created_at` 上倒着读一行，所以成本跟着活的条数走，跟

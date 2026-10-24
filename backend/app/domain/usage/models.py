@@ -46,6 +46,8 @@ class GrantSource(StrEnum):
     TASK_EARMARK = "task_earmark"
     PURCHASE = "purchase"
     ADMIN_GRANT = "admin_grant"
+    # A beta, feedback or invitation reward (``incentives.CreditIncentives``).
+    REWARD = "reward"
 
 
 class Plan(Timestamps, Base):
@@ -104,7 +106,12 @@ class PlanWindowUse(Base):
 
 
 class CreditReward(Timestamps, Base):
-    """One campaign participation or accepted feedback can issue one pack."""
+    """One campaign participation, accepted feedback or invitation step can
+    issue one pack. ``points`` is the contribution score the same event earns:
+    it only ever adds up, and it is still recorded when no credits are paid.
+    Nobody is shown points yet: the team took them off every page until they
+    lead to something (a ranking, a perk), and keeps recording them so that
+    day starts from the full history."""
 
     __tablename__ = "credit_rewards"
 
@@ -116,6 +123,7 @@ class CreditReward(Timestamps, Base):
         index=True,
     )
     credits: Mapped[int] = mapped_column(Integer)
+    points: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     reason: Mapped[str] = mapped_column(String(128))
     actor_handle: Mapped[str] = mapped_column(String(64))
 
@@ -204,7 +212,8 @@ class ComputeGrant(UuidPk, Timestamps, Base):
             postgresql_where=text("source = 'plan_period'"),
         ),
         CheckConstraint(
-            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant')",
+            "source IN ('plan_period', 'task_earmark', 'purchase', 'admin_grant', "
+            "'reward')",
             name="ck_compute_grants_source",
         ),
     )
@@ -235,6 +244,19 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: The ``route`` of a usage row that charges cloud compute rather than a model
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
+#: The ``route`` of a usage row that charges web searches the platform asked
+#: for (`cheese_web(action=search)`): like a compute charge, credits and no call. The
+#: searches are made on the caller's gateway key and drained with its model
+#: calls (``agent.gateway_spend``), which lands the gateway's search line
+#: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.
+SEARCH_ROUTE = "search"
+SEARCH_KIND = "web_search"
+#: The name the gateway gives its DeepSeek search tool's spend
+#: (deploy/gateway/deepseek_search.py, ``search_tools`` in config.yaml).
+GATEWAY_SEARCH_MODEL = "deepseek/search"
+#: The routes of rows that charge credits for something other than a model
+#: call.
+NOT_MODEL_CALLS = (COMPUTE_ROUTE, SEARCH_ROUTE)
 
 
 class ProjectCreditBudget(Timestamps, Base):
@@ -400,7 +422,8 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     kind: Mapped[str] = mapped_column(String(24), default="chat")
     # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
     # "subscription" (metering proxy), "native" (profile-pinned credentials);
-    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
+    # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``), "search"
+    # for web searches the platform asked the gateway for (``SEARCH_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
     # The team that paid, and the credits charged for this row (#2397). Every
@@ -474,11 +497,19 @@ class ComputeRun(UuidPk, Timestamps, Base):
     # The price list entry: ``sandbox`` for a sandbox, the VM's spec name.
     spec: Mapped[str] = mapped_column(String(64))
     subject: Mapped[str] = mapped_column(String(64))
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    # None for a run of a conversation in no project: its person pays.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    # The conversation the sandbox ran for.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="SET NULL",
+            name="fk_compute_runs_topic_id_conversations",
+        ),
+        index=True,
+        nullable=True,
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

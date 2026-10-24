@@ -159,6 +159,8 @@ export const FEEDBACK_META: FeedbackMeta = {
   hot_score: 10,
   hot_half_life_days: 2,
   hot_min_items: 5,
+  max_attachments: 10,
+  max_attachment_bytes: 10 * 1024 * 1024,
   is_admin: false,
   is_platform_admin: false,
 }

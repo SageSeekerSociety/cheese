@@ -12,10 +12,10 @@ from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.core.work_context import parse_work_id
 from app.domain.block.adapters import dump_blocks_json
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
 from app.domain.block.output_effects import append_output
-from app.domain.block.queries import client_delivery_bundle, message_reply_target
-from app.domain.block.schemas import BlockOut
+from app.domain.block.queries import message_reply_target
+from app.domain.block.schemas import reply_preview
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -38,6 +38,20 @@ class HumanHandoff:
 
     project: Project | None = None
     roster: tuple[Member, ...] | None = None
+    place: Place | None = None
+
+
+async def _merge_place(session: AsyncSession, place: Place) -> Place:
+    room = await session.merge(place.room, load=False)
+    task = (
+        await session.merge(place.task, load=False) if place.task is not None else None
+    )
+    thread = (
+        await session.merge(place.thread, load=False)
+        if place.thread is not None
+        else None
+    )
+    return Place(room=room, task=task, thread=thread)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +113,18 @@ async def persist_human_message(
     attachments: list[dict] | None = None,
     client_id: str | None = None,
     quoted_context: dict | None = None,
+    by_assistant: bool = False,
+    handoff: HumanHandoff | None = None,
 ) -> StoredHuman:
     async with sessions() as session:
         # A room's own line, or a task's conversation in it.
-        place = await PlaceResolver(session).conversation(topic_id)
+        place = (
+            await _merge_place(session, handoff.place)
+            if handoff is not None
+            and handoff.place is not None
+            and handoff.place.conversation_id == topic_id
+            else await PlaceResolver(session).conversation(topic_id)
+        )
         if place is None:
             raise NotFoundError(say("topicNotFound"))
         topic = place.room
@@ -129,31 +151,9 @@ async def persist_human_message(
                 [uuid.UUID(value) for value in stored["block_ids"]],
                 True,
             )
-        if delivery_key:
-            assert client_id is not None
-            legacy_blocks = await client_delivery_bundle(
-                session, place.room_id, author=author, client_id=client_id
-            )
-            if legacy_blocks:
-                anchor = next(
-                    block
-                    for block in legacy_blocks
-                    if (block.meta or {}).get("client_id") == client_id
-                )
-                payloads = await dump_blocks_json(legacy_blocks)
-                block_ids = [block.id for block in legacy_blocks]
-                await idem.record_result(
-                    session,
-                    delivery_key,
-                    {
-                        "payloads": payloads,
-                        "anchor_block_id": str(anchor.id),
-                        "block_ids": [str(block_id) for block_id in block_ids],
-                    },
-                )
-                await session.commit()
-                return StoredHuman(place, [], payloads, anchor.id, block_ids, True)
         created_blocks: list[Block] = []
+        # Written by the author's own 芝士: every block of the send says so.
+        written_for = {BY_ASSISTANT_META_KEY: True} if by_assistant else {}
         prepared = await prepare(session, place, content, author)
         recipient = prepared.recipient
         anchor_id: uuid.UUID | None = None
@@ -168,6 +168,7 @@ async def persist_human_message(
         # recoverable, refusing the send is not.
         reply_uuid = parse_work_id(reply_to)
         reply_author: str | None = None
+        reply_parent: Block | None = None
         if reply_uuid is not None:
             parent = await message_reply_target(session, reply_uuid)
             if parent is None or parent.conversation_id != place.conversation_id:
@@ -181,6 +182,7 @@ async def persist_human_message(
                 # 回谁的话就是对着谁说的：被回复的那条的作者定这一句的收件人
                 # （#3210），由 `refuse` 认。
                 reply_author = parent.author
+                reply_parent = parent
         if content:
             content = prepared.content
             admission = await refuse(
@@ -216,6 +218,7 @@ async def persist_human_message(
                         if quoted_context is not None
                         else {}
                     ),
+                    **written_for,
                 },
             )
             if attribution_id is None:
@@ -256,6 +259,7 @@ async def persist_human_message(
                         if not content and index == 0 and client_id
                         else {}
                     ),
+                    **written_for,
                 },
             )
             if attribution_id is None:
@@ -266,10 +270,15 @@ async def persist_human_message(
             created_blocks.append(att_block)
         if anchor_id is None:  # guarded by the route, but never crash a turn
             raise NotFoundError(say("chatMessageEmpty"))
-        payloads = [
-            BlockOut.model_validate(block).model_dump(mode="json")
-            for block in created_blocks
-        ]
+        payloads = await dump_blocks_json(created_blocks)
+        # The reply cue needs a line from the parent, and the reader's timeline
+        # may not hold it. It rides with the reply; the parent stays out of the
+        # page. Written before the idempotency record so a retry carries it too.
+        if reply_parent is not None:
+            preview = reply_preview(reply_parent)
+            for block, payload in zip(created_blocks, payloads, strict=True):
+                if block.reply_to is not None:
+                    payload["reply_preview"] = preview
         block_ids = [block.id for block in created_blocks]
         if delivery_key:
             await idem.record_result(

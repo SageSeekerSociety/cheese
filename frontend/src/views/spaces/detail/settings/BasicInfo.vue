@@ -89,7 +89,7 @@ const confirmDelete = async () => {
   }
   toast.success(t('spaces.detail.deleteSpaceSuccess'))
   // replace 而不是 push：这一页刚才还在的空间已经没了，「返回」不该把人送回它。
-  void router.replace({ name: 'HomeSpaces' })
+  void router.replace({ name: 'inbox' })
   deleting.value = false
 }
 </script>

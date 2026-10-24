@@ -48,7 +48,7 @@ from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
 from app.domain.deliverables import artifacts
-from app.domain.delivery_events import REPLACES, DeliveryEvent, SettleCard
+from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,
@@ -60,13 +60,12 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.notification.models import NotificationType
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
-from app.domain.review.ports import Announce, RecordInstruction
+from app.domain.review.ports import Announce
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.closing import Overdue
-from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.models import Task
 from app.domain.room_task.services import said_title
 from app.domain.topic.models import Topic
 from app.domain.webhook import service as webhook_service
@@ -155,6 +154,7 @@ async def _tell_the_reviewer(
     `about_card` 填一句话是不是「等你动手」那一类：是就填卡的 id，卡一有决定它
     就从收件箱里消失（`_settle_the_card`）；说结局的那几句不填。
     """
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
@@ -162,7 +162,7 @@ async def _tell_the_reviewer(
         content=content,
         meta={"source": "accept", **meta},
         author="accept",
-        points_at=Event(reviewers=(card.reviewer_handle, *also)),
+        points_at=Event(reviewers=(*reviewers, *also)),
         about_card=about_card,
     )
 
@@ -227,11 +227,16 @@ async def _announce_filed(
         for part in (card.change_subject or "", (card.change_body or "").strip())
         if part
     )
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=say("cardFiled", task=task.title, reviewer=card.reviewer_handle),
+        content=say(
+            "cardFiled",
+            task=task.title,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        ),
         meta=notice(
             EVENT_CARD_FILED,
             severity=SEVERITY_INFO,
@@ -240,7 +245,7 @@ async def _announce_filed(
             detail_label=say("labelChanges"),
         ),
         points_at=Event(
-            reviewers=(card.reviewer_handle,),
+            reviewers=tuple(reviewers),
             reporter=task.reporter_handle,
         ),
         about_card=card.id,
@@ -308,11 +313,16 @@ async def _notify_ready(
     signature = pr_signals.signature("ready", card.pr_head_sha or "")
     if ledger.already_sent(pr_signals.NudgeKind.ready, signature):
         return
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await _tell_the_reviewer(
         session,
         card,
         topic,
-        say("acceptReady", pr=card.pr_number, reviewer=card.reviewer_handle),
+        say(
+            "acceptReady",
+            pr=card.pr_number,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        ),
         meta=notice(
             EVENT_ACCEPT_READY,
             severity=SEVERITY_INFO,
@@ -395,53 +405,6 @@ def _note_poll_failed(card: AcceptCard, exc: BaseException) -> None:
         notes.NoteCode.poll_failed,
         f"无法读取 PR 状态，稍后自动重试：{detail}",
     )
-
-
-async def _record_task_nudge(
-    session: AsyncSession,
-    *,
-    topic,
-    task,
-    content,
-    headline,
-    meta,
-    announce: Announce,
-    record_instruction: RecordInstruction | None,
-    replaces: str | None = None,
-):
-    """Commit the task event and parent delivery with the source state.
-
-    ``replaces`` names what the instruction is the current state of; an earlier
-    one with the same name the agent has not been handed yet is dropped for it
-    (`delivery_events.REPLACES`)."""
-    block = await announce(
-        session,
-        place_id=topic.id,
-        task_id=task.id if task is not None else None,
-        content=headline,
-        meta=meta,
-    )
-    if (
-        block is not None
-        and task is not None
-        and task.status == TaskStatus.open
-        and record_instruction is not None
-    ):
-        await record_instruction(
-            session,
-            DeliveryEvent(
-                id=block.id,
-                type=NotificationType.ROOM_NOTICE,
-                payload={
-                    "projectId": str(topic.project_id),
-                    "topicId": str(topic.id),
-                    **({REPLACES: replaces} if replaces else {}),
-                },
-                occurred_at=block.created_at,
-            ),
-            task_id=task.id,
-            content=content,
-        )
 
 
 async def _note_outside_accept_txn(

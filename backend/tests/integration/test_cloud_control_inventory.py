@@ -7,10 +7,6 @@ inventory leaves out runs no tool. The inventory is the program
 very program against the test database.
 """
 
-from app.domain.device.wiring import sql_device_service
-from tests.support.devices import enrollment_team
-
-
 import json
 import os
 import runpy
@@ -22,9 +18,11 @@ from pathlib import Path
 
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, WarmMachine
 from tests.conftest import TEST_DATABASE_URL
+from tests.support.devices import enrollment_team
 
 CONTROL = Path(__file__).resolve().parents[3] / "deploy/cloud-control.py"
 

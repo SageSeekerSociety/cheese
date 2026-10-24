@@ -26,7 +26,6 @@ from migration_helpers import CI_POSTGRES_MAJOR  # noqa: E402
 PINNED = (
     ".github/workflows/test.yml",
     ".github/workflows/e2e.yml",
-    ".github/workflows/remote-execution.yml",
     "deploy/ci-runner/resident-services.sh",
     "deploy/deploy-docker.sh",
     "backend/scripts/device_connection_lifecycle_acceptance.py",

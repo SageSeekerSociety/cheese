@@ -1,6 +1,5 @@
 // 「现场」那一格的取数：这一窗 transcript（读最近一页、往上翻、socket 上来的一行
-// 落到哪儿）、按队友筛的那排名册、每一轮的起始时间、贴在顶上那条会话栏，以及摊开
-// 一步之后它打印了什么。
+// 落到哪儿）、按队友筛的那排名册、每一轮的起始时间、贴在顶上那条会话栏。
 //
 // 和画的那一半（`components/panels/PanelSite.vue`）分家，理由和别处一样：场景棘轮
 // 认的「场景」是 `components/panels/**` 下每个 SFC，A 档的意思是「给一组 props 就
@@ -52,7 +51,8 @@ export function usePanelSite(scope: PanelSiteScope) {
   // with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
   // above the thing they came to see.
   const scrollRef = ref<HTMLElement | null>(null)
-  useStickToBottom(scrollRef, 48)
+  // 这一窗停在哪、跟不跟新行：由读者自己的滚动维护，见 useStickToBottom。
+  const stick = useStickToBottom(scrollRef, 48)
 
   // ---- 按队友看 ----
   // 一个房间可以先后、甚至同时交给几个队友。时间线是他们交错着的，而人来看的往往
@@ -87,13 +87,19 @@ export function usePanelSite(scope: PanelSiteScope) {
   // 手上这一窗 transcript（读最近一页 / 往上翻 / 过 MAX_WINDOW 封顶 / socket 上来的行
   // 落到哪儿）都在 useSiteTranscript 里。递进去的是「现在读的是谁」和这一窗自己的滚动
   // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
-  const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
-    topicId: scope.topicId,
-    viewing: () => viewing.value,
-    scrollRef,
-    noteAgents,
-    noteStarts,
-  })
+  const { transcript, hasOlder, loading, loadingOlder, errorMsg, arrived, load, onSiteScroll, receive } =
+    useSiteTranscript({
+      topicId: scope.topicId,
+      active: scope.active,
+      viewing: () => viewing.value,
+      scrollRef,
+      following: stick.following,
+      scrollToTail: stick.scrollToTail,
+      captureAnchor: stick.captureAnchor,
+      restoreAnchor: stick.restoreAnchor,
+      noteAgents,
+      noteStarts,
+    })
 
   // 换一个视角 = 换一条时间线：重读这个人的最近一页，停在最新的那一条。不是把手上
   // 这一窗（可能是「全部」，也可能是上一位）就地滤一遍 —— 那既是「一次加载全部」，
@@ -164,6 +170,7 @@ export function usePanelSite(scope: PanelSiteScope) {
     loading,
     loadingOlder,
     errorMsg,
+    arrived,
     onSiteScroll,
     receive,
     selectAgent,

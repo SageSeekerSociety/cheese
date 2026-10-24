@@ -142,9 +142,9 @@
       <div v-for="session in sessions" :key="session.id" class="srow">
         <span class="srow__k">
           <v-icon :icon="sessionIcon(session.userAgent)" size="18" />
-          {{ deviceLabel(session.userAgent) }}
+          {{ deviceLabel(session) }}
         </span>
-        <span class="srow__v srow__v--parts" :title="sessionDetails(session).join(' · ')">
+        <span class="srow__v srow__v--parts">
           <!-- The separator belongs to the part after it, so a wrapped row
                never leaves a dot alone at the end of a line; one that lands
                at the start of a line is clipped (see .srow__v--parts). -->
@@ -344,7 +344,7 @@ import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { GITHUB_APP_PROVIDER_ID, ownGithub } from '@/lib/githubAccount'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
-import { deviceOf } from '@/views/user/settings/deviceName'
+import { DESKTOP_APP_SIGN_IN, deviceOf, osOf } from '@/views/user/settings/deviceName'
 
 /** Nothing renews this GitHub authorization: PRs fall back to the AI teammate. */
 const githubExpired = (conn: OAuthConnectionInfo) => ownGithub(conn, true).state === 'expired'
@@ -449,8 +449,12 @@ const formatDate = (value: string | Date) =>
 const formatDateTime = (value: string | Date) =>
   new Intl.DateTimeFormat(i18n.global.locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 
-const deviceLabel = (userAgent: string) => {
-  const device = deviceOf(userAgent)
+const deviceLabel = (session: SessionInfo) => {
+  if (session.loginMethod === DESKTOP_APP_SIGN_IN) {
+    const os = osOf(session.userAgent)
+    return os ? t('account.security.desktopAppName', { os }) : t('account.security.desktopApp')
+  }
+  const device = deviceOf(session.userAgent)
   return device ? t('account.security.deviceName', device) : t('account.security.unknownDevice')
 }
 
@@ -461,6 +465,7 @@ const METHOD_LABELS: Record<string, () => string> = {
   backup_code: () => t('account.security.methodBackupCode'),
   email_code: () => t('account.security.methodEmailCode'),
   signup: () => t('account.security.methodSignup'),
+  [DESKTOP_APP_SIGN_IN]: () => t('account.security.methodDesktopApp'),
 }
 
 const methodLabel = (method: string) =>
@@ -536,25 +541,16 @@ const sessionIcon = (userAgent: string) =>
    back into that space. A part that wraps to the start of a line pulls its
    separator past the left edge instead, where the clip hides it.
 
-   On the wide layout the row is one line: a device's details that wrap to a
-   second line push the row taller than the sign-out button beside it and the
-   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
-   single clipped line — anything past the edge is hidden and the full text is
-   on `title`. Below md the row has its own full-width line and wraps freely. */
+   The parts wrap at every width: a device's details run past one line in the
+   value column of a desktop settings page, and clipping them there cut off the
+   IP address at the end. The sign-out button stays centred on the taller row,
+   as on any other row whose value takes two lines. */
 .srow__v--parts {
   --sep: 20px;
 
   column-gap: 0;
   row-gap: 2px;
   overflow: hidden;
-}
-
-@media (min-width: 600px) {
-  .srow__v--parts {
-    display: block;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
 }
 
 .srow__part {

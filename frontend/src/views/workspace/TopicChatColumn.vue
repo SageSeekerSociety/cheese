@@ -4,16 +4,19 @@ import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
 import { useSkillProposals } from './useSkillProposals'
 
+import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
@@ -22,6 +25,7 @@ import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { artifactName } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -48,10 +52,16 @@ const props = defineProps<{
   /** 打开时停在这一条（地址里的 `?block=`）。 */
   focusBlock?: string | null
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
-   *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
+   *  提议卡（技能、反馈）也按这个任务取——队友在哪儿提的，卡就落在哪儿。 */
   taskId?: string | null
   /** 这一栏是一条还没转成任务的支线。 */
   threadId?: string | null
+  /** 这段对话的章节，按对话里的顺序（频道页、任务页给；支线不给）。 */
+  chapters?: ChapterRow[]
+  /** 现在能不能改章节：说得上话、没归档。 */
+  chapterable?: boolean
+  /** 已经钉成章节的那几条（block id）。 */
+  chapterIds?: ReadonlySet<string>
   /** 开在频道页右半边（手机上是一整页）：对话最上面是它挂着的那条消息、从那条消息
    *  另开的任务和回复条数；不在任务页上时才有。 */
   beside?: boolean
@@ -90,6 +100,10 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', target: Block | string): void
+  (e: 'rename', blockId: string, title: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   // 参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，`review` 是「查看改动」要标出
@@ -189,7 +203,7 @@ const madeHere = computed(() => {
         made.id !== conversationId.value &&
         (!made.source_block_id || made.source_block_id === id)
     )
-    .map((made) => taskLine(made, viewer.value, nameOf))
+    .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
@@ -197,11 +211,26 @@ const refs = computed(() => ({
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
+/** 做这件任务的队友叫什么：它单独指定的那位，否则这间房名册上的队友，再否则项目的默认队友。 */
+function madeAgentName(made: RoomTask): string {
+  const seat = made.agent_handle || props.topic.agent_handle || props.taskAgentHandle
+  return (seat && props.memberNames?.[seat]) || store.agentName
+}
+
 function nameOf(handle: string): string {
   return props.memberNames?.[handle] || handle
 }
 function avatarOf(handle: string): string {
   return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
+}
+
+/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。 */
+async function downloadRootFile(block: Block) {
+  try {
+    await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
+  } catch {
+    toast.error(t('work.room.chat.downloadFailed'))
+  }
 }
 
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
@@ -247,6 +276,12 @@ defineExpose({
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
       :focus-block="focusBlock"
+      :chapters="chapters"
+      :chapterable="chapterable"
+      :chapter-ids="chapterIds"
+      @chapter="emit('chapter', $event)"
+      @unchapter="emit('unchapter', $event)"
+      @rename="(id: string, title: string) => emit('rename', id, title)"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"
@@ -284,7 +319,11 @@ defineExpose({
       </template>
       <!-- 它挂着的那条消息交给对话的滚动区：跟着回复一起滚，而不是钉在顶上。钉着的话，
            长消息一展开就把回复挤没、把正文末尾那颗「收起」顶到看不见的地方。 -->
-      <template v-if="beside || root" #timeline-start>
+      <!-- No v-if on this <template>: a conditional slot makes ChatPanel's slots
+           dynamic, and ChatPanel forwards them to ChatTimeline, which then redraws
+           every row on each ChatPanel render — that is, on every keystroke in the
+           composer. The branches inside already render nothing when neither holds. -->
+      <template #timeline-start>
         <template v-if="beside">
           <ThreadRoot
             v-if="root"
@@ -292,6 +331,9 @@ defineExpose({
             :name="nameOf(root.author)"
             :avatar="avatarOf(root.author)"
             :refs="refs"
+            :files="thread?.files"
+            :topic-id="topic.id"
+            @download="downloadRootFile($event)"
           />
           <div v-if="madeHere.length" class="made-here">
             <TaskCard
@@ -312,7 +354,15 @@ defineExpose({
           <button type="button" class="from-room t-meta" @click="emit('open-room')">
             {{ t('work.task.fromRoom', { room: topicTitle(topic) }) }}
           </button>
-          <ThreadRoot :root="root" :name="nameOf(root.author)" :avatar="avatarOf(root.author)" :refs="refs" />
+          <ThreadRoot
+            :root="root"
+            :name="nameOf(root.author)"
+            :avatar="avatarOf(root.author)"
+            :refs="refs"
+            :files="thread?.files"
+            :topic-id="topic.id"
+            @download="downloadRootFile($event)"
+          />
           <div class="from-room__rule" aria-hidden="true" />
         </template>
       </template>

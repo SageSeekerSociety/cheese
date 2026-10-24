@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // 新手引导的画面（页面是同目录的 Welcome.vue）。
 //
-// 五问：怎么称呼、主要用知是做什么、想先做成什么、和谁一起、芝士在哪干活。每个
-// 回答都有去处，右边的「你的项目」随回答长出来；点「建好项目」才把回答交出去
-// （`finish`）。建项目、进「综合」由页面做（Welcome.vue），这里只画五问。
+// 两问：主要用知是做什么、想先做成什么。每个回答都有去处，右边的「你的项目」随回答
+// 长出来；点「建好项目」才把回答交出去（`finish`）。称呼用注册时填的昵称，邀请队友
+// 和换电脑都在项目里做，这里不问。建项目、进「综合」由页面做（Welcome.vue），这里
+// 只画两问。
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -18,33 +19,26 @@ export interface WelcomeFinish {
     project_id: string
     project_name: string
     intent: string
-    nickname: string
     work_role?: WorkRole | null
     organization?: string
-    invitees: string[]
-    solo: boolean
   }
   /** 跳过了引导：只建一个以名字命名的项目，不写请求、不记身份。 */
   skipAll: boolean
   /** 写进「综合」输入框的第一句（带 @芝士），和要附上的文件。 */
   draft: string
   files: File[]
-  /** 桌面端选了「用这台电脑」。 */
-  onThisComputer: boolean
 }
 
 const props = defineProps<{
-  /** 从帮助菜单再走一遍：从身份开始，回答预填上次的。 */
+  /** 从帮助菜单再走一遍：回答预填上次的，没有「跳过引导」。 */
   again?: boolean
-  /** 账号上已有的：预填称呼、身份和单位，名字也用来给项目起默认名。 */
+  /** 账号上已有的：预填身份和单位，名字用来给项目起默认名。 */
   me: { username: string; nickname?: string | null; work_role?: string | null; organization?: string | null } | null
-  /** 在桌面端里：多一项「用这台电脑」。 */
-  desktop: boolean
   busy: boolean
   /** 上一次没建成的原因；空串表示没有。 */
   failure: string
 }>()
-const emit = defineEmits<{ finish: [WelcomeFinish] }>()
+const emit = defineEmits<{ finish: [WelcomeFinish]; exit: [] }>()
 const again = props.again
 const me = props.me
 
@@ -89,26 +83,21 @@ const TASK_ICONS: Record<string, string> = {
   build: 'mdi-application-brackets-outline',
 }
 
-// 再走一遍的人已经回答过称呼，从身份开始。
-const step = ref(again ? 2 : 1)
-const LAST = 5
-const nickname = ref(me?.nickname ?? '')
+const step = ref(1)
+const LAST = 2
 const role = ref<WorkRole | null>((me?.work_role as WorkRole | null | undefined) ?? null)
 const organization = ref(me?.organization ?? '')
 const taskKey = ref<string | null>(null)
 const own = ref('')
 const files = ref<File[]>([])
 const picker = ref<HTMLInputElement | null>(null)
-const solo = ref(true)
-const inviteText = ref('')
-const onThisComputer = ref(false)
 // 每走一遍引导选一次：重试补完同一个项目，不会建出第二个。
 const projectId = crypto.randomUUID()
 
 const group = computed<TaskGroup>(() => (role.value && role.value in TASKS ? (role.value as TaskGroup) : 'general'))
 const taskText = (key: string, part: 'label' | 'hint' | 'name' | 'text') =>
   t(`welcome.tasks.${group.value}.${key}.${part}`)
-const displayName = computed(() => nickname.value.trim() || me?.username || '')
+const displayName = computed(() => me?.nickname?.trim() || me?.username || '')
 const fallbackName = computed(() => t('welcome.preview.nameFallback', { name: displayName.value }))
 
 const projectName = computed(() => {
@@ -122,7 +111,6 @@ const request = computed(() => {
   if (mine) return `${mine}\n${t('welcome.task.ownPlan')}`
   return taskKey.value ? taskText(taskKey.value, 'text') : ''
 })
-const invitees = computed(() => (solo.value ? [] : inviteText.value.split(/[\s,\uff0c]+/).filter(Boolean)))
 const aboutLine = computed(() =>
   [role.value && role.value !== 'other' ? t(`welcome.role.${role.value}Hint`) : '', organization.value.trim()]
     .filter(Boolean)
@@ -146,19 +134,13 @@ function finish(skipAll = false) {
         project_id: projectId,
         project_name: fallbackName.value,
         intent: '',
-        nickname: nickname.value,
-        invitees: [],
-        solo: true,
       }
     : {
         project_id: projectId,
         project_name: projectName.value,
         intent: intent.value,
-        nickname: nickname.value,
         work_role: role.value,
         organization: organization.value,
-        invitees: invitees.value,
-        solo: solo.value,
       }
   // 输入框里那句和起手卡写进去的一样带 @：直接回车只发给成员，芝士不会接。
   const draft = !skipAll && request.value ? `@${t('work.room.defaultAgentName')} ${request.value}` : ''
@@ -167,11 +149,8 @@ function finish(skipAll = false) {
     skipAll,
     draft,
     files: skipAll ? [] : files.value,
-    onThisComputer: !skipAll && props.desktop && onThisComputer.value,
   })
 }
-
-const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 </script>
 
 <template>
@@ -188,12 +167,6 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 
         <template v-if="step === 1">
           <p class="welcome__intro">{{ t('welcome.intro') }}</p>
-          <h1 class="t-page-title">{{ t('welcome.name.q') }}</h1>
-          <input v-model="nickname" class="welcome__input" autocomplete="nickname" :aria-label="t('welcome.name.q')" />
-          <p class="welcome__why">{{ t('welcome.name.why') }}</p>
-        </template>
-
-        <template v-else-if="step === 2">
           <h1 class="t-page-title">{{ t('welcome.role.q') }}</h1>
           <p class="welcome__why">{{ t('welcome.role.why') }}</p>
           <div class="welcome__options">
@@ -218,7 +191,7 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
           </label>
         </template>
 
-        <template v-else-if="step === 3">
+        <template v-else>
           <h1 class="t-page-title">{{ t('welcome.task.q') }}</h1>
           <p class="welcome__why">{{ t('welcome.task.why') }}</p>
           <div class="welcome__options">
@@ -268,89 +241,23 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
           <p class="welcome__why">{{ t('welcome.task.filesNote') }}</p>
         </template>
 
-        <template v-else-if="step === 4">
-          <h1 class="t-page-title">{{ t('welcome.who.q') }}</h1>
-          <p class="welcome__why">{{ t('welcome.who.why') }}</p>
-          <div class="welcome__options">
-            <button type="button" class="welcome__option" :aria-pressed="solo" @click="solo = true">
-              <span class="welcome__icon"><v-icon icon="mdi-account-outline" size="20" /></span>
-              <span class="welcome__label">
-                <span class="t-title">{{ t('welcome.who.solo') }}</span>
-                <span class="welcome__hint">{{ t('welcome.who.soloHint') }}</span>
-              </span>
-            </button>
-            <button type="button" class="welcome__option" :aria-pressed="!solo" @click="solo = false">
-              <span class="welcome__icon"><v-icon icon="mdi-account-multiple-outline" size="20" /></span>
-              <span class="welcome__label">
-                <span class="t-title">{{ t('welcome.who.team') }}</span>
-                <span class="welcome__hint">{{ t('welcome.who.teamHint') }}</span>
-              </span>
-            </button>
-          </div>
-          <label v-if="!solo" class="welcome__field" for="welcome-invitees">
-            <span class="welcome__field-label">{{ t('welcome.who.invitees') }}</span>
-            <input id="welcome-invitees" v-model="inviteText" class="welcome__input" autocomplete="off" />
-          </label>
-        </template>
-
-        <template v-else>
-          <h1 class="t-page-title">{{ t('welcome.where.q') }}</h1>
-          <p class="welcome__why">{{ t('welcome.where.why') }}</p>
-          <div class="welcome__options welcome__options--stack">
-            <button
-              type="button"
-              class="welcome__option"
-              :aria-pressed="!onThisComputer"
-              @click="onThisComputer = false"
-            >
-              <span class="welcome__icon"><v-icon icon="mdi-cloud-outline" size="20" /></span>
-              <span class="welcome__label">
-                <span class="t-title">{{ t('welcome.where.cloud') }}</span>
-                <span class="welcome__hint">{{ t('welcome.where.cloudHint') }}</span>
-              </span>
-            </button>
-            <button
-              v-if="desktop"
-              type="button"
-              class="welcome__option"
-              :aria-pressed="onThisComputer"
-              @click="onThisComputer = true"
-            >
-              <span class="welcome__icon"><v-icon icon="mdi-laptop" size="20" /></span>
-              <span class="welcome__label">
-                <span class="t-title">{{ t('welcome.where.device') }}</span>
-                <span class="welcome__hint">{{ t('welcome.where.deviceHint') }}</span>
-              </span>
-            </button>
-          </div>
-          <!-- 网页上不能把这台电脑接给芝士：给一张同样的卡，说要先装桌面端，按钮去下载页。 -->
-          <div v-if="!desktop" class="welcome__option welcome__option--static">
-            <span class="welcome__icon"><v-icon icon="mdi-laptop" size="20" /></span>
-            <span class="welcome__label">
-              <span class="t-title">{{ t('welcome.where.deviceWeb') }}</span>
-              <span class="welcome__hint">{{ t('welcome.where.webNote') }}</span>
-            </span>
-            <BaseButton kind="secondary" size="sm" :to="{ name: 'Download' }">{{
-              t('welcome.where.download')
-            }}</BaseButton>
-          </div>
-        </template>
-
         <p v-if="failure" class="welcome__failure" role="alert">{{ failure }}</p>
 
         <div class="welcome__foot">
+          <!-- 第一次走的时候有「跳过引导」（建一个占位项目）；从帮助菜单再看一遍的那次
+               没有项目要建，给的是「退出引导」：看完就走，什么都不改。 -->
           <BaseButton v-if="step === 1 && !again" kind="ghost" :disabled="busy" @click="finish(true)">
             {{ t('welcome.skipAll') }}
           </BaseButton>
-          <BaseButton v-else-if="step > 1 && step < LAST" kind="ghost" :disabled="busy" @click="step += 1">
-            {{ t('welcome.skip') }}
+          <BaseButton v-else-if="again" kind="ghost" :disabled="busy" @click="emit('exit')">
+            {{ t('welcome.exit') }}
           </BaseButton>
           <span v-else />
           <span class="welcome__go">
-            <BaseButton v-if="step > (again ? 2 : 1)" kind="ghost" :disabled="busy" @click="step -= 1">
+            <BaseButton v-if="step > 1" kind="ghost" :disabled="busy" @click="step -= 1">
               {{ t('welcome.back') }}
             </BaseButton>
-            <BaseButton v-if="step < LAST" kind="primary" :disabled="!canGoOn" @click="step += 1">
+            <BaseButton v-if="step < LAST" kind="primary" @click="step += 1">
               {{ t('welcome.next') }}
             </BaseButton>
             <BaseButton v-else kind="primary" :loading="busy" @click="finish()">
@@ -367,10 +274,10 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
       <p class="t-eyebrow">{{ t('welcome.preview.title') }}</p>
       <div class="welcome__window">
         <div class="welcome__rail">
-          <span class="welcome__tile">{{ (step >= 3 ? projectName : fallbackName).slice(0, 1) }}</span>
+          <span class="welcome__tile">{{ (step >= 2 ? projectName : fallbackName).slice(0, 1) }}</span>
         </div>
         <div class="welcome__side">
-          <p class="t-title welcome__pname">{{ step >= 3 ? projectName : fallbackName }}</p>
+          <p class="t-title welcome__pname">{{ step >= 2 ? projectName : fallbackName }}</p>
           <p class="welcome__nav">
             <v-icon icon="mdi-view-dashboard-outline" size="14" />{{ t('navigation.project.overview') }}
           </p>
@@ -389,17 +296,10 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
             <dd>{{ files.map((f) => f.name).join(t('welcome.preview.listSep')) }}</dd>
           </template>
           <dt>{{ t('welcome.preview.members') }}</dt>
-          <dd>
-            {{ displayName }} · {{ t('work.room.defaultAgentName') }}
-            <template v-for="name in invitees" :key="name"> · {{ t('welcome.preview.invited', { name }) }}</template>
-          </dd>
+          <dd>{{ displayName }} · {{ t('work.room.defaultAgentName') }}</dd>
           <template v-if="aboutLine">
             <dt>{{ t('welcome.preview.about') }}</dt>
             <dd>{{ t('welcome.preview.aboutLine', { name: displayName, about: aboutLine }) }}</dd>
-          </template>
-          <template v-if="step >= LAST">
-            <dt>{{ t('welcome.preview.where') }}</dt>
-            <dd>{{ onThisComputer ? t('welcome.preview.device') : t('welcome.preview.cloud') }}</dd>
           </template>
         </dl>
       </div>
@@ -497,9 +397,6 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
-.welcome__options--stack {
-  grid-template-columns: minmax(0, 1fr);
-}
 .welcome__option {
   display: flex;
   align-items: flex-start;
@@ -516,16 +413,6 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 }
 .welcome__option:hover {
   background: var(--fill);
-}
-.welcome__option--static {
-  align-items: center;
-  cursor: default;
-}
-.welcome__option--static:hover {
-  background: var(--surface);
-}
-.welcome__option--static .welcome__label {
-  flex: 1;
 }
 .welcome__option[aria-pressed='true'] {
   border-color: var(--ink);

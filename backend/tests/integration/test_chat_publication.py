@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -9,10 +10,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select, update
 
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
+from app.domain.block.models import Block, BlockKind
+from app.domain.delivery.models import NativeInput
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -115,6 +121,10 @@ def test_reply_preserves_reference_and_rejects_another_room(client):
     reply = publish(client, topic, headers, "已经查到了。", reply_to=first["id"])
     assert reply.status_code == 200, reply.text
     assert reply.json()["data"]["reply_to"] == first["id"]
+    preview = reply.json()["data"]["reply_preview"]
+    assert preview["id"] == first["id"]
+    assert preview["author"] == first["author"]
+    assert preview["content"] == first["content"]
     other, other_headers = room(client)
     assert (
         publish(client, other, other_headers, reply_to=first["id"]).status_code == 422
@@ -275,6 +285,52 @@ def next_block(ws):
             return frame["block"]
 
 
+def _read_by_its_session(client, topic: str) -> datetime:
+    """Wait for the session to read what it was handed (its echo is the read),
+    and return the moment after: the clock the reminders measure from."""
+
+    async def read() -> bool:
+        async with client.test_factory() as session:
+            return (
+                await session.scalar(
+                    select(NativeInput.id).where(
+                        NativeInput.conversation_id == uuid.UUID(topic),
+                        NativeInput.echoed_at.is_not(None),
+                    )
+                )
+                is not None
+            )
+
+    deadline = datetime.now(UTC) + timedelta(seconds=10)
+    while not client.portal.call(read):
+        assert datetime.now(UTC) < deadline, "the session never read its input"
+    return datetime.now(UTC)
+
+
+def _stopped_working(chat, topic) -> None:
+    """Until the session's runner has said it is idle: the room hears the
+    result (``done``) a moment before the seat is marked idle."""
+    deadline = time.monotonic() + 10
+    while chat.compute.working_seat(uuid.UUID(str(topic))) is not None:
+        assert time.monotonic() < deadline, "the session never went idle"
+        time.sleep(0.01)
+
+
+def _said_at(client, block_id: str, at: datetime) -> None:
+    """The message ``block_id`` was written at ``at``, on the sweep's clock."""
+
+    async def move() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Block)
+                .where(Block.id == uuid.UUID(block_id))
+                .values(created_at=at)
+            )
+            await session.commit()
+
+    client.portal.call(move)
+
+
 @pytest.mark.parametrize("threshold", [600, 90])
 @pytest.mark.parametrize(
     ("make_room", "speaker"),
@@ -288,26 +344,13 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
 
     A private chat is exempted from nothing here: now that its reply reaches the
     room only through chat_send, a silent private chat is exactly the room that
-    shows nothing while someone waits.
+    shows nothing while someone waits. What is measured: the session at work
+    read a person's message, and has published nothing since. Once it has
+    answered, it is not prodded to narrate the rest of its work.
     """
-    from app.domain.agent import chat as chat_module
-    from app.domain.agent.turn.intake import assistant as assistant_module
-    from app.domain.agent.turn.steps import send as send_module
-    from app.domain.agent.turn.store import session_inputs as session_inputs_module
-
     topic, headers = make_room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
-    clock = datetime.now(UTC)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(send_module, "datetime", Clock)
-    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
-    monkeypatch.setattr(assistant_module, "datetime", Clock)
+    quiet = QuietSessionReminders(chat, chat.compute)
     assert settings.chat_progress_reminder_after_s == 600
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
     system_event = AsyncMock(wraps=chat.post_system_event)
@@ -323,92 +366,63 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     started = asyncio.Event()
     notices = []
 
-    async def delayed_notice(topic_id, notice):
+    async def delayed_notice(topic_id, notice, **_kwargs):
         notices.append(notice)
         started.set()
         await release.wait()
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
+    monkeypatch.setattr(chat, "notify_running_session", delayed_notice)
     with room_socket(client, topic, speaker) as ws:
         post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if frame["type"] == "turn_started":
                 break
-        assert client.portal.call(chat.remind_silent_turns) == 0
+        clock = _read_by_its_session(client, topic)
+        assert client.portal.call(quiet.silence, clock) == 0
         system_event.reset_mock()
         clock += timedelta(seconds=threshold - 1)
-        assert client.portal.call(chat.remind_silent_turns) == 0
+        assert client.portal.call(quiet.silence, clock) == 0
         clock += timedelta(seconds=1)
         client.portal.call(stub_hooks.says, uuid.UUID(topic), "More internal output")
-        sweep = client.portal.start_task_soon(chat.remind_silent_turns)
+        sweep = client.portal.start_task_soon(quiet.silence, clock)
         client.portal.call(started.wait)
         assert not sweep.done()
         system_event.assert_not_called()
         client.portal.call(release.set)
         assert sweep.result(timeout=2) == 1
         assert len(notices) == 1 and "chat_send" in notices[0]
-        assert "已经结束的话才不用理会" in notices[0]
+        assert "已经停下的话才不用理会" in notices[0]
         # Inside the interval there is one reminder, not a stream of them.
         clock += timedelta(seconds=threshold - 1)
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        # Past it again with still nothing published, the silence is reminded
-        # about again. Being asked once and then left alone is what let a turn
-        # work for hours while the room showed nothing.
+        assert client.portal.call(quiet.silence, clock) == 0
+        # Past it again with the person still unanswered, it is reminded again.
         clock += timedelta(seconds=1)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert client.portal.call(quiet.silence, clock) == 1
         assert len(notices) == 2
-        request_id = str(uuid.uuid4())
-        sent = publish(client, topic, headers, request_id=request_id).json()["data"]
+        sent = publish(client, topic, headers).json()["data"]
         assert next_block(ws)["id"] == sent["id"]
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        clock += timedelta(seconds=threshold)
-        # Replaying a previous send must not masquerade as a fresh update.
-        assert publish(client, topic, headers, request_id=request_id).status_code == 200
-        assert next_block(ws)["id"] == sent["id"]
-        assert client.portal.call(chat.remind_silent_turns) == 1
-        assert len(notices) == 3
+        _said_at(client, sent["id"], clock)
+        # It answered: from here it works quietly, however long the work takes.
+        # The process shows in 现场 and the board, not in the conversation.
+        for _ in range(3):
+            clock += timedelta(seconds=threshold)
+            assert client.portal.call(quiet.silence, clock) == 0
+        assert len(notices) == 2
         system_event.assert_not_called()
-        # Stop must disarm a fresh silence interval, not merely a sent reminder.
-        sent = publish(client, topic, headers, content="检查已经结束。").json()["data"]
-        assert next_block(ws)["id"] == sent["id"]
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
         while ws.receive_json()["type"] != "done":
             pass
-        clock += timedelta(seconds=threshold)
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        assert len(notices) == 3
+        _stopped_working(chat, topic)
 
 
-def test_publication_from_a_remote_executor_still_counts_as_speaking(
-    client, stub_hooks, monkeypatch
-):
-    """The publish endpoint attributes a publication through the runner's live
-    work, which only knows turns THIS process executes. A remote executor's
-    turn publishes over HTTP with turn_id=None — yet its turn is exactly the
-    one the silence sweep is tracking (`live.active_turn_ids`). The publication
-    must still refresh `last_chat_at`, or the sweep keeps "reminding" a turn
-    that just spoke, counting the silence from turn start."""
-    from app.api.deps import get_work_runner
-    from app.domain.agent import chat as chat_module
-    from app.domain.agent.turn.intake import assistant as assistant_module
-    from app.domain.agent.turn.steps import send as send_module
-    from app.domain.agent.turn.store import session_inputs as session_inputs_module
-
-    topic, headers = room(client)
+def test_another_agents_words_are_not_this_ones(client, stub_hooks, monkeypatch):
+    """Two teammates in one room have two silences: one of them speaking does
+    not stop the reminder the other is owed."""
+    topic, _headers = room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
-    clock = datetime.now(UTC)
-
-    class Clock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return clock
-
-    monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(send_module, "datetime", Clock)
-    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
-    monkeypatch.setattr(assistant_module, "datetime", Clock)
+    quiet = QuietSessionReminders(chat, chat.compute)
     threshold = 90
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
 
@@ -420,131 +434,47 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     notices = []
 
-    async def record_notice(topic_id, notice):
+    async def record_notice(topic_id, notice, **_kwargs):
         notices.append(notice)
         return True
 
-    monkeypatch.setattr(chat, "notify_running_turn", record_notice)
-    # The executor is remote: this process runs no work for the topic, so the
-    # endpoint's runner lookup attributes nothing.
-    monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
+    monkeypatch.setattr(chat, "notify_running_session", record_notice)
     with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if frame["type"] == "turn_started":
                 break
-        # A second agent's turn is live in the same room, and IT is the one
-        # holding the topic's active slot. Attribution must still land on the
-        # PUBLISHER's own turn — crediting this publication to the other
-        # agent's turn would silence ITS reminder while this room stays dark.
-        import dataclasses
+        _read_by_its_session(client, topic)
 
-        clock += timedelta(seconds=threshold)
-        own = next(
-            s for (t, _), s in chat.live.hook_work.items() if t == uuid.UUID(topic)
-        )
-        rival_id = uuid.uuid4()
-        rival = dataclasses.replace(
-            own, work_id=rival_id, acting_agent="cheese-other", started_at=clock
-        )
-        chat.live.hook_work[(uuid.UUID(topic), rival_id)] = rival
-        chat.live.active_turn_ids[uuid.UUID(topic)] = {rival_id}
+        # The other teammate speaks half a window before the clock below: had
+        # its words counted as this seat's, this seat would not be due yet.
+        now = datetime.now(UTC)
 
-        sent = publish(client, topic, headers).json()["data"]
-        assert next_block(ws)["id"] == sent["id"]
-        assert sent["turn_id"] is None  # the endpoint could not attribute it
-        # The publication still counts as the publisher's turn speaking: no
-        # reminder right after it, and none inside a fresh interval either.
-        assert own.last_chat_at == clock
-        assert rival.last_chat_at is None  # never credited across agents
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        clock += timedelta(seconds=threshold - 1)
-        assert client.portal.call(chat.remind_silent_turns) == 0
-        assert notices == []
+        async def another_agent_says() -> None:
+            async with client.test_factory() as session:
+                project = await session.scalar(
+                    select(Block.project_id).where(
+                        Block.conversation_id == uuid.UUID(topic)
+                    )
+                )
+                session.add(
+                    Block(
+                        project_id=project,
+                        conversation_id=uuid.UUID(topic),
+                        author="cheese-0ther0agent0",
+                        author_type=AuthorType.participant,
+                        kind=BlockKind.message,
+                        content="我这边好了",
+                        created_at=now + timedelta(seconds=threshold // 2),
+                    )
+                )
+                await session.commit()
 
-
-def test_publication_attribution_never_guesses_between_agents():
-    """Two live turns, neither the publisher's: attribute nothing.
-
-    The fallback exists so a remote executor's publication refreshes ITS
-    turn. Between two agents whose turns are both live in one room, a
-    publication from a third party matches nobody, and a wrong credit is
-    worse than none: it silences the reminder of a turn that never spoke.
-    """
-    from types import SimpleNamespace
-
-    from app.domain.agent.turn.state.live import LiveWork
-
-    topic = uuid.uuid4()
-    a, b = uuid.uuid4(), uuid.uuid4()
-    live = LiveWork()
-    live.hook_work = {
-        (topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a"),
-        (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
-    }
-    live.active_turn_ids = {topic: {a}}
-    attribute = LiveWork.attributed_work_id
-    # A third party publishes: two live turns, neither theirs — no guess.
-    assert attribute(live, topic, "cheese-c") is None
-    # The publisher's own turn wins even when it is not the active one.
-    assert attribute(live, topic, "cheese-b") == b
-    # Both live turns are the publisher's: the active one breaks the tie.
-    live.hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
-    assert attribute(live, topic, "cheese-a") == a
-    # One live turn only: unambiguous whoever publishes (a token naming no
-    # agent seat resolves to the room's roster, which may differ).
-    live.hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
-    assert attribute(live, topic, "cheese-c") == a
-    # Nothing live: nothing to attribute.
-    live.hook_work = {}
-    assert attribute(live, topic, "cheese-a") is None
-
-
-def test_consuming_work_id_only_delivers_when_unambiguous():
-    """An inbound message goes to exactly one live turn, never a guess.
-
-    Today the active set holds at most one id and this reduces to the old
-    single-slot behavior, including its tolerance of a missing hook state.
-    With several turns live (parallel agents in one room), delivery needs
-    exactly one recipient match — zero or two both hold the message.
-    """
-    from types import SimpleNamespace
-
-    from app.domain.agent.turn.state.live import LiveWork
-
-    topic = uuid.uuid4()
-    a, b = uuid.uuid4(), uuid.uuid4()
-    live = LiveWork()
-    live.hook_work = {
-        (topic, a): SimpleNamespace(work_id=a, agent_instance_handle="inst-a"),
-        (topic, b): SimpleNamespace(work_id=b, agent_instance_handle="inst-b"),
-    }
-    live.active_turn_ids = {topic: {a, b}}
-    consume = LiveWork.consuming_work_id
-    to = lambda handle: lambda s: s.agent_instance_handle == handle  # noqa: E731
-    # Exactly one match: delivered there.
-    assert consume(live, topic, to("inst-a")) == a
-    assert consume(live, topic, to("inst-b")) == b
-    # No match, or both match: held rather than guessed.
-    assert consume(live, topic, to("inst-c")) is None
-    assert consume(live, topic, lambda s: True) is None
-    # No matcher and several live: held.
-    assert consume(live, topic) is None
-    # A live id without hook state is tolerated (single-slot compatibility)…
-    live.active_turn_ids = {topic: {a, b}}
-    del live.hook_work[(topic, b)]
-    assert consume(live, topic, to("inst-a")) is None  # b still could be it
-    # …unless the caller is strict: then a missing state cannot receive.
-    live.active_turn_ids = {topic: {b}}
-    assert consume(live, topic, to("inst-b"), strict=True) is None
-    assert consume(live, topic, to("inst-b"), strict=False) == b
-    # One live turn with its state: the everyday case.
-    live.hook_work[(topic, b)] = SimpleNamespace(
-        work_id=b, agent_instance_handle="inst-b"
-    )
-    assert consume(live, topic, to("inst-b")) == b
-    assert consume(live, topic) == b
+        client.portal.call(another_agent_says)
+        clock = now + timedelta(seconds=threshold + 1)
+        assert client.portal.call(quiet.silence, clock) == 1
+        assert len(notices) == 1
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"pixels"

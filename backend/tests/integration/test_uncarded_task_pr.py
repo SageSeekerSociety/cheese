@@ -15,7 +15,7 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
-from tests.landing import summary_turn_ends
+from tests.landing import written_up
 from tests.support.review_ports import task_teammate
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
@@ -55,7 +55,7 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
     assert first["tasks_merged"] == 1 and first["errors"] == []
     assert second["tasks_merged"] == 0
     # The task closes once its AI teammate has written it up.
-    summary_turn_ends(client, task.id)
+    written_up(client, task.id)
 
     async def read_result():
         from sqlalchemy import select

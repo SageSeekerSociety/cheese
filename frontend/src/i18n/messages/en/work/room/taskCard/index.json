@@ -3,7 +3,5 @@
   "acceptedTimes": "Accepted {n} times",
   "acceptedTimesPr": "Accepted {n} times · PR #{pr}",
   "created": "created a task",
-  "owner": "Owner: {name}",
-  "waitingAnswer": "Waiting for {name} to answer",
-  "waitingReview": "Waiting for {name} to review"
+  "owner": "Owner: {name}"
 }

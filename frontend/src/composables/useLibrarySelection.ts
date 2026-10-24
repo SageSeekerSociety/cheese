@@ -5,6 +5,7 @@
 // 一次。开和关在手机上是一页的进出（`push`／退一格），桌面上只换右边那一栏（`replace`）；
 // 关的时候往哪走由 `closeOverlay` 认来路（见 lib/backOut.ts）。
 import type { RouteLocationNormalizedLoaded, Router } from 'vue-router'
+import type { LibraryShelf } from '@/lib/libraryApi'
 import type { LibraryFile } from '../lib/libraryApi'
 import type { LibraryRow } from './useLibraryPages'
 
@@ -14,7 +15,8 @@ import { closeOverlay } from '../lib/backOut'
 import { getLibraryFile } from '../lib/libraryApi'
 
 export function useLibrarySelection(page: {
-  projectId: () => string
+  /** 哪一个资料库（`LibraryShelf`）。 */
+  shelf: () => LibraryShelf
   /** 表里已经取回来的那些行。 */
   entries: Ref<LibraryRow[]>
   /** 同一个名字被替换以后加一：换过的那一份要重新问一次。 */
@@ -34,11 +36,11 @@ export function useLibrarySelection(page: {
       (fetched.value?.path === selectedPath.value ? fetched.value : null)
   )
   watch(
-    [selectedPath, () => page.projectId(), page.revision],
-    async ([path, projectId]) => {
+    [selectedPath, () => page.shelf(), page.revision],
+    async ([path, shelf]) => {
       if (!path || page.entries.value.some((row) => row.file?.path === path)) return
       try {
-        const found = await getLibraryFile(projectId, path)
+        const found = await getLibraryFile(shelf, path)
         if (selectedPath.value === path) fetched.value = found
       } catch {
         // 地址上那一份已经不在了：右边那一栏不摆，列表照常。

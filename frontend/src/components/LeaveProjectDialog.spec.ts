@@ -37,7 +37,7 @@ function makeRouter(): Router {
   return createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/spaces', name: 'HomeSpaces', component: Blank },
+      { path: '/inbox', name: 'inbox', component: Blank },
       { path: '/projects/:projectId', name: 'project', component: Blank },
       { path: '/:any(.*)*', component: Blank },
     ],
@@ -179,9 +179,9 @@ describe('LeaveProjectDialog 的被拒语义', () => {
     const { router, push, replace } = mount()
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p1'))
-    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('inbox'))
     // 换掉这一格，不在身后压回一条刚才那个项目。
-    expect(replace).toHaveBeenCalledWith({ name: 'HomeSpaces' })
+    expect(replace).toHaveBeenCalledWith({ name: 'inbox' })
     expect(push).not.toHaveBeenCalled()
     expect(screen.queryByText(/退出失败/)).toBeNull()
     expect(refreshMembers).toHaveBeenCalled()

@@ -16,9 +16,14 @@ import { toast } from 'vuetify-sonner'
 import { SpacesApi } from '@/api/spaces'
 import { TagsApi } from '@/api/tags'
 import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskDraftsApi } from '@/api/taskDrafts'
 import { t } from '@/i18n'
+import { markTasksSeen, tasksSeenAt } from '@/lib/spaceTasksSeen'
 import { useSpaceStore } from '@/stores/space'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
+
+/** 侧栏新题目数最多数到几道；再多也只写这么多。 */
+const NEW_TASKS_COUNTED = 50
 
 export function useSpaceData() {
   const space = useSpaceStore()
@@ -29,6 +34,8 @@ export function useSpaceData() {
       space.setSpace(null)
       space.setCategories([])
       space.setPendingAuditCount(0)
+      space.setMyDraftCount(0)
+      space.setNewTaskCount(0)
     }
     space.setCurrentSpaceId(spaceId)
 
@@ -56,6 +63,43 @@ export function useSpaceData() {
       if (spaceId === space.currentSpaceId) space.setPendingAuditCount(data.page.total ?? 0)
     } catch (error) {
       console.error('fetch pending audit count failed', error)
+    }
+  }
+
+  /** 侧栏「我的草稿」旁边的数。读不到就当没有，不打扰。 */
+  const fetchMyDraftCount = async () => {
+    const spaceId = space.currentSpaceId
+    if (!spaceId) return
+    try {
+      const drafts = await TaskDraftsApi.list(spaceId)
+      if (spaceId === space.currentSpaceId) space.setMyDraftCount(drafts.length)
+    } catch {
+      if (spaceId === space.currentSpaceId) space.setMyDraftCount(0)
+    }
+  }
+
+  /** 上次打开题目列表之后新发布了几道（最多数到一页）。从没打开过就从现在算起。 */
+  const fetchNewTaskCount = async () => {
+    const spaceId = space.currentSpaceId
+    if (!spaceId) return
+    const seen = tasksSeenAt(spaceId)
+    if (seen === null) {
+      markTasksSeen(spaceId)
+      space.setNewTaskCount(0)
+      return
+    }
+    try {
+      const data = await TaskBoardApi.list({
+        space: spaceId,
+        approved: 'APPROVED',
+        pageSize: NEW_TASKS_COUNTED,
+        sort_by: 'publishedAt',
+        sort_order: 'desc',
+      })
+      const fresh = data.tasks.filter((task) => (task.publishedAt ?? task.createdAt) > seen).length
+      if (spaceId === space.currentSpaceId) space.setNewTaskCount(fresh)
+    } catch {
+      // 数不出来就不显示。
     }
   }
 
@@ -159,11 +203,22 @@ export function useSpaceData() {
     }
   }
 
-  const createCategory = async (name: string, description?: string | null, displayOrder?: number) => {
+  const createCategory = async (
+    name: string,
+    description?: string | null,
+    displayOrder?: number,
+    defaultRole?: string
+  ) => {
     if (!space.currentSpaceId) return
 
     try {
-      await SpacesApi.createCategory(space.currentSpaceId, { name, description, displayOrder })
+      await SpacesApi.createCategory(space.currentSpaceId, {
+        name,
+        description,
+        displayOrder,
+        // 没指定就不带这个键（`undefined` 与「省略」同义，但显式省掉更清楚）。
+        ...(defaultRole !== undefined ? { defaultRole } : {}),
+      })
       await fetchCategories()
       toast.success(t('spaces.detail.manageCategories.createSuccess'))
     } catch (error) {
@@ -288,6 +343,8 @@ export function useSpaceData() {
 
   return {
     fetchPendingAuditCount,
+    fetchMyDraftCount,
+    fetchNewTaskCount,
     fetchSpace,
     updateSpace,
     updateTemplates,

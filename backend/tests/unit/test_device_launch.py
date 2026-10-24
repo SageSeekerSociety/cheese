@@ -190,6 +190,25 @@ def test_the_contract_stays_put_across_the_rooms_own_turns():
     assert later.contract == first.contract
 
 
+def test_a_release_that_changes_only_the_installer_relaunches_no_session(
+    monkeypatch,
+):
+    """The installer of the pinned build runs before a session starts and is
+    not kept by it, so a deploy that edits only it leaves live sessions be."""
+    before = device_launch.launch_holes(state=STATE)
+    real = Path.read_text
+
+    def edited(self, *args, **kwargs):
+        text = real(self, *args, **kwargs)
+        return text + "\n# edited\n" if self.name == "executor_download.py" else text
+
+    monkeypatch.setattr(Path, "read_text", edited)
+    after = device_launch.launch_holes(state=STATE)
+
+    assert "# edited" in after.prepare
+    assert after.contract == before.contract
+
+
 def test_the_contract_moves_with_whatever_the_session_reads_only_at_launch(
     monkeypatch,
 ):
@@ -435,7 +454,6 @@ def _run_prepare(
     *,
     api: str = "",
     system_prompt: str = "",
-    curl=None,
     handle: str = "",
     target=None,
 ):
@@ -446,9 +464,6 @@ def _run_prepare(
     session.mkdir(parents=True, exist_ok=True)
     bindir = tmp_path / "bin"
     _bootstrap_passthrough(bindir)
-    if curl is not None:
-        (bindir / "curl").write_text(curl)
-        (bindir / "curl").chmod(0o755)
     script, _seat = _prepare_script(session, system_prompt=system_prompt, handle=handle)
     env = {
         **_clean_environ(),
@@ -626,52 +641,20 @@ def test_no_claude_anywhere_is_named_not_started(tmp_path):
     assert not (session / "command").exists()
 
 
-def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) -> str:
-    """A `curl` that logs its URL and writes what it was asked for to `-o`.
-
-    A claude download gets a stand-in binary. When ``bundle`` is given, the
-    skill-bundle URL a launch fetches gets the real bytes back, so the sha256
-    the launcher checks against the digest in its script matches."""
-    serve_bundle = (
-        f'case "$url" in *"/skill-bundles/"*) '
-        f'cat {shlex.quote(str(bundle))} > "$dest"; exit 0 ;; esac\n'
-        if bundle is not None
-        else ""
-    )
-    return (
-        "#!/bin/sh\n"
-        # A `--head` is the platform asking a package mirror whether it answers
-        # (`package_mirrors`), and it is not a download this fixture counts.
-        'for a in "$@"; do [ "$a" = "--head" ] && exit 0; done\n'
-        'dest=""; url=""\n'
-        'while [ "$#" -gt 0 ]; do\n'
-        '  case "$1" in -o) shift; dest="$1" ;; http*) url="$1" ;; esac\n'
-        "  shift\n"
-        "done\n"
-        f'echo "$url" >> {shlex.quote(str(log))}\n'
-        + serve_bundle
-        + "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        + f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
-        + "AGENT\n"
-    )
-
-
 def test_a_missing_pin_is_fetched_from_the_platform_and_preferred(tmp_path):
     """A pin bump reaches a machine enrolled under the old pin at its next
     launch: the pinned build is placed from the platform and wins over whatever
     the machine has on its own."""
     _stand_in_claude(tmp_path / "owner/.local/bin/claude")
-    log = tmp_path / "curl.log"
-    owner, session, result = _run_prepare(
-        tmp_path, api="https://platform.invalid/", curl=_fetching_curl(log)
-    )
+    with _platform_server(None) as (api, hits):
+        owner, session, result = _run_prepare(tmp_path, api=api + "/")
 
     assert result.returncode == 0, result.stderr
     pin = owner / ".cheese/claude/versions" / PIN
     assert pin.is_file() and os.access(pin, os.X_OK)
-    (url,) = log.read_text().splitlines()
+    (url,) = hits
     assert re.fullmatch(
-        rf"https://platform\.invalid/connector/claude/{re.escape(PIN)}/"
+        rf"/connector/claude/{re.escape(PIN)}/"
         r"(linux|darwin)-(x64|arm64)(-musl)?/claude",
         url,
     )
@@ -681,13 +664,15 @@ def test_a_missing_pin_is_fetched_from_the_platform_and_preferred(tmp_path):
 
 def test_a_failed_fetch_falls_back_to_the_machines_own_build(tmp_path):
     claude = _stand_in_claude(tmp_path / "owner/.local/bin/claude")
-    owner, session, result = _run_prepare(
-        tmp_path, api="https://platform.invalid", curl="#!/bin/sh\nexit 22\n"
-    )
+    with _platform_server(None, claude=None) as (api, _):
+        owner, session, result = _run_prepare(tmp_path, api=api)
 
     assert result.returncode == 0, result.stderr
     assert f"could not fetch claude {PIN}" in result.stderr
-    assert not list((owner / ".cheese/claude/versions").iterdir())
+    # Nothing a later attempt could mistake for the build; the lock stays.
+    assert [p.name for p in (owner / ".cheese/claude/versions").iterdir()] == [
+        f"{PIN}.lock"
+    ]
     argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
     assert argv[4] == str(claude)
 
@@ -695,13 +680,32 @@ def test_a_failed_fetch_falls_back_to_the_machines_own_build(tmp_path):
 def test_a_present_pin_is_not_fetched_again(tmp_path):
     owner = tmp_path / "owner"
     pin = _stand_in_claude(owner / ".cheese/claude/versions" / PIN)
-    log = tmp_path / "curl.log"
-    _, session, result = _run_prepare(
-        tmp_path, api="https://platform.invalid", curl=_fetching_curl(log)
-    )
+    with _platform_server(None) as (api, hits):
+        _, session, result = _run_prepare(tmp_path, api=api)
 
     assert result.returncode == 0, result.stderr
-    assert not log.exists()
+    assert hits == []
+    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    assert argv[4] == str(pin)
+
+
+def test_a_fetch_that_was_cut_off_is_continued_not_restarted(tmp_path):
+    """The build is a quarter of a gigabyte. What an earlier attempt fetched —
+    this launch's, a room's preparation, or the desktop app fetching it ahead —
+    is kept beside the pin, and the next launch asks only for the rest."""
+    owner = tmp_path / "owner"
+    versions = owner / ".cheese/claude/versions"
+    versions.mkdir(parents=True)
+    held = len(_served_build()) // 2
+    (versions / f"{PIN}.partial").write_bytes(_served_build()[:held])
+    ranges: list[str | None] = []
+    with _platform_server(None, ranges=ranges) as (api, _):
+        _, session, result = _run_prepare(tmp_path, api=api)
+
+    assert result.returncode == 0, result.stderr
+    assert ranges == [f"bytes={held}-"]
+    pin = versions / PIN
+    assert pin.read_bytes() == _served_build()
     argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
     assert argv[4] == str(pin)
 
@@ -909,27 +913,60 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     ).resolve()
 
 
+def _served_build(version: str = PIN) -> bytes:
+    """The build the platform serves in these tests: it answers `--version`."""
+    return (
+        "#!/bin/sh\n"
+        f'if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; fi\n'
+        "exit 0\n"
+    ).encode() + b"# filler\n" * 512
+
+
 @contextlib.contextmanager
-def _bundle_server(bundle: bytes | None):
-    """The platform's skill-bundle route, as far as a launch can tell: it serves
-    ``bundle`` at any ``/connector/skill-bundles/`` path (or 404s when None)
-    and records every path asked for. The launch fetches it with python, not
-    curl, so the curl stand-in cannot answer for it."""
+def _platform_server(
+    bundle: bytes | None,
+    *,
+    claude: str | None = PIN,
+    ranges: list[str | None] | None = None,
+):
+    """The platform's routes a launch fetches from, as far as it can tell: the
+    skill bundle at any ``/connector/skill-bundles/`` path (404 when None), and
+    a build reporting ``claude`` as its version at ``/connector/claude/`` with
+    the digest the platform names, answering a Range request for the rest of it
+    (404 when None). Records every path asked for, and into ``ranges`` the
+    Range each request for the build carried."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     hits: list[str] = []
+    build = _served_build(claude or PIN)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             hits.append(self.path)
-            if bundle is None or "/connector/skill-bundles/" not in self.path:
+            status, first = 200, 0
+            if claude is not None and self.path.startswith("/connector/claude/"):
+                body, digest = build, hashlib.sha256(build).hexdigest()
+                asked = self.headers.get("Range")
+                if ranges is not None:
+                    ranges.append(asked)
+                if asked:
+                    status, first = 206, int(asked.removeprefix("bytes=").rstrip("-"))
+            elif bundle is not None and "/connector/skill-bundles/" in self.path:
+                body, digest = bundle, None
+            else:
                 self.send_response(404)
                 self.end_headers()
                 return
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(bundle)))
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body) - first))
+            if status == 206:
+                self.send_header(
+                    "Content-Range", f"bytes {first}-{len(body) - 1}/{len(body)}"
+                )
+            if digest:
+                self.send_header("X-Checksum-SHA256", digest)
             self.end_headers()
-            self.wfile.write(bundle)
+            self.wfile.write(body[first:])
 
         def log_message(self, *_):
             pass
@@ -946,7 +983,7 @@ def _bundle_server(bundle: bytes | None):
 
 def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_path):
     bundle = session_skill_bundle(None)
-    served = _bundle_server(bundle)
+    served = _platform_server(bundle)
     api, hits = served.__enter__()
     owner, session, work, _claude, env = _machine(tmp_path, api=api)
     config = work / ".claude"
@@ -974,23 +1011,21 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
     for skill in retired:
         skill.parent.mkdir(parents=True)
         skill.write_text("A guide this session no longer gets\n")
-    log = tmp_path / "curl.log"
-    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
-    (tmp_path / "bin/curl").chmod(0o755)
-
     try:
         result = _launch(tmp_path, env)
     finally:
         served.__exit__(None, None, None)
 
     assert result.returncode == 0, result.stderr
-    # One fetch each: the pinned build (curl) and this project's skill bundle.
+    # One fetch each: the pinned build and this project's skill bundle.
     # The bundle is content-addressed, so this machine downloads it here and
     # never again (device_launch), keyed by the digest this launch carried.
-    urls = log.read_text().splitlines()
-    assert len(urls) == 1 and f"/connector/claude/{PIN}/" in urls[0]
+    builds = [hit for hit in hits if hit.startswith("/connector/claude/")]
+    assert len(builds) == 1 and builds[0].startswith(f"/connector/claude/{PIN}/")
     digest = hashlib.sha256(bundle).hexdigest()
-    assert hits == [f"/connector/skill-bundles/{digest}"]
+    assert [hit for hit in hits if hit not in builds] == [
+        f"/connector/skill-bundles/{digest}"
+    ]
     assert {path: path.read_bytes() for path in protected} == before
     assert set(owner.iterdir()) == original_entries | {owner / ".cheese"}
     assert set(work.rglob("*")) == project_entries
@@ -1005,21 +1040,17 @@ def test_a_cached_skill_bundle_is_never_refetched(tmp_path):
     project's bundle fetches the pinned build and nothing else. The bytes are
     the same for every room and project on the machine (the platform set), so
     one launch here spares every later session the download."""
-    owner, session, _work, _claude, env = _machine(
-        tmp_path, api="https://fixture.invalid"
-    )
-    digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
-    cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
-    cache.parent.mkdir(parents=True)
-    cache.write_bytes(session_skill_bundle(None))
-    log = tmp_path / "curl.log"
-    (tmp_path / "bin/curl").write_text(_fetching_curl(log))
-    (tmp_path / "bin/curl").chmod(0o755)
+    with _platform_server(None) as (api, hits):
+        owner, session, _work, _claude, env = _machine(tmp_path, api=api)
+        digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()
+        cache = owner / ".cheese/skill-bundles" / f"{digest}.json.gz"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(session_skill_bundle(None))
 
-    result = _launch(tmp_path, env)
+        result = _launch(tmp_path, env)
 
     assert result.returncode == 0, result.stderr
-    assert all("/skill-bundles/" not in url for url in log.read_text().splitlines())
+    assert all("/skill-bundles/" not in hit for hit in hits)
     assert (seat_of(session) / ".claude/skills/cheese/SKILL.md").is_file()
 
 
@@ -1027,7 +1058,7 @@ def test_a_launch_whose_skills_cannot_be_fetched_starts_and_says_so(tmp_path):
     """Like the pinned build above it: a machine that cannot get the bundle for
     a moment must not become one where nothing starts. It starts without the
     skills, says so in the launch log naming the digest, and caches nothing."""
-    with _bundle_server(None) as (api, hits):
+    with _platform_server(None) as (api, hits):
         owner, session, _work, _claude, env = _machine(tmp_path, api=api)
         (tmp_path / "bin/curl").write_text("#!/bin/sh\nexit 1\n")
         (tmp_path / "bin/curl").chmod(0o755)
@@ -1039,7 +1070,8 @@ def test_a_launch_whose_skills_cannot_be_fetched_starts_and_says_so(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "STARTING WITHOUT THIS PROJECT'S SKILLS" in result.stderr
     assert digest in result.stderr
-    assert len(hits) == 3, "three attempts before giving up"
+    asked = [hit for hit in hits if "/skill-bundles/" in hit]
+    assert len(asked) == 3, "three attempts before giving up"
     assert not (owner / ".cheese/skill-bundles" / f"{digest}.json.gz").exists()
     assert not (seat_of(session) / ".claude/skills/cheese/SKILL.md").exists()
 

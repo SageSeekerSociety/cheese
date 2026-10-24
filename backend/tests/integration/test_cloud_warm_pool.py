@@ -5,9 +5,6 @@ Taking a warm machine into the host pool is covered with placement
 (``test_cloud_host_pool.py``).
 """
 
-from tests.support.devices import enrollment_team
-
-
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -17,13 +14,15 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.device.models import DeviceRow
-from app.domain.device.wiring import sql_device_service
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.machine import warm
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 def test_central_warm_creation_does_not_request_subscription(warm_case, monkeypatch):
@@ -118,6 +117,7 @@ def warm_case(client, monkeypatch):
                     device_id=device.device_id,
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.1",
+                    sandbox_disk_gb=64,
                     create_request={
                         "hostname": "warm-test",
                         "offeringId": 1,
@@ -150,7 +150,9 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
     monkeypatch.setattr(settings, "microcloud_direct_control", direct)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
-    bootstrap = AsyncMock(return_value="Connected.")
+    bootstrap = AsyncMock(
+        return_value="CHEESE_SANDBOX_DISK_BYTES=64000000000\nConnected."
+    )
     monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
 
     async def run():
@@ -455,3 +457,51 @@ def test_a_full_pool_still_asks_again_for_a_failed_cleanup(warm_case, monkeypatc
             assert cloud.deleted == [901]
 
     client.portal.call(lambda: run())
+
+
+def test_a_machine_being_prepared_holds_no_database_connection(warm_case, monkeypatch):
+    """Bootstrapping a new machine takes about a minute of SSH; for all of it the
+    sweep that started it holds none of the backend's database connections, which
+    every request needs one of."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+    pool = client.test_app_engine.pool
+    held_during_bootstrap = []
+
+    async def bootstrap(**_):
+        held_during_bootstrap.append(pool.checkedout())
+        return "CHEESE_SANDBOX_DISK_BYTES=64000000000\nConnected."
+
+    monkeypatch.setattr("app.domain.machine.warm.enrollment.run_bootstrap", bootstrap)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            row = await session.scalar(select(WarmMachine))
+            row.state = "preparing"
+            row.machine_id = None
+            row.enrolled_at = None
+            row.bootstrap_key = "test-bootstrap"
+            row.create_request = {
+                **row.create_request,
+                "customerId": 7,
+                "accountId": 9,
+                "warmPoolKey": str(row.id),
+            }
+            await session.commit()
+            row_id = row.id
+        await warm.sweep_warm_pool(client.test_request_factory, cloud)
+        async with client.test_request_factory() as session:
+            row = await session.get(WarmMachine, row_id)
+            cloud.machines[row.machine_id].update(
+                status="running", aiStatus="disabled", ip="192.0.2.1"
+            )
+        await warm.sweep_warm_pool(client.test_request_factory, cloud)
+        async with client.test_request_factory() as session:
+            row = await session.get(WarmMachine, row_id)
+            assert row.state == "ready"
+            assert row.enrolled_at is not None
+            assert row.bootstrap_key is None
+
+    client.portal.call(lambda: run())
+    assert held_during_bootstrap == [0]

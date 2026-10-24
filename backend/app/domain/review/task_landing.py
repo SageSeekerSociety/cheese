@@ -4,23 +4,23 @@ A task may deliver several times. The card says whether this delivery is the
 last step (``AcceptCard.completes_task``). Any step but the last leaves the
 task open and moves it onto a branch cut from the project's latest code, for
 its AI teammate to carry on from. The last one has the AI teammate write the
-task up, and the task closes when that turn ends (`room_task.closing`). Either
+task up and close it (`room_task.closing`). Either
 way the discussion the task came from hears what landed. Nothing is watched
 after the merge: the repository's CI and deploy on its default branch are
 its own.
 
-A last step lands as a step after all when the task's own AI teammate is
-working in it on something begun after the delivery was handed over, or a
-message to it there is waiting for its turn — someone asked for more after
-the card went up, and accepted it anyway. What it is doing is not in the
+A last step lands as a step after all when the task's own AI teammate's
+session is at work on a message it read that was sent after the delivery was
+handed over, or a message to it there is still waiting to be read — someone
+asked for more after the card went up, and accepted it anyway. What it is doing is not in the
 delivery, and closing the task would stop it half done and leave it with
 nowhere to be delivered. So the task stays open on the next step's branch,
 and the AI teammate delivers that work as the next step. The same holds for a
 task already being written up when such work starts in it
 (`go_on_while_working`). Only the task's own teammate's work counts, and only
-what a person or the teammate itself began: a turn the platform started —
-another seat woken in the task, a conflict or CI fix — is not more work asked
-of it (`room_task.closing.unfinished`).
+what a person or the teammate itself asked for: an instruction the platform
+gave — another seat woken in the task, a conflict or CI fix — is not more work
+asked of it (`room_task.closing.unfinished`).
 
 Every path that sees a delivery merge comes through here — an accept click,
 the merge queue, the poller, a PR merged by hand — so none of them can keep
@@ -53,6 +53,7 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
+
 
 def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
     """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
@@ -227,8 +228,14 @@ async def _asked_for_more(
     if teammate is None:
         # 项目和房间都不在了：这个任务无处落脚，也就没有队友的活要认。
         return []
-    _instance_id, handle = teammate
-    return await unfinished(session, task.id, since=since, by=handle)
+    instance_id, handle = teammate
+    return await unfinished(
+        session,
+        task.id,
+        since=since,
+        by=handle,
+        seat=agent_instance_handle(instance_id),
+    )
 
 
 async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
@@ -253,8 +260,8 @@ async def _go_on(
     base_branch: str | None = None,
 ) -> None:
     """``task``'s last step landed while its AI teammate was at work on more:
-    it goes on to the next step, and its AI teammate hears so once that work's
-    turn ends. The write-up instruction, if one was given, is not sent
+    it goes on to the next step, and its AI teammate hears so. The write-up
+    instruction, if one was given, is not sent
     (`delivery.agent.dispatch_pending`)."""
     await TaskService(session).next_step(task, base_branch=base_branch)
     await tell_agent(
@@ -372,8 +379,8 @@ async def tell_agent(
     record_instruction: RecordInstruction | None,
     closes: bool = False,
 ) -> None:
-    """The task's AI teammate hears ``content`` on its next turn. ``closes``:
-    the task closes when that turn ends.
+    """The task's AI teammate hears ``content``. ``closes``: it is the
+    instruction to write the finished task up and close it.
 
     ``record_instruction`` 是第 5 层那个 `delivery.agent.record_task_instruction`，
     由调用链上的门递下来（`app.domain.review.ports.RecordInstruction`）：这句话
@@ -415,7 +422,7 @@ def task_next_step_prompt(*, title: str, task_id) -> str:
         f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
         f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "对照实况文档接着做下一步，做完再用 cheese_card(action=request) 递一次交付；"
         "这一步做完任务目标就全部达成时 completes_task 填 true，"
         "还有没做完的就填 false，并在交付说明里写下一步做什么。"
     )
@@ -430,24 +437,25 @@ def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
         "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
         f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
-        "再用 cheese_accept_request 把它作为下一步递交，"
+        "再用 cheese_card(action=request) 把它作为下一步递交，"
         "做完任务目标就全部达成时 completes_task 填 true。"
-        "新做的东西如果不需要交付，就用 cheese_close_task 关闭任务，结论里写明。"
+        "新做的东西如果不需要交付，就用 cheese_task(action=close) 关闭任务，结论里写明。"
     )
 
 
 def task_summary_prompt(*, title: str) -> str:
-    """What a task's agent is told when its last delivery lands: one turn to
-    write the task up, after which the task closes."""
+    """What a task's agent is told when its last delivery lands: write the task
+    up, then close it."""
     return (
-        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
-        "这一轮只做两件事：\n"
-        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        f"任务「{title}」的最后一次交付已经采纳并合并，写完总结就关闭任务。"
+        "只做三件事：\n"
+        "1. 用 cheese_doc(action=get) 读实况文档，用 cheese_doc(action=edit) 改成任务完成时的样子："
         "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
         "没有就不写；过程中被推翻的计划删掉。\n"
         "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
         "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
         "写明是什么、没有交付。"
         "没什么可补的，只写一句结果。\n"
-        "不要改动文件，不要提交审阅，不要关闭任务。"
+        "3. 用 cheese_task(action=close) 关闭任务，结论写一句结果。\n"
+        "不要改动文件，不要提交审阅。"
     )

@@ -9,8 +9,9 @@
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
-import type { Block, TodoItem, Topic } from '../../cx_types'
+import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { GroupAnswer } from '../../lib/askGroups'
 import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
@@ -18,17 +19,21 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { RefNames } from '../../lib/refChip'
+import type { ChapterRow } from '../../types/chapters'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
+import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
+import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
+import AskGroupCard from '../ask/AskGroupCard.vue'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
@@ -37,6 +42,8 @@ import TaskCard from '../room/TaskCard.vue'
 import TaskCreatedPost from '../room/TaskCreatedPost.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
+
+import ChapterMark from './ChapterMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import RoutineRunLine from '@/components/routine/RoutineRunLine.vue'
@@ -63,6 +70,11 @@ const props = defineProps<{
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
+  /** 组头块的 id → 这一组的每道题（`lib/askGroups`）；组里其余几行不单独画。 */
+  askGroups?: Map<string, Block[]>
+  /** 整组提交在路上 / 失败时那一句：由面板拿着（`useAskGroupAnswer`）。 */
+  askGroupBusy?: boolean
+  askGroupFailure?: string | null
   /** 开头还没挂上的行数（首屏分批挂行，room/composables/useRowBatch）。 */
   hiddenRows?: number
   dayLabels: Map<string, string>
@@ -82,6 +94,8 @@ const props = defineProps<{
   }
   barBlock: Block | null
   barEditable: boolean
+  /** 上一下是键盘在走这一列（useChatRowActions 的 kbdNav）：焦点框由我们自己画。 */
+  kbdNav?: boolean
   reactionPickerFor: string | null
   loadingHistory: boolean
   hasMore: boolean
@@ -118,9 +132,10 @@ const props = defineProps<{
       彩色首字母。原名叫 `avatarSrc`，改成 `avatarOf`：和这批修复里其它地方（ThreadLine、
       文档链）已经统一的名字一致，一个概念只有一个叫法。 */
   avatarOf: (handle: string) => string | null
-  displayName: (m: Block) => string
+  displayName: (m: Block | ReplyPreview) => string
+  authorTitle?: (m: Block) => string | null
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
-  parentOf: (m: Block) => Block | undefined
+  parentOf: (m: Block) => Block | ReplyPreview | undefined
   showReplyCue: (m: Block) => boolean
   fmtTime: (iso: string) => string
   pendingBlock: (item: Outgoing) => Block
@@ -134,6 +149,12 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）。 */
   pinnedIds?: ReadonlySet<string>
+  /** 这段对话能钉章节（频道主线、任务）：消息的 ⋯ 里多一项「钉成章节」。 */
+  chapterable?: boolean
+  /** 已经钉成章节的那几条（block id）。 */
+  chapterIds?: ReadonlySet<string>
+  /** 这段对话的章节，按对话里的顺序；每条起头消息前画一道章节刻度。 */
+  chapters?: ChapterRow[]
   /** 频道里一件任务的那张卡；不认得就是 null。 */
   taskOf?: (taskId: string) => TaskLine | null
   /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
@@ -155,6 +176,7 @@ const emit = defineEmits<{
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
+  (e: 'ask-group-submit', questionId: string, answers: Record<string, GroupAnswer>): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -163,6 +185,8 @@ const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'pin', block: Block): void
   (e: 'unpin', block: Block): void
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', block: Block): void
   (e: 'keep', block: Block): void
   (e: 'retry-send', clientId: string): void
   (e: 'starter', text: string): void
@@ -170,6 +194,16 @@ const emit = defineEmits<{
   (e: 'settle-sent', event: AnimationEvent, clientId: string): void
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
+
+// 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
+// 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
+// 不是要画的东西，所以不放进响应式状态。
+let keyedBefore: ReadonlyMap<string, string> = new Map()
+const rowKeyList = computed(() => {
+  const { keys, byBlock } = rowKeys(props.rows, keyedBefore)
+  keyedBefore = byBlock
+  return keys
+})
 
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
 // 「正在做」，也是上一轮没走完的，不该跟着转。
@@ -216,11 +250,12 @@ const createdCont = computed(() =>
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
 )
+const NO_TASKS: TaskLine[] = []
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
-  return props.tasksUnder?.(blockId) ?? []
+  return props.tasksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -228,8 +263,21 @@ function became(m: Block): TaskLine | undefined {
 }
 /** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
 function madeFrom(m: Block): TaskLine[] {
+  const tasks = under(m.id)
+  if (!tasks.length) return NO_TASKS
   const own = props.threadable ? became(m) : undefined
-  return under(m.id).filter((task) => task !== own)
+  return own ? tasks.filter((task) => task !== own) : tasks
+}
+
+/**
+ * 这道题上我有一条答复还压在发件箱里、没落库：卡片把选项先按住。
+ *
+ * 卡片收起要等那条消息落库、题块再带着答案回来，这一来一回里手快就会多点出几条消息，
+ * 房间里真会多出几条。被服务端拒掉的那条不算：那一下没答上题，选项得还给人家重选
+ * （他点那条消息上的「重试」，它回到在路上，卡片跟着再锁上）。
+ */
+function answeringQuestion(id: string): boolean {
+  return props.outbox.some((item) => item.replyTo === id && item.state !== 'failed')
 }
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
@@ -276,7 +324,7 @@ const faceRows = computed(() => {
 // 悬停在动的头像上：现场顶上那一行，连同已经用了多久。秒数只在有队友在跑时走。
 const now = ref(Date.now())
 let ticker: ReturnType<typeof setInterval> | undefined
-const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status))
+const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status && f.status.startedAt !== null))
 watch(
   ticking,
   (on) => {
@@ -301,6 +349,23 @@ function faceLabel(face: AgentFace | undefined): string | null {
 function faceStatus(face: AgentFace | undefined): string | null {
   return face?.status ? siteStatusLabel(face.status) : null
 }
+
+const faceLabels = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const label = faceLabel(face)
+    if (label) out.set(id, label)
+  }
+  return out
+})
+const faceStatuses = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const status = faceStatus(face)
+    if (status) out.set(id, status)
+  }
+  return out
+})
 
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
@@ -364,6 +429,22 @@ function rowLabel(name: string | null, iso: string, text: string): string {
   const time = props.fmtTime(iso)
   return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
+// 章节刻度：每条被钉成章节的消息是第几章、叫什么。优先用书签自己的名字（人改的或模型起的），
+// 没有时退回那条消息的第一行；不在当前窗口里的章节也照样占一个号，翻动历史时刻度上的号不会跳。
+const chapterMarks = computed(() => {
+  const marks = new Map<string, { no: number; title: string }>()
+  inReadingOrder(props.chapters ?? []).forEach((chapter, i) => {
+    marks.set(chapter.block.id, {
+      no: i + 1,
+      title: chapter.title || replySnippet(chapter.block, props.refs, 60) || t('work.channel.chapters.untitled'),
+    })
+  })
+  return marks
+})
+function chapterMarkOf(blockId: string) {
+  return chapterMarks.value.get(blockId) ?? null
+}
+
 const rowLabels = computed(() =>
   props.rows.map(({ block, notice }, i) => {
     const task = createdTasks.value[i]
@@ -410,6 +491,8 @@ const rowLabels = computed(() =>
         :processable="processable"
         :pinnable="pinnable"
         :pinned-ids="pinnedIds"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
@@ -419,6 +502,8 @@ const rowLabels = computed(() =>
         @edit="emit('edit', $event)"
         @pin="emit('pin', $event)"
         @unpin="emit('unpin', $event)"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <!-- 骨架和真的那几行同形同高：到货时骨架淡出，不推动下面的东西。 -->
       <Transition name="tl-skel">
@@ -460,12 +545,13 @@ const rowLabels = computed(() =>
            没有自己的盒子样式，排版和直接排在 .tl-content 里一样。 -->
       <div
         class="tl-feed"
+        :class="{ 'tl-feed--kbd': kbdNav }"
         data-chat-feed
         role="feed"
         :aria-label="t('work.room.chat.timelineLabel')"
         :aria-busy="loadingHistory || loadingOlder"
       >
-        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="rowKeyList[i]">
           <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
           <template v-if="i >= (hiddenRows ?? 0)">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
@@ -477,6 +563,10 @@ const rowLabels = computed(() =>
               <v-icon size="12">mdi-arrow-down</v-icon>
               {{ t('work.room.chat.newMessagesBelow') }}
             </TimelineMark>
+            <!-- 章节刻度：这一节从这条消息开始。 -->
+            <template v-if="!notice && chapterMarkOf(m.id)">
+              <ChapterMark :no="chapterMarkOf(m.id)!.no" :title="chapterMarkOf(m.id)!.title" />
+            </template>
             <TaskCreatedPost
               v-if="createdTasks[i]"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
@@ -504,8 +594,8 @@ const rowLabels = computed(() =>
               :time-of="fmtTime"
               :cont="noticeCont[i]"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :time="fmtTime(m.created_at)"
               :agent-name="agentName"
               :refs="refs"
@@ -523,6 +613,28 @@ const rowLabels = computed(() =>
               @retry="emit('retry')"
               @jump="emit('jump', $event)"
             />
+            <!-- 一次问的几道题：收成一张卡画（`lib/askGroups` 把同组的行并到组头）。 -->
+            <section
+              v-else-if="!notice && askGroups?.get(m.id)"
+              class="tl-ask-group"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-label="rowLabels[i]"
+            >
+              <AskGroupCard
+                :blocks="askGroups!.get(m.id)!"
+                :asker="displayName(m)"
+                :names="refs.mentionNames"
+                :viewer="viewer"
+                :closed="askClosed"
+                :busy="askGroupBusy"
+                :failure="askGroupFailure"
+                @submit="(payload) => emit('ask-group-submit', payload.questionId, payload.answers)"
+              />
+            </section>
             <!-- message row -->
             <RoomMessage
               v-else-if="!notice"
@@ -540,18 +652,21 @@ const rowLabels = computed(() =>
               :mine="isMine(m)"
               :topic-id="topic?.id ?? null"
               :author-name="displayName(m)"
+              :author-title="authorTitle?.(m) ?? null"
               :external="isExternal(m.author)"
               :avatar="avatarOf(m.author)"
               :is-agent="isAgentBlock(m)"
               :time="fmtTime(m.created_at)"
               :refs="refs"
+              :name-of-handle="nameOf"
               :viewer="viewer"
               :ask-closed="askClosed"
+              :ask-answering="answeringQuestion(m.id)"
               :active="bar.shown && bar.id === m.id"
               :live="liveChecklists.has(m.id)"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :editing="editingId === m.id"
               :saving="editSaving"
               :mention-pool="mentionPool"
@@ -594,7 +709,7 @@ const rowLabels = computed(() =>
             <div
               v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
-              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
             >
               <div v-if="threadable && m.thread" class="msg-work__talk">
@@ -661,7 +776,11 @@ const rowLabels = computed(() =>
             :refs="refs"
             :viewer="viewer"
             :ask-busy="false"
-            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+            :outgoing="{
+              error: item.error,
+              failed: item.state === 'failed',
+              slow: !!item.slow || !!outgoingState(item),
+            }"
             @animationend="emit('settle-sent', $event, item.clientId)"
             @retry="emit('retry-send', item.clientId)"
             @edit="emit('edit-send', item)"
@@ -681,6 +800,7 @@ const rowLabels = computed(() =>
           :mine="false"
           :topic-id="topic?.id ?? null"
           :author-name="displayName(m)"
+          :author-title="authorTitle?.(m) ?? null"
           :external="isExternal(m.author)"
           :avatar="avatarOf(m.author)"
           :is-agent="isAgentBlock(m)"
@@ -858,9 +978,16 @@ const rowLabels = computed(() =>
   }
 }
 
-/* 键盘停在一条上：焦点环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——行是
-   整宽的，滚动区会把画在外面的环左右切掉。 */
+/* 焦点框不交给浏览器的 :focus-visible 判据：它见到任何一次按键都算「人在用键盘」，
+   有的系统还会把音量/媒体键也递进网页——点过一条消息再按一下音量键（只想调音量），
+   整行就亮起一圈。这里只认这一列自己用的那几个键（useTimelineKeys 的 isTimelineKey），
+   由 kbdNav 决定画不画。环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——
+   行是整宽的，滚动区会把画在外面的环左右切掉。 */
 .tl-feed > [data-feed-item]:focus-visible {
+  outline: none;
+}
+.tl-feed.tl-feed--kbd > [data-feed-item]:focus {
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 </style>

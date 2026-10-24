@@ -2,7 +2,7 @@
 // 项目总览（容器）：读项目目标、最近进展、项目的任务和名册，去任务页、文档
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
-import type { ProjectMemberRow, RoomTask } from '@/cx_types'
+import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
 
@@ -22,10 +22,11 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
-import { memberName } from '@/lib/agentNames'
+import { agentNames, memberName } from '@/lib/agentNames'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
+import { TASK_FOLDER } from '@/lib/taskRevision'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
@@ -99,6 +100,16 @@ const members = computed(() => store.members as ProjectMemberRow[])
 const names = computed(() =>
   Object.fromEntries(members.value.map((m) => [m.user_handle, memberName(m) || m.user_handle]))
 )
+// 每个频道坐着的那位队友叫什么：任务没单独指定队友时，做它的就是它所在频道的这位。
+const roomAgentNames = computed(() => {
+  const seats = agentNames([], members.value)
+  return Object.fromEntries(
+    (store.topics as Topic[]).flatMap((topic) => {
+      const name = topic.agent_handle ? seats.get(topic.agent_handle) : undefined
+      return name ? [[topic.id, name]] : []
+    })
+  )
+})
 // 没挑过头像（avatar_id 是 null）时给空串，交给 UserAvatar 画首字母。
 const avatars = computed(() =>
   Object.fromEntries(members.value.map((m) => [m.user_handle, m.avatar_id == null ? '' : getAvatarUrl(m.avatar_id)]))
@@ -127,6 +138,9 @@ function pressTask(task: { taskId: string; roomId: string }) {
 }
 function openArtifact(artifactId: string) {
   void router.push({ name: 'project-artifact', params: { projectId: props.projectId, artifactId } })
+}
+function openTaskFolder() {
+  void router.push({ name: 'project-library', params: { projectId: props.projectId }, query: { dir: TASK_FOLDER } })
 }
 // 起草项目目标：材料先放进资料库（以后的人和 AI 队友都从那里读），再跳到项目目标那篇
 // 文档，由那里的 AI 队友接着写（`lib/overviewDraft`）。
@@ -170,6 +184,7 @@ function allTasks() {
     :tasks="tasks"
     :underway="underway"
     :names="names"
+    :room-agent-names="roomAgentNames"
     :avatars="avatars"
     :me="myHandle()"
     :artifact-api="artifactApi"
@@ -183,6 +198,7 @@ function allTasks() {
     @open-task="openTask"
     @press-task="pressTask"
     @open-artifact="openArtifact"
+    @open-task-folder="openTaskFolder"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"
   />

@@ -18,6 +18,7 @@ from app.domain.notice_meta import EVENT_TURN_FAILED, SEVERITY_INFO, WHO_HUMAN, 
 from app.domain.room_task.place import Place
 from app.domain.topic.models import is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.models import User
 
 
 async def seat_if_named(
@@ -25,8 +26,11 @@ async def seat_if_named(
 ) -> None:
     """Seat named project teammates using team connections.
 
-    Their generated seat handles use the agent namespace. Human mentions need
-    no connection lookup; actual seats are still checked against project rows.
+    A private channel seats only a personal agent whose owner is in that
+    channel: whoever is seated reads what is said there, so the roster is the
+    boundary. Their generated seat handles use the agent namespace. Human
+    mentions need no connection lookup; actual seats are still checked against
+    project rows.
     """
     if not content or f"<@{AGENT_HANDLE_PREFIX}" not in content:
         return
@@ -41,8 +45,20 @@ async def seat_if_named(
     )
     handles = {own: agent_instance_handle(own) for own in owned.all()}
     seats = {own: seat for own, seat in handles.items() if f"<@{seat}>" in content}
+    members = TopicMemberService(session)
+    if topic.members_only:
+        # 私密频道只有名册上的人看得到。别人的私人 Claude Code 不在名册上，点名会让
+        # 它入座、读到这里的内容，等于把频道外的人拉进来。所以只认主人自己也在频道
+        # 里的那几位；主人不在，点名和没点一样。
+        people = set(await members.people_handles(topic.id))
+        rows = await session.execute(
+            select(OwnAgent.instance_id, User.username)
+            .join(User, User.id == OwnAgent.owner_user_id)
+            .where(OwnAgent.instance_id.in_(list(seats)))
+        )
+        owners = {instance: username for instance, username in rows.all()}
+        seats = {own: seat for own, seat in seats.items() if owners.get(own) in people}
     for seat in seats.values():
-        members = TopicMemberService(session)
         already = seat in await members.agent_handles(topic.id)
         await members.ensure_agent_seat(topic.id, seat)
         if not already:

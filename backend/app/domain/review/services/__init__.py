@@ -42,9 +42,6 @@ from app.domain.review.room_notices import (
     _notify_ready as _notify_ready,
 )
 from app.domain.review.room_notices import (
-    _record_task_nudge as _record_task_nudge,
-)
-from app.domain.review.room_notices import (
     _tell_the_reviewer as _tell_the_reviewer,
 )
 from app.domain.review.services._shared import (
@@ -193,6 +190,9 @@ from app.domain.review.services._shared import (
 )
 from app.domain.review.services._shared import (
     approvals_required_of as approvals_required_of,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as deliverable_revision,
 )
 from app.domain.review.services._shared import (
     logger as logger,

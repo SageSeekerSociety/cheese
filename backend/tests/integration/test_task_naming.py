@@ -15,7 +15,8 @@ says which task and why; an answer cut off before the model wrote anything
 leaves the task as it was without counting as a failed call, while one that
 never arrives at all still backs the task off; a title too wide for the
 sidebar is sent back with its width a bounded number of times, inside the one
-naming timeout, and cut to fit when that does not help. The gateway is a MockTransport
+naming timeout, and left unchanged when that does not help; unread attachments
+wait for textual context, and the model may abstain from naming. The gateway is a MockTransport
 that answers from a script and records what it was asked.
 """
 
@@ -36,13 +37,14 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
-from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
+from app.domain.room_task.title_width import TITLE_WIDTH, title_width
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
     post_project,
     room_agent_headers,
     room_agent_seat,
+    task_agent_headers,
 )
 from tests.support.living_doc import document_of
 
@@ -55,7 +57,13 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
     ``httpx.Response`` for a call that does not come back the usual way (the
     model cut off mid-thought, an upstream error). ``bodies`` is what the model
     was asked."""
-    seen: dict = {"answers": [], "asked": [], "bodies": [], "mints": 0}
+    seen: dict = {
+        "answers": [],
+        "asked": [],
+        "bodies": [],
+        "mints": 0,
+        "nudge": naming.nudge,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/key/generate":
@@ -127,7 +135,15 @@ def _unnamed(client, alice) -> str:
     return _task(client, alice, _project(client, alice)["root_topic_id"])
 
 
-def _say(client, conversation_id: str, text: str, *, author: str = "alice") -> None:
+def _say(
+    client,
+    conversation_id: str,
+    text: str,
+    *,
+    author: str = "alice",
+    kind: BlockKind = BlockKind.message,
+    mime_type: str | None = None,
+) -> None:
     async def add():
         async with client.test_factory() as s:
             task = await s.get(Task, uuid.UUID(conversation_id))
@@ -135,10 +151,11 @@ def _say(client, conversation_id: str, text: str, *, author: str = "alice") -> N
                 Block(
                     project_id=task.project_id,
                     conversation_id=task.id,
-                    kind=BlockKind.message,
+                    kind=kind,
                     author_type=AuthorType.participant,
                     author=author,
                     content=text,
+                    mime_type=mime_type,
                 )
             )
             await s.commit()
@@ -179,6 +196,10 @@ def _history(client, task_id: str) -> list[tuple[str, str, str]]:
 
 
 def _events(client, conversation_id: str) -> list[Block]:
+    """The events people in the conversation see. A line the room does not
+    show (``in_room: false``) is not said to them: the platform tells the
+    task's teammate a rename that way."""
+
     async def read():
         async with client.test_factory() as s:
             rows = await s.scalars(
@@ -187,7 +208,7 @@ def _events(client, conversation_id: str) -> list[Block]:
                     Block.kind == BlockKind.event,
                 )
             )
-            return list(rows)
+            return [b for b in rows if (b.meta or {}).get("in_room") is not False]
 
     return asyncio.run(read())
 
@@ -271,7 +292,7 @@ def test_a_channel_is_never_named_by_the_platform(client, alice, gateway):
         headers=alice,
     )
     assert r.status_code == 200, r.text
-    for reason in ("message", "turn", "signal"):
+    for reason in ("message", "idle", "signal"):
         assert _run(client, room, reason) is None
     assert gateway["asked"] == []
 
@@ -297,11 +318,33 @@ def test_an_unnamed_task_waits_for_something_worth_naming_it_by(client, alice, g
     assert _history(client, tid) == [("dev 外网访问慢排查", "auto", "name")]
 
 
-def _turned_from(client, alice, text: str, replies: tuple[str, ...] = ()) -> str:
-    """A task alice turned from her message ``text`` in a channel (转为任务),
-    with ``replies`` said under it in its 支线 first."""
+def _turned_from(
+    client, alice, text: str, replies: tuple[str, ...] = (), *, attachment: bool = False
+) -> str:
+    """A task turned from a message, with its attachments and discussion."""
     room = _project(client, alice)["root_topic_id"]
     said = post_message(client, room, "alice", {"content": text})
+    if attachment:
+
+        async def attach():
+            async with client.test_factory() as session:
+                root = await session.get(Block, uuid.UUID(said["id"]))
+                root.turn_id = root.turn_id or root.id
+                session.add(
+                    Block(
+                        project_id=root.project_id,
+                        conversation_id=root.conversation_id,
+                        turn_id=root.turn_id,
+                        kind=BlockKind.attachment,
+                        author_type=AuthorType.participant,
+                        author="alice",
+                        content="uploads/screenshot.png",
+                        mime_type="image/png",
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(attach())
     if replies:
         thread = client.post(f"/blocks/{said['id']}/thread", headers=alice)
         assert thread.status_code == 200, thread.text
@@ -323,7 +366,7 @@ def test_a_task_turned_from_a_message_is_named_by_that_message(client, alice, ga
     _say(client, tid, "hello.md 里那句介绍按什么口径写？", author="cheese-0123456789ab")
 
     gateway["answers"].append({"keep": False, "title": "hello.md 项目介绍"})
-    renamed = _run(client, tid, "turn")
+    renamed = _run(client, tid, "idle")
 
     assert renamed is not None
     assert _shown(client, tid) == ("hello.md 项目介绍", "auto")
@@ -481,6 +524,156 @@ def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
     assert gateway["bodies"][-1]["max_tokens"] >= 700
 
 
+# ---------- wait for the subject of unread attachments ----------
+
+
+@pytest.mark.parametrize("reason", ["message", "idle", "signal"])
+@pytest.mark.parametrize("earlier_reply", [False, True])
+def test_an_unread_attachment_waits_for_its_subject(
+    client, alice, gateway, reason, earlier_reply
+):
+    """Only context after the unread attachment may explain its subject."""
+    rid = _unnamed(client, alice)
+    if earlier_reply:
+        _say(client, rid, "你好，我在，请发一下截图。", author="cheese-c82aeb40555a")
+    _say(client, rid, "这什么鬼<@cheese-c82aeb40555a>还活着吗")
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    gateway["answers"].append({"keep": False, "title": "cheese-c82aeb40555a"})
+
+    assert _run(client, rid, reason) is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
+
+    _say(
+        client,
+        rid,
+        "截图中上面那轮跑了 21 小时还是 0 步，卡住了。",
+        author="cheese-c82aeb40555a",
+    )
+    gateway["answers"][:] = [{"keep": False, "title": "卡住的轮次排查"}]
+    renamed = _run(client, rid, "idle")
+
+    assert renamed is not None and renamed.title == "卡住的轮次排查"
+    assert _shown(client, rid) == ("卡住的轮次排查", "auto")
+
+
+def test_an_image_only_opener_can_be_named_after_an_explanation(client, alice, gateway):
+    rid = _unnamed(client, alice)
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    assert _run(client, rid, "idle") is None
+
+    _say(
+        client,
+        rid,
+        "截图中是轮次卡住了，21 小时还没走第一步。",
+        author="cheese-c82aeb40555a",
+    )
+    gateway["answers"].append({"keep": False, "title": "卡住的轮次排查"})
+
+    assert _run(client, rid, "idle").title == "卡住的轮次排查"
+    assert _shown(client, rid) == ("卡住的轮次排查", "auto")
+
+
+def test_a_person_can_supply_the_missing_attachment_context(client, alice, gateway):
+    rid = _unnamed(client, alice)
+    _say(client, rid, "这张图怎么回事？")
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    gateway["answers"].append({"keep": False, "title": "这张图"})
+    assert _run(client, rid, "message") is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
+    _say(client, rid, "轮次跑了 21 小时还是 0 步，帮我排查卡在哪里。")
+    gateway["answers"][:] = [{"keep": False, "title": "卡住的轮次排查"}]
+
+    assert _run(client, rid, "message").title == "卡住的轮次排查"
+
+
+def test_a_model_can_wait_for_more_context_without_losing_first_naming(
+    client, alice, gateway
+):
+    rid = _unnamed(client, alice)
+    _say(client, rid, "你看这又是怎么了呀")
+    gateway["answers"].append({"keep": True, "title": ""})
+    assert _run(client, rid, "message") is None
+    assert _history(client, rid) == []
+
+    _say(client, rid, "上面那轮跑了 21 小时还是 0 步，查查卡在哪里。")
+    gateway["answers"].append({"keep": False, "title": "卡住的轮次排查"})
+    assert _run(client, rid, "message").title == "卡住的轮次排查"
+
+
+def test_a_product_name_is_not_rejected_for_matching_someones_account(
+    client, alice, gateway
+):
+    seed_user(client, "Redis")
+    rid = _unnamed(client, alice)
+    _say(client, rid, "给缓存数据库 Redis 建一个知识页")
+    gateway["answers"].append({"keep": False, "title": "Redis"})
+
+    assert _run(client, rid, "message").title == "Redis"
+
+
+def test_a_turned_task_keeps_the_unread_attachment_context(client, alice, gateway):
+    rid = _turned_from(client, alice, "这什么鬼，还活着吗", attachment=True)
+    gateway["answers"].append({"keep": False, "title": "cheese-c82aeb40555a"})
+    assert _run(client, rid, "message") is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+
+    _say(
+        client,
+        rid,
+        "截图上那轮卡住了，21 小时还是 0 步。",
+        author="cheese-c82aeb40555a",
+    )
+    gateway["answers"][:] = [{"keep": False, "title": "卡住的轮次排查"}]
+    assert _run(client, rid, "idle").title == "卡住的轮次排查"
+    assert "image/png" in gateway["asked"][-1]
+    assert "uploads/screenshot.png" not in gateway["asked"][-1]
+
+
+def test_the_document_can_explain_an_unread_attachment(client, alice, gateway):
+    rid = _unnamed(client, alice)
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    assert _run(client, rid, "signal") is None
+    document = document_of(client, rid, headers=alice)
+    response = client.put(
+        f"/documents/{document}",
+        json={
+            "content": "截图中那轮跑了 21 小时仍是 0 步，要查清卡在哪里。",
+            "expected_version": 0,
+        },
+        headers=alice,
+    )
+    assert response.status_code == 200, response.text
+    gateway["answers"].append({"keep": False, "title": "卡住的轮次排查"})
+
+    assert _run(client, rid, "signal").title == "卡住的轮次排查"
+
+
 # ---------- a title that fits the sidebar ----------
 
 
@@ -506,71 +699,78 @@ def test_a_title_too_wide_goes_back_to_the_model_with_its_width(client, alice, g
     assert str(TITLE_WIDTH) in told
 
 
-def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
-    """However often the model answers too wide, it is asked a bounded number
-    of times and what is stored still fits — at the calibration that wrote the
-    over-wide titles seen on dev as much as at the first name."""
+def test_a_title_that_never_fits_keeps_the_previous_name(client, alice, gateway):
+    """Failed rewrites must not replace a complete name with a cut prefix."""
     rid = _named(client, alice, gateway)
-    asked = len(gateway["asked"])
-    gateway["answers"] += [
-        {"keep": False, "title": "季度预算编制流程说明 Word 文档"}
-    ] * 10
+    before = _shown(client, rid)
+    history = _history(client, rid)
+    gateway["answers"] += [{"keep": False, "title": "lz123y 与 2026201782 显示"}] * 10
 
-    renamed = _run(client, rid, "turn")
-
-    assert renamed is not None
-    assert title_fits(renamed.title)
-    assert "季度预算编制流程说明 Word 文档".startswith(renamed.title)
-    assert title_fits(_row(client, rid).title)
-    assert 1 < len(gateway["asked"]) - asked <= 3
+    assert _run(client, rid, "idle") is None
+    assert _shown(client, rid) == before
+    assert _history(client, rid) == history
 
 
-def test_keep_on_a_retry_cuts_the_title_it_was_asked_about(client, alice, gateway):
-    """Answering `keep` when asked for something shorter means nothing better
-    came back: the task is still named, with the too-wide title cut to fit."""
+@pytest.mark.parametrize(
+    "retry",
+    [
+        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        httpx.Response(503, json={"error": "no upstream"}),
+        "not a verdict",
+    ],
+)
+def test_a_failed_rewrite_leaves_an_unnamed_task_unnamed(client, alice, gateway, retry):
+    """No valid replacement means no partial name or title-history entry."""
     rid = _unnamed(client, alice)
     _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
     gateway["answers"] += [
         {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
-        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        retry,
     ]
 
-    renamed = _run(client, rid, "message")
+    assert _run(client, rid, "message") is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
+    # The next trigger can still give this unnamed task a complete name.
+    gateway["answers"].append({"keep": False, "title": "巡检报表与周报模板"})
+    assert _run(client, rid, "message").title == "巡检报表与周报模板"
 
-    assert renamed is not None and renamed.title == "仓库巡检报表自动导出与周"
-    assert _shown(client, rid) == ("仓库巡检报表自动导出与周", "auto")
-    assert len(gateway["asked"]) == 2
 
-
-def test_keeping_a_stored_title_too_wide_does_not_leave_it_too_wide(
-    client, alice, gateway
+@pytest.mark.parametrize("previous", ["季度预算编制流程说明 Word 文档"])
+def test_an_old_unusable_name_is_not_cut_when_the_model_keeps_it(
+    client, alice, gateway, previous
 ):
-    """A title stored before the width was checked is not kept as it is: the
-    model is asked for a shorter one, and when it keeps answering `keep` the
-    stored title is cut to fit."""
+    """An existing name is left whole when no better name comes back."""
     rid = _named(client, alice, gateway)
-    _set(client, rid, title="季度预算编制流程说明 Word 文档")
-    asked = len(gateway["asked"])
+    _set(client, rid, title=previous)
     gateway["answers"] += [
-        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
-        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+        {"keep": True, "title": previous},
+        {"keep": True, "title": previous},
     ]
 
-    renamed = _run(client, rid, "turn")
+    assert _run(client, rid, "idle") is None
+    assert _row(client, rid).title == previous
 
-    assert renamed is not None
-    assert renamed.previous == "季度预算编制流程说明 Word 文档"
-    assert renamed.title == "季度预算编制流程说明 Wor"
-    assert _row(client, rid).title == "季度预算编制流程说明 Wor"
-    assert len(gateway["asked"]) - asked == 2
-    assert str(title_width("季度预算编制流程说明 Word 文档")) in gateway["asked"][-1]
+
+@pytest.mark.parametrize("previous", ["季度预算编制流程说明 Word 文档"])
+def test_an_old_unusable_name_can_be_rewritten_whole(client, alice, gateway, previous):
+    rid = _named(client, alice, gateway)
+    _set(client, rid, title=previous)
+    gateway["answers"] += [
+        {"keep": True, "title": previous},
+        {"keep": False, "title": "预算文档与名字显示"},
+    ]
+
+    renamed = _run(client, rid, "idle")
+
+    assert renamed is not None and renamed.title == "预算文档与名字显示"
+    assert _row(client, rid).title == "预算文档与名字显示"
 
 
 def test_asking_again_stays_inside_the_naming_timeout(
     client, alice, gateway, monkeypatch
 ):
-    """A retry gets only what is left of the one budget naming has; with too
-    little left it is not started, and the title is cut instead."""
+    """Too little time to rewrite must leave the task's title unchanged."""
     monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 1.0)
     rid = _unnamed(client, alice)
     _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
@@ -581,7 +781,9 @@ def test_asking_again_stays_inside_the_naming_timeout(
 
     renamed = _run(client, rid, "message")
 
-    assert renamed is not None and title_fits(renamed.title)
+    assert renamed is None
+    assert _shown(client, rid) == ("新任务", "placeholder")
+    assert _history(client, rid) == []
     assert len(gateway["asked"]) == 1
 
 
@@ -591,13 +793,13 @@ def test_the_first_turn_checks_the_name_once(client, alice, gateway):
 
     # Still right: kept, and the task counts as calibrated.
     gateway["answers"].append({"keep": True, "title": "dev 外网访问慢排查"})
-    assert _run(client, rid, "turn") is None
+    assert _run(client, rid, "idle") is None
     row = _row(client, rid)
     assert row.title == "dev 外网访问慢排查" and row.title_calibrated is True
 
     # Calibration does not run twice; a later turn with no signal asks nothing.
     asked = len(gateway["asked"])
-    assert _run(client, rid, "turn") is None
+    assert _run(client, rid, "idle") is None
     assert len(gateway["asked"]) == asked
 
 
@@ -609,7 +811,7 @@ def test_a_calibration_that_renames_does_so_quietly(client, alice, gateway):
     # is not empty; what is pinned here is that the rename adds nothing to it.
     said = [b.id for b in _events(client, rid)]
     gateway["answers"].append({"keep": False, "title": "Valkey 连接池耗尽"})
-    renamed = _run(client, rid, "turn")
+    renamed = _run(client, rid, "idle")
     assert renamed is not None and renamed.previous == "dev 外网访问慢排查"
     assert _shown(client, rid) == ("Valkey 连接池耗尽", "auto")
     assert [b.id for b in _events(client, rid)] == said
@@ -619,7 +821,7 @@ def test_a_calibration_that_renames_does_so_quietly(client, alice, gateway):
 def test_following_up_needs_a_signal_and_respects_the_throttle(client, alice, gateway):
     rid = _named(client, alice, gateway)
     gateway["answers"].append({"keep": True, "title": "dev 外网访问慢排查"})
-    _run(client, rid, "turn")
+    _run(client, rid, "idle")
     asked = len(gateway["asked"])
 
     # An ordinary message is no reason to look again.
@@ -658,7 +860,7 @@ def test_a_persons_name_is_never_overwritten(client, alice, gateway):
     r = client.post(f"/topics/{rid}/title", json={"title": "我的名字"}, headers=alice)
     assert r.status_code == 200 and _shown(client, rid) == ("我的名字", "human")
     asked = len(gateway["asked"])
-    for reason in ("message", "turn", "signal"):
+    for reason in ("message", "idle", "signal"):
         assert _run(client, rid, reason) is None
     assert len(gateway["asked"]) == asked
     assert _row(client, rid).title == "我的名字"
@@ -697,11 +899,11 @@ def test_a_task_a_teammate_created_keeps_its_title_until_its_direction_changes(
     client, alice, gateway
 ):
     """The AI teammate that creates a task names it, and the platform does not
-    second-guess it after the first turn; only a change of direction does."""
+    second-guess it once its session first goes idle; only a change of direction does."""
     tid = _by_teammate(client, alice, "迁移旧数据")
     assert _shown(client, tid) == ("迁移旧数据", "auto")
     _say(client, tid, "先从用户表开始")
-    for reason in ("message", "turn"):
+    for reason in ("message", "idle"):
         assert _run(client, tid, reason) is None
     assert gateway["asked"] == []
 
@@ -772,6 +974,51 @@ def test_without_a_gateway_nothing_is_asked(client, alice, gateway, monkeypatch)
 
 
 # ---------- what nudges naming ----------
+
+
+@pytest.mark.parametrize("recover_publication", [False, True])
+def test_publishing_an_attachment_explanation_names_the_task_before_idle(
+    client, alice, gateway, monkeypatch, recover_publication
+):
+    """A published explanation names the task without waiting for session idle."""
+    project = _project(client, alice)
+    room = project["root_topic_id"]
+    rid = _task(client, alice, room)
+    headers = task_agent_headers(project["id"], rid, room_agent_seat(client, room))
+    _say(client, rid, "我之前的任务怎么突然又成待办了？")
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    assert _run(client, rid, "message") is None
+
+    message = {
+        "content": "这两条是以前的问题卡，今天重新冒出来成了待办，我去查来源。",
+        "request_id": str(uuid.uuid4()),
+    }
+    first = None
+    if recover_publication:
+        # The reply was committed, but the process never nudged naming.
+        first = client.post(f"/topics/{rid}/messages", json=message, headers=headers)
+        assert first.status_code == 200, first.text
+    monkeypatch.setattr(naming, "_default_factory", lambda: client.test_request_factory)
+    monkeypatch.setattr(naming, "nudge", gateway["nudge"])
+    gateway["answers"].append({"keep": False, "title": "旧问题卡重新冒出待办"})
+
+    response = client.post(f"/topics/{rid}/messages", json=message, headers=headers)
+    assert response.status_code == 200, response.text
+    if first is not None:
+        assert response.json()["data"]["id"] == first.json()["data"]["id"]
+
+    async def settle_naming():
+        await asyncio.gather(*tuple(naming._tasks))
+
+    client.portal.call(settle_naming)
+    assert _shown(client, rid) == ("旧问题卡重新冒出待办", "auto")
+    assert _history(client, rid) == [("旧问题卡重新冒出待办", "auto", "name")]
 
 
 def test_what_happens_in_a_task_nudges_its_naming_and_a_channel_does_not(

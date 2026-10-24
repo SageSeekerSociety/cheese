@@ -17,6 +17,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
+from app.domain.room_task import progress
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -220,7 +221,7 @@ class TaskService:
         侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
         不出这个进程、更不上线。等这边也开了 `queries.py`，这条就该只交纯值。
 
-        Consumers are task_liveness, facts_for_task and TaskOut.model_validate.
+        Consumers are facts_for_task and TaskOut.model_validate.
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
@@ -238,8 +239,7 @@ class TaskService:
         """These threads' heartbeats, newest block per task, in one query.
 
         A narrow read out of this domain for callers that hold ids and need the
-        liveness signal the board draws from — the project rail is the one that
-        does. It is on the service and not on the repository because the
+        latest-activity time the project rail sorts by. It is on the service and not on the repository because the
         repository is this domain's own drawer and stays inside it: a caller
         outside `room_task` reaches for the service.
 
@@ -472,7 +472,8 @@ class TaskService:
     def takes_part(task: Task, handle: str | None) -> bool:
         """Whether this person works the task: its owner, or a collaborator
         the owner brought in. What they say is what its AI teammate acts on,
-        and they write its document; only the owner closes or hands it over."""
+        and they write its document, and close it; only the owner hands it
+        over."""
         return handle is not None and (
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
@@ -584,6 +585,9 @@ class TaskService:
         task.status = TaskStatus.open
         task.closed_at = None
         task.conclusion = None
+        # Reopened is 开启: what its teammate last reported was about the work
+        # that closed.
+        progress.clear(task)
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
         else:

@@ -326,8 +326,16 @@ successor serves requests at once but holds the turns asked of it until the lock
 reaches it. The outgoing backend, on SIGTERM,
 lets the prompts it is still sending arrive, stops reading its sessions, lets go
 of its turns without ending them and releases the lock. The successor then picks every running turn up
-where it stands and starts any turn a message was left waiting for. The whole
-of that fits in the backend's 60-second `stop_grace_period`, which is why the
+where it stands and starts any turn a message was left waiting for. A Claude
+Code runner that does not speak the lifecycle protocol the successor reads
+(`harness/driven/lifecycle.py`, `PROTOCOL`) is replaced rather than picked up:
+an idle one at once, with what it was written and never read offered again,
+and one at work once its ping says the work is done (it gets no new input
+meanwhile and the seat's messages wait). Only past `RUNNER_DRAIN_S` (30
+minutes by default) is its turn interrupted, ending with `runner_replaced` and
+resumed at once. That drain runs in the successor after the handover, not
+inside it. The handover itself fits in the backend's 60-second
+`stop_grace_period`, which is why the
 old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
@@ -411,10 +419,11 @@ The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
 
-`main` requires the GitHub Actions check `CI required` and the
-[Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
-The ruleset has no bypass actors and carries only the required status check: it
-has no merge-queue rule, so a green PR merges directly with `gh pr merge --squash`.
+`main` requires the GitHub Actions check `CI required` through
+[ruleset 23778889](https://github.com/SageSeekerSociety/cheese/rules/23778889).
+The ruleset carries only the required status check: it has no merge-queue rule,
+so a green PR merges directly with `gh pr merge --squash`. The repository's
+admin role may always bypass it.
 Without a merge strategy, noninteractive `gh pr merge` fails; `--auto` would
 allow a later merge without another local review check.
 
@@ -433,8 +442,7 @@ waits for a later release.
 `.github/workflows/required-ci.yml` runs the quick tier on every pull request.
 Ready PRs aggregate as `CI required`; drafts aggregate as
 `CI required (draft quick)`. The full suites selected by
-`.github/scripts/required-ci-paths.json` run after a push to main. The workflow
-also accepts `merge_group` events, but the ruleset does not create queue entries.
+`.github/scripts/required-ci-paths.json` run after a push to main.
 Failed scope detection, failed or cancelled selected suites, and unexpected
 skips fail the full gate.
 
@@ -448,8 +456,8 @@ was queued. The push runs join one fixed concurrency group with
 `cancel-in-progress: false`, which is what keeps one run executing and one
 waiting. The deploy gate (`deploy/check-auto-deploy.py`) accepts that push run.
 PR titles are checked before merge; main push titles are reported as warnings
-with `--warn-only`, because those commits have already landed. Remote execution acceptance
-remains advisory pending the stability target in #1279; the MCP latest-version
+with `--warn-only`, because those commits have already landed. Remote execution
+acceptance is one of the gated suites on a main push; the MCP latest-version
 canary runs on schedule or manual dispatch.
 
 The feedback-time targets remain those in #1279.
@@ -488,8 +496,7 @@ the CLI boot e2e and remote-execution acceptance; only the serial aggregation
 jobs listed in the bullet below take the pool. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
 is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
-61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
-merge-queue jobs. This is a historical baseline, not representative of the
+61 hosted jobs running concurrently. This is a historical baseline, not representative of the
 2026-10-14 busy window, when hosted-runner waits were substantially longer.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
@@ -793,7 +800,9 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
   DB dump; older runs are gzip objects under `session-records/` in the private
-  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. The objects are kept
+  `TRANSCRIPT_S3_BUCKET`, which nothing else backs up. Each object is read
+  back byte for byte, and its index marker under `session-record-index/`
+  published, before the rows it replaces are deleted. The objects are kept
   for good, a deleted conversation's included; a sealed run's row (and so the
   app's way to read it) goes after 30 days.
 - **Transcripts** (the CLI's own `.jsonl` files: Claude Code's, Codex's, pi's)
@@ -1215,7 +1224,9 @@ units are untouched by it.
 
 ## Campus model API: dev reaches it through 119pve, hand-managed
 
-The campus model endpoint admits campus addresses only. Everything
+`deepseek-flash` (deploy/gateway/config.yaml) tries RUC's self-hosted model at
+`RUC_DEEPSEEK_API_BASE` (gateway `.env`) before DeepSeek's API, and that endpoint
+admits campus addresses only. Everything
 the dev box sends by default goes through router-2 and leaves off campus, and
 the endpoint drops those connections after about 5 s with an empty reply. So
 TCP to that address and port, and nothing else, takes the same path as tunnel B:

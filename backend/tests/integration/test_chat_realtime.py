@@ -306,71 +306,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
 
 @pytest.mark.anyio
-async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
-    business_db_factory, tmp_path, monkeypatch
-):
-    from app.domain.agent.realtime.broker import InProcessBroker
-    from app.domain.agent.runtime import AgentWorkRunner
-
-    factory = business_db_factory
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    svc = ChatService(
-        work_runner=runner,
-        session_factory=factory,
-        compute=stub_compute(InstantScreen()),
-        base_system_prompt="You are Cheese.",
-        workspace_root=str(tmp_path / "ws"),
-    )
-    async with factory() as session:
-        await registered(session, "u")
-        project = await project_service(session).create(name="P", owner_handle="u")
-        topic = await TopicService(session).create(
-            project_id=project.id, title="T", created_by="u"
-        )
-        topic_id = topic.id
-        await session.commit()
-    _payloads, original, original_ids, _ = await svc.human_messages.post_user_message(
-        topic_id,
-        author="u",
-        content="saved by the old backend",
-        turn_id=None,
-        reply_to=None,
-        attachments=[{"path": "room/a.png", "mime": "image/png"}],
-    )
-    async with factory() as session:
-        anchor = await BlockRepository(session).get(original)
-        assert anchor is not None
-        anchor.meta = {**(anchor.meta or {}), "client_id": "pre-upgrade-delivery"}
-        await session.commit()
-
-    submitted = []
-    monkeypatch.setattr(
-        runner,
-        "_receive_message",
-        lambda *args, **kwargs: submitted.append((args, kwargs)),
-    )
-    retried = await runner.receive_message(
-        svc,
-        topic_id,
-        author="u",
-        content="saved by the old backend",
-        attachments=[{"path": "room/a.png", "mime": "image/png"}],
-        client_id="pre-upgrade-delivery",
-    )
-
-    assert retried == original
-    assert submitted == []
-    async with factory() as session:
-        rows = [
-            block
-            for block in await BlockRepository(session).list_for_topic(topic_id)
-            if not looks_like_agent_handle(block.author)
-        ]
-    assert [block.id for block in rows] == original_ids
-
-
-@pytest.mark.anyio
 async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tmp_path):
     """收下一条消息，收件人是项目建出来时就有的那个芝士，不多长一个队友。
 
@@ -660,7 +595,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     )
     # The default agent's turn is still held — Second's runs beside it: its
     # own session takes the prompt, and nothing is written mid-turn into the
-    # default one's (merge_into_running_turn only delivers to the seat the
+    # default one's (merge_into_running_session only delivers to the seat the
     # message named).
     async with asyncio.timeout(HANG_S):
         while screen.runs < 2:
@@ -1412,7 +1347,6 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
             assert row.echoed_at is None
             assert row.execution_work_id is None
             assert row.settled_at is None
-            assert row.completed_at is None
             assert row.terminated_at is None
             assert await seat_has_unfinished_input(
                 session, topic_id, identity.recipient_handle
@@ -1513,7 +1447,6 @@ async def test_midturn_delivery_holds_no_topic_lock(
         images=None,
         *,
         register_input=None,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1522,9 +1455,12 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "steer", slow_deliver)
-    svc.live.active_turn_ids[topic_id] = {uuid.uuid4()}
+    # A session at work in the room.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
     merge = asyncio.create_task(
-        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
     )
     await asyncio.wait_for(in_flight.wait(), timeout=5)
     async with factory() as session:
@@ -1580,7 +1516,6 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         images=None,
         *,
         register_input,
-        expected_work_id=None,
         agent_handle=None,
         owes_reply=False,
     ):
@@ -1593,9 +1528,9 @@ async def test_midturn_message_stays_pending_until_its_receipt(
             tid,
             "cheese",
             "stub-session",
-            f"session-{expected_work_id}",
+            f"session-{turn_id}",
             uuid.uuid4(),
-            expected_work_id,
+            turn_id,
         )
         await register_input(identity)
         minted.append(identity)
@@ -1605,10 +1540,13 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
-    svc.live.active_turn_ids[topic_id] = {turn_id}
+    # A session at work in the room, on the work ``turn_id``.
+    monkeypatch.setattr(
+        svc._compute, "working_seat", lambda *_a, **_k: ("cheese", "cheese")
+    )
 
     assert (
-        await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        await svc.merge_into_running_session(topic_id, block_ids, "改一下配色", "u")
         is True
     )
     assert len(delivered_texts) == 1
@@ -1657,7 +1595,7 @@ class SlowToReplay(StubChannel):
         self.replayed = asyncio.Event()
 
     async def call(self, handle, method: str, params: dict) -> dict:
-        if method == "events" and handle.session.topic_id == self.slow:
+        if method == "read" and handle.session.topic_id == self.slow:
             await self.replayed.wait()
         return await super().call(handle, method, params)
 

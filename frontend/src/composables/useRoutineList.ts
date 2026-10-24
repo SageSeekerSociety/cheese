@@ -146,12 +146,14 @@ export function useRoutineList(options: RoutineListOptions) {
       })
       state.runs = page.data
       state.total = page.total
+      state.creditsThisMonth = page.credits_this_month
       // 总数是在这一页才知道的：筛过之后一共几页，只有后端答得上来。
       state.pages = Math.max(1, Math.ceil(page.total / RECORDS_PER_PAGE))
     } catch (e) {
       fail(e, t('routines.runsFailed'))
       state.runs = []
       state.total = 0
+      state.creditsThisMonth = 0
       state.pages = 1
     } finally {
       state.loading = false
@@ -166,6 +168,7 @@ export function useRoutineList(options: RoutineListOptions) {
       failedOnly: false,
       runs: [],
       total: 0,
+      creditsThisMonth: r.credits_this_month,
       pages: 1,
       loading: false,
       // 点一份结果文件要去哪个房间：项目总览页用得上（那一页上没有能开文件的面板），

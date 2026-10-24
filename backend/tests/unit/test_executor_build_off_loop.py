@@ -65,7 +65,7 @@ async def _start(hub, lease):
         hub,
         lease,
         device_id="machine",
-        project_id=uuid.uuid4(),
+        namespace=uuid.uuid4(),
         work_resource=str(uuid.uuid4()),
         setup={},
         sandbox=False,

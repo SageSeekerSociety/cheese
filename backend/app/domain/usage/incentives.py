@@ -1,6 +1,7 @@
 """Beta rewards and the purchase enquiries handled in the credit console."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
+from app.domain.team.models import DEFAULT_PLAN_KEY, Team
 from app.domain.team.services import team_service
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import (
@@ -15,11 +17,22 @@ from app.domain.usage.models import (
     CreditRequest,
     CreditReward,
     GrantSource,
+    Plan,
 )
 from app.domain.usage.plans import PlanService
 
 BETA_CREDITS = 500
 FEEDBACK_CREDITS = 100
+#: Every reward pack, whatever earned it, can be spent for this long after it
+#: is issued. A fixed 365 days rather than calendar months, so the migration
+#: that dated the earlier packs (``e4a7c2d9b6f1``) applies the same span.
+REWARD_LIFETIME = timedelta(days=365)
+
+
+def reward_kind(key: str) -> str:
+    """What a reward was for, read off its key's prefix."""
+    prefix = key.split(":", 1)[0]
+    return prefix if prefix in ("feedback", "invite") else "beta"
 
 
 def request_out(row: CreditRequest) -> dict:
@@ -43,8 +56,17 @@ class CreditIncentives:
         return {"credits": row.credits, "reason": row.reason} if row else None
 
     async def issue(
-        self, *, key: str, user_id: int, credits: int, reason: str, actor: str
+        self,
+        *,
+        key: str,
+        user_id: int,
+        credits: int,
+        reason: str,
+        actor: str,
+        points: int = 0,
     ) -> dict:
+        """Issue the reward named ``key`` once. A reward of points alone writes
+        the row and pays no pack."""
         team = await team_service(self._session).ensure_personal_team(user_id)
         issued = await self._session.scalar(
             insert(CreditReward)
@@ -52,14 +74,21 @@ class CreditIncentives:
                 key=key,
                 team_id=team.id,
                 credits=credits,
+                points=points,
                 reason=reason,
                 actor_handle=actor,
             )
             .on_conflict_do_nothing(index_elements=["key"])
             .returning(CreditReward.key)
         )
-        if issued is not None:
-            await Ledger(self._session).grant(team.id, credits, reason=reason)
+        if issued is not None and credits > 0:
+            await Ledger(self._session).grant(
+                team.id,
+                credits,
+                source=GrantSource.REWARD,
+                reason=reason,
+                expires_at=datetime.now(UTC) + REWARD_LIFETIME,
+            )
         return {"credits": credits, "issued": issued is not None}
 
     async def beta(self, user_id: int) -> dict:
@@ -67,10 +96,11 @@ class CreditIncentives:
             "credits": BETA_CREDITS,
             "claimed": await self.reward(f"beta:{user_id}") is not None,
             "feedback_credits": FEEDBACK_CREDITS,
+            "plan_credits": await self._monthly_plan_credits(user_id),
         }
 
-    async def rewards(self, user_id: int) -> dict:
-        team = next(
+    async def _personal_team(self, user_id: int) -> Team | None:
+        return next(
             (
                 team
                 for team in await team_service(self._session).get_teams_of_user(user_id)
@@ -78,8 +108,28 @@ class CreditIncentives:
             ),
             None,
         )
+
+    async def _monthly_plan_credits(self, user_id: int) -> int | None:
+        """What the person's own plan issues each month; None for a plan that is
+        unlimited or billed by time windows, which has no monthly figure. A
+        person whose personal team is not made yet will start on the default."""
+        team = await self._personal_team(user_id)
+        plan = await self._session.get(
+            Plan, team.plan_key if team else DEFAULT_PLAN_KEY
+        )
+        if plan is None or plan.unlimited or plan.credits_per_period is None:
+            return None
+        return int(plan.credits_per_period)
+
+    async def rewards(self, user_id: int) -> dict:
+        team = await self._personal_team(user_id)
         if team is None:
-            return {"feedback_count": 0, "feedback_credits": 0, "items": []}
+            return {
+                "feedback_count": 0,
+                "feedback_credits": 0,
+                "invite_credits": 0,
+                "items": [],
+            }
         rows = list(
             await self._session.scalars(
                 select(CreditReward)
@@ -87,13 +137,16 @@ class CreditIncentives:
                 .order_by(CreditReward.created_at.desc(), CreditReward.key)
             )
         )
-        feedback = [row for row in rows if row.key.startswith("feedback:")]
+        feedback = [row for row in rows if reward_kind(row.key) == "feedback"]
         return {
             "feedback_count": len(feedback),
             "feedback_credits": sum(row.credits for row in feedback),
+            "invite_credits": sum(
+                row.credits for row in rows if reward_kind(row.key) == "invite"
+            ),
             "items": [
                 {
-                    "kind": "feedback" if row.key.startswith("feedback:") else "beta",
+                    "kind": reward_kind(row.key),
                     "credits": row.credits,
                     "created_at": row.created_at.isoformat(),
                 }

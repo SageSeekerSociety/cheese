@@ -133,6 +133,8 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 				built = ExecutionResult(id, failure)
 			case "heartbeat":
 				built = Heartbeat()
+			case "exec.output":
+				built = ExecOutput(f.Meaning["exec_id"].(string), f.Meaning["line"].(string))
 			default:
 				t.Fatalf("no builder for %s", f.Type)
 			}

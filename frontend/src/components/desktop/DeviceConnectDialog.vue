@@ -2,6 +2,7 @@
 // Select one enrollment team, show progress and report completion.
 import type { MyTeam } from '@/cx_types'
 import type { ConnectFailure, ConnectStep } from '@/lib/desktop'
+import type { DesktopExecutorStatus } from '@/lib/desktopApp'
 
 import { ref, watch } from 'vue'
 
@@ -22,6 +23,8 @@ const props = defineProps<{
   deviceName: string
   teams: MyTeam[]
   error: string | null
+  /** 接好之后，AI 队友要用的程序在后台下到哪了；不说的应用为 null。 */
+  prefetch?: DesktopExecutorStatus | null
 }>()
 
 const emit = defineEmits<{
@@ -174,6 +177,23 @@ function failedAt(f: ConnectFailure) {
     <div v-else-if="stage === 'done'" class="flow">
       <p class="flow__hint">{{ t('account.connectFlow.doneHint') }}</p>
       <p class="flow__body">{{ deviceName }}</p>
+      <div v-if="prefetch?.state === 'fetching'" class="flow__prefetch" aria-live="polite">
+        <p class="flow__hint">
+          {{
+            prefetch.percent === null
+              ? t('account.connectFlow.prefetch.preparing')
+              : t('account.connectFlow.prefetch.fetching', { percent: prefetch.percent })
+          }}
+        </p>
+        <v-progress-linear
+          :model-value="prefetch.percent ?? undefined"
+          :indeterminate="prefetch.percent === null"
+          color="primary"
+          rounded
+          height="2"
+        />
+      </div>
+      <p v-else-if="prefetch?.state === 'ready'" class="flow__hint">{{ t('account.connectFlow.prefetch.ready') }}</p>
     </div>
   </AdaptiveDialog>
 </template>
@@ -197,6 +217,12 @@ function failedAt(f: ConnectFailure) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.flow__prefetch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .flow__error {

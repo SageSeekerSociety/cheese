@@ -392,10 +392,14 @@
     }
   },
   "previewPanelLocator": {
-    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+    },
+    "s2": {
+      "name": "This file takes no comments",
+      "note": "A library original or a message attachment takes no comments, so only 'send' is offered."
     }
   },
   "previewPanelPickToggle": {
@@ -503,18 +507,22 @@
     }
   },
   "publishTaskView": {
-    "about": "Publish page: top to bottom one task (content, participants, timing, categories and tags, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "about": "Publish page: the publish form on the left, saved as a draft as it is written; the header's Drafts lists my drafts in this space. Cheese is the app's one panel, docked on the right when this page opens on desktop. While it writes this draft, the app's Cheese host draws a named pointer on the form that follows what it fills in; this component does not draw it.",
     "s1": {
-      "name": "Publish one",
-      "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
-    },
-    "s2": {
-      "name": "Publish several",
-      "note": "Three read from a file (two checked): the task list above says what the file is called and how many were read; the button changes to say how many will publish."
+      "name": "Writing a draft",
+      "note": "Default cell: the form, with 'Drafts 3' and 'Draft saved' in the header, and 'Needs admin review after publishing' beside the publish button."
     },
     "s3": {
       "name": "Space not ready",
-      "note": "Categories and domain groups still hanging off the space, not yet arrived: no form, only the header line explaining this task needs review — the publish button is disabled meanwhile."
+      "note": "Categories and domain groups are still on their way: no form, and the publish button is disabled."
+    },
+    "s4": {
+      "name": "Several tasks from one file",
+      "note": "Above the form, the tasks Cheese made from one file: the first is published, the second shows 1 missing after Publish all, the third is being filled in. Publish all (2) sits at the end."
+    },
+    "s5": {
+      "name": "Cheese closed",
+      "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
     }
   },
   "basicInfoView": {
@@ -540,33 +548,14 @@
     }
   },
   "spaceGuidanceView": {
-    "about": "Space settings 'Guidance for the AI teammate': a line of explanation, a six-field form and save. All six empty means this board sets no default, and whichever layer below says something is followed.",
+    "about": "Space settings 'AI teammate guidance': a line of explanation, the approach, additional requirements, materials it may read, and save. All empty means this board sets nothing; only each task's own counts.",
     "s1": {
       "name": "This board set defaults",
-      "note": "Default cell: system prompt, current week and this week's scope are filled in; the finer settings are tucked into 'More'."
+      "note": "Set: 'Guide with questions' is picked and requirements are written."
     },
     "s2": {
       "name": "No defaults yet",
       "note": "All six empty means 'nothing said': the materials list also failed to load this time, but failing to load isn't the same as gone, so it isn't treated as invalid — that field becomes an explanatory line, offering no candidates."
-    }
-  },
-  "spaceMaterialsView": {
-    "about": "Space settings 'Materials': visible to all members; those marked 'Admins only' are hidden from members and unreadable by their AI. Each row can be downloaded, have its visibility changed, or be taken down.",
-    "s1": {
-      "name": "Has materials, admin sees all",
-      "note": "Default cell: three materials in one list; each row shows type, size, upload date, download count and how many places reference it; the account can manage, so every row has entries to change visibility and take down."
-    },
-    "s2": {
-      "name": "Nothing yet",
-      "note": "Materials empty: says 'No materials', doesn't draw a blank block."
-    },
-    "s3": {
-      "name": "List still loading",
-      "note": "Not loaded yet: spins in place, doesn't say 'No materials' first — that would read 'not loaded' as 'none'."
-    },
-    "s4": {
-      "name": "Upload form open",
-      "note": "The form that appears after pressing 'Upload material': pick a file, set visibility (all members / admins only), both required."
     }
   },
   "briefView": {
@@ -578,6 +567,10 @@
     "s2": {
       "name": "Brief only, no materials",
       "note": "This task brings no materials: the whole materials section isn't drawn, no empty heading left — just the brief section."
+    },
+    "s3": {
+      "name": "Rubric kept to graders",
+      "note": "The publisher or a space admin still sees the rubric, marked as visible to graders only; students do not see this section."
     }
   },
   "insightsView": {
@@ -1154,6 +1147,10 @@
     "s5": {
       "name": "Both kinds of connection",
       "note": "Sample data includes device subscriptions, services and API keys, plus platform-held keys and services, one row per connection."
+    },
+    "s6": {
+      "name": "Adding my connection",
+      "note": "Pick one of your existing connections to add to the team; it serves only your own assistant."
     }
   },
   "channelBrowseView": {
@@ -1464,8 +1461,8 @@
       "note": "The default: one host in use, one offline, one broken by the provider and given up; opening the one in use shows a working sandbox and one waiting for its host."
     },
     "s2": {
-      "name": "Refusing new sessions",
-      "note": "The provider broke three hosts within the hour: the page says new sessions are being refused, instead of leaving a number to interpret."
+      "name": "Not starting new AI teammates",
+      "note": "The provider broke three hosts within the hour: the page says no new AI teammates are being started, instead of leaving a number to interpret."
     },
     "s3": {
       "name": "A failed read is not an empty pool",
@@ -1523,26 +1520,26 @@
     }
   },
   "teamMembersView": {
-    "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
+    "about": "The Members section of team settings: an Invite button beside the title, then four cards (how people join, join requests, members, sent invitations; requests and invitations only when there are some) and an invite dialog. Reads and writes live in the container `teams/detail/Members.vue`.",
     "s1": {
-      "name": "The members tab",
-      "note": "Default state: three people, one per row, owner and admin each carrying a role chip, and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+      "name": "Members",
+      "note": "One row per person, each with a role chip and a line on what the role can do. Promote, demote and remove sit in the row menu; a member the server will not let you remove has no menu."
     },
     "s2": {
-      "name": "The join requests tab",
-      "note": "The one waiting for a decision: who asked, their one-line reason, when they asked, with approve and reject on the right; both go dead while an answer is in flight."
+      "name": "Join requests",
+      "note": "A pending request: who, their message, when; reject and approve on the right; the card title counts what is still waiting."
     },
     "s3": {
-      "name": "The sent invitations tab",
-      "note": "Sent, no answer yet: who was invited and when, with only a withdraw button on the right."
+      "name": "Sent invitations",
+      "note": "An invitation still waiting: who, when, and a Withdraw button."
     },
     "s4": {
       "name": "The members tab could not load",
       "note": "The list did not come back: this tab turns into the failure state, states the reason and offers a retry, rather than drawing \"No members\"."
     },
     "s5": {
-      "name": "The requests are still loading",
-      "note": "The requests are not back yet: one centred spinner. It cannot say \"No join requests\" here - that sentence is only sayable after a read."
+      "name": "Requests still loading",
+      "note": "A spinner in the card; it does not say there are none."
     },
     "s6": {
       "name": "The invite dialog found someone",
@@ -1554,10 +1551,10 @@
     }
   },
   "teamJoinLinkCard": {
-    "about": "The team address and joining card: the address (`/teams/` plus the handle), a long-lived team link (copy it, reset it), whether joining needs approval, and whether the team shows up in search. Fetching, writing, and where the browser goes after an address change all live in the container `teams/detail/Members.vue`; this card only takes data and reports actions, and only the address field keeps its own draft - a half-typed address must not follow the next team.",
+    "about": "How people join, in the Members section: the long-lived team link (copy, reset), whether joining needs approval, and who can find the team. The team address lives in Profile. Reads and writes are in the container `teams/detail/Members.vue`.",
     "s1": {
       "name": "The link is back",
-      "note": "Default state: the address field carries the host prefix, the link field is read-only, copy and reset sit beside it, and below are the approval switch and the two \"who can find this team\" options."
+      "note": "The default: a read-only link with copy and reset beside it; below, the approval switch and the two visibility choices, each with a line under it."
     },
     "s2": {
       "name": "Just copied",
@@ -1570,10 +1567,6 @@
     "s4": {
       "name": "It did not go through",
       "note": "A read or write failed: a red bar states the reason, the rest of the card stays as it was, and the person can try again."
-    },
-    "s5": {
-      "name": "The address is taken",
-      "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
     }
   },
   "adminCiActivityPageView": {
@@ -1597,13 +1590,144 @@
   },
   "thisDeviceView": {
     "sleepOff": {
-      "name": "No sessions, sleep prevention off",
-      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+      "name": "No AI teammates working, sleep prevention off",
+      "note": "The list of working AI teammates is empty and the switch is off. The computer can sleep when idle."
     }
   },
   "teamAgentPicker": {
     "name": "Choose a team connection",
     "note": "Choose a connection, an available model, and the device that will execute tasks.",
     "about": "AI teammates in project settings choose a team connection, one of its models, and an execution device."
+  },
+  "assistantPanel": {
+    "about": "The app's one Cheese panel, held by the app shell; its header just says Cheese. Each step of a turn is one line, folded into one when the answer is done; what it wrote into a draft is a card where every field can be undone; a message or task it drafted for the person is a card waiting for them, which they can edit and only then send; things left for the person to confirm and published results are cards too. Earlier topics sit above, set apart by New topic.",
+    "s1": {
+      "name": "Publish page, nothing asked yet",
+      "note": "An empty conversation: one line on what it can do, a few starters below, and a button to add files beside the box."
+    },
+    "s2": {
+      "name": "Writing a draft",
+      "note": "Cheese has read the file and looked through the space's tasks, and is filling in the task: the last step spins."
+    },
+    "s3": {
+      "name": "A finished turn",
+      "note": "The steps fold into one line; the deadline in the changes card was undone (struck through); a 'Needs your check' card; the published result offers 'View task'."
+    },
+    "s4": {
+      "name": "Three tasks from one file",
+      "note": "A file handed over with nothing typed. The first task fills the open draft and is listed field by field; the other two are new drafts, one line each, opened by their names."
+    },
+    "s5": {
+      "name": "Earlier topics",
+      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
+    },
+    "s6": {
+      "name": "Drafting in a project",
+      "note": "Asked in a channel what needs the person: Cheese read the history and drafted a reply (waiting, editable, with Send and Set aside) and a task (already opened, with View)."
+    },
+    "s7": {
+      "name": "A routine's run",
+      "note": "A conversation the platform started: the line on top says the routine started. Cheese drafted a reply; you were away, so the card waits for you. The card the last run left has expired."
+    },
+    "s8": {
+      "name": "A memory saved",
+      "note": "Cheese notes something about you; a Memory card appears in the panel and can be undone"
+    },
+    "s9": {
+      "name": "A long piece of work under way",
+      "note": "The checklist sits on top, ticked as it goes; words and steps appear in the order they happened; of two subagents one is working and one is done, and opening one lists its steps."
+    },
+    "s10": {
+      "name": "A long piece of work done",
+      "note": "The checklist folds to one line, both subagents are done, and words and steps keep the order they happened in."
+    },
+    "s11": {
+      "name": "Saying more while Cheese works",
+      "note": "While Cheese answers, + and the microphone stay; typing or picking a file turns the button into send, and it goes into the answer under way."
+    },
+    "s12": {
+      "name": "Work done, nothing written",
+      "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
+    },
+    "s13": {
+      "name": "With the page, a selection and citations",
+      "note": "The row in the box: the page Cheese reads and the text selected this time, the same chips as attachments. The last question's cited document and task are chips, with one line each under it: the selection, and the page it was asked on."
+    },
+    "s14": {
+      "name": "Page left out",
+      "note": "The page's × clicked: the name is struck through and × becomes +, which brings it back; the next page is included again."
+    },
+    "s15": {
+      "name": "Citing with {'@'}",
+      "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
+    }
+  },
+  "myDraftsView": {
+    "about": "My drafts: tasks not yet published in this space, and unsaved changes to published ones. Open one by its name; deleting asks first.",
+    "s1": {
+      "name": "A few drafts",
+      "note": "Two new tasks and one set of changes, marked as such; the source names the imported file."
+    },
+    "s2": {
+      "name": "None",
+      "note": "After the last one is deleted."
+    }
+  },
+  "spaceLibraryView": {
+    "about": "The space's Library page in the sidebar: members see files open to all members; admins see both tiers. Clicking a row previews it on the right; admins upload from the header and change visibility or remove from each row's ⋯ menu.",
+    "s1": {
+      "name": "Admin",
+      "note": "Four files, each row showing who uploaded it, when and its size; the admins-only file carries a tag."
+    },
+    "s2": {
+      "name": "Member",
+      "note": "No upload button and no admins-only files; the ⋯ menu only offers Download."
+    },
+    "s3": {
+      "name": "One file open",
+      "note": "The text file previews in the right pane. Admins also see its download count and how many guidance settings list it."
+    },
+    "s4": {
+      "name": "Nothing yet",
+      "note": "Says “No files yet” and draws no search box."
+    },
+    "s5": {
+      "name": "Still loading",
+      "note": "A spinner in place, not “No files yet” first."
+    },
+    "s6": {
+      "name": "One file open on a phone",
+      "note": "The file fills the page with Download at the bottom; the top bar's ← returns to the list."
+    },
+    "s7": {
+      "name": "Upload dialog",
+      "note": "Pick a file, then who can see it; each choice says who that is. Upload stays disabled until a file is chosen."
+    }
+  },
+  "settingsAssistantView": {
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "s1": {
+      "name": "With routines",
+      "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
+    },
+    "s2": {
+      "name": "Nothing set yet",
+      "note": "No entries of your own, so “No confirmation needed” says None; no routines."
+    }
+  },
+  "citeMenu": {
+    "about": "The menu {'@'} opens in Cheese's box: pick a task, channel, document, library file or problem to cite as a chip. Each row says on the right which project and channel it is in.",
+    "s1": {
+      "name": "Just typed {'@'}",
+      "note": "Recent places first, then the four kinds in this project; click one to list that kind."
+    },
+    "s2": {
+      "name": "Typed a few letters",
+      "note": "Grouped by kind, at most 4 each, the project in view first; the matched letters in bold."
+    },
+    "s3": {
+      "name": "Five already cited",
+      "note": "A question cites at most 5 things; typing {'@'} again only says so."
+    }
   }
 }

@@ -2,7 +2,22 @@ import type { BoardPhrase } from '../cx_types'
 
 /** 待我处理清单里的一行（后端 `/awaiting-me`）：项目里的一件事，或一条等我回答的
  *  邀请、申请。两种按 `kind` 分。 */
-export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun
+export type WaitingItem = WaitingWork | WaitingAsk | WaitingRun | WaitingTask
+
+/** 我出的（或我管的空间里的）一道题目上等我的事（后端 `space/teaching_queue.py`）：几份领取
+ *  等我批准、几份提交等我批改。批完就不在清单上了。 */
+export interface WaitingTask {
+  kind: 'task_queue'
+  taskId: number
+  taskName: string
+  spaceId: number
+  spaceName: string
+  /** 等我批准的领取有几份。 */
+  claims: number
+  /** 等我批改的提交有几份。 */
+  reviews: number
+  at: string
+}
 
 /** 项目里等我的一件事（后端 `room_task/awaiting.py`）。
  *
@@ -30,6 +45,12 @@ export interface WaitingWork {
   threadId?: string | null
   /** 第二行：等的是什么（提问的原话、改动的主题、停住的原因、拍板的说明）；没有就空。 */
   detail?: string
+  /** 等你审阅的那一行才有：这件任务递的第几版、什么时候递上来的（ISO）。 */
+  cardVersion?: number | null
+  cardSince?: string | null
+  /** 卡住那一行才有：做这件任务的队友叫什么，和名字的来历（`default` 时按读者的语言叫）。 */
+  agentName?: string | null
+  agentNameSource?: string | null
   /** 来自通知的才有：哪一条、它的标题（要拍板的问题、改了什么），决策请求可选的答案。 */
   alertId?: number | null
   headline?: string
@@ -59,6 +80,8 @@ export interface WaitingAsk {
   role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
   /** 邀请或申请时附的那句话；没写是空串。 */
   message: string
+  /** 邀请是发起人自己的芝士替他发的。 */
+  byAssistant?: boolean
   at: string
 }
 

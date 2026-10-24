@@ -29,12 +29,13 @@ from tests.integration.conftest import (
     unique_int,
 )
 
-#: A 项目集 that says nothing, as the API reports it.
+#: A 空间 that says nothing, as the API reports it. Read with the board OWNER's
+#: token, so the 私有指导 (`privatePrompt`) key is present and null.
 EMPTY_TEACHING = {
+    "mode": None,
     "systemPrompt": None,
-    "currentWeek": None,
-    "allowedTopics": [],
-    "avoidInCode": [],
+    "privatePrompt": None,
+    "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
 }
@@ -118,7 +119,7 @@ def _patch_teaching(
     material_ids: list[int] | None = None,
 ):
     return api_client.patch(
-        f"/spaces/{board['space_id']}/categories/{board['category_id']}",
+        f"/spaces/{board['space_id']}",
         json={
             "teaching": {
                 "materialIds": material_ids or [],
@@ -130,12 +131,9 @@ def _patch_teaching(
 
 
 def _teaching_of(api_client: TestClient, board: dict, token: str) -> dict:
-    resp = api_client.get(
-        f"/spaces/{board['space_id']}/categories/{board['category_id']}",
-        headers=_auth(token),
-    )
+    resp = api_client.get(f"/spaces/{board['space_id']}", headers=_auth(token))
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["category"]["teaching"]
+    return resp.json()["data"]["space"]["teaching"]
 
 
 def _publish_task(api_client: TestClient, board: dict, *, name: str) -> int:
@@ -351,31 +349,32 @@ def test_someone_elses_material_is_allowed_because_material_has_no_owner(
 def test_the_other_teaching_fields_are_untouched(
     api_client: TestClient, user_client: UserCreator, db_session, _portal
 ):
-    """回归：新增的引用校验只碰 `materialIds` / `documentIds`，
-    `systemPrompt` / `currentWeek` / `allowedTopics` / `avoidInCode` 照旧落库、
-    照旧进这一轮的开场上下文。"""
+    """回归：引用校验只碰 `materialIds` / `documentIds`，`mode` / `systemPrompt`
+    照旧落库、照旧进这一轮的开场上下文。"""
     board = _new_board(user_client, api_client)
     teaching = {
-        "systemPrompt": "第 {current_week} 周，只做 {allowed_topics}。",
-        "currentWeek": 3,
-        "allowedTopics": ["循环"],
-        "avoidInCode": ["递归"],
+        "mode": "guide",
+        "systemPrompt": "只讲循环，不碰递归。",
         "materialIds": [],
         "documentIds": [],
     }
     resp = api_client.patch(
-        f"/spaces/{board['space_id']}/categories/{board['category_id']}",
+        f"/spaces/{board['space_id']}",
         json={"teaching": teaching},
         headers=_auth(board["token"]),
     )
     assert resp.status_code == 200, resp.text
 
-    assert _teaching_of(api_client, board, board["token"]) == teaching
+    # 回复带上空的两格：`learningGoals` 与（板主看得见的）`privatePrompt`。
+    assert _teaching_of(api_client, board, board["token"]) == {
+        **teaching,
+        "learningGoals": [],
+        "privatePrompt": None,
+    }
 
     task_id = _publish_task(api_client, board, name="这门课的题（其它字段）")
     project_id = _project_under(api_client, user_client, board, task_id=task_id)
     context = _for_project(_portal, db_session, project_id)
     assert context is not None
-    assert context.teaching.current_week == 3
-    assert context.teaching.allowed_topics == ["循环"]
-    assert context.teaching.avoid_in_code == ["递归"]
+    assert context.teaching.mode == "guide"
+    assert context.teaching.system_prompt == "只讲循环，不碰递归。"

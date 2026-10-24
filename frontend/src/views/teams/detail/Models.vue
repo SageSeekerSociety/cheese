@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 import { useTeamModels } from '@/composables/useTeamModels'
 
 import ModelsView from './ModelsView.vue'
+
+import { t } from '@/i18n'
 
 const {
   teamId,
@@ -28,11 +32,14 @@ const {
   setModels,
   refresh,
 } = useTeamModels()
+
+const addingPersonal = ref(false)
 </script>
 
 <template>
   <ModelsView
     :key="teamId"
+    v-model:adding-personal="addingPersonal"
     :connections="connections"
     :held="held"
     :personal-choices="personalChoices"

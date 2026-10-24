@@ -34,14 +34,20 @@ from sqlalchemy.orm import aliased
 
 from app.core.errors import ConflictError
 from app.core.sentences import listing, say
-
 from app.domain.admin.models import PlatformAdmin
 from app.domain.agent_instance.models import (
     AccountConnection,
     AgentInstance,
     OwnAgent,
 )
-from app.domain.assistant.models import AssistantConversation, AssistantGatewayKey
+from app.domain.assistant.models import (
+    AssistantChange,
+    AssistantConversation,
+    AssistantGateCheck,
+    AssistantGatewayKey,
+    AssistantProposal,
+    AssistantRules,
+)
 from app.domain.device.models import DeviceRow
 from app.domain.integration.models import Integration
 from app.domain.local_fs.models import LocalDirectoryGrantRow
@@ -237,6 +243,18 @@ async def close_account(session: AsyncSession, user_id: int) -> Closed | None:
     )
     await session.execute(
         delete(AssistantConversation).where(AssistantConversation.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantChange).where(AssistantChange.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantProposal).where(AssistantProposal.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantGateCheck).where(AssistantGateCheck.user_id == user_id)
+    )
+    await session.execute(
+        delete(AssistantRules).where(AssistantRules.user_id == user_id)
     )
     await session.execute(
         delete(Notification).where(

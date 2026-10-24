@@ -23,17 +23,17 @@ covers:
 
 | 列 | 意思 | 属于它的短语 |
 |---|---|---|
-| `building` 进行中 | 在做，还没递出交付 | 芝士在做、进行中、空闲（房间）、草稿（房间） |
+| `building` 进行中 | 在做，还没递出交付 | 芝士在做、在等结果、进行中、空闲（房间）、草稿（房间） |
 | `delivering` 检查中 | 下一步在平台/芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
-| `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答 |
+| `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答、卡住了 |
 | `done` 已关闭 | 已采纳，或已关闭 | 已采纳、已关闭（关闭时留没留结论都是这一句） |
 | `archived` 已归档 | 房间才有；任务不归档 | 已归档 |
 
 每一列只说属于自己的话，而这一条不是靠注释守的：每个短语是它那一列专属枚举的成员，列由成员的类型查出来（`_COLUMN_OF` / `_show`），`COLUMN_PHRASES` 也由同一张表推出来、不手写第二遍。没有任何一处分别挑一个列和一个短语，所以「显示了一句不属于本列的话」结构上写不出来。前端不再做第二张映射表（`frontend/src/cx_types.ts` 明写了这一点）——两次映射，两边就会各说各的。
 
-`GET /projects/{id}/tasks` 一次把「全部任务」、「总览」和侧栏要的东西拼出来（`api/routes/projects.py`）：任务的列表、每条任务最新那张卡（`latest_cards_by_task`）、哪几条停在一个未回答的提问上（`tasks_awaiting_an_answer`）、哪几条此刻在自己的会话里有一轮在跑（`agent.liveness` 的 `running_tasks`）——四次批查询，不是每条任务四次。一个项目一百多个房间，按房间的形状（`/topics/{id}/tasks`）画一次侧栏要发一百多次请求。
+`GET /projects/{id}/tasks` 一次把「全部任务」、「总览」和侧栏要的东西拼出来（`api/routes/projects.py`）：任务的列表、每条任务最新那张卡（`latest_cards_by_task`）、哪几条停在一个未回答的提问上（`tasks_awaiting_an_answer`）——三次批查询，不是每条任务三次。一个项目一百多个房间，按房间的形状（`/topics/{id}/tasks`）画一次侧栏要发一百多次请求。
 
-两个刻意的细节：**一次只取一个「现在几点」**（`now = datetime.now(UTC)`），逐行取 now 会让同一批数据里两条本该一样的活分到不同格子，而那种差别没人再能复现；**「在跑吗」先问进程**（`chat.has_running_turn(任务 id)`），那是内存里的当下事实；再补上库里这条任务还开着、已送达的轮次（`agent_turns.task_id`），进程重启忘掉的那些也算在跑。事实被收窄成显式的小结构（`CardFacts` / `TaskFacts` / `RoomFacts`）再交给纯函数，这样这层测得起来，也说清了它到底读了哪几个字段。
+两个刻意的细节：**一次只取一个「现在几点」**（`now = datetime.now(UTC)`），逐行取 now 会让同一批数据里两条本该一样的活分到不同格子，而那种差别没人再能复现；**任务的会话在跑是事实，队友报的进度只填空**：这条活自己那位队友的会话在跑（`TaskFacts.teammate_runs`，`agent.teammate_runs` 读 `session_states`，`worker_status` 为 running，每个在跑的会话在哪一次跑由 runner 说）而它在这一次跑里没报过别的（`TaskFacts.progress_run` 不是其中一次），就是在做；其余时候在做、在等、卡住读的是 AI 队友自己报的进度（`TaskFacts.progress`，即 `Task.progress_state`）。房间的任务列表（`/topics/{id}/tasks`）和房间快照每行另带的 `session_running` 只说它的会话此刻是不是在干活，会话开着但闲着也是 false；房间自己那一格的「运行中」读的也是它自己那条线的 `session_states`（同一个 `running_conversations`）。事实被收窄成显式的小结构（`CardFacts` / `TaskFacts` / `RoomFacts`）再交给纯函数，这样这层测得起来，也说清了它到底读了哪几个字段。
 
 ## 待我处理 {#awaiting}
 

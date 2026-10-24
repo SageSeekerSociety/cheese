@@ -30,7 +30,7 @@ def test_the_change_line_is_reachable_from_the_module():
     )
     assert files == [{"path": "a.py", "added": 1, "removed": 1}]
     line = event_lines._format_change_summary(files)
-    assert line == "这一轮改了 1 个文件（+1 -1）\na.py"
+    assert line == "这次改了 1 个文件（+1 -1）\na.py"
     assert (
         event_lines._change_summary_meta(event_lines._Changeset([], files))[
             "changeset"

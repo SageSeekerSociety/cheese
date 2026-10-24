@@ -17,8 +17,10 @@
  * 值，运行时不构成循环。
  */
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { BoardPhrase, RoomTask } from '@/cx_types'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
+import type { TaskState } from '@/lib/taskState'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
@@ -38,6 +40,7 @@ import ThreadHead from '@/components/room/ThreadHead.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
+import { taskState } from '@/lib/taskState'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」。 */
@@ -60,7 +63,7 @@ const PEOPLE: MentionItem[] = [
   { label: '波比', kind: 'member', insert: '波比', sub: '@bobby', agent: false, external: true, handle: 'bobby' },
 ]
 
-/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
+/** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面，挂一条分组标题。 */
 const OUTSIDER: MentionItem = {
   label: '陈卡',
   kind: 'member',
@@ -68,6 +71,7 @@ const OUTSIDER: MentionItem = {
   sub: '@carol',
   agent: false,
   outsideTopic: true,
+  group: '不在频道',
   handle: 'carol',
 }
 
@@ -155,6 +159,17 @@ function askBlock(
 
 // ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
 
+/** 一件任务的状态那一格，照 `lib/taskState.ts` 算：看的人是 alice，做它的是房间那位队友。 */
+export function catalogTaskState(phrase: BoardPhrase, over: Partial<RoomTask> = {}, viewer = 'alice'): TaskState {
+  return taskState(
+    { id: 'task-week-1', presentation: { column: 'building', phrase }, ...over },
+    { viewer, agentName: AGENT_NAME, nameOf: (handle) => CATALOG_NAMES[handle] ?? handle }
+  )
+}
+
+/** 预览里出现的几个人。 */
+export const CATALOG_NAMES: Record<string, string> = { alice: 'Alice', bobby: '波比', 'cheese-topica': AGENT_NAME }
+
 /** 频道里的一件任务，画成卡片时用到的那几样。 */
 function taskLine(over: Partial<TaskLine>): TaskLine {
   return {
@@ -162,8 +177,8 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     title: '整理第一周的课件',
     owner: 'cheese',
     creator: 'bob',
-    status: '进行中',
-    tone: 'running',
+    state: catalogTaskState('started'),
+    mine: false,
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
     latest: null,
@@ -172,7 +187,7 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
 }
 
 /** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
-const TASK_HEADER_PROPS = {
+export const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
     id: 'demo-task',
@@ -230,10 +245,112 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '在做',
-        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
+        name: '开启：队友还没报',
+        note: '一件刚开启的任务：标题在左，状态在后面；队友还没报过，写「进行中」。数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+      {
+        name: '队友说在做',
+        note: '没有卡的时候，队友自己报的「在做」照写，后面跟它的原话。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_note: '在改登录表单，加「记住我」那个勾选框',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说在等结果',
+        note: '会话停着时，状态是 AI 队友自己报的，后面跟着它的原话；悬停看是谁、什么时候报的。它的会话又跑起来、而它在这一次里没报过，就显示在做。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '队友说卡住了',
+        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；后面跟它说卡在哪。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'blocked' },
+            progress_state: 'blocked',
+            progress_note: '没有预发环境的测试账号，登不进去验证',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-progress-note"]',
+      },
+      {
+        name: '递了卡，等人审阅',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对验收人本人这一句是「待你审阅」。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+            waiting_on: 'bob',
+          },
+        },
+        expect: '待审阅',
+      },
+      {
+        name: '递了卡，平台在跑检查',
+        note: '卡还在检查这一步：下一步在平台手上，没人被点到。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
+        },
+        expect: '平台在跑检查',
+      },
+      {
+        name: '卡被退回，回到在做',
+        note: '验收人退回（或卡被作废）后，平台把任务放回「在做」；没有原话，等队友自己再报。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'running' },
+            progress_state: 'working',
+            progress_set_by: null,
+            progress_set_at: '2026-10-05T02:00:00Z',
+          },
+        },
+        expect: '在做',
+      },
+      {
+        name: '报完之后会话结束了',
+        note: '它报的那一句照旧，旁边写「已离开」：会话结束不改它报的状态。',
+        props: {
+          ...TASK_HEADER_PROPS,
+          task: {
+            ...TASK_HEADER_PROPS.task,
+            presentation: { column: 'building', phrase: 'waiting' },
+            progress_state: 'waiting',
+            progress_note: '等 CI 跑完再看失败的两个用例',
+            progress_set_by: 'cheese-topica',
+            progress_set_at: '2026-10-05T00:00:00Z',
+            agent_left_at: '2026-10-05T01:00:00Z',
+          },
+        },
+        expectSelector: '[data-testid="task-agent-left"]',
       },
     ],
   },
@@ -284,7 +401,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '进行中',
-        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
+        note: '状态那一格是任务状态的记号（图标 + 那一句），各种状态的样子见「任务状态」那几页。',
         props: { task: taskLine({}), ownerName: AGENT_NAME },
         expect: '整理第一周的课件',
       },
@@ -292,7 +409,10 @@ const TASK_ENTRIES: CatalogEntry[] = [
         name: '采纳过几步',
         note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
         props: {
-          task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
+          task: taskLine({
+            accepted: '已采纳 2 次',
+            state: catalogTaskState('awaiting_review', { waiting_on: 'bobby' }),
+          }),
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
@@ -303,7 +423,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
         props: {
           task: taskLine({
             latest: '发送验证码的接口写好了，正在写校验那一个',
-            status: '芝士在做',
+            state: catalogTaskState('running', { session_running: true }),
           }),
           ownerName: '王一鸣',
           ownerAvatar: '',
@@ -314,7 +434,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
         name: '支线顶上',
         note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
         props: {
-          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          task: taskLine({ latest: '这一句不画', state: catalogTaskState('running', { session_running: true }) }),
           ownerName: '王一鸣',
           head: true,
         },

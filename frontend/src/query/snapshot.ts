@@ -15,6 +15,7 @@
 import type { ProjectSkill } from '@/api/projectSkills'
 import type { FeedbackProposal, ListPayload, RoomTask, TopicMemberRow } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
+import type { ChapterRow } from '@/types/chapters'
 import type { ReviewComment } from '@/types/reviewComment'
 import type { TaskRelated } from '@/types/taskOrigin'
 import type { ThreadRow } from '@/types/threads'
@@ -33,6 +34,8 @@ export interface RoomSnapshot {
   tasks?: { open: RoomTask[]; recent: RoomTask[] }
   pins?: ChannelPin[]
   threads?: ThreadRow[]
+  /** 这段对话的章节：频道和任务都有。 */
+  chapters?: ChapterRow[]
   /** 任务才有。 */
   task?: RoomTask
   related?: TaskRelated
@@ -61,9 +64,12 @@ function pieces(conversation: string, room: string, snapshot: RoomSnapshot | nul
       [keys.roomThreads(room), snapshot?.threads]
     )
   }
+  // Chapters belong to the conversation being read, so both a room's own page
+  // and a task's page find them on the same key.
+  cached.push([keys.roomChapters(conversation), snapshot?.chapters])
   const waited: [readonly unknown[], unknown][] = [
     [keys.roomFeedbackProposals(conversation), snapshot?.feedback_proposals],
-    [keys.roomSkillProposals(room), snapshot?.skill_proposals],
+    [keys.roomSkillProposals(conversation), snapshot?.skill_proposals],
   ]
   if (task) {
     waited.push(

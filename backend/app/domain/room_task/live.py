@@ -15,10 +15,14 @@ conversation are told when it flushed
 - a change to the task's row (started, closed, accepted, renamed, handed over…);
 - a question asked in the task, or an answer recorded on one: what the task
   reads as (`presentation`, 待回答) turns on its latest question;
-- a turn in the task reaching its session or ending (运行中): the turn's
+- a turn in the task reaching its session or ending: the turn's
   interval is written with a bulk `update(AgentTurn)`, which a flush hook does
   not see, so its writer (`AgentTurnRepository`) queues the frames through
-  `turns_moved` in the same session;
+  `sessions_moved` in the same session;
+- a session in the task starting or stopping running, as its runner declares
+  it: whether one runs is part of what the task reads as (`presentation`, 在做),
+  and the runner's report is applied (`agent.runner_reports`) without touching
+  the task's row, so it calls `sessions_moved` too;
 - the task's first instruction moving on its ledger (`agent/opening.py`): it
   waiting to try again, or giving up, is what the overview says while the
   document is empty, and no turn moves when it happens. That module's own
@@ -27,7 +31,8 @@ conversation are told when it flushed
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
 `update(Task)` is not seen here; the one that renames a task tells the pages
-itself (`naming._tell_pages`).
+itself (`naming._tell_pages`), and the one that marks a task's session gone
+(`progress.note_agent_left`) calls `rows_written`.
 """
 
 from __future__ import annotations
@@ -103,10 +108,17 @@ def moved_in_flush(session: Session, conversations: set[uuid.UUID]) -> None:
         _tell(session, task_id, room_id)
 
 
-async def turns_moved(
+def rows_written(session: AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """A bulk `update(Task)`, which the flush hook does not see, changed this
+    task: its pages are told once ``session`` commits."""
+    _tell(session.sync_session, task_id, room_id)
+
+
+async def sessions_moved(
     session: AsyncSession, conversations: Iterable[uuid.UUID]
 ) -> None:
-    """A turn reached its session, or ended, in these conversations: the ones
+    """A turn reached its session or ended, or a session started or stopped
+    running, in these conversations: the ones
     that are tasks are told once ``session`` commits. Read in ``session``
     itself, so nothing is left running once its caller is done with it."""
     ids = set(conversations)

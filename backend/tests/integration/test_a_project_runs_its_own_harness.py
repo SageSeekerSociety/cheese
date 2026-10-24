@@ -70,10 +70,13 @@ async def test_a_project_whose_harness_this_machine_lacks_runs_the_next_one(
 
     await _converse(service, topic_id)
     assert screen.last_prompt is not None
-    screen.starts(topic_id, session_id="sid-1")
+    # The runner starts Claude Code with the session id it chose
+    # (`--session-id`), so every record the session writes carries that id and
+    # the platform resumes by it. The stub's own id is the one to expect.
+    screen.starts(topic_id)
     screen.acknowledges(topic_id, screen.last_prompt)
     screen.says(topic_id, "好")
-    screen.stops(topic_id, "好", session_id="sid-1")
+    screen.stops(topic_id, "好")
     await settle_turn(service, topic_id)
     await screen.runtime.stop_listening()
 
@@ -81,7 +84,7 @@ async def test_a_project_whose_harness_this_machine_lacks_runs_the_next_one(
         sessions = AgentSessionService(session)
         assert (
             await sessions.resume_token(topic_id, CHEESE_HANDLE, harness=CLAUDE_CODE)
-            == "sid-1"
+            == screen.new_session_id
         )
         assert await sessions.resume_token(topic_id, CHEESE_HANDLE, harness=PI) is None
 
@@ -106,7 +109,7 @@ async def test_a_room_whose_machine_runs_none_of_the_listed_harnesses_does_not_r
 
     said = await _converse(service, topic_id)
 
-    assert any("没有部署 pi" in text for text in said), said
+    assert any("没有安装 pi" in text for text in said), said
     # 一句 prompt 都没有交出去：不是「跑了但结果不要」，是没跑。
     assert screen.last_prompt is None
     async with factory() as session:

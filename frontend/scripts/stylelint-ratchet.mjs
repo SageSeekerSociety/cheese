@@ -21,12 +21,7 @@ import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { asJson, cannotJudge, emit, plainResult, verdict } from './ratchet-report.mjs'
-import {
-  formatReport,
-  parseStylelintReport,
-  syntaxErrors,
-  violationDetails,
-} from './stylelint-ratchet-core.mjs'
+import { formatReport, parseStylelintReport, syntaxErrors, violationDetails } from './stylelint-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')

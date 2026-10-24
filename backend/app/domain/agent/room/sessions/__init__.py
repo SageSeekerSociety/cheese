@@ -10,12 +10,14 @@ room (``RoomReader``), after these books have taken it.
 The work does not live here. A session runs in a runner on the session host
 that outlives this process, and ``recover`` finds it again after a restart.
 
-What ends work the session did not end itself is decided here and in the core,
-the same way for every harness (``docs/agent-liveness.md``): the core says the
-session is gone (its process exited, or its runner was out of reach for
-``RUNNER_GONE_S`` while work was owed); here, the session has been talking
-without working for ``no_progress_s``, or something said to it has gone unread
-for ``unread_grace_s``.
+What ends work the session did not end itself depends on the harness
+(``docs/agent-liveness.md``). A runner that reports in the lifecycle protocol
+ends stuck work itself, on the two limits it is registered with, and reports
+the exit. For any other harness the core says the session is gone (its process
+exited, or its runner was out of reach for ``RUNNER_GONE_S`` while work was
+owed); here, the session has been talking without working for
+``no_progress_s``, or something said to it has gone unread for
+``unread_grace_s``.
 
 **This package is the module's facade.** One file held all of it until
 2026-10-16; the bodies moved into the sibling modules of this package, and what
@@ -77,6 +79,7 @@ from app.domain.agent.reads import Read
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.sessions.records import Clock as Clock
 from app.domain.agent.room.sessions.records import Live as Live
+from app.domain.agent.room.sessions.records import Outdated
 from app.domain.agent.room.sessions.records import _home as _home
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.agent.session_host.contract import Image, Prompt
@@ -85,8 +88,6 @@ from app.domain.delivery.input_identity import (
     InputIdentity,
     InputReceipt,
     InputRegistrar,
-    WorkCompletion,
-    WorkTermination,
 )
 
 # 同级子模块从**定义它们的模块**取，不经过包 `__init__` 的名字空间：
@@ -143,6 +144,13 @@ CLOCK_READ_S = 25.0
 # tool call or an ending for ``no_progress_s`` is a loop; a session that has
 # gone quiet is judged by whether its process is alive, not by this.
 TALKING_S = 300.0
+# How often a runner another release started is asked whether the work it is
+# finishing is done (``lifecycle._drain``). Its messages wait on the answer, so
+# it is asked often; a ping is the cheapest call a runner answers.
+DRAIN_POLL_S = 5.0
+# How long a drain that interrupted its runner at the cap goes on asking it how
+# the interrupted work ended, before settling without that answer.
+DRAIN_STOP_WAIT_S = 60.0
 
 
 class RoomSessions:
@@ -197,6 +205,15 @@ class RoomSessions:
         # lands here. "Not heard from" never does — that is unknown.
         self.found_conversations: set[tuple[Seat, str]] = set()
         self.terminal_conversations: set[tuple[Seat, str]] = set()
+        # Seats whose runner another release started, found by this round's
+        # recovery: not read and given nothing. An idle one is settled at its
+        # replay; one at work is drained first (``lifecycle._drain``), and its
+        # seat's messages wait until it is settled (``draining``).
+        self.outdated: dict[Seat, Outdated] = {}
+        self.drains: dict[Seat, asyncio.Task] = {}
+        # Seats settled that way, whose runner a start of this release
+        # replaces: due as soon as the seat is quiet (``prewarm_due``).
+        self.replace_due: dict[Seat, Live] = {}
         self._owns_sessions_provider = None
         self.tasks: dict[Seat, asyncio.Task] = {}
         # Each seat's reading caught up with what its session had written.
@@ -256,11 +273,14 @@ class RoomSessions:
         process that owns the running work answers yes: the one handing it over
         must not start what the next one is about to read."""
         seat = self._seat_of(session)
-        live = self.live.get(seat)
-        if live is None or not live.takes_inputs or seat in self.work:
-            return None
         provider = self._owns_sessions_provider
         if provider is not None and not provider().owns_sessions:
+            return None
+        if seat in self.replace_due:
+            # Its runner is another release's, settled and idle: replaced now.
+            return self.replace_due[seat]
+        live = self.live.get(seat)
+        if live is None or seat in self.work:
             return None
         ledger = getattr(self.channel, "screen_ledger", None)
         if (
@@ -283,7 +303,7 @@ class RoomSessions:
 
     async def _hear(
         self, session: SessionRef, read: Read, *, required: bool = False
-    ) -> None:
+    ) -> object:
         return await _books._hear(self, session, read, required=required)
 
     def _room(
@@ -293,12 +313,6 @@ class RoomSessions:
 
     async def _hear_receipt(self, receipt: InputReceipt) -> None:
         return await _books._hear_receipt(self, receipt)
-
-    async def _hear_completion(self, completion: WorkCompletion) -> None:
-        return await _books._hear_completion(self, completion)
-
-    async def _hear_termination(self, termination: WorkTermination) -> None:
-        return await _books._hear_termination(self, termination)
 
     async def reconcile_memory(self, session: SessionRef) -> None:
         return await _books.reconcile_memory(self, session)
@@ -350,16 +364,14 @@ class RoomSessions:
     def _owning(self, seat: Seat) -> None:
         _reading._owning(self, seat)
 
-    def _listen(self, seat: Seat, *, recovered: bool = False) -> None:
-        _reading._listen(self, seat, recovered=recovered)
+    def _listen(self, seat: Seat) -> None:
+        _reading._listen(self, seat)
 
     def _clock_read_s(self, seat: Seat) -> float:
         return _reading._clock_read_s(self, seat)
 
-    async def _poll(
-        self, seat: Seat, live: Live, recovered: bool, caught: asyncio.Event
-    ) -> None:
-        return await _reading._poll(self, seat, live, recovered, caught)
+    async def _poll(self, seat: Seat, live: Live, caught: asyncio.Event) -> None:
+        return await _reading._poll(self, seat, live, caught)
 
     async def _take(
         self, seat: Seat, live: Live, read: Read, caught: asyncio.Event
@@ -471,7 +483,6 @@ class RoomSessions:
         images: list[Image] | None = None,
         *,
         register_input: InputRegistrar,
-        expected_work_id: uuid.UUID | None = None,
         agent_handle: str | None = None,
         owes_reply: bool = False,
     ) -> bool:
@@ -481,7 +492,6 @@ class RoomSessions:
             text,
             images,
             register_input=register_input,
-            expected_work_id=expected_work_id,
             agent_handle=agent_handle,
             owes_reply=owes_reply,
         )
@@ -504,8 +514,8 @@ class RoomSessions:
             register_input=register_input,
         )
 
-    def _steer_seat(self, topic_id, expected_work_id, agent_handle) -> Seat | None:
-        return _speaking._steer_seat(self, topic_id, expected_work_id, agent_handle)
+    def _steer_seat(self, topic_id, agent_handle) -> Seat | None:
+        return _speaking._steer_seat(self, topic_id, agent_handle)
 
     @contextlib.asynccontextmanager
     async def reading(
@@ -516,11 +526,30 @@ class RoomSessions:
 
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the seat's work away; the session and its conversation stay.
-        True = the stop reached the session."""
-        live = self.live.get(self._seat_of(session))
-        if live is None:
+        True = the stop reached the session. A runner being drained is
+        stopped too, under the registration it holds, and its work then ends
+        as stopped rather than as one to start again."""
+        seat = self._seat_of(session)
+        live = self.live.get(seat)
+        if live is not None:
+            return await self.host.stop(live.ref)
+        if not self._draining(seat):
             return False
-        return await self.host.stop(live.ref)
+        outdated = self.outdated[seat]
+        stopped = await self.host.stop(
+            outdated.live.ref, host=outdated.access.host, epoch=outdated.epoch
+        )
+        # Only a stop that reached it ends its work as stopped; one that did
+        # not leaves the work to end as it will.
+        outdated.stopped = outdated.stopped or stopped
+        return stopped
+
+    def holding(self, seat: Seat) -> SessionRef | None:
+        """The session this process holds on the seat, a runner being drained
+        included; None when it holds none."""
+        if (live := self.live.get(seat)) is not None:
+            return live.session
+        return self.outdated[seat].live.session if self._draining(seat) else None
 
     async def announce(self, topic: uuid.UUID) -> None:
         """Tell the room its session's controls moved."""
@@ -536,7 +565,9 @@ class RoomSessions:
         return (topic, agent) if agent else self._room_seat(topic)
 
     async def control_state(self, topic: uuid.UUID, agent: str | None = None) -> dict:
-        """What the room's controls show, from the session's mirror alone.
+        """What the room's controls show, as the session's runner last reported
+        them (`session_host.control`); nothing for a harness whose runner does
+        not report them.
 
         ``seats`` lists every live seat in the room with its session, so a room
         with two teammates working says so instead of showing no session."""
@@ -589,10 +620,43 @@ class RoomSessions:
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the agent on the
-        session host did not, and ``recover`` found it again."""
+        session host did not, and ``recover`` found it again. A runner being
+        drained (``draining``) is such a session: its work goes on."""
+        held = [*self.live, *(seat for seat in self.outdated if self._draining(seat))]
         if agent_handle is not None:
-            return (topic_id, agent_handle) in self.live
-        return any(seat[0] == topic_id for seat in self.live)
+            return (topic_id, agent_handle) in held
+        return any(seat[0] == topic_id for seat in held)
+
+    def _draining(self, seat: Seat) -> bool:
+        outdated = self.outdated.get(seat)
+        return outdated is not None and outdated.working and not outdated.settling
+
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Is this seat's runner another release's, finishing its work? Then
+        it is given nothing, and a message for the seat waits until a runner
+        of this release has taken its place (``lifecycle._drain``)."""
+        return self._draining((topic_id, agent_handle))
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Whether the room is to be told now that a message waits for this
+        seat's drain: once per drain, the first time one does."""
+        outdated = self.outdated.get((topic_id, agent_handle))
+        if outdated is None or outdated.told:
+            return False
+        outdated.told = True
+        return True
+
+    def working_seats(self, topic_id, agent_handle=None) -> list[tuple[str, str]]:
+        """The seats whose live session in this room is at work, each as its
+        own handle and the handle it acts under; with ``agent_handle``, only
+        the one it names, by either handle."""
+        return [
+            (seat[1], live.acting)
+            for seat, live in self.live.items()
+            if seat[0] == topic_id
+            and seat in self.work
+            and (agent_handle is None or agent_handle in (seat[1], live.acting))
+        ]
 
     def work_in_flight(self, topic_id, agent_handle=None) -> uuid.UUID | None:
         """The work this pool's live seat in the room is running, if one is.

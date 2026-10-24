@@ -48,7 +48,7 @@ config.yaml 声明的线路只读，但照样列出来，人看得到完整的�
 每块正文去了哪：``cache``（网关答案的 15 秒缓存与它的代际），``answers``（可达性、
 模型表、密钥表、用量窗口，以及写完之后让它们跟上），``models``（列表页、详情页、
 模型本身的增删改停用、审计的读法），``projects``（项目页与预算那道刹车），
-``sources``（线路的加改删停与重排），``_shared``（时间窗口、审计落行、写完读回、页面
+``sources``（线路的加改删停与重排），``guards``（停用、删除之前的那几道检查），``_shared``（时间窗口、审计落行、写完读回、页面
 项拼装 —— 被两处以上用的那几样）。转发器本身不写 docstring，说明留在它要调的那个
 模块函数上（``device_hub``、``feedback/services`` 都是这么放的）。
 
@@ -82,7 +82,14 @@ from app.domain.agent.gateway_admin import (
     ModelUsage,  # noqa: F401
     UsageWindow,
 )
-from app.domain.agent.gateway_models import _shared, answers, models, projects, sources
+from app.domain.agent.gateway_models import (
+    _shared,
+    answers,
+    models,
+    projects,
+    roles,
+    sources,
+)
 from app.domain.agent.gateway_models._shared import (
     _DEFAULT_DAYS,  # noqa: F401
     _MID_SYSTEM,  # noqa: F401
@@ -212,6 +219,9 @@ class GatewayModelsService:
     async def _usage_window(self, start: date, end: date) -> UsageWindow:
         return await answers._usage_window(self, start, end)
 
+    async def _ledger_window(self, end: date) -> UsageWindow:
+        return await answers._ledger_window(self, end)
+
     async def _require_models(self) -> list[AdminModel]:
         return await answers._require_models(self)
 
@@ -238,6 +248,12 @@ class GatewayModelsService:
 
     async def detail(self, *, name: str, days: int) -> dict:
         return await models.detail(self, name=name, days=days)
+
+    async def roles(self) -> dict:
+        return await roles.listing(self)
+
+    async def set_role(self, *, handle: str, role: str, model: str | None) -> dict:
+        return await roles.set_role(self, handle=handle, role=role, model=model)
 
     def _series(self, name: str, usage: UsageWindow) -> list[dict]:
         return models._series(name, usage)
@@ -409,5 +425,7 @@ class GatewayModelsService:
     # ------------------------------------------------------------------
     # 拼装
     # ------------------------------------------------------------------
-    def _item(self, model: AdminModel, usage: UsageWindow) -> dict:
-        return _shared._item(model, usage)
+    def _item(
+        self, model: AdminModel, usage: UsageWindow, ledger: UsageWindow | None = None
+    ) -> dict:
+        return _shared._item(model, usage, ledger)

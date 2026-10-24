@@ -296,7 +296,10 @@ async def claude_code(tmp_path: Path, steps: list):
             "name": "mcp__native__chat_send",
             "input": {"content": value},
         },
-        "read": lambda value: {"name": "mcp__native__cheese_chat_list", "input": {}},
+        "read": lambda value: {
+            "name": "mcp__native__cheese_chat",
+            "input": {"action": "list"},
+        },
         # Words that reach no one: the fixture answers with plain text.
         "say": lambda value: None,
         # Only Claude Code's model starts a subagent here; the value is the
@@ -395,7 +398,17 @@ async def claude_code(tmp_path: Path, steps: list):
         stderr=log,
     )
 
+    registered = False
+
     async def call(method, params):
+        # The platform registers the runner before anything else it asks, and
+        # every later call carries that registration (`lifecycle`).
+        nonlocal registered
+        if method != "ping" and not registered:
+            registered = True
+            await asyncio.to_thread(_ask, socket_path(state), "register", {"epoch": 1})
+        if method != "ping":
+            params = {**params, "epoch": 1}
         return await asyncio.to_thread(_ask, socket_path(state), method, params)
 
     session = Session(machine, model.state["requests"], call)
@@ -468,7 +481,7 @@ async def codex(tmp_path: Path, steps: list):
                 if kind == "monitor"
                 else {"text": value}
                 if kind == "say"
-                else {"tool": "cheese_chat_list", "arguments": {}}
+                else {"tool": "cheese_chat", "arguments": {"action": "list"}}
                 if kind == "read"
                 else {"tool": "chat_send", "arguments": {"content": value}}
                 for kind, value in steps
@@ -546,7 +559,7 @@ async def pi(tmp_path: Path, steps: list):
             if kind == "monitor"
             else {"text": value}
             if kind == "say"
-            else {"tool": "cheese_chat_list", "arguments": {}}
+            else {"tool": "cheese_chat", "arguments": {"action": "list"}}
             if kind == "read"
             else {"tool": "chat_send", "arguments": {"content": value}}
             for kind, value in steps

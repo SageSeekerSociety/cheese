@@ -16,7 +16,7 @@ Each chat gets a separate execution container with a read-only image and 64 MiB 
 
 The build workflow publishes the executor from `backend/sandbox/Dockerfile.private` as the `private-executor` image, and each deploy pulls the deployed commit's copy and tags it with the local name in its `com.cheese.local-image` label, which is the name `PRIVATE_CHAT_EXECUTOR_IMAGE` selects by default. A deploy that cannot fetch it logs a warning and continues; private chats then fail with a setup error until a later deploy delivers it. Backend authorization governs platform operations.
 
-The container reaches the public internet and the platform endpoint in its `CHEESE_API`, and no other internal address: not the host's own services, the other hosts on its LAN, the deployment's other containers, or a cloud metadata endpoint. Internal means not public by the definition `/fetch` refuses by (`backend/app/domain/fetch/addresses.py`). The container runs on the Docker network `cheese-private-chats`, which is internal (no route out) and carries no address of the host. The one thing it reaches there is the session host's egress proxy, `cheese-private-egress` (`remote_execution/private_egress.py`): one container per host, shared by every private chat, started from the executor image without added capabilities and also attached to the default bridge. It serves HTTP (with `CONNECT`) and SOCKS5 on port 3128, and the container's commands are given `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (`socks5h`) pointing at it; a program that ignores them has no other way out. For each connection the proxy resolves the destination itself, asks DNS over HTTPS (`FETCH_DNS_OVER_HTTPS`) for the real addresses when the host's resolver answers only with fake-IP placeholders (`198.18.0.0/15`), as dev's does, refuses the connection unless every address is public, and connects to an address it checked rather than resolving the name again. The platform's exact `host:port` is the only internal destination it allows. The launcher creates the network and the proxy when a private chat starts, adopts a running proxy started with the same image and settings, and replaces one that is missing, stopped or configured differently. While the proxy is down, the containers have no network at all. Private chats on one host share the network and can reach each other's containers on it.
+The container reaches the public internet and the platform endpoint in its `CHEESE_API`, and no other internal address: not the host's own services, the other hosts on its LAN, the deployment's other containers, or a cloud metadata endpoint. Internal means not public by the definition `/fetch` refuses by (`backend/app/domain/fetch/addresses.py`). The container runs on the Docker network `cheese-private-chats`, which is internal (no route out) and carries no address of the host. The one thing it reaches there is the session host's egress proxy, `cheese-private-egress` (`remote_execution/private_egress.py`): one container per host, shared by every private chat, started from the executor image without added capabilities and also attached to the default bridge. It serves HTTP (with `CONNECT`) and SOCKS5 on port 3128, and the container's commands are given `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` (`socks5h`) pointing at it; a program that ignores them has no other way out. For each connection the proxy resolves the destination itself, asks DNS over HTTPS (`FETCH_DNS_OVER_HTTPS`) for the real addresses when the host's resolver answers only with fake-IP placeholders (`198.18.0.0/15`), as dev's does, refuses the connection unless every address is public, and connects to an address it checked rather than resolving the name again. The platform's exact `host:port` is the only internal destination it allows. The chat's WebSearch runs at the model's provider and opens no connection from the host. Its WebFetch reads pages from Claude Code on the host, outside the container, so the WebFetch transport preload (`webfetch_transport.cjs`) tunnels every page read through the same proxy with `CONNECT`, at the address the launcher gives it in `CHEESE_WEBFETCH_EGRESS`; the proxy takes the default bridge's gateway, which is the host, as a client. A page read is refused exactly where the container's connection would be. A session started without that preload is not given WebFetch. The launcher creates the network and the proxy when a private chat starts, adopts a running proxy started with the same image and settings, and replaces one that is missing, stopped or configured differently. While the proxy is down, the containers have no network at all. Private chats on one host share the network and can reach each other's containers on it.
 
 The remaining sections describe ordinary work topics and their selected compute providers.
 
@@ -92,7 +92,9 @@ HOME 必须各自独立（会话的配置、记录和凭证都在它下面）—
 **按项目分，不按机器分。** 同一个项目的房间本来就共用一个仓库、能读彼此的 checkout，
 store 在这条线以内；跨项目则是一条真实存在的线，沙箱里只挂进本项目的 store（§四）。
 **硬链接跨不过 bind mount**（`link(2)` → EXDEV，同一个文件系统内也一样，dev 上实测过）：
-沙箱里会话目录和 store 是两个挂载点，所以那里 uv 直接复制（`UV_LINK_MODE=copy`）。
+沙箱里会话目录和 store 是两个挂载点，平台宿主机上还各是一个 project quota，硬链接两样都跨不过；
+所以那里 uv 和 pnpm 改用克隆（`UV_LINK_MODE=clone`、`npm_config_package_import_method=clone-or-copy`），
+在宿主机的 XFS 数据盘上共享 store 的块，别处退回复制。
 隔离和去重不是同一个开关。
 
 **存量房间会在下一次启动时回收掉自己那份死缓存。** 重定向之后，房间 HOME 里原来那几份
@@ -133,7 +135,7 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目所属团队有能提供沙箱的电脑时，列出一个 `team_devices`。每一种都带一句它是什么、怎么收费（`description`），项目设置里选默认环境时就写在那一项旁边。平台的两种写的是每小时多少点，数取自计费本身用的价格（`usage.compute.hourly_price`，即 `CLOUD_SANDBOX_CREDITS_PER_HOUR`，和 `CLOUD_VM_CREDITS_PER_HOUR` 里配置的虚拟机创建规格 `cloud_vm_cores` / `cloud_vm_memory_mb`），虚拟机还写出它的核数和内存；没定价的规格照实说它暂时无法启动。
 
 ## 三、放不下的时候
 
@@ -171,7 +173,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 ## 六、已定但还没做完的
 
-**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_ready` 把它标成可评审、用 `cheese_accept_request` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
+**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_card(action=ready)` 把它标成可评审、用 `cheese_card(action=request)` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
 ## 七、归档退掉什么
 
@@ -231,6 +233,6 @@ Installation and storage configuration are described in
 - `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
 - `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，机器的那端在这里
 - `backend/app/api/preview_relay.py` — 运行环境预览：平台这一半，浏览器的另一端和两端共用的 hub
-- `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案
+- `backend/app/domain/machine/environments.py` — 能选的规格（`offered_specs`），以及没人选过时用哪个
 - `backend/app/domain/device/supply.py` — 可见性两档与「哪档真能跑」
 - `docs/device-self-hosting.md` — 自托管设备那条路的完整说明

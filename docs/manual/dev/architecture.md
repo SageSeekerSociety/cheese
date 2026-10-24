@@ -108,7 +108,7 @@ app/domain/<包>/
 |---|---|---|
 | `forge`、`notices` | 上面说的两组待定模块，层位先拆依赖再定 | 待定 |
 | `chat`（新，不并进 `conversation`） | `chat.py` 的消息收发、`mentions`、`turn_inputs`、`turn_speakers`、`prompt`、`pending_messages` | 5 |
-| `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`liveness`、`turn_*`、`turn_adoption` | 5 |
+| `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`turn_*`、`turn_adoption` | 5 |
 | `live` | `agent/realtime/` 的 broker、`live_frames`、`live_notices`、`room_events` | 5 |
 | `device`（并入现有包） | `device_hub*`、`device_link`、`device_provider`、`device_storage`、`machine_*`、`executor_transport` | 5 |
 | `harness` | `agent/harness/` | 5 |
@@ -133,7 +133,7 @@ app/domain/<包>/
 
 今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/staleness.py:18`，21 处），发一帧 `{"type":"state","resource":...}`，前端重读那一类；`topics` 的调用点另外带上变的那一行的 `id`，前端就只重读那一行。项目框架（频道清单、未读、提醒档位）的变化推给订了这个项目的页面（`agent/project_feed.py`）：一条消息存进库、房间那一行变了、一轮开始或结束都会推，只说哪样在哪个房间变了；只有自己人看得见的房间只告诉里面的人。缺口在漏调：一处写完忘了通知，那一份就不刷新，没有检查会发现。
 
-三块现成的样板，用的是终点的做法：`review/live.py` 在 `after_flush` 里记下变了的采纳卡、`after_commit` 之后推；`room_task/live.py` 对任务这一行、任务里问出或答掉的题、以及任务里一轮的开始和结束（轮次区间由 `AgentTurnRepository` 批量写入，flush 钩子看不到，所以由它写入时交给 `turns_moved` 排队）、以及任务第一条指示在账上的走向（等着重试、放弃，概览据此写「正在整理」或「没能整理出文档」）做同样的事，推给任务所在的频道和任务自己那段对话；`agent/project_feed.py` 用同样两个钩子，一条消息不论从哪条路径存进库都会推给项目。
+三块现成的样板，用的是终点的做法：`review/live.py` 在 `after_flush` 里记下变了的采纳卡、`after_commit` 之后推；`room_task/live.py` 对任务这一行、任务里问出或答掉的题、以及任务里一轮的开始和结束、会话开始或停下（轮次区间由 `AgentTurnRepository` 批量写入，会话状态由 `agent/runner_reports.py` 写在 `session_states` 上，flush 钩子都看不到，所以由它们写入时交给 `sessions_moved` 排队）、以及任务第一条指示在账上的走向（等着重试、放弃，概览据此写「正在整理」或「没能整理出文档」）做同样的事，推给任务所在的频道和任务自己那段对话；`agent/project_feed.py` 用同样两个钩子，一条消息不论从哪条路径存进库都会推给项目。
 
 ### 写入钩子和映射表 {#write-hooks}
 
@@ -157,7 +157,7 @@ app/domain/<包>/
 - **订上时对齐**：房间连接的 `subscribed` 帧带着房间快照（`api/room_snapshot.py`）和 `newest`；项目订阅每次连上把四样各读一次。重连就是重新订阅，断线期间漏掉的帧不用补。
 - **消息按号补读**：`blocks.seq` 是每段对话自己的号，数据库插入时给：先取这段对话的事务级 advisory lock，再取索引上的最大号加一，所以号的先后就是提交的先后。前端手里最大的号小于 `newest` 就读 `GET /topics/{id}/blocks?stored_after=`。已读位置也是这个号。
 - **项目订阅**：页面在房间连接上订阅 `project:<id>`，收到频道清单的哪一行、未读、私聊未读、提醒档位变了；只有自己人看得见的房间只告诉里面的人。
-- **运行中**：频道列表的「运行中」由 `runtime.AgentWorkRunner.running_topic_ids()`读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也经写入钩子推出。
+- **运行中**：频道列表的「运行中」读 runner 报上来的会话状态（`session_states.worker_status`，`agent/session_state.running_conversations`），是一个查询。
 - **流式帧不走写入钩子**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`agent/realtime/broker.py`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
 
 | 方案 | 结论 |

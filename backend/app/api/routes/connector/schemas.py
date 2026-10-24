@@ -62,6 +62,10 @@ class ClaudeCodeLoginOut(BaseModel):
     #: `claude.ai` for a subscription login.
     auth_method: str | None
     subscription_type: str | None
+    #: Which Claude account the login is, as `claude auth status` names it;
+    #: None until the machine is next checked.
+    account_email: str | None = None
+    account_org: str | None = None
     #: What its owner named the connection; None until they do.
     name: str | None
     checked_at: str

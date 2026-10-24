@@ -7,9 +7,11 @@ RUN corepack enable
 
 # The manifests alone, so editing a component does not reinstall the world: this
 # layer is reused until the lockfile itself changes. The pnpm store lives on a
-# cache mount, so even a lockfile edit fetches only what it added.
+# cache mount, so even a lockfile edit fetches only what it added. The install
+# applies the dependency patches in patches/ (package.json's patchedDependencies).
 FROM base as deps
 COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps as dev

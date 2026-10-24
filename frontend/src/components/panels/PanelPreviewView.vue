@@ -23,14 +23,17 @@
 // 留在这里的还有全屏：它要的就是这个 DOM 节点，所以 `panelElement` 在这一只身上。
 
 import type { PreviewLocate } from '../../lib/previewQuestion'
+import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
+import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 
+import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
 import PreviewHeadBar from './preview/PreviewHeadBar.vue'
@@ -47,6 +50,7 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEditor.vue'))
 
 const props = withDefaults(defineProps<PreviewViewProps>(), {
+  agentName: () => t('work.room.defaultAgentName'),
   submitQuestion: undefined,
   uploadAnnotation: undefined,
   active: true,
@@ -90,6 +94,16 @@ const emit = defineEmits<{
   'mention-click': [handle: string]
 }>()
 
+// 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
+// `allow-same-origin`。第三方 MCP View 不能带 —— `allow-scripts` 加
+// `allow-same-origin` 会把手写这份 HTML 的人放进内容域的存储里。同一个面板、
+// 同一个预览源，沙箱按这一帧的 mime 分：房内那套不变，第三方那套收紧（见
+// `lib/mcpAppBridge.ts`，宿主 CSP 也做了同样的收口）。
+const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
+function sandboxFor(mime?: string | null): string {
+  return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
+}
+
 const panelElement = ref<HTMLElement | null>(null)
 const {
   isFullscreen: previewFull,
@@ -117,6 +131,7 @@ const {
   annotateError,
   imageRegion,
   pageLocator,
+  quoted,
   pick,
   clearLocator,
   sendLocator,
@@ -132,6 +147,82 @@ const {
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+// ---- 这一份文件上的评论 ----
+// 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
+const showComments = computed(() => props.comments?.open.value ?? false)
+const commentTarget = computed(() => props.comments?.target.value ?? null)
+// 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
+const commentPick = computed(() => {
+  const anchor = pageLocator.anchor() ?? quoted.anchor()
+  const target = locator.value
+  if (!anchor && !target) return null
+  // 位置和原文两样都说：钉在页上时位置是「第 3 页」，原文是「从左 42%、从上 60%」，
+  // 只留一样就说不清指的是哪一页的哪一处。
+  const quote = [target?.label, target?.quote].filter((part) => part && part.trim()).join(' · ')
+  return { quote, anchor }
+})
+/** 发一条评论；成不成由这一栏自己说，发出去之后把指认撤掉。 */
+async function postFileComment(payload: { content: string; quote: string | null; anchor: QuotedContext | null }) {
+  await props.comments?.post(payload)
+  clearLocator()
+}
+
+/** 指认条上的「评论」出口：这句话挂成这一处的评论，不走对话。
+ *
+ *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
+const commentError = ref('')
+/** 读者动了几次指认（换一处、取消、换文件）。发评论回来时拿它比一比：中途动过就说明
+ *  他已经不在这一处了，别再替他打开评论栏。 */
+const pickGeneration = ref(0)
+// 换了一处指认就把上一次那句话撤掉：它说的是上一处，留着会让读者以为新指的这处也失败了。
+// 撤掉指认的路不止一条（条上的取消、面板上的 Escape、换一份文件、选另一段），只在取消
+// 那条路上清是清不干净的——挂在指认本身变了这里，几条路一起覆盖。
+watch(locator, () => {
+  commentError.value = ''
+  pickGeneration.value += 1
+})
+/** 这条出口正发着：发一条要等一会儿，这期间再点一次会挂出两条一样的评论。
+ *
+ *  指认条那个 `busy` 只反映页上钉一处那条路（`pageLocator.sending`），评论这条路
+ *  它照不到，所以在自己这里挡一道。 */
+const commenting = ref(false)
+async function commentHere() {
+  const body = locatorNote.value.trim()
+  if (!body || !props.comments || commenting.value) return
+  // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
+  const target = commentPick.value
+  const pick = target?.quote ?? null
+  // 发之前记一笔：发回来时这个数变了，就说明读者中途取消或换了一处。
+  // 这条出口自己收尾（不走 `postFileComment`，那个函数发完就清掉指认，会把这一笔也搅进去）。
+  const before = pickGeneration.value
+  commentError.value = ''
+  commenting.value = true
+  try {
+    await props.comments.post({ content: body, quote: pick, anchor: target?.anchor ?? null })
+  } catch (cause) {
+    // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
+    // 中途换过那一处就不写了：这句话说的是上一处，落在新的这一处下面会让人以为它也失败了。
+    if (pickGeneration.value === before) {
+      commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    }
+    return
+  } finally {
+    commenting.value = false
+  }
+  // 发的时候读者已经按了取消（指着的那一处没了）或换成了另一处：这条评论已经挂上去了，
+  // 但别再把评论栏打开——他刚刚明确表示不想留在这一处，弹出来的那一栏会盖住他正在做的事。
+  if (pickGeneration.value === before) {
+    clearLocator()
+    if (!props.comments.open.value) props.comments.toggle()
+  }
+}
+// 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
+// `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
+// 样子，所以 `nameOf`/`avatarOf` 在这一栏是必填的 prop，不接就编译不过。
+const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
+const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
 
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
@@ -182,6 +273,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
       :pick-on="pick.on.value"
+      :agent-name="agentName"
       @refresh="emit('refresh')"
       @frame-load="(id: number, event: Event) => emit('frame-load', id, event)"
       @frame-error="(id: number, event: Event) => emit('frame-error', id, event)"
@@ -194,7 +286,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <div>{{ t('work.room.preview.loadFailed') }}</div>
       <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
       <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
-        {{ t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable') }}
+        {{
+          t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
+            agent: agentName,
+          })
+        }}
       </div>
       <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
@@ -222,10 +318,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
       <div>{{ t('tasks.preview.unavailable') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        {{ t('tasks.preview.appUnavailable') }}
+        {{ t('tasks.preview.appUnavailable', { agent: agentName }) }}
       </div>
       <div v-else class="text-caption mt-1">
-        {{ t('tasks.preview.connectionUnavailable') }}
+        {{ t('tasks.preview.connectionUnavailable', { agent: agentName }) }}
       </div>
     </div>
     <PreviewDocStage
@@ -296,11 +392,46 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。图上圈着一块、标注条开着时
+         先收起来：矮的面板里它正落在标注条上，会盖住「取消」。 -->
+    <BaseButton
+      v-if="commentTarget && !imageRegion.target.value"
+      class="panel-preview__comments-toggle"
+      kind="secondary"
+      size="sm"
+      prepend-icon="mdi-comment-text-outline"
+      :title="t('work.room.comments.title')"
+      @click="props.comments?.toggle()"
+    >
+      {{ t('work.room.comments.title') }}
+    </BaseButton>
+    <PreviewComments
+      v-if="showComments && commentTarget"
+      class="panel-preview__comments"
+      :topic-id="commentTarget.topicId"
+      :path="commentTarget.path"
+      :version="commentTarget.version"
+      :author="props.comments?.author ?? ''"
+      :thread-state="props.comments!.threads.state"
+      :thread-actions="props.comments!.threads.actions"
+      :pick="commentPick"
+      :writable="true"
+      :post="postFileComment"
+      :name-of="commentNameOf"
+      :avatar-of="commentAvatarOf"
+      :agent-name="agentName"
+      @clear-pick="clearLocator"
+      @close="props.comments?.toggle()"
+    />
+
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :busy="pageLocator.sending.value"
+      :busy="pageLocator.sending.value || commenting"
+      :can-comment="!!commentTarget"
+      :comment-error="commentError"
       @send="sendLocator"
+      @comment="commentHere"
       @cancel="clearLocator"
     />
 
@@ -342,5 +473,20 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 .panel-preview:fullscreen {
   width: 100%;
   height: 100%;
+}
+
+/* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */
+.panel-preview__comments {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: var(--z-raised);
+  width: min(340px, 100%);
+  box-shadow: var(--shadow-2);
+}
+.panel-preview__comments-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  z-index: var(--z-raised);
 }
 </style>

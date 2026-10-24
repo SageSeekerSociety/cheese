@@ -9,8 +9,6 @@ session has been idle, but never before its work is pushed. Users see the
 environment, never the machine.
 """
 
-from tests.support.devices import enrollment_team
-
 import ast
 import json
 import re
@@ -49,6 +47,7 @@ from app.domain.usage.models import ComputeRun, ResourceUsage
 from tests.executor_release import running
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
 VM = {
@@ -214,7 +213,10 @@ def _up(case, seat) -> str:
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
-                host, device_id=device.device_id, when=datetime.now(UTC)
+                host,
+                device_id=device.device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=None,
             )
             await db.commit()
             return device.device_id
@@ -320,6 +322,22 @@ def _pushed_on(case, device_id) -> bool:
 # --- choosing it -------------------------------------------------------------
 
 
+def test_a_projects_settings_say_what_each_sandbox_spec_is_and_costs(cloud):
+    """Where a project picks its default environment is where a reader learns
+    what each spec on offer is and what it costs: a spec named with nothing
+    beside it leaves the choice to a guess."""
+    case = cloud
+    specs = case.client.get(
+        f"/projects/{case.project_id}/compute-configs",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["specs"]
+    assert {"standard", "vm"} <= {spec["spec"] for spec in specs}
+    about = [spec["description"] for spec in specs]
+    assert all(about) and len(set(about)) == len(about)
+    # Said in the reader's language: the sentence's key travels beside it.
+    assert all(spec["i18n"]["description"]["key"] for spec in specs)
+
+
 def test_a_room_can_give_its_new_agents_a_vm_sandbox(cloud):
     case = cloud
     room = case.client.post(
@@ -407,7 +425,7 @@ def test_each_session_on_a_whole_vm_gets_a_machine_of_its_own(cloud):
     assert len(placed) == 3
     assert _host(case, first).whole_machine and not _host(case, sandboxed).whole_machine
     assert _host(case, first).project_id == case.project_id
-    assert _room_lines(case, first) == ["正在准备虚拟机沙箱"]
+    assert _room_lines(case, first) == ["正在准备云端虚拟机"]
     assert _room_lines(case, sandboxed) == ["正在准备环境"]
 
 
@@ -444,7 +462,7 @@ def test_a_whole_vms_executor_runs_without_a_sandbox(cloud):
     configure = ast.parse(installed).body[-1].value
     payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
     assert payload["sandbox"] is None
-    assert _room_lines(case, seat) == ["正在准备虚拟机沙箱", "虚拟机沙箱已就绪"]
+    assert _room_lines(case, seat) == ["正在准备云端虚拟机", "云端虚拟机已就绪"]
 
 
 def test_users_see_the_environment_and_never_the_vm(cloud):
@@ -559,7 +577,7 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _session_lease(case, seat) is None
     assert _host(case, seat) is None
     minutes = settings.cloud_vm_idle_release_s // 60
-    assert _room_lines(case, seat)[-1].startswith(f"虚拟机沙箱 {minutes} 分钟没有活动")
+    assert _room_lines(case, seat)[-1].startswith(f"云端虚拟机 {minutes} 分钟没有活动")
     _sweep(case)
     assert case.provider.deleted == [machine]
 

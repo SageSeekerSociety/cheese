@@ -18,6 +18,7 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
+import TaskFormGrading from '@/components/tasks/form/TaskFormGrading.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
@@ -190,6 +191,48 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'task-form-grading',
+    title: 'TaskFormGrading',
+    about:
+      '「提交与评分」那一节：学生交哪几样东西（每样是文件还是文字）、评分要点（评什么、多少分、怎样算做到），以及评分要点给不给学生看。',
+    file: 'src/components/tasks/form/TaskFormGrading.vue',
+    component: TaskFormGrading,
+    needs: UI_T,
+    args: { submissionSchema: [{ prompt: '提交文件', type: 'FILE' }], rubric: [], rubricPublic: true },
+    states: [
+      {
+        name: '新发一道题',
+        note: '默认交一个文件，还没有评分要点。',
+        props: {},
+        expect: '暂无评分要点',
+      },
+      {
+        name: '写好了',
+        note: '三样提交物（两个文件、一段文字），三行评分要点，合计按分值加起来。',
+        props: {
+          submissionSchema: [
+            { prompt: 'csim.c 源文件', type: 'FILE' },
+            { prompt: '实验报告（PDF，不超过 4 页）', type: 'FILE' },
+            { prompt: '合作与参考说明', type: 'TEXT' },
+          ],
+          rubric: [
+            { item: '正确性', points: 60, criteria: '用 8 组访存记录自动评测，三项全对得满分' },
+            { item: '实现', points: 20, criteria: '缓存按组和行组织，LRU 替换正确' },
+            { item: '报告', points: 20, criteria: '说明数据结构设计，分析两组记录的命中率差异' },
+          ],
+          rubricPublic: false,
+        },
+        expect: '合计 100 分',
+      },
+      {
+        name: '有一行没写名称（标红）',
+        note: '写了评分标准却没写项目名称：点过发布后那一格标红，下面一句说为什么。',
+        props: { rubric: [{ item: '', points: 10, criteria: '格式规范' }], missingName: true },
+        expect: '写了评分标准的项需要填写项目名称',
+      },
+    ],
+  },
+  {
     id: 'task-form-time',
     title: 'TaskFormTime',
     about: '「时间」那一节：报名开始与截止（都可空）、领取后几天内完成。',
@@ -273,6 +316,20 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '上限是接口报的那个数，页面问来给它；问不到就不写那句话。',
         props: { files: [], uploading: false, maxFileBytes: 100 * 1024 * 1024 },
         expect: '添加文件',
+      },
+      {
+        name: '改题时：每一份都能换成新的一版',
+        note: '换上去的是新的一版，旧的一版留在题目资料库的历史里，题目跟着记一版。',
+        props: {
+          files: [
+            { id: '实验指导书.pdf', name: '实验指导书.pdf', size: 2_400_000 },
+            { id: 'starter.zip', name: 'starter.zip', size: 12_400_000 },
+          ],
+          uploading: false,
+          maxFileBytes: 100 * 1024 * 1024,
+          replaceable: true,
+        },
+        expect: 'starter.zip',
       },
       {
         name: '挂了两份、正在传第三份',

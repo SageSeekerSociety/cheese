@@ -22,6 +22,7 @@ import {
   imageStageProps,
   PREVIEW_DOC_FILE,
   PREVIEW_IMAGE_SRC,
+  previewCommentsProps,
   previewCsvBytes,
   previewFrame,
   revisionsWith,
@@ -34,6 +35,7 @@ import DesignRegionNote from '@/components/panels/preview/DesignRegionNote.vue'
 import DesignSketchOverlay from '@/components/panels/preview/DesignSketchOverlay.vue'
 import DesignSketchToolbar from '@/components/panels/preview/DesignSketchToolbar.vue'
 import DesignViewportToolbar from '@/components/panels/preview/DesignViewportToolbar.vue'
+import PreviewComments from '@/components/panels/preview/PreviewComments.vue'
 import PreviewDocStage from '@/components/panels/preview/PreviewDocStage.vue'
 import PreviewFrameStage from '@/components/panels/preview/PreviewFrameStage.vue'
 import PreviewHeadBar from '@/components/panels/preview/PreviewHeadBar.vue'
@@ -423,8 +425,27 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelLocator.s1.note')
         },
-        props: { target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' }, note: '' },
-        expect: '网页 · 第 2 屏',
+        props: {
+          target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
+          note: '这一处按不到',
+          canComment: true,
+        },
+        expect: '评论',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelLocator.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelLocator.s2.note')
+        },
+        // 挂不了评论的那一份（资料库原件、消息附件）只该露出「发送」这一条。
+        props: {
+          target: { label: 'library/报告.pdf', quote: '第 2 页' },
+          note: '这一处的数字不对',
+          canComment: false,
+        },
+        expect: '发送',
       },
     ],
   },
@@ -733,6 +754,38 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         },
         props: { editor: fileEditorUnsupported(), fileHistory: fileHistoryWith(), path: '示例.pdf' },
         expect: '这种文件不能在线编辑',
+      },
+    ],
+  },
+  {
+    id: 'preview-panel-comments',
+    title: 'PreviewComments · 文件上的评论',
+    about:
+      '一份房间文件上的评论栏：上面写一条新的，下面一串串已有的；每张卡写作者的名字、画他挑过的头像。它是盖住预览右边的浮层，所以右上角那颗 × 是它的关闭入口。',
+    file: 'src/components/panels/preview/PreviewComments.vue',
+    component: PreviewComments,
+    needs: UI,
+    states: [
+      {
+        name: '两串评论',
+        note: '人开的头、芝士在答的那一串没有解决，另一串已经解决：卡上写的是名册上的名字（不是 handle），头像按人各归各的 —— 李甘没挑过，画彩色首字母。',
+        props: previewCommentsProps(),
+        expect: '这里的用时要不要一起写进去',
+        expectSelector: '.file-comments__close',
+      },
+      {
+        name: '指着一处再说',
+        note: '预览里选中一段再开这一栏：上面那条引用写明评的是哪几个字，旁边那颗 × 撤掉这次指认，栏本身不关。',
+        props: previewCommentsProps({ pick: { quote: '搜索次数翻倍。', anchor: null } }),
+        expect: '搜索次数翻倍。',
+      },
+      {
+        name: '还没有人评论',
+        note: '一份新的文件：一句交代，不是一个空白。',
+        props: previewCommentsProps({
+          threadState: { threads: [], activity: {}, errors: {}, busy: false, unknown: null },
+        }),
+        expect: '暂无评论',
       },
     ],
   },

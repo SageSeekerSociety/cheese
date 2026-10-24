@@ -89,6 +89,20 @@ LONG_POLL = "long_poll"
 LIVE = "live"
 
 
+def current_loop() -> asyncio.AbstractEventLoop | None:
+    """The loop this is running on, or None outside one.
+
+    A harness runner reaches its own loop from a platform tool call's thread
+    (`call_soon_threadsafe`) and may be constructed before there is a loop at
+    all: a sync test builds one, and only ``start`` is really on the loop. So
+    the reference is taken here where it exists and set again in ``start``.
+    """
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 def socket_path(state: Path) -> str:
     """Where the connector will look, given this state directory.
 
@@ -146,21 +160,23 @@ def socket_path(state: Path) -> str:
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
-#: The platform tools that read the room's own messages: let through, and no answer.
+#: The platform tools that read the room's own messages: let through, and no
+#: answer. Each is one verb of `cheese_chat`, by its key (`<tool>.<action>`):
+#: editing a message of one's own is in the same tool and answers nobody.
 REPLY_READS = (
-    "cheese_chat_list",
-    "cheese_chat_get",
-    "cheese_chat_search",
-    "cheese_chat_replies",
+    "cheese_chat.list",
+    "cheese_chat.get",
+    "cheese_chat.search",
+    "cheese_chat.replies",
 )
 REPLY_OWED = (
     "A person in this conversation has sent a message you have not answered yet. "
     "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
     "what you will do next — and if they asked you to stop, stop. If you have "
-    "not seen what they wrote, read the conversation with cheese_chat_list (or "
-    "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
-    "tool is refused until you have replied."
+    "not seen what they wrote, read the conversation with cheese_chat "
+    "(action=list, or get / search / replies); every other tool is refused "
+    "until you have replied."
 )
 
 
@@ -252,11 +268,21 @@ class Runner(Generic[J]):  # noqa: UP046
         # mark changes with every change of it, and from one runner to the next.
         self.live_blocks: list[dict] = []
         self.live_work: str | None = None
+        #: The calls of the work under way that came back, for a harness that
+        #: says so (``Writing.returned``).
+        self.live_returned: list[str] = []
+        #: The branches of a person's 芝士 that the work under way started or
+        #: moved, as they stand (``Writing.branches``).
+        self.live_branches: list[dict] = []
+        #: The calls of the work under way as they were made, by id
+        #: (``Writing.made``).
+        self.live_made: dict[str, dict] = {}
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
-        # id (``RemoteClient.checkpoint``); None for a session without hands.
-        self.checkpointer: Callable[[str], dict] | None = None
+        # id and the turn that ended (``RemoteClient.checkpoint``); None for a
+        # session without hands.
+        self.checkpointer: Callable[[str, str | None], dict] | None = None
         self.checkpointing: asyncio.Task | None = None
         self.checkpoint_again = False
 
@@ -331,6 +357,13 @@ class Runner(Generic[J]):  # noqa: UP046
 
     # --- a turn's checkpoint -------------------------------------------------
 
+    def turn_work(self) -> str | None:
+        """The work id of the turn that just ended: the owner of what this
+        session has been doing. None when nothing of the platform's started
+        it — a session that woke for its own reason."""
+        owner = json.loads(self.journal.recall("owner") or "{}")
+        return owner.get("work_id")
+
     def turn_ended(self) -> None:
         """The session's turn ended: checkpoint its work. One at a time; a turn
         that ends while one runs gets one more once it is done, which covers
@@ -340,15 +373,20 @@ class Runner(Generic[J]):  # noqa: UP046
         if self.checkpointing is not None and not self.checkpointing.done():
             self.checkpoint_again = True
             return
-        self.checkpointing = asyncio.ensure_future(self._checkpoint())
+        # The turn this checkpoint syncs, read here and not when the sync runs:
+        # by then another turn may have started, and the machine is told so a
+        # failed push is filed under this turn rather than guessed later.
+        self.checkpointing = asyncio.ensure_future(self._checkpoint(self.turn_work()))
 
-    async def _checkpoint(self) -> None:
+    async def _checkpoint(self, turn: str | None) -> None:
         assert self.checkpointer is not None
         while True:
             self.checkpoint_again = False
             try:
                 result = await asyncio.to_thread(
-                    self.checkpointer, f"checkpoint-{uuid.uuid4().hex}"
+                    self.checkpointer,
+                    f"checkpoint-{uuid.uuid4().hex}",
+                    turn,
                 )
                 if isinstance(result, dict) and result.get("error"):
                     raise RuntimeError(result["error"])
@@ -356,6 +394,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
             if not self.checkpoint_again:
                 return
+            # A newer turn ended while this one synced; the retry is that
+            # turn's checkpoint, so it carries that turn instead of the first.
+            turn = self.turn_work()
 
     async def yield_foreground(self) -> None:
         """Give the model its turn back: what it is waiting on moves to the
@@ -468,7 +509,7 @@ class Runner(Generic[J]):  # noqa: UP046
             if (
                 self.closing
                 or self.ended()
-                or self.journal.last() > after
+                or self.has_news(after)
                 or self.live_mark() != seen
             ):
                 break
@@ -494,8 +535,16 @@ class Runner(Generic[J]):  # noqa: UP046
                 "work_id": self.live_work,
                 # As they stand now: the harness goes on changing them in place.
                 "blocks": [dict(block) for block in self.live_blocks],
+                "returned": list(self.live_returned),
+                "branches": [dict(branch) for branch in self.live_branches],
+                "made": [dict(made) for made in self.live_made.values()],
             }
         return answer
+
+    def has_news(self, after: int) -> bool:
+        """Whether there is something past ``after`` to answer a read with: a
+        record, for a harness that reports nothing else."""
+        return self.journal.last() > after
 
     # --- letting an idle session go ------------------------------------------
 

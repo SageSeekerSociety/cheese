@@ -14,12 +14,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
-from app.domain.block.models import Block, BlockKind, BlockReaction
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.models import Block, BlockKind, BlockReaction, consumed_turn
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.receipts import (
-    complete_work_inputs,
     held_blocks,
     record_receipt,
     register_input,
@@ -258,8 +256,11 @@ def test_independent_batches_register_while_first_batch_is_locked(
     client.portal.call(run)
 
 
-def test_only_consumption_by_registered_work_releases_an_initial_hold(client):
-    project = uuid.UUID(_project(client, "hold completion"))
+def test_the_read_releases_an_initial_hold_and_acceptance_does_not(client):
+    """A batch is held from its registration until the session reads it: the
+    runner taking the input in is not reading it, and nothing after the read —
+    how the work it was read into ends — is waited for."""
+    project = uuid.UUID(_project(client, "hold release"))
     topic = uuid.UUID(_room(client, str(project), "initial input"))
 
     async def run():
@@ -269,47 +270,27 @@ def test_only_consumption_by_registered_work_releases_an_initial_hold(client):
         async with factory() as session:
             await register_input(session, identity, InputEffects(held_block_ids=ids))
             await session.commit()
-        for evidence in ["accepted", "native_echo"]:
+
+        async def held() -> set:
             async with factory() as session:
-                await record_receipt(session, InputReceipt(identity, evidence))
-                await session.commit()
-            async with factory() as session:
-                assert await held_blocks(
-                    session,
-                    project_id=project,
-                    topic_id=topic,
-                    recipient_handle=identity.recipient_handle,
-                ) == set(ids)
-        async with factory() as session:
-            await BlockRepository(session).mark_consumed(list(ids), uuid.uuid4())
-            await session.commit()
-        async with factory() as session:
-            assert await held_blocks(
-                session,
-                project_id=project,
-                topic_id=topic,
-                recipient_handle=identity.recipient_handle,
-            ) == set(ids)
-            await complete_work_inputs(
-                session,
-                project_id=project,
-                conversation_id=topic,
-                recipient_handle=identity.recipient_handle,
-                harness=identity.harness,
-                native_session_id=identity.native_session_id,
-                work_id=identity.work_id,
-            )
-            await session.commit()
-        async with factory() as session:
-            assert (
-                await held_blocks(
+                return await held_blocks(
                     session,
                     project_id=project,
                     topic_id=topic,
                     recipient_handle=identity.recipient_handle,
                 )
-                == set()
-            )
+
+        async with factory() as session:
+            await record_receipt(session, InputReceipt(identity, "accepted"))
+            await session.commit()
+        assert await held() == set(ids)
+        async with factory() as session:
+            await record_receipt(session, InputReceipt(identity, "native_echo"))
+            await session.commit()
+        assert await held() == set()
+        async with factory() as session:
+            blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
+        assert all(consumed_turn(block) is not None for block in blocks)
 
     client.portal.call(run)
 

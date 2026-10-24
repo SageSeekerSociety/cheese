@@ -23,8 +23,7 @@
 //
 // Everything that runs the type check goes through this file, because everything
 // that runs it needs the types present: `pnpm run typecheck` (the CI job, the
-// pre-commit hook, `task fe:check`), and the narrow changed-files project the
-// fast tier builds in .github/scripts/ci_fast_checks.py. On a fresh checkout,
+// pre-commit hook, `task fe:check`). On a fresh checkout,
 // the generated types must exist before the type check starts.
 import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'

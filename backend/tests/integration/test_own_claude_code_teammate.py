@@ -1,7 +1,5 @@
 """A personal assistant is addressable by the team and opens tasks on its owner's word."""
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import asyncio
 import uuid
 from datetime import UTC, datetime
@@ -11,6 +9,7 @@ from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.claude_code import owner_login
+from app.domain.agent_instance.models import OwnAgent
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -22,6 +21,7 @@ from tests.integration.conftest import (
     post_message,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 
 def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
@@ -69,6 +69,12 @@ def _add(client, project_id, handle: str, connection: str):
             await place_in_project_team(
                 sql_device_service(db), row.device_id, uuid.UUID(project_id)
             )
+            # 这份连接跟着机器归队：`logins(team_id)` 认的是**登录行**的 team_id，
+            # 只把机器挪过去，连接还在原来那个团队名下，加队友时就看不着它。
+            from app.domain.project.models import Project
+
+            team = await db.get(Project, uuid.UUID(project_id))
+            row.team_id = team.team_id
             await db.commit()
             return "sonnet", row.device_id
 
@@ -591,6 +597,38 @@ def test_it_carries_its_owners_current_name(client):
     own = _own_row(_members(client, project_id, "alice"), "alice")
     # Its owner's nickname, and the plan the connection is on now.
     assert own["name"] == "小艾的 Claude Code（Pro）"
+
+
+def test_its_owner_arms_its_skills_without_a_manager(client):
+    """What runs on your own machine under your own login is yours to arm: its
+    owner picks the skills it carries and needs no manager to approve that,
+    while another member's agent stays a manager's call."""
+    project_id, _room = _project_with_bob(client)
+    # 机器上的那次登录只是一个**连接**；要成为项目里的一位队友，得由它主人加进来
+    # （#3611：一位队友 = 一个连接，加和删都只由主人做）。
+    _bring_in(client, project_id, "bob")
+    assert _own_row(_members(client, project_id, "bob"), "bob") is not None
+
+    async def instance_id():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User).where(User.username == "bob"))
+            # 席位 handle 带上了一个随机后缀（`own_handle`），认不出是谁的，
+            # 所以从 `own_agents` 那一行按主人用户认这一位队友。
+            return await db.scalar(
+                select(OwnAgent.instance_id).where(
+                    OwnAgent.owner_user_id == user.id,
+                )
+            )
+
+    agent_id = asyncio.run(instance_id())
+    bob = session_auth_headers("bob")
+    armed = client.put(
+        f"/projects/{project_id}/agents/{agent_id}",
+        json={"configuration": {"bob's": "kept", "skills": ["wolfram"]}},
+        headers=bob,
+    )
+    assert armed.status_code == 200, armed.text
+    assert armed.json()["data"]["configuration"]["skills"] == ["wolfram"]
 
 
 def _name_connection(client, device_id, name, as_whom="alice"):

@@ -16,7 +16,6 @@ import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 import { t } from '@/i18n'
-import { relTime } from '@/lib/relTime'
 import { renderPlain } from '@/lib/renderMessage'
 
 // 实况文档的正文编辑器（tiptap + prosemirror + 文档 schema，压缩后约 1.1 MB）按需取，不

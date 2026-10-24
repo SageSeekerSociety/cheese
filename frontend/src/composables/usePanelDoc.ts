@@ -13,18 +13,26 @@ import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { AuthoredDocument } from '../lib/docAuthors'
 import type { DocEdit } from '../lib/docEdits'
+import type { MentionMember } from '../lib/expandMentions'
 import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getDocNodes } from '../api'
+import { AgentChangesApi } from '../api/agentChanges'
 import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getNotifiedMentions, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
-import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
+import {
+  documentImageDataUrl,
+  documentImageUrl,
+  documentPdf,
+  getDocumentAbout,
+  renameDocument,
+} from '../api/projectDocuments'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -64,8 +72,12 @@ export interface PanelDocProps {
 /** 「文档」这一格的取数原样递给面板（props）：面板自己不认识接口。 */
 export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 
-/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
-export function usePanelDoc(props: PanelDocProps) {
+/** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。
+ *
+ *  `mentionPool` 是评论发送前把「@名字」认成人用的那份候选（备注名、原名、handle）；
+ *  由接线外壳给，因为那份名册只有它读得到（`usePanelDocWiring`）。不给时只认 AI 队友，
+ *  和加这一条之前一样。 */
+export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMember[]) {
   const AUTHOR = myHandle()
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
@@ -141,10 +153,17 @@ export function usePanelDoc(props: PanelDocProps) {
     if (did) void loadSuggestionReasons(did).catch(() => {})
   }
 
-  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到。 */
+  /** 评论里写的「@名字」换成点名（和对话框发消息一样）：AI 队友只认点名，写成字它收不到；
+      人也一样 —— 备注名不是名册上的名字，后端认不出来，写成字没人收到通知。
+
+      `broadcast: false`：评论文档没有「所有人」可通知，候选菜单也不给这两个词
+      （`useCommentMentions`）。开着的话手打一个 `@all` 会变成谁都不通知的 `<@all>`，
+      正文里那个 @ 还不见了。 */
   function withMentions(content: string): string {
     const handle = props.agentHandle
-    return handle ? expandMentions(content, [{ handle, label: props.agentName }]) : content
+    const pool: MentionMember[] = [...(mentionPool?.() ?? [])]
+    if (handle) pool.unshift({ handle, label: props.agentName })
+    return pool.length ? expandMentions(content, pool, [], { broadcast: false }) : content
   }
 
   /** 当场要说的失败（目前只有复制代码失败）；null = 把它关掉。 */
@@ -205,6 +224,13 @@ export function usePanelDoc(props: PanelDocProps) {
     return applyDocEdits(did, edits)
   }
 
+  /** 撤销（或恢复）AI 队友这一次回答对这篇文档的修改：服务端以自己的名义把那几处换回去。
+   *  一次回答对一篇文档的几处改动是一起撤销的，给第一处就够了。 */
+  function undoAgentChanges(changes: number[], redo: boolean) {
+    if (!changes.length) return Promise.resolve()
+    return redo ? AgentChangesApi.redo(changes[0]) : AgentChangesApi.undo(changes[0])
+  }
+
   // 文档里引用的一张图拿什么画：按这份文档去取（读得了文档的人才看得到），路径落在
   // 哪儿由后端按文档是谁的来定。本来就是地址的（http(s)、data、blob、站内绝对路径）
   // 原样画。节点里留着原来的路径，Markdown 里不会出现取回来的地址。
@@ -213,6 +239,30 @@ export function usePanelDoc(props: PanelDocProps) {
     const did = documentId.value
     if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
     return documentImageUrl(did, src.replace(/^\.\//, ''))
+  }
+
+  // 印成纸时那张图：同一个取法，但把字节带进纸里（打印的浏览器没有凭证，也够不着
+  // 这份文档）。本来就是自足的地址（公开网址、data:）照原样给。
+  function imageData(src: string): Promise<string> {
+    if (/^(https?:|data:)/i.test(src)) return Promise.resolve(src)
+    const did = documentId.value
+    if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return documentImageDataUrl(did, src.replace(/^\.\//, ''))
+  }
+
+  /** 把排好的一页交给平台印成 PDF，回执落到浏览器的下载里。 */
+  async function savePdf(html: string, filename: string): Promise<void> {
+    const did = documentId.value
+    if (!did) throw new Error(t('work.room.doc.exportPdfFailed'))
+    const blob = await documentPdf(did, html)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.append(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   // 文档里的画布：读写都按画布自己的编号；新建、复制一块要知道是给哪份文档的。
@@ -393,7 +443,10 @@ export function usePanelDoc(props: PanelDocProps) {
     setError,
     fetchDocNodes,
     imageSrc,
+    imageData,
+    savePdf,
     canvas,
     applyEdits,
+    undoAgentChanges,
   }
 }

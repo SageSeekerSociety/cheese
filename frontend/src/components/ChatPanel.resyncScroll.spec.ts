@@ -17,6 +17,12 @@ const postChatMessage = vi.fn()
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
+vi.mock('@/api/chapters', () => ({
+  listChapters: async () => [],
+  addChapter: vi.fn(),
+  removeChapter: vi.fn(),
+  renameChapter: vi.fn(),
+}))
 vi.mock('@/api/threads', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/threads')>()),
   listThreads: async () => [],

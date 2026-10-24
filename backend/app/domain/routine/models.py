@@ -118,14 +118,12 @@ class Routine(UuidPk, Timestamps, Base):
     #: 「补充说明」: anything else the teammate should know. A new name on the
     #: column that held 「使用哪些资料」, not a rename — the release still serving
     #: reads that name. What a rule used to keep in that column and in
-    #: ``output_dir`` was folded in here by migration ``3e8b1d5a72c4``; both
-    #: columns go two releases from now.
+    #: ``output_dir`` was folded in here by migration ``3e8b1d5a72c4``.
     note: Mapped[str] = mapped_column(
         "context_scope", Text, default="", server_default=""
     )
     # No ``output_dir``: where the results go is the teammate's call each time it
-    # runs, so nothing asks for it any more. The column is still there, unmapped
-    # and unwritten, until a later release drops it.
+    # runs, so nothing asks for it any more.
     trigger: Mapped[str] = mapped_column(String(32))
     #: schedule: {"freq": hourly|daily|weekly|monthly, "time": "HH:MM",
     #: "minute": int, "weekdays": [0..6], "day": 1..31}.
@@ -139,8 +137,7 @@ class Routine(UuidPk, Timestamps, Base):
     owner_handle: Mapped[str] = mapped_column(String(64))
     #: Who created it — a person's handle, or the handle of the teammate that
     #: created it on someone's behalf. The column still carries its birth name:
-    #: a rename is a new name on the old column, and `proposed_by` keeps it
-    #: until a later release drops the three columns the confirm step added.
+    #: a rename is a new name on the old column, so it is still `proposed_by`.
     created_by: Mapped[str] = mapped_column("proposed_by", String(64))
     next_run_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -188,6 +185,14 @@ class RoutineRun(UuidPk, Base):
     turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     outputs: Mapped[list] = mapped_column(JSONB, default=list)
+    #: The feedback this run handed to its teammate (a list of uuid strings),
+    #: for a rule whose spec carries `feedback_batch`; empty otherwise. The
+    #: triage selection skips what an earlier run of the same rule handed out,
+    #: so a report is batched once — and a run that failed, or never started,
+    #: does not count (see `routine/service/firing.py`).
+    feedback_offered: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default="[]"
+    )
     error: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(

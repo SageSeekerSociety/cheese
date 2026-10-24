@@ -3,10 +3,12 @@
 export interface PreviewInfo {
   /** Content fingerprint for refreshing an updated static preview. */
   version?: string | null
-  // File and app previews share an isolated topic content origin.
-  kind?: 'file' | 'app'
+  // File, app and mcp-app previews share an isolated topic content origin.
+  kind?: 'file' | 'app' | 'mcp-app'
   path: string
   mime: string | null
+  /** mcp-app only: which remote MCP server publishes this `ui://` View. */
+  server?: string
   // Isolated content URL for files and live apps; null when the app is offline. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
   // "通道在，但应用没在跑" — without it both look like an empty white frame.
   url?: string | null
@@ -22,7 +24,14 @@ export interface PreviewSession {
   url: string
   grant: string
   resource_id?: string
-  resource?: { kind: 'app' | 'file'; instance?: string; path: string; version?: string }
+  resource?: {
+    kind: 'app' | 'file' | 'mcp-app'
+    instance?: string
+    path?: string
+    version?: string
+    server?: string
+    uri?: string
+  }
 }
 
 export interface PreviewSelection {

@@ -22,12 +22,18 @@ from app.api.deps import get_work_runner
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.input_registration import confirm_receipt
-from app.domain.agent.models import TurnResume
+from app.domain.agent.models import AgentTurn, TurnResume
+from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
+    runner_replaced_message,
+)
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
     POLICIES,
-    RATE_LIMITED as RATE_KIND,
     Policy,
+)
+from app.domain.agent.resumable_failures import (
+    RATE_LIMITED as RATE_KIND,
 )
 from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
@@ -42,14 +48,14 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
-from app.domain.delivery.models import Delivery
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
+from app.domain.delivery.models import Delivery
 from app.domain.delivery.receipts import register_input
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.conftest import StubChannel, stub_compute
+from tests.conftest import StubChannel, drain_hooks, stub_compute
 from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.threads import thread_in
@@ -65,6 +71,14 @@ REFUSED = (
 COOLING = (
     "API Error: Server is temporarily limiting requests (not your usage limit)"
     " · cheese: all Claude accounts are cooling down"
+)
+# Our gateway's lifetime cap on an upstream key (`deploy/gateway/spend_cap.py`),
+# in the words a turn ends with when it is reached.
+SPENT_CAP = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
+    " Received Model Group=gemini-4-argon\nAvailable Model Group Fallbacks=None"
+    "（rate_limit）"
 )
 
 
@@ -238,21 +252,13 @@ async def test_a_rate_limited_turn_resumes_by_itself(
         assert str(RESUME_NOTE) in screen.handed[-1]
         assert len(screen.sessions) == 1
         await runner.drain(timeout_s=10)
-        deadline = time.monotonic() + HANG_S
-        while True:
-            async with factory() as session:
-                completed = await for_site(
-                    session, conversation, since=None, until=None
-                )
-            if (
-                any(
-                    r["meta"].get("event_type") == "turn_resume_started"
-                    for r in completed
-                )
-                or time.monotonic() >= deadline
-            ):
-                break
-            await asyncio.sleep(0.05)
+        # The resume's start is recorded when the session's read of it is
+        # reported; the resumed turn's own retry line arrives as a record after
+        # that read, on its own commit. Read the history once both have landed.
+        [(room_id, _)] = screen.sessions
+        await drain_hooks(screen, room_id)
+        async with factory() as session:
+            completed = await for_site(session, conversation, since=None, until=None)
         assert [
             r["meta"].get("event_type")
             for r in completed
@@ -281,6 +287,30 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     )
     try:
         # Sending the same conversation again is refused the same way.
+        assert await _owed_resumes(factory, conversation, expected=False) == []
+        assert await _failure_cards(factory, conversation) == 1
+        later = datetime.now(UTC) + timedelta(days=1)
+        assert await hand_due(factory, now=later) == 0
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
+        assert len(screen.handed) == 1
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path):
+    """The gateway's lifetime cap on an upstream key refuses under the same
+    "temporarily limiting requests" wording as a rate limit, and used to be
+    resumed until the streak ran out: six rounds of ten retries, all refused
+    (2026-10-21)."""
+    factory = business_db_factory
+    conversation, _seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, SPENT_CAP
+    )
+    try:
+        # Nothing about raising a cap happens by waiting: the seat stays idle
+        # and the room gets the failure card, which offers no retry.
         assert await _owed_resumes(factory, conversation, expected=False) == []
         assert await _failure_cards(factory, conversation) == 1
         later = datetime.now(UTC) + timedelta(days=1)
@@ -411,7 +441,7 @@ async def test_an_unread_joined_resume_is_not_recorded_as_started(business_db_fa
     class AcceptedTransport:
         session_factory = factory
 
-        async def join_running_turn(self, _delivery_id, _attempt_id):
+        async def join_running_session(self, _delivery_id, _attempt_id):
             return True  # Transport accepted; the CLI has not echoed the input.
 
     intake = SimpleNamespace(_wait_to_start=no_op, _wait_for_replay=no_op)
@@ -735,3 +765,70 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
     wait = (row.due_at - now).total_seconds()
     # After the first account thaws, not on a short backoff that fails again.
     assert thaw_in <= wait <= thaw_in + 5 * 60
+
+
+#: A rate limit whose service names a reset hours away.
+LIMITED_FOR_HOURS = (
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    " · Rate limited. Please try again in 4 hours"
+)
+
+
+@pytest.mark.anyio
+async def test_an_upgrade_after_a_wake_up_resumes_at_once(business_db_factory):
+    """The seat was waiting out a rate limit when a teammate's delivery woke it,
+    which ends that wait. The upgrade then cuts the woken turn short: that turn
+    is resumed within seconds, not after the limit the wake-up already ended."""
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+    t0 = datetime.now(UTC)
+    waiting = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=uuid.uuid4(),
+        result=_failed(LIMITED_FOR_HOURS),
+        route="subscription",
+        now=t0,
+    )
+    assert waiting is not None and waiting.due_at > t0 + timedelta(hours=1)
+    woken = uuid.uuid4()
+    async with factory() as session:
+        session.add(
+            AgentTurn(
+                id=woken,
+                conversation_id=conversation,
+                continuation_id=woken,
+                author="teammate",
+                agent_handle=seat,
+                content="go on",
+                started_at=t0 + timedelta(seconds=10),
+                delivered_at=t0 + timedelta(seconds=10),
+            )
+        )
+        await session.commit()
+    t1 = t0 + timedelta(seconds=60)
+
+    resumed = await after_failure(
+        factory,
+        project_id=project,
+        conversation_id=conversation,
+        seat=seat,
+        failed_turn_id=woken,
+        result=AgentResult(
+            text=runner_replaced_message(seat),
+            session_id="s",
+            is_error=True,
+            failure_code=RUNNER_REPLACED_CODE,
+        ),
+        route="subscription",
+        now=t1,
+    )
+
+    assert resumed is not None and resumed.dropped_at is None
+    assert resumed.reason == "runner_replaced"
+    assert resumed.failed_turn_id == woken
+    assert resumed.due_at <= t1 + timedelta(seconds=10)
+    assert await hand_due(factory, now=t1 + timedelta(seconds=10)) == 1

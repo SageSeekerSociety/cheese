@@ -90,7 +90,7 @@ SCRATCH_REFUSED = (
     "这个会话在支线里，改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器"
     "不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这由会话所在"
     "的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；有人要做这件事时，"
-    "用 cheese_task 把支线转为任务。"
+    "用 cheese_task(action=open) 把支线转为任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -109,12 +109,18 @@ LINK_INTERRUPTED = (
 # 每两秒重试一次，连拒几个小时。说「可以重试」是假话，所以这句话叫它停。
 SESSION_ENDED = (
     "平台已经收回了这个会话用机器的凭证（它所在的房间或任务换了归属）："
-    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，结束这一轮。"
+    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，这次就到这里。"
 )
 _DEAD_CREDENTIAL = (
     "Execution credential does not own this session",
     "This credential works another conversation",
 )
+#: The same refusal said as a catalog sentence. Its words are the reader's
+#: language, and this bundle runs on a machine that may speak none of ours; the
+#: key beside them does not change with it (`app/core/errors.py` writes
+#: `error.i18n`). A task's credential reaching another conversation is said
+#: this way (`api/auth/resolver.py`), and is just as dead on the lease path.
+_DEAD_CREDENTIAL_KEYS = frozenset({"taskCredentialOtherConversation"})
 
 # 平台的一个接口接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个
 # 会话对拿机器那一步连着 376 次）。同一个接口（方法加路径）连续 `BREAKER_AFTER` 次之
@@ -153,7 +159,10 @@ def _dead_credential(error) -> bool:
     if detail.get("retryable") is True or body.get("retryable") is True:
         return False
     message = f"{body.get('message', '')} {detail.get('message', '')}"
-    return any(text in message for text in _DEAD_CREDENTIAL)
+    if any(text in message for text in _DEAD_CREDENTIAL):
+        return True
+    i18n = detail.get("i18n")
+    return isinstance(i18n, dict) and i18n.get("key") in _DEAD_CREDENTIAL_KEYS
 
 
 class PlatformHealth:
@@ -484,14 +493,26 @@ class PlatformHost:
     breaker: gone means an immediate MACHINE_OUT_OF_REACH, never a wait.
     """
 
-    def __init__(self, client, invoke, call_id, doc_versions):
+    def __init__(self, client, invoke, call_id, doc_versions, run, compact=None):
         self.client = client
         self.invoke = invoke
         self.call_id = call_id
         self.doc_versions = doc_versions
         self.environ = dict(os.environ)
+        #: Which run of its session this call is made in, as the session's
+        #: runner names it (``harness/epoch/seq`` of the ``running`` event that
+        #: began it), or None for a harness whose runner names no runs. Every
+        #: platform request carries it (``X-Cheese-Run``), so what the agent
+        #: reports is known to be that run's (`presentation.task_presentation`).
+        self.run = run
+        #: Ask this session's harness to compact its context, for the one
+        #: tool that does (`cheese_session(action=compact)`); a session with none refuses.
+        self.compact = compact
 
     def request(self, plan):
+        run = self.run()
+        if run:
+            plan = {**plan, "run": run}
         stdout = self.client.platform_request(plan)["value"]["stdout"]
         return json.loads(stdout) if stdout else {}
 
@@ -510,6 +531,13 @@ class PlatformHost:
             f"{self.call_id}-sync",
             timeout_ms=600000,
         )
+
+
+def no_run():
+    """The run source of a harness whose runner names no runs: it reports no
+    lifecycle (`Harness.reports_lifecycle`), so its sessions have no state on
+    the platform for a run to be compared with, and its reports always stand."""
+    return None
 
 
 def _replace_file(path, text):
@@ -531,6 +559,10 @@ def _replace_file(path, text):
 #: helpers reach the runner there, never the agent, whose commands run on the
 #: room's machine.
 SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
+#: The header a platform request names its session's run in (`PlatformHost.run`).
+#: The same name as `room_task.progress.RUN_HEADER`, which reads it: this file
+#: ships alone and imports nothing of it.
+RUN_HEADER = "X-Cheese-Run"
 
 
 def dial_runner(path: str, timeout: float):
@@ -578,12 +610,7 @@ def register_project_hooks(config, hooks):
             "This session cannot take up the project's tool hooks: "
             "it was started without its runner's socket"
         )
-    request = {
-        "method": "control",
-        "params": {
-            "request": {"subtype": "apply_flag_settings", "settings": {"hooks": hooks}}
-        },
-    }
+    request = {"method": "apply_hooks", "params": {"hooks": hooks}}
     with dial_runner(path, 60) as connection:
         connection.sendall(json.dumps(request).encode() + b"\n")
         answer = json.loads(connection.makefile("rb").readline())
@@ -715,6 +742,12 @@ class RemoteClient:
                             if os.environ.get("CHEESE_TURN")
                             else {}
                         ),
+                        # What a person's 芝士 does for them once its gate let
+                        # it (`assistant.passes`).
+                        **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
+                        # The run of the session this call is made in
+                        # (`PlatformHost.run`).
+                        **({RUN_HEADER: args["run"]} if args.get("run") else {}),
                     },
                 )
                 response = connection.getresponse()
@@ -795,9 +828,7 @@ class RemoteClient:
     def _publish_message(self, payload, args):
         content = args.get("content") or ""
         attachments = args.get("attachments") or []
-        if not isinstance(content, str) or (
-            not content.strip() and not attachments
-        ):
+        if not isinstance(content, str) or (not content.strip() and not attachments):
             raise ValueError("Chat content must be a nonempty string")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
         topic = os.environ.get("CHEESE_TOPIC", "")
@@ -1512,14 +1543,21 @@ class RemoteClient:
     def control(self, request, preparing=None):
         return self.call("control", dict(request), preparing=preparing)
 
-    def checkpoint(self, request_id):
+    def checkpoint(self, request_id, turn=None):
         """A turn's Stop checkpoint: its work synced into the project. A
         session whose work is not kept (a 支线) has none
         to sync, and the executor route would refuse it. Nor does a session
         that never held a sandbox: its turn did nothing on a machine. (One
-        whose sandbox was destroyed while idle is the route's to answer.)"""
+        whose sandbox was destroyed while idle is the route's to answer.)
+
+        `turn` is the work id of the turn that ended. The machine runs its
+        sync with it (``CHEESE_TURN``), so a push failure is filed under that
+        turn instead of being guessed from whatever is newest later."""
         if self.config.get("kind") == "deferred" or keeps_nothing(
             self.execution_token()
         ):
             return {}
-        return self.control({"subtype": "checkpoint", "request_id": request_id})
+        request = {"subtype": "checkpoint", "request_id": request_id}
+        if turn:
+            request["turn"] = str(turn)
+        return self.control(request)

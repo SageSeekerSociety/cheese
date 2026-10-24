@@ -1,0 +1,6 @@
+# Commits `git blame` skips: whole-tree reformats that changed no behaviour.
+# GitHub reads this file by name; locally, `git config blame.ignoreRevsFile
+# .git-blame-ignore-revs` (Taskfile git:config sets it).
+
+# ci: a commit fixes its staged files; CI judges lint, layout and types (#4511)
+bfadb14dbbb67470cd47973a446b481c75b18343

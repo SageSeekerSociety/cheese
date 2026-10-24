@@ -14,7 +14,7 @@
 // 这一页自己的样式在 `profile/profile.css`。
 import type { ProfileProject, ProfileProjectRole } from '@/cx_types'
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { useProfileNotes } from './profile/useProfileNotes'
@@ -34,6 +34,7 @@ import { activityWeeks, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
+import { skillIcon } from '@/lib/skillIcons'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -45,11 +46,61 @@ const { mdAndUp } = useDisplay()
 const compact = computed(() => !mdAndUp.value)
 const isSelf = computed(() => myHandle() === props.handle)
 
-const { data, pageKey, loading, error, refresh, profile, member, missing, displayName, avatarUrl, locale, joined } =
-  useProfilePage(
-    () => props.handle,
-    () => props.projectId
-  )
+const {
+  data,
+  pageKey,
+  loading,
+  error,
+  refresh,
+  profile,
+  member,
+  missing,
+  remark,
+  originalName,
+  displayName,
+  saveRemark,
+  avatarUrl,
+  locale,
+  joined,
+} = useProfilePage(
+  () => props.handle,
+  () => props.projectId
+)
+
+const editingRemark = ref(false)
+const remarkDraft = ref('')
+const remarkSaving = ref(false)
+const remarkError = ref<string | null>(null)
+watch(
+  () => props.handle,
+  () => {
+    editingRemark.value = false
+    remarkError.value = null
+  }
+)
+function startRemarkEdit() {
+  remarkDraft.value = remark.value
+  remarkError.value = null
+  editingRemark.value = true
+}
+function cancelRemarkEdit() {
+  editingRemark.value = false
+  remarkError.value = null
+}
+async function submitRemark(nextValue?: string | Event) {
+  if (remarkSaving.value) return
+  const raw = typeof nextValue === 'string' ? nextValue : remarkDraft.value
+  remarkSaving.value = true
+  remarkError.value = null
+  try {
+    await saveRemark(raw.trim())
+    editingRemark.value = false
+  } catch (e) {
+    remarkError.value = e instanceof Error && e.message ? e.message : t('users.profile.remark.saveFailed')
+  } finally {
+    remarkSaving.value = false
+  }
+}
 const { selectedWeek, weekPending, pickWeek, clearWeek, topicsTitle, topics, topicsFailed, topicsEmpty } =
   useProfileTopics(
     () => props.handle,
@@ -105,6 +156,19 @@ const dmRoute = computed(() => {
   const peer = here.source === 'agent' ? agentDmKey(own) : props.handle
   return { name: 'workspace-dm', params: { projectId: props.projectId, peer } }
 })
+
+/** 他名下那几个 AI 队友里，handle 对得上这一个。—— 人没有「带的技能」。
+ *
+ *  只画名字，不画数字：几颗是这个人自己的事，资料页只回答「是哪些」。
+ *  也不画健康圆点：圆点得拿**项目**去探（`getSkillHealth(projectId, …)`），
+ *  资料页不为看一眼技能多发一遍探针。 */
+const carriedSkills = computed<string[]>(() => {
+  // 名册里的链接用的是座位名（`seat_handle`，如 `cheese-c6cf7aefd1d5`），而
+  // `/projects/{id}/agents` 的那份把两个名字都给了（`handle` 是 `cheese`）。对座位名
+  // 才认得出是哪一个 —— 对 `handle` 永远对不上，这一格就永远不亮。
+  const agent = (data.value?.agents ?? []).find((a) => a.seat_handle === props.handle)
+  return agent?.configuration.skills ?? []
+})
 </script>
 
 <template>
@@ -151,8 +215,67 @@ const dmRoute = computed(() => {
           <div class="profile__who">
             <UserAvatar :avatar="avatarUrl" :name="displayName" :size="compact ? 64 : 96" class="profile__avatar" />
             <div class="profile__names">
-              <h1 class="t-page-title profile__name">{{ displayName }}</h1>
-              <div class="t-meta-read profile__handle">{{ handle }}</div>
+              <div class="profile__name-row">
+                <h1 class="t-page-title profile__name" data-user-content>{{ displayName }}</h1>
+                <button
+                  v-if="!isSelf && !editingRemark"
+                  type="button"
+                  class="profile__remark-btn"
+                  data-testid="profile-remark-trigger"
+                  :title="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  :aria-label="remark ? t('users.profile.remark.edit') : t('users.profile.remark.add')"
+                  @click="startRemarkEdit"
+                >
+                  <v-icon size="14" icon="mdi-pencil-outline" aria-hidden="true" />
+                  <span v-if="!remark">{{ t('users.profile.remark.add') }}</span>
+                </button>
+              </div>
+              <div v-if="remark && originalName && originalName !== remark" class="t-meta-read profile__original-name">
+                <span data-user-content>{{ t('users.profile.remark.originalName', { name: originalName }) }}</span>
+                <span> · </span>
+                <span class="profile__handle">{{ handle }}</span>
+              </div>
+              <div v-else class="t-meta-read profile__handle">{{ handle }}</div>
+              <form v-if="!isSelf && editingRemark" class="profile__remark-form" @submit.prevent="submitRemark()">
+                <input
+                  v-model="remarkDraft"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="32"
+                  class="profile__remark-input t-body"
+                  data-testid="profile-remark-input"
+                  :aria-label="t('users.profile.remark.placeholder')"
+                  :placeholder="t('users.profile.remark.placeholder')"
+                  :disabled="remarkSaving"
+                  @keydown.esc.prevent="cancelRemarkEdit"
+                />
+                <div class="profile__remark-actions">
+                  <BaseButton
+                    type="submit"
+                    size="sm"
+                    :loading="remarkSaving"
+                    data-testid="profile-remark-save"
+                    @click="submitRemark()"
+                  >
+                    {{ t('users.profile.remark.save') }}
+                  </BaseButton>
+                  <BaseButton
+                    v-if="remark"
+                    type="button"
+                    kind="ghost"
+                    size="sm"
+                    :disabled="remarkSaving"
+                    data-testid="profile-remark-clear"
+                    @click="submitRemark('')"
+                  >
+                    {{ t('users.profile.remark.clear') }}
+                  </BaseButton>
+                  <BaseButton type="button" kind="ghost" size="sm" :disabled="remarkSaving" @click="cancelRemarkEdit">
+                    {{ t('users.profile.remark.cancel') }}
+                  </BaseButton>
+                </div>
+                <p v-if="remarkError" class="t-meta profile__remark-error" role="alert">{{ remarkError }}</p>
+              </form>
               <div v-if="roleInProject" class="profile__role">
                 <ExternalTag v-if="roleInProject === 'external'" />
                 <span v-else class="chip-neutral">{{ roleLabel(roleInProject) }}</span>
@@ -204,6 +327,25 @@ const dmRoute = computed(() => {
                 t('users.profile.inProject.weekly', { count: inProject.weekly_contributions ?? 0 })
               }}</span>
             </header>
+            <!-- 带的技能：只有 AI 队友有名字可对。技能跟着人走，所以这一格挂在他身上，
+                 不是挂在房间上（见 `useAgentSkills`）。只读：编辑在项目设置里。 -->
+            <div
+              v-if="carriedSkills.length"
+              class="profile__card profile__card--pad profile__skills"
+              data-section="carried-skills"
+            >
+              <div class="profile__card-head">
+                <span class="t-eyebrow-read">{{ t('users.profile.inProject.skills') }}</span>
+              </div>
+              <ul class="profile__sockets">
+                <li v-for="name in carriedSkills" :key="name" class="profile__socket" :title="name">
+                  <span class="profile__socket-hole"
+                    ><v-icon size="18">{{ skillIcon(name) }}</v-icon></span
+                  >
+                  <span class="profile__socket-name">{{ name }}</span>
+                </li>
+              </ul>
+            </div>
             <div class="profile__pair">
               <!-- 收件箱只有本人打得开，别人的主页上这一格永远是空的，所以只在自己的页上画。 -->
               <div v-if="isSelf" class="profile__card profile__card--pad">

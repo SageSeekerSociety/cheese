@@ -94,6 +94,16 @@ describe('a person who was only referred to', () => {
     chip.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
     expect(opened).toHaveBeenCalledWith('alice')
   })
+  it('shows original name and @handle on hover when a personal remark is set', () => {
+    const chip = refChip('@', 'alice', {
+      mentionNames: { alice: '后端接口-Alice' },
+      mentionTitles: { alice: 'Alice (@alice)' },
+      topicTitles: {},
+      notified: true,
+    })
+    expect(chip.textContent).toBe('@后端接口-Alice')
+    expect(chip.title).toBe('Alice (@alice)')
+  })
 })
 
 describe('a reference chip in a document being edited', () => {

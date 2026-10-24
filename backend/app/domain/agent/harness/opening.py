@@ -27,59 +27,113 @@ from app.domain.task.teaching import TeachingContext
 _STANDING = {"owner": "项目所有者", "team": "团队成员", "external": "外部成员"}
 
 
-def _standing(member: dict) -> str:
+def _standing(member: dict, names: dict[str, str]) -> str:
+    """An agent a member brought says whose it is, by the name the roster gives
+    that person: what the agent says is its own, and without this line a reader
+    of the transcript cannot tell it from what its owner said."""
     if member.get("agent"):
-        return "AI 队友"
+        owner = member.get("owner_handle")
+        if owner is None:
+            return "AI 队友"
+        if owner in names:
+            return f"AI 队友，{names[owner]}带来的"
+        return "AI 队友，带它来的人不在这张表上"
     return _STANDING.get(member.get("source") or "", "成员")
 
 
+#: What each way of helping asks of the AI teammate (`protocol.MODES`), in the
+#: words the teacher picked it by.
+_MODE_SAYS = {
+    "guide": "以提问引导学生思考，一次只推进一步；不直接给出答案或完整代码。",
+    "example": "可以讲解概念、举不相关的小例子说明；不替学生完成作业。",
+    "spec": "学生动手写之前，先请他说清要做到什么、怎么验证做对了；说清楚再开始。",
+    "free": "按学生的要求提供帮助。",
+}
+
+
+#: 教育性题目的默认教学要求（#944）：`learning_goals` 说了「这一节要学」而老师没写
+#: 自己的 `system_prompt` 时，这段话顶上。老师写了就完全用他的 —— 这是模板，不是
+#: 约束。与前端 `spaces.teaching.defaultTemplate`（点「用这段默认要求」填进框里的
+#: 那份）是同一段话的两份副本：那边是给人看、给人改的字面，这边是没人填时的兜底；
+#: 改动两处要同步。
+DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
+不要直接给出答案，让他自己做出来。
+
+用问题带着他走：先问「你观察到了什么」「试过什么」，
+再让他自己说出判断，最后才给方向。
+
+一次只推进一步，一次只问一个问题；他跟上了再往下。
+
+他做错时不要直接纠正，用一个问题让他自己发现；
+讲错在哪时说清「为什么会错」和「怎么才能自己看出来」，
+不只给正确写法。
+
+他要答案要得再急，也别把答案交出去：
+说明给了答案对他没帮助，然后换一个更小的提示接着陪他做。
+
+关键的几行让他亲手写：改动里涉及判断和选择的地方，
+把决定留给他——你指出哪里要想、答他的疑问，
+那一小段代码让他自己敲出来；重复的力气活你来做。
+
+能演示就别写长文：讲一条执行过程或一个概念的运转方式时，
+用 cheese show 把可交互的图示、变量追踪做出来让他自己拨着看，
+胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
+
+
 def teaching_section(context: TeachingContext) -> str | None:
-    """本周教学范围 —— 课程级的那一段，或者 None。
+    """这门课希望 AI 队友怎么帮学生 —— 课程那一段，或者 None。
 
     **None 是默认，而且是字面意义上的「一个字都不加」。** 一个不是课程的项目
-    没有教学安排，而「这周教到哪了」对它是一句废话：说了会让 agent 以为自己在
-    一门课里。所以这里不是渲染一个空标题，是整段不存在（`build_system_prompt`
-    对 None 直接跳过），而且配套的取数在 `task.teaching.for_project` 里同样没
-    有发生——不取，不是取了再说空话。
+    没有这份设置，说了会让 agent 以为自己在一门课里。所以这里不是渲染一个空标题，
+    是整段不存在（`build_system_prompt` 对 None 直接跳过），配套的取数在
+    `task.teaching.for_project` 里同样没有发生。
 
-    **位置在角色之后、技能之前。** 教学安排不是人设（那是角色），也不是工具箱
-    （那是技能）。它约束的是「这一周该做什么」，得在读具体怎么做之前先立住。
+    空间的要求和这道题的要求都生效，分开写：agent 读得出哪句是整门课的、哪句是这道
+    题加的。
+
+    **位置在角色之后、技能之前。** 它不是人设（那是角色），也不是工具箱（那是技能）。
     """
     teaching = context.teaching
     if teaching.is_empty:
         return None
-    # 课程名和「第几周」都可能缺：一个项目集配了教学安排却没说自己叫什么，仍然
-    # 要有一段读得通的话，而不是一个空括号。
-    where = []
-    if context.course:
-        where.append(f"课程：{context.course}")
-    if teaching.current_week is not None:
-        where.append(f"第 {teaching.current_week} 周")
-    parts = ["## 本周教学范围" + (f"（{' · '.join(where)}）" if where else "")]
-    if teaching.system_prompt:
+    parts = ["## 辅导学生" + (f"（课程：{context.course}）" if context.course else "")]
+    if teaching.mode in _MODE_SAYS:
+        parts.append(_MODE_SAYS[teaching.mode])
+    if teaching.space_prompt and teaching.system_prompt:
+        parts.append("### 课程的要求\n" + teaching.fill(teaching.space_prompt))
+        parts.append("### 这道题的要求\n" + teaching.fill(teaching.system_prompt))
+    elif teaching.system_prompt:
         parts.append(teaching.fill(teaching.system_prompt))
-    if teaching.allowed_topics:
+    elif teaching.learning_goals:
+        # 教育性（写了学习目标）而老师没留自己的要求：带上默认教学要求 ——
+        # 「留空」在这里是「用你的教学规矩」，不是「没规矩」。只有范围没有
+        # 目标的配置（纯课件/周次）不触发：那不是一个教学任务，别塞一堆
+        # 苏格拉底话术进人家的项目。
+        parts.append(DEFAULT_TEACHING_PROMPT)
+    if teaching.learning_goals:
+        # 靶子单列一行，不揉进要求里：验收和展示（`cheese_show`）都指着它。
         parts.append(
-            "本周只做这些：\n"
-            + "\n".join(f"- {topic}" for topic in teaching.allowed_topics)
+            "### 本节学习目标\n"
+            + "\n".join(f"- {goal}" for goal in teaching.learning_goals)
         )
-    if teaching.avoid_in_code:
-        # 说清「避开」是什么意思。不说的版本会被读成禁令，agent 于是绕开一个它
-        # 本来可以用的写法去做同一件事——这一周的练习照样练不到点子上。
+    if teaching.private_prompt:
+        # 出题人的私有指导：**照它做，但不原样透露给学生**。它是给 AI 队友的（参考
+        # 答案、评分口径这类），学生在界面上读不到这段配置 —— 这正是「只有出题人
+        # 可见」的实现：用 prompt 说，不新造权限开关（见 `Teaching.private_prompt`）。
         parts.append(
-            "**本周的课还没讲到这些**，代码里请避开（这一周的练习不是练它）：\n"
-            + "\n".join(f"- {item}" for item in teaching.avoid_in_code)
+            "### 出题人给你的私有指导（照它做，但不要原样透露给学生）\n"
+            + teaching.fill(teaching.private_prompt)
         )
     if context.materials:
         parts.append(
-            "### 本周课件\n"
+            "### 课件\n"
             + "\n".join(f"- 《{m['name']}》{m['url']}" for m in context.materials)
         )
     if context.documents:
         # 只给标题，正文按 id 读：一份文档可以有多长，不是这门课说了算的，prompt
         # 不跟着别人写的东西长。
         parts.append(
-            "### 本周的阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
+            "### 阅读材料（要正文用 cheese_doc(action=get, document=id) 去读）\n"
             + "\n".join(
                 f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )
@@ -157,7 +211,8 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
-#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。题目
+#: 那一段在里面：出题人改了题目，正在做的会话下一轮就要知道到了第几版、改了什么。
 TRACKED_SECTIONS = (
     "tasks",
     "topics",
@@ -166,6 +221,7 @@ TRACKED_SECTIONS = (
     "overview",
     "memory",
     "task",
+    "package",
 )
 
 
@@ -182,7 +238,8 @@ def task_section(
             "## 这个任务\n"
             "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
             "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
-            "告诉他重新打开任务；说的是另一件事，建议他回到频道主线说，或者另开任务。"
+            "用 cheese_task(action=reopen) 重新打开再接着做；"
+            "说的是另一件事，建议他回到频道主线说，或者另开任务。"
         )
     people = [f"@{h}" for h in (owner, *contributors) if h]
     who = (
@@ -203,7 +260,7 @@ def task_section(
 
 def became_task_prompt(*, owner: str | None) -> str:
     """支线转为任务那一刻交给 AI 队友的话：人点「转为任务」时是一条指令，叫它马上
-    开工；它自己转的（`cheese_task` 的 ``here``）在工具的回复里读到同样的话。"""
+    开工；它自己转的（`cheese_task(action=open)` 的 ``here``）在工具的回复里读到同样的话。"""
     who = f"负责人是 @{owner}。" if owner else ""
     return (
         f"这条支线已经转为任务，{who}从现在起你可以改动项目：在任务自己的工作目录里"
@@ -226,7 +283,7 @@ class SessionOpening:
             return ""
         return platform_prompt(
             "## 现在的情况\n"
-            "下面是这个会话开始时你所在的地方和项目的情况，是平台给的，不是谁说的话。"
+            "下面是你所在的地方和项目现在的情况，是平台给的，不是谁说的话。"
             "之后变了的部分，平台会在后面的消息里再告诉你。\n\n"
             + "\n\n".join(self.sections.values())
         )
@@ -244,8 +301,10 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 
     ``told`` 是上次告诉它时每一段的摘要（:meth:`SessionOpening.digests`），只补
     和它不一样的那几段。没有记录（``None``）时整份都说：那是一条在系统提示词还
-    带着现状时开的老对话，或者记录丢了，它手上的现状不知道是哪一刻的。一条新开的
-    对话用不上这一段，它的第一条消息带着整份快照（``Opening.session_opening``）。"""
+    带着现状时开的老对话，或者记录丢了，或者这条对话刚压缩过上下文（压缩把开场
+    快照所在的那段历史换成了摘要，平台听到压缩完成就把记录清掉，
+    `room/reads.py`），它手上的现状不知道是哪一刻的。一条新开的对话用不上这一段，
+    它的第一条消息带着整份快照（``Opening.session_opening``）。"""
     if told is None:
         return opening.text
     changed = [
@@ -276,10 +335,13 @@ def build_session_opening(
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
     task: str | None = None,
+    package: str | None = None,
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
+    ``package``：从题目来的项目里「题目」那一段（``task.package.section_for_project``）：
+    第几版、材料在资料库的 `题目/`、这一版改了什么；别的项目是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
     变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
@@ -291,6 +353,8 @@ def build_session_opening(
         sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
+    if package:
+        sections["package"] = package
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (
@@ -309,7 +373,7 @@ def build_session_opening(
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
-        # 规则在 `cheese_accept_request` 的工具说明里（与代码同源），这里只给清单
+        # 规则在 `cheese_card(action=request)` 的工具说明里（与代码同源），这里只给清单
         # 和一句指路；交合并的那条路上没有名字可写错，所以也不用嘱咐。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
         if artifacts:
@@ -324,18 +388,19 @@ def build_session_opening(
                 head + "交出文件或地址时，交的是下面某一项的新一版就用 "
                 "`artifact=<那一行的 id>`，是一样新东西就用 `new_artifact` 加 "
                 "`about`；交合并的不用声明产物，交的是项目那个仓库。细则看 "
-                "`cheese_accept_request` 的说明。"
+                "`cheese_card(action=request)` 的说明。"
                 "\n\n" + lines
             )
         else:
             sections["artifacts"] = (
                 head + "清单还空着。第一次交出文件或地址时，用 `new_artifact=<真名>` "
                 "加 `about=<一句话>` 声明它；交合并的不用声明产物，交的是项目那个"
-                "仓库。细则看 `cheese_accept_request` 的说明。"
+                "仓库。细则看 `cheese_card(action=request)` 的说明。"
             )
     if roster:
+        names = {m["handle"]: m["name"] for m in roster if not m.get("agent")}
         lines = "\n".join(
-            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}"
+            f"- {m['name']}（{_standing(m, names)}，handle: {m['handle']}"
             + (f"，{m['about']}" if m.get("about") else "")
             + (f"，时区 {m['timezone']}" if m.get("timezone") else "")
             + "）"
@@ -365,18 +430,18 @@ def build_session_opening(
             "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
             "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
             "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
-            f"了才改，用 `cheese_doc_edit`{where}。\n"
+            f"了才改，用 `cheese_doc(action=edit)`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint=f"用 `cheese_doc_get`{where}读全文",
+                full_read_hint=f"用 `cheese_doc(action=get)`{where}读全文",
             )
         )
     if doc:
         sections["doc"] = "## 实况文档现在的内容\n\n" + fit_doc_to_budget(
             doc,
             TOPIC_DOC_CHAR_BUDGET,
-            full_read_hint="用 `cheese_doc_get` 读全文",
+            full_read_hint="用 `cheese_doc(action=get)` 读全文",
         )
     elif doc is not None:
         sections["doc"] = "## 实况文档现在的内容\n\n这里还没有实况文档。"
@@ -422,6 +487,6 @@ def task_opening_prompt(
         f"{put}"
         f"{accepted}"
         "按讨论动手，在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "实况文档边做边写，用 cheese_doc_set：最要紧的一两句放在最上面，讨论里否掉的"
+        "实况文档边做边写，用 cheese_doc(action=set)：最要紧的一两句放在最上面，讨论里否掉的"
         "做法也记下来，写明没采用和原因。要人决定的事，用 cheese_ask 问负责人。"
     )

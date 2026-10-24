@@ -12,8 +12,6 @@ repository，正路是走对方的 service。这个文件测的就是那几条�
 
 """
 
-from tests.support.devices import enrollment_team
-
 import uuid
 from datetime import UTC, datetime
 
@@ -30,6 +28,7 @@ from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.integration.conftest import project_service, registered
+from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.anyio
 
@@ -82,7 +81,7 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(
 async def _card(session, topic_id, *, status: AcceptStatus, pr_number=None):
     card = await AcceptCardRepository(session).add(
         topic_id=topic_id,
-        reviewer_handle="alice",
+        reviewer_handles=["alice"],
         focus="",
         status=status,
     )

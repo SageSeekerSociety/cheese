@@ -4,9 +4,14 @@
 -->
 
 <script setup lang="ts">
+import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
+import type { NavTarget } from '@/lib/navTarget'
 import type { Team } from '@/types'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import TeamProfile from './TeamProfile.vue'
+import TeamSettingsView from './TeamSettingsView.vue'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -31,9 +36,11 @@ defineProps<{
   teamIntro: string
   /** 没加入的人点「加入」走哪条路，由容器接上。 */
   join: (message: string) => Promise<void>
+  /** 停在设置的某一栏上：这一页画成盖在窗口上的「团队设置」那一层，不画团队页的外框。 */
+  settings?: { groups: SettingsGroup[]; active: string | null; backTo: NavTarget } | null
 }>()
 
-const emit = defineEmits<{ 'retry-load': [] }>()
+const emit = defineEmits<{ 'retry-load': []; 'close-settings': [] }>()
 
 /** 当前这一栏的正文由容器给：它在那儿挂 `<router-view>`。 */
 defineSlots<{ default?: () => unknown }>()
@@ -56,6 +63,18 @@ defineSlots<{ default?: () => unknown }>()
       @retry="emit('retry-load')"
     />
   </v-container>
+  <TeamSettingsView
+    v-else-if="teamData && settings"
+    :name="teamData.name"
+    :handle="teamData.handle"
+    :avatar="getAvatarUrl(teamData.avatarId)"
+    :groups="settings.groups"
+    :active="settings.active"
+    :back-to="settings.backTo"
+    @close="emit('close-settings')"
+  >
+    <slot />
+  </TeamSettingsView>
   <AppPage
     v-else-if="teamData"
     :title="pageTitle"

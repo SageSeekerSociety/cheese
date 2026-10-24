@@ -1,20 +1,28 @@
 {
-  "avoid": "暂不使用",
+  "agent": "默认队友",
+  "agentNone": "没有指定默认队友",
+  "agentSkills": "它会带的技能",
+  "agentSkillsNone": "不带任何技能",
+  "agentSkillsOnly": "题目指定的技能",
   "credits": "{n} 点算力",
   "from": {
-    "category": "来自项目集",
+    "both": "空间和这道题",
     "project": "来自项目",
     "space": "来自空间",
     "task": "来自这道题"
   },
-  "guidance": "给 AI 队友的指导",
-  "guidanceNone": "这一题没有指导",
+  "guidance": "AI 队友辅导",
+  "guidanceNone": "这一题没有 AI 队友辅导设置",
   "materialCount": "{n} 份",
   "materials": "会被带上的资料",
   "materialsNone": "这个空间还没有资料",
   "pack": "资源包",
   "packNone": "没有算力额度",
-  "title": "将继承什么",
-  "topics": "本周范围",
-  "week": "第 {n} 周"
+  "privateGuidance": "出题人私有指导（学生看不到）",
+  "prompt": "题目自带的 prompt",
+  "promptNone": "没有自带 prompt",
+  "promptSet": "已指定（见下）",
+  "spacePrompt": "空间的要求",
+  "taskPrompt": "这道题的要求",
+  "title": "将继承什么"
 }

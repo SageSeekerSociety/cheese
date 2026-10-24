@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The `--json` record consumed by ci:fast.
+"""The `--json` record the snapshot collector (ratchet-snapshot.py) consumes.
 
     python3 .claude/scripts/check-file-sizes.py --json
 
 prints ONE JSON object on stdout and nothing else. The human report stays off in
-that mode on purpose: ci:fast parses stdout, and a report interleaved with
+that mode on purpose: the collector parses stdout, and a report interleaved with
 a record is not a record. Errors keep going to stderr, where they already went.
 
 The exit code stays the authority on the verdict, and --json does not change it:

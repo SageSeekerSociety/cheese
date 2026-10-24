@@ -147,7 +147,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
   })
 
   // 滚动位置、跟不跟新消息、重放期间不抖 —— 见 room/composables/useChatScroll。
-  const scroll = useChatScroll({ showingNewest: () => !timeline.hasNewer.value, topicId: () => place()?.id })
+  const scroll = useChatScroll({
+    showingNewest: () => !timeline.hasNewer.value,
+    topicId: () => place()?.id,
+    column: opts.column,
+  })
 
   // 打开话题时分批挂行 —— 见 room/composables/useRowBatch（`rows`、`paging` 在下面，晚读）。
   const rowBatch = useRowBatch({

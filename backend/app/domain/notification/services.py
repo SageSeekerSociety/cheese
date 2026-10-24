@@ -25,6 +25,7 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
+from app.domain.notification.names import names_for, with_names
 from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
@@ -58,8 +59,12 @@ class NotificationQueryService:
         self,
         repo: NotificationRepository,
         resolvers: Sequence[EntityInfoResolver] | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._repo = repo
+        # Where the names of people a row's tokens name are read (`names.py`);
+        # without it a row is shown as stored.
+        self._session = session
         self._resolver_map: dict[str, EntityInfoResolver] = {
             r.supported_entity_type(): r for r in (resolvers or [])
         }
@@ -75,7 +80,9 @@ class NotificationQueryService:
         接这个频道的站内信读者（HTTP 路由、别的领域）不该知道底下的 repository 叫
         什么、怎么造：那一步是跨领域摸 repository，守卫拦的就是它。
         """
-        return cls(NotificationRepository(session), resolvers=resolvers)
+        return cls(
+            NotificationRepository(session), resolvers=resolvers, session=session
+        )
 
     async def get_notification_by_id_for_current_user(
         self, user_id: int, notification_id: int
@@ -266,6 +273,7 @@ class NotificationQueryService:
         notification: Notification,
         *,
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
+        names: Mapping[str, str] | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -274,6 +282,12 @@ class NotificationQueryService:
         —— 那个函数是幂等的，但不是免费的。
         """
         metadata_map = _metadata_map_of(notification)
+        # A row names people by name, not by the room's <@handle> token
+        # (`names.py`). ``names`` is the page's, read once for every row.
+        if names is None and self._session is not None:
+            names = await names_for(self._session, metadata_map)
+        if names:
+            metadata_map = with_names(metadata_map, names)
 
         if resolved_entities is None:
             entities = (
@@ -295,9 +309,14 @@ class NotificationQueryService:
     ) -> list[NotificationDTO]:
         """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
+        names = (
+            await names_for(self._session, *map(_metadata_map_of, notifications))
+            if self._session is not None
+            else {}
+        )
         return [
             await self.build_notification_dto(
-                notification, resolved_entities=resolved_entities
+                notification, resolved_entities=resolved_entities, names=names
             )
             for notification, resolved_entities in zip(
                 notifications, resolved_pages, strict=True
@@ -511,9 +530,11 @@ class ProjectNotificationService:
         decided_by: str,
         publish: Callable[[str, dict], Awaitable[None]],
         decision_line: DecisionLine,
+        by_assistant: bool = False,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
-        对话，芝士下一轮读得到。"""
+        对话，芝士下一轮读得到。``by_assistant``：是 ``decided_by`` 自己的芝士
+        替他拍的板，那一句照样署他的名，并标明是芝士代他说的。"""
         row = await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
             raise ValidationError(say("notificationOnlyDecisions"))
@@ -535,6 +556,7 @@ class ProjectNotificationService:
                 conversation_id=row.conversation_id,
                 author=decided_by,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",
+                by_assistant=by_assistant,
             )
         saved = await self._repo.save(row)
         if line is not None:

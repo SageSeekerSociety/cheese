@@ -4,9 +4,11 @@ code outside its sandbox that reads what the session can write.
 The sandbox's network and limits are set up by root (`sandbox_host.py`
 through `sudo -n`), so the tests that start one need Linux, bubblewrap and a
 passwordless sudo, as CI's runner has; elsewhere they are skipped. They change
-the machine's iptables rules and cgroups the way a Cloud machine's are
-changed, and CI turns them on (`CHEESE_TEST_SANDBOX_HOST`) rather than every
-Linux checkout that happens to allow sudo. The rest holds anywhere.
+the machine's iptables rules, cgroups and project quotas the way a Cloud
+machine's are changed, and CI turns them on (`CHEESE_TEST_SANDBOX_HOST`)
+rather than every Linux checkout that happens to allow sudo. The homes are
+made on an XFS filesystem with project quotas, as a platform host's data disk
+is (`CHEESE_TEST_SANDBOX_DISK`, a directory on it). The rest holds anywhere.
 """
 
 import json
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,7 +36,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     sandbox_host,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import bubblewrap
+from tests.support import bubblewrap, sandbox_disk
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
@@ -42,6 +45,8 @@ RUNNER = Path(environment_runner.__file__)
 def _sandbox_host_runs() -> bool:
     if os.environ.get("CHEESE_TEST_SANDBOX_HOST") != "1":
         return False
+    if not sandbox_disk.available():
+        return False
     if not sys.platform.startswith("linux") or shutil.which("bwrap") is None:
         return False
     return subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
@@ -49,7 +54,8 @@ def _sandbox_host_runs() -> bool:
 
 with_sandbox_host = pytest.mark.skipif(
     not _sandbox_host_runs(),
-    reason="needs Linux, bubblewrap and sudo -n (CHEESE_TEST_SANDBOX_HOST=1)",
+    reason="needs Linux, bubblewrap, sudo -n (CHEESE_TEST_SANDBOX_HOST=1) and a "
+    "directory with project quotas (CHEESE_TEST_SANDBOX_DISK)",
 )
 
 
@@ -90,19 +96,31 @@ class Room:
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
-        payload = payload_for(
-            self.project,
-            self.resource,
-            {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})},
-            sandbox=True,
-            platform_machine=True,
-        )
+        self.env = {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})}
+        self.capsys = capsys
+        payload = self.payload()
         try:
             bootstrap.configure(payload)
         except RuntimeError:
             log = self.home / ".cheese/executor-bootstrap.log"
             pytest.fail(log.read_text() if log.exists() else "no executor log")
         self.release = Path(json.loads(capsys.readouterr().out)["release"])
+
+    def payload(self) -> dict:
+        """What the backend sends to install or prepare this room."""
+        return payload_for(
+            self.project,
+            self.resource,
+            self.env,
+            sandbox=True,
+            platform_machine=True,
+        )
+
+    def install_again(self, payload: dict | None = None) -> dict:
+        """The install, run again as the next tool call runs it: what it said."""
+        self.capsys.readouterr()
+        bootstrap.configure(payload or self.payload())
+        return json.loads(self.capsys.readouterr().out.strip().splitlines()[-1])
 
     def bash(self, command: str) -> dict:
         answer = runtime.request(
@@ -128,7 +146,11 @@ class Room:
 
 @pytest.fixture
 def rooms(tmp_path, monkeypatch, capsys):
-    owner = tmp_path / "owner"
+    with sandbox_disk.owner(tmp_path) as owner:
+        yield from _rooms(owner, monkeypatch, capsys)
+
+
+def _rooms(owner, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(owner))
     bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -233,6 +255,51 @@ def test_sandboxes_cannot_reach_each_other(rooms, machine_service):
     )
 
 
+@pytest.fixture
+def ahead_of_the_sandboxes():
+    """Puts a chain that accepts everything at the top of the machine's
+    FORWARD, ahead of the sandboxes' own, as Docker's restart puts its rules
+    there; taken out again afterwards."""
+    iptables = ["sudo", "-n", f"{sandbox_host.TOOLS}/xtables-nft-multi", "iptables"]
+    chain = "CHEESE-TEST-AHEAD"
+
+    def insert():
+        subprocess.run([*iptables, "-N", chain], check=True)
+        subprocess.run([*iptables, "-A", chain, "-j", "ACCEPT"], check=True)
+        subprocess.run([*iptables, "-I", "FORWARD", "1", "-j", chain], check=True)
+
+    yield insert
+    subprocess.run([*iptables, "-D", "FORWARD", "-j", chain], capture_output=True)
+    subprocess.run([*iptables, "-F", chain], capture_output=True)
+    subprocess.run([*iptables, "-X", chain], capture_output=True)
+
+
+@with_sandbox_host
+def test_sandboxes_stay_apart_after_another_firewall_goes_first(
+    rooms, machine_service, ahead_of_the_sandboxes
+):
+    """A rule something else put ahead of the sandboxes' own, as Docker does
+    each time its daemon starts, decides for no sandbox once the next one
+    starts: two sandboxes still cannot reach each other."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    first = rooms(api)
+    first.bash(
+        "setsid nohup python3 -m http.server 8000 >/dev/null 2>&1 </dev/null &"
+        " for i in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/8000) 2>/dev/null"
+        " && break; sleep 0.1; done"
+    )
+    assert first.python(DIAL + "print(dial('127.0.0.1', 8000))").strip() != (
+        "unreachable"
+    )
+    ahead_of_the_sandboxes()
+
+    second = rooms(api)
+
+    assert second.python(DIAL + f"print(dial('{first.address()}', 8000))").strip() == (
+        "unreachable"
+    )
+
+
 @with_sandbox_host
 def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
@@ -260,6 +327,280 @@ def test_the_sandboxes_together_leave_the_machine_memory_of_its_own(
     held = int((sandbox_host.CGROUP / "memory.max").read_text())
 
     assert held <= total - max(1 << 30, total // 4)
+
+
+@pytest.fixture
+def small_disk(monkeypatch):
+    """A sandbox may hold a gigabyte and two thousand files."""
+    monkeypatch.setattr(settings, "cloud_sandbox_disk_budget_gb", 1)
+    monkeypatch.setattr(settings, "cloud_sandbox_inode_budget", 2000)
+
+
+MAKE_FILES = """
+import os
+made = 0
+try:
+    while True:
+        os.mkdir(f"d{made}")
+        made += 1
+except OSError as error:
+    print(made, error.errno)
+"""
+
+
+@with_sandbox_host
+def test_a_sandbox_is_refused_writes_past_its_disk_and_its_neighbour_is_not(
+    rooms, machine_service, small_disk
+):
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    full, neighbour = rooms(api), rooms(api)
+
+    written = full.bash("fallocate -l 1100M big; echo exit=$?; rm -f big")
+    made, error = full.python(MAKE_FILES).split()
+
+    assert "No space left on device" in written["stdout"] + written["stderr"]
+    assert "exit=1" in written["stdout"]
+    assert int(made) < 2000 and int(error) == 28  # ENOSPC
+    assert neighbour.bash("fallocate -l 100M f && echo ok")["stdout"].strip() == "ok"
+    assert neighbour.bash("mkdir d{1..500} && echo ok")["stdout"].strip() == "ok"
+
+
+# Every way a session might take its files out of its quota from inside: set
+# a file's project, take the inheritance off its home, or move or link a file
+# into its project's store, whose project is another.
+ESCAPES = """
+import errno, fcntl, os, struct
+GET, SET, INHERIT = 0x801C581F, 0x401C5820, 0x200
+def change(path, project=None, inherit=True):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fields = list(struct.unpack("IIIII8s", fcntl.ioctl(fd, GET, bytes(28))))
+        if project is not None:
+            fields[3] = project
+        if not inherit:
+            fields[0] &= ~INHERIT
+        fcntl.ioctl(fd, SET, struct.pack("IIIII8s", *fields))
+        return "changed"
+    except OSError as error:
+        return errno.errorcode[error.errno]
+    finally:
+        os.close(fd)
+def moved(call, *paths):
+    try:
+        call(*paths)
+        return "moved"
+    except OSError as error:
+        return errno.errorcode[error.errno]
+open("mine", "w").write("x")
+store = os.environ["CHEESE_STORE"]
+print(
+    change("mine", project=0),
+    change(os.environ["HOME"], inherit=False),
+    moved(os.link, "mine", os.path.join(store, "linked")),
+    moved(os.rename, "mine", os.path.join(store, "renamed")),
+)
+"""
+
+
+@with_sandbox_host
+def test_a_session_cannot_take_its_files_out_of_its_disk_limit(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+
+    assert room.python(ESCAPES).split() == ["EINVAL", "EINVAL", "EXDEV", "EXDEV"]
+
+
+@with_sandbox_host
+def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    # Its limit is 953 MiB: most of it at once, the rest written to the end.
+    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+
+    result = room.bash("echo more >> big; echo exit=$?")
+
+    assert "No space left on device" in result["stdout"] + result["stderr"]
+    assert "exit=1" in result["stdout"]
+    assert runtime.request(room.state, "ping")
+
+
+def fill(room: "Room") -> None:
+    """The room's disk, 953 MiB here, filled to the last block."""
+    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+
+
+@with_sandbox_host
+def test_a_room_whose_disk_is_full_is_prepared_again_and_told_so(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    fill(room)
+    # The next lease's token, which the preview token in the home is
+    # rewritten with and the disk has no room for.
+    room.env["CHEESE_TOKEN"] = "test-2"
+
+    installed = room.install_again()
+
+    assert installed["disk_full_mb"] < 64
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
+    rooms, machine_service, small_disk
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    fill(room)
+
+    result = room.bash("echo more >> big")
+    # The same command through the shell a session's own build runs it in
+    # (`shell_prefix`), which reads the command's end from the executor.
+    shell = {"subtype": "shell", "command_id": "full-disk"}
+    runtime.request(
+        room.state,
+        "control",
+        {
+            **shell,
+            "operation": "start",
+            "kind": "sh",
+            "body": "echo more >> big",
+            "cwd": str(room.home / "room"),
+            "env": {},
+            "merge": True,
+            "stdin": None,
+        },
+    )
+    deadline = time.monotonic() + 30
+    while "exit" not in (
+        read := runtime.request(
+            room.state,
+            "control",
+            {**shell, "operation": "read", "out": 0, "err": 0, "wait": 1},
+        )
+    ):
+        assert time.monotonic() < deadline
+
+    assert "disk full:" in result["stdout"] and "MB free" in result["stdout"]
+    assert read["exit"] != 0 and "disk full:" in read["disk"]
+
+
+def full_release_store(room: "Room"):
+    """The machine's release store with no room for another release."""
+    store = Path(os.environ["HOME"]) / ".cheese/executor-releases"
+    mount = subprocess.run(
+        ["findmnt", "-n", "-o", "TARGET", "--target", str(store)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    project = str(4_000_000 + os.getpid() % 1000)
+
+    def quota(command: str) -> None:
+        subprocess.run(
+            ["sudo", "-n", "xfs_quota", "-x", "-c", command, mount], check=True
+        )
+
+    quota(f"project -s -p {store} {project}")
+    quota(f"limit -p bhard=1m {project}")
+    return lambda: quota(f"limit -p bhard=0 {project}")
+
+
+def newer(payload: dict) -> dict:
+    """The same payload from a later release."""
+    payload["files"]["remote-execution/newer.txt"] = "bmV3ZXI="
+    if "file_names" in payload:
+        payload["file_names"] = [*payload["file_names"], "remote-execution/newer.txt"]
+    return payload
+
+
+@with_sandbox_host
+def test_an_upgrade_with_no_room_for_its_release_keeps_the_running_executor(
+    rooms, machine_service
+):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    lift = full_release_store(room)
+    try:
+        answer = room.install_again(newer(room.payload()))
+    finally:
+        lift()
+
+    assert answer["upgrade_pending"] is True
+    assert answer["release"] == str(room.release)
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_no_full_disk_keeps_an_executor_running_otherwise_than_it_is_asked(
+    rooms, machine_service
+):
+    """Sandboxed now, asked to run with other limits: no room to stage the
+    release that would run it so is no reason to keep it as it is."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    payload = newer(room.payload())
+    payload["sandbox"] = {**payload["sandbox"], "memory_mb": 512}
+    lift = full_release_store(room)
+    try:
+        with pytest.raises(OSError):
+            room.install_again(payload)
+    finally:
+        lift()
+
+
+@with_sandbox_host
+def test_a_new_sandbox_is_not_charged_for_a_removed_ones_leftovers(
+    rooms, machine_service, small_disk
+):
+    """A sandbox taken down leaves its home until its teardown deletes it,
+    which can wait on whatever still holds it. A sandbox started meanwhile
+    has its whole limit, not what the leftovers leave of it."""
+    api = f"http://127.0.0.1:{machine_service(b'backend')}"
+    gone = rooms(api)
+    gone.bash("fallocate -l 800M left")
+    subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "down", str(gone.resource)], check=True
+    )
+
+    fresh = rooms(api)
+
+    assert fresh.bash("fallocate -l 800M mine && echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_no_sandbox_runs_where_its_home_has_no_disk_limit(
+    tmp_path, monkeypatch, capsys
+):
+    owner = tmp_path / "owner"
+    monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    payload = payload_for(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        {"CHEESE_API": "http://127.0.0.1:9", "CHEESE_TOKEN": "test"},
+        sandbox=True,
+        platform_machine=True,
+    )
+
+    with pytest.raises(RuntimeError, match="project quotas"):
+        bootstrap.configure(payload)
+
+
+@with_sandbox_host
+def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    room.bash("head -c 300M /dev/urandom > blob && cat blob > /dev/null")
+    group = sandbox_host.CGROUP / str(room.resource)
+    held = int((group / "memory.current").read_text())
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "reclaim", str(room.resource)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert int((group / "memory.current").read_text()) < held - (200 << 20)
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
@@ -575,6 +916,25 @@ def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
     assert result.returncode == 2, result.stderr
 
 
+def test_the_sandbox_helper_takes_only_the_home_of_the_sandbox_it_starts():
+    name, project = str(uuid.uuid4()), str(uuid.uuid4())
+    limits = ["--memory-mb", "64", "--swap-mb", "0", "--cpus", "1", "--pids", "16"]
+    limits += ["--disk-mib", "64", "--inodes", "1000"]
+    for home in (
+        f"/h/.cheese/home/{project}/{uuid.uuid4()}",
+        f"/h/.cheese/home/{project}/../{project}/{name}",
+        f"/h/.cheese/home/not-a-project/{name}",
+        f"h/.cheese/home/{project}/{name}",
+        f"/h/.cheese/home/{project}/{name}/",
+    ):
+        result = subprocess.run(
+            [sys.executable, str(HELPER), "up", name, "100", "--home", home, *limits],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2 and "is not a sandbox's home" in result.stderr
+
+
 def test_the_sandbox_helper_runs_only_for_a_user_through_sudo():
     name = str(uuid.uuid4())
     result = subprocess.run(
@@ -591,11 +951,11 @@ def test_the_machines_rules_are_written_once_for_every_sandbox():
     writes nothing; a flushed chain is noticed and written again."""
     wanted = sandbox_host.rules(["10.53.0.1"], [18080])
     first = sandbox_host.restore(wanted, "")
-    assert "-I FORWARD 1 -j CHEESE-SBX-FWD" in first
-    assert "-A CHEESE-SBX-FWD -i chs+ -d 10.53.0.1 -p udp --dport 53 -j ACCEPT" in first
-    assert "-A CHEESE-SBX-FWD -i chs+ -d 192.168.0.0/16 -j DROP" in first
-    assert first.index("--dport 53 -j ACCEPT") < first.index("10.0.0.0/8 -j DROP")
-    saved = _as_saved(first)
+    saved = _applied("", first)
+    assert _first_rule(saved, "filter", "FORWARD") == "-A FORWARD -j CHEESE-SBX-FWD"
+    assert "-A CHEESE-SBX-FWD -i chs+ -d 10.53.0.1 -p udp --dport 53 -j ACCEPT" in saved
+    assert "-A CHEESE-SBX-FWD -i chs+ -d 192.168.0.0/16 -j DROP" in saved
+    assert saved.index("--dport 53 -j ACCEPT") < saved.index("10.0.0.0/8 -j DROP")
 
     assert sandbox_host.restore(wanted, saved) == ""
     flushed = "\n".join(
@@ -604,13 +964,106 @@ def test_the_machines_rules_are_written_once_for_every_sandbox():
     assert sandbox_host.restore(wanted, flushed) != ""
 
 
-def _as_saved(restored: str) -> str:
-    """What `iptables-save` prints after `restored` was applied to empty
-    tables: the jumps appended to their built-in chains."""
+# What Docker's daemon puts at the top of FORWARD and POSTROUTING each time it
+# starts, ahead of whatever was there.
+DOCKER_AHEAD = {
+    ("filter", "FORWARD"): [
+        "-A FORWARD -j DOCKER-USER",
+        "-A FORWARD -j DOCKER-FORWARD",
+    ],
+    ("nat", "POSTROUTING"): [
+        "-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE"
+    ],
+}
+
+
+def test_the_sandbox_rules_come_first_again_after_docker_restarts():
+    """Docker restarting puts its rules ahead of ours; the next sandbox's
+    start puts ours back on top, once, and leaves Docker's in place."""
+    wanted = sandbox_host.rules(["10.53.0.1"], [18080])
+    saved = _applied("", sandbox_host.restore(wanted, ""))
+    for (table, _), lines in DOCKER_AHEAD.items():
+        saved = _insert_first(saved, table, lines)
+
+    again = _applied(saved, sandbox_host.restore(wanted, saved))
+
+    for (table, chain), ours in (
+        (("filter", "FORWARD"), "CHEESE-SBX-FWD"),
+        (("filter", "INPUT"), "CHEESE-SBX-IN"),
+        (("nat", "PREROUTING"), "CHEESE-SBX-PRE"),
+        (("nat", "POSTROUTING"), "CHEESE-SBX-POST"),
+    ):
+        rules = _rules(again, table, chain)
+        assert rules[0] == f"-A {chain} -j {ours}"
+        assert rules.count(f"-A {chain} -j {ours}") == 1
+        assert set(DOCKER_AHEAD.get((table, chain), [])) <= set(rules[1:])
+    assert sandbox_host.restore(wanted, again) == ""
+
+
+def _rules(saved: str, table: str, chain: str) -> list[str]:
+    found, current = [], None
+    for line in saved.splitlines():
+        if line.startswith("*"):
+            current = line[1:]
+        elif current == table and line.startswith(f"-A {chain} "):
+            found.append(line)
+    return found
+
+
+def _first_rule(saved: str, table: str, chain: str) -> str | None:
+    return next(iter(_rules(saved, table, chain)), None)
+
+
+def _tables(saved: str) -> dict[str, dict[str, list[str]]]:
+    tables: dict[str, dict[str, list[str]]] = {}
+    current = None
+    for line in saved.splitlines():
+        if line.startswith("*"):
+            current = tables.setdefault(line[1:], {})
+        elif line.startswith("-A ") and current is not None:
+            current.setdefault(line.split()[1], []).append(line)
+    return tables
+
+
+def _saved(tables: dict[str, dict[str, list[str]]]) -> str:
+    """`iptables-save`'s shape: per table, every rule in chain order."""
     lines = []
+    for table, chains in tables.items():
+        lines.append(f"*{table}")
+        for rules in chains.values():
+            lines += rules
+        lines.append("COMMIT")
+    return "\n".join([*lines, ""])
+
+
+def _insert_first(saved: str, table: str, lines: list[str]) -> str:
+    tables = _tables(saved)
+    for line in reversed(lines):
+        chain = line.split()[1]
+        tables.setdefault(table, {}).setdefault(chain, []).insert(0, line)
+    return _saved(tables)
+
+
+def _applied(saved: str, restored: str) -> str:
+    """What `iptables-save` prints after `iptables-restore --noflush` applied
+    `restored` to tables holding `saved`: a declared chain is emptied, `-A`
+    appends, `-I <chain> 1` inserts at the top, `-D` removes the first equal
+    rule."""
+    tables = _tables(saved)
+    table = None
     for line in restored.splitlines():
-        if line.startswith("-I "):
-            _, parent, _, *rest = line.split()
-            line = " ".join(["-A", parent, *rest])
-        lines.append(line)
-    return "\n".join(lines)
+        if line.startswith("*"):
+            table = tables.setdefault(line[1:], {})
+        elif line.startswith(":") and table is not None:
+            table[line[1:].split()[0]] = []
+        elif table is not None and line[:3] in ("-A ", "-I ", "-D "):
+            verb, chain, *rest = line.split()
+            rules = table.setdefault(chain, [])
+            if verb == "-I":
+                assert rest[0] == "1"
+                rules.insert(0, " ".join(["-A", chain, *rest[1:]]))
+            elif verb == "-D":
+                rules.remove(" ".join(["-A", chain, *rest]))
+            else:
+                rules.append(line)
+    return _saved(tables)

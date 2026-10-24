@@ -30,6 +30,7 @@ from app.domain.delivery.agent import (
 )
 from app.domain.delivery.ledger import settle_card
 from app.domain.docs_site import periodic as docs_periodic
+from app.domain.integration import periodic as integration_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
@@ -38,6 +39,7 @@ from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
+from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
@@ -47,6 +49,7 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
+    "task deadline reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
     "task closing",  # forge_bound: a task going on reads its next branch
@@ -56,6 +59,7 @@ PERIODIC_JOB_NAMES = (
     "queued message sweep",
     "chat progress reminder",
     "checklist reminder",
+    "task state reminder",
     "gate sweep",
     "cloud host pool sweep",
     "cloud sandbox lifecycle",
@@ -67,6 +71,7 @@ PERIODIC_JOB_NAMES = (
     "run record expiry",
     "session record seal",
     "session record retention",
+    "retired site archive",
     "notification email drain",
     "notification push drain",
     "notification digest",
@@ -77,8 +82,13 @@ PERIODIC_JOB_NAMES = (
     "timed deliveries",
     "overdue deliveries",
     "routines",
+    "assistant routines",
+    "assistant memory tidy",
+    "feishu authorization renewal",
     "task deadline sweep",
     "memory dream",
+    "platform model roles refresh",
+    "model spend cap alert",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
 )
 
@@ -129,6 +139,7 @@ def periodic_jobs(
     compute: machine_periodic.Sweeper,
     sessions: SessionFactory,
     get_runner: Callable[[], AgentWorkRunner],
+    assistants: Callable[[], tuple[object, object]] | None = None,
 ) -> list[PeriodicRunner]:
     """Build one checked, ordered set without importing domains from core."""
     jobs = PeriodicJobs()
@@ -156,6 +167,7 @@ def periodic_jobs(
         last_activity=last_activity,
     )
     task_quiet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    task_notices_periodic.register_periodic_jobs(jobs, sessions=sessions)
     review_periodic.register_periodic_jobs(
         jobs,
         chat=chat,
@@ -191,8 +203,13 @@ def periodic_jobs(
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, chat=chat, get_runner=get_runner
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        get_runner=get_runner,
+        assistants=assistants,
     )
+    integration_periodic.register_periodic_jobs(jobs, sessions=sessions)
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)

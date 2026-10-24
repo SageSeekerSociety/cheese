@@ -13,8 +13,9 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
@@ -28,7 +29,6 @@ task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
 task_access_domain_seq = Sequence("task_access_domain_seq")
-task_attachment_seq = Sequence("task_attachment_seq")
 
 
 class Task(Base):
@@ -84,6 +84,11 @@ class Task(Base):
     team_id: Mapped[int | None] = mapped_column("team_id", BigInteger, nullable=True)
     access_control_enabled: Mapped[bool] = mapped_column(
         "access_control_enabled", Boolean, nullable=False, default=False
+    )
+    # 评分要点（``TaskRubricItem``）给不给领题的人看。批改的人（出题人、空间管理员）
+    # 总能看到；关掉它只是不对学生显示。
+    rubric_public: Mapped[bool] = mapped_column(
+        "rubric_public", Boolean, nullable=False, default=True, server_default="true"
     )
     published_at: Mapped[datetime | None] = mapped_column(
         "published_at", DateTime(timezone=True), nullable=True
@@ -213,6 +218,26 @@ class TaskSubmissionSchemaEntry(Base):
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
 
 
+class TaskRubricItem(Base):
+    """One line of a task's 评分要点: what is scored, how many points, and what
+    earns them. Read by whoever grades the submissions, and by the students when
+    the task's ``rubric_public`` says so. Replaced as a whole, like the
+    submission form above."""
+
+    __tablename__ = "task_rubric_item"
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_rubric_item_task_id_task"),
+        primary_key=True,
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    item: Mapped[str] = mapped_column("item", String(64), nullable=False)
+    points: Mapped[int] = mapped_column("points", Integer, nullable=False)
+    criteria: Mapped[str] = mapped_column("criteria", Text, nullable=False, default="")
+
+
 class TaskMentor(Base):
     """Someone the task's publisher chose to join every claimer's project as a
     mentor (#3830). The claimer agrees to it before claiming; the project made
@@ -271,6 +296,9 @@ class TaskSubmission(Base):
     submitter_id: Mapped[int] = mapped_column(
         "submitter_id", Integer, nullable=False
     )  # references user.id
+    #: Which version of the 题目 this was handed in under
+    #: (``TaskPackageRevision.number``); None for the ones from before versions.
+    package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -335,6 +363,16 @@ class TaskSubmissionReview(Base):
         # 一版提交的评审：完成状态那条轴的相关 EXISTS、提交列表和回填都按
         # submission_id 取。也是这一列的外键索引。
         Index("ix_task_submission_review_submission_id", "submission_id"),
+        # 一版提交可以有多条评审 —— 每位老师各判自己那一份。唯一性是
+        # `(submission_id, reviewer_id)`（同一人在同一版上只有一条），**只看活行**：
+        # 软删一条再重判是允许的，所以约束是带 `deleted_at IS NULL` 的部分唯一索引。
+        Index(
+            "uq_task_submission_review_submission_reviewer",
+            "submission_id",
+            "reviewer_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -342,6 +380,11 @@ class TaskSubmissionReview(Base):
     )
     submission_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("task_submission.id"), nullable=False
+    )
+    # 谁判的（`user.id`）。历史行在迁移里回填 `-id`（当年一版只有一条评审，
+    # 判者不明，负数保证每行唯一、也不会撞到真实用户 id）。
+    reviewer_id: Mapped[int] = mapped_column(
+        "reviewer_id", Integer, nullable=False, default=0
     )
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -358,33 +401,97 @@ class TaskSubmissionReview(Base):
     )
 
 
-class TaskAttachment(Base):
-    """一个文件挂在一道题上 —— 出题时带上的材料，领取者与审核者可以下载。
+class TaskPackageRevision(Base):
+    """One version of what a 题目 hands its takers (#4767 §一): its description,
+    what to hand in, its 评分要点 and its files. The first is written when the
+    题目 is published; every change to any of those writes the next, saying in
+    ``changes`` what changed, so a project taken from it can say 「题目已更新到第
+    N 版」 and what that version changed. A submission records the version it
+    was made under (``TaskSubmission.package_revision``).
 
-    **不是** ``attachment`` 表本身，也不是它的替代：那一行文件仍然在
-    ``attachment`` 里（type/url/meta，meta 里带着 filename / contentType /
-    storageKey / size / uploaderId），由 ``POST /attachments`` 上传、由
-    ``app.core.storage`` 落到存储上。这张表只回答「它属于哪道题」以及题目这一侧
-    的事情（下载次数、什么时候挂上、什么时候被拿下来）。两件事分开，是因为同一个
-    文件在不同的上下文里可以是不同东西：交作业时附上的那份属于某个 ``submission``，
-    出题人放在题目上的那份属于某道 ``task``，共用一行文件记录不等于共用一个语义。
-
-    删除是**软删这一行**，存储上的对象留着 —— 见 ``TaskAttachmentService.remove``
-    的说明。
+    ``changes`` names the parts: ``published`` on the first; ``description``,
+    ``submission``, ``rubric`` when those changed; ``files`` with the names
+    ``added``, ``replaced`` and ``removed``.
     """
 
-    __tablename__ = "task_attachment"
+    __tablename__ = "task_package_revisions"
+    __table_args__ = (
+        Index(
+            "uq_task_package_revisions_task_id_number",
+            "task_id",
+            "number",
+            unique=True,
+        ),
+    )
 
-    id: Mapped[int] = mapped_column(BigInteger, task_attachment_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("task.id"), nullable=False
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_task_package_revisions_task_id_task",
+        ),
+        nullable=False,
     )
-    # ``attachment.id`` 是 Integer（autoincrement），外键类型必须一致。
-    attachment_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("attachment.id"), nullable=False
+    #: 第几版，从 1 数。
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Who made the change (``user.id``).
+    author_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
-    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+
+class TaskDraft(Base):
+    """A 题目 written but not yet published, or the changes to a published one
+    not yet saved (``task_id``). It holds the publish form as the person left
+    it, so the form survives a reload, and it is what their 芝士 writes into:
+    an answer goes on after its page is closed, so what it fills has to be
+    somewhere other than that page (``app.domain.task.drafts``).
+
+    ``fields`` is the form, in the shape ``POST /tasks`` takes. ``version``
+    counts the writes; ``marks`` holds, per field, the version of the person's
+    last write to it, so a write by 芝士 made from an older reading leaves a
+    field the person has since changed as they left it.
+    """
+
+    __tablename__ = "task_draft"
+    __table_args__ = (
+        # A person's drafts in a space, latest first: the draft list.
+        Index("ix_task_draft_user_space", "user_id", "space_id", "updated_at"),
+        Index("ix_task_draft_space_id", "space_id"),
+        Index("ix_task_draft_task_id", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user.id", ondelete="CASCADE", name="fk_task_draft_user_id_user"),
+        nullable=False,
+    )
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("space.id", ondelete="CASCADE", name="fk_task_draft_space_id_space"),
+        nullable=False,
+    )
+    # The published 题目 these are changes to; NULL for a new one.
+    task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_task_draft_task_id_task"),
+        nullable=True,
+    )
+    # The 芝士 conversation working on it, when there is one. Not a foreign key:
+    # the conversation is the assistant's, and a draft outlives a deleted one.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    # Where it came from, as the list shows it: a file's name, or empty.
+    source: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    fields: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    marks: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
@@ -393,7 +500,4 @@ class TaskAttachment(Base):
         nullable=False,
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )

@@ -53,10 +53,7 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return (
-        f"## 要做成什么\n\n{text}\n\n"
-        "下一步：补上什么时候做成、这阶段不做什么，然后在下方对话中说明你要做什么。"
-    )
+    return f"## 要做成什么\n\n{text}\n\n下一步：补上什么时候做成、这阶段不做什么。"
 
 
 class ProjectArchivedError(ConflictError):
@@ -152,6 +149,8 @@ class ProjectService:
         *,
         display_name: str | None = None,
         type_name: str | None = None,
+        prompt: str | None = None,
+        skills: Sequence[str] = (),
     ) -> None:
         """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
 
@@ -161,7 +160,12 @@ class ProjectService:
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("default_teammate was not handed in")
         await self._default_teammate(
-            self._session, project, display_name=display_name, type_name=type_name
+            self._session,
+            project,
+            display_name=display_name,
+            type_name=type_name,
+            prompt=prompt,
+            skills=skills,
         )
 
     async def _has_earmark(self, project: Project, task_id: int) -> bool:
@@ -647,7 +651,13 @@ class ProjectService:
         terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        await self._seed_default_teammate(project, type_name=terms.default_role)
+        await self._seed_default_teammate(
+            project,
+            type_name=terms.default_role,
+            # 题目包里的 prompt 与技能名（#944）：建项目时并进默认队友。
+            prompt=terms.prompt,
+            skills=terms.skills,
+        )
         if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits

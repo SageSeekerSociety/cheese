@@ -235,7 +235,7 @@ async def test_two_simultaneous_summons_run_one_turn_not_two(
 
     turn1 = await _post_and_queue(svc, topic_id, author="u1", content="A 怎么办")
     # 顺序是这条用例**自己定**的，不是产品答应的性质：两条 @ 一起到，谁先交到
-    # 会话手上是一次投递竞态 —— `merge_into_running_turn` 不排序、也不看
+    # 会话手上是一次投递竞态 —— `merge_into_running_session` 不排序、也不看
     # `created_at`，两边各做各的 DB 往返，谁先跑完谁先说。而「在库里谁先说」也
     # 只有同一个墙上时钟（并列还按 id 断），两个人同时说话本来就没有可对照的先后。
     # 所以这里不等那个竞态：u1 已经交进那个还在跑的会话之后，才发 u2。

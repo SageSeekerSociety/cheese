@@ -3,6 +3,16 @@
     "joined": "{date}加入",
     "edit": "编辑资料",
     "dm": "私聊",
+    "remark": {
+      "add": "设置备注",
+      "edit": "修改备注",
+      "placeholder": "设置队友备注（仅自己可见）",
+      "originalName": "原名：{name}",
+      "save": "保存",
+      "cancel": "取消",
+      "clear": "清空",
+      "saveFailed": "备注保存失败"
+    },
     "notFound": "该用户不存在",
     "loadFailed": "个人主页加载失败",
     "retry": "重试",
@@ -54,7 +64,8 @@
       "waiting": "等你处理",
       "waitingEmpty": "暂无待处理的事",
       "active": "在忙的频道",
-      "activeEmpty": "暂无进行中的频道"
+      "activeEmpty": "暂无进行中的频道",
+      "skills": "带的技能"
     }
   }
 }

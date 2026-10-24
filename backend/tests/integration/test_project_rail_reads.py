@@ -177,7 +177,6 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
             AcceptCard(
                 topic_id=uuid.UUID(room),
                 task_id=second.id,
-                reviewer_handle="alice",
                 status=AcceptStatus.pending,
                 pr_number=1789,
                 pr_url="https://github.com/acme/web/pull/1789",
@@ -203,9 +202,21 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
         "phrase": Building.started,
     }
 
-    # 有卡的那一行：`card` 窄到侧栏画得出来的四个字段，一个不多一个不少。
+    # 有卡的那一行：`card` 窄到侧栏画得出来的那几个字段，一个不多一个不少——
+    # 骑在哪个 PR 上，和「等审」第二行要写的第几版、交的是什么、从什么时候起。
     assert with_card["title"] == "第二件"
-    assert set(with_card["card"]) == {"id", "status", "pr_number", "pr_url"}
+    assert set(with_card["card"]) == {
+        "id",
+        "status",
+        "pr_number",
+        "pr_url",
+        "version",
+        "reviewer",
+        "subject",
+        "since",
+    }
+    assert with_card["card"]["version"] == 1
+    assert with_card["card"]["since"]
     assert with_card["card"]["status"] == "pending"
     assert with_card["card"]["pr_number"] == 1789
     assert with_card["card"]["pr_url"] == "https://github.com/acme/web/pull/1789"
@@ -243,7 +254,6 @@ def _carded_tasks(client, project: str, room: str, cards: list[dict]) -> dict[st
                 AcceptCard(
                     topic_id=uuid.UUID(room),
                     task_id=task.id,
-                    reviewer_handle="alice",
                     **spec,
                 )
             )
@@ -389,6 +399,10 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "status": "pending",
         "pr_number": None,
         "pr_url": None,
+        "version": 1,
+        "reviewer": row["card"]["reviewer"],
+        "subject": None,
+        "since": row["card"]["since"],
     }
 
 

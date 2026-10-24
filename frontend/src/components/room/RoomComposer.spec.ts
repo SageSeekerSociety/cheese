@@ -389,6 +389,49 @@ describe('@ 候选：没加入频道的人', () => {
     expect(labels(container)).toEqual(['芝士', '所有人', '在线成员', 'Alice', 'Carol'])
   })
 
+  it('没加入的人上面挂一条分组标题，频道里的人不挂', async () => {
+    const { container, box } = mount({ pool: MIXED })
+
+    await fillComposer(box(), '@')
+    await flush()
+
+    const groups = Array.from(container.querySelectorAll('.mention-menu-group')).map((el) => el.textContent?.trim())
+    expect(groups).toEqual(['不在频道'])
+    // 标题在 Carol 那一行上面，不是在最上头。
+    const group = container.querySelector('.mention-menu-group')!
+    const carol = menuItems(container).find((el) => el.textContent?.includes('Carol'))!
+    expect(group.compareDocumentPosition(carol) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('名单比 7 长也全列出来：后面的人不用再靠「打对名字」才找得到', async () => {
+    const many: MentionPoolEntry[] = Array.from({ length: 10 }, (_, i) => ({
+      handle: `u${i}`,
+      label: `同事${i}`,
+      avatar: null,
+      agent: false,
+      outsideTopic: true,
+    }))
+    const { container, box } = mount({ pool: many })
+
+    await fillComposer(box(), '@')
+    await flush()
+
+    expect(labels(container)).toEqual([
+      '所有人',
+      '在线成员',
+      '同事0',
+      '同事1',
+      '同事2',
+      '同事3',
+      '同事4',
+      '同事5',
+      '同事6',
+      '同事7',
+      '同事8',
+      '同事9',
+    ])
+  })
+
   it('没加入的人照样挑得中，写进正文的是他', async () => {
     const { container, box, draft } = mount({ pool: MIXED })
 
@@ -668,13 +711,26 @@ describe('动作行', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('输入法上屏留下的时间戳也算：那一下回车不是发送', async () => {
+  it('上屏之后紧接着按的回车是发送，不被当成输入法吃掉', async () => {
+    // 打中文的人上屏之后紧接着按回车发送，两次按键只隔几十毫秒。曾经这里有一个
+    // 「compositionend 之后 100 毫秒内的按键都算输入法」的时间窗，把这一次发送也吃掉了，
+    // 输入框里留下来一行换行（真机 2026-10-24 反馈）。判据只能看这一次按键本身。
     const { box, onSend } = mount()
     await fillComposer(box(), '看看这个')
     focusIn(box())
 
     await fireEvent.compositionEnd(box())
-    await fireEvent.keyDown(box(), { key: 'Enter' })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 13 })
+    expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('上屏那一下的回车本身不是发送：它带 isComposing 或 229', async () => {
+    const { box, onSend } = mount()
+    await fillComposer(box(), '看看这个')
+    focusIn(box())
+
+    await fireEvent.keyDown(box(), { key: 'Enter', isComposing: true })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 229 })
     expect(onSend).not.toHaveBeenCalled()
   })
 

@@ -1,8 +1,9 @@
 """Backfill each device's sole team, refusing ambiguous ownership."""
 
-from alembic import op
 import sqlalchemy as sa
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "c9e25a7b38f1"
 down_revision = "b8d14f6a27e0"

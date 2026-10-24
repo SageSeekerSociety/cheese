@@ -214,6 +214,7 @@ class SpaceCategoryRepository:
         name: str,
         description: str | None,
         display_order: int,
+        default_role: str | None = None,
     ) -> SpaceCategory:
         now = datetime.now(UTC)
         category = SpaceCategory(
@@ -221,6 +222,7 @@ class SpaceCategoryRepository:
             name=name,
             description=description,
             display_order=display_order,
+            default_role=default_role,
             archived_at=None,
             created_at=now,
             updated_at=now,
@@ -351,6 +353,17 @@ class SpaceAdminRelationRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def administered(self, user_id: int, space_ids: Sequence[int]) -> set[int]:
+        """Which of these spaces ``user_id`` is an owner or admin of."""
+        if not space_ids:
+            return set()
+        stmt = select(SpaceAdminRelation.space_id).where(
+            SpaceAdminRelation.user_id == user_id,
+            SpaceAdminRelation.space_id.in_(list(space_ids)),
+            SpaceAdminRelation.deleted_at.is_(None),
+        )
+        return {int(i) for i in (await self._session.execute(stmt)).scalars()}
 
     async def list_admins(self, space_id: int) -> Sequence[SpaceAdminRelation]:
         stmt: Select[tuple[SpaceAdminRelation]] = (

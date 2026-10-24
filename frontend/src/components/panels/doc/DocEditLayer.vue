@@ -13,6 +13,7 @@ import type { DocSuggestionsController } from '../../../composables/useDocSugges
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { isAgentHandle } from '../../../lib/authorship'
 import { editMarks } from '../../../lib/docEditMarks'
 
 import DocAgentBox from './DocAgentBox.vue'
@@ -23,6 +24,8 @@ import DocSuggestionCard from './DocSuggestionCard.vue'
 const props = defineProps<{
   editor: Editor | null
   agentName: string
+  /** 项目 AI 队友的 handle：认它和别的队友。 */
+  agentHandle: string | null
   editable: boolean
   rewrite: DocAgentController
   review: DocReviewController
@@ -31,8 +34,31 @@ const props = defineProps<{
   suggestionReasons: Record<string, string>
   /** handle → 名字：回答里的点名读成名字。 */
   mentionNames: Record<string, string>
+  /** handle → 名字：建议卡上的作者读成名字。 */
+  nameOf: (handle: string) => string
+  /** handle → 他挑过的头像；没挑过时是空串。 */
+  avatarOf: (handle: string) => string
 }>()
 const emit = defineEmits<{ (e: 'open-thread', id: string): void }>()
+
+/** 人的 handle 读成名字：自己是「你」、在线的人用名字，都读不出来时用名册。 */
+function personName(handle: string): string {
+  const resolved = props.nameOf(handle)
+  return resolved === handle ? props.mentionNames[handle] ?? handle : resolved
+}
+
+/** 正看着的那一处建议是谁提的：人还是 AI 队友，名字和头像跟着它。 */
+const activeSuggestionAuthor = computed(() => {
+  const handle = props.suggestions.active.value?.author ?? ''
+  // 编号里没有作者的一处（坏数据）：退回项目这一位队友，至少不空着。
+  if (!handle) return { name: props.agentName, agent: true, avatar: '' }
+  const agent = handle === props.agentHandle || isAgentHandle(handle)
+  return {
+    name: agent ? props.agentName : personName(handle),
+    agent,
+    avatar: agent ? '' : props.avatarOf(handle),
+  }
+})
 
 async function toComment() {
   const thread = await props.rewrite.toComment()
@@ -195,8 +221,10 @@ onBeforeUnmount(() => {
             />
             <DocSuggestionCard
               v-else-if="anchor.kind === 'suggestion' && suggestions.active.value"
-              :agent-name="agentName"
-              :agent-handle="suggestions.active.value.author || null"
+              :author-name="activeSuggestionAuthor.name"
+              :author-handle="suggestions.active.value.author || null"
+              :author-agent="activeSuggestionAuthor.agent"
+              :author-avatar="activeSuggestionAuthor.avatar"
               :index="suggestions.index.value"
               :total="suggestions.list.value.length"
               :reason="suggestionReasons[suggestions.active.value.id] ?? null"

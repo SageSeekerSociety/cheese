@@ -6,7 +6,7 @@ import type { MemberActivityLine } from '../../lib/memberActivity'
 import { computed, nextTick, useId } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
-import { overviewRecords, recordTree } from '../../lib/sessionRecords'
+import { overviewRecords, recordParts, recordTree } from '../../lib/sessionRecords'
 import { groupByTurn } from '../../lib/siteLog'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 import MemberActivity from '../room/MemberActivity.vue'
@@ -79,6 +79,7 @@ const {
   loading,
   loadingOlder,
   errorMsg,
+  arrived,
   onSiteScroll,
   selectAgent,
   inspector,
@@ -89,8 +90,23 @@ const {
 const visible = computed(() =>
   viewing.value === null ? transcript.value : transcript.value.filter((b) => b.author === viewing.value)
 )
+/** 这条记录该不该出现在概览的分组里。
+ *
+ * 平台内部的记账行（`command_lifecycle` 那类「输入排队了」）没有可显示的内容，
+ * 原始记录视图里才把它们摊成 JSON。它们没有轮次 id，`groupByTurn` 会给每个这样的
+ * 块单独成一组，于是在概览里顶出一串「时刻 · 0 步」、底下什么都没有的组头。
+ *
+ * 只丢这一类：**不属于任何一轮、又画不出行**的独立块。属于某一轮的记录一律留着——
+ * 它撑着那一组的组头和「进行中」，哪怕这一轮此刻还没有画得出来的步骤（每轮开头那条
+ * `command_lifecycle/started` 就是这种）；画不画那一行由 `SiteRecordRow` 自己决定。 */
+function keepsGroup(block: Block): boolean {
+  if (viewMode.value === 'raw') return true
+  if (block.turn_id) return true
+  if (!block.meta?.record) return true
+  return recordParts(block).some((part) => part.kind !== 'thinking')
+}
 const turns = computed(() => {
-  const all = groupByTurn(visible.value, turnStarts.value)
+  const all = groupByTurn(visible.value.filter(keepsGroup), turnStarts.value)
   return props.onlyTurn ? all.filter((turn) => turn.key === props.onlyTurn) : all
 })
 function baseLabel(handle: string): string {
@@ -115,9 +131,15 @@ function turnWho(entries: Block[]): string | null {
 const workingLines = computed(() =>
   props.activity.filter((l) => l.kind === 'working' && (viewing.value === null || l.handle === viewing.value))
 )
+/** 表头钉在滚动层顶上，所以「此刻看得见的第一行」要从表头下沿算起，不是滚动容器
+ *  自己的上沿；否则换视图时会把一行藏在表头底下的记录当成锚点。 */
+function viewportTop(el: HTMLElement): number {
+  const head = el.querySelector<HTMLElement>('.site-head')
+  return (head ?? el).getBoundingClientRect().bottom
+}
 async function switchView(mode: 'overview' | 'raw') {
   const el = scrollRef.value
-  const top = el?.getBoundingClientRect().top ?? 0
+  const top = el ? viewportTop(el) : 0
   const anchor = Array.from(el?.querySelectorAll<HTMLElement>('[data-record-id]') ?? []).find(
     (row) => row.getBoundingClientRect().bottom > top
   )
@@ -127,29 +149,33 @@ async function switchView(mode: 'overview' | 'raw') {
   await nextTick()
   if (!el || !id) return
   const target = el.querySelector<HTMLElement>(`[data-record-id="${id}"]`)
-  if (target) el.scrollTop += target.getBoundingClientRect().top - top - offset
+  if (target) el.scrollTop += target.getBoundingClientRect().top - viewportTop(el) - offset
 }
 </script>
 
 <template>
   <div ref="scrollRef" class="panel-site" @scroll="onSiteScroll">
-    <LoadingSkeleton v-if="loading" variant="site" :rows="5" />
-    <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">{{ errorMsg }}</v-alert>
-    <template v-else>
+    <!-- 这一栏是日志的「表头」，不跟着记录滚：打开现场停在最新一条，读者正看着底下，
+         会话状态、概览／原始记录、队友页签如果在上头，就等于要翻回最顶才够得着。
+         钉住的只有这几行控件；记录本身照旧在下面滚。 -->
+    <div class="site-head">
       <SessionInspector
         v-if="topicId"
         :session="inspector"
         :project-id="projectId"
         @mention-click="emit('mention-click', $event)"
-      />
-      <div class="site-view" role="group" :aria-label="t('work.room.site.view')">
-        <button type="button" :aria-pressed="viewMode === 'overview'" @click="switchView('overview')">
-          {{ t('work.room.site.overview') }}
-        </button>
-        <button type="button" :aria-pressed="viewMode === 'raw'" @click="switchView('raw')">
-          {{ t('work.room.site.raw') }}
-        </button>
-      </div>
+      >
+        <template #actions>
+          <div class="site-view" role="group" :aria-label="t('work.room.site.view')">
+            <button type="button" :aria-pressed="viewMode === 'overview'" @click="switchView('overview')">
+              {{ t('work.room.site.overview') }}
+            </button>
+            <button type="button" :aria-pressed="viewMode === 'raw'" @click="switchView('raw')">
+              {{ t('work.room.site.raw') }}
+            </button>
+          </div>
+        </template>
+      </SessionInspector>
       <SiteAgentTabs
         :agents="agents"
         :labels="agentLabels"
@@ -158,6 +184,10 @@ async function switchView(mode: 'overview' | 'raw') {
         @select="selectAgent"
       />
       <MemberActivity :lines="workingLines" class="site-activity" />
+    </div>
+    <LoadingSkeleton v-if="loading" :variant="viewMode === 'raw' ? 'siteRaw' : 'site'" :rows="5" />
+    <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">{{ errorMsg }}</v-alert>
+    <template v-else>
       <div v-if="transcript.length === 0" :id="logId" :role="agents.length > 1 ? 'tabpanel' : undefined">
         <BaseEmptyState :title="t('work.room.site.empty')" />
       </div>
@@ -183,6 +213,9 @@ async function switchView(mode: 'overview' | 'raw') {
             :nodes="recordTree(viewMode === 'raw' ? turn.entries : overviewRecords(turn.entries))"
             :raw="viewMode === 'raw'"
             :load-image="loadImage"
+            :member-names="memberNames"
+            :arrived="arrived"
+            @settle="arrived.delete($event)"
           />
         </section>
       </div>
@@ -199,14 +232,26 @@ async function switchView(mode: 'overview' | 'raw') {
   overflow-y: auto;
   background: var(--surface);
 }
+/* 现场的表头：会话栏、概览／原始记录、队友页签、谁在忙。打开这一格停在最新一条时，
+   读者正看着底下，这几行不能跟着记录一起走。只有它是钉住的；日志仍在下面滚。 */
+.site-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+/* 分隔线由表头自己画一条：会话栏那条和它贴在一起会变成两像素。 */
+.site-head .session-inspector {
+  border-bottom: 0;
+}
 .site-view {
   display: flex;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 2px;
 }
 .site-view button {
-  min-height: 36px;
-  padding: 8px 12px;
+  min-height: 28px;
+  padding: 2px 8px;
   border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: 13px;
@@ -219,12 +264,10 @@ async function switchView(mode: 'overview' | 'raw') {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+/* 活动条也在表头里，不再自己钉一次（两个 sticky 同顶会互相盖住）。 */
 .site-activity {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised);
-  padding-block: 8px;
-  border-bottom: 1px solid var(--line);
+  padding-block: 6px;
+  border-bottom: 0;
   background: var(--surface);
 }
 .site-older {

@@ -1,4 +1,5 @@
 // PanelPreviewView 的 props 契约：这一格要什么，全写在这里。摆在视图外面，取数那一层和这一格看的是同一份说明，视图文件也留在一千行以内。
+import type { PreviewCommentsBundle } from '../../../composables/panelPreview/comments'
 import type { DocumentRevisionsBundle } from '../../../composables/useDocumentRevisions'
 import type { UploadAnnotation } from '../../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../../composables/usePreviewFrames'
@@ -65,6 +66,9 @@ export interface PreviewViewProps {
   canPage?: boolean
   /** 网页那一页本身；还没取到就是 null。 */
   docPageHtml?: string | null
+  /** 这一份文件上的评论：线程、写一条新的、回复和解决
+   *  （`composables/panelPreview/comments.ts`）。 */
+  comments?: PreviewCommentsBundle
   /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
   revs: DocumentRevisionsBundle
   /** 在线编辑那一份会话：编辑器实例、盯版本、另存都在里面（`useRoomFileEditor.ts`）。 */
@@ -75,4 +79,6 @@ export interface PreviewViewProps {
   editing: string | null
   /** 文档条下面那一栏历史开着没有。 */
   showHistory: boolean
+  /** 这间房的队友叫什么：预览连不上时那句话请它去查（项目可以给它改名）。 */
+  agentName?: string
 }

@@ -82,6 +82,7 @@ def _make_submission(**overrides):
         "membership_id": 50,
         "version": 1,
         "submitter_id": 42,
+        "package_revision": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -579,6 +580,7 @@ class TestTaskSubmissionService:
             membership_id=50,
             submitter_id=42,
             version=1,
+            package_revision=None,
         )
         entry_repo.create_entries.assert_awaited_once()
 
@@ -633,6 +635,7 @@ class TestTaskSubmissionService:
             membership_id=50,
             submitter_id=42,
             version=3,
+            package_revision=None,
         )
 
     @pytest.mark.anyio
@@ -895,6 +898,7 @@ class TestTaskSubmissionReviewService:
         svc = self._build_service(review_repo=review_repo, rank_service=None)
         result = await svc.create_review(
             submission_id=200,
+            reviewer_id=7,
             accepted=True,
             score=90,
             comment="Good",
@@ -937,6 +941,7 @@ class TestTaskSubmissionReviewService:
 
         result = await svc.create_review(
             submission_id=200,
+            reviewer_id=7,
             accepted=True,
             score=90,
             comment="Good",

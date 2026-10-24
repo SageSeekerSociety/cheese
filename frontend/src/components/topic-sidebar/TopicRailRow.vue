@@ -1,35 +1,16 @@
 <script setup lang="ts">
-// 话题列表里的一行 —— 只凭 props 画，凭事件往回说。**它不认识路由，也不取数。**
-//
-// 行左边只有一个 16px 槽：有子话题 → 折叠开关；否则画频道的记号（# / 锁 / 文档）。
-// 空槽也占 16px，否则同层级的标题左缘会参差。
-//
-// 行尾是这一行自己的那盏灯（`light`，父级按 `lib/roomLight.ts` 的判据算好）：画
-// 哪一盏、红灯说的是哪件事（在跑却没动静、停下报错没人接手，或者等一位队友等太久
-// 了）都在那一份里，这里只负责把它画出来。不亮就不画。
-//
-// 行右边画的是成员：此刻在这里干活的队友（`TopicRailMembers`），悬停说出是谁、在
-// 做什么。成员和灯是两回事：灯说这个房间的活走到哪了，成员说此刻谁在里面。房间在
-// 等一位队友、等太久了说的是这一行自己的红灯，不画成头像。
-//
-// 有子话题的行，折叠开关另带一层颜色——收起来的后代里：红 = 有成员卡住了，黄 = 有
-// 事等你，绿 = 有活在走。收起来把后代整行都藏掉了，开关上这一点颜色是替它们说的。
-// 它不含这一行自己的灯：那一盏就在同一行的行尾，各说各的，不重复画。
-//
-// 「哪些行看得见、收起来的行替谁背着未读和动静、这一行画哪几位成员」都是
-// `composables/useTopicRail.ts` 的事（`row` / `stalled` / `marks` / `toggleTitle`
-// 就是它的答案）。这一份只管那一段模板和它自己的 CSS。
+// 频道行只收 props、发事件；隐藏后代和收起任务的状态共用行尾一盏灯。
+// 子话题和任务是两种折叠，保留各自的箭头，均放在名称前。
+// 状态及红灯原因沿用 lib/roomLight.ts；这里只合并显示既有信号。
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { RailMemberMark } from '@/lib/memberActivity'
 import type { RowLight } from '@/lib/roomLight'
 import type { VisibleRow } from '@/lib/topicTree'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
-import TopicRailMembers from './TopicRailMembers.vue'
 import TopicRailTaskFold from './TopicRailTaskFold.vue'
 
 import { menuActionOf } from '@/commands'
@@ -38,13 +19,12 @@ import { t } from '@/i18n'
 import { brightest } from '@/lib/roomLight'
 import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
-import { countLabel } from '@/lib/topicTree'
 
 const props = defineProps<{
   row: VisibleRow<Topic>
   /** 这一行是不是当前打开的那个房间。 */
   selected: boolean
-  /** 整页形态（手机）：没有 hover 浮出来的 ⋯，那里长按一行打开同一组操作。 */
+  /** 整页形态（手机）：操作入口常驻，使用触控尺寸。 */
   page: boolean
   /** 这一行正在就地改名。 */
   renaming: boolean
@@ -52,21 +32,19 @@ const props = defineProps<{
   menuOpen: boolean
   /** 父级带钟算出来的：这一行里有没有成员卡住了（自己的，不含收起来的后代）。 */
   stalled: boolean
+  /** 父级算好的成员动态。频道行不再画头像，保留这份契约供父级沿用。 */
+  marks?: RailMemberMark[]
   /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
   light?: RowLight | null
-  /** 这一行右边画的那几位成员（此刻在干活的），父级带钟算好。 */
-  marks?: RailMemberMark[]
   /** 折叠开关 hover 时说的那句话（里面有什么，父级知道）。 */
   toggleTitle: string
   /** 这一行的 ⋯ 里有哪几项（要 router 才算得出链接，所以由父级给）。 */
   actions: (topic: Topic) => MenuCommand[]
-  /** 我静音了这个频道：名字变灰、只有 @我才有数字，行尾留一个静音标记说明为什么。 */
-  muted?: boolean
   /** 主线上有我没读过的新消息：名字加粗（数字按通知档位另算，可以是 0）。 */
   fresh?: boolean
   /** 挂在它下面的那一块任务收起来了没有。没给就是不收——这个频道没挂任务。 */
   tasksCollapsed?: boolean
-  /** 收起来的那一块里进行中的任务条数；不给就不画这个数。 */
+  /** 这个频道进行中的任务数；只用于决定是否提供任务折叠入口。 */
   taskCount?: number
   /** 收起来的那一块该画的灯（父级带钟算好）；不亮是 null。 */
   taskLight?: RowLight | null
@@ -83,18 +61,13 @@ const emit = defineEmits<{
   (e: 'commit-rename', draft: string): void
   (e: 'cancel-rename'): void
   (e: 'update:menu-open', open: boolean): void
-  /** 挂在它下面的那一整块任务收起来或展开（右边那个折叠加手）。 */
+  /** 挂在它下面的那一整块任务收起来或展开。 */
   (e: 'toggle-tasks', id: string): void
 }>()
 
-/** 这一行自己的灯：props 里的可选值在模板里当「有或没有」用。 */
-const rowLight = computed(() => props.light ?? null)
-
-// 折叠开关的颜色：收起来的后代里的动静，加上「这一行或它收起来的东西里有人卡住了」
-// ——红光最亮，压过其余。这一行自己的那盏灯不并进来：它就在同一行的行尾，已经画过
-// 一遍了。
-const chevronLight = computed<RowLight | null>(() =>
-  brightest([props.row.hiddenLight, props.stalled || props.row.hiddenStalled ? { kind: 'red', breathe: false } : null])
+// 每行只显示一盏：保留已有状态事实和优先级，不另取任务或重算状态。
+const rowLight = computed<RowLight | null>(() =>
+  brightest([props.light, props.row.hiddenLight, props.tasksCollapsed ? props.taskLight : null])
 )
 
 // Status: only show when notable (archived / draft); active is implicit. Shown as a
@@ -130,6 +103,31 @@ function onMenuToggle(open: boolean) {
   if (!open) menuPoint.value = null
   emit('update:menu-open', open)
 }
+
+// 点下去到新页面出来之间，这一行一直亮着。只靠按下的那一下不够：手指抬起后它又变回
+// 原样，等得久的人会以为没点到。选中态到了就熄；一直没选中（跳转被挡下）最多亮十秒。
+const pending = ref(false)
+let pendingTimer: number | undefined
+function choose(): void {
+  // 点的就是当前这一行：不跳转，也就没有「等它选中」这回事，别亮着不放。
+  if (props.selected) {
+    emit('select', props.row.topic.id)
+    return
+  }
+  pending.value = true
+  window.clearTimeout(pendingTimer)
+  pendingTimer = window.setTimeout(() => (pending.value = false), 10_000)
+  emit('select', props.row.topic.id)
+}
+watch(
+  () => props.selected,
+  (on) => {
+    if (!on) return
+    pending.value = false
+    window.clearTimeout(pendingTimer)
+  }
+)
+onBeforeUnmount(() => window.clearTimeout(pendingTimer))
 </script>
 
 <template>
@@ -141,12 +139,11 @@ function onMenuToggle(open: boolean) {
     :data-row-actions="row.topic.id"
     :active="selected"
     rounded="lg"
-    class="topic-row"
+    class="topic-row rail-channel"
     :class="{
-      'topic-row--hover-actions': !page,
-      'topic-row--tasks': !!taskCount,
-      'topic-row--tasks-collapsed': !!taskCount && tasksCollapsed === true,
+      'rail-channel-page': page,
       'is-active': selected,
+      'is-pending': pending,
       'is-sub': row.depth > 0,
       'is-menu-open': menuOpen,
     }"
@@ -154,7 +151,7 @@ function onMenuToggle(open: boolean) {
       paddingInlineStart: 8 + row.depth * 20 + 'px',
       '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
     }"
-    @click="emit('select', row.topic.id)"
+    @click="choose"
     @mouseenter="emit('hover', row.topic.id)"
     @mouseleave="emit('leave')"
     @focusin="emit('hover', row.topic.id)"
@@ -162,36 +159,37 @@ function onMenuToggle(open: boolean) {
     @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
-    <!-- 左边一个 16px 槽：有子话题是折叠开关，否则画频道记号（# / 锁 / 文档），和
-         「# 综合」同一个记号——没有它，频道名和「综合」的字就对不齐。种类标签不要
-         （缩进表达层级），操作 hover 才浮现。 -->
+    <!-- Independent fold controls share a fixed leading slot; private/type markers stay visible. -->
     <template #prepend>
-      <button
-        v-if="row.hasChildren"
-        type="button"
-        class="row-slot subtree-toggle"
-        :class="{
-          'tap-target': page,
-          'subtree-toggle--stalled': chevronLight?.kind === 'red',
-          'subtree-toggle--awaits': chevronLight?.kind === 'yellow',
-          'subtree-toggle--working': chevronLight?.kind === 'green',
-        }"
-        :title="toggleTitle"
-        :aria-expanded="!row.collapsed"
-        @click.stop="emit('toggle-collapse', row.topic.id)"
-      >
-        <v-icon size="15">
-          {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-        </v-icon>
-      </button>
-      <span v-else class="row-slot">
-        <v-icon
-          size="16"
-          class="row-glyph"
-          :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
-          :icon="channelGlyph(row.topic)"
-          :title="row.topic.members_only ? t('work.channel.privateTip') : undefined"
+      <span class="row-leading">
+        <button
+          v-if="row.hasChildren"
+          type="button"
+          class="row-slot subtree-toggle"
+          :title="toggleTitle"
+          :aria-label="toggleTitle"
+          :aria-expanded="!row.collapsed"
+          @click.stop="emit('toggle-collapse', row.topic.id)"
+        >
+          <v-icon size="15">
+            {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+          </v-icon>
+        </button>
+        <TopicRailTaskFold
+          v-if="taskCount"
+          :collapsed="tasksCollapsed === true"
+          :page="page"
+          @toggle="emit('toggle-tasks', row.topic.id)"
         />
+        <span v-if="!row.hasChildren && (!taskCount || channelGlyph(row.topic) !== 'mdi-pound')" class="row-slot">
+          <v-icon
+            size="16"
+            class="row-glyph"
+            :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
+            :icon="channelGlyph(row.topic)"
+            :title="row.topic.members_only ? t('work.channel.privateTip') : undefined"
+          />
+        </span>
       </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">
@@ -217,18 +215,10 @@ function onMenuToggle(open: boolean) {
           class="text-truncate"
           :class="{
             'title-unread': row.unreadTotal > 0 || fresh,
-            'title-muted': muted && row.unreadTotal === 0,
             'title-visiting': row.topic.joined === false,
           }"
           :data-user-content="row.topic.title || undefined"
           >{{ topicTitle(row.topic) }}</span
-        >
-        <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
-        <span
-          v-if="row.collapsed && row.hiddenCount > 0"
-          class="subtree-count ms-2"
-          :title="t('work.sidebar.hiddenCount', { count: row.hiddenCount })"
-          >{{ countLabel(row.hiddenCount) }}</span
         >
         <span v-if="statusBadge(row.topic.status)" class="d-inline-flex align-center ga-1 c-faint topic-status ms-2">
           <span class="status-dot status-dot--warn" />
@@ -237,35 +227,9 @@ function onMenuToggle(open: boolean) {
       </template>
     </v-list-item-title>
     <template #append>
-      <TopicRailMembers v-if="marks?.length" :marks="marks" class="me-1" />
-      <v-icon
-        v-if="muted"
-        size="14"
-        class="row-muted me-1"
-        icon="mdi-bell-off-outline"
-        :aria-label="t('work.room.menu.muted')"
-        :title="t('work.room.menu.muted')"
-      />
-      <!-- 折叠不能把「有新消息」吞掉：收起来的后代的未读加到本行上。 -->
-      <TopicRailBadge
-        v-if="row.unreadTotal > 0"
-        :count="row.unreadTotal"
-        :title="row.hiddenUnread > 0 ? t('work.sidebar.hiddenUnread', { count: row.hiddenUnread }) : undefined"
-      />
-      <!-- 这一行自己的那盏灯，摆在行尾最后——像一行上的指示灯。 -->
       <TopicRailLight v-if="rowLight" :light="rowLight" />
-      <!-- 挂在它下面的那一整块任务的把手：收起来时它自己顶上那一块的灯和条数。 -->
-      <TopicRailTaskFold
-        v-if="taskCount"
-        :collapsed="tasksCollapsed === true"
-        :count="taskCount"
-        :light="taskLight ?? null"
-        :page="page"
-        @toggle="emit('toggle-tasks', row.topic.id)"
-      />
-      <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
-           整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
-      <div v-if="!page" class="row-actions" @click.stop>
+      <!-- The menu has its own layout slot, including on touch screens. -->
+      <div class="row-actions" @click.stop>
         <AdaptiveMenu
           :model-value="menuOpen"
           :actions="actions(row.topic).map(menuActionOf)"
@@ -329,10 +293,6 @@ function onMenuToggle(open: boolean) {
   font-style: italic;
   color: var(--muted);
 }
-/* 静音：名字退到次要色，没有 @我的时候整行都安静。 */
-.title-muted {
-  color: var(--faint);
-}
 
 /* 三态：静默（透明，露出 rail 的 --canvas）/ hover --fill-2 / 选中 --line-2。
    没有琥珀左竖条——选中态靠底色和字重就够了（Slack/Discord 的行选中态也只是底色），
@@ -367,22 +327,20 @@ function onMenuToggle(open: boolean) {
 .topic-row.is-active:hover {
   background: var(--line-2);
 }
+/* 按下去那一帧就换底色。触屏上没有 hover，点了之后页面要等一下才换，中间这一下
+   要是也没有变化，看起来就像没点到。 */
+.topic-row:active {
+  background: var(--line-2);
+}
+/* 手指抬起之后到新页面出来之前，这一行保持亮着（见脚本里的 pending）。 */
+.topic-row.is-pending {
+  background: var(--line-2);
+}
 
 .topic-status {
   font-size: 13px;
 }
 
-/* Hover-only action overlay: absolutely positioned over the row's tail, zero
-   layout width — the title gets the full rail. Hover detection is the WHOLE row
-   (the old flicker came from hovering the buttons themselves). */
-.topic-row {
-  position: relative;
-  min-height: 36px;
-  margin-block: 2px;
-}
-.topic-row :deep(.v-list-item__content) {
-  padding-block: 0;
-}
 /* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
    稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。 */
 .topic-row :deep(.v-list-item__spacer) {
@@ -426,41 +384,6 @@ function onMenuToggle(open: boolean) {
 .subtree-toggle:hover :deep(.v-icon) {
   color: var(--text);
 }
-/* 收起来的父话题会把子话题整行藏掉——开关自己带聚合色补上：红 = 里面（或这一行
-   自己）有成员卡住了，黄 = 里面有东西等你，绿 = 里面有活在走。颜色由
-   `chevronLight` 算好（`lib/roomLight.ts` 的 `brightest`），这里只管画。
-   hover 不改这三个颜色，状态优先于反馈。 */
-/* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
-   压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
-   的状态色刷成 --muted——正好是「这一行收起来了、里面有事等你」最该看见的时候。 */
-.subtree-toggle--stalled :deep(.v-icon),
-.subtree-toggle--stalled:hover :deep(.v-icon) {
-  color: var(--danger) !important;
-}
-.subtree-toggle--awaits :deep(.v-icon),
-.subtree-toggle--awaits:hover :deep(.v-icon) {
-  color: var(--signal-yellow) !important;
-}
-.subtree-toggle--working :deep(.v-icon),
-.subtree-toggle--working:hover :deep(.v-icon) {
-  color: var(--ok) !important;
-}
-
-/* 行尾那盏灯（`TopicRailLight` 自己画颜色和闪不闪）。间距靠这里给：未读数字、静音
-   记号都自带左边距，它也得有，不然贴在数字上。 */
-.topic-row .row-light {
-  margin-left: 6px;
-}
-/* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
-.subtree-count {
-  flex: none;
-  font-size: 12px;
-  color: var(--faint);
-  background: var(--fill);
-  border-radius: 8px;
-  padding: 1px 6px;
-  font-variant-numeric: tabular-nums;
-}
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。
    这是结构线，不是强调条——左条纹禁令不管它。 */
 .topic-row.is-sub::before {
@@ -473,89 +396,6 @@ function onMenuToggle(open: boolean) {
   background: var(--line-2);
 }
 
-.row-actions {
-  position: absolute;
-  right: 5px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  opacity: 0;
-  pointer-events: none;
-  /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
-     在任何行底色上都成立——不再试图和行底色融为一体。 */
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
-  transition: opacity var(--dur-quick) var(--ease-standard);
-  color: var(--muted);
-}
-/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。这颗按钮就是整条白底的
-   内芯：内边距收掉、让它撑满，白底上就没有一圈「看着是它、点着不算」的边，悬停的灰
-   也铺满整块。留 3px 内边距时点到那圈上什么都不发生，灰只在中间铺一小块方片
-   （2026-10-13 lz123y 报的）。外面那 1px 描边不吃点击。
-   舒适可点，但必须小于行高（~36px）：29px 按钮 + 16px 图标，稳稳落在行内。 */
-.row-actions :deep(.v-btn) {
-  width: 31px;
-  height: 29px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-}
-.row-actions :deep(.v-btn .v-icon) {
-  font-size: 16px;
-}
-.row-actions :deep(.v-btn:hover) {
-  background: var(--fill);
-  color: var(--text);
-}
-/* 触摸屏没有 hover，键盘焦点又要先 Tab 到它——这两条规则加起来，⋯ 菜单在桌面宽度
-   的触屏上（平板横屏、带触摸屏的笔记本）根本摸不到。所以在没有 hover 能力的设备上
-   它常驻。整页形态（手机）不画这颗 ⋯，那里长按一行打开同一组操作。 */
-@media (hover: none) {
-  .row-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .topic-row .unread-badge {
-    opacity: 1;
-  }
-}
-/* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
-   鼠标一离开行、菜单就没了根。
-   键盘焦点这里用 :focus-visible（行自己）加 :has(:focus-visible)（行里的 ⋯），不用
-   :focus-within：鼠标点一下行也会让它拿到焦点，:focus-within 从那以后一直命中，⋯ 就
-   挂在行尾不走了（同一个先例见 style.css 的 .fb-row:has(.fbrow__link:focus-visible)）。
-   行本身可聚焦，而 :has() 只看后代，所以 Tab 停在行上那一条要单写。 */
-.topic-row:hover .row-actions,
-.topic-row:focus-visible .row-actions,
-.topic-row:has(:focus-visible) .row-actions,
-.topic-row.is-menu-open .row-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-/* While the actions are out, the count steps aside (they share the tail). 只在有那颗
-   ⋯ 的行上：手机上点过一行之后 :hover 会一直粘着，未读数不能因此消失。 */
-.topic-row--hover-actions:hover .unread-badge,
-.topic-row--hover-actions:focus-visible .unread-badge,
-.topic-row--hover-actions:has(:focus-visible) .unread-badge,
-.topic-row.is-menu-open .unread-badge {
-  opacity: 0;
-}
-/* 有折叠加手的行，那颗 ⋯ 往左让出一个把手的宽度：不让的话它正好压住把手，而把手是
-   那一块唯一的入口，压住就成了「看着有、点不着」。（把手自己有多宽见
-   TopicRailTaskFold.vue。） */
-.topic-row--tasks .row-actions {
-  right: 45px;
-}
-/* 收起来的那一档要再让一截：把手这时还多顶着一盏灯和一颗条数，展开态只有一个箭头
-   （16px），收起态实测 51px。45px 那条留的量只够展开态——收起时 ⋯ 正好压在那颗条数
-   上（2026-10-13 真渲染量到的：压住 21px），而条数正是收起这一档要留给人看的唯一东西。
-   所以按宽的那一档让：行右沿到把手 16px + 收起态把手 51px + 14px 空隙 = 81，展开态
-   那颗 ⋯ 离把手也正是 13～14px，两档的空隙看起来一样。这些数跟着字号走，字号变了要重量。 */
-.topic-row--tasks-collapsed .row-actions {
-  right: 81px;
-}
 /* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
 .topic-rail--page .topic-row {
   min-height: 44px;
@@ -570,8 +410,6 @@ function onMenuToggle(open: boolean) {
   min-height: 36px;
   font-size: 16px;
 }
-
-.row-muted {
-  color: var(--faint);
-}
 </style>
+
+<style src="./rail-channel-row.css"></style>

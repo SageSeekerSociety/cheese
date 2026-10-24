@@ -71,7 +71,7 @@ describe('一级导航的两份清单', () => {
     const projects = [{ id: 'p-uuid', slug: 'demo', name: '演示' }] as Project[]
     const rail = items(
       railItems(
-        { ...sources(0), projects, projectLastPlace: () => ({ kind: 'channel', id: 't9', room: 't9' }) },
+        { ...sources(0), projects, projectLastPlace: () => ({ path: 'channels/t9', room: 't9' }) },
         DEFAULT_SHELL
       )
     )
@@ -128,6 +128,22 @@ describe('一级导航的两份清单', () => {
   it('底栏格数不随项目数量增长', () => {
     const counts = [0, 1, 5, 40].map((n) => tabItems(sources(n, n ? 'p0' : null), DEFAULT_SHELL).length)
     expect(new Set(counts).size).toBe(1)
+  })
+
+  // 市场的入口在首页那份目录里（挨着空间，`views/home/HomeNav.vue`），不占 rail 的格子，
+  // 也就不占 ⌘N：rail 上有地址的格子只有首页和项目。
+  it('rail 上没有市场那一格，⌘N 只分给首页和项目', () => {
+    const rail = items(railItems(sources(3, 'p1'), DEFAULT_SHELL))
+    expect(rail.some((i) => i.to === '/market')).toBe(false)
+    expect(rail.filter((i) => i.to).map((i) => i.to)).toEqual([
+      '/inbox',
+      '/projects/p0',
+      '/projects/p1',
+      '/projects/p2',
+    ])
+    expect(shortcutTarget(rail, 4)).toBe('/projects/p2')
+    expect(shortcutTarget(rail, 5)).toBeNull()
+    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL))).toHaveLength(3)
   })
 
   it('桌面 rail 每个项目一格', () => {
@@ -214,7 +230,7 @@ describe('项目格子自己带信号', () => {
       railItems(
         {
           ...sources(2, 'p0'),
-          projectLastPlace: (id) => (id === 'p1' ? { kind: 'channel', id: 't9', room: 't9' } : null),
+          projectLastPlace: (id) => (id === 'p1' ? { path: 'channels/t9', room: 't9' } : null),
         },
         DEFAULT_SHELL
       )
@@ -228,18 +244,24 @@ describe('项目格子自己带信号', () => {
   // 还要自己找出来再点一次。落点要直接是那件任务，地址里带上它所在的频道。
   it('上次待的是任务页，项目格子落到那件任务', () => {
     const rail = items(
-      railItems(
-        { ...sources(1, 'p0'), projectLastPlace: () => ({ kind: 'task', id: 'task-7', room: 't9' }) },
-        DEFAULT_SHELL
-      )
+      railItems({ ...sources(1, 'p0'), projectLastPlace: () => ({ path: 'tasks/task-7', room: 't9' }) }, DEFAULT_SHELL)
     )
     expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0/tasks/task-7')
+  })
+
+  // 记着的是项目里别的页（总览、成员、资料库）时一样落回去：地方是地址，不是
+  // 「任务或频道」那两种。
+  it('上次待的是项目里的其它页，项目格子落到那一页', () => {
+    const rail = items(
+      railItems({ ...sources(1, 'p0'), projectLastPlace: () => ({ path: 'overview', room: null }) }, DEFAULT_SHELL)
+    )
+    expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0/overview')
   })
 
   // ⌘N 和点这一格走的是同一个地址：两处落点不一样的话，快捷键会把人带去别处。
   it('⌘N 跟着落到同一个地方', () => {
     const rail = railItems(
-      { ...sources(2, 'p0'), projectLastPlace: () => ({ kind: 'channel', id: 't9', room: 't9' }) },
+      { ...sources(2, 'p0'), projectLastPlace: () => ({ path: 'channels/t9', room: 't9' }) },
       DEFAULT_SHELL
     )
     expect(shortcutTarget(rail, 2)).toBe('/projects/p0/channels/t9')

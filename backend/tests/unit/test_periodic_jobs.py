@@ -16,8 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.background import PeriodicJobs, PeriodicRunner
-from app.core.background import periodic_health, watch_periodic_jobs
+from app.core.background import (
+    PeriodicJobs,
+    PeriodicRunner,
+    periodic_health,
+    watch_periodic_jobs,
+)
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -492,9 +496,7 @@ def _jobs():
 
     return periodic_jobs(
         chat=SimpleNamespace(
-            remind_silent_turns=_noop,
-            # 同一件事的另一半：一轮可以一直在说话，清单却停在开工那一版。
-            remind_stale_checklists=_noop,
+            compute=SimpleNamespace(working_conversations=set),
             sweep_memory_dreams=_noop,
             session_factory=lambda: None,
         ),

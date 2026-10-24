@@ -23,7 +23,6 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.delivery.models import NativeInput
 from app.main import app
-from tests.support.session_records import wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -32,6 +31,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 class FirstPromptOnly(StubChannel):
@@ -273,7 +273,8 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
                 for row in _rows(
                     client, NativeInput, topic, NativeInput.work_id == check
                 )
-                if not row.completed_at
+                # Its fate unknown: neither read nor reported unread.
+                if row.echoed_at is None and row.terminated_at is None
             ),
             *(
                 ("running", str(key[1]))

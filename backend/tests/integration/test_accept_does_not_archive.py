@@ -21,7 +21,7 @@ from tests.integration.conftest import (
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
-from tests.landing import summary_turn_ends
+from tests.landing import written_up
 
 
 def _project(client) -> str:
@@ -112,7 +112,7 @@ def _delivered_topic(client) -> tuple[str, str]:
     cid = _card(client, tid).json()["data"]["id"]
     assert _accept(client, cid).status_code == 200
     # The task closes once its AI teammate has written it up.
-    summary_turn_ends(client, delivery_task_id(client, tid))
+    written_up(client, delivery_task_id(client, tid))
     return pid, tid
 
 
@@ -260,6 +260,6 @@ def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_statu
     assert r.status_code == 422
     message = r.json()["message"]
     if blocked_status == "pending":
-        assert "cheese_redeliver" in message
+        assert "cheese_card(action=redeliver)" in message
     else:
         assert "任务已结束" in message

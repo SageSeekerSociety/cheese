@@ -362,6 +362,37 @@ describe('production surface comment selections', () => {
     await fireEvent.click(screen.getByRole('menuitemradio', { name: new RegExp(t('work.room.doc.slash.h3')) }))
     expect(f.ed.getHTML()).toBe('<h3>第一段文字</h3><h3>第二段文字</h3><p>第三段文字</p>')
   })
+
+  it('keeps the bar away while a mouse selection is dragged, and shows it once the pointer is released', async () => {
+    const f = await mountDoc('<p>第一段 第二段</p>')
+    f.ed.view.dom.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    // 拖着走：选区一直在变，浮条不能跟着光标出来
+    f.ed.commands.setTextSelection(span(f.ed, '第一段'))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).toBeNull()
+    f.ed.commands.setTextSelection({ from: span(f.ed, '第一段').from, to: span(f.ed, '第二段').to })
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).toBeNull()
+    // 松开鼠标：按最终选区摆出来
+    document.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+  })
+
+  it('puts the bar back when the browser cancels the gesture and the selection is still there', async () => {
+    const f = await mountDoc('<p>第一段 第二段</p>')
+    f.ed.commands.setTextSelection(span(f.ed, '第一段'))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+    f.ed.view.dom.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await nextTick()
+    expect(document.querySelector('.doc-comment-cta')).toBeNull()
+    // 滚动手势接管：指针被取消，但选区还在
+    document.dispatchEvent(new MouseEvent('pointercancel', { bubbles: true }))
+    await nextTick()
+    expect(f.ed.state.selection.empty).toBe(false)
+    expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
+  })
 })
 
 describe('asking the AI teammate from a selection', () => {

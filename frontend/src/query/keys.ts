@@ -14,6 +14,11 @@ export const keys = {
   /** 我能看到的项目。 */
   projects: () => ['projects'] as const,
 
+  /** 我所在的团队（首页侧栏和手机首页共用这一份目录）。 */
+  myTeams: () => ['teams', 'my'] as const,
+  /** 我加入的空间，加上还没过审的申请（首页同一份目录）。 */
+  mySpaces: () => ['spaces', 'my'] as const,
+
   project: (projectId: string) => ['project', projectId] as const,
   projectRow: (projectId: string) => ['project', projectId, 'row'] as const,
   projectTopics: (projectId: string) => ['project', projectId, 'topics'] as const,
@@ -46,6 +51,8 @@ export const keys = {
   roomTask: (roomId: string) => ['room', roomId, 'task'] as const,
   roomPreview: (roomId: string) => ['room', roomId, 'preview'] as const,
   roomPins: (roomId: string) => ['room', roomId, 'pins'] as const,
+  /** 一段对话的章节（频道或任务，键是那段对话的 id）。 */
+  roomChapters: (conversationId: string) => ['room', conversationId, 'chapters'] as const,
   roomThreads: (roomId: string) => ['room', roomId, 'threads'] as const,
   /** 一条支线本身（它是一段对话，所以按房间分层），带着它挂着的那条主线消息。 */
   roomThread: (threadId: string) => ['room', threadId, 'thread'] as const,

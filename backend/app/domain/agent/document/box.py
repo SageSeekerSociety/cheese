@@ -35,11 +35,17 @@ from app.domain import project_material
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
 from app.domain.agent.document.question import Asked
-from app.domain.agent.session_host.answer import Answer, Tool, Waiting, Words
+from app.domain.agent.session_host.answer import (
+    Answer,
+    Said,
+    Tool,
+    Waiting,
+    Words,
+)
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import HostFull, Prompt, StartAbandoned
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.living_doc import work_edits
+from app.domain.assistant import changes
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +170,9 @@ def _box_key(conversation: uuid.UUID | str) -> str:
 
 @dataclass(frozen=True)
 class Box:
-    """Whose a box's conversation is, and what it last answered."""
+    """Whose a box's conversation is, and what it last answered. A box is only
+    ever opened on a document (a selection has no file to be about), so its
+    subject is the document's id."""
 
     asker: str
     document_id: uuid.UUID
@@ -177,6 +185,13 @@ async def box_of(redis: Redis, conversation: uuid.UUID) -> Box | None:
         return None
     held = json.loads(raw)
     return Box(held["asker"], uuid.UUID(held["document"]), held.get("answer", ""))
+
+
+def _document_of(asked: Asked) -> uuid.UUID:
+    """The document a box's answer is about; a box is only ever opened on one."""
+    document_id = asked.document_id
+    assert document_id is not None
+    return document_id
 
 
 async def _keep(redis: Redis, conversation: uuid.UUID, box: Box) -> None:
@@ -257,7 +272,7 @@ def _question(
         rule = "这次只回答，不要改文档。"
     elif selection is not None:
         rule = (
-            "要改就只改 <选中> 标出的文字；cheese_doc_edit 的 old 从文档原文照抄，"
+            "要改就只改 <选中> 标出的文字；cheese_doc(action=edit) 的 old 从文档原文照抄，"
             "不含 <选中> 标记。"
         )
     else:
@@ -291,7 +306,10 @@ async def ask(
     allowed = may_edit and (chosen is None or chosen.kind == "edit")
     async with factory() as db:
         bound = await question.bind(db, asked)
-    await _keep(redis, conversation, Box(asker, asked.document_id))
+    # 输入框只开在文档上（选中的是正文），所以这里一定拿得到文档 id。
+    document_id = asked.document_id
+    assert document_id is not None
+    await _keep(redis, conversation, Box(asker, document_id))
     work = uuid.uuid4()
 
     async def queued() -> None:
@@ -311,7 +329,7 @@ async def ask(
             # A stop is for the question it reached: the next one starts
             # unstopped.
             await question.unstop(redis, conversation)
-            await emit("done", {"answer": "", "edits": [], "stopped": True})
+            await emit("done", {"answer": "", "changes": [], "stopped": True})
         else:
             busy = say("docAgentBoxBusy", agent=bound.agent_name)
             await emit("error", error_frame(busy))
@@ -391,7 +409,9 @@ class Answers:
     stopped = staticmethod(question.is_stopped)
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Said,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
@@ -399,7 +419,7 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "delta", {"text": item.text, "at": item.at}
             )
-        else:
+        elif isinstance(item, Tool):
             await self._consumptions.publish(consumption, "tool", {"name": item.name})
 
     async def ended(
@@ -427,11 +447,11 @@ class Answers:
             )
             refused = say("docAgentBoxFailed", agent=agent)
         redis = get_redis_client()
-        edits = (
-            await work_edits.take(redis, consumption.work_id)
-            if redis is not None
-            else []
-        )
+        async with self._chat.session_factory() as db:
+            changed = [
+                changes.view(row)
+                for row in await changes.of_work(db, consumption.work_id)
+            ]
         if redis is not None:
             await question.unstop(redis, conversation)
         if stopped:
@@ -440,7 +460,7 @@ class Answers:
         await self._chat.charge_turn_spend(
             asked.project_id, asked.task_id, consumption.work
         )
-        if refused is not None and not edits:
+        if refused is not None and not changed:
             return [("error", error_frame(refused))]
         # What was changed was changed, answer or not: the box shows it and can
         # undo it.
@@ -449,6 +469,6 @@ class Answers:
             await _keep(
                 redis,
                 conversation,
-                Box(consumption.data["asker"], asked.document_id, text),
+                Box(consumption.data["asker"], _document_of(asked), text),
             )
-        return [("done", {"answer": text, "edits": edits, "stopped": stopped})]
+        return [("done", {"answer": text, "changes": changed, "stopped": stopped})]

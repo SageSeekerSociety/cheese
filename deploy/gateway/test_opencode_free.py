@@ -217,8 +217,12 @@ async def main():
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         })
 
-    config = yaml.safe_load(Path(__file__).with_name("config.yaml").read_text())
-    official = copy.deepcopy(next(row for row in config["model_list"] if row["model_name"] == "deepseek-flash"))
+    # The official row by its key, not the group's first row: RUC's rows come
+    # first in deepseek-flash, and they are not the upstream this test falls back to.
+    official = copy.deepcopy(next(
+        row for row in yaml.safe_load(Path(__file__).with_name("test_rows.yaml").read_text())["model_list"]
+        if row["model_name"] == "deepseek-flash"
+        and row["litellm_params"].get("api_key") == "os.environ/DEEPSEEK_API_KEY"))
     official["model_name"] = "free-first"
     official["litellm_params"]["api_key"] = "official-key"
     router = litellm.Router(model_list=[

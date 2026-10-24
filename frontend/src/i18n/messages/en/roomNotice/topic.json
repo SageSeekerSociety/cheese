@@ -1,6 +1,6 @@
 {
   "mentionFused": "AI teammates reached this hour's limit on mentioning each other; this one did not wake anyone",
-  "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
+  "mentionFusedDetail": "In one channel, AI teammates' mentions can wake others at most {limit} times an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
   "pendingHandedOver": "{actor} handed over the earlier messages",
   "pendingHandedTo": "{actor} handed the earlier messages to {seat}",
   "roomArchived": "{actor} archived channel “{room}”",

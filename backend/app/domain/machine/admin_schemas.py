@@ -32,7 +32,7 @@ class MachineSandboxOut(BaseModel):
     id: str
     spec: str
     state: str
-    project_id: str
+    project_id: str | None
     project: str | None
     room_id: str
     room: str | None
@@ -118,7 +118,6 @@ class MachineConfigOut(BaseModel):
     sandbox_inode_budget: int
     near_cap: float
     check_s: int
-    walk_s: int
     alert_used: dict[str, float]
     history_step_s: int
 

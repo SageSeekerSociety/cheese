@@ -25,6 +25,7 @@
     "unavailableTeam": "无法访问此团队，选择你所在的团队。"
   },
   "rewards": {
+    "inviteCapped": "这个月通过邀请得到的额度已满 1,500 点，这位好友首次采纳不再给你额度。",
     "betaTitle": "内测体验额度",
     "betaOnce": "每个账号可领取一次，发放到个人额度。",
     "activity": "内测奖励活动",
@@ -49,7 +50,9 @@
     "awardedCount": "已获奖励反馈",
     "awardedCredits": "累计获得",
     "count": "{n} 条",
-    "summaryNote": "奖励发放到你的个人额度。提交反馈后，采纳时发放。"
+    "summaryNote": "奖励发放到你的个人额度。提交反馈后，采纳时发放。",
+    "invite": "邀请奖励",
+    "inviteEarned": "累计获得 {n} 点邀请奖励"
   },
   "offers": {
     "feedbackLink": "前往反馈中心",
@@ -106,6 +109,7 @@
   "packs": {
     "title": "其他额度",
     "grant": "管理员发放",
+    "reward": "奖励",
     "purchase": "购买",
     "task": "题目「{task}」",
     "taskUnknown": "题目额度",

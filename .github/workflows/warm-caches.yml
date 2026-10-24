@@ -1,8 +1,8 @@
 name: Warm dependency caches
 
-# Required CI's suites run on pull requests, merge-queue entries and main
-# pushes, and in all three they only restore caches. A cache saved from a
-# pull-request or merge-queue ref is visible to that ref alone, while one saved
+# Required CI's suites run on pull requests and main pushes, and in both they
+# only restore caches. A cache saved from a pull-request ref is visible to that
+# ref alone, while one saved
 # on main is visible to every ref, so this workflow is the one place their
 # dependency caches are saved. Each
 # job installs dependencies the way its suite does, under the suite's exact
@@ -12,6 +12,7 @@ name: Warm dependency caches
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
 #   npm-harness-pins-*                 test.yml, harness-contract.yml
 #   harness-bins-v2-*                  test.yml (its arm64 shards)
+#   apt-debs-v1-*                      test.yml (its arm64 shards)
 #   pre-commit uv (setup-uv inputs)    repo-guards.yml
 #   npm-remote-execution-*             mcp-contract.yml, mcp-equivalence.yml
 #   go-*                               cli.yml
@@ -259,6 +260,27 @@ jobs:
           )"
           mkdir -p "$bins/pi"
           tar -xzf "$archive" -C "$bins/pi"
+
+      # The .deb files of the tools test.yml's arm64 shards install, under the
+      # key they restore (test.yml: "Name the cached tool packages"). The image
+      # version is in the key, so a runner image update starts a new one, which
+      # the daily run here fills. Changing the package list means changing it
+      # in both places.
+      - name: Name the cached tool packages
+        id: apt-debs
+        run: echo "key=apt-debs-v1-${ImageOS:-self}-${ImageVersion:-0}-$(uname -m)-bubblewrap-iproute2-iptables-lsof-ripgrep-tmux-zsh" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: apt-debs-cache
+        with:
+          path: ~/.cache/cheese-apt-debs
+          key: ${{ steps.apt-debs.outputs.key }}
+      - name: Download the tool packages
+        if: steps.apt-debs-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          CHEESE_APT_DEBS="$HOME/.cache/cheese-apt-debs" \
+            .github/scripts/ensure-apt.sh bubblewrap iproute2 iptables lsof ripgrep tmux zsh
+          ls "$HOME/.cache/cheese-apt-debs"
 
   guards:
     needs: plan

@@ -6,8 +6,6 @@ project teammate carries that teammate's name; one that names no teammate
 carries the name of the project's default agent.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -32,6 +30,7 @@ from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

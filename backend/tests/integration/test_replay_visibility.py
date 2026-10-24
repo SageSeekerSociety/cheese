@@ -21,11 +21,10 @@ from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.session_host import claude_code
-from app.domain.block.models import Block, consumed_turn
+from app.domain.block.models import Block, consumed_turn, read_failed
 from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
-from tests.support.session_records import wait_for_record
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -34,6 +33,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.session_records import wait_for_record
 
 
 @pytest.fixture(autouse=True)
@@ -298,7 +298,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
 def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
     """dev 一合并就重新部署：一轮跑到一半，后端进程被换掉，机器上的会话照常把活
     干完，Stop 落到新进程上。那一轮送进去的消息芝士已经读过、答过了 —— 下一次
-    @ 它，prompt 里不该再出现它们，更不该一次次累加成「第 3 次送进轮次」。"""
+    @ 它，prompt 里不该再出现它们，更不该一次次累加成「第 3 次送去处理」。"""
     topic_id, after, service = _restarted_mid_turn(client, "第一句")
     room = uuid.UUID(topic_id)
 
@@ -314,12 +314,12 @@ def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
 
 
 @pytest.mark.parametrize("worked_first", [True, False])
-def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
+def test_a_batch_read_before_a_restart_whose_work_fails_is_not_sent_again(
     client, worked_first
 ):
-    """失败结果不等于处理完成；另一轮的干净 Stop 也不能替原输入完成结算。
+    """读到了就是送达：之后那段工作失败了，原消息也不会换一个输入 id 再送一遍。
 
-    原消息保留原登记身份、未消费且仍被持有，新消息不能把它换一个输入 id 再送。
+    失败记在它身上（读了，然后失败），下一句话的 prompt 里没有它。
     """
     topic_id, after, service = _restarted_mid_turn(client, "第一句")
     room = uuid.UUID(topic_id)
@@ -360,9 +360,11 @@ def test_a_batch_whose_session_fails_after_a_restart_stays_held_without_replay(
             )
             holders = [row for row in rows if str(original.id) in row.held_block_ids]
             assert len(holders) == 1
-            assert holders[0].completed_at is None
-            assert str(original.id) not in holders[0].released_block_ids
-            assert consumed_turn(original) is None
+            assert holders[0].echoed_at is not None
+            assert str(original.id) in holders[0].released_block_ids
+            assert holders[0].failure == "api_error"
+            assert consumed_turn(original) is not None
+            assert read_failed(original) == "api_error"
 
     client.portal.call(original_input_is_still_held)
     _say(client, topic_id, "第二句")

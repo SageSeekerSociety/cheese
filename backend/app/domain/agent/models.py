@@ -5,7 +5,8 @@ unit of work — the work is the task, which outlives any number of these — an
 is not a container the platform schedules against. It is an interval with three
 moments and nothing else: ``started_at`` when the platform decided to speak,
 ``delivered_at`` when the transport accepted the write, ``stopped_at`` when the
-session came back. Running is exactly ``stopped_at IS NULL``.
+session came back, and ``stop_reason`` — which closer did it, since the moment
+alone cannot say. Running is exactly ``stopped_at IS NULL``.
 
 This used to be a JSON file at ``{workspace_root}/.turns-inflight.json``, whose
 whole job was to survive the process. It did that, and paid for it: it was a
@@ -29,7 +30,9 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -47,6 +50,20 @@ from app.domain.common import Timestamps, UuidPk
 # The registry `conversation_id` points at: mapped wherever this is, so the
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
+
+#: Who ended a turn's interval, as that closer names itself in
+#: ``AgentTurn.stop_reason``. One word each: after an incident the question is
+#: 「是谁让它停的」, and before this column the only answer was 「它停了」.
+STOP_FINISHED = "finished"
+STOP_STOPPED = "stopped"
+STOP_SWEEP = "sweep"
+STOP_TASK_CLOSED = "task_closed"
+STOP_TAKEN_OVER = "taken_over"
+STOP_UNDELIVERED = "undelivered"
+#: The platform destroyed the machine this turn was running on: its executor went
+#: with it, and no report about that turn can ever arrive
+#: (``turn_inputs.close_turns_of_a_destroyed_machine``).
+STOP_MACHINE_DESTROYED = "machine_destroyed"
 
 
 class AgentTurn(Base):
@@ -101,6 +118,11 @@ class AgentTurn(Base):
     stopped_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # 这一轮是怎么结束的，由关掉它的那一段代码写下（`STOP_REASONS`）。
+    # 没有这一列的时候，只有「停了多久」没有「谁让它停的」：2026-10-22 的一轮
+    # 开了 13 小时，事后只能查到它停了，查不到是会话自己收的、还是清扫收的、
+    # 还是别的什么收的。NULL = 这一列加上之前就结束的那些行，不是「不知道」。
+    stop_reason: Mapped[str | None] = mapped_column(String(32), default=None)
     # Admission refused a `/v1/messages` call for this turn's place because the
     # project's compute credits are spent (#715). First-writer-wins, like
     # `delivered_at`: the proxy caches a verdict for 30s and Claude Code retries
@@ -166,6 +188,23 @@ class GatewayAdminAudit(UuidPk, Timestamps, Base):
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class PlatformModelRole(Timestamps, Base):
+    """Which gateway model a platform model role runs on, as an administrator
+    pointed it (``app.core.model_roles`` lists the roles and reads them).
+
+    One row per role that has been pointed; a role with no row reads its
+    ``Settings`` field, so a deployment that never touches the page behaves as
+    it did before the table existed. Who pointed it and when is in
+    ``gateway_admin_audit`` (action ``role.set``), next to the model edits a
+    role is checked against.
+    """
+
+    __tablename__ = "platform_model_roles"
+
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model: Mapped[str] = mapped_column(String(200))
+
+
 class TurnResume(UuidPk, Base):
     """A resume the platform owes one seat after its turn failed on a transient
     model-service error (`agent.turn_resume`).
@@ -227,3 +266,78 @@ class TurnResume(UuidPk, Base):
         DateTime(timezone=True), nullable=True
     )
     dropped_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class SessionState(Base):
+    """One seat's session as its runner declares it (`harness/driven/lifecycle.py`).
+
+    A seat is (conversation, agent, harness): the key ``agent_sessions`` is
+    written under. ``worker_epoch`` is the registration the platform issued its
+    runner last; a runner, or a platform process, holding an older one can no
+    longer change anything here (``session_state.take``). ``worker_status`` is
+    what the runner said the session is doing, ``idle`` or ``running``, and
+    ``changed_at`` when it last said something different. ``run_epoch`` /
+    ``run_seq`` name the run the current process last began: the
+    ``(epoch, seq)`` of its ``running`` event, which the runner names the run
+    by and a task's report carries (`session_state.run_started`). Whether the
+    session is reachable is not here: that is a lease the reading process
+    holds, and unreachable is not a status the session has.
+    """
+
+    __tablename__ = "session_states"
+    __table_args__ = (
+        CheckConstraint(
+            "worker_status IN ('idle', 'running')",
+            name="ck_session_states_worker_status",
+        ),
+        Index(
+            "ix_session_states_running",
+            "conversation_id",
+            postgresql_where=text("worker_status = 'running'"),
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    worker_epoch: Mapped[int] = mapped_column(BigInteger)
+    worker_status: Mapped[str] = mapped_column(String(16))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: When the runner last reported the session's process gone.
+    exited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SessionOffset(Base):
+    """How far the platform has applied what one registration of a seat's
+    runner reported: the consumer offset, committed in the same transaction as
+    the effects of the events it covers (``session_state.take``).
+
+    Events of one runner arrive in sequence order and are applied in it, so an
+    event at or below ``applied_seq`` for its ``(seat, epoch)`` has been
+    applied, and applying it again is a no-op: the unique key of an event is
+    ``(seat, epoch, seq)``, and this row is the high-water mark of it. An event
+    is acknowledged to the runner only once ``projected_seq`` covers it too.
+    """
+
+    __tablename__ = "session_offsets"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    harness: Mapped[str] = mapped_column(String(32), primary_key=True)
+    epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    applied_seq: Mapped[int] = mapped_column(BigInteger)
+    #: How far what follows from those events outside this transaction (the
+    #: room's books, what is told) has been done: an event above it and at or
+    #: below ``applied_seq`` was applied, and what follows from it is done again
+    #: when it is delivered again (``session_state.projected``).
+    projected_seq: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    #: How far the room has landed the closing results those events carried:
+    #: done again, the rest of an event's projection does not hand the room
+    #: the same result twice (`session_state.result_landed`).
+    landed_seq: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")

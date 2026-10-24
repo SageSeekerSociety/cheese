@@ -7,7 +7,7 @@ is exactly what they asked for, priced the way the gateway prices it: cache
 reads at the cache rate.
 After each question the key's new spend is read and charged the way a
 project's is (``agent.gateway_spend``), to the person's credits
-(``kind = "assistant"``), once: the checkpoint the read moves past is the one
+(``kind = "assistant"``, or ``"assistant_write"`` for writing), once: the checkpoint the read moves past is the one
 stored with the key, compared and advanced in the same transaction as the
 charge.
 
@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import model_roles
 from app.core.config import settings
 from app.domain.agent import gateway_spend
 from app.domain.agent.gateway import LlmGateway
@@ -76,16 +77,26 @@ class PersonalGatewayKey:
         return await payer_for_person(session, self.user_id)
 
 
-def person_charge(user_id: int) -> Charge:
-    return Charge(model=settings.assistant_model, kind="assistant", user_id=user_id)
+#: The lines a person's 芝士 is charged under (``usage.report``): asking about
+#: something, and writing one — a 题目 drafted on its publish page.
+ASKING = "assistant"
+WRITING = "assistant_write"
 
 
-async def settle(sessions: async_sessionmaker[AsyncSession], user_id: int) -> None:
+def person_charge(user_id: int, kind: str = ASKING) -> Charge:
+    return Charge(
+        model=model_roles.model("assistant_model"), kind=kind, user_id=user_id
+    )
+
+
+async def settle(
+    sessions: async_sessionmaker[AsyncSession], user_id: int, kind: str = ASKING
+) -> None:
     """Charge one question's spend once the gateway has recorded it."""
     await gateway_spend.settle(
         sessions,
         gateway(),
         PersonalGatewayKey(user_id),
-        person_charge(user_id),
+        person_charge(user_id, kind),
         retry_after=RETRY_AFTER_S,
     )

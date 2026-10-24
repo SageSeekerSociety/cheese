@@ -217,6 +217,38 @@ def test_its_teammate_turns_the_thread_on_someones_word(client, stub_hooks):
     assert task["title"] == "登录验证码"
 
 
+def test_asking_to_open_here_inside_a_task_hands_that_task_back(client, stub_hooks):
+    """已经在任务里，队友又说「就在这儿开」：不是「这儿不能开」，是「你要的
+    地方就是这里」。回 200 而不是 422，并把这条任务交回去——2026-10-21，那句
+    「只有支线可以原地转为任务」被读成「这里没有任务」，于是同一件事被另开成
+    一条任务、两个 AI 各做了一份。"""
+    project, room = _channel(client)
+    root, thread, seat = _thread_with_a_turn(client, room)
+    client.post(f"/blocks/{root['id']}/upgrade", headers=session_auth_headers("alice"))
+
+    token = mint_scoped_token(project_id=project, topic_id=thread, agent_handle=seat)
+    bearer = client.headers.pop("Authorization", None)
+    try:
+        again = client.post(
+            f"/topics/{thread}/teammate-tasks",
+            json={"title": "再做一遍", "here": True},
+            headers={"X-Cheese-Token": token},
+        )
+        listed = client.get(
+            f"/topics/{room}/tasks", headers=session_auth_headers("alice")
+        )
+    finally:
+        if bearer is not None:
+            client.headers["Authorization"] = bearer
+
+    assert again.status_code == 200, again.text
+    body = again.json()["data"]
+    assert body["id"] == thread
+    assert body["already"] is True
+    # 没有再开一条：房间里还是只有这一件。
+    assert [t["id"] for t in listed.json()["data"]["data"]] == [thread]
+
+
 def test_a_closed_task_is_still_talked_in_and_keeps_nothing(client, stub_hooks):
     """After a task closes, people can still ask about it there; its teammate
     answers when named, as in a 支线, and nothing it does reaches the project

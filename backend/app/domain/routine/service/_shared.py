@@ -17,14 +17,12 @@ from app.domain.routine.models import RoutineTrigger
 
 #: A planned moment found later than this was missed (platform down), not late.
 MISSED_GRACE = timedelta(minutes=15)
-#: A queued run whose turn never began is reported as not started after this.
+#: A queued run its session never read is reported as not started after this.
 START_TIMEOUT = timedelta(hours=2)
-#: How long a delivered run may go without a report before it counts as failed.
-#: A turn row cannot say when the work ended: in a live session every input's
-#: row is delivered and stopped within milliseconds, and the business backend
-#: does not see whether the device's session is still busy. So the only clock
-#: is the longest a turn may run at all, plus a little for the report to land;
-#: a real failure is caught sooner by the room's own turn-failed notice.
+#: How long a run its session read may go without a report before it counts as
+#: failed: the longest a session may work on one thing at all, plus a little
+#: for the report to land. A real failure is caught sooner, by the runner
+#: reporting the work the run was read into failed.
 REPORT_TIMEOUT = timedelta(seconds=settings.agent_turn_hard_ceiling_s) + timedelta(
     minutes=5
 )
@@ -32,6 +30,17 @@ NO_REPORT = "AI 队友一直没有交回结果"
 
 #: Loop breaker: an event rule fires at most this often per hour.
 EVENT_RUNS_PER_HOUR = 6
+#: Why an event past that limit did not run: written on the run, and how the
+#: sweep knows the owner has already been told this hour.
+OVER_EVENT_LIMIT = (
+    f"一小时内已触发 {EVENT_RUNS_PER_HOUR} 次，这一次不执行（防止循环触发）"
+)
+#: How far back each sweep looks again for events: one written before the
+#: last sweep but committed after it carries an earlier time than the cursor.
+#: An event found twice is one run (its occurrence key).
+EVENT_LOOKBACK = timedelta(minutes=2)
+#: Why a moment came while the rule's last run was still going.
+STILL_RUNNING = "上一次执行还没结束，这一次不执行"
 
 EVENT_TRIGGERS = frozenset(
     {

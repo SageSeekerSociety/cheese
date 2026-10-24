@@ -49,6 +49,8 @@ PUSHABLE: Final = frozenset(
         NotificationType.ROOM_NOTICE,
         NotificationType.CHEESE_QUESTION,
         NotificationType.TEAM_JOIN_REQUEST,
+        NotificationType.TASK_DUE_SOON,
+        NotificationType.ASSISTANT_NOTICE,
     }
 )
 
@@ -152,6 +154,13 @@ def push_text(
         doc = str(payload.get("documentTitle") or "").strip()
         title = in_language(say("pushMentionedInDoc", who=who, doc=doc), locale)
         return (title, str(payload.get("content") or "").strip())
+    if type_ is NotificationType.MENTION and payload.get("roomPath"):
+        # Mentioned in a comment on a room file (`api.routes.file_comments`):
+        # the file is where, whichever channel it belongs to.
+        who = str(payload.get("authorName") or payload.get("author") or "").strip()
+        file = str(payload.get("documentTitle") or "").strip()
+        title = in_language(say("pushMentionedInFile", who=who, doc=file), locale)
+        return (title, str(payload.get("content") or "").strip())
     if type_ in _SAID_IN_ROOM and room:
         who = str(payload.get("authorName") or payload.get("author") or "").strip()
         title = in_language(say(_SAID_IN_ROOM[type_], who=who, room=room), locale)
@@ -170,6 +179,10 @@ def push_text(
     if said is None:
         locale = LOCALES[0]
     content = (said or str(payload.get("content") or "")).strip()
+    if type_ is NotificationType.ASSISTANT_NOTICE:
+        # What the person's own 芝士 did on its own: the sentence, then what
+        # it said about it.
+        return (content, str(payload.get("quote") or "").strip())
     where = in_language(say("pushInRoom", room=room), locale) if room else ""
     return (content or in_language(say("pushNotice"), locale), where)
 
@@ -189,10 +202,20 @@ def push_link(payload: dict[str, Any]) -> str:
 
     和 `frontend/public/push-sw.js` 的 `readPayload` 是同一条规则。
     """
+    # The person's own 芝士 (`routine.personal`): the conversation, in the
+    # panel, over their inbox.
+    if conversation := payload.get("assistantConversation"):
+        return f"/inbox?assistant={conversation}"
     project_id = payload.get("projectId")
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")
     thread_id = payload.get("threadId")
+    # A space's 题目 (`task_notices`): its page. Its id is `spaceTaskId`, not
+    # `taskId`, which names a project's task.
+    if (space_id := payload.get("spaceId")) and (
+        space_task := payload.get("spaceTaskId")
+    ):
+        return f"/spaces/{space_id}/tasks/{space_task}"
     if project_id and topic_id:
         if task_id:
             return f"/projects/{project_id}/topics/{topic_id}/tasks/{task_id}"

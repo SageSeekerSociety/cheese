@@ -17,6 +17,7 @@
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -27,6 +28,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.gateway_models import GatewayModelsService, reset_cache
+from app.domain.agent.models import PlatformModelRole
 from app.domain.agent.schemas import (
     ModelCreate,
     ModelUpdate,
@@ -42,9 +44,24 @@ class _StubDb:
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        # Platform model roles an administrator pointed (`platform_model_roles`).
+        self.roles: dict[str, PlatformModelRole] = {}
 
     def add(self, obj: object) -> None:
+        if isinstance(obj, PlatformModelRole):
+            self.roles[obj.role] = obj
+            return
         self.added.append(obj)
+
+    async def scalars(self, _statement: object) -> object:
+        rows = list(self.roles.values())
+        return SimpleNamespace(all=lambda: rows)
+
+    async def get(self, _cls: object, key: str) -> PlatformModelRole | None:
+        return self.roles.get(key)
+
+    async def delete(self, obj: PlatformModelRole) -> None:
+        self.roles.pop(obj.role, None)
 
     async def flush(self) -> None:
         return None
@@ -83,6 +100,12 @@ class _Gateway:
     def __init__(self, rows: list[dict] | None = None) -> None:
         self.rows: list[dict] = json.loads(json.dumps(rows or []))
         self.requests: list[httpx.Request] = []
+        # Virtual keys by alias -> the models each may call (`/key/update`).
+        self.keys: dict[str, list[str]] = {}
+        # The ledger by upstream model (`breakdown.models`), and the start date
+        # of every usage window asked for.
+        self.ledger: dict[str, float] = {}
+        self.usage_starts: list[str] = []
 
     def _find(self, model_id: str) -> dict | None:
         return next((r for r in self.rows if r["model_info"]["id"] == model_id), None)
@@ -96,7 +119,17 @@ class _Gateway:
         if path == "/model/info":
             return httpx.Response(200, json={"data": self.rows})
         if path == "/user/daily/activity/aggregated":
-            return httpx.Response(200, json={"results": [], "metadata": {}})
+            self.usage_starts.append(request.url.params["start_date"])
+            models = {
+                upstream: {"metrics": {"spend": spend}}
+                for upstream, spend in self.ledger.items()
+            }
+            results = (
+                [{"date": "2026-10-20", "breakdown": {"models": models}}]
+                if models
+                else []
+            )
+            return httpx.Response(200, json={"results": results, "metadata": {}})
         if path == "/model/new":
             model_id = str(uuid.uuid4())
             params = dict(body["litellm_params"])
@@ -124,6 +157,12 @@ class _Gateway:
             return httpx.Response(200, json={})
         if path == "/model/delete":
             self.rows = [r for r in self.rows if r["model_info"]["id"] != body["id"]]
+            return httpx.Response(200, json={})
+        if path == "/key/update":
+            alias = body.get("key_alias")
+            if alias not in self.keys:
+                return httpx.Response(404, json={"detail": "no key holds the alias"})
+            self.keys[alias] = list(body["models"])
             return httpx.Response(200, json={})
         if path in ("/model/block", "/model/unblock"):
             row = self._find(body["model_id"])
@@ -234,6 +273,24 @@ async def test_a_source_added_beside_a_config_model_carries_the_models_metadata(
     assert new_row["model_info"]["cheese_session_header"] == "x-opencode-session"
     assert "extra_headers" not in config_row["litellm_params"]
     assert new_row["litellm_params"]["order"] == 1
+
+
+@pytest.mark.anyio
+async def test_a_source_added_beside_a_row_that_cannot_search_is_not_marked_so():
+    # Whether a deployment runs web search is a fact about its server (RUC's vLLM
+    # does not), measured per row; a new route must not inherit "cannot search",
+    # or the gateway never sends a search to it.
+    config = json.loads(json.dumps(_KIMI_CONFIG))
+    config["model_info"]["supports_web_search"] = False
+    gw = _Gateway([config])
+    service = _service(gw)
+
+    await service.add_source(
+        handle="admin", name="kimi-k3", payload=SourceCreate(**_GO)
+    )
+
+    _, new_row = gw.group("kimi-k3")
+    assert "supports_web_search" not in new_row["model_info"]
 
 
 @pytest.mark.anyio
@@ -429,7 +486,8 @@ async def test_a_reorder_naming_a_config_source_writes_nothing_at_all():
 
 @pytest.mark.anyio
 async def test_pausing_one_source_leaves_the_model_offered():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     first = gw.group("glm")[0]["model_info"]["id"]
@@ -824,7 +882,8 @@ async def test_a_source_ordered_after_the_others_needs_no_say_so():
 
 @pytest.mark.anyio
 async def test_a_source_added_to_a_paused_model_stays_paused():
-    gw = _Gateway()
+    # Another offered model: pausing the last one is refused.
+    gw = _Gateway([_KIMI_CONFIG])
     service = _service(gw)
     await _two_runtime_sources(gw, service)
     await service.set_blocked(handle="admin", name="glm", blocked=True)
@@ -907,3 +966,397 @@ async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
     assert new_row["litellm_params"]["model"] == config_row["litellm_params"]["model"]
     assert new_row["model_info"]["cheese_spend_cap_usd"] == 1000
     assert new_row["model_info"]["cheese_no_explicit_cache"] is True
+
+
+# --- Spend cap: one per upstream model, set from the page ----------------------
+
+_ARGON = "gemini/gemini-4-argon"
+
+
+async def _argon_rows(service: GatewayModelsService) -> None:
+    """Two runtime models on the argon upstream (one with a second source), and
+    one source on another upstream."""
+    for name in ("argon", "argon-b"):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(name=name, upstream_model=_ARGON, **_PAID),
+        )
+    await service.add_source(
+        handle="admin",
+        name="argon",
+        payload=SourceCreate(
+            **_PAID, upstream_model=_ARGON, order=1, make_primary=True
+        ),
+    )
+    await service.add_source(
+        handle="admin",
+        name="argon",
+        payload=SourceCreate(**_PAID, upstream_model="gemini/other", order=2),
+    )
+    reset_cache()
+
+
+def _caps(gw: _Gateway) -> list[object]:
+    return [r["model_info"].get("cheese_spend_cap_usd") for r in gw.rows]
+
+
+async def _cap_on_page(service: GatewayModelsService, name: str) -> list[tuple]:
+    item = await _listed(service, name)
+    return [(s["upstream_raw"], s["spend_cap_usd"]) for s in item["sources"]]
+
+
+async def _set_cap(
+    service: GatewayModelsService, name: str, source_id: str, cap: float | None
+) -> None:
+    await service.update_source(
+        handle="admin",
+        name=name,
+        source_id=source_id,
+        payload=SourceUpdate(spend_cap_usd=cap),
+    )
+    reset_cache()
+
+
+@pytest.mark.anyio
+async def test_a_cap_set_on_one_source_holds_on_every_source_of_its_upstream():
+    """spend_cap.py counts a cap against the upstream's whole bill, so a second
+    key or model name on the same upstream must not run under another cap."""
+    gw = _Gateway()
+    db = _StubDb()
+    service = _service(gw, db)
+    await _argon_rows(service)
+
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+
+    on_argon = [r for r in gw.rows if r["litellm_params"]["model"] == _ARGON]
+    assert len(on_argon) == 3
+    assert [r["model_info"]["cheese_spend_cap_usd"] for r in on_argon] == [2500] * 3
+    other = next(r for r in gw.rows if r["litellm_params"]["model"] == "gemini/other")
+    assert "cheese_spend_cap_usd" not in other["model_info"]
+    assert sorted(await _cap_on_page(service, "argon")) == [
+        (_ARGON, 2500.0),
+        (_ARGON, 2500.0),
+        ("gemini/other", None),
+    ]
+    audit = db.added[-1]
+    assert (audit.action, audit.result) == ("source.update", "ok")
+    assert audit.after["spend_cap_usd"] == 2500
+    assert len(audit.after["spend_cap_also_on"]) == 2
+
+
+@pytest.mark.anyio
+async def test_a_capped_source_shows_what_its_upstream_has_cost_all_time():
+    """Used is the ledger's all-time total for the upstream, the number
+    spend_cap.py refuses on; a source without a cap shows none."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.ledger = {_ARGON: 2100.0, "gemini/other": 5.0}
+
+    item = await _listed(service, "argon")
+
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
+    assert "2000-01-01" in gw.usage_starts
+
+
+@pytest.mark.anyio
+async def test_a_cap_on_an_upstream_with_no_calls_has_used_nothing():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+
+    item = await _listed(service, "argon-b")
+
+    assert [s["spend_cap_used_usd"] for s in item["sources"]] == [0.0]
+
+
+@pytest.mark.anyio
+async def test_without_a_cap_the_all_time_ledger_is_not_read():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    gw.usage_starts.clear()
+
+    item = await _listed(service, "argon")
+
+    assert {s["spend_cap_used_usd"] for s in item["sources"]} == {None}
+    assert "2000-01-01" not in gw.usage_starts
+
+
+@pytest.mark.anyio
+async def test_clearing_the_cap_lifts_it_on_every_source_of_its_upstream():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    edited = gw.group("argon")[0]["model_info"]["id"]
+    await _set_cap(service, "argon", edited, 2500)
+
+    await _set_cap(service, "argon", edited, None)
+
+    assert [cap for _, cap in await _cap_on_page(service, "argon")] == [None] * 3
+    assert [cap for _, cap in await _cap_on_page(service, "argon-b")] == [None]
+
+
+@pytest.mark.anyio
+async def test_an_edit_that_does_not_name_the_cap_leaves_it():
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    edited = gw.group("argon")[0]["model_info"]["id"]
+    await _set_cap(service, "argon", edited, 2500)
+    before = _caps(gw)
+
+    await service.update_source(
+        handle="admin", name="argon", source_id=edited, payload=SourceUpdate(order=3)
+    )
+
+    assert _caps(gw) == before
+
+
+@pytest.mark.anyio
+async def test_a_cap_that_disagrees_with_a_config_row_on_its_upstream_is_refused():
+    """The config.yaml row cannot be rewritten from the page; letting the two
+    differ would refuse the same bill at two totals."""
+    gw = _Gateway([_argon_like_kimi()])
+    service = _service(gw)
+    await service.add_source(
+        handle="admin",
+        name="kimi-k3",
+        payload=SourceCreate(
+            protocol="anthropic",
+            upstream_model="kimi-k3",
+            api_base="https://api.moonshot.cn/anthropic",
+            order=1,
+            prices={"input": 2.8e-6, "output": 1.4e-5},
+            make_primary=True,
+        ),
+    )
+    runtime = gw.group("kimi-k3")[1]["model_info"]["id"]
+    reset_cache()
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError) as refused:
+        await service.update_source(
+            handle="admin",
+            name="kimi-k3",
+            source_id=runtime,
+            payload=SourceUpdate(spend_cap_usd=1500, order=4),
+        )
+
+    assert "config.yaml" in str(refused.value)
+    assert len(gw.writes()) == before
+    # The config row's own figure is accepted: nothing disagrees.
+    await _set_cap(service, "kimi-k3", runtime, 1000)
+    assert _caps(gw) == [1000, 1000]
+
+
+@pytest.mark.parametrize("cap", [0, -5, float("inf")])
+def test_a_cap_must_be_a_positive_amount(cap):
+    with pytest.raises(ValidationError):
+        SourceUpdate(spend_cap_usd=cap)
+
+
+# --- What config.yaml's check held the file to, held at the write -------------
+
+
+@pytest.mark.anyio
+async def test_the_last_offered_model_cannot_be_paused_deleted_or_unlisted():
+    """With no offered model, every agent settings page is bare."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+    first, second = (r["model_info"]["id"] for r in gw.group("glm"))
+    await service.set_source_blocked(
+        handle="admin", name="glm", source_id=first, blocked=True
+    )
+    reset_cache()
+    before = len(gw.writes())
+
+    for attempt in (
+        lambda: service.set_blocked(handle="admin", name="glm", blocked=True),
+        lambda: service.delete(handle="admin", name="glm"),
+        lambda: service.update(
+            handle="admin", name="glm", payload=ModelUpdate(selectable=False)
+        ),
+        lambda: service.set_source_blocked(
+            handle="admin", name="glm", source_id=second, blocked=True
+        ),
+        lambda: service.delete_source(handle="admin", name="glm", source_id=second),
+    ):
+        with pytest.raises(BadRequestError):
+            await attempt()
+    assert len(gw.writes()) == before
+
+    # With another offered model the same pause goes through.
+    gw.rows.append(json.loads(json.dumps(_KIMI_CONFIG)))
+    reset_cache()
+    await service.set_blocked(handle="admin", name="glm", blocked=True)
+
+
+_CLAUDE_PRICES = {
+    "input": 2e-6,
+    "output": 1e-5,
+    "cache_read": 2e-7,
+    "cache_creation": 2.5e-6,
+    "cache_creation_1h": 4e-6,
+}
+
+
+async def _claude_price_row(service: GatewayModelsService) -> str:
+    """A subscription model's price row: unlisted, paused, no credential."""
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="claude-sonnet-5",
+            protocol="anthropic",
+            upstream_model="claude-sonnet-5",
+            prices=_CLAUDE_PRICES,
+        ),
+    )
+    reset_cache()
+    await service.set_blocked(handle="admin", name="claude-sonnet-5", blocked=True)
+    reset_cache()
+    return (await _listed(service, "claude-sonnet-5"))["sources"][0]["source_id"]
+
+
+@pytest.mark.anyio
+async def test_the_one_hour_cache_write_price_is_read_and_edited_on_the_page():
+    """Subscription billing reads it (`usage.pricing.Rate.cache_write_1h`)."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _claude_price_row(service)
+
+    (row,) = gw.group("claude-sonnet-5")
+    assert row["litellm_params"]["cache_creation_input_token_cost_above_1hr"] == 4e-6
+    assert "api_key" not in row["litellm_params"]
+    item = await _listed(service, "claude-sonnet-5")
+    assert item["sources"][0]["prices"]["cache_creation_1h"] == 4e-6
+
+    await service.update_source(
+        handle="admin",
+        name="claude-sonnet-5",
+        source_id=source_id,
+        payload=SourceUpdate(prices={**_CLAUDE_PRICES, "cache_creation_1h": 8e-6}),
+    )
+    assert (
+        gw.group("claude-sonnet-5")[0]["litellm_params"][
+            "cache_creation_input_token_cost_above_1hr"
+        ]
+        == 8e-6
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "prices",
+    [
+        {**_CLAUDE_PRICES, "output": None},
+        {**_CLAUDE_PRICES, "cache_creation_1h": None},
+        {"input": 2e-6, "output": 1e-5},
+    ],
+)
+async def test_a_price_a_row_has_can_be_changed_but_never_cleared(prices):
+    """Paused and unlisted or not, every price a row has is what usage under its
+    name is billed by; an edit that empties one is refused, nothing written."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    source_id = await _claude_price_row(service)
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError):
+        await service.update_source(
+            handle="admin",
+            name="claude-sonnet-5",
+            source_id=source_id,
+            payload=SourceUpdate(prices=prices),
+        )
+    assert len(gw.writes()) == before
+
+
+@pytest.mark.anyio
+async def test_a_source_without_both_prices_is_refused_on_any_model():
+    """Not only on an offered model: an unlisted model is billed by its prices too."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    await _claude_price_row(service)
+    before = len(gw.writes())
+
+    with pytest.raises(BadRequestError):
+        await service.add_source(
+            handle="admin",
+            name="claude-sonnet-5",
+            payload=SourceCreate(
+                protocol="anthropic",
+                upstream_model="claude-sonnet-5",
+                order=5,
+                prices={"input": 2e-6},
+            ),
+        )
+    assert len(gw.writes()) == before
+
+
+@pytest.mark.anyio
+async def test_a_transcription_row_priced_on_input_only_is_kept_and_stays_editable():
+    """Speech to text charges for the audio in and nothing out: one zero is a
+    price. Saving the row with its prices as they are (the page sends them on
+    every save) rewrites nothing and is not refused."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+    await service.add(
+        handle="admin",
+        payload=ModelCreate(
+            name="asr",
+            upstream_model="qwen-asr/flash",
+            prices={"input": 1.2394e-6, "output": 0},
+        ),
+    )
+    reset_cache()
+    source = gw.group("asr")[0]["model_info"]["id"]
+    before = len(gw.writes())
+
+    await service.update_source(
+        handle="admin",
+        name="asr",
+        source_id=source,
+        payload=SourceUpdate(
+            order=4, free=False, prices={"input": 1.2394e-6 * (1 + 1e-12), "output": 0}
+        ),
+    )
+
+    (sent,) = [json.loads(r.content) for r in gw.writes()[before:]]
+    assert sent["litellm_params"] == {"order": 4}
+    with pytest.raises(BadRequestError):
+        await service.add(
+            handle="admin",
+            payload=ModelCreate(
+                name="zeros", upstream_model="x/y", prices={"input": 0, "output": 0}
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_a_row_priced_before_todays_rules_takes_an_unrelated_edit():
+    gw = _Gateway(
+        [
+            _KIMI_CONFIG,
+            {
+                "model_name": "legacy",
+                "litellm_params": {"model": "anthropic/legacy"},
+                "model_info": {"id": "rt-legacy", "db_model": True},
+            },
+        ]
+    )
+    service = _service(gw)
+
+    await service.update_source(
+        handle="admin",
+        name="legacy",
+        source_id="rt-legacy",
+        payload=SourceUpdate(order=2, free=False, prices={"input": None}),
+    )
+
+    assert gw.group("legacy")[0]["litellm_params"]["order"] == 2

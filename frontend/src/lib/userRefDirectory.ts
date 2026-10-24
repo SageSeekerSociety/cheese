@@ -14,6 +14,8 @@ import type { UserRefTarget } from '@/lib/userRef'
 export interface UserRefDirectory {
   /** 名册里这个人的显示名；查不到给 null，chip 退回 handle。 */
   name(handle: string): string | null
+  /** 设了个人备注时悬停看到的原名与 @handle；没有备注给 null。 */
+  title?(handle: string): string | null
   /**
    * 点这个人去哪。projectId 不传（undefined）时取眼下所在的项目；传 null 表示这句话
    * 不属于眼下这个项目（例如全局通知），去个人主页。没有去处给 null。

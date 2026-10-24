@@ -44,6 +44,15 @@
  * else's — and it comes off the question, not out of the room: the message they
  * sent stays, and what they typed there stays with it. Confirmed first, because
  * the question goes back to waiting and everyone sees the options again.
+ *
+ * Answering is a message, and the card only grows into its answered shape when
+ * that message lands and the question comes back with it. Until then it still
+ * looks unanswered, so it locks itself the moment an option or the field is
+ * used: a second click in that window is the same message sent twice, and the
+ * room really would gain a second message. The lock shows as the options, the
+ * field and the ✕ being dead, the same way they look to someone the question
+ * does not wait on. It lifts when that answer stops being on its way — it landed,
+ * or the server refused it and the line sits in the room with 「重试」.
  */
 import type { Block } from '../../cx_types'
 
@@ -64,6 +73,11 @@ const props = defineProps<{
   names: Record<string, string>
   /** 这里已经不能回答了：任务关了、频道归档了。 */
   closed?: boolean
+  /**
+   * 我在这道题上有一条答复还压在发件箱里、题上还没记下：选项先按住。
+   * 谁在算它见 `ChatTimeline.answeringQuestion`。
+   */
+  answering?: boolean
   /** 看着这间房的人（自己的 handle）：哪一条答案旁边有「撤回」由它定。 */
   viewer?: string
 }>()
@@ -136,16 +150,41 @@ const whoKey = computed(() => {
 // 选项还摆在看的人面前：没人答过、没结束、没被所有人跳过、他自己也没跳过。
 const choosing = computed(() => !answers.value.length && !props.closed && !skippedByAll.value && !mySkip.value)
 
+/**
+ * 这道题的回答已经打出去了、题上还没看到它：这一段时间里选项不再收第二下。
+ *
+ * 拦在第一下的自己这一半（`sent`）点下去当场就生效，管的是同一帧里又冒出来的第二下
+ * ——那时 DOM 上的 `disabled` 还没画上去。父层给的 `answering` 是发件箱里的实情，管
+ * 的是卡片被重建（切话题、滚出屏幕再回来）之后本地那个记号留不住的时候，也说明这一
+ * 趟什么时候结束：落库了、被服务端拒了，它都落回 false，本地这一半跟着松开。
+ */
+const sent = ref(false)
+watch(
+  () => props.answering,
+  (answering) => {
+    if (!answering) sent.value = false
+  }
+)
+const locked = computed(() => sent.value || !!props.answering)
+
+// 点一个选项：那几个字就是对这道题的回复。`disabled` 挡得住手，这里挡得住同一趟里
+// 又冒出来的第二下（键盘的数字键也走这里）。
+function pick(text: string) {
+  if (locked.value || !canAnswer.value) return
+  sent.value = true
+  emit('reply', label(text))
+}
+
 // 卡片有焦点时按 1–9 就是点第几个选项。末行输入框里的数字是在打字，不算；带修饰键的
 // 是别的快捷键（⌘1–9 是切侧栏），也不算。
 function onCardKey(e: KeyboardEvent) {
   if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return
-  if (!/^[1-9]$/.test(e.key) || !choosing.value || !canAnswer.value) return
+  if (!/^[1-9]$/.test(e.key) || !choosing.value || !canAnswer.value || locked.value) return
   if ((e.target as HTMLElement).closest('textarea, input, [contenteditable="true"]')) return
   const option = options.value[Number(e.key) - 1]
   if (!option) return
   e.preventDefault()
-  emit('reply', label(option.text))
+  pick(option.text)
 }
 
 function confirmWithdraw() {
@@ -171,7 +210,8 @@ watch(otherField, fitOther, { flush: 'post' })
 
 function sendOther() {
   const text = otherText.value.trim()
-  if (!text || !canAnswer.value) return
+  if (!text || !canAnswer.value || locked.value) return
+  sent.value = true
   otherText.value = ''
   emit('reply', text)
   requestAnimationFrame(fitOther)
@@ -214,7 +254,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
         </div>
       </div>
       <BaseButton
-        v-if="choosing && canAnswer"
+        v-if="choosing && canAnswer && !locked"
         class="ask-replies__skip"
         kind="ghost"
         size="sm"
@@ -262,8 +302,8 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           :key="option.text"
           type="button"
           class="ask-replies__option"
-          :disabled="!canAnswer"
-          @click="emit('reply', label(option.text))"
+          :disabled="!canAnswer || locked"
+          @click="pick(option.text)"
         >
           <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
           <span class="ask-replies__body">
@@ -276,14 +316,14 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
             <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
           </span>
         </button>
-        <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer }">
+        <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer || locked }">
           <textarea
             ref="otherField"
             v-model="otherText"
             rows="1"
             autocomplete="off"
             class="ask-replies__other-input"
-            :disabled="!canAnswer"
+            :disabled="!canAnswer || locked"
             :placeholder="t('ask.replies.otherPlaceholder')"
             :aria-label="t('ask.replies.otherPlaceholder')"
             @input="fitOther"
@@ -294,7 +334,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
             kind="ghost"
             size="sm"
             icon="mdi-arrow-up"
-            :disabled="!canAnswer || !otherText.trim()"
+            :disabled="!canAnswer || locked || !otherText.trim()"
             :aria-label="t('ask.replies.otherSend')"
             :title="t('ask.replies.otherSend')"
             @click="sendOther"

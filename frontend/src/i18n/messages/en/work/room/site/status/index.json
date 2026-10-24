@@ -1,5 +1,4 @@
 {
-  "acting": "{verb}",
   "api_retry": "Retry",
   "compact_boundary": "Context compacted",
   "compacting": "Compacting context",
@@ -8,6 +7,7 @@
   "queuedBehind": "Queued, {ahead} ahead",
   "retrying": "Retrying",
   "retryingCount": "Retrying (attempt {attempt})",
+  "sync_failed": "Sync failed",
   "task_notification": "Subagent returned",
   "task_started": "Subagent started",
   "thinking": "Thinking",

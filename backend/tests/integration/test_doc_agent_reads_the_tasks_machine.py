@@ -6,8 +6,6 @@ It never takes a machine for a question: a task whose machine is not in hand
 nothing else: no file written, no command started.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -30,6 +28,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
 

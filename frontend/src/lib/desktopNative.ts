@@ -25,6 +25,7 @@ const SELECTABLE = [
   // What a person reads.
   'pre',
   'code',
+  '.md-reader',
   '.md-content',
   '.card-markdown',
   '.markdown-body',
@@ -35,6 +36,7 @@ const SELECTABLE = [
   '.msg-select',
   '.chat-response',
   '.reasoning-text',
+  '.record-row__status',
   // Step checklists: a teammate's in the chat, a room's and a card's progress.
   '.checklist',
   '.todo-checklist',

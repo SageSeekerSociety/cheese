@@ -13,6 +13,13 @@
         <h1 class="t-page-title shared-title">{{ doc.title || t('work.room.doc.untitled') }}</h1>
         <p class="t-meta-read shared-meta">{{ t('publicSite.sharedDoc.updated', { time: updated }) }}</p>
         <MarkdownView class="md-content t-reading" :source="doc.content" />
+        <footer class="shared-colophon">
+          <span>{{ t('publicSite.sharedDoc.colophon.brand') }}</span>
+          <NavLink v-if="invite" :to="invite.to" class="shared-colophon__link" data-testid="colophon-invite">
+            {{ t('publicSite.sharedDoc.colophon.seats', { name: invite.name, n: invite.seats }) }} →
+          </NavLink>
+          <NavLink v-else to="/" class="shared-colophon__link">{{ t('publicSite.aboutCheese') }} →</NavLink>
+        </footer>
       </template>
     </article>
   </main>
@@ -24,6 +31,7 @@ import type { SharedDocument } from '@/api/documentShares'
 import { computed } from 'vue'
 
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { absDateTime } from '@/lib/dateText'
 
@@ -35,6 +43,17 @@ const props = defineProps<{
 }>()
 
 const updated = computed(() => (props.doc ? absDateTime(Date.parse(props.doc.updated_at)) : ''))
+
+/** The way in on the sharer's own invite code, while it still has seats; otherwise none. */
+const invite = computed(() => {
+  const by = props.doc?.shared_by
+  if (!by?.code || by.seats_left <= 0) return null
+  return {
+    name: by.nickname || `@${by.handle}`,
+    seats: by.seats_left,
+    to: { path: '/account/signup', query: { code: by.code } },
+  }
+})
 </script>
 
 <style scoped>
@@ -56,6 +75,29 @@ const updated = computed(() => (props.doc ? absDateTime(Date.parse(props.doc.upd
 
 .shared-meta {
   margin-bottom: 24px;
+}
+
+/* A colophon, not a banner: one quiet line under the text, the way in on the right. */
+.shared-colophon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 64px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.shared-colophon__link {
+  color: var(--muted);
+}
+
+.shared-colophon__link:hover {
+  color: var(--text);
 }
 
 .shared-gone {

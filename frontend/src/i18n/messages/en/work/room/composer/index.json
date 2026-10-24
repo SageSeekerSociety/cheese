@@ -10,6 +10,7 @@
   "removeAttachment": "Remove {name}",
   "replyTo": "Replying to {name}: {text}",
   "send": "Send",
+  "stop": "Stop",
   "sendPhotos": "Send photos or videos",
   "sendUploading": "Uploading attachments — send once they finish",
   "summonBusy": "{name} is busy and will pick this up next",

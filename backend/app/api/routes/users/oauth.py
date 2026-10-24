@@ -23,13 +23,13 @@ from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.app_return import back_in_app, started_in_app
 from app.api.deps import (
     get_oauth_service,
     get_user_auth_service,
 )
 from app.api.legal_deps import client_context
 from app.api.response import ok, typed_response
-from app.api.app_return import back_in_app, started_in_app
 from app.api.routes.users._common import (
     GithubAppIntentOut,
     GithubAppIntentRequest,
@@ -68,9 +68,9 @@ from app.domain.identity.handles import is_reserved_username
 from app.domain.invite.services import InviteCodeService
 from app.domain.legal.services import ConsentService
 from app.domain.oauth.services import OAuthService
+from app.domain.usage import referrals
 from app.domain.user.login_security import LoginDelay, TOTPService
 from app.domain.user.passwords import require_new_password
-from app.domain.user.sessions import SessionService
 from app.domain.user.services import (
     NICKNAME_MAX_LENGTH,
     USERNAME_MAX_LENGTH,
@@ -78,6 +78,7 @@ from app.domain.user.services import (
     is_valid_username,
     normalize_nickname,
 )
+from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -1034,7 +1035,7 @@ async def oauth_create_user(
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect("INVITE_CODE_REQUIRED", str(exc))
     invite_service = InviteCodeService(session)
-    if invite_code:
+    if invite_code and settings.require_invite_code:
         try:
             await invite_service.validate_code(invite_code)
         except ValueError as exc:
@@ -1097,12 +1098,16 @@ async def oauth_create_user(
         )
         if invite_code:
             try:
-                await invite_service.consume_code(invite_code)
+                consumed = await invite_service.consume_code(invite_code)
             except ValueError as exc:
-                await session.rollback()
-                return _oauth_error_redirect(
-                    "INVALID_INVITE_CODE", str(_invite_code_error(exc))
-                )
+                if settings.require_invite_code:
+                    await session.rollback()
+                    return _oauth_error_redirect(
+                        "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                    )
+                consumed = None
+            if consumed is not None:
+                await referrals.record_referral(session, consumed, user.id)
         response = await _complete_oauth_binding(
             request=request,
             session=session,

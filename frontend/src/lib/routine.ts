@@ -45,6 +45,13 @@ export interface Routine {
    *  行上那颗图形要用它：规则自己只有「启用中 / 已暂停」两档，正在排队的那条画沙漏、
    *  上一次没跑成的那条画红叉，这两档只在执行记录里。 */
   last_run_status: RoutineRunStatus | null
+  /** 这条规则**本月**扣掉的额度（点，1 点 = 1 分钱）。
+   *
+   *  它跑在共享团队的项目里时，花的是团队额度、不记到任何人头上；「本月」是平台口径
+   *  的一个月（北京时间每月 1 日重置），和团队额度页的「本月已用」同一个起点。
+   *
+   *  只含模型调用（含网页搜索），不含云端算力 —— 算力按频道按分钟记，挂不到某一轮上。 */
+  credits_this_month: number
   agent_handle: string
   owner_handle: string
   /** 建这条规则的人：人或者 AI 队友。 */
@@ -73,6 +80,9 @@ export interface RoutineRun {
   created_at: string
   started_at: string | null
   finished_at: string | null
+  /** 这一次执行**本月**扣掉的额度（点）。`null` 是「还没有数」：还没跑完，或者刚
+   *  跑完花费还没落账（几秒到几十秒）。写 0 是在说「这一轮没花钱」，两件事要分开。 */
+  credits?: number | null
 }
 
 /**
@@ -90,6 +100,9 @@ export interface RoutineRecordsView {
   runs: RoutineRun[]
   /** 筛过之后一共几次。 */
   total: number
+  /** 这条规则**本月**扣掉的额度（点）—— 整条规则的，不是这一页的。翻到第几页都是
+   *  同一个数：读者问的是「这条规则这个月花了多少」。 */
+  creditsThisMonth: number
   pages: number
   loading: boolean
   /** 结果文件那一串整串点开去哪儿。项目总览页给（指回这一条所在的房间 —— 那一页上
@@ -146,6 +159,17 @@ const STATE_ICONS: Record<RoutineStateKind, string> = {
 
 export function routineStateIcon(kind: RoutineStateKind): string {
   return STATE_ICONS[kind]
+}
+
+/** 额度（点）写成给人读的一句。`null` / 没给是「还没有数」，和 0 分开。 */
+export function creditsLabel(credits: number | null | undefined): string {
+  if (credits === null || credits === undefined) return t('routines.spend.pending')
+  return t('routines.spend.points', { n: fmtCredits(credits) })
+}
+
+/** 点数：最多一位小数，千分位分开。和额度页同一套写法（`lib/adminCredits`）。 */
+export function fmtCredits(n: number): string {
+  return new Intl.NumberFormat(i18n.global.locale.value, { maximumFractionDigits: 1 }).format(n)
 }
 
 /** 一颗结果文件在行上的名字：记录里写的是它在频道文件区里的路径。 */

@@ -10,10 +10,15 @@ tool call (``SandboxHome.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
-too, but only until the spec's ``background_cap_s`` after that activity. A
-process the agent detached itself (``nohup … &``, a dev server) is not work in
-progress and keeps nothing up. A line that has handed its delivery over and is
-waiting on the checks the platform is watching for its card
+too, but only until the spec's ``background_cap_s`` after that activity. A cap
+spent, the command is stopped rather than the sandbox destroyed: the session
+wakes to read its result in the home it left, so it keeps the work and the
+place its next tool call lands. A command the machine no longer runs is
+activity — the session is waking to it — and gives the home a fresh idle
+window instead of counting as silence. A process the agent detached itself
+(``nohup … &``, a dev server) is not work in progress and keeps nothing up. A
+line that has handed its delivery over and is waiting on the checks the
+platform is watching for its card
 (``review.queries.waiting_on_checks``) is not idle either, on the same clock:
 the poller wakes its session when they finish, and the sandbox it comes back
 to should be this one rather than a new one and the documents read again. A
@@ -54,19 +59,20 @@ a whole cloud VM is neither this sweep's nor a user of the shared slots
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.agent import execution, resource_cleanup
+from app.domain.agent import execution, resource_cleanup, turn_inputs
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
@@ -87,12 +93,21 @@ class SandboxRemoving(Exception):
 STOP_HOLD = timedelta(minutes=3)
 #: A sandbox whose background command keeps it up is asked again this often.
 RECHECK = timedelta(minutes=1)
+#: A command the machine had running at the last ask, and does not now, ended
+#: within this window: the session is waking to read it, not sitting idle.
+WOKEN_FOR = timedelta(minutes=2)
+#: The stop a command past its background cap is sent, by the POSIX number the
+#: executor knows it by (``runtime.STOP_SIGNALS``: SIGTERM).
+TERM = 15
 #: Sandboxes destroyed per sweep.
 DESTROYS_PER_SWEEP = 20
 
 # When each home kept up by its background work was last asked, in this
-# process: the sweep runs every few seconds, and asking is a call to the host.
-_asked: dict[uuid.UUID, datetime] = {}
+# process, and whether the machine had commands running for it then: the sweep
+# runs every few seconds, and asking is a call to the host. The second half
+# tells a command that just ended from a machine that had nothing running all
+# along.
+_asked: dict[uuid.UUID, tuple[datetime, bool]] = {}
 
 
 class SandboxHomeError(RuntimeError):
@@ -300,7 +315,8 @@ class SandboxLifecycle:
                 if since is None:
                     continue
                 idle = now - since
-            # A home its session still uses is destroyed under its room's lock.
+            # A home its session still uses is destroyed under its holder's
+            # lock.
             if await self._destroy(
                 home.id,
                 home.topic_id if current else None,
@@ -389,23 +405,11 @@ class SandboxLifecycle:
             await self._session.commit()
             if recovering:
                 return None
-        turns = (
-            await self._session.execute(
-                select(
-                    # An interval left open past the orphan sweep's limit is a
-                    # corpse, and must not read as this session still at work.
-                    func.count().filter(
-                        AgentTurn.stopped_at.is_(None),
-                        AgentTurn.started_at > now - STALE_TURN,
-                    ),
-                    func.max(AgentTurn.stopped_at),
-                ).where(_own_turns(home.session_id))
-            )
-        ).one()
+        open_turns, last_end = await self._turns_of(home.session_id, now)
         await self._session.commit()
-        if turns[0]:
+        if open_turns:
             return None
-        since = max(home.active_at, turns[1] or home.active_at)
+        since = max(home.active_at, last_end or home.active_at)
         if now - since < idle_for:
             return None
         cap = _background_cap(home.spec)
@@ -426,26 +430,110 @@ class SandboxLifecycle:
         if until and datetime.fromisoformat(until) > now:
             # A tool call is starting it right now.
             return None
-        if (
-            lease
-            and lease.get("state")
-            and lease.get("device_id") == home.device_id
-            and now - since < cap
-        ):
+        if lease and lease.get("state") and lease.get("device_id") == home.device_id:
             asked = _asked.get(home.id)
-            if asked is not None and now - asked < RECHECK:
+            if asked is not None and now - asked[0] < RECHECK:
                 return None
-            _asked[home.id] = now
+            asked_at, was_running = asked if asked is not None else (None, False)
             try:
                 info = await execution.call(
                     lease, "ping", {}, hub=self._hub, timeout=30
                 )
+                running = bool(info.get("running_commands"))
             except (RuntimeError, TimeoutError):
-                info = {}
-            if info.get("running_commands"):
+                # The machine did not answer: what it had running is unknown,
+                # and a home that cannot be asked is not held for it. A
+                # command that was running at the last ask still counts as
+                # one that just ended, so a single failed ping does not take
+                # the sandbox out from under the session.
+                info, running = {}, False
+            _asked[home.id] = (now, running)
+            if running:
+                if now - since < cap:
+                    return None
+                # A turn may have started while the machine was asked (the
+                # ping is a round trip): a session at work keeps even a command
+                # it just started.
+                open_turns, _ = await self._turns_of(home.session_id, datetime.now(UTC))
+                await self._session.commit()
+                if open_turns:
+                    return None
+                commands = [str(name) for name in info.get("running_command_ids") or ()]
+                if commands and await self._stop_commands(lease, commands):
+                    # Past the cap the command is stopped, not the sandbox:
+                    # the session wakes to read its result in the home it left,
+                    # and that stop is activity that starts a fresh window.
+                    await self._wake(home.id, now)
+                    return None
+                # A machine that cannot name what it runs (an executor older
+                # than that field) keeps the cap's old meaning.
+                return since
+            if was_running and asked_at is not None and now - asked_at <= WOKEN_FOR:
+                # The command ended since the last ask. Its end is the session
+                # waking to read it — activity, not the silence the idle clock
+                # measures — so the wake starts a fresh idle window rather
+                # than the sweep taking the home in the seconds before its
+                # next tool call.
+                await self._wake(home.id, now)
                 return None
         _asked.pop(home.id, None)
         return since
+
+    async def _turns_of(self, session_id, now: datetime) -> tuple[int, datetime | None]:
+        """How many turns of the session are open, and when its last one
+        stopped: the two things that say whether it is at work."""
+        turns = (
+            await self._session.execute(
+                select(
+                    # An interval left open past the orphan sweep's limit is a
+                    # corpse, and must not read as this session still at work.
+                    func.count().filter(
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > now - STALE_TURN,
+                    ),
+                    func.max(AgentTurn.stopped_at),
+                ).where(_own_turns(session_id))
+            )
+        ).one()
+        return int(turns[0]), turns[1]
+
+    async def _wake(self, home_id: uuid.UUID, now: datetime) -> None:
+        """Move a home's idle clock to now: the session is waking to work in
+        it, and idleness is measured from the wake."""
+        await self._session.execute(
+            update(SandboxHome).where(SandboxHome.id == home_id).values(active_at=now)
+        )
+        await self._session.commit()
+
+    async def _stop_commands(self, lease: dict, commands: list[str]) -> bool:
+        """Stop the commands a session left running past its background cap.
+
+        The cap is what keeps a hung command from holding a host for good; the
+        sandbox is not part of that bargain. Stopping the command leaves the
+        session's home, the work in it, and the place its next tool call lands.
+        """
+        for command in commands:
+            try:
+                await execution.call(
+                    lease,
+                    "control",
+                    {
+                        "subtype": "shell",
+                        "operation": "signal",
+                        "command_id": command,
+                        "signal": TERM,
+                    },
+                    hub=self._hub,
+                    timeout=30,
+                )
+            except (RuntimeError, TimeoutError):
+                logger.warning(
+                    "stopping command %s of an idle sandbox failed",
+                    command,
+                    exc_info=True,
+                )
+                return False
+        return True
 
     async def _waiting_on_checks(self, home) -> bool:
         """Whether the task this home's session works in is waiting on the
@@ -470,44 +558,28 @@ class SandboxLifecycle:
         await self._session.commit()
         return answer
 
-    async def evict(
-        self,
-        home_id: uuid.UUID,
-        room_id: uuid.UUID | None,
-        device_id: str,
-        tell: Callable[[AsyncSession, SandboxHome], Awaitable[dict | None]],
-    ) -> bool:
-        """Destroy one sandbox now, idle or not, and tell its room why with
-        ``tell`` (``disk_guard``). Returns whether it was destroyed."""
-        return await self._destroy(home_id, room_id, device_id, None, tell=tell)
-
     async def _destroy(
         self,
         home_id: uuid.UUID,
-        room_id: uuid.UUID | None,
+        holder_id: uuid.UUID | None,
         device_id: str,
         idle: timedelta | None,
         *,
         idle_for: timedelta | None = None,
-        tell: Callable[[AsyncSession, SandboxHome], Awaitable[dict | None]]
-        | None = None,
     ) -> bool:
         """Destroy one sandbox: idle for ``idle``, or, with ``idle`` None,
-        because its project's credits ran out (``metering.unpaid_sandboxes``),
-        an earlier removal did not finish, or it is evicted (``tell``).
+        because its project's credits ran out (``metering.unpaid_sandboxes``)
+        or an earlier removal did not finish.
 
         ``idle_for`` is how long this home was to be kept before it counts as
         idle — the shorter pressed time for a cloud sandbox (``_held_for``);
         without it, its spec's."""
-        # deferred-import: tests replace this name on app.domain.topic.services
-        from app.domain.topic.services import TopicService
-
-        if room_id is not None:
-            # The room's lock first, as a tool call takes it: one that arrives
+        if holder_id is not None:
+            # The holder's lock first, as a tool call takes it: one that arrives
             # now waits until the home is marked, and then waits for it to go.
             # An archived room takes no tool call, but its sandbox still goes:
             # one left running holds its host's slot, and its host, for good.
-            await TopicService(self._session).lock(room_id)
+            await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
         now = datetime.now(UTC)
         if home is None:
@@ -517,6 +589,16 @@ class SandboxLifecycle:
         if home.stopped_at is None and idle is not None and now - home.active_at < held:
             await self._session.commit()
             return False
+        if home.stopped_at is None and idle is not None and home.session_id is not None:
+            # The home was picked from a look taken before this lock. A turn
+            # may have started since — the sweep that picked it ran a second
+            # before the session woke to a background command's result — and a
+            # session at work keeps its sandbox however long it was idle when
+            # the look was taken.
+            open_turns, last_end = await self._turns_of(home.session_id, now)
+            if open_turns or (last_end is not None and now - last_end < held):
+                await self._session.commit()
+                return False
         if home.stopped_at is not None and now - home.stopped_at < STOP_HOLD:
             # Another sweep is removing it.
             await self._session.commit()
@@ -524,9 +606,9 @@ class SandboxLifecycle:
         if idle is not None and await self._session_recovering(home.session_id):
             await self._session.commit()
             return False
-        unpaid = home.stopped_at is None and idle is None and tell is None
+        unpaid = home.stopped_at is None and idle is None
         home.stopped_at = now
-        project, resource = str(home.project_id), home.resource_id
+        project, resource = str(holders.namespace_of(home)), home.resource_id
         await self._session.commit()
         try:
             await run_on_host(
@@ -541,8 +623,8 @@ class SandboxLifecycle:
             # Marked, it takes no tool call; a later sweep tries again.
             logger.warning("destroying sandbox %s failed", home_id, exc_info=True)
             return False
-        if room_id is not None:
-            await TopicService(self._session).lock(room_id)
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
         if home is None:
             await self._session.commit()
@@ -562,10 +644,25 @@ class SandboxLifecycle:
                     **(row.execution_request or {}),
                     LOST_KEY: True,
                 }
+                # The platform has just taken this session's machine away, and
+                # it is the one authority that knows a runner will never report
+                # the end of the turn that was running on it. Recording that
+                # here — where the destruction happens — is what lets the room's
+                # orphan sweep collect the interval instead of leaving it open
+                # for good: without it, `death_evidence.unknown_row` reads the
+                # turn as "nobody has said it died" and holds it, correctly,
+                # open (FB-56 legacy③). This is not "unreachable is dead": a
+                # machine merely out of reach is still unknown, and is never
+                # touched by this.
+                await turn_inputs.close_turns_of_a_destroyed_machine(
+                    self._session,
+                    conversation_id=row.conversation_id,
+                    agent_handle=row.agent_handle,
+                    harness=row.harness,
+                    at=now,
+                )
             line = (
-                await tell(self._session, home)
-                if tell is not None
-                else await tell_unpaid(self._session, home)
+                await tell_unpaid(self._session, home)
                 if unpaid
                 else await tell_released(
                     self._session,
@@ -579,10 +676,6 @@ class SandboxLifecycle:
         logger.info(
             "sandbox %s destroyed %s",
             home_id,
-            "evicted"
-            if tell is not None
-            else "with its credits spent"
-            if unpaid
-            else f"after {idle} idle",
+            "with its credits spent" if unpaid else f"after {idle} idle",
         )
         return True

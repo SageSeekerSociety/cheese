@@ -3,6 +3,11 @@
 Load with ``-p scripts.ci_shard --ci-shard=0/4``. xdist still schedules the
 assigned cases within each runner; every worker derives the same partition.
 
+``--ci-integration-files=PATH`` names a JSON file holding either ``"all"`` or a
+list of test files (relative to backend/): integration-layer cases outside
+those files are deselected before partitioning, the same way on the collection
+that plans a run and on every shard that executes it.
+
 The assigned cases are then ordered module by module, the longest module first
 by ``tests/module_durations.json`` (refreshed with ``scripts.test_durations``),
 each module's cases kept together in their collected order. Under
@@ -28,6 +33,24 @@ def pytest_addoption(parser):
     group = parser.getgroup("cheese-ci")
     group.addoption("--ci-shard", default="0/1", help="zero-based index/count")
     group.addoption("--ci-selection-output", type=Path)
+    group.addoption(
+        "--ci-integration-files",
+        type=Path,
+        help='JSON: "all" or the test files whose integration cases run',
+    )
+
+
+def integration_files(config):
+    """The test files whose integration cases run, or None for every file."""
+    path = config.getoption("--ci-integration-files")
+    if path is None:
+        return None
+    files = json.loads(path.read_text())
+    if files == "all":
+        return None
+    if not isinstance(files, list):
+        raise pytest.UsageError('--ci-integration-files must hold "all" or a list')
+    return set(files)
 
 
 def shard_spec(value):
@@ -48,6 +71,17 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     # Finish layer assignment and normal -m/-k filtering before partitioning.
     result = yield
+    allowed = integration_files(config)
+    if allowed is not None:
+        kept, dropped = [], []
+        for item in items:
+            keep = (
+                _layer(item) != "integration" or item.nodeid.split("::")[0] in allowed
+            )
+            (kept if keep else dropped).append(item)
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+            items[:] = kept
     index, count = shard_spec(config.getoption("--ci-shard"))
     selected = [item.nodeid for item in items]
     assigned, deselected = [], []

@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -34,6 +33,7 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task import progress
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
@@ -56,7 +56,6 @@ from app.domain.review.services._shared import (
     SEVERITY_WARN,
     WHO_HUMAN,
     ReviewerAdmission,
-    _deliverable_revision,
     _hold_deliverable,
     _no_artifact_action,
     _one_artifact_action,
@@ -64,6 +63,9 @@ from app.domain.review.services._shared import (
     _read_deliverable,
     approvals_required_of,
     notice,
+)
+from app.domain.review.services._shared import (
+    deliverable_revision as _deliverable_revision,
 )
 from app.domain.task.teaching import protocol_for_task
 
@@ -141,7 +143,7 @@ async def create_card(
     *,
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
-    reviewer_handle: str | None = None,
+    reviewer_handles: list[str] | None = None,
     focus: str = "",
     change_subject: str | None = None,
     change_body: str | None = None,
@@ -208,12 +210,13 @@ async def create_card(
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
-    reviewer_handle = await self._reviewer_or_project_default(
+    reviewers = await self._reviewers_or_project_default(
         await self._projects.get(topic.project_id),
-        reviewer_handle,
+        reviewer_handles,
         from_work=[task],
     )
-    await self._require_reviewer_in_room(topic, reviewer_handle, admits_reviewer)
+    for reviewer in reviewers:
+        await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
     # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
     # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
     # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
@@ -257,7 +260,7 @@ async def create_card(
     card = await self._repo.add(
         topic_id=topic_id,
         task_id=task.id,
-        reviewer_handle=reviewer_handle,
+        reviewer_handles=reviewers,
         focus=focus,
         status=AcceptStatus.pending,
         change_subject=subject,
@@ -285,8 +288,16 @@ async def create_card(
             snapshot[0],
             snapshot[1],
         )
-    if has_branch_changes:
-        card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    # 卡骑哪条 PR 由递卡之后的那次发布写回来（`pr_publish.record_pr`）：它先为
+    # 这条分支开/认领 PR，再把号写到卡和任务上。这里不抄 `task.pr_number` ——
+    # 任务上的号可能已经过期：旧草稿 PR 被人关掉、分支又推了新提交时，平台会为
+    # 新的 head 另开一条 PR，任务要等那次发布写回才改号。把旧号抄过来，这张刚
+    # 递上来的卡就骑着一条已关闭的 PR，轮询器一跳便按「PR 已关闭」把它作废
+    # （2026-10-22 00:55，任务 9bd0b806）。卡上没有号时轮询器不碰它，发布写回
+    # 之后骑的就是新 PR。
+    # The card says where the task stands now (等审): what its teammate
+    # reported before it is over.
+    progress.clear(task)
     await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
@@ -370,7 +381,7 @@ async def redeliver(
     await self._tell_the_reviewer(
         card,
         topic,
-        say("cardRedelivered", actor=actor),
+        say("cardRedelivered", actor=f"<@{actor}>"),
         meta=notice(
             EVENT_CARD_REDESCRIBED,
             severity=SEVERITY_INFO,
@@ -557,6 +568,18 @@ async def open_pr_card_ids(
     return [c.id for c in cards]
 
 
+async def missing_merge_actor_card_ids(
+    self: pkg.AcceptService, *, since: datetime, limit: int
+) -> list[uuid.UUID]:
+    """已合并、但还没记下合并人的卡：轮询兜底要补的那一批。
+
+    只算平台没点过采纳的（`decided_by` 空）—— 点过采纳的，人就是决议人。
+    窗口由调用方给（项目总览只看最近一段），`merged_by` 非空的不再问：
+    问过 GitHub 的卡，不管是人是空，都有答案了（`github_pr_status.merge_actor`）。
+    """
+    return await self._repo.accepted_missing_merge_actor(since=since, limit=limit)
+
+
 async def anybody_still_waiting(
     self: pkg.AcceptService, place_ids: list[uuid.UUID]
 ) -> bool:
@@ -650,6 +673,12 @@ async def _render(
     summaries: dict[tuple[uuid.UUID, uuid.UUID], Any],
 ) -> dict:
     data = AcceptCardOut.model_validate(card).model_dump(mode="json")
+    # 评审人在 `accept_card_reviewer` 表里，不在卡那一行上 —— 折成一句话补进来。
+    # 一卡多人：`reviewer_handles` 是完整集合，`reviewer_handle` 是它的「、」拼接
+    # （旧读者还在读那一个字段）。
+    handles = await self._repo.reviewer_handles(card.id)
+    data["reviewer_handles"] = handles
+    data["reviewer_handle"] = "、".join(handles)
     # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），
     # 随卡下发。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了后来加
     # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。

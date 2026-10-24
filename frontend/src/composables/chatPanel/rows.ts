@@ -8,6 +8,7 @@ import type { Block, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
+import { groupAskBlocks } from '../../lib/askGroups'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../../lib/chatGrouping'
 import { collapseNotices } from '../../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../../lib/renderMessage'
@@ -40,7 +41,14 @@ export function usePanelRows(deps: {
   // consecutive message rows. Repair those rows before collapseNotices hides
   // event blocks, because an event is a hard boundary and must prevent an
   // accidental merge.
-  const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(deps.messages.value)))
+  const collapsed = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(deps.messages.value)))
+  // 一次问的几道题收成一张卡（`lib/askGroups`）：头一条留着画整组，其余几条不再
+  // 单独占一行——它们的内容已经在头一条那张卡里了。判据是纯函数，测试在它旁边。
+  const askBlocks = computed(() => groupAskBlocks(collapsed.value.map((r) => r.block)))
+  const rows = computed(() => {
+    if (!askBlocks.value.hidden.size) return collapsed.value
+    return collapsed.value.filter((r) => !askBlocks.value.hidden.has(r.block.id))
+  })
   const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
 
   // 对话栏画得出来的那几件任务跟着各块一起来（useTimelineTasks），不读整个房间的清单。
@@ -96,5 +104,18 @@ export function usePanelRows(deps: {
     })
   }
 
-  return { rows, visible, roomTasks, dayLabels, unreadAnchorId, placeUnreadAnchor, runEdges, outboxEdge }
+  /** 组头块的 id → 这一组的每道题；组件拿它画整张卡。 */
+  const askGroups = computed(() => askBlocks.value.members)
+
+  return {
+    rows,
+    visible,
+    askGroups,
+    roomTasks,
+    dayLabels,
+    unreadAnchorId,
+    placeUnreadAnchor,
+    runEdges,
+    outboxEdge,
+  }
 }

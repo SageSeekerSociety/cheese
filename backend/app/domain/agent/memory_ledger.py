@@ -156,7 +156,7 @@ class MemoryLedger:
         """记下一个座位（对话, agent）这一轮的记忆账：署谁的名、算谁的 private。
 
         组装一轮的时候才知道这两件事（`_assemble_turn`），而对账的两个时刻（输入
-        之前、这一轮结束之后）手上只有那个座位的会话。记的是刚才 `memory_index`
+        之前、会话停下来之后）手上只有那个座位的会话。记的是刚才 `memory_index`
         读过的那几个人，所以「注入里看得见的」和「铺到会话目录里的」是同一批。
         """
         self._turns.pop(seat, None)
@@ -185,7 +185,7 @@ class MemoryLedger:
     async def sync(self, session: SessionRef) -> None:
         """对一遍这个座位的会话的记忆账；同一间房的两场对账排队，不交错。
 
-        一轮结束时，钩子要对一次账，整理那一轮收尾时自己也要当场对一次；一间房里
+        会话停下来时要对一次账，整理那一段工作收尾时自己也要当场对一次；一间房里
         几个座位的会话用的是同一棵树。两场交错时，后一场读到的是前一场提交之前的
         数据库：它把平台的旧版铺回会话，整理拿它算出的「改了哪些」也是空的，而那
         些改动其实已经落库了。
@@ -197,8 +197,8 @@ class MemoryLedger:
         """对一遍这个座位的会话的记忆账：平台这一份铺下去，会话改过的收回来。
 
         两个时刻问它：输入之前（让 agent 一睁眼读到的就是平台现在这一份，别人刚
-        改的也在里面）和这一轮结束之后（它是在这一轮里写的，写的时候这一轮还没
-        结束）。两个时刻做的是同一件事，因为对账是幂等的 —— 「上一次对过什么」在
+        改的也在里面）和会话停下来之后（runner 报会话空闲：它是在干活时写的，写的
+        时候还没停下）。两个时刻做的是同一件事，因为对账是幂等的 —— 「上一次对过什么」在
         会话那边的基线里，不在这里的记忆里。
 
         一次对账是跨机的一次往返，所以中间不持有事务：先把数据库这一份读出来、
@@ -390,7 +390,7 @@ class MemoryLedger:
                     harness=runtime.harness,
                 )
                 # 这一轮点名的作用域也在这里定下来：`send` 会在输入之前按它铺一遍
-                # （记忆那时才落到会话的磁盘上），一轮结束时又按它收回来。
+                # （记忆那时才落到会话的磁盘上），会话停下来时又按它收回来。
                 self.remember_turn(
                     root_topic_id,
                     (root_topic_id, dreamer.agent_handle),
@@ -468,7 +468,7 @@ class MemoryLedger:
             if refusal:
                 summary = f"拒绝执行：{refusal}"
             elif failed:
-                summary = "这一轮没跑成"
+                summary = "这次整理没做完"
             else:
                 summary = dream.clip(final_text, 1000)
             run = await dream.run_of(session, run_id)

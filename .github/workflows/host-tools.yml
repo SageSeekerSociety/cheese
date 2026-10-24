@@ -1,0 +1,158 @@
+name: host-tools
+
+# The static programs cheesehost places on Linux machines besides bwrap
+# (`scripts/build-host-tools.sh`). A pull request that changes the recipe
+# builds them and runs each the way the platform does, so the recipe is known
+# to work before it merges; publishing the release that `agent/toolchain.py`
+# pins is a manual dispatch from main, because a release is what machines
+# download.
+on:
+  pull_request:
+    paths:
+      - scripts/build-host-tools.sh
+      - .github/workflows/host-tools.yml
+      - backend/app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build in Alpine
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
+            sh scripts/build-host-tools.sh dist
+          ls -l dist
+      - name: Unpack
+        run: |
+          mkdir "$RUNNER_TEMP/placed"
+          for name in host-tools tmux git; do
+            mkdir "$RUNNER_TEMP/placed/$name"
+            tar -xzf dist/$name-*.tar.gz -C "$RUNNER_TEMP/placed/$name" --strip-components=1
+            cat "$RUNNER_TEMP/placed/$name/NOTICE"
+            ls "$RUNNER_TEMP/placed/$name/licenses"
+          done
+          echo "TOOLS=$RUNNER_TEMP/placed/host-tools" >> "$GITHUB_ENV"
+          echo "PLACED=$RUNNER_TEMP/placed" >> "$GITHUB_ENV"
+      # What `sandbox_host.py` does as root: a veth pair into a network
+      # namespace, and filter and NAT rules with the matches and targets it
+      # writes, read back with iptables-save.
+      - name: A sandbox's network, as root
+        run: |
+          ip="$TOOLS/bin/ip"
+          xt="$TOOLS/bin/xtables-nft-multi"
+          sudo "$ip" netns add cheese-test
+          sudo "$ip" link add chs0 type veth peer chp0 netns cheese-test
+          printf 'addr add 10.200.0.1/30 dev chs0\nlink set chs0 up\n' | sudo "$ip" -batch -
+          printf 'addr add 10.200.0.2/30 dev chp0\nlink set lo up\nlink set chp0 up\nroute add default via 10.200.0.1\n' \
+            | sudo "$ip" netns exec cheese-test "$ip" -batch -
+          sudo "$ip" netns exec cheese-test "$ip" route | grep -q 'default via 10.200.0.1'
+          printf '%s\n' '*filter' ':CHEESE-SBX-FWD - [0:0]' ':CHEESE-SBX-IN - [0:0]' \
+            '-A CHEESE-SBX-FWD -i chs+ -d 192.168.0.0/16 -j DROP' \
+            '-A CHEESE-SBX-FWD -o chs+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT' \
+            '-A CHEESE-SBX-IN -i chs+ -d 127.0.0.1 -p tcp --dport 8080 -m conntrack --ctstate DNAT -j ACCEPT' \
+            '-A CHEESE-SBX-IN -m comment --comment "cheese-sandbox test" -j RETURN' \
+            '-I FORWARD 1 -j CHEESE-SBX-FWD' 'COMMIT' \
+            '*nat' ':CHEESE-SBX-PRE - [0:0]' ':CHEESE-SBX-POST - [0:0]' \
+            '-A CHEESE-SBX-PRE -i chs+ -p tcp --dport 8080 -m addrtype --dst-type LOCAL -j DNAT --to-destination 127.0.0.1:8080' \
+            '-A CHEESE-SBX-POST -s 10.200.0.0/16 ! -o chs+ -j MASQUERADE' 'COMMIT' \
+            | sudo "$xt" iptables-restore --noflush
+          sudo "$xt" iptables-save -t filter | grep -q 'cheese-sandbox test'
+          sudo "$xt" iptables-save -t nat | grep -q -- '-A CHEESE-SBX-POST -s 10.200.0.0/16 ! -o chs+ -j MASQUERADE'
+          # The system's own iptables reads the same rules: one nf_tables view.
+          sudo iptables-save -t nat | grep -q 'CHEESE-SBX-POST'
+          sudo "$ip" link del chs0
+      # What enrollment and `sandbox_host.py` do with a platform host's data
+      # disk: format it with the features of the machine's long-term kernel,
+      # mount it with project quotas, and hold a project to a limit.
+      - name: A data disk with a project quota, as root
+        run: |
+          kernel=$(uname -r | cut -d. -f1,2)
+          features=""
+          for conf in $(ls "$TOOLS"/mkfs/lts_*.conf | sort -V); do
+            lts=${conf##*/lts_}; lts=${lts%.conf}
+            [ "$(printf '%s\n%s\n' "$lts" "$kernel" | sort -V | head -n 1)" = "$lts" ] && features=$conf
+          done
+          echo "kernel $kernel formats with $features"
+          truncate -s 1G "$RUNNER_TEMP/disk.img"
+          "$TOOLS/bin/mkfs.xfs" -q -c options="$features" "$RUNNER_TEMP/disk.img"
+          sudo mkdir /mnt/cheese-test
+          sudo mount -o loop,prjquota "$RUNNER_TEMP/disk.img" /mnt/cheese-test
+          sudo mkdir /mnt/cheese-test/home
+          sudo "$TOOLS/bin/xfs_quota" -x -c 'project -s -p /mnt/cheese-test/home 7' /mnt/cheese-test
+          sudo "$TOOLS/bin/xfs_quota" -x -c 'limit -p bhard=16m ihard=100 7' /mnt/cheese-test
+          if sudo dd if=/dev/zero of=/mnt/cheese-test/home/fill bs=1M count=64 status=none; then
+            echo "::error::the project quota did not stop a write past its limit"; exit 1
+          fi
+          sudo "$TOOLS/bin/xfs_quota" -x -c 'report -p -b' /mnt/cheese-test
+      - name: tmux and git, as a user
+        run: |
+          tmux="$PLACED/tmux/bin/tmux -S $RUNNER_TEMP/tmux.sock"
+          $tmux new-session -d -s keep 'sleep 30'
+          # A screen whose program ended stays, marked dead with its time:
+          # what the connector reads to close it.
+          $tmux set-option -g remain-on-exit on
+          $tmux new-session -d -s dead 'exit 3'
+          sleep 1
+          $tmux list-panes -t dead -F '#{pane_dead} #{pane_dead_time}' | grep -Eq '^1 [0-9]+$'
+          $tmux kill-server
+          git="$PLACED/git/bin/git"
+          "$git" --version | grep -q '^git version 2\.56\.'
+          "$git" clone -q --depth 1 --filter=blob:none https://github.com/SageSeekerSociety/cheese "$RUNNER_TEMP/clone"
+          test "$("$git" -C "$RUNNER_TEMP/clone" rev-parse --path-format=absolute --git-common-dir)" = "$RUNNER_TEMP/clone/.git"
+      # Static: the same files run on distributions the build never saw, and
+      # git's https finds each one's CA certificates where it keeps them. A
+      # cloud image carries those; Ubuntu's container image does not, so it is
+      # given them first.
+      - name: On other distributions
+        run: |
+          for image in fedora:42 almalinux:9 alpine:3.22 ubuntu:20.04 opensuse/leap:15.6; do
+            echo "== $image"
+            prepare=true
+            case "$image" in
+              ubuntu:*) prepare="apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null" ;;
+            esac
+            docker run --rm -v "$PLACED:/placed:ro" "$image" sh -c "$prepare"' &&
+              /placed/host-tools/bin/ip -V &&
+              /placed/host-tools/bin/xtables-nft-multi iptables-restore --version &&
+              /placed/host-tools/bin/mkfs.xfs -V &&
+              /placed/tmux/bin/tmux -V &&
+              /placed/git/bin/git ls-remote https://github.com/SageSeekerSociety/cheese HEAD'
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: host-tools-${{ matrix.runner }}
+          path: dist/
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          recipe=scripts/build-host-tools.sh
+          revision=$(sed -n 's/^revision=//p' "$recipe")
+          versions=$(sed -n 's/^\([a-z0-9_]*\)_version=\(.*\)/\1 \2/p' "$recipe" | paste -sd, - | sed 's/,/, /g')
+          gh release create "host-tools-v$revision" dist/* --target "$GITHUB_SHA" \
+            --title "host tools $revision" \
+            --notes "Built statically against musl in Alpine 3.22 by \`$recipe\` for cheesehost to place on Linux machines: $versions. Sources and license texts come from upstream, each checked against the SHA-256 in the recipe. Each archive's \`NOTICE\` lists every component its programs are linked from, with version and license, and \`licenses/\` carries their license texts."

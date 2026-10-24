@@ -47,6 +47,7 @@ from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
+from app.domain.routine import personal as routine_personal
 from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
@@ -114,7 +115,8 @@ def _note_alive(conversation: uuid.UUID) -> None:
 
     Not a frame — it may come from a turn that has written nothing for half an
     hour — and that is the point: it is the one sign of life a quiet turn
-    leaves, and the sidebar's red light reads it to tell quiet from stopped.
+    leaves, and the stall verdict (`TopicService.stall_signal`, read by
+    `cheese status`) reads it to tell quiet from stopped.
     """
     get_broker().note_alive(str(conversation))
 
@@ -148,7 +150,16 @@ def consumptions_for(
 ) -> Consumptions:
     """The questions read on ``host``, each kind served by its consumer."""
     consumptions = Consumptions(host, redis)
-    consumptions.serve(personal.KIND, personal.Answers(sessions, consumptions, redis))
+    consumptions.serve(
+        personal.KIND,
+        personal.Answers(
+            sessions,
+            consumptions,
+            redis,
+            run_ended=partial(routine_personal.ended, sessions),
+            answered=partial(routine_personal.answered, sessions),
+        ),
+    )
     consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))
     consumptions.serve(box.KIND, box.Answers(chat, consumptions))
     return consumptions

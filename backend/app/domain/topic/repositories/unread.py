@@ -90,10 +90,12 @@ async def unread_counts(
     (`thread.reads`). A private room counts every message.
 
     A task counts only for the people who take part in it (its owner and
-    collaborators), and only what PEOPLE said there: the AI teammate talks
-    on every step, and a badge that lights each time is a badge nobody
-    reads. When it needs the person, the task's own mark says so. Everyone
-    else follows a task they do not take part in from the channel.
+    collaborators), and everything said there by someone else: people and
+    AI teammates alike. An AI teammate's message is new content the people
+    in the task asked to see, so it counts like a person's. Tool steps are
+    not messages and never reach here; the task's own mark still says when
+    it is the person's turn. Everyone else follows a task they do not take
+    part in from the channel.
     """
     # A private room seats both of its people, so a seat answers for it too.
     joined = or_(
@@ -188,7 +190,6 @@ async def unread_counts(
             _blocks.c.kind == KIND_MESSAGE,
             _blocks.c.author != user_handle,
             _blocks.c.author_type == AuthorType.participant,
-            ~agent_handle_column(_blocks.c.author),
             unseen,
         )
         .group_by(_blocks.c.conversation_id)

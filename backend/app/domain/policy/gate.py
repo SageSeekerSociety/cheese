@@ -91,8 +91,8 @@ def policy_of(
 ) -> Policy:
     """从项目设置读出这两句话。读不懂的值按默认算。
 
-    一个拼错的设置不能让项目下不去线——和 `agent/supply.py` 的 `resolve_pool` 同
-    一条规矩。默认这一档又恰好等于今天的行为，所以读不懂时退回去的是「照旧」。
+    一个拼错的设置不能让项目下不去线。默认这一档又恰好等于今天的行为，所以读不懂
+    时退回去的是「照旧」。
     """
     raw = (project_settings or {}).get(ALLOWED_TIERS_KEY)
     allowed: frozenset[str] | None = None

@@ -331,24 +331,23 @@ async function seed(page: Page): Promise<Seed> {
     reviewer_handle: "alice",
     change_subject: "docs: add the release notes",
   });
-  const token = await page.evaluate(() => localStorage.getItem("accessToken"));
-  const uploaded = await page.request.post(
-    `/api/projects/${projectId}/library`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      multipart: {
-        file: {
-          name: "brief.txt",
-          mimeType: "text/plain",
-          buffer: Buffer.from("The brief.\n"),
-        },
-      },
-    },
+  // A library file goes in the way the page puts it in: take an address, PUT
+  // the bytes there, register the upload.
+  const brief = Buffer.from("The brief.\n");
+  const slot = (await api(page, "post", `/projects/${projectId}/library/uploads`, {
+    name: "brief.txt",
+    size: brief.length,
+  })) as { url: string; upload: string };
+  const put = await page.request.put(
+    slot.url.startsWith("/") ? `/api${slot.url}` : slot.url,
+    { data: brief },
   );
-  if (!uploaded.ok())
-    throw new Error(
-      `library upload → ${uploaded.status()} ${await uploaded.text()}`,
-    );
+  if (!put.ok())
+    throw new Error(`library upload → ${put.status()} ${await put.text()}`);
+  await api(page, "post", `/projects/${projectId}/library`, {
+    upload: slot.upload,
+    filename: "brief.txt",
+  });
   const feedback = (await api(page, "post", "/feedback", {
     kind: "bug",
     title: "The board forgets its filter",
@@ -464,7 +463,7 @@ test("teams: shared and personal", async ({ page }) => {
     { name: "pending requests", path: "/teams/pending" },
     { name: "shared team", path: "/teams/team-1" },
     { name: "team members", path: "/teams/team-1/members" },
-    { name: "team documents", path: "/teams/team-1/docs" },
+    { name: "team library", path: "/teams/team-1/library" },
     { name: "team compute", path: "/teams/team-1/compute" },
     { name: "team credits", path: "/teams/team-1/credits" },
     { name: "personal team", path: "/teams/alice" },
@@ -474,7 +473,6 @@ test("teams: shared and personal", async ({ page }) => {
 
 test("spaces and challenges", async ({ page }) => {
   await check(page, [
-    { name: "spaces", path: "/spaces" },
     { name: "challenges in a space", path: "/spaces/1/tasks" },
     { name: "announcements", path: "/spaces/1/announcements" },
     { name: "challenge", path: "/spaces/1/tasks/1" },

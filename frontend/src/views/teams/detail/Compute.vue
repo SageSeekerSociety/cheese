@@ -46,6 +46,8 @@ async function load() {
 }
 async function rename(device: MyDevice, name: string) {
   if (!name.trim() || name.trim() === device.name) return
+  // A message left from an earlier action must not stand for this attempt: the dialog closes only on a clean finish.
+  error.value = null
   busy.value = device.device_id
   try {
     await renameMyDevice(device.device_id, name.trim())
@@ -88,6 +90,7 @@ watch(
   <ComputeView
     v-model:error="error"
     :devices="devices"
+    :personal="!!team?.personal"
     :can-manage="canManage"
     :loading="loading"
     :load-failed="loadError !== null"

@@ -124,6 +124,21 @@ describe('ModelConnectionsView', () => {
     expect(within(row('login-b')).getByRole('button', REMOVE())).toBeTruthy()
   })
 
+  it('tells two logins on one computer apart by the Claude account each one is', async () => {
+    mount([
+      connection('login-a', { device_id: 'desk', account_email: 'alice@example.com' }),
+      connection('login-b', { device_id: 'desk', account_email: 'alice@work.example', account_org: 'Work Inc' }),
+    ])
+    expect(summary('login-a').textContent).toContain('alice@example.com')
+    expect(summary('login-b').textContent).toContain('alice@work.example')
+    expect(summary('login-a').textContent).not.toContain('alice@work.example')
+
+    await expand('login-b')
+    const detail = row('login-b').querySelector('.mc-body') as HTMLElement
+    expect(detail.textContent).toContain('alice@work.example')
+    expect(detail.textContent).toContain('Work Inc')
+  })
+
   it('removes only after confirming, and only the connection asked for', async () => {
     const view = mount([connection('desk'), connection('laptop')])
     await expand('laptop')
@@ -144,6 +159,14 @@ describe('ModelConnectionsView', () => {
     expect(summary('lab').textContent).toContain(t('account.modelConnections.revoking'))
     await expand('lab')
     expect(within(row('lab')).queryByRole('button', REMOVE())).toBeNull()
+  })
+
+  it('does not call a subscription ready while the computer holding it is offline', () => {
+    mount([connection('desk'), connection('lab', { online: false })])
+
+    expect(summary('desk').textContent).toContain(t('account.modelConnections.ready'))
+    expect(summary('lab').textContent).not.toContain(t('account.modelConnections.ready'))
+    expect(summary('lab').textContent).toContain(t('account.devices.offline'))
   })
 
   it('says a key failed its check while closed, and why once opened', async () => {
@@ -207,7 +230,8 @@ describe('ModelConnectionsView', () => {
       within(row('personal')).getByRole('button', { name: t('account.modelConnections.removePersonal') })
     )
     expect(view.emitted('removePersonal')).toEqual([['personal']])
-    await fireEvent.click(screen.getByRole('button', { name: t('account.modelConnections.addPersonal') }))
+    // The button that opens this dialog is in the team page's header (Models.vue).
+    await view.rerender({ addingPersonal: true })
     await fireEvent.mouseDown(
       await screen.findByLabelText(t('account.modelConnections.connection'), { selector: 'input' })
     )

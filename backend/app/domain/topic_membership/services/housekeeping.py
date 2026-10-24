@@ -31,10 +31,16 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from app.core.request_facts import recall, remember
 from app.domain.conversation.services import room_of_thread
-from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.identity.services import IdentityService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, is_private_chat
+from app.domain.topic_membership import project_rows
 from app.domain.topic_membership.ports import ProjectTeam
 from app.domain.topic_membership.schemas import TopicMemberOut
 
@@ -89,6 +95,41 @@ async def addressable_agent_handle(
     return await svc.resolve_agent_handle(topic_id, room_id=room_id)
 
 
+async def addressable_agent_handles(
+    svc: pkg.TopicMemberService, project_id: uuid.UUID, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str | None]:
+    """:func:`addressable_agent_handle` for a page of one project's rooms, in a
+    fixed number of reads: the rosters at once, who on them is an agent at once,
+    and — only when a room seats more than one — the project's default once.
+
+    Same answer per room: None when no agent sits there, the one that does when
+    one does, and with several the project's default if it is among them, else
+    the first on the roster. Rooms only — a 支线 or a task answers through its
+    channel, which the caller already holds.
+    """
+    if not room_ids:
+        return {}
+    members = await svc._repo.list_for_topics(room_ids)
+    agents = await IdentityService(svc._session).agents_among(
+        list({m.member_handle for m in members})
+    )
+    seated: dict[uuid.UUID, list[str]] = {room: [] for room in room_ids}
+    for member in members:
+        if member.member_handle in agents:
+            seated[member.topic_id].append(member.member_handle)
+    own: str | None = None
+    if any(len(handles) > 1 for handles in seated.values()):
+        default = await project_rows.default_agent_instance_id(svc._session, project_id)
+        own = agent_instance_handle(default) if default is not None else None
+    return {
+        room: (own if own in handles else handles[0]) if handles else None
+        for room, handles in seated.items()
+    }
+
+
+_AGENT_SEAT_TABLES = frozenset({"topic_memberships", "user", "agent_bindings"})
+
+
 async def agent_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> list[str]:
     """Which of this topic's members are agents, in roster order.
 
@@ -102,11 +143,17 @@ async def agent_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> lis
     handle 上给出两个答案，而房间说它是 agent、项目名册说它是人，正是这次改动
     要消掉的那种差（I4a）。
     """
+    key = ("agent_handles", topic_id)
+    found, cached = recall(svc._session, key)
+    if found:
+        return cached
     members = await svc._repo.list_for_topic(topic_id)
     agents = await IdentityService(svc._session).agents_among(
         [m.member_handle for m in members]
     )
-    return [m.member_handle for m in members if m.member_handle in agents]
+    handles = [m.member_handle for m in members if m.member_handle in agents]
+    remember(svc._session, key, handles, tables=_AGENT_SEAT_TABLES)
+    return handles
 
 
 async def ensure_agent_seat(

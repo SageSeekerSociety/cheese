@@ -50,7 +50,7 @@ import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
-import { memberName, teammateName } from '@/lib/agentNames'
+import { memberName, memberOriginalName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
 import { mayIn } from '@/lib/projectPermissions'
@@ -144,7 +144,11 @@ const error = ref<string | null>(null)
 function matches(m: ProjectMemberRow): boolean {
   const q = query.value.trim().toLowerCase()
   if (!q) return true
-  return memberName(m).toLowerCase().includes(q) || m.user_handle.toLowerCase().includes(q)
+  return (
+    memberName(m).toLowerCase().includes(q) ||
+    memberOriginalName(m).toLowerCase().includes(q) ||
+    m.user_handle.toLowerCase().includes(q)
+  )
 }
 
 const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
@@ -208,6 +212,12 @@ function openDm(m: ProjectMemberRow) {
 
 function openAgentDm(a: ProjectAgent) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: agentDmKey(a.handle) } })
+}
+
+/** AI 队友也有资料页。它那一格只回答「带了哪几颗」，是只读的；改在项目设置里（`AgentTeamSettings`）。
+ *  地址用**座位名**（`seat_handle`）——资料页拿它跟 `/projects/{id}/agents` 对得上（见 `ProfileView`）。 */
+function openAgentProfile(a: ProjectAgent) {
+  void router.push({ name: 'member', params: { projectId: props.projectId, handle: a.seat_handle } })
 }
 
 function messageOf(e: unknown, fallback: string): string {
@@ -483,6 +493,11 @@ useCommands(() => [
                 <button type="button" class="t-title text-truncate member-name" @click.stop="openProfile(m)">
                   {{ memberName(m) || m.user_handle }}
                 </button>
+                <span
+                  v-if="m.remark && memberOriginalName(m) && memberOriginalName(m) !== m.remark"
+                  class="t-meta c-muted text-truncate"
+                  >({{ memberOriginalName(m) }})</span
+                >
                 <ExternalTag v-if="isExternalMember(m)" />
                 <span v-if="teamChip(m)" class="chip-neutral">{{ teamChip(m) }}</span>
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
@@ -553,7 +568,12 @@ useCommands(() => [
               </div>
               <div v-if="inv.invitee_name" class="t-meta c-muted">{{ inv.invitee_handle }}</div>
               <i18n-t keypath="work.members.pendingBy" tag="div" class="t-meta c-muted">
-                <template #inviter><UserRef :handle="inv.inviter_handle" /></template>
+                <template #inviter>
+                  <i18n-t v-if="inv.invited_by_assistant" keypath="work.onBehalf.who" tag="span">
+                    <template #name><UserRef :handle="inv.inviter_handle" /></template>
+                  </i18n-t>
+                  <UserRef v-else :handle="inv.inviter_handle" />
+                </template>
               </i18n-t>
             </div>
             <v-spacer />
@@ -570,7 +590,14 @@ useCommands(() => [
           ><span class="c-muted">{{ agents.length }}</span>
         </div>
         <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
-          <div class="d-flex align-center pa-3">
+          <div
+            class="d-flex align-center pa-3"
+            role="button"
+            tabindex="0"
+            @click="openAgentProfile(a)"
+            @keydown.enter="openAgentProfile(a)"
+            @keydown.space.prevent="openAgentProfile(a)"
+          >
             <CheeseAvatar
               :name="teammateName(a.display_name, a.name_source) || a.handle"
               :handle="a.seat_handle"
@@ -599,7 +626,7 @@ useCommands(() => [
             </span>
             <BaseButton
               size="sm"
-              @click="
+              @click.stop="
                 router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'agents' } })
               "
             >
@@ -699,7 +726,8 @@ useCommands(() => [
 </template>
 
 <style scoped>
-.member-row {
+.member-row,
+.agent-row {
   cursor: pointer;
 }
 
@@ -715,7 +743,8 @@ useCommands(() => [
   text-align: start;
 }
 
-.member-row:hover {
+.member-row:hover,
+.agent-row:hover {
   border-color: var(--line-2);
 }
 

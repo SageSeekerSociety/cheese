@@ -167,3 +167,39 @@ export function getDocsAssistantReport(days: FeatureDays): Promise<DocsAssistant
 export function getTaskNamingReport(days: FeatureDays): Promise<TaskNamingReport> {
   return getFeatureReport<TaskNamingReport>('task-naming', days)
 }
+
+/* ---- 个人芝士（`personal-assistant`） ----
+ *
+ * 把关放行了多少、先问了多少、在哪一步定下的、花了平台多少，以及每次回答里模型调用的
+ * 提示词有多少被服务方的缓存接住。没有分母的比例是 `null`。后端：
+ * `feature_stats/features/personal_assistant.py`。 */
+export interface PersonalAssistantReport {
+  days: number
+  gate: {
+    checks: number
+    allowed: number
+    asked: number
+    /** `verdict:stage`，如 `allowed:quick`、`asked:rule`。 */
+    byStage: Record<string, number>
+    byKind: { kind: string; allowed: number; asked: number }[]
+    inputTokens: number
+    cacheReadTokens: number
+    cacheRate: number | null
+    outputTokens: number
+    costUsd: number
+    latencyMs: { count: number; median: number | null; p90: number | null }
+  }
+  answers: {
+    answers: number
+    calls: number
+    inputTokens: number
+    cacheReadTokens: number
+    cacheRate: number | null
+    callCacheRate: { median: number | null; p10: number | null }
+  }
+  daily: { date: string; checks: number; asked: number; costUsd: number }[]
+}
+
+export function getPersonalAssistantReport(days: FeatureDays): Promise<PersonalAssistantReport> {
+  return getFeatureReport<PersonalAssistantReport>('personal-assistant', days)
+}

@@ -51,7 +51,9 @@ def configured_row() -> dict:
         config = yaml.safe_load(f)
     providers = config["litellm_settings"]["custom_provider_map"]
     assert {"provider": "qwen-asr", "custom_handler": "cheese_qwen_asr.handler"} in providers
-    (row,) = [r for r in config["model_list"] if r["litellm_params"]["model"].startswith("qwen-asr/")]
+    with open("/opt/cheese-gateway/test_rows.yaml") as f:
+        rows = yaml.safe_load(f)["model_list"]
+    (row,) = [r for r in rows if r["litellm_params"]["model"].startswith("qwen-asr/")]
     return row
 
 

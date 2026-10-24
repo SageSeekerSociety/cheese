@@ -1,14 +1,10 @@
-"""A person's model connections, managed from any browser (#2991).
+"""Personal subscriptions are managed from Models independently of execution devices.
 
-Their own Claude Code is logged in on the machines they enrolled; 「模型连接」
-lists each login and lets its owner remove it, or point a machine at another
-model service, without being at that machine. Only the owner sees or touches
-their connections. A removed connection is out of use at once — nothing starts
-with it — and a machine that was away when it was removed logs it out as it
-next connects. A model service's key goes to the machine and nowhere else.
+Only the owner manages their personal-team connections. Removing a connection
+immediately prevents new sessions from using it; an offline computer logs it out
+when it next connects. A status probe never registers an unknown login or assigns
+its team.
 """
-
-from tests.support.devices import enrollment_team
 
 import json
 import uuid
@@ -32,15 +28,16 @@ from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
-from app.domain.team.services import team_service
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
     post_project,
     session_auth_headers,
 )
+from tests.support.devices import enrollment_team
 
 
 class _Machines:
@@ -53,6 +50,8 @@ class _Machines:
         self.online: set[str] = set()
         #: machine -> its logins, by local id -> logged in.
         self.logins: dict[str, dict[str, bool]] = {}
+        #: machine -> local id -> the Claude account (email, org) logged in.
+        self.accounts: dict[str, dict[str, tuple[str, str]]] = {}
         self.refuse_logout = False
         self.exec = AsyncMock(side_effect=self._exec)
 
@@ -86,6 +85,8 @@ class _Machines:
             status = {"loggedIn": logged_in}
             if logged_in:
                 status |= {"authMethod": "claude.ai", "subscriptionType": "max"}
+                email, org = self.accounts.get(device, {}).get(local_id, (None, None))
+                status |= {"email": email, "orgName": org}
             reports.append({"id": local_id, "status": status})
         return {
             "exit": 0,
@@ -173,8 +174,6 @@ def test_only_its_owner_sees_or_changes_a_connection(client, monkeypatch):
     assert client.delete(login, headers=bob).status_code == 403
     assert client.post(f"{login}/check", headers=bob).status_code == 403
     assert client.patch(login, headers=bob, json={"name": "x"}).status_code == 403
-    machine = f"/connector/my/devices/{laptop}/claude-code"
-    assert client.post(machine, headers=bob).status_code == 403
 
     machines.exec.assert_not_awaited()
     (still,) = _connections(client, alice)
@@ -278,6 +277,7 @@ async def _waits(chat, topic_id, block_id, instance_id) -> bool:
         chat.post_system_event,
         topic_id,
         None,
+        draining=chat,
         user_block_id=block_id,
         recipient_instance_id=instance_id,
     ) as held:
@@ -308,7 +308,10 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     )
     assert machines.logins[laptop][FIRST_LOGIN] is True
     # Asking it again from the page changes nothing either.
-    recheck = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    recheck = client.post(
+        f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check",
+        headers=alice,
+    )
     assert recheck.status_code == 200, recheck.text
     (still,) = _connections(client, alice)
     assert still["revoking"] is True and still["logged_in"] is False
@@ -412,12 +415,47 @@ def test_a_probe_does_not_assign_a_team_to_an_unregistered_login(client, monkeyp
     machines.holds(laptop, FIRST_LOGIN, "C2QR")
     monkeypatch.setattr(connections, "device_hub", machines)
 
-    asked = client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    path = f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check"
+    asked = client.post(path, headers=alice)
 
     assert asked.status_code == 200, asked.text
     assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
 
     # Logged out and removed on the machine itself: it is no connection now.
     del machines.logins[laptop]["C2QR"]
-    client.post(f"/connector/my/devices/{laptop}/claude-code", headers=alice)
+    client.post(path, headers=alice)
     assert [c["local_id"] for c in _connections(client, alice)] == [FIRST_LOGIN]
+
+
+def test_each_login_names_the_claude_account_it_is(client, monkeypatch):
+    """Two logins on one computer are told apart by the Claude account each
+    one is, as the computer reports it on every check."""
+    alice = _bearer(seed_user(client, "alice"))
+    laptop = _laptop(client, "alice", "B7QX")
+    machines = _Machines()
+    machines.online.add(laptop)
+    machines.holds(laptop, FIRST_LOGIN, "B7QX")
+    machines.accounts[laptop] = {
+        FIRST_LOGIN: ("alice@example.com", "Alice's Organization"),
+        "B7QX": ("alice@work.example", "Work Inc"),
+    }
+    monkeypatch.setattr(connections, "device_hub", machines)
+
+    path = f"/connector/teams/{team_id(client)}/claude-logins/{laptop}/check"
+    checked = client.post(path, headers=alice)
+
+    assert checked.status_code == 200, checked.text
+    accounts = {
+        c["local_id"]: (c["account_email"], c["account_org"])
+        for c in _connections(client, alice)
+    }
+    assert accounts == {
+        FIRST_LOGIN: ("alice@example.com", "Alice's Organization"),
+        "B7QX": ("alice@work.example", "Work Inc"),
+    }
+
+    # Logged in again there with another account: the next check says so.
+    machines.accounts[laptop]["B7QX"] = ("bob@work.example", "Work Inc")
+    assert client.post(path, headers=alice).status_code == 200
+    second = next(c for c in _connections(client, alice) if c["local_id"] == "B7QX")
+    assert second["account_email"] == "bob@work.example"

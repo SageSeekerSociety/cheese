@@ -23,6 +23,7 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { toast } from 'vuetify-sonner'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -31,11 +32,13 @@ import { useDocFind } from '../../composables/useDocFind'
 import { useDocOutline } from '../../composables/useDocOutline'
 import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
+import { isAgentHandle } from '../../lib/authorship'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
 import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
+import { documentPrintHtml } from './doc/blocks/print'
 import DocBacklinks from './doc/DocBacklinks.vue'
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
@@ -127,6 +130,10 @@ const props = withDefaults(
     fetchDocNodes: () => Promise<Block[]>
     /** 文档里引用的一张图拿什么画。 */
     imageSrc: (src: string) => Promise<string>
+    /** 导出 PDF 时那张图放进纸里的地址：自带字节的 data: URL。取不到时给空串。 */
+    imageData?: (src: string) => Promise<string>
+    /** 把排好的一页交给平台印成 PDF 并下载；没接这一条时「⋯」里不给「导出 PDF」。 */
+    savePdf?: (html: string, filename: string) => Promise<void>
     /** 文档里的画布拿什么读写。 */
     canvas?: CanvasData | null
     // ---- 动作 ----
@@ -140,6 +147,8 @@ const props = withDefaults(
     answerToComment?: (conversation: string, quote: string, question: string) => Promise<string>
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
+    /** 撤销、恢复 AI 队友一次回答对这篇的修改（`/assistant/changes`）。 */
+    undoAgentChanges?: (changes: number[], redo: boolean) => Promise<unknown>
     // ---- 修改记录 ----
     /** 最近一次编辑：谁（读成名字）、什么时候。 */
     lastEdit?: { name: string; at: string } | null
@@ -184,6 +193,7 @@ const props = withDefaults(
     suggestionReasons: () => ({}),
     fetchSuggestionReasons: undefined,
     applyDocEdits: undefined,
+    undoAgentChanges: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
     avatarOf: () => '',
@@ -191,6 +201,8 @@ const props = withDefaults(
     restoreVersion: undefined,
     mentionOutside: null,
     canvas: null,
+    imageData: undefined,
+    savePdf: undefined,
   }
 )
 
@@ -361,7 +373,7 @@ const agentOptions = {
   ask: () => props.askAgent,
   stop: () => props.stopAgent,
   editable: () => decides.value,
-  applyEdits: () => props.applyDocEdits,
+  undoChanges: () => props.undoAgentChanges,
   toComment: () => props.answerToComment,
   agentName: () => props.agentName,
   onError: (message: string) => props.setError(message),
@@ -382,6 +394,21 @@ watch(
   { immediate: true }
 )
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
+/** 人的 handle 读成名字：自己是「你」、在线的人是他们的名字，都读不出来时用名册。 */
+function personName(handle: string): string {
+  const resolved = props.nameOf(handle)
+  return resolved === handle ? mentionNames.value[handle] ?? handle : resolved
+}
+/** 建议条上的名字：全出自一个人时写那个人的名字，混着几个人时不写名字。 */
+function suggestionAuthorName(authors: string[]): string | null {
+  const unique = [...new Set(authors.filter(Boolean))]
+  if (unique.length !== 1) return null
+  const handle = unique[0]
+  if (handle === props.agentHandle || isAgentHandle(handle)) return props.agentName
+  return personName(handle)
+}
+const pendingSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.list.value.map((s) => s.author)))
+const decidedSuggestionAuthor = computed(() => suggestionAuthorName(suggestions.decided.value.authors))
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
 const suggestionsOpen = ref(false)
 function toggleSuggestions() {
@@ -403,6 +430,29 @@ function exportDoc() {
   link.download = `${docTitle.value || 'document'}.md`
   link.click()
   URL.revokeObjectURL(url)
+  // 文件悄悄落进下载文件夹，不说一句就像没导出。
+  toast(t('work.room.doc.exportedMarkdown'))
+}
+/** 文档名能当文件名：每个系统都不收的那几个字符换成空格。 */
+function fileName(title: string): string {
+  return Array.from(title, (ch) => ('\\/:*?"<>|'.includes(ch) ? ' ' : ch)).join('')
+}
+/** 导出 PDF：同一份正文，排成一页纸交给平台的打印浏览器。菜单在点下去时已经关了，
+ *  所以失败要说出来，不然这一下就成了没反应。 */
+async function exportPdf() {
+  if (!props.session || !props.savePdf) return
+  try {
+    const html = await documentPrintHtml({
+      title: docTitle.value || 'document',
+      markdown: exportMarkdown(props.session.doc),
+      names: { mentionNames: props.mentionNames ?? {}, topicTitles: {} },
+      image: props.imageData,
+    })
+    await props.savePdf(html, `${fileName(docTitle.value || 'document')}.pdf`)
+    toast(t('work.room.doc.exportedPdf'))
+  } catch (cause) {
+    props.setError(cause instanceof Error && cause.message ? cause.message : t('work.room.doc.exportPdfFailed'))
+  }
 }
 watch(
   () => suggestions.list.value.map((s) => s.id).join(' '),
@@ -514,6 +564,7 @@ defineExpose({
             :headings="outlineHeadings"
             :find-open="findOpen"
             :deletable="!!document && !readOnly && !suggestOnly"
+            :pdfable="!!savePdf"
             :suggest-only="suggestOnly"
             :suggesting="suggesting"
             @delete="emit('delete')"
@@ -525,6 +576,7 @@ defineExpose({
             @set-suggesting="(on: boolean) => setSuggesting?.(on)"
             @history="historyOpen = true"
             @export="exportDoc"
+            @export-pdf="exportPdf"
             @open-thread="locateComment"
             @toggle-find="toggleFind"
             @outline-select="goHeading"
@@ -552,7 +604,8 @@ defineExpose({
         <Transition name="doc-menu">
           <DocSuggestionStrip
             v-if="suggestionsOpen"
-            :agent-name="agentName"
+            :author="pendingSuggestionAuthor"
+            :decided-author="decidedSuggestionAuthor"
             :count="suggestions.list.value.length"
             :decided="suggestions.decided.value"
             :editable="decides"
@@ -656,6 +709,9 @@ defineExpose({
               <DocEditLayer
                 :editor="surfaceRef?.editor ?? null"
                 :agent-name="agentName"
+                :agent-handle="agentHandle"
+                :name-of="nameOf"
+                :avatar-of="avatarOf"
                 :editable="decides"
                 :rewrite="rewrite"
                 :review="review"

@@ -4,8 +4,9 @@ Revision ID: e7a4913c62bf
 Revises: d4f30c9e71a2
 """
 
-from alembic import op
 from migration_helpers import with_lock_retries
+
+from alembic import op
 
 revision = "e7a4913c62bf"
 down_revision = "d4f30c9e71a2"

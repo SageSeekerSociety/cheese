@@ -33,10 +33,14 @@ const createAvatar = vi.fn()
 vi.mock('@/api/avatars', () => ({ createAvatar: (...args: unknown[]) => createAvatar(...args) }))
 const spaceList = vi.fn()
 const spaceJoin = vi.fn()
+const spaceApplications = vi.fn()
+const spaceCreate = vi.fn()
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     list: (...args: unknown[]) => spaceList(...args),
     join: (...args: unknown[]) => spaceJoin(...args),
+    applications: (...args: unknown[]) => spaceApplications(...args),
+    create: (...args: unknown[]) => spaceCreate(...args),
   },
 }))
 const confirm = vi.fn()
@@ -53,6 +57,7 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
 import HomeSidebar from '@/views/home/HomeSidebar.vue'
 
 const blank = { template: '<div />' }
@@ -78,16 +83,22 @@ async function mount(path = '/inbox') {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
-      { path: '/spaces', name: 'HomeSpaces', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
+      { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+      { path: '/users/settings/compute', name: 'UserSettingsCompute', component: blank },
       {
         path: '/teams/:handle',
         component: { template: '<router-view />' },
         children: [
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
-          { path: 'docs', name: 'TeamsDetailDocs', component: blank },
+          { path: 'settings', name: 'TeamsDetailSettings', component: blank },
+          { path: 'profile', name: 'TeamsDetailProfile', component: blank },
+          { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
@@ -129,6 +140,8 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
+  // 名单现在住在全站共用的查询缓存里：上一个用例读到的不能带到这一个。
+  queryClient.clear()
   for (const fn of [
     getMyTeams,
     removeMember,
@@ -139,12 +152,15 @@ beforeEach(() => {
     createAvatar,
     spaceList,
     spaceJoin,
+    spaceApplications,
+    spaceCreate,
     confirm,
     refreshProjects,
   ])
     fn.mockReset()
   getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
-  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课' }] })
+  spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课', avatarId: 9 }] })
+  spaceApplications.mockResolvedValue({ items: [] })
 })
 afterEach(cleanup)
 
@@ -152,8 +168,30 @@ describe('目录的名单', () => {
   it('我所在的团队和我加入的空间都读来就画出来', async () => {
     await mount()
     expect(await screen.findByText('知是开发组')).toBeTruthy()
-    expect(await screen.findByText('数据分析课')).toBeTruthy()
+    const spaceRow = (await screen.findByText('数据分析课')).closest('.v-list-item')
+    expect(spaceRow?.querySelector('.home-nav__mark img')?.getAttribute('src')).toContain('/avatars/9')
     expect(getMyTeams).toHaveBeenCalled()
+  })
+
+  // 从空间或项目回到首页时这块侧栏会卸载重挂。旧名单要当场画出来，不让屏幕先空
+  // 一下；同时还要照旧去问服务器，别让目录看不见时删掉、改名的空间被缓存盖住。
+  it('回到首页时先画上一次的名单，同时再到服务器问一次', async () => {
+    const first = await mount()
+    await screen.findByText('知是开发组')
+    first.unmount()
+
+    let answerTeams: (value: unknown) => void = () => {}
+    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerTeams = resolve)))
+    await mount()
+
+    // 请求还没回来，上一次的名单已经在屏幕上了。
+    expect(screen.getByText('知是开发组')).toBeTruthy()
+    expect(screen.getByText('数据分析课')).toBeTruthy()
+    expect(getMyTeams).toHaveBeenCalledTimes(2)
+
+    // 服务器说名单变了：这一次回答会把它换掉。
+    answerTeams({ teams: [team('fresh', '刚加入的团队')] })
+    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
   })
 
   // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
@@ -343,88 +381,6 @@ describe('转让团队', () => {
   })
 })
 
-describe('改团队资料', () => {
-  async function openEditor() {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
-    await mount()
-    await fireEvent.click(await screen.findByLabelText('团队操作'))
-    await fireEvent.click(await screen.findByText('编辑团队资料'))
-    return screen.findByLabelText('团队名称')
-  }
-
-  it('名字是空的就不发，报在名字那一格', async () => {
-    await openEditor()
-    await fireEvent.update(screen.getByLabelText('团队名称'), '   ')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('填写团队名称')
-    expect(update).not.toHaveBeenCalled()
-  })
-
-  it('换头像先传图，再把拿到的 id 和另外两样一起交上去', async () => {
-    URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
-    createAvatar.mockResolvedValue({ avatarId: 77 })
-    update.mockResolvedValue({ team: team('crew', '芝士社') })
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
-    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(createAvatar).toHaveBeenCalledWith(file))
-    expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '', avatarId: 77 })
-    await waitFor(() => expect(screen.queryByRole('button', { name: '保存' })).toBeNull())
-    expect(await screen.findByText('芝士社')).toBeTruthy()
-  })
-
-  // 这条是从原来那个弹窗自己的 spec 里搬过来的：只改名字、没碰头像时，交上去的那一份
-  // 里不能有 avatarId，否则用户现成的头像会被清掉。
-  it('没换图就不带 avatarId，免得把现成的头像覆盖掉', async () => {
-    update.mockResolvedValue({ team: team('crew', '芝士社') })
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '' }))
-    expect(createAvatar).not.toHaveBeenCalled()
-  })
-
-  it('撞名报在名字那一格，不是「保存失败」', async () => {
-    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await screen.findByText('这个名称已被占用，换一个试试')
-    expect(screen.queryByText('保存失败，请稍后重试')).toBeNull()
-  })
-
-  // 弹窗自己那条用例只验「往外发了 clearErrors」，接线断掉照样绿：这里验屏幕上的效果。
-  it('撞名报错之后，人在名字那格一打字，那句报错就消失', async () => {
-    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
-    const name = await openEditor()
-    await fireEvent.update(name, '芝士社')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('这个名称已被占用，换一个试试')
-
-    await fireEvent.update(name, '芝士社二号')
-    await waitFor(() => expect(screen.queryByText('这个名称已被占用，换一个试试')).toBeNull())
-  })
-
-  it('没权限和没网都留在整张表单上', async () => {
-    update.mockRejectedValue(new ApiError(403, 'forbidden', 'Forbidden'))
-    await openEditor()
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('只有团队所有者和管理员能修改资料')
-
-    cleanup()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    update.mockRejectedValue(new Error('offline'))
-    await openEditor()
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('保存失败，请稍后重试')
-  })
-})
-
 describe('手机上', () => {
   // 手机上没有常驻侧栏：同一份目录是底栏「首页」那一格的整页（HomeHub）。侧栏容器照样
   // 挂在那里，这一份没人看，就不该去读后端——更不该每次换页面、每次拿回焦点再读一回。
@@ -489,6 +445,64 @@ describe('用邀请码加入空间', () => {
     await fireEvent.click(screen.getByRole('button', { name: '加入' }))
 
     expect(await screen.findByText('邀请码无效、已过期或已达使用上限')).toBeTruthy()
+    expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
+  })
+})
+
+describe('我建的空间还没过审', () => {
+  const application = (id: number, name: string, reviewStatus: string) => ({ id, name, intro: '', reviewStatus })
+
+  it('待审核和被驳回的也在空间那一组里，标着是哪一种；过审的不重复', async () => {
+    spaceApplications.mockResolvedValue({
+      items: [
+        application(3, '数据分析课', 'APPROVED'),
+        application(8, '操作系统 2026 秋', 'PENDING'),
+        application(9, '量子计算导论', 'REJECTED'),
+      ],
+    })
+    await mount()
+    expect(await screen.findByText('操作系统 2026 秋')).toBeTruthy()
+    expect(screen.getByText('待审核')).toBeTruthy()
+    expect(screen.getByText('已驳回')).toBeTruthy()
+    expect(screen.getAllByText('数据分析课')).toHaveLength(1)
+  })
+
+  it('点还没过审的那一行，进的是这份申请', async () => {
+    spaceApplications.mockResolvedValue({ items: [application(9, '量子计算导论', 'REJECTED')] })
+    await mount()
+    await fireEvent.click(await screen.findByText('量子计算导论'))
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/space-applications/9'))
+  })
+
+  it('申请读不到时，加入的空间照样列出来', async () => {
+    spaceApplications.mockRejectedValue(new Error('offline'))
+    await mount()
+    expect(await screen.findByText('数据分析课')).toBeTruthy()
+  })
+})
+
+describe('新建空间', () => {
+  it('提交以后落到这份申请上', async () => {
+    spaceCreate.mockResolvedValue({ space: { id: 12 }, inviteCode: null })
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '  编译原理 2026 秋 ')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    await waitFor(() =>
+      expect(spaceCreate).toHaveBeenCalledWith({ name: '编译原理 2026 秋', intro: '', avatarId: undefined })
+    )
+    await waitFor(() => expect(mounted.router!.currentRoute.value.fullPath).toBe('/space-applications/12'))
+  })
+
+  it('没建成的那一句留在弹窗里，人还在原处', async () => {
+    spaceCreate.mockRejectedValue(new Error('offline'))
+    await mount()
+    await fireEvent.click(await screen.findByText('新建空间'))
+    await fireEvent.update(await screen.findByLabelText('空间名称'), '编译原理')
+    await fireEvent.click(screen.getByRole('button', { name: '提交审核' }))
+
+    expect(await screen.findByText('创建失败，稍后重试')).toBeTruthy()
     expect(mounted.router!.currentRoute.value.fullPath).toBe('/inbox')
   })
 })

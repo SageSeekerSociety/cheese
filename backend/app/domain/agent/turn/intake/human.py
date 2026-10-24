@@ -226,6 +226,7 @@ class HumanMessages:
         client_id: str | None = None,
         quoted_context: dict | None = None,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         stored = await persist_human_message(
             self.sessions,
@@ -240,10 +241,13 @@ class HumanMessages:
             attachments=attachments,
             client_id=client_id,
             quoted_context=quoted_context,
+            by_assistant=by_assistant,
+            handoff=handoff,
         )
         if not stored.duplicate:
             await publish_answered(stored.place.conversation_id, stored.answered)
             if names_a_person(author) and stored.place.task is not None:
                 naming.nudge(stored.place.task.id, "message")
-            await self._thread_replied(stored.place.conversation_id)
+            if stored.place.thread is not None:
+                await self._thread_replied(stored.place.conversation_id)
         return stored.payloads, stored.anchor_id, stored.block_ids, stored.duplicate

@@ -60,6 +60,13 @@
   "neverRun": "Not run yet",
   "noReason": "No reason given",
   "listSeparator": ", ",
+  "spend": {
+    "points": "{n} credits",
+    "pending": "settling",
+    "thisMonth": "{points} this month",
+    "recordsTotal": "{points} this month",
+    "hint": "What this rule took from the team's credits this month. Model calls only — cloud compute is not counted."
+  },
   "zone": {
     "beijing": "Beijing time"
   },
@@ -90,7 +97,7 @@
     "preset": "From the platform",
     "mine": "Saved in this project",
     "mineNote": "(shared with everyone in the project)",
-    "saveFailed": "The template wasn't saved",
+    "saveFailed": "Couldn't save the template",
     "when": {
       "daily": "Every day at {time}",
       "weekly": "Every {days} at {time}",
@@ -135,11 +142,11 @@
     "goalPlaceholder": "e.g. Sum up this week's finished tasks, work in progress and blockers across channels in a one-page weekly report",
     "note": "Notes",
     "notePlaceholder": "e.g. List results per channel; only files in the library",
-    "autoHint": "It fills the blanks from the goal, and starts running once that is done.",
+    "autoHint": "{agent} fills the blanks from the goal, and starts running once that is done.",
     "timeOn": "Time",
     "conditionOn": "Condition",
     "keepTemplate": "Save as a template",
-    "goalRequired": "The goal is required: it is what the AI teammate works from.",
+    "goalRequired": "The goal is required: it is what {agent} works from.",
     "weekdaysRequired": "Pick a day: a weekly run has to name which day.",
     "freq": "Frequency",
     "time": "Time",

@@ -4,12 +4,15 @@
 # macOS's own 3.9 among them, which cannot evaluate `dict | None`.
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import runpy
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -189,6 +192,280 @@ def windows_holders(paths: list[Path]) -> list[int]:
     return found
 
 
+#: Where Linux shows each process's working directory, root, executable, open
+#: files and mapped files. Read there rather than by lsof, which a stock Linux
+#: image need not have: the Debian cloud image behind the MicroCloud VM offering
+#: has none, and every sandbox destroy on those hosts failed for it (dev,
+#: 2026-10-20). macOS has no /proc and ships lsof.
+PROC = Path("/proc")
+
+
+def proc_index(paths: list[Path]) -> set:
+    """Every file and directory under these, as (device, inode): what a process
+    holding something of the room holds, whatever path it reaches it by. A
+    process in another mount namespace names the room differently (a private
+    session sees its directory as `/work`), and on a platform host the homes are
+    also reachable through the data disk they are bound from; the inode is the
+    same in every case. `lsof +D` matches the same way.
+
+    The walk goes by directory descriptors and never follows a symlink below
+    the paths given: what is inside the room is the room's to change while it
+    is walked, and a directory it swaps for a link to `/usr/lib` must not make
+    every process with libc mapped one to end.
+
+    A part of the room it cannot read is a RuntimeError, never a part left out:
+    an index missing a subtree finds nothing holding it and lets the room be
+    deleted under whoever does. Only an entry that is gone, or is no longer a
+    directory, is passed over. One descriptor is held per level, so a tree
+    deeper than the descriptors left (about a thousand levels under the usual
+    limit) is refused this way; `remove_tree` holds one per level too and
+    could not delete it either."""
+    found = set()
+
+    def unreadable(path: str, error: OSError) -> RuntimeError:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        return RuntimeError(
+            "could not establish whether the resource has active writers: "
+            f"cannot read {path}: {error.strerror or error}"
+        )
+
+    def enter(descriptor: int, path: str) -> tuple:
+        """Index this directory and its files; the subdirectories it lists are
+        opened one at a time as the walk reaches them, so the descriptors held
+        open are as many as the tree is deep."""
+        try:
+            info = os.fstat(descriptor)
+            found.add((info.st_dev, info.st_ino))
+            subdirectories = []
+            for entry in os.scandir(descriptor):
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        subdirectories.append(entry.name)
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                found.add((info.st_dev, info.st_ino))
+        except OSError as error:
+            os.close(descriptor)
+            raise unreadable(path, error) from error
+        return descriptor, path, iter(subdirectories)
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    for path in paths:
+        try:
+            top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise unreadable(str(path), error) from error
+        stack = [enter(top, str(path))]
+        try:
+            while stack:
+                descriptor, where, pending = stack[-1]
+                name = next(pending, None)
+                if name is None:
+                    os.close(descriptor)
+                    stack.pop()
+                    continue
+                inside = os.path.join(where, name)
+                try:
+                    child = os.open(name, flags, dir_fd=descriptor)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue  # gone, or no longer a directory
+                except OSError as error:
+                    if error.errno == errno.ELOOP:
+                        continue  # now a link: nothing of the room's to follow
+                    raise unreadable(inside, error) from error
+                stack.append(enter(child, inside))
+        finally:
+            for descriptor, _, _ in stack:
+                os.close(descriptor)
+    return found
+
+
+#: statx(2), which can be told to answer from what the kernel already knows
+#: of a file (`AT_STATX_DONT_SYNC`) instead of asking its filesystem: a
+#: process may have a file open on a FUSE mount whose daemon has stopped
+#: answering, and a plain stat of it waits for that daemon for as long as it is
+#: stuck. The device and inode never need asking for. (On NFS, following the
+#: /proc link can still revalidate the file with its server first.)
+#:
+#: Called by its number rather than through libc's wrapper, which glibc has
+#: only from 2.28 and musl only from 1.2.5; the kernel has had the call since
+#: 4.11. The numbers are each architecture's own (`asm/unistd.h`).
+_STATX_NUMBER = {
+    "x86_64": 332,
+    "i386": 383,
+    "i686": 383,
+    "aarch64": 291,
+    "arm64": 291,
+    "riscv64": 291,
+    "loongarch64": 291,
+    "armv7l": 397,
+    "armv6l": 397,
+    "ppc64le": 383,
+    "ppc64": 383,
+    "s390x": 379,
+}
+_STATX_DONT_SYNC = 0x4000
+_STATX_TYPE_INO = 0x0001 | 0x0100
+_AT_FDCWD = -100
+#: What statx answers when it cannot look at anything at all (an old kernel, a
+#: seccomp profile that refuses it), as against at this one file: taking those
+#: for "nothing here" would report every room free.
+_STATX_UNUSABLE = {errno.ENOSYS, errno.EPERM, errno.EINVAL, errno.EFAULT}
+
+
+def _statx():
+    """A lookup of (device, inode, mode) by path that never waits on the
+    filesystem the path leads into. It answers None when this one file cannot
+    be looked at (gone, or another user's process), and raises when statx
+    cannot be used here at all."""
+    number = _STATX_NUMBER.get(os.uname().machine)
+    if number is None:
+        # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+        raise RuntimeError(
+            "could not establish whether the resource has active writers: "
+            f"no statx call known for {os.uname().machine}"
+        )
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    buffer = ctypes.create_string_buffer(256)
+
+    def statx(path: str) -> tuple | None:
+        answer = libc.syscall(
+            ctypes.c_long(number),
+            ctypes.c_int(_AT_FDCWD),
+            ctypes.c_char_p(os.fsencode(path)),
+            ctypes.c_int(_STATX_DONT_SYNC),
+            ctypes.c_uint(_STATX_TYPE_INO),
+            buffer,
+        )
+        if answer == 0:
+            # struct statx: stx_mode at 28, stx_ino at 32, stx_dev_major and
+            # stx_dev_minor at 136.
+            (mode,) = struct.unpack_from("=H", buffer, 28)
+            (inode,) = struct.unpack_from("=Q", buffer, 32)
+            major, minor = struct.unpack_from("=II", buffer, 136)
+            return os.makedev(major, minor), inode, mode
+        failure = ctypes.get_errno()
+        if failure in _STATX_UNUSABLE:
+            # i18n-exempt: runs on the machine; a cleanup's reason, for the logs and the row
+            raise RuntimeError(
+                "could not establish whether the resource has active writers: "
+                f"statx: {os.strerror(failure)}"
+            )
+        return None
+
+    return statx
+
+
+def _bound_sockets(pid: Path, cache: dict) -> dict:
+    """Socket inode -> the path it is bound at, for the network namespace this
+    process is in (`/proc/<pid>/net/unix` is its namespace's list), read once
+    per namespace. A name relative to where the binder then was, and an
+    abstract one, lead nowhere that can be looked up and are left out."""
+    try:
+        namespace = os.stat(pid / "ns" / "net").st_ino
+    except OSError:
+        return {}
+    if namespace not in cache:
+        bound = {}
+        try:
+            with open(pid / "net" / "unix") as table:
+                next(table, None)
+                for line in table:
+                    fields = line.split(None, 7)
+                    if len(fields) == 8 and fields[7].startswith("/"):
+                        bound[fields[6]] = fields[7].rstrip("\n")
+        except OSError:
+            pass
+        cache[namespace] = bound
+    return cache[namespace]
+
+
+def _holds(pid: Path, index: set, statx, sockets: dict) -> bool:
+    """Whether this process's working directory, root, executable, an open file,
+    a mapped file or a unix socket it has bound is one of `index`. A link the
+    kernel does not let this user follow (another user's process) is not this
+    user's to end either.
+
+    A bound socket is held through a descriptor that leads to the socket, not to
+    the file naming it in the room, so it is found by its name instead: looked
+    up from the process's own root, where that name was bound. A process whose
+    only hold on the room is the socket it listens on there (gpg-agent with its
+    home in the room works from `/`) is found this way. Looking that name up
+    walks its directories, which on a mount that has stopped answering can
+    still wait; only processes with a socket bound pay for it."""
+    links = [str(pid / "cwd"), str(pid / "root"), str(pid / "exe")]
+    held = set()
+    try:
+        for fd in os.scandir(pid / "fd"):
+            try:
+                target = os.readlink(fd.path)
+            except OSError:
+                continue
+            if target.startswith("socket:["):
+                held.add(target[8:-1])
+            else:
+                links.append(fd.path)
+    except OSError:
+        pass
+    for link in links:
+        found = statx(link)
+        if found is not None and found[:2] in index:
+            return True
+    if held:
+        for inode, path in _bound_sockets(pid, sockets).items():
+            if inode not in held:
+                continue
+            found = statx(f"{pid}/root{path}")
+            if found and stat.S_ISSOCK(found[2]) and found[:2] in index:
+                return True
+    try:
+        with open(pid / "maps") as maps:
+            for line in maps:
+                fields = line.split(None, 5)
+                if len(fields) < 5 or fields[4] == "0":
+                    continue
+                major, minor = fields[3].split(":")
+                device = os.makedev(int(major, 16), int(minor, 16))
+                if (device, int(fields[4])) in index:
+                    return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def proc_holders(paths: list[Path], index: set | None = None) -> list[int]:
+    """What `lsof +D` answers, read from /proc: the processes whose working
+    directory, root, executable, an open file, a mapped file or a bound unix
+    socket lies inside these. `index` is `proc_index(paths)`, when the caller
+    already has it."""
+    if index is None:
+        index = proc_index(paths)
+    own = {os.getpid(), os.getppid()}
+    statx = _statx()
+    sockets = {}
+    found = []
+    for entry in os.scandir(PROC):
+        if not entry.name.isdigit() or int(entry.name) in own:
+            continue
+        if _holds(Path(entry.path), index, statx, sockets):
+            found.append(int(entry.name))
+    return sorted(found)
+
+
+def proc_command(pid: int) -> str:
+    """A process's pid and command line, as `ps -o pid=,args=` would print it."""
+    try:
+        args = (PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return str(pid)
+    return f"{pid} " + " ".join(a.decode(errors="replace") for a in args if a)[:150]
+
+
 def run_command(
     argv: list[str], *, cwd: Path | None = None, pass_fds: tuple[int, ...] = ()
 ) -> subprocess.CompletedProcess:
@@ -295,6 +572,16 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
         rooms = []
         for path in paths:
             rooms += ["--bind", str(path), str(path)]
+        # The git the connector placed under the owner's home where the system
+        # had none good enough (`cli/internal/devenv`), shown back read-only;
+        # nothing else of the home is.
+        placed = (
+            Path.home()
+            / os.environ.get("CHEESE_PROFILE_ROOT", FOOTPRINT_ROOT)
+            / "runtime/git"
+        )
+        if placed.is_dir():
+            rooms += ["--ro-bind", str(placed), str(placed)]
         argv = [
             "bwrap",
             "--unshare-all",
@@ -319,7 +606,8 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
-    ONE lsof call, never one per path. `lsof +D` spends about two seconds
+    On Linux the processes are read from /proc (`proc_holders`); elsewhere
+    by lsof. ONE lsof call, never one per path. `lsof +D` spends about two seconds
     walking every process's descriptors before it so much as looks at the
     directory, so its cost is per INVOCATION and not per tree: measured
     2026-09-18, an empty directory costs the same 1.97s as a repository, five
@@ -333,12 +621,17 @@ def check_no_writers(paths: list[Path]) -> None:
     present = [str(path) for path in paths if path.exists()]
     if not present:
         return
-    if sys.platform == "win32":
-        pids = windows_holders([Path(path) for path in present])
+    if sys.platform == "win32" or PROC.is_dir():
+        if sys.platform == "win32":
+            pids = windows_holders([Path(path) for path in present])
+            named = [str(pid) for pid in pids]
+        else:
+            pids = proc_holders([Path(path) for path in present])
+            named = [proc_command(pid) for pid in pids]
         if pids:
             raise StillRunning(
                 "resource still has processes holding files or working "
-                "directories: " + ", ".join(str(pid) for pid in pids)
+                "directories: " + ", ".join(named)
             )
         return
     result = run_command(["lsof", "-t", "+D", *present])
@@ -367,6 +660,8 @@ def holders(paths: list[Path]) -> list[int]:
         return []
     if sys.platform == "win32":
         return windows_holders([Path(path) for path in present])
+    if PROC.is_dir():
+        return proc_holders([Path(path) for path in present])
     result = run_command(["lsof", "-t", "+D", *present])
     own = {os.getpid(), os.getppid()}
     return [
@@ -379,11 +674,19 @@ def holders(paths: list[Path]) -> list[int]:
 def end_holders(paths: list[Path]) -> None:
     """Terminate whatever still holds the room, gently first, then not.
 
-    lsof names the processes; each gets SIGTERM, ten seconds to act on it,
+    `holders` names the processes; each gets SIGTERM, ten seconds to act on it,
     then SIGKILL. A tmux pane whose process dies reads as dead to the next
     `request_exit`, which closes the session the ordinary way.
     """
-    pids = holders(paths)
+    index = None
+    if sys.platform != "win32" and PROC.is_dir():
+        # The room is walked once; only the processes are read again each poll.
+        index = proc_index([path for path in paths if path.exists()])
+
+    def current() -> list[int]:
+        return holders(paths) if index is None else proc_holders(paths, index)
+
+    pids = current()
     for signal_number, wait in ((15, 10.0), (9, 2.0)):
         helper = portable(paths) if sys.platform == "win32" else None
         if helper is not None:
@@ -398,7 +701,7 @@ def end_holders(paths: list[Path]) -> None:
         deadline = time.monotonic() + wait
         while pids and time.monotonic() < deadline:
             time.sleep(0.1)
-            pids = [pid for pid in pids if pid in set(holders(paths))]
+            pids = [pid for pid in pids if pid in set(current())]
         if not pids:
             return
 

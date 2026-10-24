@@ -6,8 +6,6 @@ A failure is counted against the people's machines the room's sessions hold
 second strike quarantines the machine, and the room is told which one.
 """
 
-from tests.support.devices import enrollment_team, place_in_project_team
-
 import uuid
 
 from app.domain.agent.host_failure import judge_host_failure
@@ -18,6 +16,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from tests.support.devices import enrollment_team, place_in_project_team
 
 OWNER = 1
 

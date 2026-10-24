@@ -112,7 +112,7 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_accept_request",
+          "tool": "cheese_card.request",
           "arg": "docs: add a welcome note",
           "platform": true
         },

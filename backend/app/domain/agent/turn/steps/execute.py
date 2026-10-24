@@ -297,7 +297,7 @@ async def execute(
                     continue
                 if kind == "turn_ceiling":
                     ceiling_s = float(frame.get("seconds", policy.timeout))
-                    # `topic_work()` reads this so `cheese_status` reports the
+                    # `topic_work()` reads this so `cheese_session(action=status)` reports the
                     # backend's REAL ceiling, not the generic outer default.
                     rec["ceiling_s"] = ceiling_s
                     # The frame's only remaining job here: it is emitted before
@@ -382,7 +382,7 @@ async def execute(
         # the books here.
         rec["status"] = "cancelled"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
-        rec["detail"] = rec.get("detail") or "轮次被强制结束"
+        rec["detail"] = rec.get("detail") or "这次运行被强制结束"
         logger.warning(
             "turn %s cancelled for topic %s after %ss",
             turn_id,
@@ -523,7 +523,7 @@ async def execute(
         rec["status"] = "crashed"
         rec["duration_s"] = round(time.monotonic() - t0, 1)
         logger.exception("turn %s failed for topic %s", turn_id, topic_id)
-        # The failure goes into the 现场 timeline as a persisted system event
+        # The failure goes into the room's conversation as a persisted system event
         # (scrolls with the flow, survives reload) — not just a transient
         # banner. No invented cause: the log has the real traceback.
         platform_failure = classify_platform_failure(exc)

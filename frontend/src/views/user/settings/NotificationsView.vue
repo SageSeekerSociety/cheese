@@ -351,5 +351,17 @@ function cellLabel(category: NotificationEventCategory, channel: NotificationEve
   .notif-matrix td {
     padding: 10px 16px;
   }
+
+  /* A channel column is as wide as its two-character heading, so the event names
+     keep the rest of the row instead of breaking onto two or three lines. */
+  .notif-matrix .notif-matrix__cell {
+    width: 1%;
+    padding-inline: 8px;
+    white-space: nowrap;
+  }
+
+  .notif-matrix .notif-matrix__cell:last-child {
+    padding-right: 16px;
+  }
 }
 </style>

@@ -29,15 +29,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
 from app.api.admin_deps import PlatformAdminDep
-from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
+from app.api.deps import (
+    get_consumptions,
+    get_llm_gateway,
+    get_ownership,
+    get_session_host,
+)
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
-from app.core.health import set_periodic_health
 from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
+from app.core.health import set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
 from app.core.metrics import active_requests, registry
@@ -60,6 +65,7 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
@@ -125,6 +131,19 @@ async def lifespan(application: FastAPI):
     except Exception as exc:  # a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
+    # Which gateway model each platform model role runs on, as an administrator
+    # pointed it (`app.core.model_roles`), read before this process serves: a
+    # role read from its Settings field after an administrator moved it (and
+    # its key) would be refused at the gateway. The periodic job "platform
+    # model roles refresh" keeps it current. Never blocks boot either.
+    try:
+        async with async_session_factory() as session:
+            await model_role_store.refresh(session)
+    except Exception as exc:  # same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "platform model roles read skipped", reason=str(exc)[:120]
         )
 
     # Every project agent is a collaborator with an identity of its own — a user
@@ -206,6 +225,7 @@ async def lifespan(application: FastAPI):
         compute=ComputeMeterSweeper(async_session_factory).sweep,
         sessions=async_session_factory,
         get_runner=get_work_runner,
+        assistants=lambda: (get_session_host(), get_consumptions()),
     )
     runs = JobRuns(async_session_factory)
 
@@ -338,6 +358,19 @@ async def lifespan(application: FastAPI):
                 )
         except Exception:  # never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
+
+        # 卡片是在补记「谁在 GitHub 上合的」这项之前合并的：上线时补一次项目
+        # 总览还显示的那 14 天，之后正常轮询看到合并就记。一次，不是定时任务。
+        try:
+            # deferred-import: startup cost
+            from app.domain.review import pr_poll
+
+            background.spawn(
+                pr_poll.backfill_missing_merge_actors(get_chat_service()),
+                name="merge actor backfill",
+            )
+        except Exception:  # never block startup
+            get_logger("cheesex.runtime").exception("merge actor backfill failed")
 
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),

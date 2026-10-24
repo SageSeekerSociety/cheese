@@ -82,6 +82,7 @@ from app.api.topics_deps import (
     BlockOut,
     BlockRepository,
     _actor_in_place,
+    reply_preview,
     require_person_speaks,
 )
 from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
@@ -101,9 +102,9 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.store.human import HumanHandoff
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn
 from app.domain.delivery.agent import dispatch_pending
-from app.domain.library import service as library
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
@@ -112,6 +113,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
+from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
 from app.domain.topic_membership.services import TopicMemberService
@@ -192,11 +194,21 @@ async def send_chat_message(
         # The writer opens its own session; what this request already read of
         # the project goes with the message instead of being read there again.
         handoff=HumanHandoff(
-            project=await load_project(db, place.project_id), roster=members
+            project=await load_project(db, place.project_id),
+            roster=members,
+            place=place,
         ),
+        by_assistant=actor.by_assistant,
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
+    # The sender's own copy may be the first one the client sees. It carries the
+    # same one-line preview as the broadcast, or the cue would blink out when the
+    # parent is on a page this client never loaded.
+    if stored is not None and stored.reply_to is not None:
+        parent = await BlockRepository(db).get(stored.reply_to)
+        if parent is not None and parent.conversation_id == stored.conversation_id:
+            sent["reply_preview"] = reply_preview(parent)
     # Told to the sender alone, in this answer, and never stored: whom the
     # message names that the channel does not seat (Slack's "X isn't in this
     # channel"). The sender decides whether to add them.
@@ -219,9 +231,7 @@ def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
     for item in items[:ATTACHMENTS_PER_MESSAGE]:
         if not item.content_b64:
             # i18n-exempt: the agent reads this tool refusal, not a person's screen
-            raise ValidationError(
-                "An agent sends a file by its bytes, not by a path"
-            )
+            raise ValidationError("An agent sends a file by its bytes, not by a path")
         try:
             raw = base64.b64decode(item.content_b64, validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -261,9 +271,7 @@ async def _write_agent_attachments(place, prepared: list[dict]) -> list[dict]:
     """
     written: list[dict] = []
     for item in prepared:
-        path = (
-            f"{library.MESSAGE_ATTACHMENT_PREFIX}/{uuid.uuid4().hex}/{item['name']}"
-        )
+        path = f"{library.MESSAGE_ATTACHMENT_PREFIX}/{uuid.uuid4().hex}/{item['name']}"
         await asyncio.to_thread(
             library.write_room_file,
             place.project_id,
@@ -271,9 +279,7 @@ async def _write_agent_attachments(place, prepared: list[dict]) -> list[dict]:
             path,
             item["raw"],
         )
-        written.append(
-            {"path": path, "mime": item["mime"], "digest": item["digest"]}
-        )
+        written.append({"path": path, "mime": item["mime"], "digest": item["digest"]})
     return written
 
 
@@ -287,11 +293,7 @@ def _publication_input(text: str, reply_to, prepared: list[dict]) -> dict:
     return {
         "text": text,
         "reply_to": str(reply_to) if reply_to else None,
-        **(
-            {"attachments": [item["digest"] for item in prepared]}
-            if prepared
-            else {}
-        ),
+        **({"attachments": [item["digest"] for item in prepared]} if prepared else {}),
     }
 
 
@@ -300,10 +302,12 @@ async def _publish_as_agent(
 ) -> dict | None:
     """An agent's message: attributed to its live turn, never the start of one."""
     content = body.content.strip()
+    reply_parent = None
     if body.reply_to is not None:
         parent = await BlockRepository(db).get(body.reply_to)
         if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
+        reply_parent = parent
     content = await project_refs_text(db, place.project_id, place.room_id, content)
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
@@ -329,6 +333,15 @@ async def _publish_as_agent(
         ):
             raise ConflictError(say("chatPublicationIdReused"))
         block = previous.get("block")
+        # Older stored publications predate the preview; a retry still hands
+        # the caller the same one-line quote the live path carries.
+        if (
+            block is not None
+            and reply_parent is not None
+            and block.get("reply_to") is not None
+            and "reply_preview" not in block
+        ):
+            block["reply_preview"] = reply_preview(reply_parent)
         # The same frame a retry got before this check existed: the caller's
         # socket still sees the stored message come back, and the room's
         # timeline de-duplicates it by id.
@@ -343,27 +356,30 @@ async def _publish_as_agent(
         # recording its mention deliveries. The ledger is idempotent by
         # event × seat (`delivery/mention.py`), so running it again here is the
         # same at-least-once recovery the retry got before this early return.
-        if block is not None and place.task is None:
+        if block is not None:
+            if place.task is not None:
+                naming.nudge(place.conversation_id, "message")
             await _summon_the_named(chat, runner, place, block, author)
         return block
     attachments = await _write_agent_attachments(place, prepared)
-    payload, attachment_payloads = (
-        await chat.messages.persist_assistant_message_with_attachments(
-            attachments=attachments,
-            project_id=place.project_id,
-            topic_id=place.room_id,
-            inner_id=place.inner_id,
-            text=content,
-            turn_id=turn_id,
-            reply_to=body.reply_to,
-            roster=None,
-            topic_refs=[],
-            author=author,
-            publication_id=publication_id,
-            extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-            if body.quoted_context
-            else None,
-        )
+    (
+        payload,
+        attachment_payloads,
+    ) = await chat.messages.persist_assistant_message_with_attachments(
+        attachments=attachments,
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        inner_id=place.inner_id,
+        text=content,
+        turn_id=turn_id,
+        reply_to=body.reply_to,
+        roster=None,
+        topic_refs=[],
+        author=author,
+        publication_id=publication_id,
+        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
+        if body.quoted_context
+        else None,
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
@@ -375,8 +391,9 @@ async def _publish_as_agent(
         )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    # A task's session names nobody into its task: it works for its owner.
-    if payload is not None and place.task is None:
+    if payload is not None:
+        if place.task is not None:
+            naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
 
@@ -453,8 +470,8 @@ async def leave_a_note(
     收件人那条线程在正文里，由平台拿两边的席位比出来（I14②）。同 `tell` 一样，URL
     里的 id 说的是「谁在说话」，从不说「改的是哪个资源」。
 
-    它不落时间线：便条进的是那条线程正在跑的那一轮（`notify_running_turn`），不是
-    房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
+    它不落时间线：便条进的是那条线程里正在干活的会话（`notify_running_session`），不是
+    房间里的一条消息。那边这一刻没有在干活的会话就没人接住，如实回 `delivered: false`。
     """
 
     place = await place_or_404(db, topic_id)

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { RememberedPlace } from '@/stores/workspace'
+
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
@@ -10,11 +12,13 @@ import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { trackNavigations } from '@/lib/navigationProgress'
+import { lookupRef, refsVersion } from '@/lib/refDirectory'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
 import { useProjectFeed } from '@/query/projectFeed'
+import { useAgentContext } from '@/stores/agent'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -44,21 +48,85 @@ const { navigating } = trackNavigations(router)
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
 const ids = computed(() => routeIds(route.params))
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// 芝士在项目里读的是眼前这一页：打开的文档，所在的频道、任务或支线，别的页就是这个项目。
+// 编号还没换成 UUID（短编号刚进来）时先当项目。
+useAgentContext(() => {
+  const { docId, threadId, taskId, topicId, projectId } = ids.value
+  const place = [threadId, taskId, topicId].find((id) => id && UUID.test(id))
+  const page =
+    docId && UUID.test(docId)
+      ? ({ kind: 'doc', id: docId } as const)
+      : place
+        ? ({ kind: 'topic', id: place } as const)
+        : projectId && UUID.test(projectId)
+          ? ({ kind: 'project', id: projectId } as const)
+          : null
+  return {
+    page,
+    label: pageLabel(page),
+    project: projectId && UUID.test(projectId) && store.projectName ? { id: projectId, name: store.projectName } : null,
+    greeting: t('tasks.assistant.project.greeting'),
+    starters: [
+      t('tasks.assistant.project.starters.mine'),
+      place ? t('tasks.assistant.project.starters.recap') : t('tasks.assistant.project.starters.progress'),
+      t('tasks.assistant.project.starters.handOff'),
+    ],
+  }
+})
+/** 「当前页面」那枚标签上写的名字：频道、任务、支线、文档按引用的名字，别的页是项目。
+ *  名字还没问回来时先不写（`refsVersion` 让它回来后重算）。 */
+function pageLabel(page: { kind: 'doc' | 'topic' | 'project'; id: string } | null): string | undefined {
+  if (!page) return undefined
+  if (page.kind === 'project')
+    return store.projectName ? t('tasks.assistant.page.project', { name: store.projectName }) : undefined
+  void refsVersion.value
+  const found = lookupRef(page.id)
+  if (!found || found === 'missing' || found.kind === 'unreadable') return undefined
+  const key = { room: 'channel', task: 'task', thread: 'thread', document: 'doc' }[found.kind]
+  return t(`tasks.assistant.page.${key}`, { name: found.title || t('work.room.doc.untitled') })
+}
+
+/**
+ * 这一页在项目里那一段地址：`tasks/318`、`overview`、`members/lisi`；项目首页是空串。
+ * 地址里项目那一段用的是短名或编号（守卫 `canonicalAddress` 换过），所以按当前地址
+ * 上写的那个 ref 截，不是按项目 id。
+ */
+function placePathOf(path: string, projectRef: string): string {
+  const prefix = `/projects/${projectRef}/`
+  return path.startsWith(prefix) ? path.slice(prefix.length) : ''
+}
+
+/**
+ * 正待着的这一页，记进「上次待的地方」。
+ *
+ * 记的是地址，不分页面种类——项目里的每一页都算一个地方。只认任务和频道的话，从
+ * 成员页、资料库离开再回来就掉回频道列表，那正是「只能回到任务」这一句说的毛病。
+ *
+ * 两类不算：盖在页面上的一层（`settingsOverlay`，回到它等于回来时先站在设置里），
+ * 和只有查询才说得清是哪一页的搜索页（查询串不记，回来就是一张空搜索页）。
+ */
+function placeOf(): RememberedPlace | null {
+  if (route.meta.settingsOverlay === true || route.name === 'project-search') return null
+  const ref = typeof route.params.projectId === 'string' ? route.params.projectId : ''
+  const topicId = ids.value.topicId
+  return {
+    path: placePathOf(route.path, ref),
+    room: typeof topicId === 'string' ? topicId : null,
+  }
+}
+
 watch(
-  () => [ids.value.topicId, ids.value.taskId, route.params.peer, props.projectId] as const,
-  ([topicId, taskId, peer, projectId]) => {
+  () => [route.path, ids.value.topicId, route.params.peer, props.projectId] as const,
+  ([, topicId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null
-    // 正待着的这个地方记在这个项目名下：下次从 rail 点回来，直接落回它。在任务页
-    // 上记的是那件任务（房间也一起记，任务页画不出来时退回它）。带上 projectId
-    // 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
-    if (typeof topicId === 'string' && projectId) {
-      store.rememberPlace(projectId, {
-        kind: typeof taskId === 'string' ? 'task' : 'channel',
-        id: typeof taskId === 'string' ? taskId : topicId,
-        room: topicId,
-      })
-    }
+    // 正待着的这一页记在这个项目名下：下次从 rail 点回来、或者重开应用，直接落回它。
+    // 带上 projectId 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
+    if (!projectId) return
+    const place = placeOf()
+    if (place) store.rememberPlace(projectId, place)
   },
   { immediate: true }
 )

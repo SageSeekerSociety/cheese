@@ -14,19 +14,17 @@ enrichment（作者、管理员、分类、附件数、话题、当前用户的�
 from collections.abc import Sequence
 from datetime import datetime
 
-from app.api.task_teaching import read_task_teaching
-from app.domain.attachment.models import Attachment
+from app.api.task_teaching import read_task_default_role, read_task_teaching
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
-from app.domain.task.attachment_service import TaskAttachmentRepository
+from app.domain.task import package
 from app.domain.task.claims import own_claim
 from app.domain.task.models import (
     Task,
-    TaskAttachment,
     TaskMembership,
     TaskSubmissionSchemaEntry,
 )
@@ -50,7 +48,7 @@ def _ms(moment: datetime | None) -> int | None:
     return int(moment.timestamp() * 1000) if moment is not None else None
 
 
-def _task_to_api_model(task: Task) -> dict:
+def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) -> dict:
     created_at_ms = _ms(task.created_at) or 0
     updated_at_ms = _ms(task.updated_at) or 0
     deadline_ms = _ms(task.deadline)
@@ -77,6 +75,9 @@ def _task_to_api_model(task: Task) -> dict:
         "rank": task.rank,
         "submitterType": submitter_type_map.get(task.submitter_type, "USER"),
         "submissionSchema": [],
+        # 评分要点只在详情与改题的响应里填（见 lifecycle）；列表不带。
+        "rubric": [],
+        "rubricPublic": task.rubric_public,
         "space": {"id": task.space_id},
         "category": {"id": task.category_id, "name": ""},
         "categoryId": task.category_id,
@@ -91,7 +92,11 @@ def _task_to_api_model(task: Task) -> dict:
         "accessControlEnabled": task.access_control_enabled,
         # 这道题自己的「给 AI 队友的指导」(#944)：报的是**原始覆盖**，不是解析后的
         # 赢家 —— 发题页编的是这道题自己写了什么，空 = 继承，只有对着原始值才讲得通。
-        "teaching": read_task_teaching(task),
+        # `include_private_teaching`：私有指导只给看得见这道题的出题人/管理员，学生
+        # 的那条读不带上它（默认 False，漏改一处也不会泄漏）。
+        "teaching": read_task_teaching(task, include_private=include_private_teaching),
+        # 这道题自己的默认队友类型名 (#944)：同样是**原始覆盖**，空 = 继承项目集那份。
+        "defaultRole": read_task_default_role(task),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "publishedAt": published_at_ms,
@@ -345,10 +350,11 @@ async def _enrich_task_models(
 
 
 async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
-    """把每道题挂着几个材料填进列表响应（就地改）。
+    """把每道题有几份材料填进列表响应（就地改）。
 
     只是**一个数**：不带文件本体、不带文件名，也不问谁能下载 —— 卡片上那格「附件
-    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/attachments`）。一个材料
+    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/files`）。「有几份材料」
+    不比「这道题在不在」多泄露什么。一个材料
     都没有的题给 0，不是缺字段：卡片按「有就列、没有就不显示」写，而 0 与「不知道」
     是两件事。
 
@@ -361,9 +367,7 @@ async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
     ]
     if not task_ids:
         return
-    counts = await TaskAttachmentRepository(session=db).count_live_by_task_ids(
-        task_ids=task_ids
-    )
+    counts = await package.file_counts(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
@@ -631,35 +635,3 @@ def _membership_to_api_model(
         # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
         model["team"] = {"id": team.id, "name": team.name}
     return model
-
-
-def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
-    """一个**还没挂到任何题上**的文件在预览响应里的样子。
-
-    与 ``_task_attachment_to_api`` 是同一套字段来源（名字、大小、类型都取自
-    ``meta``），只是没有那两样要有关联行才成立的东西：下载计数、挂上来的时间。同样
-    **不带 url** —— 存储给的是直链，发出去就等于绕开下载那道门。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-    }
-
-
-def _task_attachment_to_api(*, attachment: Attachment, link: TaskAttachment) -> dict:
-    """一个附件在接口上的样子。
-
-    **不带 url**：存储给的是直链（本地 ``/uploads/...``、S3 公开地址），把它发出去
-    就等于把「下载限人」这道门绕过去了。要文件就走下面那个下载端点，门在那里。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-        "uploaderId": attachment.meta.get("uploaderId"),
-        "downloadCount": link.download_count,
-        "createdAt": int(link.created_at.timestamp() * 1000),
-    }

@@ -36,6 +36,7 @@ from app.core.sentences import say
 from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.living_doc.comments import OnDocument
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
@@ -232,8 +233,14 @@ def asked_of(reached: Reached) -> Asked | None:
         return None
     return Asked(
         project_id=doc.project_id,
-        document_id=doc.id,
+        subject=OnDocument(doc.id),
         task_id=reached.task.id if reached.task is not None else None,
+        # Where the thread is read: the task's own conversation, or the room a
+        # document kept in one lives in. A document with neither is the
+        # project's, read by its people.
+        conversation_id=(
+            reached.place.conversation_id if reached.place is not None else None
+        ),
     )
 
 

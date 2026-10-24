@@ -6,8 +6,8 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
@@ -16,7 +16,6 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.team.services import team_service
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
@@ -29,10 +28,10 @@ from app.domain.machine.models import (
     WarmMachine,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import pick_offering
+from app.domain.machine.supply import data_disk_gb, pick_offering
+from app.domain.team.services import team_service
 
 logger = logging.getLogger("cheese.machine.warm")
-POOL_LOCK = 728104913
 # A machine whose deletion failed five times may still be billed, so a pile of
 # them stops replacement — but a couple of stale ones must not: counted as pool
 # capacity, the two on dev in September held a size-2 pool at zero for 11 days.
@@ -104,9 +103,6 @@ async def sweep_warm_pool(
         except Exception as exc:  # said on change, not every sweep
             _health.failed(f"{type(exc).__name__}: {exc}", exc)
             return
-        if swept is None:
-            # Another process holds the pool: this sweep learned nothing.
-            return
         if swept:
             _health.failed(swept)
         else:
@@ -132,7 +128,11 @@ class WarmPoolService:
         ).all()
         for warm in candidates:
             assert warm.machine_id is not None  # Ready rows have a provider identity.
-            if not warm.device_id or not device_hub.is_online(warm.device_id):
+            if (
+                not warm.device_id
+                or warm.sandbox_disk_gb is None
+                or not device_hub.is_online(warm.device_id)
+            ):
                 continue
             if any(
                 warm.create_request.get(key) != body.get(key)
@@ -169,6 +169,7 @@ class WarmPoolService:
                 cores=body["cores"],
                 memory_mb=body["memoryMb"],
                 disk_gb=body["diskGb"],
+                sandbox_disk_gb=warm.sandbox_disk_gb,
                 status=MachineStatus.starting,
                 ip=warm.ip,
                 ai_mode=body.get("aiMode", "none"),
@@ -309,28 +310,17 @@ class WarmPoolService:
         )
         return True
 
-    async def sweep(self) -> str | None:
-        """A dedicated connection holds the worker lock across checkpoint commits.
+    async def sweep(self) -> str:
+        """What keeps the pool from being replenished, or "" when nothing does.
 
-        None when another process holds the pool; otherwise what keeps the
-        pool from being replenished, or "" when nothing does.
+        One sweep at a time is the ownership lock's doing: this runs as a
+        periodic job of the process that owns the running work
+        (`app.core.ownership`), which stops it before handing the work over. It
+        takes no lock of its own because a lock held for the whole sweep is a
+        database connection held through each machine's bootstrap, about a
+        minute of SSH during which every request has one connection fewer;
+        `_prepare` commits before the bootstrap starts.
         """
-        engine = self.session.bind
-        assert isinstance(engine, AsyncEngine)
-        async with engine.connect() as connection:
-            locked = await connection.scalar(
-                text("SELECT pg_try_advisory_lock(:key)"), {"key": POOL_LOCK}
-            )
-            if not locked:
-                return None
-            try:
-                return await self._sweep_locked()
-            finally:
-                await connection.execute(
-                    text("SELECT pg_advisory_unlock(:key)"), {"key": POOL_LOCK}
-                )
-
-    async def _sweep_locked(self) -> str:
         abandoned = (
             await self.session.scalars(
                 select(WarmMachine)
@@ -447,6 +437,7 @@ class WarmPoolService:
                 "warm pool requires a reachable connector_public_base"
             )
         offering = await pick_offering(self.client)
+        data_disk = data_disk_gb(offering)
         ref = "cheese-platform-warm-pool"
         customer = await self.client.find_customer(
             ref
@@ -480,7 +471,12 @@ class WarmPoolService:
             body[name] = max(
                 int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value)
             )
-        row = WarmMachine(id=key, create_request=body, bootstrap_key=private)
+        row = WarmMachine(
+            id=key,
+            create_request=body,
+            bootstrap_key=private,
+            sandbox_disk_gb=data_disk,
+        )
         self.session.add(row)
         await self.session.commit()
         logger.info(
@@ -532,13 +528,16 @@ class WarmPoolService:
                 origin=settings.connector_public_base,
                 token=device.token,
                 device_id=device.device_id,
+                sandbox_disk=True,
             )
-            await enrollment.run_bootstrap(
+            output = await enrollment.run_bootstrap(
                 ip=ip,
                 login_user=row.create_request["user"],
                 private_key=row.bootstrap_key,
                 script=script,
+                sandboxes=True,
             )
+            row.sandbox_disk_gb = enrollment.sandbox_disk_gb(output)
             row.enrolled_at = datetime.now(UTC)
             row.bootstrap_key = None
         if row.device_id and device_hub.is_online(row.device_id):

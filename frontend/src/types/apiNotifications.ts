@@ -22,6 +22,9 @@ export type NotificationType =
   | 'CHEESE_QUESTION'
   | 'DEVICE_IN_USE'
   | 'SPACE_ANNOUNCEMENT'
+  | 'TASK_NOTICE'
+  | 'TASK_DUE_SOON'
+  | 'ASSISTANT_NOTICE'
 
 export interface EntityInfo {
   id: string

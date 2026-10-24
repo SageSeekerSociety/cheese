@@ -1,6 +1,9 @@
 <script setup lang="ts">
 // 行上那盏灯：颜色 + 动不动。
 //
+// 绿色分两档：呼吸绿（`breathe`）说有活在往前走，长绿说做完了、你还没看过。其余
+// 红黄蓝一律不动。
+//
 // 画哪一盏由父级按 `lib/roomLight.ts` 算好传进来（状态那几条判据的事实都在后端，
 // 蓝灯是父级按「这条归谁」盖上的），这一份只管画 —— 频道行和任务行两处都用它，
 // 免得同一盏灯在两处画成两个样子。
@@ -11,16 +14,16 @@ import type { RowLight } from '@/lib/roomLight'
 
 import { lightTitle } from '@/lib/roomLight'
 
-defineProps<{ light: RowLight }>()
+defineProps<{ light: RowLight; label?: string }>()
 </script>
 
 <template>
   <span
     class="row-light"
-    :class="[`row-light--${light.kind}`, { 'row-light--breathe': light.breathe }]"
+    :class="[`row-light--${light.kind}`, { 'row-light--breathe': light.kind === 'green' && light.breathe }]"
     role="img"
-    :aria-label="lightTitle(light)"
-    :title="lightTitle(light)"
+    :aria-label="label || lightTitle(light)"
+    :title="label || lightTitle(light)"
   />
 </template>
 

@@ -1,6 +1,7 @@
 {
   "home": "Home",
   "inbox": "Inbox",
+  "market": "Market",
   "newProject": "New {project}",
   "project": {
     "library": "Library",
@@ -28,9 +29,11 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
+    "mineUnread": "My feedback, 1 unread update | My feedback, {n} unread updates",
     "admin": "Admin console",
     "guide": "New-user guide",
-    "tour": "Interface tour"
+    "tour": "Interface tour",
+    "tourStartsInGeneral": "The tour starts in the project's General channel — open it and try again."
   },
   "admin": {
     "queue": "Feedback",
@@ -65,12 +68,13 @@
     "appearance": "Appearance",
     "language": "Language",
     "logout": "Log out",
-    "noIntro": "No bio yet",
     "theme": {
       "system": "System",
       "light": "Light",
       "dark": "Dark"
     },
+    "invites": "Invite friends",
+    "seatsLeft": "{n} left",
     "archivedProjects": "Archived projects",
     "download": "Download apps",
     "usePhone": "Use on your phone"
@@ -131,7 +135,8 @@
     "searchIn": "Search in project",
     "leaveScope": "Remove project scope and search names across projects",
     "searchAll": "View all results",
-    "weekly": "Weekly report"
+    "weekly": "Weekly report",
+    "spaceTasks": "Tasks in spaces"
   },
   "sidebar": {
     "resize": "Drag to resize",

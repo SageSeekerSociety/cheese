@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.domain.deliverables.export import _versions_of
 from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.project.models import Project, ProjectArtifact, ProjectForge
 from app.domain.project.services import ProjectService
@@ -128,7 +129,6 @@ def exported_project(client, monkeypatch, tmp_path):
             await db.flush()
             card = AcceptCard(
                 topic_id=room.id,
-                reviewer_handle="export-owner",
                 artifact_id=artifact.id,
                 status=AcceptStatus.accepted,
                 deliverable_kind=DeliverableKind.file,
@@ -136,7 +136,12 @@ def exported_project(client, monkeypatch, tmp_path):
             )
             db.add(card)
             await library_records.add(
-                db, pid, "资料/source data.csv", b"a,b\n1,2\n", "export-owner", None
+                db,
+                Shelf.of_project(pid, with_task=False),
+                "资料/source data.csv",
+                b"a,b\n1,2\n",
+                "export-owner",
+                None,
             )
             await db.commit()
             snapshot = artifact_snapshot_path(pid, card.id, "report.txt")

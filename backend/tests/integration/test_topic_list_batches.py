@@ -6,8 +6,8 @@ replied-to-me, unresolved failures, and `my_tasks` — both the caller's own
 underway tasks and the borrowed `filling_in` rows). Several of those helpers
 ask the same underlying question:
 
-- which 支线 belong to these rooms (`threads_of_rooms`, `moving_topics`,
-  `replied_to_me`, `threads_still_threads`);
+- which 支线 belong to these rooms (`threads_of_rooms`, `replied_to_me`,
+  `threads_still_threads`);
 - which underway tasks belong to these rooms and when each last spoke
   (`tasks_of_rooms` twice, `underway_counts`, `underway_with`,
   `underway_others`, `last_block_at_for_tasks` twice);
@@ -43,6 +43,7 @@ from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     join_project_team,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 from tests.support.counting_session import counting_sql
@@ -51,6 +52,7 @@ EXPECTED_TOPIC_KEYS = {
     "accepted_at",
     "accepted_by",
     "activity",
+    "agent_handle",
     "archived_at",
     "awaits_me",
     "can_manage",
@@ -62,7 +64,6 @@ EXPECTED_TOPIC_KEYS = {
     "joined",
     "kind",
     "last_activity_at",
-    "last_output_at",
     "members_only",
     "moving",
     "my_tasks",
@@ -83,6 +84,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "accepted_at",
     "accepted_by",
     "agent_handle",
+    "agent_left_at",
     "awaits_me",
     "base_branch",
     "base_task_id",
@@ -93,19 +95,24 @@ EXPECTED_RAIL_TASK_KEYS = {
     "contributor_handles",
     "created_at",
     "created_by",
+    "created_by_assistant",
     "delivered_head",
     "document_id",
     "historical_delivery_id",
     "id",
     "incomplete_since",
     "last_activity_at",
-    "last_output_at",
     "moving",
+    "needs_my_action",
     "number",
     "owner_handle",
     "pr_number",
     "pr_url",
     "presentation",
+    "progress_note",
+    "progress_set_at",
+    "progress_set_by",
+    "progress_state",
     "project_id",
     "reporter_handle",
     "reviewer_handle",
@@ -131,10 +138,6 @@ _TASK_CARDS_SELECT = re.compile(
 )
 _AWAITING_PLACES_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM\s+\(SELECT DISTINCT ON \(blocks\.conversation_id\)",
-    re.IGNORECASE,
-)
-_AWAITING_SPOKE_SELECT = re.compile(
-    r"^\s*SELECT anon_1\.place,\s*said_since\.author,\s*said_since\.at\s+FROM unnest\(",
     re.IGNORECASE,
 )
 _UNDERWAY_TASKS_SELECT = re.compile(
@@ -213,7 +216,7 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
                     await cards_repo.add(
                         topic_id=topic.id,
                         task_id=task.id,
-                        reviewer_handle="carol",
+                        reviewer_handles=["carol"],
                         status=AcceptStatus.pending,
                         change_subject=f"feat(test): deliver {task.id.hex[:8]}",
                     )
@@ -280,27 +283,12 @@ def _turn_running_elsewhere(client) -> None:
     client.portal.call(_insert)
 
 
-def _turn_starting_here(monkeypatch) -> None:
-    """A turn this process has just started in another project's conversation,
-    whose delivered row is not written yet: the in-process half of what the
-    sidebar reads (`AgentWorkRunner.running_topic_ids`), which other tests in
-    the same worker leave behind, so this must not cost the list a `tasks`
-    lookup either."""
-    from app.api.deps import get_work_runner
-
-    runner = get_work_runner()
-    elsewhere = uuid.uuid4()
-    here = runner.running_topic_ids
-    monkeypatch.setattr(runner, "running_topic_ids", lambda: here() | {elsewhere})
-
-
 def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monkeypatch):
     """Across a populated project, `GET /topics?project_id=` reads `topics`,
     `threads`, task `accept_cards`, underway `tasks`, and `awaiting_an_answer`
     `blocks` once each, while preserving the full response field set."""
     pid, room_ids = _seed_populated_project(client)
     _turn_running_elsewhere(client)
-    _turn_starting_here(monkeypatch)
     headers = session_auth_headers("alice")
 
     with counting_sql(client) as seen:
@@ -339,8 +327,8 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
     assert "topics.environment" not in topic_sql
     assert "topics.default_environment" not in topic_sql
 
-    # 2. `threads` is read once across threads_of_rooms, moving_topics,
-    #    replied_to_me, and threads_still_threads.
+    # 2. `threads` is read once across threads_of_rooms, replied_to_me, and
+    #    threads_still_threads.
     assert _count(seen, _THREADS_SELECT) == 1, [
         s for s in seen if _THREADS_SELECT.search(s)
     ]
@@ -350,17 +338,14 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
         s for s in seen if _TASK_CARDS_SELECT.search(s)
     ]
 
-    # 4. `blocks` awaiting_an_answer (places + unnest lateral) is read once
-    #    across the room list and all sidebar task rows.
+    # 4. Question records are read once across the room list and all sidebar
+    #    task rows. Later speech no longer determines whether they are settled.
     assert _count(seen, _AWAITING_PLACES_SELECT) == 1, [
         s for s in seen if _AWAITING_PLACES_SELECT.search(s)
     ]
-    assert _count(seen, _AWAITING_SPOKE_SELECT) == 1, [
-        s for s in seen if _AWAITING_SPOKE_SELECT.search(s)
-    ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
-    #    underway_others, last_block_at_for_tasks, moving_topics) is read once,
+    #    underway_others, last_block_at_for_tasks) is read once,
     #    and total `FROM tasks` queries are only 2 (_underway_for_rooms + unseen_deliveries).
     assert _count(seen, _UNDERWAY_TASKS_SELECT) == 1, [
         s for s in seen if _UNDERWAY_TASKS_SELECT.search(s)
@@ -476,3 +461,29 @@ def test_topic_names_list_defers_sandbox_environment_columns(client):
     assert len(topic_selects) == 1
     assert "topics.environment" not in topic_selects[0]
     assert "topics.default_environment" not in topic_selects[0]
+
+
+def test_every_room_row_names_the_seat_its_teammate_sits_in(client):
+    """A row's state can name the room's teammate (「{agent}在做」), and a project
+    may have renamed it, so the row says which seat that is — the one a message
+    nobody addressed goes to — and the list and the header agree on it."""
+    headers = session_auth_headers("alice")
+    pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
+    rooms = [
+        client.post(
+            "/topics", json={"project_id": pid, "title": title}, headers=headers
+        ).json()["data"]["id"]
+        for title in ("甲", "乙")
+    ]
+
+    listed = {
+        row["id"]: row["agent_handle"]
+        for row in client.get(f"/topics?project_id={pid}", headers=headers).json()[
+            "data"
+        ]["data"]
+    }
+    for room in rooms:
+        seat = room_agent_seat(client, room)
+        assert listed[room] == seat
+        header = client.get(f"/topics/{room}", headers=headers).json()["data"]
+        assert header["agent_handle"] == seat

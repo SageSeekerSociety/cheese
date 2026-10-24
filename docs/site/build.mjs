@@ -416,15 +416,15 @@ function ciSource() {
   const declared = [...(jobs.get('scope') || '').matchAll(/^ {6}([a-z0-9_]+): \$\{\{ steps\.scope\.outputs\.\1 \}\}$/gm)].map((m) => m[1])
   const runs = {}
   for (const [job, body] of jobs) {
-    // A suite's job is gated on its own scope output. Since the draft tier, the
-    // gate is `needs.scope.outputs.tier == 'full' && needs.scope.outputs.<suite>
-    // == 'true'` — the tier guard makes a `true` suite still skip on a draft —
-    // so the suite key leads the second clause and the tier guard is optional
-    // here (a bare `<suite> == 'true'` gate is still read). The frontend's gate
-    // goes on — `|| needs.api.outputs.moved == 'true'`, inside `${{ !cancelled()
-    // && … }}` — because a backend change that moves the API document runs it
-    // too, so the suite key is read where it leads and the rest is left alone.
-    const gate = /^ {4}if: (?:\$\{\{ !cancelled\(\) && )?(?:needs\.scope\.outputs\.tier == 'full' && )?\(?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'/m.exec(body)
+    // A suite's job is gated on its own scope output behind a tier guard:
+    // `needs.scope.outputs.tier != 'draft' && needs.scope.outputs.<suite> ==
+    // 'true'`, or `tier == 'full'` for a suite that runs only after merge. So
+    // the suite key leads the second clause and the tier guard is optional here
+    // (a bare `<suite> == 'true'` gate is still read). The frontend's gate goes
+    // on — `|| needs.api.outputs.moved == 'true'`, inside `${{ !cancelled() &&
+    // … }}` — because a backend change that moves the API document runs it too,
+    // so the suite key is read where it leads and the rest is left alone.
+    const gate = /^ {4}if: (?:\$\{\{ !cancelled\(\) && )?(?:needs\.scope\.outputs\.tier (?:== 'full'|!= 'draft') && )?\(?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'/m.exec(body)
     const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
     if (gate && uses) runs[gate[1]] = uses[1]
   }
@@ -902,7 +902,7 @@ const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c
 const publicPages = Object.values(pages).filter((p) => p.section !== 'dev')
 write('search.json', searchIndex(publicPages))
 write('dev/search.json', searchIndex(devList))
-// What 问芝士 and the agents' cheese_docs_search read (backend: app/domain/docs_site/
+// What 问芝士 and the agents' cheese_help read (backend: app/domain/docs_site/
 // retrieval.py), whole sections. Public pages in one file, developer pages in another
 // behind the dev/ gate: 问芝士's answers are shown to anyone signed in, and only
 // agents in the platform's own project may search developer pages.

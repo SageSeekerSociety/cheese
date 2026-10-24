@@ -10,6 +10,7 @@ from app.core.sentences import say
 from app.domain.notice_meta import EVENT_MERGE_WITHHELD
 from app.domain.review import merge_state, notes, pr_signals
 from app.domain.review import services as pkg
+from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.services._shared import (
@@ -135,6 +136,7 @@ async def _poll_pr_card(
             # The review remains a return. GitHub establishes a separate
             # fact about the batch, including the head that actually landed.
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
+            card.merged_by = merge_actor(status)
             landed = await self._mark_task_merged(card, delivered_head=status.head_sha)
             await self._session.flush()
             if landed:
@@ -293,7 +295,7 @@ async def _poll_pr_card(
     # 拦住 —— 合下去落进历史的是仓库检查没评判过的字（`pr_text` 的那条注释）。
     title = self._title_nudge(card=card, topic=topic, status=status)
     if title is None and card.note_code is notes.NoteCode.pr_title_disagrees:
-        # 两行又对上了（人用 `cheese_describe` 把卡片的 subject 改成了该落的那
+        # 两行又对上了（人用 `cheese_card(action=describe)` 把卡片的 subject 改成了该落的那
         # 一行、或者干脆把 GitHub 上的标题改回来了）：「标题和卡片不一致，合并
         # 已暂停」那句说的是过去。改 PR 标题不动 head，上面换 head 时那次清理
         # 永远轮不到它 —— 不清，卡面一直亮着红灯，而同一次轮询已经在下边报了

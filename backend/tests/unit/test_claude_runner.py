@@ -126,7 +126,23 @@ class Screen:
             stderr=self.errors,
         )
 
-    def call(self, method, params=None, timeout=60.0):
+    #: The epoch the platform registers this runner under (``lifecycle``).
+    EPOCH = 1
+
+    def call(self, method, params=None, timeout=60.0, *, epoch=True):
+        params = dict(params or {})
+        if epoch and method not in ("ping", "register", "reply_check"):
+            # Everything but a greeting is the platform's, and carries the
+            # registration it holds; registered on the first such call.
+            if not getattr(self, "registered", False):
+                self.registered = True
+                self.call("register", {"epoch": self.EPOCH})
+            params.setdefault("epoch", self.EPOCH)
+        answer = self.raw(method, params, timeout)
+        assert "error" not in answer, answer
+        return answer["result"]
+
+    def raw(self, method, params, timeout=60.0) -> dict:
         deadline = time.monotonic() + timeout
         while True:
             client = socket.socket(socket.AF_UNIX)
@@ -141,20 +157,33 @@ class Screen:
                 time.sleep(0.1)
         with client:
             client.sendall(
-                json.dumps({"method": method, "params": params or {}}).encode() + b"\n"
+                json.dumps({"method": method, "params": params}).encode() + b"\n"
             )
-            answer = json.loads(client.makefile("rb").readline())
-        assert "error" not in answer, answer
-        return answer["result"]
+            return json.loads(client.makefile("rb").readline())
 
     def records(self) -> list[dict]:
+        """The whole journal, read the way the platform reads it."""
         found, after = [], 0
         while True:
-            page = self.call("events", {"after": after})["events"]
+            page = self.call("read", {"records_after": after})["records"]
             found += page
             if len(page) < PAGE:
                 return found
             after = page[-1]["sequence"]
+
+    def events(self) -> list[dict]:
+        """Every event the runner reported so far, unacknowledged: a read
+        that acknowledges nothing hands all of them over again."""
+        return self.call("read", {"records_after": 0})["events"]
+
+    def wait_event(self, predicate, timeout=90.0) -> dict:
+        deadline = time.monotonic() + timeout
+        while True:
+            for event in self.events():
+                if predicate(event):
+                    return event
+            assert time.monotonic() < deadline, json.dumps(self.events())[-3000:]
+            time.sleep(0.2)
 
     def wait(self, predicate, timeout=90.0, after=0) -> dict:
         """The first journal entry after sequence ``after`` that matches."""
@@ -237,40 +266,93 @@ def _turn(records, start):
 # --- 1. a send opens a turn for its work, and a steer lands inside it ----------
 
 
-def test_a_send_opens_a_turn_for_its_work_and_result_closes_it(screen, contract):
+def _input(identifier, status):
+    return lambda e: (
+        e["kind"] == "input" and e["input_id"] == identifier and e["status"] == status
+    )
+
+
+def _status(worker_status, work=None):
+    return lambda e: (
+        e["kind"] == "status"
+        and e["worker_status"] == worker_status
+        and (work is None or e["work_id"] == work)
+    )
+
+
+def test_a_send_is_written_read_and_its_work_goes_idle_in_order(screen, contract):
+    """What a send becomes, as the runner reports it: the input written, the
+    session running on its work, the input read (its echo), and the session
+    idle again with how the work ended and what it read — in that order, under
+    one epoch, at increasing sequences."""
     work = str(uuid.uuid4())
     sent = screen.send("hello", work_id=work)
-    result = screen.wait(_is("result"))
-    # The build taking this input is the moment its turn begins.
-    opened = screen.wait(
-        lambda r: (
-            r.get("type") == "command_lifecycle"
-            and r.get("state") == "started"
-            and r.get("command_uuid") == sent
-        )
-    )
-    echo = screen.wait(_echo_of(sent))
+    idle = screen.wait_event(_status("idle", work))
+    events = screen.events()
+    session = screen.call("ping")["session_id"]
 
-    owner = {"harness": "claude-code", "agent_handle": AGENT, "work_id": work}
-    assert opened["record"]["cheese"] == {**owner, "turn_start": True}
-    assert echo["record"]["isReplay"] is True
-    assert echo["record"]["cheese"] == {
-        **owner,
-        "receipt": True,
-        "receipt_work_id": work,
-        "receipt_execution_work_id": work,
-        "receipt_session_id": screen.call("ping")["session_id"],
-    }
-    turn = _turn(screen.records(), opened["sequence"])
-    assert turn[-1] == result
-    assert {e["record"]["cheese"].get("work_id") for e in turn} == {work}
-    assert not any(e["record"]["cheese"].get("unsolicited") for e in turn)
-    assert sum(bool(e["record"]["cheese"].get("turn_start")) for e in turn) == 1
-    assert result["record"]["is_error"] is False
+    written = next(e for e in events if _input(sent, "written")(e))
+    running = next(e for e in events if _status("running", work)(e))
+    read = next(e for e in events if _input(sent, "read")(e))
+    assert written["seq"] < running["seq"] < read["seq"] < idle["seq"]
+    assert {e["epoch"] for e in events} == {Screen.EPOCH}
+    assert read["session_id"] == session
+    assert read["work_id"] == work and read["execution_work_id"] == work
+    assert running["unsolicited"] is False
+    assert idle["result"]["failure"] is None
+    assert idle["result"]["inputs"] == [sent]
+    assert idle["result"]["text"]
+    assert idle["result"]["usage"]["output_tokens"] >= 0
     assert screen.call("ping")["working"] is False
+    # The journal still carries what the session wrote, stamped with its work.
+    echo = next(e for e in screen.records() if _echo_of(sent)(e["record"]))
+    assert echo["record"]["cheese"]["work_id"] == work
 
 
-def test_a_steer_is_received_only_at_the_tool_boundary(screen, contract):
+def test_a_platform_call_is_told_the_run_by_the_event_that_began_it(screen):
+    """The session's helper asks which run its platform call is made in, and is
+    told the run by the same name the platform applies the ``running`` event
+    under: its epoch and seq. Idle afterwards (a background task's call), it is
+    still that run; before the session has run, there is no run to name."""
+    assert screen.call("run") == {}
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+    running = next(e for e in screen.events() if _status("running", work)(e))
+
+    assert screen.call("run") == {
+        "run": f"claude-code/{running['epoch']}/{running['seq']}"
+    }
+
+
+def test_an_acknowledged_event_is_not_handed_over_again(screen):
+    """The runner keeps an event until the platform acknowledges it, and only
+    that long: a read that acknowledges nothing gets it again, one that
+    acknowledges it does not."""
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    idle = screen.wait_event(_status("idle", work))
+
+    assert idle in screen.events()
+    left = screen.call("read", {"ack": idle["seq"]})["events"]
+    assert all(e["seq"] > idle["seq"] for e in left)
+    assert idle not in screen.events()
+
+
+def test_a_call_under_another_epoch_is_refused(screen):
+    """Only the registration the runner holds now may ask it anything: one it
+    was registered under before, or one it never was, is refused — and so is
+    going back to an older one."""
+    screen.call("ping")
+    screen.call("register", {"epoch": 2})
+    screen.registered = True
+    stale = screen.raw("read", {"epoch": 1})
+    assert "stale worker epoch" in stale["error"]
+    assert "stale worker epoch" in screen.raw("register", {"epoch": 1})["error"]
+    assert screen.call("read", {"epoch": 2})["worker_epoch"] == 2
+
+
+def test_a_steer_is_read_only_at_the_tool_boundary(screen, contract):
     work = str(uuid.uuid4())
     screen.send(
         contract.do("Bash", command="sleep 4; echo FIRST_DONE", description="sleep"),
@@ -281,22 +363,22 @@ def test_a_steer_is_received_only_at_the_tool_boundary(screen, contract):
     steer = screen.send("STEER_MARKER", work_id=work, method="steer")
     echo = screen.wait(_echo_of(steer))
     boundary = screen.wait(_tool_result)
-    result = screen.wait(_is("result"), after=echo["sequence"])
+    screen.wait_event(_status("idle", work))
 
-    # Taken inside the turn it was said to, once the running tool returned.
-    assert boundary["sequence"] < echo["sequence"] < result["sequence"]
-    assert echo["record"]["cheese"]["receipt"] is True
-    assert "turn_start" not in echo["record"]["cheese"]
-    assert echo["record"]["cheese"]["work_id"] == work
-    assert result["record"]["cheese"]["work_id"] == work
-    results = [e for e in screen.records() if _is("result")(e["record"])]
-    assert len(results) == 1
-
-
-# --- 2. a turn the session starts for itself ------------------------------------
+    # Read inside the work it was said to, once the running tool returned.
+    assert boundary["sequence"] < echo["sequence"]
+    events = screen.events()
+    read = next(e for e in events if _input(steer, "read")(e))
+    assert read["execution_work_id"] == work
+    assert [e["work_id"] for e in events if _status("running")(e)] == [work]
+    (idle,) = [e for e in events if _status("idle")(e)]
+    assert steer in idle["result"]["inputs"]
 
 
-def test_a_turn_the_session_starts_itself_is_unsolicited_with_its_own_work(
+# --- 2. work the session starts itself ---------------------------------------
+
+
+def test_work_the_session_starts_itself_is_unsolicited_with_its_own_work(
     screen, contract
 ):
     work = str(uuid.uuid4())
@@ -309,51 +391,33 @@ def test_a_turn_the_session_starts_itself_is_unsolicited_with_its_own_work(
         ),
         work_id=work,
     )
-    first = screen.wait(_is("result"))
-    notified = screen.wait(_is("system", "task_notification"), after=first["sequence"])
-    follow = screen.wait(_is("result"), after=first["sequence"])
+    screen.wait_event(_status("idle", work))
+    own = screen.wait_event(lambda e: _status("running")(e) and e["work_id"] != work)
+    screen.wait_event(_status("idle", own["work_id"]))
 
-    assert first["record"]["cheese"]["work_id"] == work
-    opened = next(
-        e
-        for e in screen.records()
-        if e["sequence"] > first["sequence"] and e["record"]["cheese"].get("turn_start")
-    )
-    turn = _turn(screen.records(), opened["sequence"])
-    stamps = {e["record"]["cheese"].get("work_id") for e in turn}
-    (own,) = stamps
-    assert own != work
-    uuid.UUID(own)
-    assert all(e["record"]["cheese"].get("unsolicited") for e in turn)
-    assert turn[-1] == follow
-    assert notified["sequence"] < follow["sequence"]
+    assert own["unsolicited"] is True
+    uuid.UUID(own["work_id"])
 
 
 # --- 3. a platform command is nobody's work --------------------------------------
 
 
-def test_a_platform_command_produces_no_room_owned_records(screen):
+def test_a_platform_command_is_no_rooms_work(screen):
     work = str(uuid.uuid4())
     screen.send("hello", work_id=work)
-    before = screen.wait(_is("result"))["sequence"]
+    screen.wait_event(_status("idle", work))
 
     answer = screen.call("command", {"text": "/reload-skills"}, timeout=150)
 
     assert answer["is_error"] is False
-    opened = screen.wait(
-        lambda r: (
-            r.get("type") == "command_lifecycle"
-            and r.get("state") == "started"
-            and str(r.get("command_uuid")).startswith("cheese-command-")
-        ),
-        after=before,
+    commands = [
+        e for e in screen.events() if _status("running")(e) and e["work_id"] != work
+    ]
+    assert [e["work_id"] for e in commands] == [None]
+    assert not any(
+        e["kind"] == "input" and e["input_id"].startswith("cheese-command-")
+        for e in screen.events()
     )
-    during = _turn(screen.records(), opened["sequence"])
-    assert len(during) > 1
-    for entry in during:
-        assert "work_id" not in entry["record"]["cheese"], entry
-        assert "unsolicited" not in entry["record"]["cheese"], entry
-        assert "receipt" not in entry["record"]["cheese"], entry
 
 
 # --- 4. what only the files on disk hold ----------------------------------------
@@ -436,9 +500,9 @@ def test_nested_and_workflow_agents_are_read_from_their_own_files(screen, contra
 # --- 5. interrupt ------------------------------------------------------------
 
 
-def test_an_interrupt_marks_the_result_it_ends(screen, contract):
+def test_an_interrupt_is_the_failure_of_the_work_it_ends(screen, contract):
     work = str(uuid.uuid4())
-    screen.send(
+    sent = screen.send(
         contract.do("Bash", command="sleep 60; echo LATE", description="long"),
         work_id=work,
     )
@@ -446,26 +510,17 @@ def test_an_interrupt_marks_the_result_it_ends(screen, contract):
 
     assert screen.call("interrupt") == {"interrupted": True}
 
-    result = screen.wait(_is("result"))
-    assert result["record"]["cheese"]["interrupted"] is True
-    assert result["record"]["cheese"]["work_id"] == work
+    idle = screen.wait_event(_status("idle", work))
+    assert idle["result"]["failure"] == {"kind": "interrupted"}
+    assert idle["result"]["inputs"] == [sent]
     assert screen.call("ping")["working"] is False
 
 
-def test_an_error_ends_the_work_though_a_background_task_runs_on(contract, tmp_path):
-    """A turn the API killed is over; a task it left behind does not undo that.
-
-    An unfinished input shuts the seat, and the only thing that opens it again
-    is the terminal stamp on the record that ended the work. The build can only
-    ever write it there — the next record belongs to a new work — so a session
-    that stays quiet keeps its seat shut for good: the platform defers every
-    later message, no turn runs, and the room is answered by silence.
-
-    A task still running is an interval of its own: it can never settle the
-    inputs of the work that ended, while the hold on those inputs is what stops
-    anyone resending them. The clean completion above takes no account of such
-    tasks either.
-    """
+def test_an_api_failure_is_typed_and_names_what_the_work_read(contract, tmp_path):
+    """Work the API killed ends there, and the runner says so on the spot,
+    typed: the kind of failure, the status, what the build called it, and the
+    inputs the work had read — a task it left running does not hold that back,
+    because that task goes on in a work of its own."""
 
     class Refusing(contract.Handler):
         """The script answers its first request, then the budget is gone."""
@@ -506,15 +561,13 @@ def test_an_error_ends_the_work_though_a_background_task_runs_on(contract, tmp_p
             screen.wait(_is("system", "task_started"))
             assert screen.call("ping")["tasks"]
 
-            result = screen.wait(_is("result"), timeout=180)
-            assert result["record"]["is_error"] is True
-            stamp = result["record"]["cheese"]
-            assert stamp["work_terminated"] is True
-            assert stamp["termination"] == "is_error"
-            assert stamp["termination_work_id"] == work
-            assert stamp["termination_input_ids"] == [sent]
-            # The task goes on running, and the input keeps its hold: what the
-            # stamp opened is the seat, not the work.
+            idle = screen.wait_event(_status("idle", work), timeout=180)
+            failure = idle["result"]["failure"]
+            assert failure["kind"] == "api_error"
+            assert failure["status"] == 429
+            assert "Budget has been exceeded" in failure["detail"]
+            assert idle["result"]["inputs"] == [sent]
+            # The task goes on running in a work of its own.
             assert screen.call("ping")["tasks"]
         finally:
             screen.stop()
@@ -637,9 +690,10 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
 
     async def backend():
         while True:
-            await runner.dispatch("events", {"after": 0})
+            await runner.dispatch("read", {"epoch": 1, "records_after": 0})
             await asyncio.sleep(0.1)
 
+    runner.outbox.register(1)
     reading = asyncio.create_task(backend())
     try:
         await runner.send(str(uuid.uuid4()), "hello", work_id=str(uuid.uuid4()))
@@ -650,6 +704,57 @@ async def test_an_idle_session_is_let_go_while_a_backend_keeps_reading_it(
     finally:
         reading.cancel()
         await runner.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("previous", ["idle", "running", "restarted"])
+async def test_a_queued_input_is_not_filed_under_the_previous_work(
+    tmp_path, monkeypatch, previous
+):
+    """The next input can queue long after the last result, or while another
+    work is running. Its queue notice names its delivery, but queueing alone
+    does not make it part of any execution work."""
+    state = tmp_path / "state"
+    runner = Runner(state)
+    runner.session_id = "session-queue"
+    runner.outbox.register(1)
+
+    async def written(message):
+        pass
+
+    monkeypatch.setattr(runner, "_write", written)
+    old_input, old_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(old_input, "first", work_id=old_work)
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": old_input, "state": "started"}
+    )
+    if previous != "running":
+        runner.observe({"type": "result", "result": "done"})
+    next_input, next_work = str(uuid.uuid4()), str(uuid.uuid4())
+    await runner.send(next_input, "next", work_id=next_work)
+    if previous == "restarted":
+        runner = Runner(state)
+        runner.session_id = "session-queue"
+        runner.outbox.register(1)
+        monkeypatch.setattr(runner, "_write", written)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "queued"}
+    )
+    queued = runner.journal.read(0)[-1]["record"]
+    assert queued["cheese"].get("work_id") is None
+    assert queued["cheese"]["input_work_id"] == next_work
+    assert runner.working is (previous == "running")
+    assert runner.work == (old_work if previous == "running" else None)
+
+    runner.observe(
+        {"type": "command_lifecycle", "command_uuid": next_input, "state": "started"}
+    )
+    started = runner.journal.read(0)[-1]["record"]
+    execution = old_work if previous == "running" else next_work
+    assert started["cheese"]["work_id"] == execution
+    assert started["cheese"]["input_work_id"] == next_work
+    assert runner.working and runner.work == execution
 
 
 @pytest.mark.anyio
@@ -682,11 +787,13 @@ async def test_a_turn_aborted_before_its_prompt_was_checked_still_lets_the_sessi
     monkeypatch.setattr(runner, "release", release)
     monkeypatch.setattr(runner, "_write", written)
     await runner.listen(2**16)
+    runner.outbox.register(1)
     try:
         identifier = str(uuid.uuid4())
         await runner.dispatch(
             "send",
             {
+                "epoch": 1,
                 "input_id": identifier,
                 "work_id": identifier,
                 "text": "hello",
@@ -717,7 +824,7 @@ async def test_a_turn_aborted_before_its_prompt_was_checked_still_lets_the_sessi
             runner.observe(
                 {**record, "session_id": runner.session_id, "uuid": str(uuid.uuid4())}
             )
-        await runner.dispatch("events", {"after": 0})
+        await runner.dispatch("read", {"epoch": 1, "records_after": 0})
         clock[0] += IDLE_EXIT_S + 1
         await asyncio.wait_for(released.wait(), 5)
         assert reply_owed(reply_owed_path(runner.state)) is None
@@ -976,10 +1083,18 @@ async def test_the_block_being_written_is_shown_as_it_grows_and_never_journaled(
     )
     assert runner.process is not None and runner.process.stdin is not None
     stdin = runner.process.stdin
+    runner.outbox.register(1)
 
     async def shown(seen: str | None) -> dict:
         answer = await runner.dispatch(
-            "events", {"after": runner.journal.last(), "wait": 10, "live": seen}
+            "read",
+            {
+                "epoch": 1,
+                "ack": runner.outbox.last(),
+                "records_after": runner.journal.last(),
+                "wait": 10,
+                "live": seen,
+            },
         )
         assert "live" in answer, "nothing new was shown"
         return answer["live"]
@@ -1210,3 +1325,69 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
     assert calls.read_text().count("called") == 2, "once before each turn"
     assert offered, "the first turn was not offered the skill the project gained"
     assert loaded
+
+
+# --- N. the session compacting itself -------------------------------------------
+
+
+def test_an_idle_session_compacts_itself_when_asked(screen, contract):
+    """`cheese_session(action=compact)` reaches this runner as `compact`, and the runner writes
+    `/compact` — the same door `/reload-skills` goes through. An idle session
+    has no turn to wait for, so it goes at once, and the build reports the
+    compaction the way the room already reads it (`system/status`)."""
+    work = str(uuid.uuid4())
+    screen.send("hello", work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    answer = screen.call("compact", {})
+
+    assert answer == {"requested": True, "already": False}
+    started = screen.wait(lambda r: r.get("status") == "compacting")
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"
+
+
+def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract):
+    """A tool call is answered at a tool boundary, and the build takes stdin at
+    those boundaries: `/compact` written from inside one would arrive inside the
+    turn that asked. So it waits for that turn's ending — one per request, and
+    the second asking in the same turn is told it is already asked."""
+    work = str(uuid.uuid4())
+    screen.send(
+        contract.do("Bash", command="sleep 4; echo HELD", description="hold the turn"),
+        work_id=work,
+    )
+    # The Bash is really running: asked for a tool call, the build is inside
+    # one, and the turn cannot end before its result comes back.
+    screen.wait(_is("system", "task_started"))
+    assert screen.call("ping")["work_id"] == work
+
+    first = screen.call("compact", {})
+    second = screen.call("compact", {})
+
+    assert first == {"requested": True, "already": False}
+    assert second == {"already": True}
+    held = screen.records()
+    assert not any(
+        block.get("text") == "/compact"
+        for entry in held
+        for block in _blocks(entry["record"])
+    ), "the command went out inside the turn that asked"
+    screen.wait_event(_status("idle", work))
+    screen.wait(lambda r: r.get("status") == "compacting")
+
+    # Once per turn, not once for ever: the session's next turn can ask again,
+    # and this time nothing is running, so the command goes at once.
+    second_work = str(uuid.uuid4())
+    screen.send("again", work_id=second_work)
+    screen.wait_event(_status("idle", second_work))
+    assert screen.call("compact", {}) == {"requested": True, "already": False}
+    started = screen.wait(
+        lambda r: r.get("status") == "compacting", after=held[-1]["sequence"]
+    )
+    ended = screen.wait(
+        lambda r: r.get("compact_result") is not None, after=started["sequence"]
+    )
+    assert ended["record"]["compact_result"] == "success"

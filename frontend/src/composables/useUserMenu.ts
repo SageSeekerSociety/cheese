@@ -5,6 +5,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
+import { getMyInvites } from '@/api/invites'
 import { UserAuthApi } from '@/api/userAuth'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import AccountService from '@/services/account'
@@ -28,7 +29,6 @@ export function useUserMenu() {
     return isChosenAvatar(id) ? getAvatarUrl(id) : null
   })
   const nickname = computed(() => AccountService._user.value?.nickname ?? '')
-  const intro = computed(() => AccountService._user.value?.intro ?? '')
 
   // 这里**不再**导出 avatarInitial / avatarColor 那套兜底：彩色首字母只由 UserAvatar
   // 一处画（契约 §3.14），它自己按 `seed` 取色、按 `name` 取首字母。给用户的颜色种子
@@ -46,6 +46,19 @@ export function useUserMenu() {
     },
     { immediate: true }
   )
+
+  // 自己的邀请码还剩几个名额，写在菜单的「邀请好友」那一行上。每次打开菜单读一次，
+  // 不常驻轮询；读不到就当 0，那一行只写「邀请好友」。
+  const inviteSeatsLeft = ref(0)
+  watch(menuOpen, async (open) => {
+    if (!open || !loggedIn.value) return
+    try {
+      const mine = await getMyInvites()
+      inviteSeatsLeft.value = Math.max(0, mine.max_uses - mine.use_count)
+    } catch {
+      inviteSeatsLeft.value = 0
+    }
+  })
 
   // 退出登录
   const onLogout = async () => {
@@ -68,7 +81,7 @@ export function useUserMenu() {
     currentUser,
     avatar,
     nickname,
-    intro,
+    inviteSeatsLeft,
 
     // 方法
     onLogout,

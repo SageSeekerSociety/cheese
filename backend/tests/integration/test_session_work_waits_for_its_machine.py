@@ -5,8 +5,6 @@ and the agent retried it in a loop until the machine was up. A native session
 on that machine would simply have run the command once it could.
 """
 
-from tests.support.devices import enrollment_team
-
 import json
 import time
 import uuid
@@ -36,6 +34,7 @@ from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 @pytest.fixture
@@ -179,7 +178,12 @@ def _machine_is_up(case, session_id, device_id):
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
             host.last_seen_at = datetime.now(UTC)
-            await repo.mark_enrolled(host, device_id=device_id, when=datetime.now(UTC))
+            await repo.mark_enrolled(
+                host,
+                device_id=device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=host.sandbox_disk_gb,
+            )
             await db.commit()
 
     case.client.portal.call(enrol)
@@ -440,4 +444,6 @@ def test_each_session_on_a_cloud_host_has_its_executor_sandboxed(cloud_rooms):
         "swap_mb": settings.cloud_sandbox_swap_mb,
         "cpus": settings.cloud_sandbox_cpus,
         "pids": settings.cloud_sandbox_pids,
+        "disk_mib": settings.cloud_sandbox_disk_budget_gb * 10**9 >> 20,
+        "inodes": settings.cloud_sandbox_inode_budget,
     }

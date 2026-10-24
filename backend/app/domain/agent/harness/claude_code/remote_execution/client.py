@@ -139,6 +139,14 @@ else:
     from shell_stop import deliver_stop
 
 PINNED_VERSION = "2.1.299"
+# How long a request to the runner may take before the session's own helper
+# gives up on it (`compact`). The runner answers at once — the compaction it
+# then writes runs for minutes and is not waited for — so this is only the
+# socket's own patience.
+RUNNER_REQUEST_S = 30.0
+# The preload the device launch hands the build in BUN_OPTIONS
+# (`device_launch.py`); a private chat's WebFetch depends on it.
+PAGE_TRANSPORT = "webfetch_transport.cjs"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -151,7 +159,7 @@ NATIVE_TOOLS = (
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese_doc_set and publish artifacts "
+    "Save finished documents through cheese_doc(action=set) and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
@@ -204,6 +212,25 @@ def reply_hook(payload: dict) -> dict | None:
     return {"decision": "block", "reason": reason} if reason else None
 
 
+def checkpoint_turn() -> str | None:
+    """The work id of the turn whose checkpoint this is: the runner's answer on
+    the socket it gave this session. None when there is no runner to ask, which
+    ends with the sync reported as a platform line instead of a turn's step."""
+    path = os.environ.get(SESSION_SOCKET)
+    if not path:
+        return None
+    try:
+        with dial_runner(path, 10) as connection:
+            connection.sendall(
+                json.dumps({"method": "checkpoint_turn", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+    except (OSError, ValueError):
+        return None
+    work = (answer.get("result") or {}).get("work_id")
+    return str(work) if work else None
+
+
 def cheese_source() -> Path:
     """The platform tool table: shipped beside this helper, or the checkout's."""
     shipped = Path(__file__).with_name("cheese.py")
@@ -243,10 +270,10 @@ def prepare(
     if target.get("kind") == "private":
         if __package__:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from .private import ensure
+            from .private import ensure, webfetch_egress
         else:
             # deferred-import: private scratch requires fcntl, absent on Windows
-            from private import ensure
+            from private import ensure, webfetch_egress
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -555,12 +582,16 @@ def prepare(
     if target.get("kind") == "private":
         # Subagents and arbitrary plugins must not create another local execution
         # route around the proxy. Skills shipped by the platform remain available.
-        command.extend(
-            [
-                "--disallowedTools",
-                "Agent,Task,WebFetch,WebSearch,EnterWorktree,ExitWorktree",
-            ]
-        )
+        # WebSearch runs at the model's provider, so it opens no route here.
+        # WebFetch reads the page from this host, so it is let in only where the
+        # transport preload will send that read through the chat's egress proxy;
+        # without the preload it would leave by the host's own network.
+        refused = ["Agent", "Task", "EnterWorktree", "ExitWorktree"]
+        if PAGE_TRANSPORT in os.environ.get("BUN_OPTIONS", ""):
+            env["CHEESE_WEBFETCH_EGRESS"] = webfetch_egress()
+        else:
+            refused.append("WebFetch")
+        command.extend(["--disallowedTools", ",".join(refused)])
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
@@ -720,7 +751,7 @@ def transport(config, target_path):
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
     # 平台工具从会话直接打后端，不经过这台机器；只有要机器的那一样
-    # （`cheese_accept_request` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
+    # （`cheese_card(action=request)` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
     # 而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
@@ -769,8 +800,51 @@ def transport(config, target_path):
     # 活在这条会话的 MCP 进程里：进程重起就当没读过，那是安全的方向。
     doc_versions: dict[str, int] = {}
 
+    def compact_session() -> str:
+        """Ask this session's runner to compact its context (`/compact`).
+
+        The runner is this process's parent's runner, reached at the socket it
+        handed the session — the same door `register_project_hooks` and the
+        Stop hook use. The runner writes the command; it does not wait for it,
+        because a compaction of a long conversation runs for minutes."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask for a compaction"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "compact", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return "already" if (answer.get("result") or {}).get("already") else "requested"
+
+    def current_run() -> str | None:
+        """Which run of this session a platform call is made in, as its
+        runner names it (`runner.Runner.dispatch` ``run``), at the same door
+        `compact_session` uses."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask which run it is in"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "run", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return (answer.get("result") or {}).get("run")
+
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions)
+        host = PlatformHost(
+            client, invoke, call_id, doc_versions, current_run, compact_session
+        )
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # the agent reads the reason
@@ -853,7 +927,9 @@ def transport(config, target_path):
                             },
                         },
                     ]
-                    + cheese.PLATFORM_TOOLS.schemas()
+                    # What this session's deployment offers: a tool behind a
+                    # switch it has not turned on is not on the list.
+                    + cheese.offered_tools()
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
@@ -1119,7 +1195,9 @@ def main():
                 json.dumps(payload, sort_keys=True) + str(transcript.stat().st_size)
             ).encode()
         ).hexdigest()
-        result = RemoteClient(config).checkpoint("checkpoint-" + identifier)
+        result = RemoteClient(config).checkpoint(
+            "checkpoint-" + identifier, turn=checkpoint_turn()
+        )
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "reply":

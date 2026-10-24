@@ -32,6 +32,7 @@ from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.harness.prompt import (
     PLATFORM_NOTICE,
+    REPEATED_FAILURE,
     SHARED_CHECKOUT,
     STEP_TITLES,
     SUBAGENT_TODO_WRITE,
@@ -350,7 +351,12 @@ async def test_a_subagent_is_told_the_rules_every_agent_of_the_session_keeps(
 
         (first, *_) = session.requests("child-default")
         request = json.dumps(first, ensure_ascii=False)
-        for rule in (SUBAGENT_TODO_WRITE, SHARED_CHECKOUT, STEP_TITLES):
+        for rule in (
+            SUBAGENT_TODO_WRITE,
+            SHARED_CHECKOUT,
+            STEP_TITLES,
+            REPEATED_FAILURE,
+        ):
             assert json.dumps(rule, ensure_ascii=False)[1:-1] in request, rule
 
 
@@ -528,3 +534,68 @@ async def test_interrupting_the_session_stops_its_subagents(tmp_path):
         (agent,) = session.runner.children.started.values()
         assert agent.status == "stopped"
         assert agent.process is not None and agent.process.returncode is not None
+
+
+async def test_a_subagent_whose_pi_dies_ends_and_its_parent_hears(tmp_path):
+    """A subagent's pi that exits on its own — crashed, or killed for memory —
+    ends that subagent at once. Nothing else would: its parent would wait for a
+    conclusion for ever, and the session would count it as busy."""
+
+    def route(body):
+        if body["model"] != PARENT:
+            return {"tool": "bash", "arguments": {"command": "sleep 60"}}
+        if "tool_call_id" not in said(body):
+            return {
+                "tool": "Task",
+                "arguments": {
+                    "description": "慢活",
+                    "prompt": "慢慢做",
+                    "run_in_background": True,
+                },
+            }
+        return {"text": "好"}
+
+    async with pi(tmp_path, route) as session:
+        await session.send("派一个慢的")
+        await session.until(lambda: session.requests("child-default"))
+        (agent,) = session.runner.children.started.values()
+        assert agent.process is not None
+        agent.process.kill()
+
+        await session.until(lambda: session.stops())
+        (stop,) = session.stops()
+        assert stop["status"] == "failed"
+        assert "意外退出" in stop["text"]
+        await session.until(
+            lambda: any("状态 failed" in said(b) for b in session.requests(PARENT))
+        )
+        assert not session.runner.busy()
+
+
+async def test_a_session_runs_only_so_many_subagents_at_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(subagents, "RUNNING_AT_ONCE", 1)
+
+    def route(body):
+        if body["model"] != PARENT:
+            return {"tool": "bash", "arguments": {"command": "sleep 60"}}
+        told = said(body)
+        if "tool_call_id" not in told or (
+            "同时最多" not in told and told.count("已在后台起了分身") == 1
+        ):
+            return {
+                "tool": "Task",
+                "arguments": {
+                    "description": "慢活",
+                    "prompt": "慢慢做",
+                    "run_in_background": True,
+                },
+            }
+        return {"text": "好"}
+
+    async with pi(tmp_path, route) as session:
+        await session.send("派两个慢的")
+        await session.until(
+            lambda: any("同时最多 1 个" in said(b) for b in session.requests(PARENT))
+        )
+
+        assert len(session.runner.children.started) == 1

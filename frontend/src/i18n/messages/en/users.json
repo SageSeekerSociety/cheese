@@ -3,6 +3,16 @@
     "joined": "Joined {date}",
     "edit": "Edit profile",
     "dm": "Message",
+    "remark": {
+      "add": "Add remark",
+      "edit": "Edit remark",
+      "placeholder": "Add a personal remark (only visible to you)",
+      "originalName": "Original name: {name}",
+      "save": "Save",
+      "cancel": "Cancel",
+      "clear": "Clear",
+      "saveFailed": "Could not save remark"
+    },
     "notFound": "This user does not exist",
     "loadFailed": "Could not load this page",
     "retry": "Retry",
@@ -54,7 +64,8 @@
       "waiting": "Waiting on you",
       "waitingEmpty": "Nothing waiting",
       "active": "Active channels",
-      "activeEmpty": "No active channels"
+      "activeEmpty": "No active channels",
+      "skills": "Skills carried"
     }
   }
 }

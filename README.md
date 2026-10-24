@@ -77,7 +77,7 @@ task                         # show all available commands
 task setup                   # first-time setup (install deps + infra + migrations)
 task dev                     # start backend + frontend in parallel
 task check                   # run all checks (backend + frontend); needs go-task
-./scripts/check.sh           # quick scoped check without go-task (what a work machine runs)
+./scripts/check.sh review <PR>  # start an independent review of a pull request
 
 # Backend
 task be:check                # ruff + pyright + pytest

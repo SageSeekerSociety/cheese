@@ -17,7 +17,7 @@ import logging
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
+from app.core import model_roles
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import charge_new_spend
 from app.domain.agent.personal.billing import PersonalGatewayKey, gateway, person_charge
@@ -31,6 +31,17 @@ async def stored_key(session: AsyncSession, user_id: int) -> str | None:
     return row.key if row is not None else None
 
 
+async def stored_key_and_model(
+    session: AsyncSession, user_id: int
+) -> tuple[str, str] | None:
+    """The person's stored key and the one model it may call. A call made on
+    the key outside its own model calls (a fetch's answer) asks for this model,
+    not the role's current one: the role can change while an answer runs, and
+    the key is only re-minted at the next question (``person_key``)."""
+    row = await session.get(AssistantGatewayKey, user_id)
+    return (row.key, row.model) if row is not None else None
+
+
 async def person_key(
     session: AsyncSession,
     user_id: int,
@@ -40,7 +51,7 @@ async def person_key(
     """The person's key for the assistant model as configured now, minted (or
     re-issued) on first use and committed at once; None when there is no
     gateway or it would not mint one."""
-    model = settings.assistant_model
+    model = model_roles.model("assistant_model")
     row = await session.get(AssistantGatewayKey, user_id)
     if row is not None and row.model == model:
         return row.key

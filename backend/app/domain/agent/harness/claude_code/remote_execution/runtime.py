@@ -429,6 +429,10 @@ class Executor:
                 "sandbox": bool(self.config.get("sandbox")),  # launch.can_prepare
                 "upgrading": self.upgrading,
                 "running_commands": len(self.running),
+                # Which ones: the sweep stops a command that outlasts its
+                # background cap instead of destroying the sandbox around it
+                # (`machine.lifecycle`).
+                "running_command_ids": list(self.running),
                 "capabilities": [
                     "prepare",
                     "idle_upgrade",

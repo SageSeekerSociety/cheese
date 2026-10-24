@@ -118,7 +118,8 @@ export const CHANGES_CONTENT_PROPS = {
   effectiveView: CHANGES.effectiveView,
   openDiffLines: CHANGES.openDiffLines,
   openIsImage: CHANGES.openIsImage,
-  openRawUrl: CHANGES.openRawUrl,
+  openImageSrc: CHANGES.openImageSrc,
+  openImageError: CHANGES.openImageError,
   fileBinary: CHANGES.fileBinary,
   fileTooLarge: CHANGES.fileTooLarge,
   fileBytes: CHANGES.fileBytes,
@@ -140,6 +141,8 @@ export const CHANGES_ALL_PROPS = {
   refreshing: CHANGES.refreshing,
   summaryAll: false,
   review: CHANGES.review,
+  /** 默认一段都不铺：先给「改了哪些文件」这一眼清单。 */
+  expanded: new Set<string>(),
 }
 
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
@@ -186,7 +189,7 @@ export function fileTreeRows(collapsed: string[] = []) {
   return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, collapsedDirs: new Set(collapsed) })
 }
 
-/** `ProjectFileView` 的那十八样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
+/** `ProjectFileView` 的那二十样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
 export function projectFileProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     path: 'docs/week-1.md',
@@ -199,10 +202,12 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
     binary: false,
     tooLarge: false,
     tasks: [],
+    inRoom: false,
     isImage: false,
     isDocument: false,
     documentType: null,
-    rawUrl: `/api/projects/${DEMO_PROJECT}/file/raw?path=docs/week-1.md`,
+    imageSrc: '',
+    imageError: '',
     docBytes: null,
     docLoading: false,
     docError: '',
@@ -244,6 +249,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     loading: ref(v.loading),
     refreshing: ref(v.refreshing),
     errorMsg: ref(v.errorMsg),
+    liveFallback: ref(v.liveFallback),
     noRepo: ref(v.noRepo),
     fileDiffs: computed(() => v.fileDiffs),
     diffByPath: computed(() => v.diffByPath),
@@ -269,7 +275,8 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     openIsDocument: computed(() => v.openIsDocument),
     openDocumentType: computed(() => v.openDocumentType),
     revisionPath: computed(() => v.revisionPath),
-    openRawUrl: computed(() => v.openRawUrl),
+    openImageSrc: computed(() => v.openImageSrc),
+    openImageError: computed(() => v.openImageError),
     collapsedDirs: ref(v.collapsedDirs),
     revealTick: ref(v.revealTick),
     draftCount: computed(() => v.draftCount),
@@ -285,6 +292,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     comparisonError: ref(''),
     toggleCompare: noopAsync,
     loadAll: noopAsync,
+    retryLive: noopAsync,
     selectFile: noopAsync,
     closeFile: noop,
     selectVersion: noopAsync,
@@ -355,6 +363,18 @@ export function previewBundle(
     docPage: computed(() => false),
     canPage: computed(() => pageViewOf(identity?.path)),
     docPageHtml: ref(null),
+    // 这一格是 markdown 演示：评论那一包用真的文档评论动作，这里还没有评论。
+    comments: {
+      target: computed(() => null),
+      author: 'demo',
+      open: ref(false),
+      toggle: noop,
+      threads: docThreadsBundle(),
+      post: noopAsync,
+      // 名册那一包给的：演示里照 handle 显示，头像交给首字母。
+      nameOf: (handle: string) => handle,
+      avatarOf: () => '',
+    },
     revs: v.revs,
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
@@ -432,8 +452,11 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    imageData: view.imageSrc,
+    savePdf: refuseWrite,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
+    undoAgentChanges: refuseWrite,
   }
 }
 
@@ -504,6 +527,7 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    arrived: reactive(new Set<string>()),
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {
@@ -597,6 +621,7 @@ function routine(over: Partial<Routine>): Routine {
     timezone: 'Asia/Shanghai',
     state: 'active',
     last_run_status: 'succeeded',
+    credits_this_month: 128.4,
     agent_handle: 'cheese',
     owner_handle: 'wang',
     created_by: 'cheese',
@@ -756,6 +781,20 @@ export const SITE_RAW_RECORDS: Block[] = [
       },
     }) as Block
 )
+/** A platform line in 现场 that names a member: an edit the room's agent was told of. Sample data. */
+export const SITE_EDIT_RECORD: Block = {
+  id: 'sample-run-record-edit',
+  conversation_id: 'demo-room',
+  turn_id: null,
+  author: 'system',
+  author_type: 'platform',
+  kind: 'event',
+  content: '<@demo-alice> 改了一条之前的消息',
+  created_at: '2026-10-19T10:01:00Z',
+  refs: [],
+  run_record: true,
+  meta: { event_type: 'message_edited', severity: 'info', who: 'platform' },
+} as Block
 /** 组头看的那一组：`turn` 剧本到「芝士怎么说话」那一步为止，五步全在同一轮（t1）里。 */
 export const SITE_ONE_TURN: SiteTurn<Block> = (() => {
   const turn = groupByTurn(turnFrame(4).site, turnFrame(4).running)[0]

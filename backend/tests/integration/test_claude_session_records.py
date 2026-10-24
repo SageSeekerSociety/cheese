@@ -10,6 +10,7 @@ while its session went on working.
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -19,12 +20,13 @@ from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.reads import InputRead, Report
 from app.domain.agent.room import reads as room_reads
+from app.domain.agent.turn.steps.reminders import QuietSessionReminders
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.main import app
-from tests.support.session_records import assistant_texts, records, wait_for_record
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
@@ -35,6 +37,12 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.room_reader import room_reader
+from tests.support.session_records import (
+    assistant_texts,
+    records,
+    wait_for_read,
+    wait_for_record,
+)
 
 
 def _room(client, owner: str = "alice") -> str:
@@ -142,14 +150,14 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     client, stub_hooks
 ):
     """The build taking an input off its queue is not the build having it: only
-    the echo of that exact input (``isReplay``) is the receipt."""
+    the echo of that exact input (``isReplay``) is reported as its read."""
     chat = client.app.dependency_overrides[get_chat_service]()
     receipts: list[InputReceipt] = []
-    original = chat.confirm_prompt_receipt
 
-    async def observe(receipt: InputReceipt):
-        await original(receipt)
-        if receipt.evidence == "native_echo":
+    async def observe(report: Report):
+        await chat.apply_report(report)
+        if isinstance(report.fact, InputRead):
+            receipt = report.fact.receipt
             session = stub_hooks._session_for(receipt.identity.conversation_id)
             input_id = uuid.UUID(taken[0])
             assert receipt.identity == InputIdentity(
@@ -165,7 +173,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
             receipts.append(receipt)
 
     chat._compute.report_to(
-        room_reader(receipts=observe, rest=room_reads.reader(chat)),
+        room_reader(reports=observe, rest=room_reads.reader(chat)),
         unread=chat.oldest_unread_at,
         memory=chat._memory.sync,
     )
@@ -224,9 +232,15 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         wait_for_record(client, room, lambda record: "make test" in str(record))
+        wait_for_read(client, room)
         before = len(_written(stub_hooks, room))
         monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
-        assert client.portal.call(chat.remind_silent_turns) == 1
+        assert (
+            client.portal.call(
+                QuietSessionReminders(chat, chat.compute).silence, datetime.now(UTC)
+            )
+            == 1
+        )
         written = _written(stub_hooks, room)[before:]
         assert len(written) == 1, written
         assert "chat_send" in str(written[0]["message"]["content"])
@@ -289,7 +303,7 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
             )
             assert len(inputs) == 2
             assert len({row.execution_work_id for row in inputs}) == 1
-            assert all(row.echoed_at and row.completed_at for row in inputs)
+            assert all(row.echoed_at and row.failed_at is None for row in inputs)
 
     client.portal.call(assert_same_work)
 
@@ -309,28 +323,30 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     ]
 
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", 0)
-    with caplog.at_level("INFO", logger="app.domain.agent.chat"):
-        client.portal.call(chat.remind_silent_turns)
+    with caplog.at_level("INFO", logger="app.domain.agent.turn.steps.reminders"):
+        client.portal.call(
+            QuietSessionReminders(chat, chat.compute).silence, datetime.now(UTC)
+        )
     assert "chat progress reminder topic=" not in caplog.text
 
 
-def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
+def test_a_message_without_live_handoff_still_reaches_the_working_session(
     client, stub_hooks, monkeypatch
 ):
-    """Losing the live handoff must not bypass unfinished durable work or lose
-    the next message: committed completion resumes it without another summon."""
+    """Losing the live handoff does not make a message wait for the work under
+    way: the input before it was read, so nothing about it is uncertain, and
+    the next one is written to the session at once — it reads it at its next
+    tool boundary — rather than deferred behind work that has no end the
+    platform waits for."""
     chat = client.app.dependency_overrides[get_chat_service]()
     prompts: list[str] = []
 
     def turn(topic, prompt, reply, agent=None):
         prompts.append(prompt)
-        stub_hooks.starts(topic)
-        stub_hooks.acknowledges(topic, prompt)
         if len(prompts) == 1:
+            stub_hooks.starts(topic)
+            stub_hooks.acknowledges(topic, prompt)
             stub_hooks.uses(topic, "Bash", command="make test")
-        else:
-            stub_hooks.says(topic, "lint 也过了")
-            stub_hooks.stops(topic, "lint 也过了")
 
     stub_hooks.emit_turn = turn
     room = _room(client)
@@ -339,32 +355,28 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
     async def no_live_handoff(*args, **kwargs):
         return None
 
-    with room_socket(client, room, "alice"):
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         wait_for_record(client, room, lambda record: "make test" in str(record))
-        before = len(_written(stub_hooks, room))
         with monkeypatch.context() as hidden:
-            hidden.setattr(chat, "merge_into_running_turn", no_live_handoff)
+            hidden.setattr(chat, "merge_into_running_session", no_live_handoff)
             second = post_message(
                 client, room, "alice", {"content": "@芝士 顺便跑一下 lint"}
             )
-
-            def deferred():
-                blocks = _blocks(client, id=uuid.UUID(second["id"]))
-                return blocks and (blocks[0].meta or {}).get("deferred_native_input")
-
-            assert _wait_for(client, room, deferred)
-            assert len(prompts) == 1
-            assert len(_written(stub_hooks, room)) == before
+            assert _wait_for(client, room, lambda: len(prompts) == 2)
+            (block,) = _blocks(client, id=uuid.UUID(second["id"]))
+            assert not (block.meta or {}).get("deferred_native_input")
 
         stub_hooks.returns(topic, "Bash", "42 passed")
-        stub_hooks.stops(topic, "测试过了")
-        assert _wait_for(client, room, lambda: len(prompts) == 2)
+        stub_hooks.acknowledges(topic, prompts[1])
+        stub_hooks.says(topic, "lint 也过了")
+        stub_hooks.stops(topic, "测试和 lint 都过了")
+        assert _until_done(ws)[-1]["type"] == "done"
 
     client.portal.call(settle_turn, chat, topic)
     assert "顺便跑一下 lint" in prompts[1]
 
-    async def completed_separately():
+    async def both_read():
         async with client.test_factory() as session:
             inputs = list(
                 await session.scalars(
@@ -372,17 +384,9 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
                 )
             )
             assert len(inputs) == 2
-            assert len({row.execution_work_id for row in inputs}) == 2
-            assert all(row.echoed_at and row.completed_at for row in inputs)
-            turns = list(
-                await session.scalars(
-                    select(AgentTurn).where(AgentTurn.conversation_id == topic)
-                )
-            )
-            assert len(turns) == 2
-            assert all(row.stopped_at for row in turns)
+            assert all(row.echoed_at for row in inputs)
 
-    client.portal.call(completed_separately)
+    client.portal.call(both_read)
 
 
 def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
@@ -409,9 +413,9 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
 
 
 def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
-    """The runner's abrupt exit leaves the inputs it was holding unfinished.
-    Nobody else will report on them, so the seat would refuse every later
-    message — the room goes quiet. The death is what ends them."""
+    """The runner's abrupt exit ends the work it was doing: what that work had
+    read stays delivered, with the failure on it, and the seat takes the next
+    message — nothing about the dead work is left for it to wait on."""
 
     def turn(topic, prompt, reply, agent=None):
         stub_hooks.starts(topic)
@@ -427,12 +431,8 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
         stub_hooks.alive = False
         assert _until_done(ws)[-1]["type"] == "error"
 
-    # The work's inputs are ended where the death was heard: unfinished they
-    # would refuse the seat, and no sweep reaches a closed interval. The room
-    # hears the death before the row carries it — the ending is a transaction
-    # of its own, behind the same news — so wait for that ending rather than
-    # reading once and judging: a run where the room heard the death a moment
-    # before the row was stamped reads as unfinished, and is not.
+    # The input the work had read was delivered; the death is recorded on it
+    # as the failure of the work it was read into, and holds nothing.
     async def ended_for_good():
         async def read() -> list[NativeInput]:
             async with client.test_factory() as session:
@@ -445,17 +445,13 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
         rows = await read()
         assert rows, "the killed turn held no input"
         deadline = time.monotonic() + 10
-        while not all(row.termination == "orphaned" for row in rows):
-            # Not "eventually", but "under a stamp of the death it reports": a
-            # death the room heard that never ends its inputs is the bug here.
+        while not all(row.failure == "exited" for row in rows):
             assert time.monotonic() < deadline, [
-                (str(row.id), row.termination, row.terminated_at) for row in rows
+                (str(row.id), row.failure, row.failed_at) for row in rows
             ]
             await asyncio.sleep(0.1)
             rows = await read()
-        assert all(row.completed_at is None for row in rows), [
-            (str(row.id), row.completed_at, row.termination) for row in rows
-        ]
+        assert all(row.echoed_at and row.terminated_at is None for row in rows)
 
     client.portal.call(ended_for_good)
 
@@ -467,6 +463,7 @@ def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
 
     def second(topic_id, prompt, reply, agent=None):
         stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
         stub_hooks.says(topic_id, "好的")
         stub_hooks.stops(topic_id, "好的")
 

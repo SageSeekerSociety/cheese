@@ -11,7 +11,7 @@
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。
  */
-import type { ProjectArtifact } from '@/api'
+import type { AssistantActivityItem, AssistantMemory, AssistantRoutine, AssistantRules, ProjectArtifact } from '@/api'
 import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
@@ -74,6 +74,7 @@ export const NOTIF_PREFS: NotificationPreferences = {
     invitation: { inApp: true, push: false, email: true },
     announcement: { inApp: true, push: false, email: false },
     billing: { inApp: true, push: false, email: true },
+    assistant: { inApp: true, push: true, email: true },
   },
 }
 
@@ -233,6 +234,37 @@ export const DEVICE_TEAMS: MyTeam[] = [
 ]
 
 // ---- 模型连接（`ModelConnectionsView`）-------------------------------------
+
+/** A full platform pool: names as the gateway labels them, a few carrying a trailing note. */
+export const PLATFORM_MODELS: { id: string; label: string }[] = [
+  'Claude Opus 4.8',
+  'Claude Sonnet 4.8',
+  'Claude Haiku 4.6',
+  'GPT-5.5',
+  'GPT-5.5 mini',
+  'Gemini 4 Pro',
+  'Gemini 4 Argon',
+  'Gemini 4 Flash',
+  'DeepSeek V4.1',
+  'DeepSeek V4.1 Flash',
+  'GLM-5.2',
+  'GLM-5.2 Air',
+  'Kimi K3',
+  'Kimi K3 Turbo',
+  'MiMo V2.6 Pro',
+  'MiMo V2.6 Flash（免费·限时，请求可能用于训练）',
+  'Qwen 4 Max',
+  'Qwen 4 Coder',
+  'Qwen 4 Coder Flash（免费·限时）',
+  'MiniMax M3',
+  'MiniMax M3 Lightning（免费·限时，请求可能用于训练）',
+  'Doubao Seed 2.5 Pro',
+  'Doubao Seed 2.5 Lite',
+  'Step 4',
+  'Hunyuan T2',
+  'ERNIE 5.5',
+  'Grok 5（免费·限时，请求可能用于训练）',
+].map((label) => ({ id: label.toLowerCase().replace(/[^a-z0-9.]+/g, '-'), label }))
 
 /** Team and personal subscriptions, including an offline storage computer. */
 export const MODEL_CONNECTIONS: ModelConnection[] = [
@@ -600,3 +632,111 @@ export function artifactApi(over: Partial<WorkspaceArtifactApi> = {}): Workspace
     ...over,
   }
 }
+
+/** 「芝士」设置页的示例数据，照后端写出的样子。 */
+export const ASSISTANT_RULES: AssistantRules = {
+  ask: ['remove_member', 'lower_role', 'delete'],
+  askItems: ['发给老师的消息'],
+  allowItems: ['在我负责的频道里回答问题', '在项目「机器学习课程」的频道「综合」发消息'],
+  categories: [
+    { code: 'remove_member', label: '移除成员' },
+    { code: 'lower_role', label: '降低成员的角色' },
+    { code: 'delete', label: '删除内容' },
+    { code: 'to_everyone', label: '在综合频道发消息' },
+  ],
+}
+
+export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
+  {
+    id: 'r1',
+    title: '每日待办',
+    note: '列出用户的待办',
+    when: '每天 08:00（Asia/Shanghai）',
+    state: 'active',
+    paused: '',
+    nextRunAt: '2026-10-23T00:00:00Z',
+    lastRun: { status: 'done', at: '2026-10-22T00:00:40Z', asked: 0, conversationId: 'c1' },
+    weekCredits: 4.6,
+  },
+  {
+    id: 'r2',
+    title: '有人找我',
+    note: '有人 @ 用户时读消息，起草回复',
+    when: '有人 @ 你或回复你的支线时',
+    state: 'active',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:18Z', asked: 1, conversationId: 'c2' },
+    weekCredits: 12,
+  },
+  {
+    id: 'r3',
+    title: '周一交周报',
+    note: '提醒用户交周报',
+    when: '每周 周一 09:00（Asia/Shanghai）',
+    state: 'paused',
+    paused: 'credits',
+    nextRunAt: null,
+    lastRun: { status: 'skipped', at: '2026-10-20T01:00:00Z', asked: 0, conversationId: null },
+    weekCredits: 0,
+  },
+  {
+    id: 'r4',
+    title: '提醒交开题报告',
+    note: '提醒用户把开题报告发给导师',
+    when: '10月22日 17:00 运行一次',
+    state: 'done',
+    paused: '',
+    nextRunAt: null,
+    lastRun: { status: 'done', at: '2026-10-22T09:00:20Z', asked: 0, conversationId: 'c4' },
+    weekCredits: 0.2,
+  },
+]
+
+export const ASSISTANT_MEMORY: AssistantMemory = {
+  enabled: true,
+  items: [
+    {
+      name: 'ta-os-course',
+      description: '在带「操作系统（2026 秋）」助教课，负责第 3、4 次实验',
+      type: 'user',
+      text: '本学期是操作系统课的助教，负责第 3、4 次实验的答疑和批改，助教频道在项目「操作系统（2026 秋）助教」里。',
+      updatedAt: '2026-10-20T08:00:00Z',
+    },
+    {
+      name: 'formal-to-teachers',
+      description: '给老师写东西用书面语',
+      type: 'feedback',
+      text: '给老师的消息和邮件用书面语，不用「哈」「呀」，称呼用「老师」。她纠正过一次。',
+      updatedAt: '2026-10-21T02:00:00Z',
+    },
+    {
+      name: 'midterm-defense',
+      description: '中期答辩定在 11 月 12 日',
+      type: 'project',
+      text: '课题组中期答辩定在 11 月 12 日（周四），PPT 和中期报告要在那之前给李老师过一遍。',
+      updatedAt: '2026-10-22T09:30:00Z',
+    },
+  ],
+}
+
+export const ASSISTANT_RECENT: AssistantActivityItem[] = [
+  {
+    id: 12,
+    kind: 'message',
+    summary: '在频道「综合」（项目「机器学习课程」，全体成员都会看到）发消息：\n@李老师 演示视频我来负责',
+    verdict: 'asked',
+    stage: 'rule',
+    reason: '你设置了「在综合频道发消息」需要确认',
+    at: '2026-10-22T09:00:12Z',
+  },
+  {
+    id: 11,
+    kind: 'channel',
+    summary: '在项目「机器学习课程」新建频道「论文阅读」',
+    verdict: 'allowed',
+    stage: 'low',
+    reason: '',
+    at: '2026-10-21T14:20:00Z',
+  },
+]

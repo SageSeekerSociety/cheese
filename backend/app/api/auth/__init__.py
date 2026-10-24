@@ -58,7 +58,76 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.docs_site.agent_search_docs": False,
     "app.api.routes.docs_site.agent_read_docs": False,
     "app.api.routes.tasks.participation.list_joined_tasks": False,
+    "app.api.routes.tasks.drafts.agent_search": False,
+    "app.api.routes.tasks.drafts.agent_read": False,
+    "app.api.routes.tasks.drafts.agent_write": True,
+    "app.api.routes.tasks.drafts.agent_publish": True,
+    "app.api.routes.tasks.drafts.agent_file": False,
+    "app.api.routes.tasks.drafts.agent_materials": False,
+    # A person's own 芝士 in a project: it reads the channels the person may,
+    # and drafts what they would say there; the person sends it.
+    "app.api.routes.topics.read_chat_history": False,
+    "app.api.routes.topics.read_chat_message": False,
+    # A person's own 芝士, wherever the person may: what waits on them, a
+    # thing by its ref, a web page.
+    "app.api.routes.assistant_agent.agent_inbox": False,
+    "app.api.routes.assistant_agent.agent_read": False,
+    "app.api.routes.project_context.agent_search": False,
+    # Searching the web without its gate, unlike reading a page: the query goes
+    # only to DeepSeek, which as the model's provider already holds the whole
+    # conversation, so a search reaches no one new. A page's address reaches
+    # whatever host it names (`read_url` in GATED_ROUTES).
+    "app.api.routes.fetch.web_search": False,
+    # What it does that others see goes through its gate first, which hands
+    # back a pass for the routes in `GATED_ROUTES`.
+    "app.api.routes.assistant_agent.agent_act": True,
+    "app.api.routes.assistant_agent.agent_wait": False,
+    # What is the person's own — their notification settings, how much of a
+    # channel reaches them — it changes directly, as a change they can undo.
+    "app.api.routes.assistant_agent.agent_notify": True,
+    "app.api.routes.notification_preferences.agent_read_preferences": False,
+    "app.api.routes.notification_preferences.agent_set_preference": True,
+    # What it does for the person on its own later — routines —, telling them
+    # something, and what it remembers of them: theirs alone, done directly.
+    "app.api.routes.assistant_agent.agent_routine": True,
+    "app.api.routes.assistant_agent.agent_notify_me": True,
+    "app.api.routes.assistant_agent.agent_memory": True,
+    # The person's own library: what they attached and what it hands back,
+    # moved between it and its computer at addresses good for one file and a
+    # few minutes (`assistant_agent._my_library`).
+    "app.api.routes.assistant_agent.agent_library": False,
+    "app.api.routes.assistant_agent.agent_file_link": False,
+    "app.api.routes.assistant_agent.agent_file_slot": True,
+    "app.api.routes.assistant_agent.agent_file_handed": True,
 }
+
+
+#: The routes a person's own 芝士 reaches only with a pass its gate issued for
+#: that call (`assistant.gate`, `assistant.passes`): what others see — a
+#: message, a task, a decision, a member, a channel — and reading a web page,
+#: whose address can carry what it read out to the host it names (a page on a
+#: documentation site Claude Code reads freely gets its pass with no look,
+#: ``fetch.preapproved``). The pass is
+#: the gate's verdict; without one the route refuses the credential.
+GATED_ROUTES: frozenset[str] = frozenset(
+    {
+        "app.api.routes.topics_messages.send_chat_message",
+        "app.api.routes.topics_tasks.create_task",
+        "app.api.routes.accept.accept_card",
+        "app.api.routes.accept.reject_card",
+        "app.api.routes.alerts.resolve_notification",
+        "app.api.routes.members.respond_to_invitation",
+        "app.api.routes.members.respond_to_transfer",
+        "app.api.routes.members.invite_member",
+        "app.api.routes.members.remove_member",
+        "app.api.routes.members.set_member_role",
+        "app.api.routes.topic_members.add_topic_member",
+        "app.api.routes.topic_members.remove_topic_member",
+        "app.api.routes.topics.create_topic",
+        "app.api.routes.local_mcp.decide",
+        "app.api.routes.fetch.read_url",
+    }
+)
 
 
 def _bearer(header: str | None) -> str | None:
@@ -90,6 +159,7 @@ def _resolver_for(
         screen_token=request.headers.get("x-cheese-screen") or "",
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
+        gate_pass=request.headers.get("x-cheese-pass") or "",
     )
 
 

@@ -7,18 +7,13 @@ undispatched, and retried every 40 seconds for as long as anyone looked, with a
 "concurrent turns are full" notice posted into the room every time.
 """
 
-import importlib.util
 import uuid
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.domain.agent import turn_inputs
-from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
@@ -40,8 +35,9 @@ SESSION = "sess-dead"
 
 
 async def _inputs_into(factory, topic_id, turn_id):
-    """What a session working on ``turn_id`` holds: the prompt and a message
-    steered in, both read, and a second steer it never got to read."""
+    """What a session working on ``turn_id`` was given: the prompt and a
+    message steered in, both read — delivered, so neither holds anything any
+    more — and a second steer it never got to read, whose fate is unknown."""
     async with factory() as session:
         conversation = await session.get(Conversation, topic_id)
         assert conversation is not None
@@ -77,6 +73,17 @@ async def _inputs_into(factory, topic_id, turn_id):
             await record_receipt(session, InputReceipt(taken, "native_echo", turn_id))
             await session.commit()
     return project_id, answer.id
+
+
+def _only_the_unread_one_ended(rows, reason: str) -> None:
+    """Given up on is only the input nobody read: one read is delivered, and
+    there is nothing about it left to end."""
+    assert len(rows) == 3
+    assert sorted((row.echoed_at is None, row.termination) for row in rows) == [
+        (False, None),
+        (False, None),
+        (True, reason),
+    ]
 
 
 async def _rows(factory, topic_id):
@@ -121,19 +128,18 @@ async def test_a_work_abandoned_where_the_room_saw_it_frees_its_seat(db_factory)
         assert await seat_has_unfinished_input(session, topic, SEAT)
 
     ended = await turn_inputs.end_inputs_of_abandoned_work(db_factory, turn)
-    assert ended == 3
+    assert ended == 1
 
     async with db_factory() as session:
         assert not await seat_has_unfinished_input(session, topic, SEAT)
-        # Held as the sweep holds them: nothing says the answer was taken, so
-        # it is never sent a second time.
-        assert await held_blocks(
-            session, project_id=project, topic_id=topic, recipient_handle=SEAT
-        ) == {answer}
-    rows = await _rows(db_factory, topic)
-    assert len(rows) == 3
-    assert all(row.completed_at is None for row in rows)
-    assert all(row.termination == "orphaned" for row in rows)
+        # What was read was delivered at its reading; nothing is held for it.
+        assert (
+            await held_blocks(
+                session, project_id=project, topic_id=topic, recipient_handle=SEAT
+            )
+            == set()
+        )
+    _only_the_unread_one_ended(await _rows(db_factory, topic), "orphaned")
 
 
 @pytest.mark.anyio
@@ -158,15 +164,13 @@ async def test_the_sweep_ends_a_dead_turns_inputs_and_frees_its_seat(db_factory)
     assert row is not None and row.stopped_at is not None
     async with db_factory() as session:
         assert not await seat_has_unfinished_input(session, topic, SEAT)
-        # Whether the answer was taken is still unknown: it stays held, so it
-        # is never sent a second time.
-        assert await held_blocks(
-            session, project_id=project, topic_id=topic, recipient_handle=SEAT
-        ) == {answer}
-    rows = await _rows(db_factory, topic)
-    assert len(rows) == 3
-    assert all(row.completed_at is None for row in rows)
-    assert all(row.termination == "orphaned" for row in rows)
+        assert (
+            await held_blocks(
+                session, project_id=project, topic_id=topic, recipient_handle=SEAT
+            )
+            == set()
+        )
+    _only_the_unread_one_ended(await _rows(db_factory, topic), "orphaned")
 
 
 @pytest.mark.anyio
@@ -191,68 +195,6 @@ async def test_a_turn_the_sweep_leaves_alone_keeps_its_seat(db_factory):
     async with db_factory() as session:
         assert await seat_has_unfinished_input(session, topic, SEAT)
     assert all(row.terminated_at is None for row in await _rows(db_factory, topic))
-
-
-_HEAL = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "7d2e9a41c6b3_end_inputs_of_turns_that_already_ended.py"
-)
-
-
-async def _heal(factory) -> None:
-    """The migration's own ``upgrade()``, on the path ``alembic upgrade`` takes."""
-    spec = importlib.util.spec_from_file_location("_heal", _HEAL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def apply(conn) -> None:
-        with Operations.context(MigrationContext.configure(conn)):
-            module.upgrade()
-
-    async with factory() as session:
-        await (await session.connection()).run_sync(apply)
-        await session.commit()
-
-
-async def _ended(factory, turn_id, ago: timedelta | None) -> None:
-    async with factory() as session:
-        await session.execute(
-            update(AgentTurn)
-            .where(AgentTurn.id == turn_id)
-            .values(stopped_at=None if ago is None else datetime.now(UTC) - ago)
-        )
-        await session.commit()
-
-
-@pytest.mark.anyio
-async def test_seats_held_by_turns_that_ended_before_the_fix_are_freed(db_factory):
-    long_ago = await a_topic(db_factory, title="ended long ago")
-    just_now = await a_topic(db_factory, title="just ended")
-    running = await a_topic(db_factory, title="still running")
-    turns = {}
-    for topic in (long_ago, just_now, running):
-        turns[topic] = await open_turn(db_factory, topic, delivered=True, age_s=7200)
-        await _inputs_into(db_factory, topic, turns[topic])
-    await _ended(db_factory, turns[long_ago], timedelta(hours=2))
-    await _ended(db_factory, turns[just_now], timedelta(minutes=10))
-
-    await _heal(db_factory)
-
-    async with db_factory() as session:
-        assert not await seat_has_unfinished_input(session, long_ago, SEAT)
-        # A turn that only just ended may still have its result on the way, and
-        # one still running is owed everything.
-        assert await seat_has_unfinished_input(session, just_now, SEAT)
-        assert await seat_has_unfinished_input(session, running, SEAT)
-    healed = await _rows(db_factory, long_ago)
-    assert all(row.termination == "orphaned" for row in healed)
-    assert all(row.completed_at is None for row in healed)
-    assert all(row.held_block_ids for row in healed if row.input_id == turns[long_ago])
-    for topic in (just_now, running):
-        assert all(row.terminated_at is None for row in await _rows(db_factory, topic))
 
 
 async def _task(factory, room, *, closed: bool) -> uuid.UUID:
@@ -293,6 +235,4 @@ async def test_a_closed_tasks_turn_ends_even_while_its_session_answers(db_factor
     async with db_factory() as session:
         assert not await seat_has_unfinished_input(session, closed, SEAT)
         assert await seat_has_unfinished_input(session, still_open, SEAT)
-    assert all(
-        row.termination == "task_closed" for row in await _rows(db_factory, closed)
-    )
+    _only_the_unread_one_ended(await _rows(db_factory, closed), "task_closed")

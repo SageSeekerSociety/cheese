@@ -12,11 +12,11 @@ import type { MemberActivityLine } from '../lib/memberActivity'
 
 /** What a room announces with a `state` frame (`state-changed` below), besides its
  *  own row (`topics`, which names the room). */
-export const ANNOUNCED = ['doc', 'pins', 'accept', 'feedback', 'skills', 'threads'] as const
+export const ANNOUNCED = ['doc', 'pins', 'chapters', 'accept', 'feedback', 'skills', 'threads'] as const
 
 /** Of those, what a subscription's room snapshot puts straight into the cache
  *  (`query/snapshot`): a reconnect that brought a snapshot need not re-read them. */
-export const SNAPSHOT_RESOURCES: ReadonlySet<string> = new Set(['pins', 'threads'])
+export const SNAPSHOT_RESOURCES: ReadonlySet<string> = new Set(['pins', 'chapters', 'threads'])
 
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -60,6 +60,11 @@ export interface ChatPanelEmit {
   (e: 'open-thread', block: Block): void
   /** 支线里一条 AI 队友的回复：看它那一轮的过程。 */
   (e: 'open-process', turnId: string): void
+  // 消息的 ⋯ 里「钉成章节」「取消章节」或书签条里取消：拿着这段对话地址的页面去改（面板不取这个数）。
+  (e: 'chapter', block: Block): void
+  (e: 'unchapter', target: Block | string): void
+  // 书签条里就地改名：同样是拿着这段地址的页面去写。
+  (e: 'rename', blockId: string, title: string): void
   // 转为任务：the parent turns this message into a task of the channel.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -96,6 +101,9 @@ export interface ChatPanelOptions {
   topicList: () => Topic[]
   unreadOnOpen: () => number
   focusBlock: () => string | null
+  /** 时间线和输入区共同的那一栏（面板根）：输入区离开又回来会夹住滚动位置，重写
+   *  判定得观察这一层。滚动框的直接父元素可能只是时间线的包装层。 */
+  column?: () => HTMLElement | null
   /** 我发的一条落了库，这是后端回的那一条（带着它 @ 到、不在频道里的人）。 */
   onPosted?: (block: PostedMessage) => void
   emit: ChatPanelEmit

@@ -8,7 +8,7 @@ import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
 import { legacyProjectRedirects } from './legacyProjectPaths'
 import LegalRoutes from './legal'
-import { carryLoginRedirect } from './loginRedirect'
+import { carryLoginRedirect, leaveAppForPagesItHasNot } from './loginRedirect'
 import QuestionRoutes from './question'
 import SharedRoutes from './shared'
 import SpacesRoutes from './spaces'
@@ -133,7 +133,13 @@ const routes: RouteRecordRaw[] = [
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),
-    meta: { titleKey: 'navigation.pages.market', isFullPage: true },
+    // 「市场」在 ⌘K 里也找得到（`pages.palette.ts` 只认带 `palette` 的路由）；名字复用
+    // 标题那一份，图标和桌面 rail 那一格同一颗。
+    meta: {
+      titleKey: 'navigation.pages.market',
+      isFullPage: true,
+      palette: { label: 'navigation.pages.market', icon: 'mdi-storefront-outline' },
+    },
   },
   {
     name: 'NotFound',
@@ -164,6 +170,7 @@ const router = createRouter({
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
+router.beforeEach(leaveAppForPagesItHasNot)
 // 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
 router.beforeEach((to) => (myId() ? canonicalAddress(to) : noteSignedOut(to)))
 

@@ -14,69 +14,107 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// MigrateLogins moves the old shared store once. Nothing reads it after this;
-// failure leaves the source available for the next start, never overwritten.
-func MigrateLogins(ownerRoot string) error {
+// MigrateLogins moves the old shared store into ownerRoot once, and records
+// that it has. It returns the old directories it left where they were because
+// their login had already moved: a session started before the move keeps its
+// old CLAUDE_CONFIG_DIR and writes a fresh .claude.json there, recreating the
+// old path. Such a directory is never moved over a login or deleted, and once
+// the move is recorded no old path is read again, so a login logged out later
+// is never brought back from it. Failure leaves the source available for the
+// next start, never overwritten.
+func MigrateLogins(ownerRoot string) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	shared := filepath.Join(home, place.Root)
+	done := filepath.Join(shared, ".claude-logins-migrated")
 	first := filepath.Join(shared, "claude-login")
 	more := filepath.Join(shared, "claude-logins")
+	if migrated(done) {
+		return nil, nil
+	}
 	_, firstErr := os.Stat(first)
 	_, moreErr := os.Stat(more)
 	if errors.Is(firstErr, os.ErrNotExist) && errors.Is(moreErr, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
-	unlock, err := lockMigration(filepath.Join(shared, ".claude-logins-migration.lock"))
+	unlock, err := lockFile(filepath.Join(shared, ".claude-logins-migration.lock"))
 	if err != nil {
-		return fmt.Errorf("claude: lock login migration: %w", err)
+		return nil, fmt.Errorf("claude: lock login migration: %w", err)
 	}
 	defer unlock()
+	if migrated(done) {
+		return nil, nil
+	}
 	root := filepath.Join(home, ownerRoot)
-	if err := moveLogin(first, filepath.Join(root, place.ClaudeLogin)); err != nil {
-		return err
+	var retained []string
+	moved, err := moveLogin(first, filepath.Join(root, place.ClaudeLogin))
+	if err != nil {
+		return nil, err
+	}
+	if !moved {
+		retained = append(retained, first)
 	}
 	entries, err := os.ReadDir(more)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	moreExists := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
-	if err != nil {
-		return err
-	}
+	keptInMore := false
 	for _, entry := range entries {
-		if err := moveLogin(filepath.Join(more, entry.Name()), filepath.Join(root, place.ClaudeLogins, entry.Name())); err != nil {
-			return err
+		source := filepath.Join(more, entry.Name())
+		moved, err := moveLogin(source, filepath.Join(root, place.ClaudeLogins, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if !moved {
+			retained = append(retained, source)
+			keptInMore = true
 		}
 	}
-	return os.Remove(more)
+	if moreExists && !keptInMore {
+		if err := os.Remove(more); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.WriteFile(done, nil, 0600); err != nil {
+		return nil, err
+	}
+	return retained, nil
 }
 
-func moveLogin(source, destination string) error {
+func migrated(marker string) bool {
+	_, err := os.Stat(marker)
+	return err == nil
+}
+
+// moveLogin moves source to destination and reports whether it did. An
+// existing destination is the login already moved: source stays as it is.
+func moveLogin(source, destination string) (bool, error) {
 	info, err := os.Stat(source)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return true, nil
 	} else if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := os.Stat(destination); err == nil {
-		return fmt.Errorf("claude: cannot migrate %s: destination %s already exists; both retained", source, destination)
+		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
-		return err
+		return false, err
 	}
 	if info.IsDir() && runtime.GOOS == "darwin" {
 		if err := preserveKeychain(source, destination); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := os.Rename(source, destination); err != nil {
-		return fmt.Errorf("claude: move login: %w", err)
+		return false, fmt.Errorf("claude: move login: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func preserveKeychain(source, destination string) error {

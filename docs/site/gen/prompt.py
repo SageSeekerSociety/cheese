@@ -197,30 +197,27 @@ def load_skills_module():
 # --------------------------------------------------------------------------
 class _Week:
     """Stand-in for ``protocol.Teaching`` — only what ``teaching_section``
-    reads, with the token substitution its ``fill`` documents."""
+    reads: a way of helping and the teacher's requirements."""
 
-    system_prompt = "本周是第 {current_week} 周，重点是 {allowed_topics}。"
-    current_week = 6
-    allowed_topics = ["循环", "数组"]
-    avoid_in_code = ["递归"]
+    mode = "guide"
+    system_prompt = "课上讲到了循环和数组，不要用递归。"
+    space_prompt = None
+    learning_goals = ["能自己写出循环", "能讲清数组和循环怎么配合"]
+    private_prompt = "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
 
     @property
     def is_empty(self) -> bool:
         return not (
-            self.system_prompt
-            or self.current_week is not None
-            or self.allowed_topics
-            or self.avoid_in_code
+            self.mode
+            or self.system_prompt
+            or self.space_prompt
+            or self.learning_goals
+            or self.private_prompt
         )
 
     def fill(self, template: str) -> str:
-        for token, value in (
-            ("{current_week}", str(self.current_week)),
-            ("{allowed_topics}", "、".join(self.allowed_topics)),
-            ("{avoid_in_code}", "、".join(self.avoid_in_code)),
-        ):
-            template = template.replace(token, value)
-        return template
+        """`Teaching.fill` 的替身：`{learning_goals}` 换成这一节的目标。"""
+        return template.replace("{learning_goals}", "、".join(self.learning_goals))
 
 
 #: A stand-in for ``task.teaching.TeachingContext``: a resolved week, the two
@@ -292,13 +289,13 @@ MEMORY_OVER_CAP = _Index(
 
 ENVIRONMENT = [
     "- 这台机器：内存 4GB、2 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉。",
-    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat_list` 读。",
+    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat(action=list)` 读。",
 ]
 
 #: Sample texts for injected content are one-liners on purpose: the page splits
 #: blocks at ``## `` and an injected document has headings of its own.
 DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型还在调。"
-#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc_edit`（`document: …`）」。
+#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc(action=edit)`（`document: …`）」。
 OVERVIEW_DOC_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 OVERVIEW_DOC = "要做成：把推荐算法做成一个能演示的原型。时间：11 月 15 日中期答辩前。这阶段不做：线上部署。"
 THREAD = (
@@ -306,8 +303,8 @@ THREAD = (
     "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
     "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
     "不摆预览；"
-    "要改的事用 `cheese_task` 创建成任务。别处定过的事不记得时，用 "
-    "`cheese_chat_search` 加 `channel` 搜整个频道。\n\n"
+    "要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
+    "`cheese_chat(action=search)` 加 `channel` 搜整个频道。\n\n"
     "支线挂在主线的这条消息下面：\n"
     "[wangchangxin] @芝士 登录页的错误提示改成红色，手机上也看一下\n\n"
     "这条消息之前，主线上说的是：\n"

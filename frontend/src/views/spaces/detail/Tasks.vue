@@ -23,6 +23,7 @@ import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { useCommands } from '@/commands'
+import { markTasksSeen } from '@/lib/spaceTasksSeen'
 import { useSpaceStore } from '@/stores/space'
 
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
@@ -42,6 +43,8 @@ type QueryOptions = {
   topics?: number[]
   categoryId?: number
   joined?: boolean
+  /** 「全部」先列还能领的，其余的另读一份、收在列表末尾。 */
+  lifecycle?: 'recruiting' | 'closed'
 }
 
 const route = useRoute()
@@ -138,7 +141,30 @@ const queryOptions = computed<QueryOptions>(() => ({
   topics: selectedTopics.value.length ? [...selectedTopics.value] : undefined,
   categoryId: selectedCategoryId.value || undefined,
   joined: scope.value === 'participating' ? true : undefined,
+  lifecycle: scope.value === 'all' ? 'recruiting' : undefined,
 }))
+
+/** 「已截止或名额已满」那一份：同样的筛选，只是换成另一半。 */
+const closedOptions = computed<QueryOptions>(() => ({ ...queryOptions.value, lifecycle: 'closed' }))
+
+async function listTasks(pageStart: string | undefined, options: QueryOptions | undefined) {
+  if (!options || !options.space) return createEmptyResult<Task, string>()
+  const data = await TaskBoardApi.list({
+    space: options.space,
+    pageStart: pageStart,
+    sort_by: options.by ?? 'createdAt',
+    sort_order: options.order ?? 'desc',
+    keywords: options.keywords,
+    approved: 'APPROVED',
+    topics: options.topics,
+    categoryId: options.categoryId,
+    joined: options.joined,
+    lifecycle: options.lifecycle,
+    queryTopics: true,
+    queryJoined: true,
+  })
+  return { data: data.tasks, page: data.page }
+}
 
 const {
   data: tasks,
@@ -148,27 +174,11 @@ const {
   refreshing,
   loadingMore,
   total,
-} = usePaging<Task, QueryOptions, string>(
-  async (pageStart, queryOptions) => {
-    if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()
-    const data = await TaskBoardApi.list({
-      space: queryOptions.space,
-      pageStart: pageStart,
-      sort_by: queryOptions?.by ?? 'createdAt',
-      sort_order: queryOptions?.order ?? 'desc',
-      keywords: queryOptions?.keywords,
-      approved: 'APPROVED',
-      topics: queryOptions.topics,
-      categoryId: queryOptions.categoryId,
-      joined: queryOptions.joined,
-      queryTopics: true,
-      queryJoined: true,
-    })
-    return { data: data.tasks, page: data.page }
-  },
-  undefined,
-  queryOptions.value
-)
+} = usePaging<Task, QueryOptions, string>(listTasks, undefined, queryOptions.value)
+
+const closed = usePaging<Task, QueryOptions, string>(listTasks, undefined, closedOptions.value)
+/** 收起来的那一段开着没有；换了筛选就收回去。 */
+const closedOpen = ref(false)
 
 const publishedTasks = ref<SpaceMyPublishedTask[]>([])
 const publishedLoading = ref(false)
@@ -245,8 +255,25 @@ watch(
   ([options, value]) => {
     if (value === 'publishing') loadPublishedTasks()
     else reset(undefined, options)
+    closedOpen.value = false
+    // 先读一页，收起时那一行就能写出有几道。
+    if (value === 'all') {
+      closed.reset(undefined, closedOptions.value)
+      void closed.loadMore()
+    }
   },
   { deep: true, immediate: true }
+)
+
+// 打开了题目列表：侧栏「全部题目」旁边的新题目数从这一刻重新算。
+watch(
+  spaceId,
+  (id) => {
+    if (!id) return
+    markTasksSeen(id)
+    spaceStore.setNewTaskCount(0)
+  },
+  { immediate: true }
 )
 
 onMounted(async () => {
@@ -261,6 +288,7 @@ onMounted(async () => {
     v-model:selected-category="selectedCategoryIdModel"
     v-model:selected-topics="selectedTopics"
     v-model:sort="sortKey"
+    v-model:closed-open="closedOpen"
     :announcements="announcements"
     :announcements-target="announcementsTarget"
     :category-filter-options="categoryFilterOptions"
@@ -278,7 +306,12 @@ onMounted(async () => {
     :space-id="spaceId"
     :tasks="tasks"
     :total="total"
+    :closed-tasks="scope === 'all' ? closed.data.value : []"
+    :closed-total="scope === 'all' ? closed.total.value : 0"
+    :closed-has-more="closed.hasMore.value"
+    :closed-loading-more="closed.loadingMore.value"
     @load-more="loadMore"
+    @load-more-closed="closed.loadMore"
     @load-published-tasks="loadPublishedTasks"
     @update:pending-only="setPendingOnly"
     @update:scope="selectScope"

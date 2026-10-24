@@ -1,5 +1,7 @@
 {
   "artifactVersionNoFile": "No file was kept for this version",
+  "assistantFileOneOf": "This attachment is not recognized",
+  "downloadExpired": "The download link has expired",
   "fileNotFound": "This file doesn't exist",
   "fileTooLarge": "The file is too large ({mb}MB max)",
   "grantProjectForbidden": "A grant for everything can't be bound to a single project",
@@ -10,6 +12,7 @@
   "libraryFileGone": "This file is no longer in the library",
   "libraryFileNoTaskBranch": "Library files don't belong to a task branch",
   "libraryFileNotFound": "This file isn't in the library",
+  "libraryFull": "The library is full ({mb} MB). Delete some files and try again",
   "libraryKindUnknown": "There is no file type called \"{kind}\"",
   "libraryMoveIntoItself": "A folder can't be moved into itself",
   "libraryNameTaken": "The library already has “{name}”",
@@ -17,6 +20,8 @@
   "libraryNotARevision": "Not a revision",
   "libraryPathRelative": "path must be a relative path in the library",
   "libraryPrefixReserved": "{prefix}/ is reserved for the library. Channel files can't go there",
+  "libraryTaskFolderReadOnly": "{folder}/ holds the task's materials. It's read-only: nothing can be added, replaced, renamed or deleted there",
+  "libraryTeamMembersOnly": "Only members of this team can view its library",
   "libraryUploadTooLarge": "The file is too large (10 MB max)",
   "libraryVersionIsCurrent": "That version is already the current one",
   "libraryVersionNotFound": "That version could not be found",
@@ -42,5 +47,7 @@
   "templateNotFound": "This template doesn't exist",
   "templateSuffixRequired": "The “{template}” template must be saved as .{suffix}",
   "tooManySameNameFiles": "Too many files with the same name: {name}",
-  "unsupportedFileType": "Unsupported file type"
+  "unsupportedFileType": "Unsupported file type",
+  "uploadExpired": "The upload has expired. Upload the file again",
+  "uploadIncomplete": "The file did not finish uploading. Upload it again"
 }

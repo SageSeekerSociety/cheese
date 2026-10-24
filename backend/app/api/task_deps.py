@@ -23,19 +23,14 @@
 
 from fastapi import Depends
 
-from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
-from app.domain.agent import gateway_catalog
 from app.domain.attachment.services import AttachmentService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
-)
-from app.domain.task.attachment_service import (
-    TaskAttachmentService,
 )
 from app.domain.task.services import (
     TaskMembershipService,
@@ -43,11 +38,9 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.services import TeamService
-from app.domain.usage import pricing
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
@@ -92,20 +85,9 @@ async def get_team_service(db=Depends(get_db)) -> TeamService:
     return TeamService(repo)
 
 
-async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    return await TaskPdfDraftService.on_gateway(
-        db,
-        await pricing.model_rates(),
-        sees_pictures=gateway_catalog.sees_pictures(settings.task_draft_model),
-    )
-
-
-def _task_attachment_service(db) -> TaskAttachmentService:
-    return TaskAttachmentService(session=db, storage=get_storage_backend())
-
-
 def _attachment_service(db) -> AttachmentService:
-    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。
+    """人先传上来的文件那一层（``POST /attachments`` 用的同一个服务）：发题时选的
+    材料先传成这里的附件，建题时再拷进题目资料库。
 
     ``from_session`` 而不是自己造它的 repository：这里在题目这一域的地盘上，
     摸附件那一域的 repository 正是 ``test_domain_import_guard.py`` 拦的那一条。

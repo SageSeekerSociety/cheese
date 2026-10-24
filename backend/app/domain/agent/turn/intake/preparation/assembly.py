@@ -23,6 +23,7 @@ from app.auth.audience import seats_only
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness.prompt import task_section
 from app.domain.agent.prompt import _topic_ref_lists, offered_attachments
 from app.domain.agent.queries import _acting_handle, _agent_at, require_pinned_seat
@@ -32,6 +33,7 @@ from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.turn.intake.context import (
     TurnBail,
     TurnContext,
+    carried_skills,
     human_private_owner,
     living_doc_text,
 )
@@ -59,8 +61,9 @@ from app.domain.memory.files_store import memory_index
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskStatus, TaskTitleSource
+from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
+from app.domain.task import package
 from app.domain.task import teaching as teaching_context
 from app.domain.thread.services import thread_opening
 from app.domain.topic.models import TopicStatus
@@ -151,9 +154,7 @@ async def prepare(
         # for the recipient routing, the replay counter and the 「没人在等」
         # bail, and a platform notice is an answer to none of those. It only
         # rides into the prompt and gets stamped.
-        notices = await notices_after(
-            session, place.conversation_id, after=cursor
-        )
+        notices = await notices_after(session, place.conversation_id, after=cursor)
         # Holds and waiting answers are kept per conversation, as inputs
         # are registered: a task's or a 支线's own, not its room's.
         held = await prep._held_blocks(
@@ -238,6 +239,7 @@ async def prepare(
         # 赛题, or no `teaching` on the 项目集, is no query and no prompt
         # text — not a section that renders empty.
         teaching = await teaching_context.for_project(session=session, project=project)
+        task_package = await package.section_for_project(session, project)
         # 人和 agent 共同看的那一份（结论 7）：项目目标。它不是记忆，所以不走
         # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
         # 这正是共享记忆池做不到的两件事。
@@ -413,6 +415,13 @@ async def prepare(
             contributors=task.contributor_handles or (),
             closed=task.status == TaskStatus.closed,
         ),
+        # 只看还开着的活：关闭不清这条上报（`closing.close_task` 不碰它），而关掉的
+        # 活还能被人叫起来说话；那时看板显示的是关闭，再叫它报状态只会被 422 拒掉。
+        blocked_report=(
+            task is not None
+            and task.status is TaskStatus.open
+            and task.progress_state is TaskProgress.blocked
+        ),
         acting_agent=acting_agent,
         agent=agent,
         agent_pool=agent_pool,
@@ -440,6 +449,8 @@ async def prepare(
         topic_refs_for_prompt=topic_refs_for_prompt,
         artifacts=artifact_refs,
         teaching=teaching,
+        task_package=task_package,
+        skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
         turn_images=turn_images,
         untitled=untitled,
     )

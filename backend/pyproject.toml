@@ -53,7 +53,7 @@ dependencies = [
     "tenacity>=9.2.1",
     # app/core/model_images.py decodes an uploaded picture before a model is
     # sent it; the image the app runs must have it.
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "cachetools==7.2.3",
 ]
 
@@ -67,6 +67,7 @@ dev = [
     # baseline scripts/check_boundaries.py derives from the tree at the merge
     # base.
     "import-linter>=2.15",
+    "moto[server]>=5.1",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",
@@ -78,7 +79,7 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = [
-    "aiohttp==3.14.3",
+    "aiohttp==3.14.4",
     "anyio==4.14.2",
     "cryptography==50.0.0",
     "multidict==6.9.1",
@@ -104,11 +105,12 @@ target-version = "py313"
 # existing sites, and `id`/`type` as a parameter name is idiomatic enough that
 # the rule would cost more attention than it saves.
 #
-# Layout is fixed, never judged: import order (I) is applied by the pre-commit
-# `ruff-format` hook together with `ruff format`, and line length (E501) is left
-# to the formatter. RUF100 reports a `# noqa` that suppresses nothing, so
-# `ruff check --fix` deletes it instead of a test keeping count of them.
-select = ["E", "F", "UP", "B", "DTZ", "A003", "RUF100"]
+# Import order (I) is a rule like the others: the pre-commit `ruff-fix` hook
+# applies it on a commit, and CI fails a tree that does not hold it, together
+# with `ruff format --check`. Line length (E501) is left to the formatter.
+# RUF100 reports a `# noqa` that suppresses nothing, so `ruff check --fix`
+# deletes it instead of a test keeping count of them.
+select = ["E", "F", "UP", "B", "DTZ", "A003", "RUF100", "I", "TID251"]
 # UP042 wants `class X(str, Enum)` → `class X(StrEnum)`. That is NOT behaviour-
 # preserving: `str(member)` returns "X.MEMBER" for (str, Enum) but the raw value
 # for StrEnum, which silently changes serialization/logging output. The existing
@@ -128,6 +130,50 @@ ignore = ["UP042", "E501"]
 # A migration on main is immutable (.claude/rules/migrations.md), so its
 # now-inert `# noqa` comments stay as they were written.
 "alembic/versions/*" = ["RUF100"]
+
+# Reading the source tree (TID251, below). This list only shrinks: a file
+# leaves it when its scan is replaced by a test of behaviour or by a linter.
+"scripts/check_deferred_imports.py" = ["TID251"]
+"tests/integration/test_session_work_waits_for_its_machine.py" = ["TID251"]
+"tests/integration/test_whole_cloud_vm.py" = ["TID251"]
+"tests/unit/test_a_refusal_is_said_with_a_key.py" = ["TID251"]
+"tests/unit/test_agent_instance_does_not_read_the_agent_package.py" = ["TID251"]
+"tests/unit/test_author_type_two_values.py" = ["TID251"]
+"tests/unit/test_background_spawn.py" = ["TID251"]
+"tests/unit/test_capability_matrix.py" = ["TID251"]
+"tests/unit/test_device_screens_scanned_once.py" = ["TID251"]
+"tests/unit/test_domain_import_guard.py" = ["TID251"]
+"tests/unit/test_event_landing_guard.py" = ["TID251"]
+"tests/unit/test_fast_timings.py" = ["TID251"]
+"tests/unit/test_harness_boundary.py" = ["TID251"]
+"tests/unit/test_is_private_read_points.py" = ["TID251"]
+"tests/unit/test_known_debt_is_not_an_xfail.py" = ["TID251"]
+"tests/unit/test_local_fs_sharing_guard.py" = ["TID251"]
+"tests/unit/test_no_unused_module_constants.py" = ["TID251"]
+"tests/unit/test_nothing_reads_the_model_off_a_type_or_an_instance.py" = ["TID251"]
+"tests/unit/test_policy_gate.py" = ["TID251"]
+"tests/unit/test_project_material_rows_match_their_rows.py" = ["TID251"]
+"tests/unit/test_project_not_found_says_its_key.py" = ["TID251"]
+"tests/unit/test_project_reads.py" = ["TID251"]
+"tests/unit/test_project_rows_match_their_row.py" = ["TID251"]
+"tests/unit/test_remote_execution.py" = ["TID251"]
+"tests/unit/test_remote_hub_answers_every_hub_call.py" = ["TID251"]
+"tests/unit/test_repositories_read_by_id_through_the_base.py" = ["TID251"]
+"tests/unit/test_retry_reads_the_dispatch_record.py" = ["TID251"]
+"tests/unit/test_sentences.py" = ["TID251"]
+"tests/unit/test_slow_baseline.py" = ["TID251"]
+"tests/unit/test_supply_resolution.py" = ["TID251"]
+"tests/unit/test_topic_not_found_says_its_key.py" = ["TID251"]
+"tests/unit/test_uncarded_pr_checks_wake.py" = ["TID251"]
+
+# A test reads what the code does, not what the code says (AGENTS.md, "Test
+# behaviour, never the implementation"). A scan of the source tree goes red on
+# a refactor and stays green when behaviour breaks; a structural rule worth
+# holding belongs to a linter (`.importlinter`, ruff).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"ast.parse".msg = "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'."
+"inspect.getsource".msg = "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'."
+"inspect.getsourcelines".msg = "A test reads behaviour, not source; see AGENTS.md 'Test behaviour, never the implementation'."
 
 # FastAPI's dependency-injection markers are CALLED in parameter defaults
 # (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the

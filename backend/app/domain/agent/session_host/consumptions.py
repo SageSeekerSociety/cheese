@@ -40,9 +40,8 @@ from app.domain.agent.admission import Held, Slot, adopt
 from app.domain.agent.session_host.answer import (
     Answer,
     Progress,
-    Tool,
+    Said,
     Waiting,
-    Words,
     follow,
     say,
     starting,
@@ -50,6 +49,7 @@ from app.domain.agent.session_host.answer import (
 from app.domain.agent.session_host.contract import (
     Access,
     Prompt,
+    SessionError,
     SessionRef,
     SessionSpec,
 )
@@ -89,6 +89,10 @@ def _stream(work: str) -> str:
 
 def _current(kind: str, key: str) -> str:
     return f"consumption:of:{kind}:{key}"
+
+
+def _said(work: str) -> str:
+    return f"consumption:said:{work}"
 
 
 # KEYS: lease. ARGV: owner, ms. Only the owner's lease is renewed or dropped.
@@ -167,7 +171,9 @@ class Consumer(Protocol):
         ...
 
     async def took(
-        self, consumption: Consumption, item: Waiting | Words | Tool
+        self,
+        consumption: Consumption,
+        item: Waiting | Said,
     ) -> None:
         """One step of the answer, as it comes."""
         ...
@@ -285,6 +291,10 @@ class Consumptions:
                 if task := self._reading.get(work):
                     task.cancel()
                 return
+            try:
+                await self._say_waiting(work)
+            except Exception:  # the next renewal tries again
+                logger.warning("saying what waits for %s failed", work, exc_info=True)
 
     async def _asked(
         self,
@@ -327,8 +337,6 @@ class Consumptions:
         consumption: Consumption,
         progress: Progress,
         deadline: float,
-        *,
-        recovered: bool = False,
     ) -> Answer:
         consumer = self._consumers[consumption.kind]
 
@@ -342,7 +350,6 @@ class Consumptions:
             deadline=deadline,
             progress=progress,
             keep=keep,
-            recovered=recovered,
         ):
             if isinstance(event, Answer):
                 return event
@@ -382,6 +389,13 @@ class Consumptions:
         await self._write(replace(consumption, ended=True, progress=progress.to_json()))
         for slot in self._slots.pop(work, []):
             await slot.release()
+        # Said while it was being answered, and never heard: the asker gets
+        # it back, to ask on its own.
+        waiting: list = await redis.lrange(_said(work), 0, -1)  # type: ignore[assignment]
+        await redis.delete(_said(work))
+        if waiting:
+            unheard = [json.loads(raw)["said"] for raw in waiting]
+            closing = [*closing, ("unheard", {"said": unheard})]
         for event, data in [*closing, (END, {})]:
             await self.publish(consumption, event, data)
         await redis.expire(_record(work), KEPT_S)
@@ -401,6 +415,74 @@ class Consumptions:
 
     # --- what viewers see ----------------------------------------------------
 
+    async def halt(self, consumption: Consumption) -> None:
+        """Stop the session answering ``consumption``: its consumer has seen
+        enough. The reading ends as for a stopped session, and the consumer
+        says why when the question ends."""
+        await self._host.stop(consumption.ref)
+
+    async def steer(self, consumption: Consumption, text: str) -> None:
+        """Say ``text`` to the session in the middle of answering, as the
+        platform: it reads it at its next step."""
+        await self._host.steer(
+            consumption.ref, Prompt(uuid.uuid4(), text), work_id=consumption.work
+        )
+
+    async def say(self, consumption: Consumption, text: str, said: dict) -> None:
+        """Say ``text`` to the session in the middle of answering, for the
+        asker: ``said`` is how the asker said it, given back (``unheard``) if
+        the question ends before the session heard it.
+
+        Only the process reading the question holds its session, and the one
+        asked need not be it: a deploy hands the question over, and until the
+        next process takes it up nobody holds it. So what is said waits with
+        the question, and its reader says it — at once when that is this
+        process, else at its next renewal (``RENEW_S``)."""
+        key = _said(consumption.work_id)
+        async with self._valkey().pipeline(transaction=False) as pipe:
+            pipe.rpush(
+                key,
+                json.dumps(
+                    {"id": str(uuid.uuid4()), "text": text, "said": said},
+                    ensure_ascii=False,
+                ),
+            )
+            pipe.expire(key, RECORD_S)
+            await pipe.execute()
+        if consumption.work_id in self._reading:
+            await self._say_waiting(consumption.work_id)
+
+    async def _say_waiting(self, work: str) -> None:
+        """Say what waits for the question, in order, if this process holds
+        its session. What the session could not be asked, or may not have
+        heard, waits on: it is said again under the same id, which the runner
+        takes once (``speaking``)."""
+        redis = self._valkey()
+        key = _said(work)
+        if not await redis.llen(key):  # type: ignore[misc]
+            return
+        consumption = await self.get(work)
+        if consumption is None or consumption.ended:
+            return
+        while True:
+            raw: bytes | None = await redis.lpop(key)  # type: ignore[assignment,misc]
+            if raw is None:
+                return
+            item = json.loads(raw)
+            try:
+                await self._host.steer(
+                    consumption.ref,
+                    Prompt(uuid.UUID(item["id"]), item["text"]),
+                    work_id=consumption.work,
+                )
+            except SessionError:
+                await redis.lpush(key, raw)  # type: ignore[misc]
+                return
+
+    async def act_as(self, consumption: Consumption, acting: str) -> None:
+        """What the session's tools act with from now on, for this answer."""
+        await self._host.act_as(consumption.ref, acting)
+
     async def publish(self, consumption: Consumption, event: str, data: dict) -> None:
         """Tell the question's viewers ``event``."""
         stream = _stream(consumption.work_id)
@@ -410,6 +492,15 @@ class Consumptions:
             )
             pipe.expire(stream, RECORD_S, nx=True)
             await pipe.execute()
+
+    async def told(self, work_id: str) -> list[tuple[str, str, dict]]:
+        """Everything the question's viewers were told so far, in order:
+        (position, event, data); a position starts with when, in ms."""
+        found: list = await self._valkey().xrange(_stream(work_id))  # type: ignore[assignment]
+        return [
+            (_text(position), _text(fields[b"event"]), json.loads(fields[b"data"]))
+            for position, fields in found
+        ]
 
     async def get(self, work_id: str) -> Consumption | None:
         raw = await self._valkey().get(_record(work_id))
@@ -537,7 +628,7 @@ class Consumptions:
                 raise QuestionDropped("the session ended mid-answer")
             due = consumption.deadline or time.time() + _UNKNOWN_CEILING_S
             deadline = time.monotonic() + (due - time.time())
-            answer = await self._follow(consumption, progress, deadline, recovered=True)
+            answer = await self._follow(consumption, progress, deadline)
             failure = None
         except asyncio.CancelledError:
             raise

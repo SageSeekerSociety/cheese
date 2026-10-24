@@ -8,10 +8,6 @@ session home is released after the idle hold, never while a session left work
 on it that it did not push.
 """
 
-from tests.support.devices import enrollment_team
-from app.domain.device.wiring import sql_device_service
-
-
 import asyncio
 import logging
 import uuid
@@ -28,6 +24,7 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import owner_reads, reaper, services
@@ -49,6 +46,7 @@ from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
+from tests.support.devices import enrollment_team
 
 
 class Case:
@@ -259,7 +257,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
 
 
 LOST_LINE = (
-    "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了"
+    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
 )
 
 
@@ -289,6 +287,7 @@ def _warm_machine_ready(case: Case) -> str:
                     device_id="warm-1",
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.50",
+                    sandbox_disk_gb=64,
                     create_request={
                         "hostname": "warm-1",
                         "offeringId": 1,
@@ -854,6 +853,31 @@ def test_an_enrolled_host_in_error_is_given_up_and_its_session_placed_again(pool
     # The provider failed it, so it counts against the provider's record.
     assert host.failed_at is not None
     assert pool.cloud.deleted == [host.machine_id]
+    assert pool.place("alice", alice) != host_id
+    assert pool.said("alice") == [LOST_LINE]
+
+
+def test_a_host_with_no_data_disk_is_given_up_and_its_session_placed_again(pool):
+    """No sandbox starts without a disk limit, and the limit needs the host's
+    data disk: a host that has none recorded — one enrolled before hosts had
+    them — runs nothing again, so its session is placed on one that does
+    rather than failing every tool call there."""
+    [alice] = pool.room("alice", 1)
+    host_id = pool.place("alice", alice)
+    pool.works_on(alice, pool.up(host_id))
+
+    async def without_a_data_disk():
+        async with pool.client.test_request_factory() as db:
+            row = await db.get(CloudHost, host_id)
+            row.sandbox_disk_gb = None
+            await db.commit()
+
+    pool.run(without_a_data_disk)
+    pool.pool("maintain")
+
+    host = pool.host(host_id)
+    assert host.released_at is not None
+    assert host.failed_at is None, "the provider did not fail it"
     assert pool.place("alice", alice) != host_id
     assert pool.said("alice") == [LOST_LINE]
 

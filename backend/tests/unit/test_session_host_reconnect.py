@@ -31,12 +31,22 @@ async def test_startup_waits_for_its_host_to_reconnect(monkeypatch):
     assert set(asked) == {"chosen-host"}
 
 
+def test_a_turn_waits_as_long_as_the_link_does():
+    """One window, not two: a machine that came back between 10s and 15s was
+    "gone" to a turn starting now and "still on its way" to the calls beside it."""
+    from app.domain.agent.device_contract import RECONNECT_GRACE_S
+
+    assert device_provider._SESSION_RECONNECT_GRACE_S == RECONNECT_GRACE_S
+    channel = DeviceChannel(hub=SimpleNamespace(is_online=lambda host: False))
+    assert channel._reconnect_grace_s == RECONNECT_GRACE_S
+
+
 @pytest.mark.anyio
 async def test_startup_stops_when_the_pinned_host_stays_offline():
     channel = DeviceChannel(
         hub=SimpleNamespace(is_online=lambda host: False), reconnect_grace_s=0.02
     )
-    with pytest.raises(ScreenSetupError, match="未连接"):
+    with pytest.raises(ScreenSetupError, match="没有连上"):
         await asyncio.wait_for(
             channel._wait_for_session_host(
                 "chosen-host",

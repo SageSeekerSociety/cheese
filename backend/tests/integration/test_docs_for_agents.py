@@ -1,4 +1,4 @@
-"""AI teammates search and read the docs (cheese_docs_search / cheese_docs_read),
+"""AI teammates search and read the docs (cheese_help),
 over the real HTTP stack and database; the frontend that serves the docs is a
 MockTransport that, like nginx, refuses dev/ without a valid pass.
 
@@ -35,7 +35,7 @@ DEV = [
         "title": "一条消息怎么变成芝士的一轮",
         "heading": "排队还是插话",
         "url": "/dev/turn#serialize",
-        "text": "merge_into_running_turn 把新消息送进正在运行的会话，"
+        "text": "merge_into_running_session 把新消息送进正在运行的会话，"
         "采纳之前的一轮不会被打断。",
     },
 ]

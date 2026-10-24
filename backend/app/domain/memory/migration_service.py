@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -139,14 +140,14 @@ class MemoryMigrationService:
                 KeySpec(
                     name="memory-migration-gateway-key",
                     alias="memory-migration",
-                    model=settings.memory_migration_model,
+                    model=model_roles.model("memory_migration_model"),
                     budget_usd=settings.memory_migration_budget_usd,
                     rpm=60,
                 ),
             )
             if key is not None:
                 self._chat = GatewayChat(
-                    key, settings.memory_migration_model, max_tokens=8192
+                    key, model_roles.model("memory_migration_model"), max_tokens=8192
                 )
         return self._chat
 

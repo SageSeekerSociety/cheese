@@ -118,3 +118,21 @@ class Session:
                 },
             )
             return True
+
+    async def compact(self) -> None:
+        """Ask app-server to summarise this thread's history
+        (``thread/compact/start``).
+
+        The reply is empty and means the work is queued, not done: the
+        summarising runs as a task of its own and reports through the thread's
+        ``contextCompaction`` items (``events.py``). It replaces whatever task
+        the thread has running, so the runner asks for it only once the turn
+        that asked has ended (`runner.py`).
+        """
+        async with self.input_lock:
+            if self.thread_id is None:
+                # i18n-exempt: programmer invariant, the runner asks in order
+                raise RuntimeError("Open the Codex thread before compacting it")
+            await self.client.request(
+                "thread/compact/start", {"threadId": self.thread_id}
+            )

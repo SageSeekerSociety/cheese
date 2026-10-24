@@ -11,6 +11,7 @@ import {
   DEVICE_TEAMS,
   MODEL_CONNECTIONS,
   MODEL_HELD,
+  PLATFORM_MODELS,
   SECURITY_DIALOGS,
   SECURITY_PROPS,
 } from './catalogViewSettingsWorkspaceFixtures'
@@ -217,7 +218,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
       loading: false,
       error: null,
       connections: MODEL_CONNECTIONS,
-      platformModels: [{ id: 'sonnet', label: 'Claude Sonnet' }],
+      platformModels: PLATFORM_MODELS,
       held: MODEL_HELD,
       personalChoices: [
         { id: 'personal-key', name: '我的 Kimi', kind: 'model_service', allowed_models: ['kimi-k2'], added: false },
@@ -280,8 +281,18 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s5.note')
         },
         props: {},
-        expect: '保存在平台',
         expectSelector: '[data-connection="held-glm"]',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s6.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s6.note')
+        },
+        // The button that opens it is a header command of the team page (Models.vue).
+        props: { addingPersonal: true },
+        expectSelector: '[role="dialog"]',
       },
     ],
   },

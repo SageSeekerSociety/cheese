@@ -209,11 +209,17 @@ def invoke(self, params):
         self.db.execute("INSERT INTO requests VALUES (?,?,NULL)", (key, serialized))
         self.db.commit()
     self.log(key, "started", input=params)
+    args = params.get("args", {})
+    if not params.get("platform"):
+        # `platform_env` names variables for one command, and only the
+        # platform's own calls may (`checkpoint`'s turn). A call from the
+        # model's own tools is not one, whatever it puts in its arguments.
+        args = {k: v for k, v in args.items() if k != "platform_env"}
     try:
         result = {
             "value": self.execute(
                 params["tool"],
-                params.get("args", {}),
+                args,
                 key,
                 params.get("server", "native"),
                 params.get("cwd"),
@@ -315,11 +321,19 @@ def control(self, params):
         self.hooks("Stop", "", {}, params["request_id"])
         # The platform's own command, not a call of the agent's: the
         # project's tool hooks never see it, as they never would natively.
+        args: dict = {"command": "cheese-sync"}
+        turn = params.get("turn")
+        if turn:
+            # A sync's failure is reported with this turn, so the note lands
+            # in that turn's process view rather than being guessed later.
+            # `platform_env` is what names it to the command; `invoke` drops
+            # that key from any call the platform did not make.
+            args["platform_env"] = {"CHEESE_TURN": str(turn)}
         return self.invoke(
             {
                 "id": params["request_id"],
                 "tool": "Bash",
-                "args": {"command": "cheese-sync"},
+                "args": args,
                 "platform": True,
             }
         )
@@ -385,9 +399,11 @@ def prepare(self, payload):
     if home / ".cheese/executor" != self.state:
         raise ValueError("Executor preparation belongs to another room")
     bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
+    disk = {}
     with bootstrap["prepared"](
         payload,
         room_owner,
+        disk=disk,
         # Read-only in a sandbox: only the install, outside it, fetches it.
         fetch_toolchain=not self.config.get("sandbox"),
     ) as (
@@ -409,6 +425,7 @@ def prepare(self, payload):
             **self.dispatch("configure", configure),
             "mcp_servers": bootstrap["process_servers"](config),
             "context_tree": self.context_fs({"operation": "tree"}),
+            **disk,
         }
         if payload.get("environment"):
             runner = runpy.run_path(str(self.programs / "cheese-environment.py"))

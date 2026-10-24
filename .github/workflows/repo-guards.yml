@@ -16,10 +16,9 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded runs on a PR, never in the merge queue. Keying queue runs
-# by sha gives each queued commit its own group, so one entry cannot cancel
-# another's run and leave the commit that lands on main with no result — a
-# cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
+# Cancel superseded runs on a PR, never on main. Keying main's runs by sha
+# gives each commit its own group, so one push cannot cancel another's run and
+# leave a commit on main with no result — a cancelled run is not a red run. PR refs keep the ref key, so repeated pushes
 # to one PR still supersede each other.
 concurrency:
   group: repo-guards-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -117,14 +116,13 @@ jobs:
       # exec_module does not do what `python3 <path>` does: a helper that
       # imports a neighbour by bare name resolves it beside the script when run
       # as a file and nowhere when it is not. No module collected today does
-      # that — the two that do, test_ci_fast.py and test_ci_rounds.py, are both
-      # excluded below — so this is a net for the next helper rather than a
-      # line this run depends on.
+      # that — the one that does, test_ci_rounds.py, is excluded below — so
+      # this is a net for the next helper rather than a line this run depends
+      # on.
       #
       # Exclusions, all by name, and each one has to stay justified:
-      #   * the two owned by Required CI itself — test_required_ci.py runs in
-      #     the scope job, test_ci_fast.py in the cifast job of required-ci.yml
-      #     (that one drives real pre-commit and is too slow for this lane);
+      #   * the one owned by Required CI itself — test_required_ci.py runs in
+      #     the scope job;
       #   * the two a step above already runs — .claude/scripts/test_pr_review.py
       #     and test_ci_rounds.py in Trace tooling self-test;
       #   * the two that need an install this job does not have, both of them
@@ -142,10 +140,8 @@ jobs:
       # goes in NEEDS_AN_INSTALL, the comment above names the lane that runs it
       # instead, and when nothing does, it says that too.
       #
-      # It stops at `test_*.py` because the two hyphen-named files next to the
-      # guards are not one kind of file, and widening it would collect both:
-      # test-changed.py is a developer entry point with no tests in it at all;
-      # test-verify-module-split.py is offline, green and 27 seconds but only
+      # It stops at `test_*.py` because widening it would collect
+      # test-verify-module-split.py, which is offline, green and 27 seconds but only
       # reached by verify-module-split.py --self-test, a tool no step runs — a
       # lane for it is its own decision, recorded here so the next diagnosis
       # does not redo it.
@@ -157,7 +153,7 @@ jobs:
           import sys
           import unittest
 
-          OWNED_BY_REQUIRED_CI = {"test_required_ci", "test_ci_fast"}
+          OWNED_BY_REQUIRED_CI = {"test_required_ci"}
           RUN_BY_A_STEP_ABOVE = {"test_pr_review", "test_ci_rounds"}
           #: Helpers that need an install this job does not have: one scans with
           #: node, one drives a script that imports alembic. Named rather than
@@ -268,14 +264,13 @@ jobs:
           # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
           # host's own root can serve those; manual.zip is built either way.
           # So a PR that leaves docs/site alone gives up the earlier signal,
-          # not the check: the merge queue is a merge_group event and runs both
-          # builds whatever the PR changed, as does any pull_request that
-          # touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # not the check: a main push runs both builds whatever landed, as
+          # does any pull_request that touches docs/site. `git diff --quiet` exits non-zero when it cannot
           # answer (no origin/main, say), which runs the build rather than skip
           # it.
           if [ "${{ github.event_name }}" != "pull_request" ] \
              || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
             DOCS_BASE= OUT="$OUT-host" npm run build
           else
-            echo "docs/site is untouched by this PR; the docs-host build waits for the merge queue"
+            echo "docs/site is untouched by this PR; the docs-host build runs on the main push"
           fi

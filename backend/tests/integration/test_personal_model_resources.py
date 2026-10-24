@@ -9,7 +9,7 @@ from app.domain.agent_instance.models import AccountConnection
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.project.models import Project
 from tests.integration.conftest import new_project, session_auth_headers
-from tests.integration.test_team_model_connections import setup_team, keep, path
+from tests.integration.test_team_model_connections import keep, path, setup_team
 from tests.integration.test_team_model_connections import service as service
 
 
@@ -190,6 +190,7 @@ def test_subscription_login_registers_without_any_device_and_keeps_its_own_team(
                         logged_in=True,
                         auth_method="claude.ai",
                         subscription_type="max",
+                        account_email="team-seat@example.com",
                         local_id=login["login_id"],
                     )
                 ],
@@ -203,6 +204,8 @@ def test_subscription_login_registers_without_any_device_and_keeps_its_own_team(
     row = next(c for c in listed if c["id"] == login["login_id"])
     assert row["device_name"] == login["device_id"]
     assert "Private laptop" not in str(row)
+    # Which Claude account the team's own subscription is, the team sees.
+    assert row["account_email"] == "team-seat@example.com"
 
 
 def test_personal_subscription_in_another_team_hides_computer_name_and_keeps_team_when_device_moves(
@@ -272,3 +275,63 @@ def test_personal_subscription_in_another_team_hides_computer_name_and_keeps_tea
         "connections"
     ]
     assert next(c for c in listed if c["id"] == login)["device_name"] == device
+
+
+def test_a_personal_subscription_names_its_claude_account_only_to_its_owner(client):
+    """Which Claude account a member's personal subscription is stays theirs:
+    teammates in a team it is shared into see that it is the member's, not the
+    member's Claude email."""
+    _, team, device, _ = setup_team(client)
+    home = personal_team(client, "carol")
+    start = client.post(
+        f"/connector/teams/{home}/claude-login", headers=session_auth_headers("carol")
+    ).json()
+
+    async def token():
+        async with client.test_factory() as db:
+            return (await db.get(DeviceRow, device)).token
+
+    registered = client.post(
+        "/connector/model-login/register",
+        json={
+            "ticket": start["ticket"],
+            "computer_name": "storage",
+            "transport_token": client.portal.call(token),
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    login = registered.json()["login_id"]
+
+    async def report():
+        async with client.test_factory() as db:
+            await owner_login.remember(
+                db,
+                device,
+                [
+                    owner_login.ClaudeLogin(
+                        installed=True,
+                        logged_in=True,
+                        auth_method="claude.ai",
+                        subscription_type="max",
+                        account_email="carol.private@example.com",
+                        account_org="Carol's Organization",
+                        local_id=login,
+                    )
+                ],
+            )
+            await db.commit()
+
+    client.portal.call(report)
+    shared = client.put(
+        f"/connector/teams/{team}/personal-model-resources/{login}",
+        headers=session_auth_headers("carol"),
+    )
+    assert shared.status_code == 200, shared.text
+
+    def row(viewer: str) -> dict:
+        listed = client.get(path(team), headers=session_auth_headers(viewer)).json()
+        return next(c for c in listed["connections"] if c["id"] == login)
+
+    assert "carol.private@example.com" not in str(row("bob"))
+    assert "Carol's Organization" not in str(row("bob"))
+    assert row("carol")["account_email"] == "carol.private@example.com"

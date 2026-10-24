@@ -166,14 +166,6 @@ PAGES: list[PageSpec] = [
         not_ready_selector=SPINNER,
         note="views/teams/Detail.vue + TeamProjects",
     ),
-    PageSpec(
-        "spaces",
-        "/spaces",
-        ".space-card",
-        min_text=1,
-        not_ready_selector=SKELETON,
-        note="views/spaces/Index.vue",
-    ),
     # --- the core pages, as a control group -------------------------------
     PageSpec(
         "channel",

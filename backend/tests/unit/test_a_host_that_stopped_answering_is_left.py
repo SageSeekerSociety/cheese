@@ -25,6 +25,28 @@ from app.domain.machine.services import HostPool
 pytestmark = pytest.mark.anyio
 
 
+class _Holder:
+    """A holder anyone may use, paid for by nobody."""
+
+    def __init__(self, conversation_id):
+        self.id = conversation_id
+        self.project_id = uuid.uuid4()
+        self.generation = str(uuid.uuid4())
+
+    def home(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "topic_id": self.id,
+            "room_resource_id": self.generation,
+        }
+
+    async def require_use(self, db, actor) -> None:
+        return None
+
+    async def payer(self, db) -> None:
+        return None
+
+
 class _Repo:
     """Just enough of the pool's repository to observe what the service does.
 
@@ -139,7 +161,8 @@ def _host(device_id, *, cores=4, memory_mb=8192, disk_gb=100, whole=False, **kw)
         enabled=True,
         cores=cores,
         memory_mb=memory_mb,
-        disk_gb=disk_gb,
+        disk_gb=40,
+        sandbox_disk_gb=disk_gb,
         created_at=datetime.now(UTC) - timedelta(hours=1),
         enrolled_at=datetime.now(UTC) - timedelta(hours=1),
         idle_since=None,
@@ -174,19 +197,11 @@ class _Case:
         self.service = HostPool.__new__(HostPool)
         self.service._repo = self.repo  # type: ignore[attr-defined]
         self.service._session = self.session  # type: ignore[attr-defined]
-        self.topic = SimpleNamespace(
-            id=self.home.conversation_id,
-            project_id=uuid.uuid4(),
-            resource_id=str(uuid.uuid4()),
-        )
-        self.service._lock_room = self._lock_room  # type: ignore[method-assign]
-        self.service.require_use_authority = self._allow  # type: ignore[method-assign]
+        self.holder = _Holder(self.home.conversation_id)
+        self.service._lock_holder = self._lock_holder  # type: ignore[method-assign]
 
-    async def _lock_room(self, topic_id):
-        return self.topic
-
-    async def _allow(self, project_id, actor):
-        return None
+    async def _lock_holder(self, holder_id):
+        return self.holder
 
     def place(self, session_id, hub):
         self.service._hub = hub  # type: ignore[attr-defined]
@@ -201,16 +216,16 @@ class _Case:
 
 @pytest.fixture(autouse=True)
 def _no_other_dependencies(monkeypatch):
-    """Placement's neighbours, which these cases are not about: the room of a
-    conversation, and the charge for starting an instance."""
+    """Placement's neighbours, which these cases are not about: whose the
+    sandbox is, and the charge for starting an instance."""
 
-    async def _room_of(session, conversation_id):
+    async def _holder_of(session, conversation_id):
         return conversation_id
 
-    async def _admit_start(session, project_id):
+    async def _admit_start(session, payer):
         return None
 
-    monkeypatch.setattr(machine_services, "room_of", _room_of)
+    monkeypatch.setattr(machine_services.holders, "holder_of", _holder_of)
     monkeypatch.setattr(machine_services, "admit_start", _admit_start)
 
 

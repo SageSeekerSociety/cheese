@@ -13,15 +13,15 @@
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `HOME_ENTRIES` 这个
  * 值，运行时不构成循环。
  */
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import CreateSpaceDialog from '@/views/home/CreateSpaceDialog.vue'
 import HomeHubView from '@/views/home/HomeHubView.vue'
 import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
-import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 /** 目录里的字要 i18n，行、按钮、抽屉要 vuetify，带 `to` 的行还要路由（`demoRouter`）。 */
@@ -48,18 +48,24 @@ const CREW = team('cheese-core', '芝士核心组', 'OWNER')
 const LAB = team('data-lab', '数据课第三组', 'MEMBER')
 const OWN = team('linxia', '林夏', 'OWNER', { personal: true })
 
-const SPACES = [{ id: 3, name: '数据分析课' }]
+const SPACES: SpaceLink[] = [{ id: 3, name: '数据分析课' }]
+/** 加入的一个，加上我建的、还没过审的两个。 */
+const SPACES_WITH_APPLICATIONS: SpaceLink[] = [
+  ...SPACES,
+  { id: 8, name: '操作系统 2026 秋', review: 'PENDING' },
+  { id: 9, name: '量子计算导论', review: 'REJECTED' },
+]
 
 /** 目录这一件要的那一份值，缺的都当「没有」。 */
 function navArgs(overrides: Record<string, unknown> = {}) {
   return {
     teams: [CREW, LAB],
     spaces: SPACES,
-    editing: null,
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
     joinOpen: false,
+    createOpen: false,
     ...overrides,
   }
 }
@@ -98,6 +104,12 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         note: '自己名下那一个（`personal`）不当团队说：以自己的昵称单独一行，摆在「团队」小标题之上，展开后没有「成员」也没有「额度」，更没有那一行的 ⋯。',
         props: { teams: [OWN, CREW], currentHandle: 'linxia' },
         expect: '林夏',
+      },
+      {
+        name: '我建的空间还在审核或被驳回',
+        note: '还没过审的空间也在空间那一组里，右边一枚小标签说是「待审核」还是「已驳回」，点进去是那份申请（撤回，或者看原因、改了重新提交）。',
+        props: { spaces: SPACES_WITH_APPLICATIONS },
+        expect: '已驳回',
       },
       {
         name: '手上一个空间都没加入',
@@ -178,6 +190,36 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'create-space-dialog',
+    title: 'CreateSpaceDialog',
+    about: '新建空间：头像、名称、简介。提交以后它是一份待平台管理员审核的申请，落到那份申请上。',
+    file: 'src/views/home/CreateSpaceDialog.vue',
+    component: CreateSpaceDialog,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    args: { modelValue: true },
+    states: [
+      {
+        name: '刚打开',
+        note: '三格都空着，名称没填时主按钮按不动。换头像、真去建、成了往哪跳都在 `useTeamNav`。',
+        props: {},
+        expect: '空间名称',
+      },
+      {
+        name: '正在提交',
+        note: '主按钮转圈，这时候关不掉。',
+        props: { busy: true },
+        expectSelector: '.v-btn--loading',
+      },
+      {
+        name: '没建成',
+        note: '上一回没成的那一句由外面给回来，画在表单底下；填好的字还在。',
+        props: { error: '创建失败，稍后重试' },
+        expect: '创建失败，稍后重试',
+      },
+    ],
+  },
+  {
     id: 'disband-team-dialog',
     title: 'DisbandTeamDialog',
     about: '解散团队前的二次确认：把团队名原样打一遍才按得下去，撤不回。',
@@ -235,42 +277,6 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         note: '读完了、名单是空的，这时候才说这句话 —— 一个人也交不出去，只能去解散。',
         props: { candidates: [], loading: false },
         expect: '团队里还没有别的成员可以接手。',
-      },
-    ],
-  },
-  {
-    id: 'team-profile-edit-dialog',
-    title: 'TeamProfileEditDialog',
-    about: '改团队对外的样子：名字、介绍、头像。地址、可见性、加入方式都不在这里。',
-    file: 'src/views/teams/TeamProfileEditDialog.vue',
-    component: TeamProfileEditDialog,
-    needs: ['vuetify', 'i18n'],
-    teleport: true,
-    args: { modelValue: true, team: CREW },
-    states: [
-      {
-        name: '刚打开',
-        note: '照小队现在的样子起手；每次打开都重来一遍，上一次取消留下的半截输入不跟到下一次。保存本身（换头像、PATCH、撞名怎么落格）在 `useTeamNav`。',
-        props: {},
-        expect: '显示在侧栏团队名字下面，最多 250 字',
-      },
-      {
-        name: '名字被别人占了',
-        note: '撞名是人自己能修的（换一个名字就行），所以要落在名字那一格上，不能混成一句「保存失败」。',
-        props: { nameError: '这个名称已被占用，换一个试试' },
-        expect: '这个名称已被占用，换一个试试',
-      },
-      {
-        name: '保存失败',
-        note: '没网、没权限这类人自己修不了的，报在整张表单上。',
-        props: { error: '保存失败，请稍后重试' },
-        expect: '保存失败，请稍后重试',
-      },
-      {
-        name: '正在保存',
-        note: '保存时按钮转圈，弹窗关不掉 —— 上一次的请求还在路上。',
-        props: { busy: true },
-        expectSelector: '.v-btn--loading',
       },
     ],
   },

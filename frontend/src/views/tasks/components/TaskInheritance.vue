@@ -2,10 +2,8 @@
 // 「领这道题 / 从这道题建项目，会继承到什么」 (#944)。只吃 props —— 取数在
 // `composables/useTaskInheritance.ts`，三处入口共用这一块渲染。
 //
-// 三样东西，缺一不可：资源包（吃到多少算力）、合成后的「给 AI 队友的指导」
-// （**连它来自哪一层一起说**，空间 / 项目集 / 题目 / 项目）、以及会被带上的资料。
-// 层名不是装饰：一份指导说「来自项目集」和「来自这道题」对人是两件事 —— 前者改
-// 一次二十道题都变，后者只有这一道。
+// 三样东西，缺一不可：资源包（吃到多少算力）、合成后的「AI 队友辅导」
+// （**连它来自哪里一起说**：空间、这道题、两者都有，或项目）、以及会被带上的资料。
 //
 // 合成在服务端由 `protocol.resolve()` 那一个循环算出来（`teaching.source` 也是
 // 它带出来的），这一块只把它摆出来，不重算、不猜。
@@ -24,8 +22,8 @@ const { t } = useI18n()
 // 层名 → 文案键。一张表而不是拼字符串：拼出来的键在换语言或改键名时会静默落空。
 const SOURCE_KEYS: Record<TaskInheritanceSource, string> = {
   space: 'tasks.inheritance.from.space',
-  category: 'tasks.inheritance.from.category',
   task: 'tasks.inheritance.from.task',
+  both: 'tasks.inheritance.from.both',
   project: 'tasks.inheritance.from.project',
 }
 
@@ -41,19 +39,19 @@ const sourceLabel = computed(() => {
   return source ? t(SOURCE_KEYS[source]) : null
 })
 
-/** 指导里有没有一句话可说 —— 四层都没说时连标题都不摆。 */
+/** 辅导里有没有一句话可说 —— 都没说时连标题都不摆。 */
 const hasTeaching = computed(() => {
   const g = teaching.value
-  if (!g) return false
-  return (
-    !!g.systemPrompt ||
-    (g.currentWeek !== null && g.currentWeek !== undefined) ||
-    !!g.allowedTopics?.length ||
-    !!g.avoidInCode?.length
-  )
+  return !!g && (!!g.mode || !!g.systemPrompt || !!g.privatePrompt || !!g.spacePrompt || !!g.learningGoals?.length)
 })
 
 const materials = computed(() => props.inheritance?.materials ?? [])
+
+/** 建项目时那个芝士会变成的默认队友（类型 + 技能）；上层没指定 = null。 */
+const agent = computed(() => props.inheritance?.agent ?? null)
+
+/** 题目包自带的那段 prompt（建项目时并进默认队友的人设正文）；没写 = null。 */
+const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
 </script>
 
 <template>
@@ -75,6 +73,43 @@ const materials = computed(() => props.inheritance?.materials ?? [])
         </span>
       </div>
 
+      <!-- 默认队友：建项目时那个芝士会带着这些技能出生（#944）。没指定也要说一句，
+           留白会被读成「已经会有一个」。 -->
+      <div class="inheritance__row">
+        <span class="inheritance__label">{{ t('tasks.inheritance.agent') }}</span>
+        <span v-if="agent" class="inheritance__value">
+          {{ agent.displayName ?? t('tasks.inheritance.agentSkillsOnly') }}
+          <span v-if="agent.typeName" class="inheritance__sublabel">· {{ agent.typeName }}</span>
+        </span>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.agentNone') }}
+        </span>
+      </div>
+      <div v-if="agent" class="inheritance__body">
+        <span class="inheritance__sublabel">{{ t('tasks.inheritance.agentSkills') }}</span>
+        <ul v-if="agent.skills.length" class="inheritance__skills">
+          <li v-for="skill in agent.skills" :key="skill">{{ skill }}</li>
+        </ul>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.agentSkillsNone') }}
+        </span>
+      </div>
+
+      <!-- 题目包里「手动加的一段 prompt」：建项目时并进默认队友的人设正文。
+           没写也要说一句，留白会被读成「已经有一段」。 -->
+      <div class="inheritance__row">
+        <span class="inheritance__label">{{ t('tasks.inheritance.prompt') }}</span>
+        <span v-if="protocolPrompt" class="inheritance__value">
+          {{ t('tasks.inheritance.promptSet') }}
+        </span>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.promptNone') }}
+        </span>
+      </div>
+      <div v-if="protocolPrompt" class="inheritance__body">
+        <p class="inheritance__prompt">{{ protocolPrompt }}</p>
+      </div>
+
       <!-- 指导：来源层写在标题旁边，是这块的重点。 -->
       <div class="inheritance__row">
         <span class="inheritance__label">{{ t('tasks.inheritance.guidance') }}</span>
@@ -85,21 +120,20 @@ const materials = computed(() => props.inheritance?.materials ?? [])
       </div>
 
       <div v-if="hasTeaching" class="inheritance__body">
-        <p v-if="teaching?.systemPrompt" class="inheritance__prompt">{{ teaching.systemPrompt }}</p>
-        <p v-if="teaching?.currentWeek !== null && teaching?.currentWeek !== undefined">
-          {{ t('tasks.inheritance.week', { n: teaching.currentWeek }) }}
-        </p>
-        <div v-if="teaching?.allowedTopics?.length" class="inheritance__list">
-          <span class="inheritance__sublabel">{{ t('tasks.inheritance.topics') }}</span>
-          <ul>
-            <li v-for="topic in teaching.allowedTopics" :key="topic">{{ topic }}</li>
-          </ul>
+        <p v-if="teaching?.mode">{{ t(`spaces.teaching.mode.${teaching.mode}`) }}</p>
+        <div v-if="teaching?.spacePrompt" class="inheritance__list">
+          <span class="inheritance__sublabel">{{ t('tasks.inheritance.spacePrompt') }}</span>
+          <p class="inheritance__prompt" data-user-content>{{ teaching.spacePrompt }}</p>
         </div>
-        <div v-if="teaching?.avoidInCode?.length" class="inheritance__list">
-          <span class="inheritance__sublabel">{{ t('tasks.inheritance.avoid') }}</span>
-          <ul>
-            <li v-for="item in teaching.avoidInCode" :key="item">{{ item }}</li>
-          </ul>
+        <div v-if="teaching?.systemPrompt" class="inheritance__list">
+          <span v-if="teaching.spacePrompt" class="inheritance__sublabel">{{ t('tasks.inheritance.taskPrompt') }}</span>
+          <p class="inheritance__prompt" data-user-content>{{ teaching.systemPrompt }}</p>
+        </div>
+        <!-- 私有指导：只有出题人/管理员的那条读才带这一格（服务端 `includePrivate`）。
+             学生读里没有它，所以这里 `v-if` 不到就整段不出现。 -->
+        <div v-if="teaching?.privatePrompt" class="inheritance__list">
+          <span class="inheritance__sublabel">{{ t('tasks.inheritance.privateGuidance') }}</span>
+          <p class="inheritance__prompt">{{ teaching.privatePrompt }}</p>
         </div>
       </div>
 
@@ -167,6 +201,7 @@ const materials = computed(() => props.inheritance?.materials ?? [])
 }
 
 .inheritance__list ul,
+.inheritance__skills,
 .inheritance__materials {
   margin: 0;
   padding-left: 1.2em;

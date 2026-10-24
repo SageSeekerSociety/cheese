@@ -55,6 +55,13 @@ export interface TaskSubmissionSchemaEntry {
   type: TaskSubmissionEntryType
 }
 
+/** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
+export interface TaskRubricLine {
+  item: string
+  points: number
+  criteria: string
+}
+
 /** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。
  *
  *  由后端按**提交与评审**算（`app/domain/task/submission_state.py`），不读
@@ -80,6 +87,9 @@ export interface Task {
   space?: Space
   category?: SpaceCategory
   submissionSchema: TaskSubmissionSchemaEntry[]
+  /** 评分要点。批改的人总能读到；学生只在 `rubricPublic` 时读到，否则是空的。 */
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
   participants: {
     total: number
     examples: TaskParticipantSummary[]
@@ -117,6 +127,11 @@ export interface Task {
    * 替换、不深合；`{}` = 没说，下面（项目集）或上面（空间）的默认原样生效。
    */
   teaching?: SpaceTeaching
+  /**
+   * 这道题自己写下的默认队友（#944）：平台预设的名字；`null` = 这道题没写过（继承
+   * 项目集 / 空间）。这是**原始覆盖值**，与提交时的「空串 = 清掉」不同。
+   */
+  defaultRole?: string | null
 }
 
 export interface TaskSubmissionReview {
@@ -221,6 +236,15 @@ export type TaskFormSubmitData = {
    * （`PublishTask.vue` 那一栏据此决定要不要带上它）。
    */
   teaching?: SpaceTeaching
+  /**
+   * 这道题指定的默认队友（#944）：平台预设名，`''` = 这一层不单独指定。
+   * 提交时是否带上这个键由那一栏自己按「三选一」口径决定（见 `defaultRolePayload`）。
+   */
+  defaultRole?: string
   /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
   mentors?: string[]
+  /** 学生提交时逐项填写的东西。 */
+  submissionSchema?: TaskSubmissionSchemaEntry[]
+  rubric?: TaskRubricLine[]
+  rubricPublic?: boolean
 }

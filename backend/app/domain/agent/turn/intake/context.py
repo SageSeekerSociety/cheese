@@ -55,9 +55,32 @@ async def living_doc_text(
     # document's note takes is left, so that second fit has nothing to cut.
     room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
     return (
-        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
+        fit_doc_to_budget(
+            text, room, full_read_hint="用 `cheese_doc(action=get)` 读全文"
+        )
         + canvases
     )
+
+
+def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
+    """这一轮谁带哪些技能进提示词：队友自己带的（userskill），没带就回落到这间房
+    点亮的。
+
+    userskill 存在 `agent_instances.configuration.skills`，出厂时从 preset 抄进来
+    （`agent_instance/services.initial_configuration`），改它要 manager
+    （`projects_agents._changes_an_advanced_setting`）。技能跟着人走：学术研究的
+    队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
+    都进提示词，只会让模型在互相冲突的规矩里挑一份。
+
+    两边都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
+    这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
+    """
+    carried = [
+        name
+        for name in (agent.configuration or {}).get("skills") or []
+        if isinstance(name, str)
+    ]
+    return carried or list(topic.skills or [])
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -115,6 +138,13 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 从题目来的项目里「题目」那一段（`task.package.section_for_project`）：第几版、
+    # 材料在哪、这一版改了什么。别的项目是 None，开场里没有这一段。
+    task_package: str | None
+    # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
+    # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
+    # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
+    skill_bodies: str
 
     # What this turn was given, and what it is being asked about.
     prompt_text: str
@@ -144,6 +174,11 @@ class TurnContext:
     # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
     prior_progress: list[dict]
+    #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
+    #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
+    #: 「卡住了」通常是它在轮次末尾报的，等有人回话时上一轮早就结束了，而那条
+    #: 只在会话还在跑时才发得出来的提醒正好够不着（`StaleProgressReminder`）。
+    blocked_report: bool
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
     # For a 支线: the message it hangs under and what the main line said just

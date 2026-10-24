@@ -97,7 +97,7 @@ Commands without `--profile` address `default`. An explicit login to an already 
 
 The connector supplies `CHEESE_PROFILE_ROOT` to execution commands and screens. Backend paths, harness state, executor releases, sandbox records and cleanup resolve that root on the machine. The connector announces `profiles` in `hello`; a connector that does not (one built before profiles) is a default-profile machine, and the hub writes `.cheese` into the paths it resolves itself until its update lands. Uninstall removes the selected profile's service, config and workspace. Uninstalling `default` preserves the other profiles under `profiles/`.
 
-Claude credentials record their own team and personal owner, independently of any execution-device enrollment. A profile chooses their local storage and connector transport. Subscription directories live at `<profile-root>/logins/claude-logins/<id>`; an existing first login keeps `<profile-root>/logins/claude-login`. Login, status, logout, probes and session launches select that profile. On first start, the connector moves the old shared store into the single profile, preserving its macOS Keychain entries; when several profiles exist, the default profile inherits it. Old paths are removed after the move. Uninstall removes the selected profile's logins. While another profile remains, shared binaries, runtime skill cache and the connector's PATH entry stay; the last uninstall removes the whole installation.
+Claude credentials record their own team and personal owner, independently of any execution-device enrollment. A profile chooses their local storage and connector transport. Subscription directories live at `<profile-root>/logins/claude-logins/<id>`; an existing first login keeps `<profile-root>/logins/claude-login`. Login, status, logout, probes and session launches select that profile. On first start, the connector moves the old shared store into the single profile, preserving its macOS Keychain entries; when several profiles exist, the default profile inherits it. Old paths are removed after the move; one recreated afterwards by a session started before it is left in place and no longer read. Uninstall removes the selected profile's logins. While another profile remains, shared binaries, runtime skill cache and the connector's PATH entry stay; the last uninstall removes the whole installation.
 
 ---
 
@@ -165,7 +165,7 @@ The connector asks `GET <origin>/connector/claude/pin` for the pinned version, d
 
 Add API keys and Anthropic-compatible model services through the team's Models page. Their keys are encrypted on the platform and have no storage computer.
 
-When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status; it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
+When a credential host connects, the backend runs `claude auth status` through its connector for each registered subscription, without calling a model. It updates the registered login's status, including the Claude account email and organization the command reports, which the team's Models page shows to tell logins apart (a personal login's account only to its owner); it does not discover credentials from execution-device ownership. A credential-only host and an enrolled execution device can use the same transport.
 
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 
@@ -214,24 +214,28 @@ When a credential host connects, the backend runs `claude auth status` through i
 ### 5.1 屏幕面板显示什么
 
 - **团队「设备」页**（`/teams/:handle/compute`）：列出团队的接入、在线状态和只读登录摘要。管理员可以改名、移除和接入设备。桌面端「设置 → 这台设备」只读列出本机各次接入、所属团队和管理页链接。
-- **「现场」面板**：浏览器里**只读**的真终端，字节级 relay 设备上那块 screen 的输出。screen 里跑的是 runner，`claude` 在它下面 headless 运行，所以这里看不到 `claude` 的界面；只能发 `resize` 控制帧，**不能敲键**。空白/连不上 = screen 没开，或你无权看（无权与未知 screen 以同样的 1008 关闭，不可枚举）。
+- **「现场」面板**：读这个会话的原始记录（`session_records`，见[会话记录](manual/dev/session-records.md)），默认是概览，也可以切到原始视图看思考、完整的工具输入输出和 JSON。screen 里跑的是 runner，`claude` 在它下面 headless 运行；产品里没有直接看那块 screen 终端的面板。
 
-### 5.2 会话记录走哪条路径
+### 5.2 会话记录和生命周期事件走哪条路径
 
 ```
 设备侧                                          后端侧
-claude -p 的 stdout（stream-json）               读循环按游标向 runner 要新记录
-  → runner 按到达顺序编号、写进本地日志           → 镜像进后端那份日志（同一编号，
-     （records.sqlite）                             重复的一页只落一次）
-  → 子 agent / workflow 的记录文件也由它跟读      → 翻译成房间事件，落地之后推进游标
+claude -p 的 stdout（stream-json）               读循环带着登记的 epoch 向 runner 要新东西
+  → runner 按到达顺序编号、写进本地日志           → 记录：存进会话记录（同一编号只存一次），
+     （records.sqlite）                             翻译成房间事件显示；什么都不由它决定
+  → 子 agent / workflow 的记录文件也由它跟读      → 事件：连同它的效果在一次事务里落库，
+  → runner 把看到的事实写进待确认的事件队列          推进座位的偏移，然后才确认
+     （输入写入/读到/丢弃、运行/空闲、进程退出）
 ```
 
-**记录的持久层是 runner 那份日志，不是后端。** 后端一时够不着，runner 照记；后端回来从游标
-接着读，一条不丢。日志在会话机上按时间过期清理。
+**记录和事件的持久层都是 runner，不是后端。** 后端一时够不着，runner 照记；事件在确认之前一直
+留着，后端回来从头再拿，已经落过的那一条按 `(座位, epoch, 序号)` 什么都不改。日志在会话机上按
+时间过期清理。
 
 - **事件没回来**：先看 runner 活着没有（`ping`）、它的日志有没有在长；再看设备到后端的
   连接器链路是否在线。
-- **事件重复**：记录按编号导入，同一页读两次只落一次；翻译出的事件按记录自己的 id 去重。
+- **事件重复**：记录按编号存，同一页读两次只存一次；翻译出的事件按记录自己的 id 去重；生命周期
+  事件按座位的偏移只落一次。
 
 ### 5.3 设备离线时的表现
 

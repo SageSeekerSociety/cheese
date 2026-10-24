@@ -171,7 +171,8 @@ async def _more(factory, project_id, places, *, per_conversation):
 
 
 async def _add_held_input(factory, project_id, conversation_id):
-    """One input the seat never finished: it holds that seat by itself."""
+    """One input written to the seat's session and never read: its fate is
+    unknown, and it holds that seat by itself."""
     async with factory() as session:
         now = datetime.now(UTC)
         session.add(
@@ -184,7 +185,6 @@ async def _add_held_input(factory, project_id, conversation_id):
                 input_id=uuid.uuid4(),
                 work_id=uuid.uuid4(),
                 registered_at=now - timedelta(minutes=5),
-                echoed_at=now,
             )
         )
         await session.commit()
@@ -379,7 +379,6 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=uuid.uuid4(),
                     work_id=uuid.uuid4(),
                     registered_at=now,
-                    echoed_at=now,
                 ),
                 NativeInput(
                     project_id=project.id,
@@ -390,8 +389,8 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=finished,
                     work_id=finished,
                     registered_at=now,
+                    # Read: delivered, and holding nothing.
                     echoed_at=now,
-                    completed_at=now,
                 ),
                 # A hold under a seat nobody is asking about in the pair below:
                 # the read may only answer the pairs it was given.
@@ -404,7 +403,6 @@ async def test_batch_reads_answer_like_their_single_reads(db_factory):
                     input_id=uuid.uuid4(),
                     work_id=uuid.uuid4(),
                     registered_at=now,
-                    echoed_at=now,
                 ),
             ]
         )

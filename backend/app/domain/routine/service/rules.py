@@ -19,9 +19,9 @@ from sqlalchemy import func, select
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import settle_proposal
+from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.agent import instance_for_seat
 from app.domain.delivery.timer import deliver_at
-from app.domain.agent_instance.adapters import project_team
 from app.domain.feedback import claims as feedback_claims
 from app.domain.notice_meta import EVENT_ROUTINE_PROPOSED
 from app.domain.routine import schedule
@@ -37,6 +37,7 @@ from app.domain.routine.service._shared import (
 from app.domain.routine.service.firing import _fire
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import timezones_by_handles
 
 if TYPE_CHECKING:
     from app.domain.routine import service as pkg
@@ -180,6 +181,10 @@ async def _agent_for(
     return seats[0]
 
 
+#: A rule's zone when nobody gave one and its owner's browser never said.
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
 async def create(
     svc: pkg.RoutineService,
     *,
@@ -191,30 +196,33 @@ async def create(
     note: str,
     trigger: str,
     spec: dict,
-    tz: str,
+    tz: str | None,
     owner_handle: str | None,
     agent_handle: str | None,
 ) -> Routine:
     if not instructions.strip():
         raise ValidationError(say("routineInstructionsRequired"))
-    spec = validate_spec(trigger, spec, tz)
-    await svc._check_feedback_batch(spec, topic.project_id)
     if by_agent:
         agent = await svc._agent_for(topic.id, agent_handle or by)
         if not owner_handle:
             raise ValidationError(say("routineNeedsOwner"))
-        # The owner is told the results, so they are a person of the
-        # project, and the channel the routine runs in becomes theirs too.
+        # The owner is told the results, and each run reads their private
+        # memory the way a turn reads its speaker's: so they are someone
+        # already in the channel the runs answer in. A teammate brings nobody
+        # in to be one.
         members = TopicMemberService(svc._session)
-        if owner_handle not in await members.project_people(
-            topic.project_id, team=project_team
-        ):
-            raise ValidationError(say("routineOwnerNotInProject", handle=owner_handle))
-        await members.take_in(topic.id, owner_handle)
+        if owner_handle not in await members.people_in(topic, team=project_team):
+            raise ValidationError(say("routineOwnerNotInChannel", handle=owner_handle))
         owner = owner_handle
     else:
         agent = await svc._agent_for(topic.id, agent_handle)
         owner = by
+    # Unsaid, the time is the owner's: "every Monday at nine" is their nine.
+    tz = tz or (await timezones_by_handles(svc._session, [owner])).get(
+        owner, DEFAULT_TIMEZONE
+    )
+    spec = validate_spec(trigger, spec, tz)
+    await svc._check_feedback_batch(spec, topic.project_id)
     row = Routine(
         id=uuid.uuid4(),
         project_id=topic.project_id,
@@ -251,7 +259,7 @@ UNSET_PROMPT = """\
 {missing}
 - 目标：{instructions}
 {note}
-请照这个目标把它们补上，用 cheese_routine_update(routine="{routine_id}", ...) 写回：
+请照这个目标把它们补上，用 cheese_routine(action=update, routine="{routine_id}", ...) 写回：
 {asks}
 补完这条规则就按你定的开始跑。定完在频道里说一句你定的是什么。
 """
@@ -343,6 +351,7 @@ async def update(svc: pkg.RoutineService, row: Routine, *, changes: dict) -> Rou
     if changes.get("agent_handle"):
         row.agent_handle = await svc._agent_for(row.topic_id, changes["agent_handle"])
     was_unset = not row.trigger
+    kept_cursor = row.event_cursor if trigger == row.trigger else None
     row.trigger, row.spec, row.timezone = trigger, new_spec, tz
     row.revision += 1
     # An edit takes effect the same way a new rule does: an AI teammate's
@@ -355,6 +364,10 @@ async def update(svc: pkg.RoutineService, row: Routine, *, changes: dict) -> Rou
         row.next_run_at = None
     elif row.state == RoutineState.active.value or was_unset:
         svc._activate(row)
+        if kept_cursor is not None:
+            # Still waiting for the same kind of event: what happened since
+            # the last sweep is still its news.
+            row.event_cursor = kept_cursor
     await svc._session.flush()
     if (not trigger and not was_unset) or (not row.title and title_was):
         await _ask_the_teammate_to_fill(svc, row, row.topic_id)

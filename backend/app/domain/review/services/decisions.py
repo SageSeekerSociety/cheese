@@ -9,9 +9,6 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.block.models import BlockKind
-from app.domain.event_about import EventAbout, landing
-from app.domain.event_author import AuthorType
 from app.domain.membership.services import MemberService
 from app.domain.project_permissions import Permission
 from app.domain.review import (
@@ -26,7 +23,8 @@ from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
 )
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task import heard, progress
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -50,7 +48,6 @@ from app.domain.review.services._shared import (
     VOIDED_PREFIX,
     WHO_CHEESE,
     WHO_HUMAN,
-    BlockRepository,
     _force_merge_verdict,
     logger,
     notice,
@@ -228,6 +225,7 @@ async def redescribe(
     actor: str,
     change_subject: str | None = None,
     change_body: str | None = None,
+    focus: str | None = None,
 ) -> AcceptCard:
     """更正这张卡的描述 —— and rewrite the PR from it in the same breath.
 
@@ -248,6 +246,15 @@ async def redescribe(
     the platform asserts rather than something anybody can retype in a
     GitHub textarea.
 
+    **The review focus is corrected here too.** It is the same kind of text
+    as the body — an explanation the deliverer gives the reviewer, not a
+    claim about who wrote the code — and it is the reviewer's checklist.
+    `push_fix` replaces the code on the same card, so a point written at
+    filing can stop being true; asking somebody to confirm something that
+    is no longer in the change is worse than asking nothing. It keeps the
+    filing limit (`clean_focus`: three points, 300 characters) and leaves
+    the same auditable line in the room.
+
     Only while the card is `pending`. Once it is accepted the commit is
     already in main and there is nothing left to correct here; that case
     belongs in a correction the room records, not in a row nobody reads
@@ -261,6 +268,7 @@ async def redescribe(
     card = cards[0]
     topic = await self._topic_or_404(card.topic_id)
     before_subject, before_body = card.change_subject, card.change_body or ""
+    before_focus = card.focus or ""
 
     subject = (change_subject or "").strip()
     if subject:
@@ -270,14 +278,21 @@ async def redescribe(
             raise ValidationError(exception_text(exc)) from exc
     if change_body is not None:
         card.change_body = change_body.strip() or None
-    if (card.change_subject, card.change_body or "") == (
+    if focus is not None:
+        # deferred-import: `cards` loads this package when it is imported.
+        from app.domain.review.services.cards import clean_focus
+
+        card.focus = clean_focus(focus)
+    text_changed = (card.change_subject, card.change_body or "") != (
         before_subject,
         before_body,
-    ):
+    )
+    focus_changed = (card.focus or "") != before_focus
+    if not (text_changed or focus_changed):
         return card
     await self._session.flush()
 
-    if card.pr_number is not None:
+    if text_changed and card.pr_number is not None:
         client = await self._app_pr_client(topic)
         if client is not None:
             view = await client.pr_view(card.pr_number)
@@ -290,22 +305,44 @@ async def redescribe(
                 ),
             )
     # 留痕：谁在什么时候把描述从什么改成了什么。这条入口的存在本身需要可追溯，
-    # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。
-    self._notify_merge_result(
-        topic,
-        say("cardRedescribed", actor=actor),
-        task_id=card.task_id,
-        meta=notice(
-            EVENT_CARD_REDESCRIBED,
-            severity=SEVERITY_INFO,
-            who=WHO_CHEESE,
-            detail=say(
+    # 否则它就是一条能悄悄改「这次改动会在历史里说什么」的路。审阅重点不进 PR
+    # 正文，所以只有标题或正文真的变了才去碰 GitHub。
+    if text_changed:
+        content = say("cardRedescribed", actor=f"<@{actor}>")
+        if focus_changed:
+            detail = say(
+                "cardRedescribedDetailWithFocus",
+                beforeSubject=before_subject or say("emptyValue"),
+                afterSubject=card.change_subject or say("emptyValue"),
+                beforeBody=before_body or say("emptyValue"),
+                afterBody=card.change_body or say("emptyValue"),
+                beforeFocus=before_focus or say("emptyValue"),
+                afterFocus=card.focus or say("emptyValue"),
+            )
+        else:
+            detail = say(
                 "cardRedescribedDetail",
                 beforeSubject=before_subject or say("emptyValue"),
                 afterSubject=card.change_subject or say("emptyValue"),
                 beforeBody=before_body or say("emptyValue"),
                 afterBody=card.change_body or say("emptyValue"),
-            ),
+            )
+    else:
+        content = say("cardFocusUpdated", actor=f"<@{actor}>")
+        detail = say(
+            "cardFocusUpdatedDetail",
+            beforeFocus=before_focus or say("emptyValue"),
+            afterFocus=card.focus or say("emptyValue"),
+        )
+    self._notify_merge_result(
+        topic,
+        content,
+        task_id=card.task_id,
+        meta=notice(
+            EVENT_CARD_REDESCRIBED,
+            severity=SEVERITY_INFO,
+            who=WHO_CHEESE,
+            detail=detail,
             detail_label=say("labelWhatChanged"),
         ),
     )
@@ -406,12 +443,17 @@ async def push_fix(
 
 
 async def reject(
-    self: pkg.AcceptService, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+    self: pkg.AcceptService,
+    *,
+    card_id: uuid.UUID,
+    decided_by: str,
+    note: str = "",
+    by_assistant: bool = False,
 ) -> AcceptCard:
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReturn"))
-    if decided_by != card.reviewer_handle:
+    if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("returnReviewerOnly"))
 
     await self._cancel_queued_accept(card)
@@ -419,7 +461,9 @@ async def reject(
     # 退回也是结局：等验收人动手的那几句一起收掉。
     await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
-    card.decided_at = datetime.now(UTC)
+    card.decided_by_assistant = by_assistant
+    card.decided_at = decided = datetime.now(UTC)
+    await _back_to_work(self, card, at=decided)
     notes.record(card, None, note)
 
     # Topic stays active on rejection.
@@ -449,6 +493,7 @@ async def revoke(
     # 别的话躺在谁的收件箱里的情况，收一遍是空转。
     await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
+    card.decided_by_assistant = False
     card.decided_at = datetime.now(UTC)
 
     # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
@@ -460,6 +505,13 @@ async def revoke(
     # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
     # 覆盖某个人「把这个话题收起来」的动作。
     await self._stamp_delivery(card, topic, by=None, at=None)
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    if task is not None:
+        await heard.inform(
+            self._session,
+            task,
+            heard.accept_revoked(by=decided_by, pr=card.pr_number),
+        )
 
     await self._session.flush()
     await self._session.refresh(card)
@@ -613,6 +665,7 @@ async def _override_github_checks(
         )
         raise ValidationError(say("prNewCommitsDuringOverride", number=number))
     if result.queued:
+        card.decided_by_assistant = False
         await self._record_queue_entry(card, decided_by)
         return card
     if result.sha is None:
@@ -638,6 +691,7 @@ async def _override_github_checks(
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, decided_by)
     card.decided_by = decided_by
+    card.decided_by_assistant = False
     card.decided_at = now
     await self._finish_pr_accept(card=card, topic=topic, headline=headline)
     logger.warning(
@@ -694,9 +748,11 @@ async def void(
     project = await self._projects.get(topic.project_id)
     self._forbid_ai(project, decided_by, say("reviewActionVoid"))
 
-    if decided_by != card.reviewer_handle and not await MemberService(
-        self._session
-    ).manages(topic.project_id, decided_by, Permission.manage_channels):
+    if decided_by not in await self._repo.reviewer_handles(
+        card.id
+    ) and not await MemberService(self._session).manages(
+        topic.project_id, decided_by, Permission.manage_channels
+    ):
         raise ForbiddenError(say("voidForbidden"))
 
     await self._cancel_queued_accept(card)
@@ -717,10 +773,12 @@ async def void(
     card.status = AcceptStatus.revoked
     # 作废是结局：等验收人动手的那几句一起收掉。
     await self._settle_the_card(card, "voided")
+    await _back_to_work(self, card, at=datetime.now(UTC))
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:
         card.decided_by = decided_by
+        card.decided_by_assistant = False
     if card.decided_at is None:
         card.decided_at = datetime.now(UTC)
 
@@ -728,20 +786,20 @@ async def void(
     await self._session.refresh(card)
 
     # 作废的是这张卡，落点就是这张卡（结论 14）：房间主线那一档只留给为房间
-    # 本身递的卡（`task_id` 空）。
-    landed = landing(
-        EventAbout.task if card.task_id is not None else EventAbout.room,
-        project_id=topic.project_id,
-        room_id=topic.id,
-        task_id=card.task_id,
-    )
-    await BlockRepository(self._session).add(
-        project_id=landed.project_id,
-        conversation_id=landed.conversation_id,
-        author="cheese",
-        author_type=AuthorType.platform,
-        content=say("cardVoided", actor=f"<@{decided_by}>"),
-        kind=BlockKind.event,
+    # 本身递的卡（`task_id` 空）。说给人的那一行之外，任务的 AI 队友被叫起来：
+    # 它还以为这一版在等审阅，人却已经在等它重做（`room_task.heard`）。
+    task = await self._session.get(Task, card.task_id) if card.task_id else None
+    await self._record_task_nudge(
+        topic=topic,
+        task=task,
+        content=heard.card_voided(
+            by=decided_by,
+            reason=note.strip(),
+            task_id=card.task_id,
+            pr=card.pr_number if archive.pr_left_open(card) else None,
+            open_task=task is not None and task.status == TaskStatus.open,
+        ),
+        headline=say("cardVoided", actor=f"<@{decided_by}>"),
         meta={
             "platform": True,
             **notice(
@@ -754,3 +812,15 @@ async def void(
         },
     )
     return card
+
+
+async def _back_to_work(
+    self: pkg.AcceptService, card: AcceptCard, *, at: datetime
+) -> None:
+    """The card was returned or voided: its task is back in its teammate's
+    hands (`room_task.progress.back_to_work`)."""
+    if card.task_id is None:
+        return
+    task = await self._session.get(Task, card.task_id)
+    if task is not None and task.status == TaskStatus.open:
+        progress.back_to_work(task, at=at)

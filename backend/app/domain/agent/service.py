@@ -153,6 +153,10 @@ class AgentUsage:
     # Part of ``input_tokens``, where the source reports them.
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    #: Each model call of the turn, in order, as (input tokens, of them read
+    #: from the provider's cache), where the source reports calls one by one:
+    #: how well a session keeps its prompt's start the same.
+    calls: tuple[tuple[int, int], ...] = ()
 
     @property
     def total_tokens(self) -> int:
@@ -203,8 +207,9 @@ class AgentResult:
     log: str | None = None
     agent_handle: str | None = None
     harness: str | None = None
-    # Successful native main-work completion, not cancellation or synthetic Stop.
-    input_work_completed: bool = False
+    # The session read the platform's inputs in the work this ends (a native
+    # harness reports it): what they carried has been heard, whatever came of it.
+    inputs_read: bool = False
     # A message the session read inside a turn already running has no ending
     # of its own: it ends with that turn, which this names. The room heard
     # that turn end; this ending only settles the message's own work.

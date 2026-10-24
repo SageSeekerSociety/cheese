@@ -21,17 +21,15 @@ import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
 import { TaskBoardApi } from '@/api/taskBoard'
-import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { myHandle } from '@/me'
+import { agentDocked, agentOpen, toggleAgent, useAgentContext, useAgentSurface } from '@/stores/agent'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
-import { useAssistant } from '@/views/tasks/composables/useAssistant'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -67,21 +65,26 @@ const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 
 // ── 问芝士 ─────────────────────────────────────────────────────────────────────
 //
-// 个人芝士在这道题上的面板（#2285）。宽屏停在右边，把页面挤窄；窄屏从底下升起来。
-// 打开面板本身不调用模型，只读这道题上已有的对话。
+// 个人芝士的面板是全站那一个（layouts/AgentHost.vue）；这一页只说它是哪道题，芝士读到的
+// 「当前页面」就是它。芝士在这里改了这道题并保存了，页面上的题目跟着换。
 
 const { mdAndUp } = useDisplay()
-const assistant = useAssistant(() => taskId.value)
-const asking = ref(false)
-
-function openAssistant() {
-  asking.value = true
-  assistant.load().catch(() => undefined)
-}
-
-function askAssistant(text: string) {
-  assistant.ask(text, t('tasks.assistant.failed'))
-}
+useAgentContext(() => ({
+  page: { kind: 'task', id: taskId.value },
+  label: taskData.value?.name ? t('tasks.assistant.page.problem', { name: taskData.value.name }) : undefined,
+  intro: t('tasks.assistant.reads'),
+  greeting: t('tasks.assistant.greeting'),
+  starters: (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)),
+  placeholder: t('tasks.assistant.placeholder'),
+  hint: t('tasks.assistant.hint'),
+}))
+useAgentSurface(() => ({
+  on: {
+    published: (done) => {
+      if (done.task.id === taskId.value) void loadTaskData({ quiet: true })
+    },
+  },
+}))
 
 // ── 题目本身 ────────────────────────────────────────────────────────────────────
 
@@ -345,7 +348,7 @@ onMounted(() => {
       </div>
 
       <div class="td__act">
-        <BaseButton kind="secondary" class="td__ask" :active="asking" data-testid="task-ask" @click="openAssistant">
+        <BaseButton kind="secondary" class="td__ask" :active="agentOpen" data-testid="task-ask" @click="toggleAgent">
           <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
           {{ t('tasks.assistant.ask') }}
         </BaseButton>
@@ -395,7 +398,7 @@ onMounted(() => {
       </router-link>
     </nav>
 
-    <div class="td__body" :class="{ 'td__body--split': showSide && !(asking && mdAndUp) }">
+    <div class="td__body" :class="{ 'td__body--split': showSide && !(agentOpen && agentDocked && mdAndUp) }">
       <div class="td__main">
         <router-view v-slot="{ Component }">
           <component
@@ -409,7 +412,7 @@ onMounted(() => {
         </router-view>
       </div>
       <TaskSide
-        v-if="showSide && !(asking && mdAndUp)"
+        v-if="showSide && !(agentOpen && agentDocked && mdAndUp)"
         class="td__side"
         :task="taskData"
         :identity="myIdentity"
@@ -418,56 +421,6 @@ onMounted(() => {
       />
     </div>
   </div>
-
-  <!-- 只在打开时才挂：停靠的抽屉要向页面外框登记自己，关着的时候不占那个位置。 -->
-  <v-navigation-drawer
-    v-if="mdAndUp && asking"
-    :model-value="asking"
-    location="right"
-    width="380"
-    class="td-ask"
-    @update:model-value="(open: boolean) => (asking = open)"
-  >
-    <AssistantPanel
-      :personal-team-handle="myHandle()"
-      :conversations="assistant.conversations.value"
-      :current-id="assistant.current.value"
-      :title="assistant.title.value"
-      :messages="assistant.messages.value"
-      :streaming="assistant.streaming.value"
-      :tool="assistant.tool.value"
-      :queued="assistant.queued.value"
-      :notice="assistant.notice.value"
-      :credit-refused="assistant.creditRefused.value"
-      :busy="assistant.busy.value"
-      @send="askAssistant"
-      @stop="assistant.stop().catch(() => undefined)"
-      @new="assistant.startNew"
-      @select="assistant.select"
-      @close="asking = false"
-    />
-  </v-navigation-drawer>
-  <v-bottom-sheet v-else-if="!mdAndUp" v-model="asking" class="td-ask-sheet">
-    <div class="td-ask-sheet__body">
-      <AssistantPanel
-        :personal-team-handle="myHandle()"
-        :conversations="assistant.conversations.value"
-        :current-id="assistant.current.value"
-        :title="assistant.title.value"
-        :messages="assistant.messages.value"
-        :streaming="assistant.streaming.value"
-        :tool="assistant.tool.value"
-        :queued="assistant.queued.value"
-        :notice="assistant.notice.value"
-        :busy="assistant.busy.value"
-        @send="askAssistant"
-        @stop="assistant.stop().catch(() => undefined)"
-        @new="assistant.startNew"
-        @select="assistant.select"
-        @close="asking = false"
-      />
-    </div>
-  </v-bottom-sheet>
 
   <v-dialog :model-value="reviewing !== null" max-width="860" scrollable @update:model-value="closeReview">
     <TaskSubmissionHistory

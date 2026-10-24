@@ -389,6 +389,27 @@ def idle_stop(self, idle_s):
     return True
 
 
+def disk_full(path):
+    """The sentence for a command that failed where the disk is full, or
+    None while it has room. A `statvfs` of the workspace: on a platform host
+    that is the room's own quota (`sandbox_host.py`). Full is under 1% of it
+    left, or under 64 MB, in bytes or in files; a large disk with no quota of
+    the room's is full only under 1 GiB or 10,000 files."""
+    if not hasattr(os, "statvfs"):
+        return None
+    try:
+        found = os.statvfs(path)
+    except OSError:
+        return None
+    total, free = found.f_blocks * found.f_frsize, found.f_bavail * found.f_frsize
+    files = found.f_favail
+    if free >= min(max(total // 100, 64 << 20), 1 << 30) and (
+        not found.f_files or files >= min(found.f_files // 100, 10_000)
+    ):
+        return None
+    return f"disk full: {free // 10**6} MB free, {files} files left ({path})"
+
+
 def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
     """What a command printed from the given offsets on, waiting briefly for
     more; its exit status and final directory once everything is read.
@@ -444,6 +465,8 @@ def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
         and err_offset + len(err) >= err_size
     ):
         answer["exit"] = int((record / "exit").read_text())
+        if answer["exit"] and (full := disk_full(self.root)):
+            answer["disk"] = full
         # As the shell spelled it, which is the session's spelling too
         # (`native_path`).
         path = record / "cwd"
@@ -499,8 +522,8 @@ def shell(self, params):
                     raise ValueError("Command ID already belongs to different input")
                 return {"started": True, **held}
             cwd = Path(native_path(params.get("cwd") or str(self.root)))
-            if not cwd.is_dir():
-                # Gone since the session last looked: its own reset.
+            # 看不见的 cwd 会抛 EPERM：Path.is_dir 吞不住，os.path.isdir 当它不在
+            if not os.path.isdir(cwd):
                 cwd = self.root
             env = self.command_env()
             env.update(
@@ -572,6 +595,11 @@ def bash(self, args, key=None):
     command_id = "task-" + uuid.uuid4().hex[:16]
     record = self._record(command_id)
     cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
+    env = self.command_env()
+    # A platform call may name variables for this one command (`checkpoint`'s
+    # turn). Its own key, so a Bash argument from anywhere else cannot set one.
+    if isinstance(args.get("platform_env"), dict):
+        env.update({str(k): str(v) for k, v in args["platform_env"].items()})
     self.start_command(
         command_id,
         self.shell_argv(
@@ -579,7 +607,7 @@ def bash(self, args, key=None):
             + shlex.quote(str(record / "cwd"))
         ),
         cwd,
-        self.command_env(),
+        env,
         merge=True,
         watched=False,
         meta={"command": args["command"]},
@@ -626,6 +654,8 @@ def bash(self, args, key=None):
     with (record / "out").open("rb") as stream:
         text = stream.read(BASH_INLINE_CHARS * 4).decode("utf-8", "replace")
     text = text[:BASH_INLINE_CHARS].rstrip("\n")
+    if code and (full := disk_full(self.root)):
+        text += "\n" + full
     return {
         "stdout": text if code == 0 else f"Exit code {code}\n{text}",
         "stderr": "",

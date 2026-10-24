@@ -4,11 +4,11 @@
 import type { Ref } from 'vue'
 import type { FileSource } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
-import type { PanelChangesProps } from './types'
+import type { LiveSourceFallback, PanelChangesProps } from './types'
 
 import { computed, ref } from 'vue'
 
-import { getGitDiff } from '../../api'
+import { getGitDiff, RequestTimeoutError } from '../../api'
 import { splitDiffByFile } from '../../lib/diff'
 
 import { t } from '@/i18n'
@@ -25,6 +25,10 @@ export interface GitChangesDeps {
   /** A background re-fetch: spins only the 刷新 button, never replaces the panel. */
   refreshing: Ref<boolean>
   errorMsg: Ref<string | null>
+  /** 现场那一面没及时答上来时，这一格退到哪一面（也由组合根拿它切来源）。 */
+  liveFallback: Ref<LiveSourceFallback>
+  /** 本次前台读现场超时了没有：组合根据此把来源切到已提交版本。 */
+  liveTimeout: Ref<boolean>
   /** 这一格现在这一代；路上那一次回来时对不上就丢掉。 */
   epoch: () => number
   /** 开始一次前台读取：转圈要等最后一个回来的。 */
@@ -42,6 +46,8 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
     noWorkYet,
     refreshing,
     errorMsg,
+    liveFallback,
+    liveTimeout,
     epoch,
     startLoad,
   } = deps
@@ -57,17 +63,38 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
     if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
     const done = opts.silent ? null : startLoad()
     if (opts.silent) refreshing.value = true
+    else liveTimeout.value = false
     errorMsg.value = null
     try {
       const diff = await getGitDiff(pid, tid, task, fileSource.value)
       // Guard against a source switch mid-flight.
       if (selectedTask.value !== task || epoch() !== epochAt) return
       gitDiff.value = diff.diff
+      // 现场回来了：那条「没有及时响应」的说明就该收起来，后台那次成功也不能
+      // 让上一轮的「超时」把来源留在已提交版本上。
+      if (fileSource.value === 'live') {
+        liveFallback.value = 'none'
+        liveTimeout.value = false
+      }
     } catch (e) {
       // 后台那一下没取到，就留着上次取到的：下一次再取，不拿一句报错把整块顶掉。
-      if (epoch() === epochAt && !opts.silent) {
-        errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
+      if (selectedTask.value !== task || epoch() !== epochAt || opts.silent) return
+      // 现场工作区没在 20 秒里答上来：先试已提交版本。它走代码托管，不经过机器。
+      // 这不是「改动坏了」，所以不拿一句请求超时把整格顶掉；把能看的先给人看。
+      if (fileSource.value === 'live' && e instanceof RequestTimeoutError) {
+        liveTimeout.value = true
+        try {
+          const fallback = await getGitDiff(pid, tid, task, 'committed')
+          if (selectedTask.value !== task || epoch() !== epochAt) return
+          gitDiff.value = fallback.diff
+          liveFallback.value = 'committed'
+        } catch {
+          if (selectedTask.value !== task || epoch() !== epochAt) return
+          liveFallback.value = 'unavailable'
+        }
+        return
       }
+      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       done?.()
       if (selectedTask.value === task && epoch() === epochAt) refreshing.value = false
@@ -84,5 +111,5 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
     gitDiff.value = ''
   }
 
-  return { gitDiff, loadGit, fileDiffs, diffByPath, clearGitDiff }
+  return { gitDiff, loadGit, fileDiffs, diffByPath, clearGitDiff, liveTimeout }
 }

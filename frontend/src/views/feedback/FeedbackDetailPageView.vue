@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import type { FeedbackClaimFlags } from '@/api/feedbackClaim'
-import type { FeedbackDetail, FeedbackStatus } from '@/cx_types'
+import type { FeedbackAttachment, FeedbackDetail, FeedbackStatus } from '@/cx_types'
 
 import { computed, nextTick, ref } from 'vue'
 
@@ -14,6 +14,7 @@ import AdminEmptyState from '@/components/admin/AdminEmptyState.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import FeedbackAttachmentList from '@/components/feedback/FeedbackAttachmentList.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackClaimCard from '@/components/feedback/FeedbackClaimCard.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
@@ -39,6 +40,11 @@ const props = defineProps<{
   /** 失败之后又问了服务端一次：这条是真的不存在（403/404），还是只是没读到。 */
   gone: boolean
   statusLadder: FeedbackStatus[]
+  /** 附件的图片那一档取回来之后的 object URL，按附件 id（页面取的，见
+   *  `useFeedbackAttachmentImages`）。这一页只负责画。 */
+  attachmentUrls: Record<string, string>
+  /** 正在下载的那一份附件的 id；`null` = 没有。 */
+  downloadingAttachment: string | null
   moreCommentsLoading: boolean
   moreRepliesLoading: Record<string, boolean>
   deleting: boolean
@@ -63,6 +69,7 @@ const emit = defineEmits<{
   share: []
   'change-claim': [take: boolean]
   'delete-confirm': []
+  'download-attachment': [attachment: FeedbackAttachment]
 }>()
 
 const isPrivate = computed(() => props.item?.visibility === 'private')
@@ -300,6 +307,18 @@ function postComment() {
                 <template v-if="item.environment">{{ item.environment }}</template>
               </div>
             </div>
+          </section>
+
+          <!-- 附件。摆在评论之前、正文之后：它是这条反馈**自己的**内容，而评论是别人
+               添上去的。一份都没有时整块不出现（提交表单里那一栏是选填的）。 -->
+          <section v-if="item.attachments.length" class="fb-section">
+            <div class="t-eyebrow mb-2">{{ t('feedback.detail.attachments.title') }}</div>
+            <FeedbackAttachmentList
+              :attachments="item.attachments"
+              :urls="attachmentUrls"
+              :downloading="downloadingAttachment"
+              @download="(file) => emit('download-attachment', file)"
+            />
           </section>
 
           <section class="fb-section">

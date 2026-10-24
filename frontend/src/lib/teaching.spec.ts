@@ -1,78 +1,60 @@
-// 「给 AI 队友的指导」在表单与接口之间的翻译（#944）。整份替换的语义全压在这一对
-// 转换上：空的那几格要落成 `null` / `[]`（与 `Teaching.is_empty` 同一个意思），
-// 否则「留空」会被读成「写了些空的东西」，下一层就被盖住了。
+// 「AI 队友辅导」在表单与接口之间的翻译：空的那几格要落成 `null` / `[]`（与
+// `Teaching.is_empty` 同一个意思），否则「留空」会被读成「写了些空的东西」。
 import { describe, expect, it } from 'vitest'
 
-import { buildTeaching, draftFromConfig, emptyTeachingDraft, isTeachingBlank, splitIds, splitList } from './teaching'
+import { buildTeaching, defaultRolePayload, draftFromConfig, emptyTeachingDraft, isTeachingBlank } from './teaching'
 
 describe('teaching 表单转换', () => {
-  it('接口那一份读成六格：清单拼成逗号串，没设的落成空串', () => {
+  it('接口那一份读成表单那几格，没设的落成空', () => {
     expect(
       draftFromConfig({
-        systemPrompt: '第 {current_week} 周',
-        currentWeek: 3,
-        allowedTopics: ['链表', '栈'],
-        avoidInCode: ['递归'],
+        mode: 'spec',
+        systemPrompt: '先写需求说明',
         materialIds: [11, 12],
         documentIds: ['0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e'],
       })
     ).toEqual({
-      systemPrompt: '第 {current_week} 周',
-      currentWeek: '3',
-      allowedTopics: '链表, 栈',
-      avoidInCode: '递归',
-      materialIds: '11, 12',
-      documentIds: '0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e',
+      mode: 'spec',
+      systemPrompt: '先写需求说明',
+      privatePrompt: '',
+      learningGoals: '',
+      materialIds: [11, 12],
+      documentIds: ['0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e'],
     })
     expect(draftFromConfig(null)).toEqual(emptyTeachingDraft())
   })
 
-  it('六格写回接口那一份：空的是 null / []，不是空串', () => {
-    expect(
-      buildTeaching({
-        systemPrompt: '  讲完链表了  ',
-        currentWeek: '3',
-        allowedTopics: '链表，栈, 队列',
-        avoidInCode: '',
-        materialIds: '11, 12',
-        documentIds: '',
-      })
-    ).toEqual({
-      systemPrompt: '讲完链表了',
-      currentWeek: 3,
-      allowedTopics: ['链表', '栈', '队列'],
-      avoidInCode: [],
-      materialIds: [11, 12],
+  it('交回接口时去掉首尾空白，空的要求落成 null', () => {
+    expect(buildTeaching({ ...emptyTeachingDraft(), systemPrompt: '   ' })).toEqual({
+      mode: null,
+      systemPrompt: null,
+      privatePrompt: null,
+      learningGoals: [],
+      materialIds: [],
       documentIds: [],
     })
   })
 
-  it('周次留空是不设（null），不是 0', () => {
-    const week = buildTeaching({ ...emptyTeachingDraft(), currentWeek: '  ' })
-    expect(week.currentWeek).toBeNull()
+  it('全空才算没说：只选了方式也算这一层说了话', () => {
+    expect(isTeachingBlank(null)).toBe(true)
+    expect(isTeachingBlank({ mode: null, systemPrompt: ' ', materialIds: [], documentIds: [] })).toBe(true)
+    expect(isTeachingBlank({ mode: 'guide' })).toBe(false)
+    expect(isTeachingBlank({ materialIds: [3] })).toBe(false)
+  })
+})
+
+describe('defaultRolePayload', () => {
+  it('选回「继承」且这一层本来没写过：不带这个键（继承上层）', () => {
+    expect(defaultRolePayload('', null)).toBeUndefined()
+    expect(defaultRolePayload('', undefined)).toBeUndefined()
   })
 
-  it('清单认中英文逗号、去掉空项；编号只留正整数', () => {
-    expect(splitList(' a，b , ,c ')).toEqual(['a', 'b', 'c'])
-    expect(splitIds('11, -2, x, 0, 12')).toEqual([11, 12])
+  it('选回「继承」但这一层本来写过：带空串，明确清掉这一层的覆盖', () => {
+    expect(defaultRolePayload('', 'academic-research')).toBe('')
   })
 
-  it('六格全空才是「没说」—— 任何一格有东西都不算空', () => {
-    expect(isTeachingBlank(undefined)).toBe(true)
-    expect(isTeachingBlank({})).toBe(true)
-    expect(
-      isTeachingBlank({
-        systemPrompt: null,
-        currentWeek: null,
-        allowedTopics: [],
-        avoidInCode: [],
-        materialIds: [],
-        documentIds: [],
-      })
-    ).toBe(true)
-
-    expect(isTeachingBlank({ currentWeek: 0 })).toBe(false)
-    expect(isTeachingBlank({ allowedTopics: ['链表'] })).toBe(false)
-    expect(isTeachingBlank({ systemPrompt: '嗨' })).toBe(false)
+  it('选了某个预设：原样带上它', () => {
+    expect(defaultRolePayload('coding-tutor', null)).toBe('coding-tutor')
+    expect(defaultRolePayload('coding-tutor', 'academic-research')).toBe('coding-tutor')
   })
 })

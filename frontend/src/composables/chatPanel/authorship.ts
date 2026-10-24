@@ -64,22 +64,30 @@ export function usePanelAuthorship(deps: {
   }
   const pendingBlock = (item: Outgoing) => pendingMessageBlock(item, deps.author)
 
-  // 时间那一格说的是送达状态。失败了就不说：失败那一行自己会说清楚是什么失败了。
+  // 时间那一格说的是送达状态。断网时当场说等待连接；正常连接下超过阈值还没回来才说发送中；失败那行自己会说原因。
   function outgoingState(item: Outgoing): string {
     if (item.state === 'failed') return ''
-    return deps.connected.value ? t('work.room.chat.sending') : t('work.room.chat.waitingConnection')
+    if (!deps.connected.value) return t('work.room.chat.waitingConnection')
+    return item.slow ? t('work.room.chat.sending') : ''
   }
+
+  // Every visible row asks for its time on each timeline render, and
+  // toLocaleTimeString with options builds a fresh formatter per call — at a few
+  // hundred rows that alone cost ~12ms a render. One formatter per language.
+  let clock: { locale: string; format: Intl.DateTimeFormat } | null = null
 
   function fmtTime(iso: string): string {
     // Local HH:mm next to the name on the first of a run (not raw UTC). In the
     // app's language, not the browser's: a Chinese screen on an en-US system
     // otherwise reads 「07:20 PM」, which also no longer fits the gutter that a
     // continued message shows its time in.
-    return new Date(iso).toLocaleTimeString(i18n.global.locale.value, {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
+    const locale = i18n.global.locale.value
+    if (clock?.locale !== locale)
+      clock = {
+        locale,
+        format: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
+      }
+    return clock.format.format(new Date(iso))
   }
 
   // 分栏 (2026-09-09, <@符露夀> 定): 我说的话靠右，别人和芝士靠左。

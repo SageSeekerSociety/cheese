@@ -31,11 +31,12 @@ covers:
 | AI 服务重试、整理上下文、等机器 | `api_retry`、`context_compact`、`device_waiting` | 现场；在跑的一轮的状态行读它们 |
 | 环境的准备、就绪、空闲释放 | `cloud_startup`、`cloud_provisioning`、`sandbox_asleep` | 现场 |
 | 记忆改动、整理 | `memory_changed` | 现场，见[记忆 · 改动记在哪](/dev/memory#events) |
+| 有人改了房间里 agent 读过的一条消息 | `message_edited` | 现场；agent 读的是同一句旁边那条隐藏提示（`block/editing.py`） |
 | 定时投递到点 | `timed_delivery` | 现场；记录的 id 就是那条定时投递的 id，账本的事件指着它 |
 | 后端报错、前端报错 | `backend_error`、`frontend_error` | 只在管理后台；不属于任何对话，发生在哪个对话写在 `meta.conversation` |
 | 2026-10-07 之前支线以外没跑完的轮次（迁移 `52fee3dd7773` 搬过来的） | `turn_failed`、`platform_error`、`turn_timeout` | 现场；管理后台算在「报错」里 |
 
-额度用完环境被释放、环境不再响应被换掉、一轮最终没答上这些要人动手的事仍然说在对话里。在频道主线上叫芝士，它在支线里回答，没答上的那一行落在支线里，主线那条消息下面写「回复失败」。
+额度用完环境被释放、环境不再响应被换掉、一轮最终没答上这些要人动手的事仍然说在对话里。在频道主线上叫芝士，它在支线里回答，没答上的那一行落在支线里，主线那条消息下面写「没能回复，点开看原因」。
 
 ## 一轮一行：分母 {#turns}
 
@@ -57,7 +58,7 @@ covers:
 
 支线里的记录同时推一份 `thread_status` 帧到频道主线（`agent.run_records.publish`）：主线那条消息下面那一行据此写芝士在排队、重试、整理上下文还是等环境。这一帧只实时推，不进断线重放的缓冲。
 
-`GET /topics/{id}/transcript` 把这一页时间范围里的运行记录和事件块合在一起按时间排好返回。侧栏的「在等机器」、消息有没有开始处理、孤儿轮次判断，都同时读块和运行记录。
+`GET /topics/{id}/transcript` 把这一页时间范围里的会话原始记录（[原始记录](/dev/session-records)）、上线前轮次的那一行说明和运行记录合在一起按时间排好返回。侧栏的「在等机器」、消息有没有开始处理、孤儿轮次判断，都同时读块和运行记录。
 
 ## 留多久、谁能看 {#retention}
 

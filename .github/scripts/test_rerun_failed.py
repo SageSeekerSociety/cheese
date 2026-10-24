@@ -91,11 +91,6 @@ class KnownPatternTest(unittest.TestCase):
                 "dev-health-probe",
             ),
             (
-                "the merge queue's synthetic run",
-                {"event": "merge_group"},
-                "merge-group-synthetic-run",
-            ),
-            (
                 "the rerun helper's own red",
                 {"path": ".github/workflows/rerun-failed.yml", "event": "repository_dispatch"},
                 "rerun-workflow-red",
@@ -107,10 +102,11 @@ class KnownPatternTest(unittest.TestCase):
                 self.assertIn(pattern_id, reason)
 
     def test_a_known_pattern_carries_the_handling_not_just_its_name(self):
-        merge_queue = self.diagnosed({"event": "merge_group"})
-        self.assertIn("重新采纳", merge_queue)
-        self.assertIn("TempDir", merge_queue)
-        self.assertIn("test_claude_session_records", merge_queue)
+        probe = self.diagnosed(
+            {"path": ".github/workflows/box-uptime.yml", "event": "schedule"}
+        )
+        self.assertIn("同 SHA 上绿红都有", probe)
+        self.assertIn("5176ms", probe)
 
     def test_removing_a_pattern_takes_its_diagnosis_with_it(self):
         """Deliberate violation: deleting the rule is what the rule is for."""

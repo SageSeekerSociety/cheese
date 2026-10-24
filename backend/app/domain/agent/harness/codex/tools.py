@@ -10,6 +10,7 @@ import posixpath
 import re
 import shutil
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 from app.domain.agent.executor_transport import (
@@ -19,6 +20,7 @@ from app.domain.agent.executor_transport import (
     PlatformHost,
     RemoteClient,
     failure_text,
+    no_run,
     session_path,
 )
 from app.domain.agent.harness.driven import monitor
@@ -132,6 +134,10 @@ class RemoteTools:
         # The session's monitors, once the runner that tells the session what
         # they print exists (`entry.py`).
         self.monitors: monitor.Monitors | None = None
+        # How to ask the session's own thread to compact itself, for the one
+        # tool that does (`cheese_session(action=compact)`): the runner's, set beside
+        # `monitors` (`entry.py`). A session without one refuses the call.
+        self.compact: Callable[[], str] | None = None
         # The project's MCP servers the session opened with (`discover`).
         self.mcp_servers: list[str] = []
 
@@ -423,7 +429,7 @@ class RemoteTools:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
-        for tool in self.platform.PLATFORM_TOOLS.schemas():
+        for tool in self.platform.offered_tools():
             if tool["name"] in routes:
                 raise ValueError(f"Duplicate executor tool: {tool['name']}")
             routes[tool["name"]] = (PLATFORM, tool["name"])
@@ -490,7 +496,12 @@ class RemoteTools:
                 return
 
     def _platform_call(
-        self, tool: str, call_id: str, arguments: dict, notice: io.StringIO
+        self,
+        tool: str,
+        call_id: str,
+        arguments: dict,
+        notice: io.StringIO,
+        session_call: bool,
     ) -> dict:
         def invoke(payload, args):
             return self.client.call(
@@ -499,7 +510,16 @@ class RemoteTools:
                 preparing=notice,
             )
 
-        host = PlatformHost(self.client, invoke, call_id, self.doc_versions)
+        # A subagent's thread is not the room's session: compacting it would
+        # compact the wrong context, and it is not the one the room reads.
+        host = PlatformHost(
+            self.client,
+            invoke,
+            call_id,
+            self.doc_versions,
+            no_run,
+            self.compact if session_call else None,
+        )
         try:
             text = self.platform.run_platform_tool(tool, arguments, host)
         except MachineOutOfReach:
@@ -531,11 +551,17 @@ class RemoteTools:
             if owed is not None and owed["id"] != self.answered:
                 # Reading the room is on the way to answering it, and answers
                 # nothing.
+                arguments = params.get("arguments")
+                action = (
+                    arguments.get("action") if isinstance(arguments, dict) else None
+                )
+                # A read is one verb of an object (`cheese_chat.list`).
+                key = f"{params['tool']}.{action}" if action else params["tool"]
                 if params["tool"] in owed["answers"]:
                     self.answered = owed["id"]
                     # And where the runner reads it, to know the turn may end.
                     Path(owed["answered"]).write_text(owed["id"])
-                elif params["tool"] not in owed["reads"]:
+                elif key not in owed["reads"]:
                     return {
                         "success": False,
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],
@@ -554,6 +580,7 @@ class RemoteTools:
                 params["callId"],
                 params["arguments"],
                 notice,
+                session_call,
             )
         else:
             receipt = await self._executor_call(
