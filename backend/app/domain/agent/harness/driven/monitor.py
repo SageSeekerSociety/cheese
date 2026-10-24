@@ -239,9 +239,9 @@ class Lines:
 
     def feed(self, data: bytes) -> list[str]:
         self.pending += self.decoder.decode(data)
-        if len(self.pending) > PENDING_MAX:
-            self.pending = self.pending[-PENDING_MAX:]
         *whole, self.pending = self.pending.split("\n")
+        if len(self.pending) > PENDING_MAX:
+            self.pending = self.pending[:PENDING_MAX]
         return [
             _cut(line.strip(), LINE_MAX, "...(truncated)")
             for line in whole
@@ -386,9 +386,10 @@ class Monitor:
 
     async def _kill_later(self) -> None:
         await asyncio.sleep(STOP_GRACE_S)
-        if self.task in self.owner.running:
-            with contextlib.suppress(Exception):
-                await self.owner.signal(self.task, signal.SIGKILL)
+        # Expiry retires the watch before this grace period ends. The executor,
+        # which owns the command's lifetime, knows whether it still needs killing.
+        with contextlib.suppress(Exception):
+            await self.owner.signal(self.task, signal.SIGKILL)
 
     async def follow(self) -> None:
         out = err = 0
