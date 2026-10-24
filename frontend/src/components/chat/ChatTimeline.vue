@@ -269,6 +269,17 @@ function madeFrom(m: Block): TaskLine[] {
   return own ? tasks.filter((task) => task !== own) : tasks
 }
 
+/**
+ * 这道题上我有一条答复还压在发件箱里、没落库：卡片把选项先按住。
+ *
+ * 卡片收起要等那条消息落库、题块再带着答案回来，这一来一回里手快就会多点出几条消息，
+ * 房间里真会多出几条。被服务端拒掉的那条不算：那一下没答上题，选项得还给人家重选
+ * （他点那条消息上的「重试」，它回到在路上，卡片跟着再锁上）。
+ */
+function answeringQuestion(id: string): boolean {
+  return props.outbox.some((item) => item.replyTo === id && item.state !== 'failed')
+}
+
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
 // 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
 // 隔了一小时以上。和消息之间照旧断开。
@@ -650,6 +661,7 @@ const rowLabels = computed(() =>
               :name-of-handle="nameOf"
               :viewer="viewer"
               :ask-closed="askClosed"
+              :ask-answering="answeringQuestion(m.id)"
               :active="bar.shown && bar.id === m.id"
               :live="liveChecklists.has(m.id)"
               :face="faceRows.get(m.id)?.state ?? null"
