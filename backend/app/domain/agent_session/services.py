@@ -98,6 +98,17 @@ class AgentSessionService:
             told=told,
         )
 
+    async def forget_told(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """This agent's conversation was compacted: what it was told is now a
+        summary at best, so the next input tells it the whole state again."""
+        await self._repo.forget_told(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+        )
+
     async def place(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> SessionPlace | None:

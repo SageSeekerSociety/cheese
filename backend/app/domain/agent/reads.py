@@ -207,6 +207,13 @@ class Replaced:
 
 
 @dataclass(frozen=True)
+class Compacted:
+    """The session compacted its context, and the compaction took: the history
+    it was told the session opening in is a summary now. Said with the seat's
+    own session, which the event itself does not name."""
+
+
+@dataclass(frozen=True)
 class ResultLanded:
     """The room landed the closing result ``report`` carries: delivered again,
     it is not handed to the room a second time (``runner_reports.landed``)."""
@@ -239,6 +246,7 @@ class Read:
         | Followed
         | ResultLanded
         | Replaced
+        | Compacted
         | Reachable
         | Moved
         | CaughtUp

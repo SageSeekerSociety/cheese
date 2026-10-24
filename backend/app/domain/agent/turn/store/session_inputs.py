@@ -33,6 +33,25 @@ async def remember_opening(
         await session.commit()
 
 
+async def forget_opening(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    conversation_id: uuid.UUID,
+    agent_handle: str,
+    harness: str,
+) -> None:
+    """The conversation was compacted: the snapshot it was told sat in the
+    history the compaction replaced with a summary, so nothing it was told can
+    be counted on, and its next input carries the whole snapshot again."""
+    async with sessions() as session:
+        await AgentSessionService(session).forget_told(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+        )
+        await session.commit()
+
+
 async def commit_delivery(
     sessions: async_sessionmaker[AsyncSession],
     *,

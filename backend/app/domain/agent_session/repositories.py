@@ -94,6 +94,20 @@ class AgentSessionRepository:
             values={"told": told},
         )
 
+    async def forget_told(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """Record that this conversation no longer holds what it was told."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(told=None, updated_at=datetime.now(UTC))
+        )
+
     async def save_place(
         self,
         *,
