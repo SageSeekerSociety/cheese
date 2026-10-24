@@ -74,7 +74,8 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
+/** `worksTasks`：此刻看的人的角色有没有「新建任务和审阅」这一项（项目成员默认有，导师没有）。 */
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, worksTasks = true) {
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
@@ -100,6 +101,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
       loadMachine,
       setMachine: vi.fn(async () => ({})),
       setMachineDefault: vi.fn(async () => ({})),
+      worksTasks,
     },
     global: { plugins: [vuetify] },
   })
@@ -238,7 +240,7 @@ describe('任务页头', () => {
     expect(queryByTestId('task-agent-left')).toBeNull()
   })
 
-  it('不做这件事的人：没有更多操作', () => {
+  it('开着的任务，不做这件事的人：没有更多操作', () => {
     me = 'bob'
     const { container } = mount()
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
@@ -357,20 +359,29 @@ describe('任务页头', () => {
     expect(setCollaborators).toHaveBeenCalledWith(['carol'])
   })
 
-  it('关了的任务，负责人能重新打开；协作者不能', async () => {
+  it('关了的任务，负责人能重新打开', async () => {
     stubViewport()
     const owner = mount({ status: 'closed' })
     await fireEvent.click(owner.container.querySelector('[data-testid="task-more"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
     await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
     expect(owner.reopen).toHaveBeenCalledOnce()
-    owner.unmount()
+  })
 
+  it('关了的任务，不做这件事的项目成员也能重新打开', async () => {
+    stubViewport()
     me = 'bob'
-    const helper = mount({ status: 'closed', contributor_handles: ['bob'] })
-    await fireEvent.click(helper.container.querySelector('[data-testid="task-more"]')!)
-    await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
-    expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
+    const member = mount({ status: 'closed' })
+    await fireEvent.click(member.container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
+    await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
+    expect(member.reopen).toHaveBeenCalledOnce()
+  })
+
+  it('角色没有「新建任务和审阅」的人（导师）重新打开不了关了的任务', () => {
+    me = 'teacher'
+    const { container } = mount({ status: 'closed' }, PEOPLE, AGENTS, false)
+    expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
   it('「⋯」打开的是一个菜单，每一项是菜单项', async () => {
@@ -386,13 +397,13 @@ describe('任务页头', () => {
     expect(items).toEqual(expect.arrayContaining(['重命名', '关闭任务']))
   })
 
-  it('协作者能改名，不能转交和关闭', async () => {
+  it('协作者能改名、能关闭，不能转交', async () => {
     me = 'bob'
     const { container, rename } = mount({ contributor_handles: ['bob'] })
     stubViewport()
     await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
-    expect(document.body.textContent).not.toContain('关闭任务')
+    expect(document.body.textContent).toContain('关闭任务')
     expect(document.body.textContent).not.toContain('转交')
     await fireEvent.click(document.querySelector('[data-testid="task-rename"]')!)
     const input = await waitFor(() => {
