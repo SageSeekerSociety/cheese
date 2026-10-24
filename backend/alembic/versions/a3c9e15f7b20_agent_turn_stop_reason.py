@@ -8,7 +8,7 @@
 结束的那些行。
 
 Revision ID: a3c9e15f7b20
-Revises: c5e8a2d71f46
+Revises: e73ca7b0dd69
 """
 
 from collections.abc import Sequence
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a3c9e15f7b20"
-down_revision: str | Sequence[str] | None = "c5e8a2d71f46"
+down_revision: str | Sequence[str] | None = "e73ca7b0dd69"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
