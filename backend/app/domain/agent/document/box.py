@@ -37,10 +37,8 @@ from app.domain.agent.document import question, session
 from app.domain.agent.document.question import Asked
 from app.domain.agent.session_host.answer import (
     Answer,
-    Thinking,
+    Said,
     Tool,
-    ToolArgs,
-    ToolFailed,
     Waiting,
     Words,
 )
@@ -401,7 +399,7 @@ class Answers:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})

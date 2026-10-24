@@ -1628,6 +1628,22 @@
     "s8": {
       "name": "A memory saved",
       "note": "Cheese notes something about you; a Memory card appears in the panel and can be undone"
+    },
+    "s9": {
+      "name": "A long piece of work under way",
+      "note": "The checklist sits on top, ticked as it goes; words and steps appear in the order they happened; of two subagents one is working and one is done, and opening one lists its steps."
+    },
+    "s10": {
+      "name": "A long piece of work done",
+      "note": "The checklist folds to one line, both subagents are done, and words and steps keep the order they happened in."
+    },
+    "s11": {
+      "name": "Saying more while Cheese works",
+      "note": "While Cheese answers, + and the microphone stay; typing or picking a file turns the button into send, and it goes into the answer under way."
+    },
+    "s12": {
+      "name": "Work done, nothing written",
+      "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
     }
   },
   "myDraftsView": {
