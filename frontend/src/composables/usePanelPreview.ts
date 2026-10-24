@@ -24,6 +24,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
@@ -139,6 +140,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   }
 
   const doc = usePanelPreviewDocument({ props, state })
+  // 这一份文件上的评论：线程、写一条新的、回复和解决。
+  const comments = usePanelPreviewComments({ props, state })
   const edits = usePanelPreviewEditing({
     props,
     state,
@@ -193,6 +196,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docPage: doc.docPage,
     canPage: doc.canPage,
     docPageHtml: doc.docPageHtml,
+    // 这一份文件上的评论（同上，原样递下去）
+    comments,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）
     revs: edits.revs,
     editing: edits.editing,

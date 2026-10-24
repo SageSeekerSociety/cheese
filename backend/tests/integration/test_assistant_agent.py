@@ -780,3 +780,28 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
         ("message", "allowed", "quick")
     ]
     assert "收到" in done[0]["summary"]
+
+
+def test_the_steps_of_a_long_piece_of_work_are_counted_back(client):
+    me = _as(_personal(client, "todo-asker"))
+    todos = [
+        {"content": "读评分标准", "status": "completed"},
+        {"content": "给 40 份报告打分", "status": "in_progress"},
+        {"content": "汇总成表", "status": "pending"},
+    ]
+
+    r = client.post("/assistant/agent/todo", json={"todos": todos}, headers=me)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["text"] == "清单已更新：1/3 项已完成。"
+    too_many = [{"content": f"第 {n} 步", "status": "pending"} for n in range(31)]
+    assert (
+        client.post(
+            "/assistant/agent/todo", json={"todos": too_many}, headers=me
+        ).status_code
+        == 400
+    )
+    assert client.post("/assistant/agent/todo", json={"todos": todos}).status_code in (
+        401,
+        403,
+    )

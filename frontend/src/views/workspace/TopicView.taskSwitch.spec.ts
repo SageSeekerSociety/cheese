@@ -46,6 +46,7 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     topics: [TOPIC],
     members: [],
+    projects: [],
     unreadMap: {},
     chatPct: 50,
     rememberPlace: vi.fn(),

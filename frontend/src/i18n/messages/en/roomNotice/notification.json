@@ -5,6 +5,7 @@
   "pushAwaitingAnswer": "Waiting for your answer",
   "pushMentioned": "{who} mentioned you in “{room}”",
   "pushMentionedInDoc": "{who} mentioned you in the document “{doc}”",
+  "pushMentionedInFile": "{who} mentioned you in the file “{doc}”",
   "pushThreadReply": "{who} replied in a thread in “{room}”",
   "pushJoinRequest": "{who} asked to join “{team}”",
   "pushAway": "{count} new notifications while you were away"

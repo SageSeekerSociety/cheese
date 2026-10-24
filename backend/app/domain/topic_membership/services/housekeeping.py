@@ -31,6 +31,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from app.core.request_facts import recall, remember
 from app.domain.conversation.services import room_of_thread
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
@@ -126,6 +127,9 @@ async def addressable_agent_handles(
     }
 
 
+_AGENT_SEAT_TABLES = frozenset({"topic_memberships", "user", "agent_bindings"})
+
+
 async def agent_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> list[str]:
     """Which of this topic's members are agents, in roster order.
 
@@ -139,11 +143,17 @@ async def agent_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> lis
     handle 上给出两个答案，而房间说它是 agent、项目名册说它是人，正是这次改动
     要消掉的那种差（I4a）。
     """
+    key = ("agent_handles", topic_id)
+    found, cached = recall(svc._session, key)
+    if found:
+        return cached
     members = await svc._repo.list_for_topic(topic_id)
     agents = await IdentityService(svc._session).agents_among(
         [m.member_handle for m in members]
     )
-    return [m.member_handle for m in members if m.member_handle in agents]
+    handles = [m.member_handle for m in members if m.member_handle in agents]
+    remember(svc._session, key, handles, tables=_AGENT_SEAT_TABLES)
+    return handles
 
 
 async def ensure_agent_seat(

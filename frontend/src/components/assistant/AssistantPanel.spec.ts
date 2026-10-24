@@ -58,15 +58,28 @@ describe('AssistantPanel', () => {
     expect(view.queryByText('个人')).toBeNull()
   })
 
-  it('does not take a second question, or a new topic, while 芝士 is still answering', async () => {
+  it('takes what is typed while 芝士 is answering into that answer, but no new topic', async () => {
     const view = mount({ busy: true, streaming: '常见起点是' })
-    const box = view.getByRole('textbox') as HTMLTextAreaElement
-    await fireEvent.update(box, '还有呢？')
-    await fireEvent.keyDown(box, { key: 'Enter' })
+    await typeInComposer(view.container, '只看第 3 份')
+    await fireEvent.keyDown(view.getByRole('textbox'), { key: 'Enter' })
     await fireEvent.click(view.getByRole('button', { name: '新话题' }))
 
-    expect(view.emitted('send')).toBeUndefined()
+    expect(view.emitted('send')).toEqual([['只看第 3 份']])
     expect(view.emitted('new')).toBeUndefined()
+  })
+
+  it('takes files while 芝士 is answering, and sends them into that answer', async () => {
+    const view = mount({
+      busy: true,
+      streaming: '常见起点是',
+      canAttach: true,
+      files: [{ name: '第3份.pdf', mime: 'application/pdf', uploading: false }],
+    })
+    expect(view.getByRole('button', { name: '更多操作' })).toBeTruthy()
+    await fireEvent.click(view.getByRole('button', { name: '发送' }))
+
+    expect(view.emitted('send')).toEqual([['']])
+    expect(view.emitted('stop')).toBeUndefined()
   })
 
   it('stops the answer being written, and asks nothing new', async () => {
@@ -101,6 +114,133 @@ describe('AssistantPanel', () => {
     expect(view.getByText('成绩分布.png')).toBeTruthy()
     await fireEvent.click(view.getByRole('button', { name: '下载' }))
     expect(view.emitted('downloadFile')).toEqual([[file]])
+  })
+
+  it('opens a link to a page of the site in place, and leaves links elsewhere to the browser', async () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '进展如何', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '见 [部署值守](/projects/cheese-dev/channels/15) 和 [文档](https://docs.okcheese.com/apps)',
+          at: '2026-10-04T08:00:05Z',
+        },
+      ],
+    })
+
+    await fireEvent.click(view.getByRole('link', { name: '部署值守' }))
+    await fireEvent.click(view.getByRole('link', { name: '文档' }))
+    expect(view.emitted('openLink')).toEqual([['/projects/cheese-dev/channels/15']])
+  })
+
+  it('shows what 芝士 said and the calls it made in the order they happened', () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '有什么要我处理的？', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '我先查一下待办。\n\n有一件：周明的邀请。',
+          at: '2026-10-04T08:00:05Z',
+          steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 8 }],
+        },
+      ],
+    })
+
+    const said = view.getByText('我先查一下待办。')
+    const call = view.getByText('查看待办')
+    const after = view.getByText('有一件：周明的邀请。')
+    expect(said.compareDocumentPosition(call) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(call.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('while 芝士 goes on after its last call came back, a line says it is thinking', () => {
+    const view = mount({
+      busy: true,
+      streaming: '',
+      steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+    })
+
+    expect(view.getByText('思考中')).toBeTruthy()
+  })
+
+  it('says 芝士 gave no answer when it did something and wrote nothing', () => {
+    const view = mount({
+      messages: [
+        { role: 'user', text: '有什么待办？', at: '2026-10-04T08:00:00Z' },
+        {
+          role: 'assistant',
+          text: '',
+          silent: true,
+          at: '2026-10-04T08:00:05Z',
+          steps: [{ key: 'c1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+        },
+      ],
+    })
+
+    expect(view.getByText('芝士没有给出回答')).toBeTruthy()
+  })
+
+  it('reads the earlier messages of a long topic on asking', async () => {
+    const view = mount({ currentEarlier: true })
+
+    await fireEvent.click(view.getByRole('button', { name: '更早的消息' }))
+
+    expect(view.emitted('olderMessages')).toEqual([[null]])
+  })
+
+  it('shows the checklist above an answer under way, and folds it to a line once all is done', () => {
+    const list = (status: 'in_progress' | 'completed') =>
+      JSON.stringify({
+        todos: [
+          { content: '读评分标准', status: 'completed' },
+          { content: '给 40 份报告打分', status },
+        ],
+      })
+    const step = (status: 'in_progress' | 'completed') => ({
+      key: 't1',
+      verb: '更新进度清单',
+      arg: '',
+      state: 'done' as const,
+      hidden: true,
+      checklist: JSON.parse(list(status)).todos,
+    })
+
+    const going = mount({ busy: true, streaming: '', steps: [step('in_progress')] })
+    expect(going.getByText('给 40 份报告打分')).toBeTruthy()
+    expect(going.getByRole('img', { name: '进行中' })).toBeTruthy()
+    expect(going.queryByText('更新进度清单')).toBeNull()
+    going.unmount()
+
+    const done = mount({
+      messages: [
+        { role: 'user', text: '打分', at: '2026-10-04T08:00:00Z' },
+        { role: 'assistant', text: '打完了。', at: '2026-10-04T08:00:05Z', steps: [step('completed')] },
+      ],
+    })
+    expect(done.getByRole('button', { name: /2\/2 项已完成/ })).toBeTruthy()
+    expect(done.queryByText('给 40 份报告打分')).toBeNull()
+  })
+
+  it('shows a subagent on the step that started it, and what it did on opening it', async () => {
+    const view = mount({
+      busy: true,
+      streaming: '',
+      steps: [
+        {
+          key: 'c1',
+          verb: '派出分身',
+          arg: '给第 1–10 份打分',
+          state: 'run',
+          at: 0,
+          subagent: { status: 'running', steps: [{ key: 's1', verb: '读取', arg: '报告 1.pdf', state: 'done' }] },
+        },
+      ],
+    })
+
+    expect(view.getByText('进行中')).toBeTruthy()
+    expect(view.queryByText('报告 1.pdf')).toBeNull()
+    await fireEvent.click(view.getByRole('button', { name: /给第 1–10 份打分/ }))
+    expect(view.getByText('报告 1.pdf')).toBeTruthy()
   })
 
   it('asks a starter question in one click when the conversation is empty', async () => {
