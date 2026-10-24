@@ -2,10 +2,15 @@
 # Install scripts/remote_execution's pinned Claude Code and prove it runs.
 #
 # `npm ci` can succeed and still leave a `claude` the machine cannot execute:
-# on 2026-09-26 cheese-ci-runner-3b failed every remote acceptance with
-# "Exec format error: .../node_modules/.bin/claude" — a native binary from a
-# cache written for another platform. `npm ci` alone does not notice, and the
-# job then dies before a single case runs. So: install, run `claude --version`,
+# on 2026-09-26 a remote acceptance on cheese-ci-runner-3b died with
+# "Exec format error: .../node_modules/.bin/claude". The package ships
+# `bin/claude.exe` as a shebang-less placeholder script, and its postinstall
+# replaces it with the binary from the platform's optional dependency
+# (`@anthropic-ai/claude-code-linux-x64`). When that download fails, npm skips
+# the optional dependency without an error — that run logged "added 1 package
+# in 3m" where a good install adds 2 in seconds — and the placeholder stays.
+# `npm ci` alone does not notice, and the job then dies before a single case
+# runs. So: install, run `claude --version`,
 # and if it does not run, install once more from an empty cache. A second
 # failure is a real problem and fails the step with the output that says why.
 set -euo pipefail
