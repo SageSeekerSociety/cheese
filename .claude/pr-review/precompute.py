@@ -129,9 +129,13 @@ def count_refs(repo, rev, names, tree=None):
         return {}
     pat = "\n".join(names) + "\n"
     if tree and shutil.which("rg"):
+        # `--no-filename` is the whole point: without it rg prints `path:NAME` on
+        # every match, `_match_counts` sees no bare name, and every count is 0 — the
+        # orphan scan then finds nothing and says so. git grep's `-h` does this for
+        # the batch branch below.
         p = subprocess.run(
-            ["rg", "-o", "-w", "-F", "-f", "/dev/stdin", "--no-messages", "--no-ignore",
-             "--hidden", "-g", "!.git", str(tree)],
+            ["rg", "-o", "--no-filename", "-w", "-F", "-f", "/dev/stdin", "--no-messages",
+             "--no-ignore", "--hidden", "-g", "!.git", str(tree)],
             input=pat, capture_output=True, text=True,
         )
         return _match_counts(p.stdout, names)

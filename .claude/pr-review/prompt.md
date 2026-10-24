@@ -224,8 +224,10 @@ The text to give it is:
 
 What the reviewer must also know:
 
-- Its tools are the read-only ones: read files, grep, glob. No shell, no
-  edits. The precomputed sections were produced for it at the pinned SHA —
+- Its tools are the read-only ones: read files, search their contents (Grep,
+  or a read-only `grep` / `rg` / `find` when the harness has no search tool),
+  and list them (Glob). No edits, and nothing that runs a test, builds or
+  changes state. The precomputed sections were produced for it at the pinned SHA —
   start there and do not re-derive them. `PRECOMPUTED.md` says where the
   public symbols this change touches are referenced elsewhere and where tests
   patch them, and recomputes the numbers the PR body states; it runs no test,

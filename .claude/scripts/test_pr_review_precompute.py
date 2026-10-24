@@ -14,6 +14,7 @@ sections here are the symbol scan and the PR-body number recompute.
 """
 
 import importlib.util
+import shutil
 import subprocess
 import tempfile
 import types
@@ -84,6 +85,22 @@ class Precompute(unittest.TestCase):
         out = self.orphan_case(mutant("if len(now) != 1 or", "if True or"))
         with self.assertRaises(AssertionError):
             self.assertIn("⚠ `NotificationUpdate`", out)
+
+    @unittest.skipUnless(shutil.which("rg"), "ripgrep is not installed here")
+    def test_orphan_found_through_the_tree_when_ripgrep_counts(self):
+        # The reviewer found this one: rg without --no-filename prints `path:NAME`,
+        # so every count came back 0 and the orphan scan always said 无. The test
+        # gives section_symbols the tree, which is the rg path prepare takes.
+        base = commit(self.repo, {"backend/app/schemas.py": SCHEMAS, "backend/app/routes.py": ROUTES}, "base")
+        head = commit(self.repo, {"backend/app/schemas.py": "class NotificationUpdate:\n    pass\n",
+                                  "backend/app/routes.py": "def bulk(r):\n    return r\n"}, "drop bulk")
+        out = "\n".join(load().section_symbols(self.repo, base, head, tree=self.repo))
+        self.assertIn("⚠ `NotificationUpdate`", out)
+        # The deliberate violation: drop --no-filename and the counts go back to 0,
+        # so the same call finds nothing. That is what this test is here to catch.
+        broken = mutant('"--no-filename", ', '')
+        out = "\n".join(broken.section_symbols(self.repo, base, head, tree=self.repo))
+        self.assertNotIn("⚠ `NotificationUpdate`", out)
 
     def test_patch_points_listed(self):
         base = commit(self.repo, {"a.py": "def helper():\n    pass\n",
