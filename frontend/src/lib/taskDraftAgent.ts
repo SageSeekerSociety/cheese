@@ -190,13 +190,14 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   }
   if (Array.isArray(given.stages)) {
     fields.stages = given.stages
-      .map((stage) => stage as { name?: unknown; description?: unknown; due?: unknown })
+      .map((stage) => stage as { id?: unknown; name?: unknown; description?: unknown; due?: unknown })
       .filter((stage) => typeof stage.name === 'string')
       .map((stage) => {
         const found = WHEN.exec(text(stage.due)?.trim() ?? '')
         const [, y, m, d, hh, mm] = found ?? []
         const at = found ? dayjs(`${y}-${m}-${d}T${hh ?? '23'}:${mm ?? '59'}`) : null
         return {
+          id: text(stage.id) || null,
           name: String(stage.name),
           description: text(stage.description) ?? '',
           dueAt: at?.isValid() ? at.valueOf() : null,

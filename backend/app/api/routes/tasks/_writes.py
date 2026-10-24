@@ -43,6 +43,7 @@ from app.domain.task.services import (
     validate_and_get_category_id,
 )
 from app.domain.task.stages import stage_lines, stages_to_api
+from app.domain.task.submission_state import refresh_task_claims
 from app.domain.task_notices import notices as task_notices
 
 
@@ -310,6 +311,10 @@ async def update_task(
         rubric_to_api(await service.list_rubric(task.id)),
         stages_to_api(await service.list_stages(task.id)),
     )
+    # A stage added, dropped, moved or given another due date changes what every
+    # claim derives to; re-derive them in this same transaction.
+    if requirements_after[2] != requirements_before[2]:
+        await refresh_task_claims(db, task.id)
     if requirements_after != requirements_before and task.approved == 0:
         await task_notices.requirements_changed(
             db, task=task, by=user_id, at=task.updated_at

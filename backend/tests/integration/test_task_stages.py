@@ -1,17 +1,21 @@
 """A task's 阶段: set by its publisher, handed in and graded stage by stage.
 
-A stage is done when its latest submission is accepted, and a claim is done
-when every stage is. Each stage closes at its own due date. Reordering the
-stages carries what was already handed in with them; a stage that holds
-submissions cannot be dropped. A task without stages is one stage.
+A stage is done once one of its submissions is accepted, and a claim is done
+when every stage is. Each stage closes at its own due date. A stage keeps its
+id however the list is reordered, and what was handed in follows it; a stage
+that holds submissions cannot be dropped. A task without stages is one stage.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
+from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
+from app.domain.task.models import TaskMembership
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.test_task_drafts import _as_cheese
 
 DAY_MS = 24 * 3600 * 1000
 
@@ -69,6 +73,7 @@ def _publish(api_client: TestClient, board: dict, **fields) -> int:
     body = {
         "name": f"Lab ({unique_int(1000, 9999)})",
         "submitterType": "USER",
+        "rank": 2,
         "deadline": _ms(30),
         "resubmittable": True,
         "editable": True,
@@ -212,22 +217,53 @@ def test_each_stage_is_graded_on_its_own_and_the_claim_is_done_when_all_are(
     assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"
 
 
-def test_a_stage_is_judged_by_its_latest_submission(api_client, board):
-    task_id = _publish(api_client, board)
-    membership_id = _claim(api_client, board, task_id)
-    first = _submit(api_client, board, task_id, membership_id, 0, ["v1"])
-    _review(
+def test_a_passed_task_stays_passed_through_a_later_version(
+    api_client, board, db_session, _portal
+):
+    """Unstaged, as before stages existed: v1 accepted, v2 handed in and sent
+    back, the deadline passes — what was accepted stays accepted, and the
+    sweep does not fail the claim."""
+    task_id = _publish(
         api_client,
         board,
-        task_id,
-        membership_id,
-        first.json()["data"]["submission"]["id"],
-        True,
+        stages=[],
+        submissionSchema=[{"prompt": "作业", "type": "TEXT"}],
+        rubric=[],
     )
-    _submit(api_client, board, task_id, membership_id, 0, ["v2"])
-    assert _progress(api_client, board["student"], task_id)["mine"]["stages"][0] == (
-        "PENDING_REVIEW"
-    )
+    membership_id = _claim(api_client, board, task_id)
+    first = _submit(api_client, board, task_id, membership_id, 0, ["v1"])
+    _review(api_client, board, task_id, membership_id, _id(first), True)
+    second = _submit(api_client, board, task_id, membership_id, 0, ["v2"])
+    assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"
+    _review(api_client, board, task_id, membership_id, _id(second), False)
+    assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"
+
+    async def past_and_sweep():
+        await db_session.execute(
+            update(TaskMembership)
+            .where(TaskMembership.id == membership_id)
+            .values(deadline=datetime.now(UTC) - timedelta(days=1))
+        )
+        await db_session.flush()
+        await check_and_fail_expired_deadlines(db_session)
+
+    _portal.call(past_and_sweep)
+    db_session.expire_all()
+    assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "PASSED"
+    ]
+
+
+def _id(response) -> int:
+    assert response.status_code == 200, response.text
+    return int(response.json()["data"]["submission"]["id"])
+
+
+def _read(api_client, board, task_id) -> dict:
+    resp = api_client.get(f"/tasks/{task_id}", headers=_headers(board["teacher"]))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["task"]
 
 
 def test_the_publisher_sees_how_the_class_stands_on_each_stage(api_client, board):
@@ -261,14 +297,10 @@ def test_reordering_stages_carries_what_was_handed_in(api_client, board):
     membership_id = _claim(api_client, board, task_id)
     _submit(api_client, board, task_id, membership_id, 0, ["需求"])
 
+    first, second = _read(api_client, board, task_id)["stages"]
     swapped = api_client.patch(
         f"/tasks/{task_id}",
-        json={
-            "stages": [
-                {**STAGES[1], "previousIndex": 1},
-                {**STAGES[0], "previousIndex": 0},
-            ]
-        },
+        json={"stages": [second, first]},
         headers=_headers(board["teacher"]),
     )
     assert swapped.status_code == 200, swapped.text
@@ -289,9 +321,10 @@ def test_a_stage_holding_submissions_cannot_be_dropped(api_client, board):
     membership_id = _claim(api_client, board, task_id)
     _submit(api_client, board, task_id, membership_id, 0, ["需求"])
 
+    _, second = _read(api_client, board, task_id)["stages"]
     dropped = api_client.patch(
         f"/tasks/{task_id}",
-        json={"stages": [{**STAGES[1], "previousIndex": 1}]},
+        json={"stages": [second]},
         headers=_headers(board["teacher"]),
     )
     assert dropped.status_code == 400, dropped.text
@@ -333,3 +366,160 @@ def test_a_task_without_stages_is_one_stage(api_client, board):
     assert progress["stages"] == []
     assert progress["mine"]["stages"] == ["PENDING_REVIEW"]
     assert _completion(api_client, board, task_id, membership_id) == "PENDING_REVIEW"
+
+
+def test_the_first_stage_added_to_a_task_with_hand_ins_takes_them(api_client, board):
+    """Before it had stages the task was one stage; the first stage it gets is
+    that stage, whatever the writer says about where it came from."""
+    task_id = _publish(
+        api_client,
+        board,
+        stages=[],
+        submissionSchema=[{"prompt": "代码", "type": "TEXT"}],
+        rubric=[],
+    )
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, 0, ["hello"]))
+
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "stages": [
+                {"id": None, "name": "第一阶段", "description": "", "dueAt": None},
+                {"id": None, "name": "第二阶段", "description": "", "dueAt": None},
+            ],
+            "submissionSchema": [
+                {"prompt": "代码", "type": "TEXT", "stage": 0},
+                {"prompt": "报告", "type": "TEXT", "stage": 1},
+            ],
+        },
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "PENDING_REVIEW",
+        "NOT_SUBMITTED",
+    ]
+
+
+def _cheese_edits(api_client, board, task_id, stages) -> int:
+    """芝士 writes the stages into the task's changes draft, then saves them."""
+    teacher = board["teacher"]
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "stages": stages},
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    return api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": written.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+
+
+def _as_written(stage: dict) -> dict:
+    """A stage as the draft view shows it to 芝士, in its words."""
+    return {
+        "id": stage["id"],
+        "name": stage["name"],
+        "description": stage["description"],
+    }
+
+
+def test_a_stage_reordered_through_a_draft_keeps_its_hand_ins(api_client, board):
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, 0, ["需求"]))
+    first, second = _read(api_client, board, task_id)["stages"]
+
+    saved = _cheese_edits(
+        api_client, board, task_id, [_as_written(second), _as_written(first)]
+    )
+    assert saved.status_code == 200, saved.text
+    assert [s["name"] for s in _read(api_client, board, task_id)["stages"]] == [
+        "实现",
+        "需求分析",
+    ]
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "NOT_SUBMITTED",
+        "PENDING_REVIEW",
+    ]
+
+
+def test_a_stage_dropped_through_a_draft_while_it_holds_hand_ins_is_refused(
+    api_client, board
+):
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, 0, ["需求"]))
+    _, second = _read(api_client, board, task_id)["stages"]
+
+    saved = _cheese_edits(api_client, board, task_id, [_as_written(second)])
+    assert saved.status_code == 400, saved.text
+    assert saved.json()["error"]["i18n"]["key"] == "stageHasSubmissions"
+    assert len(_read(api_client, board, task_id)["stages"]) == 2
+    assert _progress(api_client, board["student"], task_id)["mine"]["stages"] == [
+        "PENDING_REVIEW",
+        "NOT_SUBMITTED",
+    ]
+
+
+def test_an_earlier_stage_still_waits_in_the_queue_after_a_later_one_is_reviewed(
+    api_client, board
+):
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    _id(_submit(api_client, board, task_id, membership_id, 0, ["需求"]))
+    later = _submit(api_client, board, task_id, membership_id, 1, ["代码", "说明"])
+    _review(api_client, board, task_id, membership_id, _id(later), True)
+
+    waiting = api_client.get("/awaiting-me", headers=_headers(board["teacher"]))
+    assert waiting.status_code == 200, waiting.text
+    queued = [
+        item
+        for item in waiting.json()["data"]["data"]
+        if item["kind"] == "task_queue" and item["taskId"] == task_id
+    ]
+    assert [item["reviews"] for item in queued] == [1]
+
+
+def test_a_stage_added_past_its_due_date_unpasses_a_finished_claim(api_client, board):
+    """Both stages passed; the publisher adds a third that is already due. The
+    claim can no longer finish, and what it reads says so at once."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    first = _submit(api_client, board, task_id, membership_id, 0, ["需求"])
+    _review(api_client, board, task_id, membership_id, _id(first), True)
+    second = _submit(api_client, board, task_id, membership_id, 1, ["代码", "说明"])
+    _review(api_client, board, task_id, membership_id, _id(second), True)
+    assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"
+
+    stages = _read(api_client, board, task_id)["stages"]
+    late = {"id": None, "name": "答辩", "description": "", "dueAt": _ms(-1)}
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [*stages, late]},
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _completion(api_client, board, task_id, membership_id) == "FAILED"
+
+
+def test_dropping_the_stage_a_claim_had_left_finishes_it(api_client, board):
+    """The first stage passed and the second is empty; the publisher drops the
+    second. Every stage the task has is passed, and the claim reads so."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    first = _submit(api_client, board, task_id, membership_id, 0, ["需求"])
+    _review(api_client, board, task_id, membership_id, _id(first), True)
+    assert _completion(api_client, board, task_id, membership_id) == "NOT_SUBMITTED"
+
+    kept, _ = _read(api_client, board, task_id)["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [kept]},
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _completion(api_client, board, task_id, membership_id) == "SUCCESS"

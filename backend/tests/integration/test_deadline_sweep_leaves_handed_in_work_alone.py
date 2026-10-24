@@ -15,6 +15,7 @@ to answer: is there a submission here whose review is absent (still queued) or
 accepted (passed)? If so, leave the membership alone.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -252,10 +253,11 @@ async def test_a_sent_back_membership_that_resubmitted_is_not_failed(db_factory)
     assert await _status(db_factory, membership_id) == REJECTED_RESUBMITTABLE
 
 
-async def _staged_claim(factory, *, first_stage: str | None) -> int:
+async def _staged_claim(factory, *, first_stage: str | None, approved: int = 0) -> int:
     """A claim on a two-stage task whose first stage was due yesterday and
     whose own deadline is a week away; ``first_stage`` is what it handed in
-    for that stage (as ``_claim``'s ``handed_in``)."""
+    for that stage (as ``_claim``'s ``handed_in``). ``approved``: 0 approved,
+    1 rejected, 2 still waiting."""
     async with factory() as session:
         now = datetime.now(UTC)
         task = Task(
@@ -279,9 +281,9 @@ async def _staged_claim(factory, *, first_stage: str | None) -> int:
             task_id=task.id,
             member_id=1,
             is_team=False,
-            approved=0,
+            approved=approved,
             completion_status=NOT_SUBMITTED,
-            deadline=now + timedelta(days=7),
+            deadline=now + timedelta(days=7) if approved == 0 else None,
             created_at=now,
             updated_at=now,
         )
@@ -331,15 +333,34 @@ async def test_a_stage_handed_in_before_its_due_date_is_not_failed(db_factory):
     assert await _status(db_factory, queued) == NOT_SUBMITTED
 
 
+async def test_a_stage_running_out_fails_no_application_that_was_not_approved(
+    db_factory,
+):
+    """A pending or rejected application hands nothing in, so a stage closing
+    does not fail it — and an application approved later starts unfailed."""
+    pending = await _staged_claim(db_factory, first_stage=None, approved=2)
+    rejected = await _staged_claim(db_factory, first_stage=None, approved=1)
+
+    assert await _sweep(db_factory) == 0
+    assert await _status(db_factory, pending) == NOT_SUBMITTED
+    assert await _status(db_factory, rejected) == NOT_SUBMITTED
+
+
 async def test_the_sweep_reaches_every_claim_however_many_pages(
     db_factory, monkeypatch
 ):
-    """Past one page of candidates, including candidates it leaves alone."""
+    """Past one page of candidates, including a whole page of candidates it
+    leaves alone: a sweep that paged from the start again would read that page
+    forever, so it has to finish in time."""
     monkeypatch.setattr(deadline_scheduler, "PAGE_SIZE", 2)
-    kept = await _claim(db_factory, status=NOT_SUBMITTED, handed_in="unreviewed")
+    kept = [
+        await _claim(db_factory, status=NOT_SUBMITTED, handed_in="unreviewed")
+        for _ in range(2)
+    ]
     empty = [await _claim(db_factory, status=NOT_SUBMITTED) for _ in range(5)]
 
-    assert await _sweep(db_factory) == 5
+    assert await asyncio.wait_for(_sweep(db_factory), timeout=30) == 5
     for membership_id in empty:
         assert await _status(db_factory, membership_id) == FAILED
-    assert await _status(db_factory, kept) == NOT_SUBMITTED
+    for membership_id in kept:
+        assert await _status(db_factory, membership_id) == NOT_SUBMITTED

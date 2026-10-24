@@ -226,11 +226,9 @@ export function useTaskForm(
   const rubricMissingName = ref(false)
   watch(rubric, () => (rubricMissingName.value = false), { deep: true })
 
-  // 阶段：改题时每个阶段记着它原来是第几个（`previousIndex`），挪了位置，已交的提交
-  // 跟着它走（`app/domain/task/stages.py`）。
-  const stages = ref<TaskStage[]>(
-    (props.initialData?.stages ?? []).map((stage, index) => ({ previousIndex: index, ...stage }))
-  )
+  // 阶段：每个已保存的阶段带着题目给它的 id，挪了位置也带着，已交的提交跟着它走
+  // （`app/domain/task/stages.py`）。
+  const stages = ref<TaskStage[]>((props.initialData?.stages ?? []).map((stage) => ({ ...stage })))
   /** 点过发布后，有没写名称的阶段。 */
   const stageMissingName = ref(false)
   watch(stages, () => (stageMissingName.value = false), { deep: true })
@@ -307,7 +305,7 @@ export function useTaskForm(
         name: stage.name.trim(),
         description: stage.description.trim(),
         dueAt: stage.dueAt,
-        previousIndex: stage.previousIndex ?? null,
+        id: stage.id ?? null,
       })),
     }
     emit('submit', submissionData)

@@ -58,14 +58,28 @@ def _one_stage(*verdicts):
     )
 
 
-def test_a_stage_stands_where_its_latest_version_stands():
-    """退回后重交是「待批改」；通过之后又交了一版，等的是那一版的批改。"""
+def test_the_named_tiers_are_what_the_cards_show():
+    """一个阶段的各版：任一版判过就是「通过」，后来的一版不把它抹掉；退回后重交是
+    「待批改」。不分阶段的题就是这一个阶段，所以这也是卡片那格的四档。"""
     assert _one_stage() == [STAGE_NOT_SUBMITTED]
     assert _one_stage(False) == [STAGE_REJECTED]
     assert _one_stage(True) == [STAGE_PASSED]
+    assert _one_stage(None) == [STAGE_PENDING_REVIEW]
     assert _one_stage(False, None) == [STAGE_PENDING_REVIEW]
     assert _one_stage(False, True) == [STAGE_PASSED]
-    assert _one_stage(True, None) == [STAGE_PENDING_REVIEW]
+    assert _one_stage(True, None) == [STAGE_PASSED]
+    assert _one_stage(True, False) == [STAGE_PASSED]
+    assert claim_state(_one_stage(True, None)) == CLAIM_PASSED
+    assert claim_state(_one_stage(False, None)) == CLAIM_SUBMITTED
+    assert claim_state(_one_stage(False)) == CLAIM_REJECTED
+    assert claim_state(_one_stage()) == CLAIM_IN_PROGRESS
+
+
+def test_a_passed_stage_stays_passed_past_the_deadline():
+    """通过之后又交了一版、那一版被退回、截止也过了：交出去并被认下来的那一版还在，
+    这条领取仍是 SUCCESS，不会被清扫判成 FAILED。"""
+    states = _one_stage(True, False)
+    assert completion_status_for(states, out_of_time=True) == COMPLETION_STATUS_SUCCESS
 
 
 def test_a_claim_passes_only_when_every_stage_has():

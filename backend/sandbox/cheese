@@ -1308,7 +1308,8 @@ TASK_WRITE_DESCRIPTION = (
     "description_edits 只改详情里的几处（每项 find 是原文里恰好出现一次的一段，"
     "replace 是换成的文字），不要为了改一句重写整篇；submission 学生要交的东西；"
     "rubric 评分要点；rubric_public 评分要点是否对学生可见；stages 阶段，按顺序列出"
-    "每个阶段的名称、要求和截止时间（due，格式同 deadline），不分阶段就不给；"
+    "每个阶段的名称、要求和截止时间（due，格式同 deadline），整组替换，不分阶段就不给；"
+    "草稿里已有的阶段带上它的 id（调整先后、改名都带着），已经有人交过的阶段去掉会被拒；"
     "分了阶段时 submission 和 rubric 的每一项用 stage 写它属于第几个阶段（从 1 数）；"
     "form 个人或团队；"
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
@@ -1393,6 +1394,10 @@ TASK_WRITE_FIELDS = {
         "items": {
             "type": "object",
             "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "已有阶段的 id，照草稿里写的带上；新阶段不写",
+                },
                 "name": {"type": "string", "description": "阶段名称，不超过 64 字"},
                 "description": {"type": "string", "description": "这个阶段要做到什么"},
                 "due": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是不设截止"),

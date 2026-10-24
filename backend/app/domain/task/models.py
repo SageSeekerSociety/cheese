@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -224,15 +226,23 @@ class TaskSubmissionSchemaEntry(Base):
     )
 
 
+def new_stage_key() -> str:
+    """A stage's id: stable for the stage's life, unique within its task."""
+    return secrets.token_hex(6)
+
+
 class TaskStage(Base):
     """One stage of a task, as its publisher set it: a name, what it asks for,
     and when it is due. A task's submission items and rubric lines each belong
     to a stage, and a claim hands work in stage by stage; a stage is done when
-    its latest submission is accepted (``submission_state``). A task without
+    one of its submissions is accepted (``submission_state``). A task without
     rows here is one implicit stage, due by the claim's own deadline. Replaced
     as a whole, like the submission form (``app.domain.task.stages``)."""
 
     __tablename__ = "task_stages"
+    __table_args__ = (
+        UniqueConstraint("task_id", "key", name="uq_task_stages_task_id_key"),
+    )
 
     task_id: Mapped[int] = mapped_column(
         "task_id",
@@ -241,6 +251,11 @@ class TaskStage(Base):
         primary_key=True,
     )
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    # The stage's id, stable across reorders: what a writer sends back so the
+    # submissions under a stage follow it (``stages.replace_stages``).
+    key: Mapped[str] = mapped_column(
+        "key", String(16), nullable=False, default=lambda: new_stage_key()
+    )
     name: Mapped[str] = mapped_column("name", String(64), nullable=False)
     description: Mapped[str] = mapped_column(
         "description", Text, nullable=False, default=""

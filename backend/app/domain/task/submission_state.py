@@ -1,12 +1,14 @@
 """完成状态这条轴：口径写在这里，推进也写在这里。
 
 一道题分成若干阶段（``app.domain.task.stages``；不设阶段就是一个阶段），每个阶段
-单独提交、单独批改。**一个阶段走到哪一步，看它最新的那一版提交**：
+单独提交、单独批改。**一个阶段走到哪一步，看它所有的 live 提交**，按这个优先级：
 
-- 一版没交                                   → ``NOT_SUBMITTED``（未提交）
-- 最新一版的评审还没写                       → ``PENDING_REVIEW``（待批改）
-- 最新一版有一份评审判了通过                 → ``PASSED``（已通过）
-- 最新一版的评审都判了退回                   → ``REJECTED``（被退回）
+- 有一版的一份评审判了通过                   → ``PASSED``（已通过）
+- 否则有一版的评审还没写                     → ``PENDING_REVIEW``（待批改）
+- 否则交过、每一版都被退回                   → ``REJECTED``（被退回）
+- 否则（一版没交）                           → ``NOT_SUBMITTED``（未提交）
+
+不分阶段的题就是一个阶段，所以这四条也就是没有阶段以前的那份口径。
 
 ``TaskMembership.completion_status`` 回答的是「这条领取走到哪一步了」，由各阶段的
 状态推出来，不是记下来的：
@@ -27,7 +29,8 @@
 推出 ``FAILED`` 才写，所以两边不会来回打架。
 
 每一处能改变答案的写入都调用 :func:`refresh_completion_status`：建提交、改提交、
-建评审、改评审、删评审，以及一次性的存量回填。**没有任何地方手写一个状态值。**
+建评审、改评审、删评审、改题目的阶段（:func:`refresh_task_claims`），以及一次性的
+存量回填。**没有任何地方手写一个状态值。**
 
 同一份优先级还有第二种粒度：板上的题卡片只问「我这条领取走到哪了」，取值那套见下面
 的 :func:`claim_state`。它不看时限那一档，别的与上面逐条对齐，且顺序由
@@ -80,26 +83,28 @@ class HandedIn:
 
 
 def stage_states(handed_in: Iterable[HandedIn], count: int) -> list[str]:
-    """每个阶段现在的状态，按它最新那一版（版本号最大）的判决。指向一个题目已经
-    没有的阶段的提交不算。"""
-    latest: dict[int, HandedIn] = {}
+    """每个阶段现在的状态，按它每一版 live 提交的判决。指向一个题目已经没有的阶段的
+    提交不算。
+
+    排的是优先级，不是「最新那一版」：任一版通过，这个阶段就是「已通过」—— 交出去
+    并被认下来的东西不会被后来的一版抹掉；否则有一版还没判就是「待批改」；否则交过
+    而都被退回是「被退回」。退回之后重交是新的一版，旧的那版带着退回的评审还在。
+    """
+    verdicts: dict[int, list[bool | None]] = {}
     for row in handed_in:
-        if not 0 <= row.stage < count:
-            continue
-        seen = latest.get(row.stage)
-        if seen is None or row.version > seen.version:
-            latest[row.stage] = row
+        if 0 <= row.stage < count:
+            verdicts.setdefault(row.stage, []).append(row.verdict)
     states = []
     for index in range(count):
-        row = latest.get(index)
-        if row is None:
-            states.append(STAGE_NOT_SUBMITTED)
-        elif row.verdict is None:
-            states.append(STAGE_PENDING_REVIEW)
-        elif row.verdict:
+        rows = verdicts.get(index, [])
+        if any(v is True for v in rows):
             states.append(STAGE_PASSED)
-        else:
+        elif any(v is None for v in rows):
+            states.append(STAGE_PENDING_REVIEW)
+        elif rows:
             states.append(STAGE_REJECTED)
+        else:
+            states.append(STAGE_NOT_SUBMITTED)
     return states
 
 
@@ -293,7 +298,8 @@ async def derive_completion_status(
         out_of_time=out_of_time(
             states,
             claim_deadline=membership.deadline,
-            stage_dues=[s.due_at for s in stages],
+            # Only an approved claim hands work in, so only it can miss a stage.
+            stage_dues=[s.due_at for s in stages] if membership.approved == 0 else [],
             moment=now or datetime.now(UTC),
         ),
     )
@@ -321,6 +327,31 @@ async def refresh_completion_status(
         session.add(membership)
         await session.flush()
     return status
+
+
+async def refresh_task_claims(
+    session: AsyncSession, task_id: int, *, now: datetime | None = None
+) -> None:
+    """重推这道题每条领取的完成状态。
+
+    题目的阶段一变（加、删、挪、改截止），每条领取推出来的答案都可能跟着变：多了一个
+    已过截止的阶段，原来的 SUCCESS 就不再成立；删掉一个空着的阶段，原来的「未提交」
+    就成了 SUCCESS。改阶段的那一次写入在落库之后调它，和提交、评审一样在同一个事务里。
+    """
+    claims = (
+        (
+            await session.execute(
+                select(TaskMembership).where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for membership in claims:
+        await refresh_completion_status(session, membership, now=now)
 
 
 async def refresh_completion_status_for_submission(

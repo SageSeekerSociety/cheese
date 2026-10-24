@@ -4,15 +4,15 @@ import { describe, expect, it } from 'vitest'
 
 import { addStage, moveStage, removeStage } from './taskStages'
 
-const stage = (name: string, previousIndex: number | null = null) => ({
+const stage = (name: string, id: string | null = null) => ({
+  id,
   name,
   description: '',
   dueAt: null,
-  previousIndex,
 })
 
 const form = (): StagedForm => ({
-  stages: [stage('一', 0), stage('二', 1), stage('三', 2)],
+  stages: [stage('一', 'a1'), stage('二', 'b2'), stage('三', 'c3')],
   items: [
     { prompt: 'a', type: 'FILE', stage: 0 },
     { prompt: 'b', type: 'FILE', stage: 1 },
@@ -48,18 +48,18 @@ describe('发题表单里的阶段', () => {
   })
 
   it('删掉最后剩下的阶段，题目回到不分阶段，提交项留下', () => {
-    const one = { stages: [stage('一', 0)], items: [{ prompt: 'a', type: 'FILE' as const, stage: 0 }], rubric: [] }
+    const one = { stages: [stage('一', 'a1')], items: [{ prompt: 'a', type: 'FILE' as const, stage: 0 }], rubric: [] }
 
     expect(removeStage(one, 0)).toEqual({ ...one, stages: [] })
   })
 
-  it('调整先后，阶段的提交项和评分要点跟着走，它原来的位置也跟着走', () => {
+  it('调整先后，阶段的提交项和评分要点跟着走，它的 id 也跟着走', () => {
     const next = moveStage(form(), 2, 1)
 
-    expect(next.stages.map((s) => [s.name, s.previousIndex])).toEqual([
-      ['一', 0],
-      ['三', 2],
-      ['二', 1],
+    expect(next.stages.map((s) => [s.name, s.id])).toEqual([
+      ['一', 'a1'],
+      ['三', 'c3'],
+      ['二', 'b2'],
     ])
     expect(next.items.find((i) => i.prompt === 'c')?.stage).toBe(1)
     expect(next.items.find((i) => i.prompt === 'b')?.stage).toBe(2)

@@ -115,8 +115,8 @@ def stages_section(stages: Sequence[StageProgress]) -> str | None:
             lines.append("   " + stage.description.replace("\n", "\n   "))
     return (
         "## 这道题的阶段\n"
-        "这个项目来自一道分阶段的题目：按阶段提交，每个阶段单独批改，一个阶段最新"
-        "的提交被采纳，这个阶段就完成；过了截止的阶段不再收提交。各阶段现在的状态：\n"
+        "这个项目来自一道分阶段的题目：按阶段提交，每个阶段单独批改，一个阶段有一版"
+        "被采纳，这个阶段就完成；过了截止的阶段不再收提交。各阶段现在的状态：\n"
         + "\n".join(lines)
     )
 

@@ -16,7 +16,7 @@ const stageOf = (entry: { stage?: number }) => entry.stage ?? 0
 
 /** 加一个阶段，排在最后。从「不分阶段」加第一个时，已有的提交项和评分要点都归它。 */
 export function addStage(form: StagedForm): StagedForm {
-  const stage: TaskStage = { name: '', description: '', dueAt: null, previousIndex: null }
+  const stage: TaskStage = { id: null, name: '', description: '', dueAt: null }
   if (!form.stages.length) return { ...form, stages: [stage] }
   const index = form.stages.length
   return {

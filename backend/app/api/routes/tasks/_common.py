@@ -161,7 +161,7 @@ class PatchTaskRequest(BaseModel):
     # 评分要点：给了就整份替换，省略不动。
     rubric: list[dict] | None = None
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
-    # 阶段：给了就整份替换，省略不动；每个阶段可带 ``previousIndex`` 说它原来是第几个。
+    # 阶段：给了就整份替换，省略不动；已有的阶段带回它的 ``id``，提交跟着它走。
     stages: list[dict] | None = None
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(

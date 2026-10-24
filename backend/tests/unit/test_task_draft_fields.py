@@ -120,7 +120,7 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
         {
             "stages": [
                 {"name": "需求分析", "description": "交需求", "due": "2026-11-01"},
-                {"name": "实现"},
+                {"id": "a1b2c3", "name": "实现"},
             ],
             "submission": [
                 {"name": "需求文档", "kind": "文字", "stage": 1},
@@ -136,14 +136,17 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
     # The last minute of 1 November in Shanghai.
     assert fields["stages"][0]["dueAt"] == 1793548740000
     assert fields["stages"][1]["dueAt"] is None
+    # A stage the task already has keeps its id, so its hand-ins follow it.
+    assert [s["id"] for s in fields["stages"]] == [None, "a1b2c3"]
     assert [e["stage"] for e in fields["submissionSchema"]] == [0, 1]
     assert fields["rubric"][0]["stage"] == 1
 
     view = drafts.agent_view(
         TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields), SPACE
     )
-    assert "  1. 需求分析｜截止 2026-11-01 23:59｜交需求" in view
+    assert "  1. 需求分析（新阶段）｜截止 2026-11-01 23:59｜交需求" in view
     assert "  - 代码（文件）｜阶段 2" in view
+    assert "  2. 实现（id: a1b2c3）｜截止 不设" in view
 
 
 def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():

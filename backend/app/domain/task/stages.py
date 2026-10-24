@@ -7,11 +7,12 @@ on its own (``submission_state``). A task with no stage rows is one implicit
 stage, index 0, due by the claim's own deadline: everything about it behaves as
 it did before stages existed.
 
-Stages are replaced as a whole, like the submission form. What a submission
-already handed in under a stage must keep pointing at that stage when the
-publisher reorders the list, so each stage sent may say where it was
-(``previousIndex``); a stage that leaves the list while it holds submissions is
-refused, since those submissions would then belong to nothing.
+Stages are replaced as a whole, like the submission form. Each stage has an
+id (``TaskStage.key``) that stays with it however the list is reordered, and a
+writer sends it back with the stage; what a submission already handed in under
+a stage follows the stage by that id. A stage that leaves the list while it
+holds submissions is refused, since those submissions would then belong to
+nothing.
 """
 
 from collections.abc import Sequence
@@ -29,6 +30,7 @@ from app.domain.task.models import (
     TaskStage,
     TaskSubmission,
     TaskSubmissionSchemaEntry,
+    new_stage_key,
 )
 
 #: Stages a task may have. A course splits one piece of work into a handful of
@@ -43,8 +45,9 @@ class StageLine:
     name: str
     description: str
     due_at: datetime | None
-    #: The index this stage had before this write; None for a new stage.
-    previous: int | None
+    #: The stage's id (``TaskStage.key``) when it is one the task already has;
+    #: None for a new stage.
+    key: str | None
 
 
 def stage_count(stages: Sequence[object]) -> int:
@@ -53,18 +56,17 @@ def stage_count(stages: Sequence[object]) -> int:
 
 
 def stage_lines(raw: list[dict]) -> list[StageLine]:
-    """The stages as sent (``{name, description, dueAt, previousIndex}``),
-    checked and trimmed.
+    """The stages as sent (``{id, name, description, dueAt}``), checked and
+    trimmed.
 
-    ``dueAt`` is milliseconds or empty. ``previousIndex`` names the stage's
-    index before this write; a stage sent without the key is taken to be the
-    one at its own position, so a writer that never reorders need not say it,
-    and ``null`` is a new stage. A row with neither a name nor a description is
-    a stage the publisher added and left empty, so it is dropped.
+    ``id`` is the id the task gave the stage (``stages_to_api``); a stage sent
+    without one is new. ``dueAt`` is milliseconds or empty. A row with neither
+    a name nor a description is a stage the publisher added and left empty, so
+    it is dropped.
     """
     lines: list[StageLine] = []
-    claimed: set[int] = set()
-    for position, entry in enumerate(raw):
+    claimed: set[str] = set()
+    for entry in raw:
         name = str(entry.get("name") or "").strip()
         description = str(entry.get("description") or "").strip()
         if not name and not description:
@@ -86,22 +88,14 @@ def stage_lines(raw: list[dict]) -> list[StageLine]:
                 due_at = datetime.fromtimestamp(int(due_raw) / 1000.0, tz=UTC)
             except (TypeError, ValueError, OverflowError, OSError) as exc:
                 raise BadRequestError(say("taskTimeInvalid", field="dueAt")) from exc
-        previous_raw = entry.get("previousIndex", position)
-        previous: int | None = None
-        if previous_raw is not None:
-            try:
-                previous = int(previous_raw)
-            except (TypeError, ValueError):
-                previous = None
-        # Two stages cannot both have been the same one; the second is new.
-        if previous is not None and (previous < 0 or previous in claimed):
-            previous = None
-        if previous is not None:
-            claimed.add(previous)
+        key = str(entry.get("id") or "").strip() or None
+        # Two stages cannot both be the same one; the second is new.
+        if key in claimed:
+            key = None
+        if key is not None:
+            claimed.add(key)
         lines.append(
-            StageLine(
-                name=name, description=description, due_at=due_at, previous=previous
-            )
+            StageLine(name=name, description=description, due_at=due_at, key=key)
         )
     if len(lines) > MAX_STAGES:
         raise BadRequestError(say("stageTooMany", max=MAX_STAGES))
@@ -115,6 +109,7 @@ def ms(moment: datetime | None) -> int | None:
 def stages_to_api(rows: Sequence[TaskStage]) -> list[dict]:
     return [
         {
+            "id": r.key,
             "name": r.name,
             "description": r.description,
             "dueAt": ms(r.due_at),
@@ -163,14 +158,16 @@ async def replace_stages(
     refused, before anything is written."""
     old = await list_stages(session, task_id)
     old_count = stage_count(old)
-    # Where each old stage went. Without stages, the one implicit stage is the
-    # first stage of whatever replaces it, and the reverse.
+    by_key = {stage.key: stage.index for stage in old}
+    # Where each old stage went, by its id. Without stages, the one implicit
+    # stage is the first stage of whatever replaces it, and the reverse.
     moved: dict[int, int] = {}
-    for new_index, line in enumerate(lines):
-        if line.previous is not None and line.previous < old_count:
-            moved[line.previous] = new_index
-    if not lines:
+    if not old or not lines:
         moved = {0: 0}
+    else:
+        for new_index, line in enumerate(lines):
+            if line.key in by_key:
+                moved[by_key[line.key]] = new_index
     gone = [i for i in range(old_count) if i not in moved]
     if gone:
         held = set(
@@ -231,6 +228,7 @@ async def replace_stages(
             TaskStage(
                 task_id=task_id,
                 index=index,
+                key=line.key if line.key in by_key else new_stage_key(),
                 name=line.name,
                 description=line.description,
                 due_at=line.due_at,

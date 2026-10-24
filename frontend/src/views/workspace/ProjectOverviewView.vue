@@ -17,7 +17,7 @@ import type { TaskState } from '@/lib/taskState'
 import type { TaskStage, TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import dayjs from 'dayjs'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
@@ -28,7 +28,6 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
-import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { taskState } from '@/lib/taskState'
@@ -94,6 +93,10 @@ const emit = defineEmits<{
   'all-tasks': []
   'retry-progress': []
 }>()
+
+// Only a project from a staged task shows the timeline, so the overview loads it
+// only then: every other project's first paint does not wait on it.
+const TaskStageTimeline = defineAsyncComponent(() => import('@/components/tasks/TaskStageTimeline.vue'))
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
 

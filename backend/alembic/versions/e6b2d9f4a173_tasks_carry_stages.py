@@ -5,7 +5,7 @@ Revises: c5e8a2d71f46
 Create Date: 2026-10-24
 
 A 题目's 阶段 (`app.domain.task.stages`): one row per stage, in order, with its
-name, what it asks for, and when it is due. Each submission item, each rubric
+id (stable across reorders), name, what it asks for, and when it is due. Each submission item, each rubric
 line and each submission names the stage it belongs to by index. Every
 existing row is in stage 0, and an existing task has no stage rows: a task
 without stages is one implicit stage, so nothing it does changes.
@@ -37,10 +37,12 @@ def upgrade() -> None:
         "task_stages",
         sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("index", sa.Integer(), nullable=False),
+        sa.Column("key", sa.String(16), nullable=False),
         sa.Column("name", sa.String(64), nullable=False),
         sa.Column("description", sa.Text(), nullable=False, server_default=""),
         sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("task_id", "index"),
+        sa.UniqueConstraint("task_id", "key", name="uq_task_stages_task_id_key"),
         sa.ForeignKeyConstraint(
             ["task_id"], ["task.id"], name="fk_task_stages_task_id_task"
         ),

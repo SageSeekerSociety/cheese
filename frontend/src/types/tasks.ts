@@ -68,12 +68,13 @@ export interface TaskRubricLine {
 
 /** 题目的一个阶段（`app/domain/task/stages.py`）：名称、要做到什么、截止时间。 */
 export interface TaskStage {
+  /** 题目给这个阶段的 id，调整先后也不变；新加、还没保存的阶段没有。改题时原样带回去，
+   *  已交的提交跟着它走。 */
+  id?: string | null
   name: string
   description: string
   /** 毫秒时间戳；`null` = 这个阶段不设截止。 */
   dueAt: number | null
-  /** 改题时它原来是第几个（从 0 数），新加的是 `null`：已交的提交跟着阶段走。 */
-  previousIndex?: number | null
 }
 
 /** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。 */

@@ -600,8 +600,10 @@ def _deadline(value, zone: tzinfo) -> int | None:
 
 def _stages(items, zone: tzinfo) -> list[dict]:
     """The stages 芝士 lists, in order: a name, what it asks for, and when it
-    is due on the person's clock. Each is the stage at its own position, as
-    the form keeps it (``app.domain.task.stages``)."""
+    is due on the person's clock. A stage the task already has keeps its
+    ``id`` (as the draft view shows it), so what was handed in under it
+    follows it; one written without an id is a new stage
+    (``app.domain.task.stages``)."""
     out = []
     for item in items or []:
         item = item or {}
@@ -610,6 +612,7 @@ def _stages(items, zone: tzinfo) -> list[dict]:
             continue
         out.append(
             {
+                "id": str(item.get("id") or "").strip() or None,
                 "name": name,
                 "description": str(item.get("description") or "").strip(),
                 "dueAt": _deadline(item.get("due"), zone),
@@ -883,7 +886,9 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
         "stages:" + ("" if stages else " （不分阶段）"),
         *(
-            f"  {n}. {s.get('name')}｜截止 {when(s.get('dueAt')) or '不设'}"
+            f"  {n}. {s.get('name')}"
+            + (f"（id: {s.get('id')}）" if s.get("id") else "（新阶段）")
+            + f"｜截止 {when(s.get('dueAt')) or '不设'}"
             + (f"｜{s.get('description')}" if s.get("description") else "")
             for n, s in enumerate(stages, start=1)
         ),

@@ -432,8 +432,8 @@ describe('发题页：发一道', () => {
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 
     expect(sent().stages).toEqual([
-      { name: '需求分析', description: '交一份需求文档', dueAt: null, previousIndex: null },
-      { name: '实现', description: '', dueAt: null, previousIndex: null },
+      { id: null, name: '需求分析', description: '交一份需求文档', dueAt: null },
+      { id: null, name: '实现', description: '', dueAt: null },
     ])
     expect(sent().submissionSchema).toEqual([
       { prompt: '提交文件', type: 'FILE', stage: 0 },
