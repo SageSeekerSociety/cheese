@@ -217,11 +217,6 @@ class Asked:
         )
 
 
-def about_document(document_id: uuid.UUID) -> Subject:
-    """A question's subject when it is a document."""
-    return OnDocument(document_id)
-
-
 async def credential(
     db: AsyncSession,
     *,
