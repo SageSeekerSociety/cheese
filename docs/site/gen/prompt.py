@@ -289,13 +289,13 @@ MEMORY_OVER_CAP = _Index(
 
 ENVIRONMENT = [
     "- 这台机器：内存 4GB、2 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉。",
-    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat_list` 读。",
+    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat(action=list)` 读。",
 ]
 
 #: Sample texts for injected content are one-liners on purpose: the page splits
 #: blocks at ``## `` and an injected document has headings of its own.
 DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型还在调。"
-#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc_edit`（`document: …`）」。
+#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc(action=edit)`（`document: …`）」。
 OVERVIEW_DOC_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 OVERVIEW_DOC = "要做成：把推荐算法做成一个能演示的原型。时间：11 月 15 日中期答辩前。这阶段不做：线上部署。"
 THREAD = (
@@ -304,7 +304,7 @@ THREAD = (
     "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
     "不摆预览；"
     "要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
-    "`cheese_chat_search` 加 `channel` 搜整个频道。\n\n"
+    "`cheese_chat(action=search)` 加 `channel` 搜整个频道。\n\n"
     "支线挂在主线的这条消息下面：\n"
     "[wangchangxin] @芝士 登录页的错误提示改成红色，手机上也看一下\n\n"
     "这条消息之前，主线上说的是：\n"

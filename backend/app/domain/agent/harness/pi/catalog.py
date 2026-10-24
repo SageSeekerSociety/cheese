@@ -59,13 +59,30 @@ def schemas_of(names: list[str]) -> list[dict]:
     """The table entries ``names`` name, from the room's table or the one for a
     芝士 answering someone (`DELEGATED_TOOLS`), in the order given. An object
     both tables have (`cheese_task`) is the delegated one: these sessions act
-    under the question's credential, and `run_platform_tool` runs it so."""
+    under the question's credential, and `run_platform_tool` runs it so.
+
+    A name may be one verb of an object (`cheese_doc.get`): the session is then
+    handed that object with the verbs it was named with and no others."""
     module = _module()
-    known = {
-        **{tool["name"]: tool for tool in module.PLATFORM_TOOLS.schemas()},
-        **{tool["name"]: tool for tool in module.DELEGATED_TOOLS.schemas()},
-    }
-    return [known[name] for name in names if name in known]
+    tables = (module.DELEGATED_TOOLS, module.PLATFORM_TOOLS)
+    verbs: dict[str, list[str] | None] = {}
+    for name in names:
+        tool, _, verb = name.partition(".")
+        named = verbs.get(tool, [])
+        if not verb:
+            verbs[tool] = None
+        elif named is not None:
+            verbs[tool] = [*named, verb]
+    schemas = []
+    for tool, only in verbs.items():
+        table = next((t for t in tables if tool in t), None)
+        if table is None:
+            continue
+        if only is None:
+            schemas.append(next(s for s in table.schemas() if s["name"] == tool))
+        else:
+            schemas.append(table.narrowed(tool, only))
+    return schemas
 
 
 def is_platform_tool(tool: str) -> bool:

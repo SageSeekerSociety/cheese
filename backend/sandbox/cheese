@@ -138,8 +138,10 @@ class ToolTable:
         #: 一个对象一样工具的那几行，各自的动词（`_object`）：调用时按它查这一个
         #: 动词收哪些参数。它不进清单——清单上只有 MCP 认得的那三个字段。
         self._actions = {t["name"]: t["actions"] for t in tools if "actions" in t}
+        self._summaries = {t["name"]: t["summary"] for t in tools if "actions" in t}
         self._tools = tuple(
-            {key: value for key, value in t.items() if key != "actions"} for t in tools
+            {k: v for k, v in t.items() if k not in ("actions", "summary")}
+            for t in tools
         )
 
     def names(self) -> tuple[str, ...]:
@@ -153,6 +155,19 @@ class ToolTable:
         """The verbs of the tool `name`, each with what it takes; None for a
         tool that does one thing."""
         return self._actions.get(name)
+
+    def narrowed(self, name: str, verbs) -> dict:
+        """The entry for `name` offering only `verbs`: a session that may do
+        some of what an object does (a document's 芝士 reads and edits the
+        document but makes none) is handed a tool that lists no more."""
+        actions = self._actions[name]
+        unknown = [verb for verb in verbs if verb not in actions]
+        if unknown:
+            raise ValueError(f"{name} has no verb {', '.join(unknown)}")
+        row = _object(
+            name, self._summaries[name], {v: actions[v] for v in actions if v in verbs}
+        )
+        return {k: v for k, v in row.items() if k not in ("actions", "summary")}
 
     def __contains__(self, name: object) -> bool:
         return name in self.names()
@@ -180,11 +195,11 @@ def offered_tools(environ=None) -> list[dict]:
     return [row for row in PLATFORM_TOOLS.schemas() if row["name"] != COMPACT_TOOL]
 
 
-#: Which document: one of the project's own, by id (`cheese_doc_list`). Left
+#: Which document: one of the project's own, by id (`cheese_doc(action=list)`). Left
 #: out, the session's own document, or its room's living document.
 _DOCUMENT_ARG = {
     "type": "string",
-    "description": "那份文档的编号（见 cheese_doc_list）；省略就是这里的实况文档",
+    "description": "那份文档的编号（见 cheese_doc(action=list)）；省略就是这里的实况文档",
 }
 
 
@@ -268,6 +283,7 @@ def _object(name: str, description: str, actions: dict) -> dict:
             "required": ["action"],
         },
         "actions": actions,
+        "summary": description,
     }
 
 
@@ -482,16 +498,6 @@ PLATFORM_TOOLS = ToolTable(
             },
         ),
         _tool(
-            "chat_edit",
-            "改你自己在对话里发过的一条消息：整段替换成新的正文，对话里的人实时看到，"
-            "消息标上「已编辑」。只能改自己发的；message_id 是 chat_send 返回的 id。",
-            {
-                "message_id": _text("要改的消息 id"),
-                "content": {"type": "string"},
-            },
-            ["message_id", "content"],
-        ),
-        _tool(
             "todo_write",
             "把步骤清单整份写进对话：第一次调用发一条清单消息，之后每次调用改的是你"
             "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
@@ -530,209 +536,229 @@ PLATFORM_TOOLS = ToolTable(
             },
             ["todos"],
         ),
-        _tool(
-            "cheese_chat_list",
-            "读聊天记录（含结构化消息和表情），默认当前对话最近 50 条，从早到晚。"
-            + _CHAT_READ,
-            {**_CHAT_SCOPE, **_CHAT_PAGE},
-        ),
-        _tool(
-            "cheese_chat_search",
-            "按文字搜聊天记录：对正文、结构化信息和引用做不区分大小写的字面匹配，"
-            "搜范围内全部记录；查不到就缩短关键词或换说法，别断定没说过。"
-            "别处定过的事用 channel 搜整个频道。" + _CHAT_READ,
+        _object(
+            "cheese_chat",
+            "这里的对话：读记录、搜记录、读一条的全文、读一条的回复，改你自己发过的一条。",
             {
-                "query": _text("要匹配的文字，不是正则"),
-                "channel": {
-                    "type": "boolean",
-                    "description": "搜整个频道：主线、所有支线和任务，默认只搜当前对话",
-                },
-                **_CHAT_SCOPE,
-                **_CHAT_PAGE,
-            },
-            ["query"],
-        ),
-        _tool(
-            "cheese_chat_get",
-            "读一条记录的全文（任何类型，含任务卡评论和文档节点）；"
-            "超长的按 offset 续读。" + _CHAT_READ,
-            {
-                "message_id": _text("消息 id"),
-                **_CHAT_SCOPE,
-                "offset": {"type": "integer", "description": "从第几个字开始"},
-                "length": {"type": "integer", "description": "最多读多少字，1..12000"},
-            },
-            ["message_id"],
-        ),
-        _tool(
-            "cheese_chat_replies",
-            "列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 id 再读。"
-            + _CHAT_READ,
-            {"message_id": _text("被回复的消息 id"), **_CHAT_SCOPE, **_CHAT_PAGE},
-            ["message_id"],
-        ),
-        _tool(
-            "cheese_doc_get",
-            "读一份文档，末尾列出还没人处理的修改建议。不给 document 读这里的实况"
-            "文档；给了读编号是它的那一份（编号见 cheese_doc_list）。读到的这一版"
-            "就是接下来 cheese_doc_set 写回所依据的那一版；没读过就写，只有文档还是"
-            "空的时才让你写。",
-            {"document": _DOCUMENT_ARG},
-        ),
-        _tool(
-            "cheese_doc_set",
-            "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
-            "任务开始前也能写。先 cheese_doc_get；期间别人改过会被拒，拒了就重读、"
-            "把别人的改动合进你的正文再写，别原样重试。文档里还有别人留下、还没"
-            "处理的修改建议时也会被拒——先请人处理，或者改用 cheese_doc_edit "
-            "逐处修改。文档标题会渲染成大标题，正文别再用一级标题重复。",
-            {
-                "content": _text("文档的全文，Markdown"),
-                "document": _DOCUMENT_ARG,
-            },
-            ["content"],
-        ),
-        _tool(
-            "cheese_doc_edit",
-            "改一份文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
-            "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
-            "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
-            "用它，不用 cheese_doc_set 整份覆盖。改动直接生效；想先让人看过再定的，"
-            "设 suggest=true，作为建议留在文档里，等人接受或拒绝。建议可以改文字，"
-            "也可以整段增删、把段落改成标题或列表；表格的行和列、分栏里的栏、时间线"
-            "和数据卡里的项不能作为建议增删。"
-            "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
-            "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
-            {
-                "edits": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "old": _text("文档里的原文，只出现一次"),
-                            "new": _text("改成的文字；删掉就给空字符串"),
+                "list": _verb(
+                    "读聊天记录（含结构化消息和表情），默认当前对话最近 50 条，从早到晚。"
+                    + _CHAT_READ,
+                    {**_CHAT_SCOPE, **_CHAT_PAGE},
+                ),
+                "search": _verb(
+                    "按文字搜聊天记录：对正文、结构化信息和引用做不区分大小写的字面匹配，"
+                    "搜范围内全部记录；查不到就缩短关键词或换说法，别断定没说过。"
+                    "别处定过的事用 channel 搜整个频道。" + _CHAT_READ,
+                    {
+                        "query": _text("要匹配的文字，不是正则"),
+                        "channel": {
+                            "type": "boolean",
+                            "description": "搜整个频道：主线、所有支线和任务，默认只搜当前对话",
                         },
-                        "required": ["old", "new"],
+                        **_CHAT_SCOPE,
+                        **_CHAT_PAGE,
                     },
-                },
-                "suggest": {
-                    "type": "boolean",
-                    "description": "只提建议，不直接改",
-                },
-                "reason": _text("为什么改，一句话；作为建议时显示在建议旁边"),
-                "document": _DOCUMENT_ARG,
+                    ["query"],
+                ),
+                "get": _verb(
+                    "读一条记录的全文（任何类型，含任务卡评论和文档节点）；"
+                    "超长的按 offset 续读。" + _CHAT_READ,
+                    {
+                        "message_id": _text("消息 id"),
+                        **_CHAT_SCOPE,
+                        "offset": {"type": "integer", "description": "从第几个字开始"},
+                        "length": {"type": "integer", "description": "最多读多少字，1..12000"},
+                    },
+                    ["message_id"],
+                ),
+                "replies": _verb(
+                    "列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 id 再读。"
+                    + _CHAT_READ,
+                    {"message_id": _text("被回复的消息 id"), **_CHAT_SCOPE, **_CHAT_PAGE},
+                    ["message_id"],
+                ),
+                "edit": _verb(
+                    "改你自己在对话里发过的一条消息：整段替换成新的正文，对话里的人实时看到，"
+                    "消息标上「已编辑」。只能改自己发的；message_id 是 chat_send 返回的 id。",
+                    {
+                        "message_id": _text("要改的消息 id"),
+                        "content": {"type": "string"},
+                    },
+                    ["message_id", "content"],
+                ),
             },
-            ["edits"],
         ),
-        _tool(
-            "cheese_doc_new",
-            "新建一份文档。它留在当前这段对话里：能看到这里的人都能看、能改，资料库里"
-            "没有它；当前对话里会出现这份文档，点开就在对话旁边。有人要一份独立的文档"
-            "（调研、方案、清单）时用它；这里的实况文档用 cheese_doc_set。给 content "
-            "就把它写成第一版。写的是以后还会反复用到的东西（方案、规范、操作说明）时，"
-            "写完问一句要不要保存到资料库，项目里的人在资料库里才找得到它；保存由人在"
-            "文档上点「保存到资料库」，你做不了。一次性的分析、复盘、周报不用问。"
-            "返回文档编号，之后读写都带上 document。",
+        _object(
+            "cheese_doc",
+            "文档：读、整份写、改几处、新建、列出。",
             {
-                "title": _text("文档标题，正文里别再用一级标题重复"),
-                "content": _text("第一版的全文，Markdown；省略就建一份空文档"),
-            },
-            ["title"],
-        ),
-        _tool(
-            "cheese_doc_list",
-            "列出资料库里的文档和你在当前这段对话里建的文档（编号、标题、最近谁改的），"
-            "最近改过的在前。不含各任务的实况文档。",
-        ),
-        _tool(
-            "cheese_app_save",
-            "保存一个小程序，即读者可以直接操作、可以运行的一段程序，可以嵌进文档，也可以发到聊天。"
-            "讲解原理、结果随条件的变化、方案比较、过程推演，或者让读者动手组合时使用；"
-            "练习题只在用户要求或材料是教学用的时使用。小程序属于 document 指定的那份文档，"
-            "能读它的人才能运行。code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
-            "写法和设计规范见 miniapp 技能的 references/apps.md。"
-            "平台先在浏览器中运行一遍；运行报错、页面没有内容、自查（console.assert）未通过，"
-            "或读者操作的控件没有绑定到变量时，不保存，并返回原因。"
-            "不给 app 时新建，返回整个块的写法，由你放进文档或聊天消息；给出 app 时修改该小程序，"
-            "保存为新版本，并同步更新所属文档中的版本号，已发到聊天里的不变。",
-            {
-                "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
-                "title": _text("新建时：小程序的标题，十个字左右"),
-                "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
-                "note": _text("这一版改了什么，一句话"),
-                "document": _DOCUMENT_ARG,
-            },
-            ["code"],
-        ),
-        _tool(
-            "cheese_app_get",
-            "读一个小程序的代码和它有哪些版本。只在要改它时读；文档里那句说明已经"
-            "说了它做什么。",
-            {
-                "app": _text("小程序的短号（文档里 :::app 后面那串）"),
-                "version": {"type": "integer", "description": "第几版；省略读最新一版"},
-            },
-            ["app"],
-        ),
-        _tool(
-            "cheese_canvas_get",
-            "读文档里的一块画布：每个格子的内容和关联的任务、格子之间的连线，按连线排成"
-            "缩进的大纲，格子用编号 [3] 指。人最近改过的格子会注明是谁、什么时候改的，"
-            "改不改它由你判断。画布编号写在文档原文 :::canvas 那一行里。",
-            {
-                "canvas": _text("画布编号"),
-                "positions": {
-                    "type": "boolean",
-                    "description": "也列出每个格子的位置和大小；要挪格子时用",
-                },
-            },
-            ["canvas"],
-        ),
-        _tool(
-            "cheese_canvas_edit",
-            "改一块画布，changes 按顺序生效，有一处做不成就一处都不改。每项一个 op："
-            "add 加格子（content 是一段 Markdown，可以缩进分层；task 关联一个任务；"
-            "ref 给新格子起个名字，同一次里后面的改动用它指这个格子；不给 x、y 就按连线"
-            "自动摆）；update 改格子的 content 或 task（task 给空字符串就取消关联）；"
-            "move 挪格子（x、y 是左上角，可带 width、height）；delete 删格子，连着它的"
-            "线一起删；connect 从 from 连到 to，label 是线上的一句话，可以不写，两个格子"
-            "已经连着就改这句话；disconnect 断开 from 到 to 的线。格子用编号（3）或同一"
-            "次里的 ref 指。格子里写什么、线上写什么由你定，没有固定的种类。",
-            {
-                "canvas": _text("画布编号"),
-                "changes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "op": {
-                                "type": "string",
-                                "enum": [
-                                    "add",
-                                    "update",
-                                    "move",
-                                    "delete",
-                                    "connect",
-                                    "disconnect",
-                                ],
+                "get": _verb(
+                    "读一份文档，末尾列出还没人处理的修改建议。不给 document 读这里的实况"
+                    "文档；给了读编号是它的那一份（编号见 cheese_doc(action=list)）。读到的这一版"
+                    "就是接下来 cheese_doc(action=set) 写回所依据的那一版；没读过就写，只有文档还是"
+                    "空的时才让你写。",
+                    {"document": _DOCUMENT_ARG},
+                ),
+                "set": _verb(
+                    "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
+                    "任务开始前也能写。先 cheese_doc(action=get)；期间别人改过会被拒，拒了就重读、"
+                    "把别人的改动合进你的正文再写，别原样重试。文档里还有别人留下、还没"
+                    "处理的修改建议时也会被拒——先请人处理，或者改用 cheese_doc(action=edit) "
+                    "逐处修改。文档标题会渲染成大标题，正文别再用一级标题重复。",
+                    {
+                        "content": _text("文档的全文，Markdown"),
+                        "document": _DOCUMENT_ARG,
+                    },
+                    ["content"],
+                ),
+                "edit": _verb(
+                    "改一份文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
+                    "原文 old（照 cheese_doc(action=get) 读到的 Markdown 原样抄，要在文档里只出现"
+                    "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
+                    "用它，不用 cheese_doc(action=set) 整份覆盖。改动直接生效；想先让人看过再定的，"
+                    "设 suggest=true，作为建议留在文档里，等人接受或拒绝。建议可以改文字，"
+                    "也可以整段增删、把段落改成标题或列表；表格的行和列、分栏里的栏、时间线"
+                    "和数据卡里的项不能作为建议增删。"
+                    "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
+                    "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
+                    {
+                        "edits": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "old": _text("文档里的原文，只出现一次"),
+                                    "new": _text("改成的文字；删掉就给空字符串"),
+                                },
+                                "required": ["old", "new"],
                             },
-                            "card": _text("要改、挪、删的格子：编号或 ref"),
-                            "ref": _text("add：新格子的名字"),
-                            "content": _text("add、update：格子里的 Markdown"),
-                            "task": _text("add、update：关联的任务编号；空字符串取消"),
-                            "x": {"type": "number", "description": "左上角横坐标"},
-                            "y": {"type": "number", "description": "左上角纵坐标"},
-                            "width": {"type": "number", "description": "宽，像素"},
-                            "height": {"type": "number", "description": "高，像素"},
-                            "from": _text("connect、disconnect：起点格子"),
-                            "to": _text("connect、disconnect：终点格子"),
-                            "label": _text("connect：线上的一句话"),
                         },
-                        "required": ["op"],
+                        "suggest": {
+                            "type": "boolean",
+                            "description": "只提建议，不直接改",
+                        },
+                        "reason": _text("为什么改，一句话；作为建议时显示在建议旁边"),
+                        "document": _DOCUMENT_ARG,
                     },
-                },
+                    ["edits"],
+                ),
+                "new": _verb(
+                    "新建一份文档。它留在当前这段对话里：能看到这里的人都能看、能改，资料库里"
+                    "没有它；当前对话里会出现这份文档，点开就在对话旁边。有人要一份独立的文档"
+                    "（调研、方案、清单）时用它；这里的实况文档用 cheese_doc(action=set)。给 content "
+                    "就把它写成第一版。写的是以后还会反复用到的东西（方案、规范、操作说明）时，"
+                    "写完问一句要不要保存到资料库，项目里的人在资料库里才找得到它；保存由人在"
+                    "文档上点「保存到资料库」，你做不了。一次性的分析、复盘、周报不用问。"
+                    "返回文档编号，之后读写都带上 document。",
+                    {
+                        "title": _text("文档标题，正文里别再用一级标题重复"),
+                        "content": _text("第一版的全文，Markdown；省略就建一份空文档"),
+                    },
+                    ["title"],
+                ),
+                "list": _verb(
+                    "列出资料库里的文档和你在当前这段对话里建的文档（编号、标题、最近谁改的），"
+                    "最近改过的在前。不含各任务的实况文档。",
+                ),
             },
-            ["canvas", "changes"],
+        ),
+        _object(
+            "cheese_app",
+            "小程序：保存一个，或读它的代码。",
+            {
+                "save": _verb(
+                    "保存一个小程序，即读者可以直接操作、可以运行的一段程序，可以嵌进文档，也可以发到聊天。"
+                    "讲解原理、结果随条件的变化、方案比较、过程推演，或者让读者动手组合时使用；"
+                    "练习题只在用户要求或材料是教学用的时使用。小程序属于 document 指定的那份文档，"
+                    "能读它的人才能运行。code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
+                    "写法和设计规范见 miniapp 技能的 references/apps.md。"
+                    "平台先在浏览器中运行一遍；运行报错、页面没有内容、自查（console.assert）未通过，"
+                    "或读者操作的控件没有绑定到变量时，不保存，并返回原因。"
+                    "不给 app 时新建，返回整个块的写法，由你放进文档或聊天消息；给出 app 时修改该小程序，"
+                    "保存为新版本，并同步更新所属文档中的版本号，已发到聊天里的不变。",
+                    {
+                        "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
+                        "title": _text("新建时：小程序的标题，十个字左右"),
+                        "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
+                        "note": _text("这一版改了什么，一句话"),
+                        "document": _DOCUMENT_ARG,
+                    },
+                    ["code"],
+                ),
+                "get": _verb(
+                    "读一个小程序的代码和它有哪些版本。只在要改它时读；文档里那句说明已经"
+                    "说了它做什么。",
+                    {
+                        "app": _text("小程序的短号（文档里 :::app 后面那串）"),
+                        "version": {"type": "integer", "description": "第几版；省略读最新一版"},
+                    },
+                    ["app"],
+                ),
+            },
+        ),
+        _object(
+            "cheese_canvas",
+            "文档里的画布：读它，改它。",
+            {
+                "get": _verb(
+                    "读文档里的一块画布：每个格子的内容和关联的任务、格子之间的连线，按连线排成"
+                    "缩进的大纲，格子用编号 [3] 指。人最近改过的格子会注明是谁、什么时候改的，"
+                    "改不改它由你判断。画布编号写在文档原文 :::canvas 那一行里。",
+                    {
+                        "canvas": _text("画布编号"),
+                        "positions": {
+                            "type": "boolean",
+                            "description": "也列出每个格子的位置和大小；要挪格子时用",
+                        },
+                    },
+                    ["canvas"],
+                ),
+                "edit": _verb(
+                    "改一块画布，changes 按顺序生效，有一处做不成就一处都不改。每项一个 op："
+                    "add 加格子（content 是一段 Markdown，可以缩进分层；task 关联一个任务；"
+                    "ref 给新格子起个名字，同一次里后面的改动用它指这个格子；不给 x、y 就按连线"
+                    "自动摆）；update 改格子的 content 或 task（task 给空字符串就取消关联）；"
+                    "move 挪格子（x、y 是左上角，可带 width、height）；delete 删格子，连着它的"
+                    "线一起删；connect 从 from 连到 to，label 是线上的一句话，可以不写，两个格子"
+                    "已经连着就改这句话；disconnect 断开 from 到 to 的线。格子用编号（3）或同一"
+                    "次里的 ref 指。格子里写什么、线上写什么由你定，没有固定的种类。",
+                    {
+                        "canvas": _text("画布编号"),
+                        "changes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "op": {
+                                        "type": "string",
+                                        "enum": [
+                                            "add",
+                                            "update",
+                                            "move",
+                                            "delete",
+                                            "connect",
+                                            "disconnect",
+                                        ],
+                                    },
+                                    "card": _text("要改、挪、删的格子：编号或 ref"),
+                                    "ref": _text("add：新格子的名字"),
+                                    "content": _text("add、update：格子里的 Markdown"),
+                                    "task": _text("add、update：关联的任务编号；空字符串取消"),
+                                    "x": {"type": "number", "description": "左上角横坐标"},
+                                    "y": {"type": "number", "description": "左上角纵坐标"},
+                                    "width": {"type": "number", "description": "宽，像素"},
+                                    "height": {"type": "number", "description": "高，像素"},
+                                    "from": _text("connect、disconnect：起点格子"),
+                                    "to": _text("connect、disconnect：终点格子"),
+                                    "label": _text("connect：线上的一句话"),
+                                },
+                                "required": ["op"],
+                            },
+                        },
+                    },
+                    ["canvas", "changes"],
+                ),
+            },
         ),
         _object(
             "cheese_task",
@@ -906,16 +932,6 @@ PLATFORM_TOOLS = ToolTable(
             },
         ),
         _tool(
-            "cheese_title",
-            f"给本频道或本任务改名，{TITLE_WIDTH_NOTE}。频道的名字由人起，"
-            "有人明确要你改时才用。"
-            "在任务的对话里，它给这个任务起名：平台会自己给没名字的任务起名、"
-            "方向变了再改，所以只在有人明确要你改名，或提示里要你起名"
-            "（平台暂时不能起名）时用。",
-            {"text": _text("标题")},
-            ["text"],
-        ),
-        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个频道名册上的人（不含芝士），不是项目里所有人。"
@@ -971,9 +987,23 @@ PLATFORM_TOOLS = ToolTable(
             {"page": _text("页名或链接，如 accept、/docs/accept#is-merge、dev/turn")},
             ["page"],
         ),
-        _tool(
-            "cheese_members",
-            "列出当前频道可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
+        _object(
+            "cheese_room",
+            "这个频道或任务：列可点名的成员，改它的名字。",
+            {
+                "members": _verb(
+                    "列出当前频道可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
+                ),
+                "rename": _verb(
+                    f"给本频道或本任务改名，{TITLE_WIDTH_NOTE}。频道的名字由人起，"
+                    "有人明确要你改时才用。"
+                    "在任务的对话里，它给这个任务起名：平台会自己给没名字的任务起名、"
+                    "方向变了再改，所以只在有人明确要你改名，或提示里要你起名"
+                    "（平台暂时不能起名）时用。",
+                    {"text": _text("标题")},
+                    ["text"],
+                ),
+            },
         ),
         _tool(
             "cheese_status",
@@ -1579,16 +1609,16 @@ DELEGATED_TOOLS = ToolTable(
             ["ref"],
         ),
         _tool(
-            "cheese_message_send",
+            "chat_send",
             "以用户的名义发一条消息到一个频道或任务（where 给它的编号，如 "
             "ml-course/channels/3）。是用户要发的就直接发出；否则不发，结果写明原因和"
             "接下来怎么办。照实告诉用户，没发出的不要说发了。",
             {
                 "where": _text("频道或任务的编号"),
-                "text": _text("消息正文，用户的口吻，Markdown"),
+                "content": _text("消息正文，用户的口吻，Markdown"),
                 "confirm": _CONFIRM,
             },
-            ["where", "text"],
+            ["where", "content"],
         ),
         _object(
             "cheese_task",
@@ -1641,33 +1671,37 @@ DELEGATED_TOOLS = ToolTable(
             },
             ["ref", "choice"],
         ),
-        _tool(
-            "cheese_member_set",
-            "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle 或名字。"
-            "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
-            "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
-            "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
+        _object(
+            "cheese_room",
+            "项目和频道：以用户的名义建频道、管成员。",
             {
-                "where": _text("项目短名或频道编号"),
-                "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
-                "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
-                "remove": {"type": "boolean"},
-                "confirm": _CONFIRM,
+                "create": _verb(
+                    "以用户的名义在一个项目里建频道（where 给项目短名）：名称、说明，"
+                    "members_only 为 true 是只有成员看得到的私密频道。",
+                    {
+                        "where": _text("项目短名"),
+                        "title": _text("频道名称"),
+                        "text": _text("频道说明"),
+                        "members_only": {"type": "boolean"},
+                        "confirm": _CONFIRM,
+                    },
+                    ["where", "title"],
+                ),
+                "member": _verb(
+                    "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle 或名字。"
+                    "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
+                    "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
+                    "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
+                    {
+                        "where": _text("项目短名或频道编号"),
+                        "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
+                        "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
+                        "remove": {"type": "boolean"},
+                        "confirm": _CONFIRM,
+                    },
+                    ["where", "who"],
+                ),
             },
-            ["where", "who"],
-        ),
-        _tool(
-            "cheese_channel_create",
-            "以用户的名义在一个项目里建频道（where 给项目短名）：名称、说明，"
-            "members_only 为 true 是只有成员看得到的私密频道。",
-            {
-                "where": _text("项目短名"),
-                "title": _text("频道名称"),
-                "text": _text("频道说明"),
-                "members_only": {"type": "boolean"},
-                "confirm": _CONFIRM,
-            },
-            ["where", "title"],
         ),
         _tool(
             "cheese_settings_set",
@@ -1862,25 +1896,19 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "cheese_docs_search",
     "cheese_docs_read",
     # 文档自己有编号（CHEESE_DOCUMENT）；只有话题时，从话题查出它的文档。
-    "cheese_doc_get",
-    "cheese_doc_set",
-    "cheese_doc_edit",
-    # 资料库是项目的，不是话题的。
-    "cheese_doc_new",
-    "cheese_doc_list",
+    # 新建和列出的是项目的资料库，不是话题的。
+    "cheese_doc",
     # 小程序跟着它的文档走。
-    "cheese_app_save",
-    "cheese_app_get",
+    "cheese_app",
     # 画布有自己的编号，跟着它的文档走。
-    "cheese_canvas_get",
-    "cheese_canvas_edit",
+    "cheese_canvas",
     # 压缩这一样动的是这场会话本身，不是哪个话题。
     "cheese_compact",
 }
-_NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
+_NEEDS_DOCUMENT = frozenset({"cheese_doc.get", "cheese_doc.edit"})
 _NEEDS_PROJECT = frozenset(
     {
-        "cheese_doc_list",
+        "cheese_doc.list",
         "cheese_project_search",
         "cheese_memory_read",
         "cheese_notify",
@@ -2046,7 +2074,7 @@ _CANVAS_FIELDS = {
 
 
 def _canvas_change(change) -> dict:
-    """One change of `cheese_canvas_edit` the way the backend reads it."""
+    """One change of `cheese_canvas(action=edit)` the way the backend reads it."""
     if not isinstance(change, dict) or change.get("op") not in _CANVAS_FIELDS:
         raise ValueError(
             "changes 的每一项要有 op：add、update、move、delete、connect、disconnect"
@@ -2152,11 +2180,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     # `tool` is a key: a tool's name, or `<name>.<action>` for one of an
     # object's verbs (`_object`), whose needs are its tool's.
     name = tool.partition(".")[0]
-    if name in _NEEDS_DOCUMENT and not document:
+    if {tool, name} & _NEEDS_DOCUMENT and not document:
         raise ValueError("Missing CHEESE_DOCUMENT")
-    if name in _NEEDS_TOPIC and not topic:
+    if {tool, name} & _NEEDS_TOPIC and not topic:
         raise ValueError("Missing CHEESE_TOPIC")
-    if name in _NEEDS_PROJECT and not project:
+    if {tool, name} & _NEEDS_PROJECT and not project:
         raise ValueError("Missing CHEESE_PROJECT")
     here = f"/topics/{topic}"
     if tool == "platform_request":
@@ -2189,7 +2217,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             **_given(args, "reply_to"),
         }
         return {"method": "POST", "path": here + "/messages", "body": body}
-    if tool == "chat_edit":
+    if tool == "cheese_chat.edit":
         return {
             "method": "PATCH",
             "path": "/blocks/" + urllib.parse.quote(args["message_id"], safe=""),
@@ -2205,9 +2233,9 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                 **_given(args, "result"),
             },
         }
-    if tool == "cheese_doc_get":
+    if tool == "cheese_doc.get":
         return {"method": "GET", "path": f"/documents/{document}"}
-    if tool == "cheese_doc_edit":
+    if tool == "cheese_doc.edit":
         return {
             "method": "POST",
             "path": f"/documents/{document}/edits",
@@ -2291,13 +2319,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_card.ready":
         return {"method": "POST", "path": here + "/ready"}
-    if tool == "cheese_doc_list":
+    if tool == "cheese_doc.list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
-    if tool == "cheese_canvas_get":
+    if tool == "cheese_canvas.get":
         canvas = urllib.parse.quote(str(args["canvas"]).strip(), safe="")
         query = "?positions=true" if args.get("positions") is True else ""
         return {"method": "GET", "path": f"/canvases/{canvas}/text{query}"}
-    if tool == "cheese_canvas_edit":
+    if tool == "cheese_canvas.edit":
         canvas = urllib.parse.quote(str(args["canvas"]).strip(), safe="")
         return {
             "method": "POST",
@@ -2306,7 +2334,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_library_ls":
         return {"method": "GET", "path": f"/projects/{project}/library"}
-    if tool == "cheese_title":
+    if tool == "cheese_room.rename":
         body = {"title": args["text"]}
         return {"method": "POST", "path": here + "/title", "body": body}
     if tool == "cheese_docs_search":
@@ -2653,7 +2681,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": "/agent/skills/read",
             "body": {"name": args["name"], "topic": topic},
         }
-    if tool == "cheese_members":
+    if tool == "cheese_room.members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
     if tool == "cheese_status":
         return {"method": "GET", "path": f"/topics/{topic}/status"}
@@ -2824,8 +2852,12 @@ _CHAT_TEXT_BUDGET = 12000
 _CHAT_PREVIEW = 1500
 
 
-def _chat_call(name: str, **kwargs) -> str:
-    """A continuation the agent can act on, written as the tool call it is."""
+def _chat_call(key: str, **kwargs) -> str:
+    """A continuation the agent can act on, written as the tool call it is:
+    `cheese_chat.get` is `cheese_chat(action="get", …)`."""
+    name, _, action = key.partition(".")
+    if action:
+        kwargs = {"action": action, **kwargs}
     args = ", ".join(
         f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kwargs.items()
     )
@@ -2863,7 +2895,7 @@ def _chat_get(args: dict, host) -> str:
     shown = text[offset:end]
     if end < len(text):
         more = _chat_call(
-            "cheese_chat_get",
+            "cheese_chat.get",
             message_id=args["message_id"],
             offset=end,
             **_chat_scope(args),
@@ -2914,17 +2946,17 @@ def _chat_page(tool: str):
             if args.get(key):
                 params[name] = args[key]
         own: dict = {}
-        if tool == "cheese_chat_search":
+        if tool == "cheese_chat.search":
             params["q"] = own["query"] = args["query"]
             if args.get("channel"):
                 params["channel"] = own["channel"] = "true"
-        elif tool == "cheese_chat_replies":
+        elif tool == "cheese_chat.replies":
             params["reply_to"] = own["message_id"] = args["message_id"]
         path = (
             f"/topics/{urllib.parse.quote(topic, safe='')}/history?"
             + urllib.parse.urlencode(params)
         )
-        if args.get("kind") == "event" and tool != "cheese_chat_replies":
+        if args.get("kind") == "event" and tool != "cheese_chat.replies":
             params.pop("kind", None)
             params["newest"] = "false" if args.get("after") else "true"
             for direction in ("before", "after"):
@@ -2935,7 +2967,7 @@ def _chat_page(tool: str):
                 + urllib.parse.urlencode(params)
             )
         data = host.request({"method": "GET", "path": path})["data"]
-        if args.get("kind") == "event" and tool != "cheese_chat_replies":
+        if args.get("kind") == "event" and tool != "cheese_chat.replies":
             data = {
                 "data": [_chat_record(item) for item in data["items"]],
                 "has_more": data["next"] is not None,
@@ -2945,7 +2977,7 @@ def _chat_page(tool: str):
             text = _chat_message_text(block)
             if len(text) > _CHAT_PREVIEW:
                 more = _chat_call(
-                    "cheese_chat_get", message_id=block["id"], **_chat_scope(args)
+                    "cheese_chat.get", message_id=block["id"], **_chat_scope(args)
                 )
                 text = text[:_CHAT_PREVIEW] + f"\n[Truncated; {more}]"
             return text
@@ -2993,7 +3025,7 @@ def _chat_page(tool: str):
 def _doc_get(args: dict, host) -> str:
     """Reading is what earns the right to write.
 
-    The living doc has no partial write: `cheese_doc_set` replaces the whole
+    The living doc has no partial write: `cheese_doc(action=set)` replaces the whole
     thing, so a write has to say which version it replaces, and that number must
     be EVIDENCE OF A READ rather than something the caller states. An argument
     would let the agent assert a version it only heard about — the platform
@@ -3002,13 +3034,13 @@ def _doc_get(args: dict, host) -> str:
     version exists to stop. So the version this read returned is kept by the
     host, and the write reads it back from there."""
     document = _document(host, args)
-    plan = request_plan("cheese_doc_get", args, {**host.environ, **document})
+    plan = request_plan("cheese_doc.get", args, {**host.environ, **document})
     answer = host.request(plan)
     doc = answer.get("data") or {}
     version = doc.get("doc_version", 0)
     host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
-        return "这份文档还是空的；cheese_doc_set 会写下第一版。"
+        return "这份文档还是空的；cheese_doc(action=set) 会写下第一版。"
     lines = _doc_links(document["CHEESE_DOCUMENT"], host) + [doc["content"]]
     pending = doc.get("pending_suggestions") or []
     if pending:
@@ -3055,7 +3087,7 @@ _EDIT_NEXT = {
 
 def _doc_edit(args: dict, host) -> str:
     document = _document(host, args)
-    plan = request_plan("cheese_doc_edit", args, {**host.environ, **document})
+    plan = request_plan("cheese_doc.edit", args, {**host.environ, **document})
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -3071,7 +3103,7 @@ def _doc_edit(args: dict, host) -> str:
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
             + _searched(args, host, document["CHEESE_DOCUMENT"])
-            + _EDIT_NEXT.get(reason, "先 cheese_doc_get 重读，照读到的原文改好再试。")
+            + _EDIT_NEXT.get(reason, "先 cheese_doc(action=get) 重读，照读到的原文改好再试。")
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []
@@ -3081,7 +3113,7 @@ def _doc_edit(args: dict, host) -> str:
     version = data.get("doc_version")
     lines = [f"{done}（第 {version} 版）。" if version else f"{done}。"]
     lines += _made_canvases(answer)
-    # 和 cheese_doc_set 一样：格式警告跟着这次写入回来，改的机会就是现在。
+    # 和 cheese_doc(action=set) 一样：格式警告跟着这次写入回来，改的机会就是现在。
     lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
     return "\n".join(lines)
 
@@ -3102,7 +3134,7 @@ def _searched(args: dict, host, document: str) -> str:
         where = f"这里的实况文档{named}"
     return (
         f"这次没给 document，找的是{where}；要改别的文档，"
-        "带上它的 document 编号（见 cheese_doc_list）。"
+        "带上它的 document 编号（见 cheese_doc(action=list)）。"
     )
 
 
@@ -3110,13 +3142,13 @@ def _made_canvases(answer: dict) -> list[str]:
     """What a write that held `:::canvas new` blocks made: one line each."""
     return [
         f"新建了画布《{canvas.get('title') or '未命名'}》，编号 {canvas['id']}："
-        f"用 cheese_canvas_edit(canvas={canvas['id']}) 往里加格子。"
+        f"用 cheese_canvas(action=edit, canvas={canvas['id']}) 往里加格子。"
         for canvas in answer.get("canvases") or []
     ]
 
 
-#: How much of one canvas `cheese_doc_get` shows after the document; the rest
-#: is a `cheese_canvas_get` away.
+#: How much of one canvas `cheese_doc(action=get)` shows after the document; the rest
+#: is a `cheese_canvas(action=get)` away.
 _DOC_CANVAS_CHARS = 6000
 
 
@@ -3158,7 +3190,7 @@ def _doc_links(document: str, host) -> list[str]:
     ]
     if not (to or by_docs or by_talk):
         return []
-    lines = ["--- 链接（只有标题；要读哪份用 cheese_doc_get(document=编号)）"]
+    lines = ["--- 链接（只有标题；要读哪份用 cheese_doc(action=get, document=编号)）"]
     if to:
         lines.append("它引用的文档：" + "、".join(to))
     if by_docs:
@@ -3178,21 +3210,21 @@ def _doc_canvases(document: str, host) -> list[str]:
     lines = [
         "",
         "--- 文档里的画布（文字版，不在正文里：改文档时别引用它；"
-        "改画布用 cheese_canvas_edit）",
+        "改画布用 cheese_canvas(action=edit)）",
     ]
     for row in rows:
         text = row.get("text") or ""
         if len(text) > _DOC_CANVAS_CHARS:
             text = (
                 text[:_DOC_CANVAS_CHARS].rsplit("\n", 1)[0]
-                + f"\n……（没列完，用 cheese_canvas_get(canvas={row['id']}) 读全部）"
+                + f"\n……（没列完，用 cheese_canvas(action=get, canvas={row['id']}) 读全部）"
             )
         lines += ["", text]
     return lines
 
 
 def _canvas_edit(args: dict, host) -> str:
-    plan = request_plan("cheese_canvas_edit", args, host.environ)
+    plan = request_plan("cheese_canvas.edit", args, host.environ)
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -3204,7 +3236,7 @@ def _canvas_edit(args: dict, host) -> str:
             raise exc from None
         raise PlatformToolError(
             f"一处都没改，画布没有变：{why.rstrip('。')}。"
-            "先 cheese_canvas_get 看看现在的样子，改好再试。"
+            "先 cheese_canvas(action=get) 看看现在的样子，改好再试。"
         ) from exc
     data = answer.get("data") or {}
     added = data.get("added") or []
@@ -3243,7 +3275,7 @@ def _doc_new(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没建成，没有多出文档：{why} 改好正文再 cheese_doc_new。"
+            f"没建成，没有多出文档：{why} 改好正文再 cheese_doc(action=new)。"
         ) from exc
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
@@ -3294,7 +3326,7 @@ def _app_save(args: dict, host) -> str:
         if why is None:
             raise
         raise PlatformToolError(
-            f"未保存：{why.rstrip('。')}。修改后重新调用 cheese_app_save。"
+            f"未保存：{why.rstrip('。')}。修改后重新调用 cheese_app(action=save)。"
         ) from exc
     saved = answer.get("data") or {}
     unchecked = (
@@ -3313,7 +3345,7 @@ def _app_save(args: dict, host) -> str:
         made = saved.get("key") or "?"
         said = (
             f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
-            "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
+            "cheese_doc(action=edit) 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
             "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
             f":::app {made}@1 {title}\n一句话说明\n:::"
         )
@@ -3371,7 +3403,7 @@ def _point_at(host, key: str, version: int) -> str:
             raise
         return (
             f"未能更新文档中的块（{(why or '文档刚被修改过').rstrip('。')}）："
-            f"用 cheese_doc_edit 把「:::app {key}@旧版本号」改为 @{version}。"
+            f"用 cheese_doc(action=edit) 把「:::app {key}@旧版本号」改为 @{version}。"
         )
     if (answer.get("data") or {}).get("mode") == "suggest":
         return f"已提出修改建议，把文档中的块改为第 {version} 版，等待接受。"
@@ -3431,7 +3463,7 @@ def _doc_set(args: dict, host) -> str:
             except (ValueError, KeyError, TypeError):
                 raise exc from None
             raise PlatformToolError(
-                f"没写进去，文档没有变：{why} 改好正文再 cheese_doc_set。"
+                f"没写进去，文档没有变：{why} 改好正文再 cheese_doc(action=set)。"
             ) from exc
         if status != 409:
             raise
@@ -3447,13 +3479,13 @@ def _doc_set(args: dict, host) -> str:
             ).rstrip("。")
             raise PlatformToolError(
                 f"没写进去，文档没有变：{why}。先请人接受或退回这些建议，"
-                "或者改用 cheese_doc_edit 逐处修改，别再整份覆盖。"
+                "或者改用 cheese_doc(action=edit) 逐处修改，别再整份覆盖。"
             ) from exc
         current = data.get("doc_version", "?")
         raise PlatformToolError(
             f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
-            "先 cheese_doc_get 重新读一遍，把别人的改动合进你的正文，再 "
-            "cheese_doc_set。直接重试会原样被拒。"
+            "先 cheese_doc(action=get) 重新读一遍，把别人的改动合进你的正文，再 "
+            "cheese_doc(action=set)。直接重试会原样被拒。"
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
     host.doc_versions[document] = version
@@ -4268,28 +4300,23 @@ def _web_fetch(args: dict, host):
 
 
 _STEPS = {
-    "cheese_message_send": _acting("message", "where", "text"),
     "cheese_inbox_respond": _acting("respond", "ref", "choice"),
-    "cheese_member_set": _acting("member", "where", "who", "role", "remove"),
-    "cheese_channel_create": _acting(
-        "channel", "where", "title", "text", "members_only"
-    ),
     "cheese_web_fetch": _web_fetch,
     "cheese_file_give": _file_give,
     "cheese_file_to_computer": _file_to_computer,
     "chat_send": _chat_send,
     "cheese_task.open": _task,
-    "cheese_chat_get": _chat_get,
-    "cheese_chat_list": _chat_page("cheese_chat_list"),
-    "cheese_chat_search": _chat_page("cheese_chat_search"),
-    "cheese_chat_replies": _chat_page("cheese_chat_replies"),
-    "cheese_doc_get": _doc_get,
-    "cheese_doc_set": _doc_set,
-    "cheese_doc_edit": _doc_edit,
-    "cheese_doc_new": _doc_new,
-    "cheese_app_save": _app_save,
-    "cheese_app_get": _app_get,
-    "cheese_canvas_edit": _canvas_edit,
+    "cheese_chat.get": _chat_get,
+    "cheese_chat.list": _chat_page("cheese_chat.list"),
+    "cheese_chat.search": _chat_page("cheese_chat.search"),
+    "cheese_chat.replies": _chat_page("cheese_chat.replies"),
+    "cheese_doc.get": _doc_get,
+    "cheese_doc.set": _doc_set,
+    "cheese_doc.edit": _doc_edit,
+    "cheese_doc.new": _doc_new,
+    "cheese_app.save": _app_save,
+    "cheese_app.get": _app_get,
+    "cheese_canvas.edit": _canvas_edit,
     "cheese_card.request": _accept_request,
     "platform_request": _platform_request,
     "cheese_feedback_list": _feedback_list,
@@ -4315,6 +4342,11 @@ _STEPS = {
 _DELEGATED_STEPS = {
     "cheese_task.open": _acting("task", "where", "title", "brief:text"),
     "cheese_card.decide": _acting("review", "ref", "choice", "text"),
+    # 以用户的名义发消息：和房间里的 chat_send 同名，房间的发在这里，这个经授权判断
+    # 发到 where 那里。
+    "chat_send": _acting("message", "where", "content:text"),
+    "cheese_room.member": _acting("member", "where", "who", "role", "remove"),
+    "cheese_room.create": _acting("channel", "where", "title", "text", "members_only"),
 }
 
 
@@ -4808,7 +4840,7 @@ def _say_skills_read(args, data, env) -> str:
 
 _SAY = {
     "chat_send": _say_chat_send,
-    "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
+    "cheese_chat.edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
     "todo_write": _say_todo,
     "cheese_task.open": _say_task,
     "cheese_task.reopen": lambda a, d, e: f"「{(d or {}).get('title')}」重新打开了。",
@@ -4838,7 +4870,7 @@ _SAY = {
         if (d or {}).get("ready")
         else (d or {}).get("reason") or "没有可以翻的 PR。"
     ),
-    "cheese_title": lambda a, d, e: (
+    "cheese_room.rename": lambda a, d, e: (
         f"标题已设为：{(d or {}).get('title') or a['text']}"
     ),
     "cheese_notify": _say_notify,
@@ -4864,11 +4896,11 @@ _SAY = {
     "cheese_help": lambda a, d, e: (
         _say_docs_read(a, d, e) if a.get("page") else _say_docs_search(a, d, e)
     ),
-    "cheese_members": _say_members,
+    "cheese_room.members": _say_members,
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
-    "cheese_doc_list": _say_documents,
-    "cheese_canvas_get": lambda a, d, e: (d or {}).get("text") or "",
+    "cheese_doc.list": _say_documents,
+    "cheese_canvas.get": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_ask": _say_ask,
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback_propose": lambda a, d, e: (

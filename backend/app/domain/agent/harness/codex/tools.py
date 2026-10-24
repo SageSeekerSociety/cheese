@@ -551,11 +551,17 @@ class RemoteTools:
             if owed is not None and owed["id"] != self.answered:
                 # Reading the room is on the way to answering it, and answers
                 # nothing.
+                arguments = params.get("arguments")
+                action = (
+                    arguments.get("action") if isinstance(arguments, dict) else None
+                )
+                # A read is one verb of an object (`cheese_chat.list`).
+                key = f"{params['tool']}.{action}" if action else params["tool"]
                 if params["tool"] in owed["answers"]:
                     self.answered = owed["id"]
                     # And where the runner reads it, to know the turn may end.
                     Path(owed["answered"]).write_text(owed["id"])
-                elif params["tool"] not in owed["reads"]:
+                elif key not in owed["reads"]:
                     return {
                         "success": False,
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],

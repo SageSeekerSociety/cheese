@@ -42,10 +42,19 @@ describe('toolLabel', () => {
   it('reads a call recorded under a retired name as the action it became', () => {
     expect(toolLabel('cheese_close_task', { conclusion: '不做了' })).toBe('关闭任务')
     expect(toolLabel('cheese_reopen_task', {})).toBe('重新打开任务')
+    expect(toolLabel('chat_edit', { message_id: 'm1', content: '改过' })).toBe(
+      toolLabel('cheese_chat', { action: 'edit' })
+    )
+    expect(toolLabel('cheese_doc_get', {})).toBe(toolLabel('cheese_doc', { action: 'get' }))
     expect(toolLabel('cheese_task_state', { state: 'waiting' })).toBe('报任务状态')
     expect(toolLabel('cheese_task', { title: '数据清洗', summary: '口径' })).toBe('创建任务')
     expect(toolLabel('cheese_task_open', { title: '排查' })).toBe('创建任务')
     expect(toolLabel('mcp__native__cheese_describe')).toBe('修改审阅说明')
+  })
+
+  it('names an object tool before its action is written', () => {
+    expect(toolLabel('cheese_doc', '{"conte')).toBe('处理文档')
+    expect(toolLabel('cheese_chat')).toBe('查看对话')
   })
 
   it('reads the action of a call still being written only once it is written', () => {

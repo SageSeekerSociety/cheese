@@ -66,16 +66,13 @@ def cli_tools() -> list[str]:
 
 
 def _keys(table) -> list[str]:
-    """What 现场 looks a call up by: a tool's name, or each of an object's
-    verbs (`cheese_task.close`)."""
+    """What 现场 looks a call up by: a tool's name, and each of an object's
+    verbs (`cheese_task.close`). An object's own name is what a step reads
+    before its `action` is written."""
     return [
         key
         for name in table.names()
-        for key in (
-            [name]
-            if table.actions(name) is None
-            else [f"{name}.{verb}" for verb in table.actions(name)]
-        )
+        for key in ([name, *(f"{name}.{verb}" for verb in table.actions(name) or ())])
     ]
 
 
@@ -83,7 +80,14 @@ def test_every_platform_command_has_a_verb():
     """A room reading 「cheese_accept_request」 is reading the thing it most
     needed a word for: the steps that changed something outside the machine."""
     verbs = labelled()
-    missing = [name for name in cli_tools() if name not in verbs]
+    # An object's name that is also an old tool's (`cheese_task`) reads as
+    # the verb it was before it took an action.
+    retired = _frontend_table("RETIRED")
+    missing = [
+        name
+        for name in cli_tools()
+        if name not in verbs and retired.get(name) not in verbs
+    ]
     assert not missing, f"现场 would render these raw: {missing}"
 
 

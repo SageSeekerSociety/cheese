@@ -272,7 +272,7 @@ def _question(
         rule = "这次只回答，不要改文档。"
     elif selection is not None:
         rule = (
-            "要改就只改 <选中> 标出的文字；cheese_doc_edit 的 old 从文档原文照抄，"
+            "要改就只改 <选中> 标出的文字；cheese_doc(action=edit) 的 old 从文档原文照抄，"
             "不含 <选中> 标记。"
         )
     else:

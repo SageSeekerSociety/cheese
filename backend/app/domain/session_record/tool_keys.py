@@ -31,6 +31,30 @@ RETIRED: dict[str, str] = {
     "cheese_redeliver": "cheese_card.redeliver",
     "cheese_ready": "cheese_card.ready",
     "cheese_review_decide": "cheese_card.decide",
+    # The conversation: reading it, and editing your own message in it.
+    "cheese_chat_list": "cheese_chat.list",
+    "cheese_chat_search": "cheese_chat.search",
+    "cheese_chat_get": "cheese_chat.get",
+    "cheese_chat_replies": "cheese_chat.replies",
+    "chat_edit": "cheese_chat.edit",
+    # A person's 芝士 sending as the person is the same chat_send.
+    "cheese_message_send": "chat_send",
+    # Documents, the mini-apps in them, and their canvases.
+    "cheese_doc_get": "cheese_doc.get",
+    "cheese_doc_set": "cheese_doc.set",
+    "cheese_doc_edit": "cheese_doc.edit",
+    "cheese_doc_new": "cheese_doc.new",
+    "cheese_doc_list": "cheese_doc.list",
+    "cheese_app_save": "cheese_app.save",
+    "cheese_app_get": "cheese_app.get",
+    "cheese_canvas_get": "cheese_canvas.get",
+    "cheese_canvas_edit": "cheese_canvas.edit",
+    # The room itself: its roster and its name, and a person's 芝士 making a
+    # channel or changing who is in one.
+    "cheese_members": "cheese_room.members",
+    "cheese_title": "cheese_room.rename",
+    "cheese_channel_create": "cheese_room.create",
+    "cheese_member_set": "cheese_room.member",
 }
 
 

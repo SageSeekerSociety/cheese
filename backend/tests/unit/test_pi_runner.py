@@ -624,7 +624,7 @@ async def test_the_room_is_given_the_platforms_tools_and_the_clis_commands(tmp_p
         published = {tool["name"] for tool in spec["tools"]}
         # The platform's table, under the names every harness uses, and the
         # commands that run on the machine as a process.
-        assert {"chat_send", "cheese_doc_get", "cheese_notify"} <= published
+        assert {"chat_send", "cheese_doc", "cheese_notify"} <= published
         assert {"cheese_worktree", "cheese_sync"} <= published
         assert "cheese_chat_send" not in published
         worktree = next(t for t in spec["tools"] if t["name"] == "cheese_worktree")

@@ -456,14 +456,18 @@ def test_agent_history_tools_read_search_and_page_complete_raw_records(
 
     host = Host()
     found = tools.run_platform_tool(
-        "cheese_chat_search", {"kind": "event", "query": "HEAD OF THE OUTPUT"}, host
+        "cheese_chat",
+        {"action": "search", "kind": "event", "query": "HEAD OF THE OUTPUT"},
+        host,
     )
     record_id = re.search(r"id=(record:[A-Za-z0-9_-]+)", found)[1]
     result = ""
     offset = 0
     while True:
         text = tools.run_platform_tool(
-            "cheese_chat_get", {"message_id": record_id, "offset": offset}, host
+            "cheese_chat",
+            {"action": "get", "message_id": record_id, "offset": offset},
+            host,
         )
         result += text
         more = re.search(r"offset=(\d+)", text)
@@ -539,8 +543,13 @@ def test_channel_record_search_crosses_task_conversations_without_paging_gaps(
             return response.json()
 
     result = tools.run_platform_tool(
-        "cheese_chat_search",
-        {"kind": "event", "query": "channel-evidence child-two", "channel": True},
+        "cheese_chat",
+        {
+            "action": "search",
+            "kind": "event",
+            "query": "channel-evidence child-two",
+            "channel": True,
+        },
         Host(),
     )
     assert "channel-evidence child-two" in result
