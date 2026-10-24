@@ -24,7 +24,9 @@ _PUBLICATION_ZH = (
     "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
     "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
     "干活的过程不用在对话里播报，现场看得到；只在要人出手、卡住了、递了卡、"
-    "改了方向或计划、有改变任务的发现、做完时主动发消息。"
+    "改了方向或计划、有改变任务的发现、有重要的结果、做完时主动发消息。"
+    "重要的结果是改变大家对这件活的看法或预期的结果：查实了根因、一个阶段有了"
+    "结果、活比预想的大或小。开工、在查、做完一步都不发。"
 )
 _PUBLICATION_EN = (
     "Ordinary output and final responses are not published to chat. "
@@ -34,7 +36,11 @@ _PUBLICATION_EN = (
     "and what you are about to do, then carry on. Do not narrate your "
     "work in the chat: people can watch it live. Publish on your own "
     "only when you need a person, are blocked, filed a card, changed "
-    "direction or plan, found something that changes the task, or are done."
+    "direction or plan, found something that changes the task, have an "
+    "important result, or are done. An important result changes what people "
+    "think of the work or expect from it: a root cause confirmed, a stage's "
+    "result in hand, the work turning out bigger or smaller than expected. "
+    "Starting, checking or finishing one step is not announced."
 )
 
 _SILENCE_ZH = (
