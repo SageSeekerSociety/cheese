@@ -170,6 +170,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'platform_error',
   'subagent_start',
   'ci_failed',
+  'ci_passed',
   'gate_failed',
   'gate_blocked',
   'gate_abandoned',

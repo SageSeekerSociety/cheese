@@ -44,6 +44,7 @@
   "checksPassed": "PR #{pr} 的检查已全绿，可以提交审阅了",
   "checksPassedAwaitingReview": "PR #{pr} 的检查已全绿，待审阅",
   "ciFailed": "PR #{pr} 的 {stage} 检查没通过",
+  "ciPassed": "PR #{pr} 的检查全部通过",
   "dependencyActionDelivered": "当前目标分支为 {branch}。获取远端分支，将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。父任务可能采用 squash 合并，请核对补丁，只重放本任务独有的改动；不要重新带入父任务整理时移除、且尚未重新获准的祖先改动。普通 rebase 成功不代表提交范围正确，请核对最终差异是否仅含本任务交付。",
   "dependencyActionUndelivered": "保留现有工作，检查本任务依赖了哪些尚未交付的修改。根据任务要求决定移除依赖、独立实现或报告无法继续的原因；不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。决定移除依赖时，在本任务分支上，以项目默认分支为基线重新整理本任务独有的提交，验证差异不包含被驳回的改动，再执行 cheese push-fix --drop-dependency。它会更新现有 PR 的目标分支、清除任务依赖和旧批准；不要重复递卡或自行合并。",
   "dependencyHeadline": "父任务{outcome}，子任务需要重新检查依赖",

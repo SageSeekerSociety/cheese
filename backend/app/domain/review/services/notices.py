@@ -460,11 +460,17 @@ async def _dispatch_nudges(
     for nudge in fresh:
         if nudge.capped:
             continue
+        # 「检查通过」不要谁动手：活已经关了就不说，说的时候也不带进工作区的命令。
+        informational = nudge.severity != SEVERITY_ERROR
+        if informational and not actionable:
+            continue
         await self._record_task_nudge(
             topic=topic,
             task=task,
             content=(
-                f"任务 {card.task_id}："
+                f"任务 {card.task_id}：" + nudge.content
+                if informational
+                else f"任务 {card.task_id}："
                 f'先执行 cd "$(cheese worktree {card.task_id})"。\n' + nudge.content
                 if actionable
                 else f"{nudge.event}。{heard.TASK_CLOSED}"
@@ -472,7 +478,7 @@ async def _dispatch_nudges(
             headline=nudge.event,
             meta=notice(
                 nudge.event_type,
-                severity=SEVERITY_ERROR,
+                severity=nudge.severity,
                 who=WHO_CHEESE,
                 detail=nudge.detail or None,
                 detail_label=nudge.detail_label or None,

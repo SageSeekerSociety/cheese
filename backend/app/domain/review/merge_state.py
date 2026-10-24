@@ -90,6 +90,20 @@ RED_CONCLUSIONS = frozenset(
 _PASS_CONCLUSIONS = frozenset({"success", "neutral"})
 
 
+def all_checks_passed(runs: Sequence[CheckRun]) -> bool:
+    """这个 head 上的检查是不是都跑完、都过了：至少一个通过，其余只能是通过或
+    ``skipped``。还在跑的、``cancelled``（没有结论）、红的，任何一个都不算。
+
+    只看报到了的检查。必跑检查缺席不在这里判 —— 那是 verdict 的
+    ``required_check_missing``，调用方要一起看。"""
+    if not runs or any(r.status != "completed" for r in runs):
+        return False
+    conclusions = {r.conclusion for r in runs}
+    return bool(conclusions & _PASS_CONCLUSIONS) and conclusions <= (
+        _PASS_CONCLUSIONS | {"skipped"}
+    )
+
+
 @dataclass(frozen=True)
 class RequiredCheck:
     """必跑名单的一条：检查名 + 「什么样的改动才要求它出现」。

@@ -13,6 +13,7 @@ from app.domain.review import services as pkg
 from app.domain.review.github_pr_status import merge_actor
 from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.nudges import _ci_passed_nudge
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
     EVENT_ACCEPT_DONE,
@@ -273,6 +274,15 @@ async def _poll_pr_card(
                     pending.append(ci)
         except Exception as exc:  # 先发完，再抛
             deferred = exc
+    elif merge_state.all_checks_passed(runs) and not kinds & {
+        "required_check_missing",
+        "ci_running",
+    }:
+        # 绿了也回去找做活的芝士（按 head 只说一次），它就不用自己轮询 CI。
+        # 必跑检查还没报到、还有检查在跑，都不算绿。
+        passed = _ci_passed_nudge(card=card)
+        if passed is not None:
+            pending.append(passed)
     try:
         review = await self._review_nudge(
             card=card,

@@ -23,9 +23,11 @@ from typing import Final, Protocol
 from app.core.sentences import say
 from app.domain.notice_meta import (
     EVENT_CI_FAILED,
+    EVENT_CI_PASSED,
     EVENT_MERGE_REFUSED,
     EVENT_PR_CONFLICT,
     EVENT_PR_REVIEW,
+    SEVERITY_INFO,
 )
 from app.domain.review import notes, pr_signals, pr_text
 from app.domain.review.models import AcceptCard
@@ -129,6 +131,32 @@ def _ci_nudge(
         note=f"{_nudge_note_prefix(stage)}{headline}",
         note_code=notes.NoteCode.checks_failed,
         event_type=EVENT_CI_FAILED,
+    )
+
+
+def _ci_passed_nudge(*, card: AcceptCard) -> pr_signals.PendingNudge | None:
+    """「这个 PR 的检查全绿了」排成一条待发，按 head 去重。
+
+    以前只有红了才回来找芝士，绿了只告诉验收人（`accept_ready`，而且要等评审等
+    合并规则都满足）。芝士于是自己 `sleep N; gh pr checks` 一遍遍轮询，一轮活被
+    「等 CI」撑到几十分钟（2026-10 的 trace：这类轮询占了长轮里两成的墙钟）。这
+    一条把「绿了」也送回去，它就可以交代完别的、停下来等这句话。
+
+    不写卡面：卡面说的是「这张卡停在哪、要谁动手」，检查通过不要任何人动手。
+    """
+    if card.pr_number is None:
+        return None
+    return pr_signals.PendingNudge(
+        kind=pr_signals.NudgeKind.ci_passed,
+        signature=pr_signals.signature("passed", card.pr_head_sha or ""),
+        event=say("ciPassed", pr=card.pr_number),
+        content=(
+            f"PR #{card.pr_number}（{card.pr_url}）当前提交上的检查全部通过了。"
+            "不用再轮询 CI；采纳由人决定，只有人已启用自动合并且项目条件满足时"
+            "才会自动合并。"
+        ),
+        event_type=EVENT_CI_PASSED,
+        severity=SEVERITY_INFO,
     )
 
 
