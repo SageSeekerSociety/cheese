@@ -119,31 +119,68 @@ sha256_of() {{
 # campus network, typically — this download stalls or never starts. The
 # connector reads this same setting; take it here unless the environment
 # already names a proxy, which keeps the last word there as it does here.
-if [ "$os" = darwin ] && [ -z "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}${{http_proxy:-}}${{https_proxy:-}}" ] && command -v scutil >/dev/null 2>&1; then
+#
+# The list is curl's, not Go's: curl ignores uppercase HTTP_PROXY (the httpoxy
+# fix) and honours ALL_PROXY, so checking the variables the connector reads
+# would both preserve a proxy curl never uses and overwrite one it does.
+if [ "$os" = darwin ] && [ -z "${{http_proxy:-}}${{https_proxy:-}}${{HTTPS_PROXY:-}}${{all_proxy:-}}${{ALL_PROXY:-}}${{no_proxy:-}}${{NO_PROXY:-}}" ] && command -v scutil >/dev/null 2>&1; then
   settings=$(scutil --proxy 2>/dev/null || true)
   field() {{
     printf '%s\\n' "$settings" | awk -v k="$1" '
-      $1 == k && $2 == ":" {{ sub(/^[^:]*:[ \\t]*/, ""); print; exit }}'
+      $1 == k && $2 == ":" {{
+        sub(/^[^:]*:[ \\t]*/, "")
+        gsub(/^"|"$/, "")
+        print; exit
+      }}'
   }}
+  # $1 is the scheme curl speaks to the proxy (http, or socks5), $2 the host key,
+  # $3 its port key.
   proxy_url() {{
-    host=$(field "$1")
+    host=$(field "$2")
     [ -n "$host" ] || return 0
-    port=$(field "$2")
-    if [ -n "$port" ]; then printf 'http://%s:%s' "$host" "$port"; else printf 'http://%s' "$host"; fi
+    port=$(field "$3")
+    if [ -n "$port" ]; then printf '%s://%s:%s' "$1" "$host" "$port"; else printf '%s://%s' "$1" "$host"; fi
   }}
   if [ "$(field HTTPEnable)" = 1 ]; then
-    HTTP_PROXY=$(proxy_url HTTPProxy HTTPPort)
+    HTTP_PROXY=$(proxy_url http HTTPProxy HTTPPort)
   fi
   if [ "$(field HTTPSEnable)" = 1 ]; then
-    HTTPS_PROXY=$(proxy_url HTTPSProxy HTTPSPort)
+    HTTPS_PROXY=$(proxy_url http HTTPSProxy HTTPSPort)
+  fi
+  # The same fallbacks the connector makes: one web proxy carries both schemes,
+  # and a Mac set up with only a SOCKS proxy still expects its web traffic to go
+  # through it.
+  if [ -z "${{HTTPS_PROXY:-}}" ]; then
+    HTTPS_PROXY="${{HTTP_PROXY:-}}"
+  fi
+  if [ -z "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}" ] && [ "$(field SOCKSEnable)" = 1 ]; then
+    HTTP_PROXY=$(proxy_url socks5 SOCKSProxy SOCKSPort)
+    HTTPS_PROXY="$HTTP_PROXY"
   fi
   # The bypass list is what the pane shows as "Bypass proxy settings for these
   # hosts"; without it a bypassed host would be forced through the proxy. The
   # entries sit one per line inside a nested array, indexed.
+  #
+  # Two spellings have to be rewritten for curl to read the list the way the
+  # pane means it: `*.example.com` is curl's `.example.com` (curl matches
+  # neither the wildcard form nor bare names' subdomains), and macOS's CIDR
+  # shorthand `169.254/16` is curl's `169.254.0.0/16` (curl reads only the
+  # full form). The default exception list has both.
   NO_PROXY=$(printf '%s\\n' "$settings" | awk '
     /ExceptionsList/ {{ inside = 1; next }}
     inside && /^[ \\t]*}}/ {{ exit }}
-    inside {{ sub(/^[^:]*:[ \\t]*/, ""); if ($0 != "") printf "%s%s", (n++ ? "," : ""), $0 }}')
+    inside {{
+      sub(/^[^:]*:[ \\t]*/, "")
+      gsub(/^"|"$/, "")
+      sub(/^\\*\\./, ".")
+      if ($0 ~ /^[0-9.]+\\/[0-9]+$/) {{
+        split($0, cidr, "/")
+        octets = split(cidr[1], o, ".")
+        for (i = octets; i < 4; i++) cidr[1] = cidr[1] ".0"
+        $0 = cidr[1] "/" cidr[2]
+      }}
+      if ($0 != "") printf "%s%s", (n++ ? "," : ""), $0
+    }}')
   if [ -n "${{HTTP_PROXY:-}}${{HTTPS_PROXY:-}}" ]; then
     http_proxy="${{HTTP_PROXY:-}}"
     https_proxy="${{HTTPS_PROXY:-}}"

@@ -188,8 +188,15 @@ echo `+shQuote(scutilThroughAProxy))
 	if servers["http"] != "http://127.0.0.1:7890" || servers["https"] != "http://127.0.0.1:7890" {
 		t.Errorf("servers = %v, want the addresses scutil printed", servers)
 	}
-	if override != "*.local;169.254/16" {
-		t.Errorf("override = %q, want the bypass list scutil printed", override)
+	// The bypass list is a set, so ask what it does rather than what it reads:
+	// the hosts scutil listed stay out, and one nobody listed still goes
+	// through. Comparing the string would fail a reader that kept the same
+	// entries in another order, which is not a defect.
+	if !bypassed(override, "printer.local") {
+		t.Errorf("printer.local is in ExceptionsList, yet %q does not bypass it", override)
+	}
+	if bypassed(override, "okcheese.com") {
+		t.Errorf("okcheese.com is not in ExceptionsList, yet %q bypasses it", override)
 	}
 }
 
@@ -202,13 +209,17 @@ func TestACommandThatAnswersNothingMeansNoProxy(t *testing.T) {
 }
 
 // A command that cannot be run — missing, or failing — means "no proxy" rather
-// than an error the connector's network path would have to handle.
+// than an error the connector's network path would have to handle. The failing
+// stand-in still prints a whole dictionary, so this would report a proxy if the
+// failure were not checked: an answer from a command that failed is not one.
 func TestACommandThatFailsMeansNoProxy(t *testing.T) {
 	if _, _, enabled := scutilProxy(filepath.Join(t.TempDir(), "absent")); enabled {
 		t.Error("the command does not exist, yet the reader reported a proxy")
 	}
-	if _, _, enabled := scutilProxy(command(t, "exit 1")); enabled {
-		t.Error("the command failed, yet the reader reported a proxy")
+	failing := command(t, `echo `+shQuote(scutilThroughAProxy)+`
+exit 1`)
+	if _, _, enabled := scutilProxy(failing); enabled {
+		t.Error("the command failed, yet the reader took its output as a proxy")
 	}
 }
 
