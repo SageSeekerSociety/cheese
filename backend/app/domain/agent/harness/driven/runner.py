@@ -269,6 +269,9 @@ class Runner(Generic[J]):  # noqa: UP046
         #: The calls of the work under way that came back, for a harness that
         #: says so (``Writing.returned``).
         self.live_returned: list[str] = []
+        #: The branches of a person's 芝士 that the work under way started or
+        #: moved, as they stand (``Writing.branches``).
+        self.live_branches: list[dict] = []
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
@@ -528,6 +531,7 @@ class Runner(Generic[J]):  # noqa: UP046
                 # As they stand now: the harness goes on changing them in place.
                 "blocks": [dict(block) for block in self.live_blocks],
                 "returned": list(self.live_returned),
+                "branches": [dict(branch) for branch in self.live_branches],
             }
         return answer
 

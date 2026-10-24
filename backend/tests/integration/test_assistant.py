@@ -1005,6 +1005,44 @@ def test_an_answer_stopped_at_its_ceiling_says_why(client, gateway, monkeypatch)
     ]
 
 
+def test_what_the_person_says_mid_answer_reaches_cheese_before_its_next_step(
+    client, gateway
+):
+    me = _auth(client, "steerer")
+    conversation = _start(client, _task(client), me)
+    idle = client.post(
+        f"/assistant/conversations/{conversation}/say",
+        json={"text": "只看第 3 份"},
+        headers=me,
+    )
+    assert idle.status_code == 409
+
+    gateway.script = [
+        ("held", "我先读一遍，", "然后再打分。"),
+        ("text", "好，只看第 3 份。"),
+    ]
+    answered: list = []
+    asking = threading.Thread(
+        target=lambda: answered.append(_ask(client, conversation, "把报告打分", me))
+    )
+    asking.start()
+    assert gateway.holding.wait(60)
+
+    said = client.post(
+        f"/assistant/conversations/{conversation}/say",
+        json={"text": "只看第 3 份"},
+        headers=me,
+    )
+    assert said.status_code == 200, said.text
+    gateway.release.set()
+    asking.join(60)
+
+    assert "只看第 3 份" in json.dumps(gateway.requests[-1], ensure_ascii=False)
+    got = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
+    texts = [(m["role"], m["text"]) for m in got["data"]["messages"]]
+    assert ("user", "只看第 3 份") in texts
+
+
 def test_a_stopped_answer_keeps_what_was_written(client, gateway):
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)

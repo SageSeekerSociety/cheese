@@ -27,6 +27,10 @@ class Writing:
     #: grows while the work goes on, so a reader that missed a moment still
     #: learns every call that returned.
     returned: tuple[str, ...] = ()
+    #: A person's 芝士's branches the work under way started or moved, as
+    #: they stand: each one's id, the call that started it, what it does, how
+    #: it is going and its latest steps.
+    branches: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)

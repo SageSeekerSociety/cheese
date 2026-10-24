@@ -72,6 +72,9 @@ READING_TOOLS = ("read", "ls", "find", "grep", "git")
 #: pi's own tools a session working on a machine of its own has beside its
 #: platform tools (`_start_without_hands`): a person's 芝士 in its sandbox.
 WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
+#: The extension's tools a person's 芝士 hands parts of its work to branches
+#: with (`platform.ts`).
+BRANCH_TOOLS = ("cheese_subagent_start", "cheese_subagent_send", "cheese_subagent_stop")
 
 
 def _said(text: str) -> dict:
@@ -181,6 +184,10 @@ class Runner(runner.Runner[Journal]):
         self.tools: dict = {}
         self.platform_token = ""
         self.children = Subagents(self)
+        # A person's 芝士's branches: which work each was last moved in, and
+        # how many times the session was spoken to mid-turn.
+        self.branch_work: dict[str, tuple[str | None, tuple]] = {}
+        self.steered = 0
         # The blocks of the assistant message pi is writing, by its content
         # index (``write``), and how many messages ended and how many of them
         # have had their entry pulled since: what is shown goes then (``refresh``).
@@ -335,6 +342,23 @@ class Runner(runner.Runner[Journal]):
             return
         self.live_blocks = [self.writing[i] for i in sorted(self.writing)]
         self.shown()
+
+    def branches_now(self, branches: list[dict]) -> dict:
+        """The branches as the extension says they stand: shown with the work
+        under way when this work started or moved them, so an answer shows
+        its own branches and not ones an earlier answer left behind."""
+        owner = json.loads(self.journal.recall("owner") or "{}").get("work_id")
+        shown = []
+        for branch in branches:
+            mark = (branch.get("status"), len(branch.get("steps") or []))
+            known = self.branch_work.get(str(branch.get("id")))
+            if known is None or known[1] != mark:
+                self.branch_work[str(branch.get("id"))] = (owner, mark)
+            if self.branch_work[str(branch.get("id"))][0] == owner:
+                shown.append(branch)
+        self.live_branches = shown
+        self.shown()
+        return {}
 
     def _verdict(self, kind: str, **fields) -> None:
         self.verdicts.append({"type": kind, "id": f"cheese:{uuid.uuid4()}", **fields})
@@ -537,6 +561,10 @@ class Runner(runner.Runner[Journal]):
                     "workspace": self.workspace,
                     "jobs": "" if child or not hands else str(self.state / "bg"),
                     "subagents": hands and not child,
+                    # A person's 芝士's branches, run in its own process.
+                    "branches": not hands
+                    and not child
+                    and bool((self.tools or {}).get("branches")),
                     # `Monitor`, as `driven/monitor.py` defines it: the
                     # session's alone, as its background jobs are — what a
                     # monitor prints is told to the session, never a subagent.
@@ -986,7 +1014,8 @@ class Runner(runner.Runner[Journal]):
             if self.machine.reading
             else WORKING_TOOLS
         )
-        names = ",".join([*own, *(spec["name"] for spec in specs)])
+        branching = BRANCH_TOOLS if tools.get("branches") else ()
+        names = ",".join([*own, *(spec["name"] for spec in specs), *branching])
         flags = ["--system-prompt", str(prompt)]
         flags += ["--tools", names] if names else ["--no-tools"]
         home = self.write_extension(extension, "", tools=specs)
@@ -1202,12 +1231,19 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 owes_reply=bool(params.get("owes_reply")),
             )
+        if method == "branches":
+            return self.branches_now(params.get("branches") or [])
+        if method == "said_since":
+            # How many times the session was spoken to mid-turn: a branch's
+            # wait ends when it changes, so the person is heard first.
+            return {"count": self.steered}
         if method == "acting":
             # A long answer's credential, renewed: the calls from now on act
             # with it, and nothing is said to the session.
             self.platform_token = str(params.get("platform_token") or "")
             return {}
         if method == "steer":
+            self.steered += 1
             return await self.send(
                 params["input_id"],
                 params["text"],

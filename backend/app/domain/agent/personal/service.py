@@ -46,6 +46,7 @@ from app.domain.agent.session_host.answer import (
     PAST_CEILING,
     Answer,
     Said,
+    Subagents,
     Thinking,
     Tool,
     ToolArgs,
@@ -405,13 +406,18 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     published: list[dict] = []
     proposed: list[dict] = []
     handed: list[dict] = []
+    branches: list[dict] = []
     reasoning: dict | None = None
 
     def ms(position: str) -> int:
         return int(position.split("-", 1)[0])
 
     for position, event, data in told:
-        if reasoning is not None and event not in ("tool_args", "tool_done"):
+        if reasoning is not None and event not in (
+            "tool_args",
+            "tool_done",
+            "subagents",
+        ):
             # Reasoning lasts until the next thing it does.
             reasoning["ms"] = ms(position) - reasoning.pop("from")
             reasoning = None
@@ -448,6 +454,8 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             proposed.append(data)
         elif event == "handed":
             handed.append(data)
+        elif event == "subagents":
+            branches = list(data.get("branches") or [])
     if reasoning is not None:
         reasoning.pop("from")
     if not (steps or edits or published or proposed or handed):
@@ -458,6 +466,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
         "published": published,
         **({"proposals": proposed} if proposed else {}),
         **({"handed": handed} if handed else {}),
+        **({"subagents": branches} if branches else {}),
     }
 
 
@@ -561,6 +570,11 @@ class Answers:
                 consumption,
                 "tool",
                 {"name": item.name, "call": item.call, "at": item.at},
+            )
+        elif isinstance(item, Subagents):
+            # The branches it started, how each is going and what it did.
+            await self._consumptions.publish(
+                consumption, "subagents", {"branches": list(item.branches)}
             )
         elif isinstance(item, ToolDone):
             await self._consumptions.publish(

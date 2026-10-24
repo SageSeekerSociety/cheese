@@ -45,6 +45,7 @@
   "assistantSettingUnknown": "没有这一项设置；能改的是 {keys}",
   "assistantSettingValue": "{name}只能是：{choices}",
   "assistantStillAnswering": "上一个问题还在回答，等它答完再问。",
+  "assistantNotAnswering": "芝士现在没有在回答，直接提问即可",
   "assistantWhoAmbiguous": "叫「{who}」的不止一人，账号分别是 {handles}；问用户是哪一位，用账号再试",
   "assistantWhoUnknown": "找不到叫「{who}」的用户：既不是账号，也不是哪位用户的名字。问用户要账号",
   "chatMessageEmpty": "消息为空",

@@ -161,6 +161,7 @@ def session(
         model=model_roles.model("assistant_model"),
         tools=TOOLS,
         works=machine is not None,
+        branches=True,
         footprint=Footprint(memory_mb=MEMORY_MB, group_limit=SESSIONS_PER_PERSON),
         idle_exit_s=IDLE_EXIT_S,
         gone_after_s=GONE_AFTER_S,

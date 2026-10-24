@@ -49,6 +49,9 @@ from app.domain.agent.session_host.host import SessionHost
 #: How long, after the answer is written, the session may go on working
 #: (compacting) inside the prompt's window before the reader stops waiting.
 SETTLE_S = 60.0
+#: How long an answer that was written is read on with nothing more coming
+#: before the session is asked whether it stopped.
+LOOK_AGAIN_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,13 @@ class Thinking:
 
 
 @dataclass(frozen=True)
+class Subagents:
+    """How the branches a person's 芝士 started stand now (``Writing``)."""
+
+    branches: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
 class ToolDone:
     """A call came back without an error: a reader shows it ended now rather
     than when the model next does something."""
@@ -112,7 +122,7 @@ class ToolFailed:
 PAST_CEILING = "the answer ran past its ceiling and was stopped"
 
 #: What of an answer is handed on while it is written.
-type Said = Words | Tool | ToolArgs | ToolFailed | ToolDone | Thinking
+type Said = Words | Tool | ToolArgs | ToolFailed | ToolDone | Thinking | Subagents
 
 
 @dataclass(frozen=True)
@@ -225,6 +235,8 @@ class Progress:
     taken: set[str] = field(default_factory=set)
     #: The calls told as come back.
     returned: set[str] = field(default_factory=set)
+    #: The branches as last told.
+    branched: str = ""
     result: Answer | None = None
 
     def whole(self) -> str:
@@ -256,7 +268,10 @@ class Progress:
         return [ToolArgs(call, raw[seen:], seen)]
 
     def writing(
-        self, blocks: tuple[dict, ...], returned: tuple[str, ...] = ()
+        self,
+        blocks: tuple[dict, ...],
+        returned: tuple[str, ...] = (),
+        branches: tuple[dict, ...] = (),
     ) -> list[Said]:
         """What the message being written says more, block by block in the
         order it is written: words said before a call are handed on before
@@ -267,11 +282,19 @@ class Progress:
             if call in self.announced and call not in self.returned:
                 self.returned.add(call)
                 said.append(ToolDone(call))
+        now = json.dumps(list(branches), ensure_ascii=False, sort_keys=True)
+        if branches and now != self.branched:
+            self.branched = now
+            said.append(Subagents(tuple(branches)))
         written: list[str] = []
         for index, block in enumerate(blocks):
             kind = block.get("type")
             if kind == "text":
                 written.append(str(block.get("text") or ""))
+                # The message that just landed, still shown a moment after:
+                # nothing new.
+                if self.parts and self.parts[-1].startswith("\n\n".join(written)):
+                    continue
                 said += self._extend([*self.parts, *written])
             elif kind == "thinking":
                 key = f"{len(self.parts)}:{index}"
@@ -301,6 +324,7 @@ class Progress:
             "thought": sorted(self.thought),
             "taken": sorted(self.taken),
             "returned": sorted(self.returned),
+            "branched": self.branched,
             "result": (
                 None
                 if self.result is None
@@ -319,6 +343,7 @@ class Progress:
             thought=set(data.get("thought") or []),
             taken=set(data.get("taken") or []),
             returned=set(data.get("returned") or []),
+            branched=str(data.get("branched") or ""),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
 
@@ -350,6 +375,16 @@ async def follow(
             await keep(progress)
         return answer
 
+    # An answer written while the session goes on (a person's 芝士 waiting for
+    # its branches, then going on with what they found): it ends with what is
+    # written by the time the session stops.
+    pending: Answer | None = None
+    reported = False
+
+    def last() -> Answer:
+        assert pending is not None
+        return Answer(progress.whole(), pending.error, usage=pending.usage)
+
     try:
         while True:
             left = deadline - time.monotonic()
@@ -359,11 +394,20 @@ async def follow(
                 # Each read is timed, never the whole loop: a deadline that
                 # fell while the caller was handling what was handed on would
                 # land in the caller's code.
-                read = await asyncio.wait_for(anext(reading), left)
+                read = await asyncio.wait_for(
+                    anext(reading), left if pending is None else min(left, LOOK_AGAIN_S)
+                )
             except StopAsyncIteration:
-                yield await ended(Answer("", "the session ended mid-answer"))
+                yield await ended(
+                    last() if pending else Answer("", "the session ended mid-answer")
+                )
                 return
             except TimeoutError:
+                if pending is not None and time.monotonic() < deadline:
+                    if not await _working(host, ref):
+                        yield await ended(last())
+                        return
+                    continue
                 await host.stop(ref)
                 yield await ended(Answer("", PAST_CEILING))
                 return
@@ -380,12 +424,14 @@ async def follow(
                     return
                 if not isinstance(fact, SessionIdle) or read.work_id != work:
                     continue
+                # The runner says the work ended: what it ended with is final.
+                reported = True
                 event = fact.result
             if isinstance(event, Ended):
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return
             if isinstance(event, Writing):
-                said = [*progress.writing(event.blocks, event.returned)]
+                said = [*progress.writing(event.blocks, event.returned, event.branches)]
             elif read.work_id != work:
                 continue
             elif isinstance(event, AgentMessage):
@@ -404,9 +450,17 @@ async def follow(
                 error = (
                     (event.text or "the model call failed") if event.is_error else None
                 )
-                await _settle(host, ref, deadline)
-                yield await ended(Answer(progress.whole(), error, usage=event.usage))
-                return
+                answer = Answer(progress.whole(), error, usage=event.usage)
+                if error is not None or reported:
+                    await _settle(host, ref, deadline)
+                    yield await ended(answer)
+                    return
+                # Written, and the session may go on (a person's 芝士 waiting
+                # for its branches, then going on with what they found): read
+                # on until the runner says the work ended, or the session is
+                # quiet and stopped.
+                pending = answer
+                continue
             else:
                 continue
             for item in said:
@@ -415,6 +469,11 @@ async def follow(
                 await keep(progress)
     finally:
         await reading.aclose()
+
+
+async def _working(host: SessionHost, ref: SessionRef) -> bool:
+    status = await host.status(ref)
+    return status is not None and status.working
 
 
 async def _settle(host: SessionHost, ref: SessionRef, deadline: float) -> None:

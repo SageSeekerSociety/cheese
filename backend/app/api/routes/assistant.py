@@ -39,7 +39,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.db import async_session_factory
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.personal import pages
@@ -48,6 +48,7 @@ from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.contract import (
     Access,
+    Prompt,
     SessionRef,
     SessionSpec,
 )
@@ -471,6 +472,56 @@ def _stream(questions: Consumptions, work: str, after: str = "0") -> StreamingRe
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+class SayIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("text")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return v.strip()
+
+
+class SaidOut(BaseModel):
+    said: bool
+
+
+@router.post(
+    "/conversations/{conversationId}/say",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(SaidOut),
+)
+async def say_in(
+    conversation_id: Annotated[uuid.UUID, Path(alias="conversationId")],
+    body: SayIn,
+    db: DbSession,
+    auth: AuthUser,
+    people: People,
+    questions: Questions,
+) -> dict:
+    """Something the person says while the conversation's question is being
+    answered: kept in the conversation as theirs, and said to 芝士 in the
+    middle of its answer, which it reads before its next step (a long piece of
+    work need not be stopped to be steered). Nothing being answered, it is
+    refused: ask it as a question."""
+    row = await _owned(db, auth.user_id, conversation_id)
+    answering = (
+        await questions.current(assistant.KIND, str(row.id))
+        if get_redis_client() is not None
+        else None
+    )
+    if answering is None or not body.text:
+        raise ConflictError(say("assistantNotAnswering"))
+    await assistant.AssistantConversations(db).append(row, "user", body.text)
+    await db.commit()
+    ref, _, _ = conversation_session(auth.user_id, row.id)
+    await people.steer(
+        ref,
+        Prompt(uuid.uuid4(), body.text),
+        work_id=uuid.UUID(answering.work_id),
+    )
+    return ok({"said": True})
 
 
 class LookingOut(BaseModel):
