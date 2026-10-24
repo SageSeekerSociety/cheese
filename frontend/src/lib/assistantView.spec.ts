@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { checklistOf, interleave, type PanelStep, stepError, stepView } from './assistantView'
+import { checklistOf, interleave, type PanelStep, stepError, stepView, withSubagents } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -238,5 +238,25 @@ describe('进度清单', () => {
     const half = stepView({ call: 't2', name: 'cheese_todo', args: '{"todos":[{"content":"读', state: 'run' })
 
     expect(checklistOf([whole, half])).toEqual([{ content: '读评分标准', status: 'in_progress' }])
+  })
+})
+
+describe('分身', () => {
+  it('turns with its subagent: spinning while it works, done when it reports back', () => {
+    const start = stepView({ call: 'c1', name: 'cheese_subagent_start', args: '{"description":"打分"}', state: 'done' })
+    const sub = (status: 'running' | 'done') => ({
+      id: 'branch-1',
+      call: 'c1',
+      description: '打分',
+      status,
+      steps: [{ name: 'cheese_read', args: '{"ref":"library/a.pdf"}' }],
+    })
+
+    const [working] = withSubagents([start], [sub('running')])
+    const [back] = withSubagents([start], [sub('done')])
+
+    expect(working).toMatchObject({ arg: '打分', state: 'run', subagent: { status: 'running' } })
+    expect(back.state).toBe('done')
+    expect(back.subagent?.steps.map((s) => s.arg)).toEqual(['a.pdf'])
   })
 })

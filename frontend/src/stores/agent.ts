@@ -22,7 +22,7 @@ import { AttachmentsApi } from '@/api/attachments'
 import { postChatMessage } from '@/api/messages'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
-import { proposalView, stepView } from '@/lib/assistantView'
+import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { uploadLibraryFile } from '@/lib/libraryApi'
@@ -232,6 +232,8 @@ export function resetAgent() {
 
 /** 说一句话：带上已经传好的文件。 */
 export async function askAgent(text: string) {
+  // 芝士还在答：这一句插进正在答的这一轮（`say`），不另问一个问题；附件留着，下一问再带。
+  if (agentThread.busy.value) return agentThread.say(text, t('tasks.assistant.failed'))
   const handed = agentFiles.value
     .filter((f) => !f.uploading)
     .map((f) => (f.path !== null ? { path: f.path, name: f.name } : { id: f.id as number, name: f.name }))
@@ -249,7 +251,7 @@ export function plainView(): AgentPanelView {
   const thread = agentThread
   return {
     messages: panelMessages(thread.messages.value, NO_TERMS),
-    steps: thread.steps.value.map(stepView),
+    steps: withSubagents(thread.steps.value.map(stepView), thread.subagents.value),
     ...writesView(thread.edits.value, NO_TERMS, null, () => false),
     results: thread.published.value.map(resultView),
     proposals: thread.proposals.value.map(proposalView),

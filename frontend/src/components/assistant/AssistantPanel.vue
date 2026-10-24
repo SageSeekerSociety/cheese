@@ -217,7 +217,7 @@
           :enter-sends="true"
           :no-files="!canAttach || busy"
           :files-label="t('tasks.assistant.files.add')"
-          :busy="busy"
+          :busy="busy && !draft.trim()"
           @files="emit('attach', $event)"
           @send="submit"
           @stop="emit('stop')"
@@ -460,7 +460,8 @@ const starterList = computed(
 )
 const ready = computed(
   () =>
-    (draft.value.trim().length > 0 || props.files.length > 0) && !props.busy && !props.files.some((f) => f.uploading)
+    // 芝士还在答时也能说：打了字就插进这一轮；只附文件得等它答完。
+    (draft.value.trim().length > 0 || (props.files.length > 0 && !props.busy)) && !props.files.some((f) => f.uploading)
 )
 
 function render(text: string): string {

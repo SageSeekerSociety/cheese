@@ -307,6 +307,26 @@ describe('芝士这一轮做了什么', () => {
     expect(a.messages.value.at(-1)?.steps?.map((s) => s.at)).toEqual([0, 0])
   })
 
+  it('keeps how the subagents it started stood when the answer ended', async () => {
+    const started = { id: 'branch-1', call: 'c1', description: '打分', status: 'running', steps: [] }
+    serve(() =>
+      events(
+        ['tool', { name: 'cheese_subagent_start', call: 'c1', at: 0 }],
+        ['tool_done', { call: 'c1' }],
+        ['subagents', { branches: [started] }],
+        ['subagents', { branches: [{ ...started, status: 'done' }] }],
+        ['delta', { text: '打完了。', at: 0 }],
+        ['done', {}]
+      )
+    )
+    const a = createAssistant()
+    await a.load()
+
+    await a.ask('打分', '答不上来')
+
+    expect(a.messages.value.at(-1)?.subagents?.map((s) => s.status)).toEqual(['done'])
+  })
+
   it('an answer that did something and wrote nothing says so instead of standing empty', async () => {
     serve(() => events(['tool', { name: 'cheese_inbox', call: 'c1' }], ['tool_done', { call: 'c1' }], ['done', {}]))
     const a = createAssistant()

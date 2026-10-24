@@ -85,6 +85,12 @@
   "newTopic": "新话题",
   "olderTopics": "更早的话题",
   "olderMessages": "更早的消息",
+  "subagent": {
+    "running": "进行中",
+    "done": "已交回",
+    "failed": "失败",
+    "stopped": "已停下"
+  },
   "checklist": {
     "pending": "待做",
     "inProgress": "进行中",

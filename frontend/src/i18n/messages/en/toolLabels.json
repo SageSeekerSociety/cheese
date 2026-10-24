@@ -66,6 +66,8 @@
   "cheeseNotify": "Send a notification",
   "cheeseNotifyMe": "Notify you",
   "cheeseTodo": "Update the checklist",
+  "cheeseSubagentSend": "Message a subagent",
+  "cheeseSubagentStop": "Stop a subagent",
   "cheeseProblemPublish": "Publish task",
   "cheeseProblemWrite": "Fill in task",
   "cheeseProjectSearch": "Search project",

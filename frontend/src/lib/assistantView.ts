@@ -1,7 +1,7 @@
 // 芝士一轮里做的事，在面板上画成什么：每一步（动词 + 一个参数），改动卡，结果。这里是
 // 不管写的是什么都一样的那一半——面板拿的形状，和每一步怎么说；写进题目草稿的改动卡、
 // 发布的结果怎么说在 `lib/draftChangeView.ts`。
-import type { AssistantProposal, AssistantStep } from '@/stores/agentThread'
+import type { AssistantProposal, AssistantStep, AssistantSubagent } from '@/stores/agentThread'
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
@@ -21,6 +21,28 @@ export interface PanelStep {
   hidden?: boolean
   /** 这一步写下的进度清单。 */
   checklist?: ChecklistItem[]
+  /** 这一步派出的分身：做到哪了，做过的几步。 */
+  subagent?: { status: AssistantSubagent['status']; steps: PanelStep[] }
+}
+
+/** 把这一轮派出的分身挂到派它的那一步上：那一步跟着分身转圈、打勾，点开看它做过的几步。 */
+export function withSubagents(steps: PanelStep[], subagents: AssistantSubagent[] = []): PanelStep[] {
+  if (!subagents.length) return steps
+  const by = new Map(subagents.map((s) => [s.call, s]))
+  return steps.map((step) => {
+    const found = by.get(step.key)
+    if (!found) return step
+    return {
+      ...step,
+      state: found.status === 'running' ? 'run' : found.status === 'failed' ? 'failed' : 'done',
+      subagent: {
+        status: found.status,
+        steps: found.steps.map((done, i) =>
+          stepView({ call: `${found.id}-${i}`, name: done.name, args: done.args, state: 'done' })
+        ),
+      },
+    }
+  })
 }
 
 /** 进度清单的一项：这一步做什么，做到哪了。 */
@@ -178,6 +200,8 @@ const STEP_ARG: Record<string, string> = {
   cheese_routine: 'title',
   cheese_notify_me: 'text',
   cheese_memory: 'description',
+  cheese_subagent_start: 'description',
+  cheese_subagent_send: 'message',
   cheese_file_give: 'name',
   cheese_file_to_computer: 'ref',
   // 这段对话自己那台电脑上的（pi 自己的工具）。

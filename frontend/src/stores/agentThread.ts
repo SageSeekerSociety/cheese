@@ -41,11 +41,22 @@ export interface AssistantStep {
   at?: number
 }
 
+/** 芝士派出的一个分身：派它的那次调用（`call`）、它做什么、做到哪了、最近做的几步。 */
+export interface AssistantSubagent {
+  id: string
+  call: string
+  description: string
+  status: 'running' | 'done' | 'failed' | 'stopped'
+  steps: { name: string; args: string }[]
+}
+
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
   steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number }[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
+  /** 这一轮派出的分身，最后是什么样。 */
+  subagents?: AssistantSubagent[]
   edits?: Record<string, unknown>[]
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
@@ -145,6 +156,8 @@ export interface AssistantMessage {
   handed?: AssistantHanded[]
   /** 做了事，却一个字没写：面板说一句，不留一段空白。 */
   silent?: boolean
+  /** 这一轮派出的分身。 */
+  subagents?: AssistantSubagent[]
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
@@ -205,6 +218,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const proposals = ref<AssistantProposal[]>([])
   /** 这一轮交出来的文件。 */
   const handed = ref<AssistantHanded[]>([])
+  /** 这一轮派出的分身，做到哪了。 */
+  const subagents = ref<AssistantSubagent[]>([])
   /** 在等会话机空出来，还没开始答。 */
   const queued = ref(false)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
@@ -434,8 +449,12 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
   function kept(
     parts: StoredParts
-  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed' | 'silent'> {
+  ): Pick<
+    AssistantMessage,
+    'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed' | 'silent' | 'subagents'
+  > {
     return {
+      ...(parts.subagents?.length ? { subagents: parts.subagents } : {}),
       ...(parts.files?.length ? { files: parts.files } : {}),
       ...(parts.silent ? { silent: true } : {}),
       ...(parts.shown ? { shown: parts.shown } : {}),
@@ -539,6 +558,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
       const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
+    } else if (event === 'subagents' && Array.isArray(payload.branches)) {
+      subagents.value = payload.branches as AssistantSubagent[]
     } else if (event === 'handed') {
       handed.value = [...handed.value, payload as unknown as AssistantHanded]
     } else if (event === 'proposal') {
@@ -566,6 +587,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published.value = []
     proposals.value = []
     handed.value = []
+    subagents.value = []
     let answer = ''
     let failed = false
     let stopped = false
@@ -626,6 +648,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             published: published.value,
             proposals: proposals.value,
             handed: handed.value,
+            ...(subagents.value.length ? { subagents: subagents.value } : {}),
             ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
         ]
@@ -638,6 +661,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         published.value = []
         proposals.value = []
         handed.value = []
+        subagents.value = []
       }
     }
   }
@@ -686,6 +710,27 @@ export function createAssistant(opts: AssistantOptions = {}) {
       )
   }
 
+  /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
+   *  这时恰好答完了，就当作一个新问题问。 */
+  async function say(text: string, fallback: string) {
+    const words = text.trim()
+    const id = current.value
+    if (!words) return
+    if (!id || !busy.value) return ask(words, fallback)
+    const at = new Date().toISOString()
+    messages.value = [...messages.value, { role: 'user', text: words, at }]
+    try {
+      await request(`/assistant/conversations/${id}/say`, {
+        method: 'POST',
+        body: JSON.stringify({ text: words }),
+      })
+    } catch {
+      messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      if (!busy.value) return ask(words, fallback)
+      notice.value = fallback
+    }
+  }
+
   /** 面板正给人看着这段对话：这时答完的不再另发通知。看着的时候每隔一会儿说一次。 */
   async function looking() {
     const id = current.value
@@ -713,6 +758,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published,
     proposals,
     handed,
+    subagents,
     queued,
     notice,
     creditRefused,
@@ -725,6 +771,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     earlierMessages,
     heard,
     looking,
+    say,
     ask,
     stop,
     undo,

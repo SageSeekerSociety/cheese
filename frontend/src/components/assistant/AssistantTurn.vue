@@ -48,9 +48,30 @@
               <v-icon v-else-if="step.state === 'done'" size="14">mdi-check</v-icon>
               <v-icon v-else size="14">mdi-close</v-icon>
             </span>
-            <span class="at__verb">{{ step.verb }}</span>
-            <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
+            <button
+              v-if="step.subagent?.steps.length"
+              type="button"
+              class="at__sub-open"
+              :aria-expanded="opened.has(`sub-${step.key}`)"
+              @click="toggle(`sub-${step.key}`)"
+            >
+              <span class="at__verb">{{ step.verb }}</span>
+              <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
+            </button>
+            <template v-else>
+              <span class="at__verb">{{ step.verb }}</span>
+              <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
+            </template>
+            <span v-if="step.subagent" class="at__sub-state">{{
+              t(`tasks.assistant.subagent.${step.subagent.status}`)
+            }}</span>
             <span v-if="step.state === 'failed' && step.error" class="at__err">{{ step.error }}</span>
+            <ul v-if="step.subagent && opened.has(`sub-${step.key}`)" class="at__steps at__sub-steps">
+              <li v-for="done in step.subagent.steps" :key="done.key" class="at__step">
+                <span class="at__verb">{{ done.verb }}</span>
+                <span v-if="done.arg" class="at__arg" data-user-content>{{ done.arg }}</span>
+              </li>
+            </ul>
           </li>
         </ul>
       </template>
@@ -276,6 +297,30 @@ function undoable(change: PanelChange): number {
 </script>
 
 <style scoped>
+.at__sub-open {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.at__sub-open:hover .at__verb {
+  color: var(--ink);
+}
+
+.at__sub-state {
+  color: var(--muted);
+}
+
+.at__sub-steps {
+  flex-basis: 100%;
+  padding-left: 20px;
+}
+
 .at__todo {
   display: flex;
   flex-direction: column;

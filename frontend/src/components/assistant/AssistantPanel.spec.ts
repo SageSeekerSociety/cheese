@@ -58,14 +58,13 @@ describe('AssistantPanel', () => {
     expect(view.queryByText('个人')).toBeNull()
   })
 
-  it('does not take a second question, or a new topic, while 芝士 is still answering', async () => {
+  it('takes what is typed while 芝士 is answering into that answer, but no new topic', async () => {
     const view = mount({ busy: true, streaming: '常见起点是' })
-    const box = view.getByRole('textbox') as HTMLTextAreaElement
-    await fireEvent.update(box, '还有呢？')
-    await fireEvent.keyDown(box, { key: 'Enter' })
+    await typeInComposer(view.container, '只看第 3 份')
+    await fireEvent.keyDown(view.getByRole('textbox'), { key: 'Enter' })
     await fireEvent.click(view.getByRole('button', { name: '新话题' }))
 
-    expect(view.emitted('send')).toBeUndefined()
+    expect(view.emitted('send')).toEqual([['只看第 3 份']])
     expect(view.emitted('new')).toBeUndefined()
   })
 
@@ -206,6 +205,28 @@ describe('AssistantPanel', () => {
     })
     expect(done.getByRole('button', { name: /2\/2 项已完成/ })).toBeTruthy()
     expect(done.queryByText('给 40 份报告打分')).toBeNull()
+  })
+
+  it('shows a subagent on the step that started it, and what it did on opening it', async () => {
+    const view = mount({
+      busy: true,
+      streaming: '',
+      steps: [
+        {
+          key: 'c1',
+          verb: '派出分身',
+          arg: '给第 1–10 份打分',
+          state: 'run',
+          at: 0,
+          subagent: { status: 'running', steps: [{ key: 's1', verb: '读取', arg: '报告 1.pdf', state: 'done' }] },
+        },
+      ],
+    })
+
+    expect(view.getByText('进行中')).toBeTruthy()
+    expect(view.queryByText('报告 1.pdf')).toBeNull()
+    await fireEvent.click(view.getByRole('button', { name: /给第 1–10 份打分/ }))
+    expect(view.getByText('报告 1.pdf')).toBeTruthy()
   })
 
   it('asks a starter question in one click when the conversation is empty', async () => {

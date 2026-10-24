@@ -85,6 +85,12 @@
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
   "olderMessages": "Earlier messages",
+  "subagent": {
+    "running": "Working",
+    "done": "Reported back",
+    "failed": "Failed",
+    "stopped": "Stopped"
+  },
   "checklist": {
     "pending": "To do",
     "inProgress": "In progress",
