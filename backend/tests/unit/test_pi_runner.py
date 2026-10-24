@@ -631,6 +631,31 @@ async def test_the_room_is_given_the_platforms_tools_and_no_cli_command(tmp_path
 
 
 @pytest.mark.anyio
+async def test_a_cli_the_runner_cannot_read_still_leaves_the_room_its_tools(
+    tmp_path, monkeypatch
+):
+    """The commands' names are read out of the CLI's parser for the sentence a
+    call to one as a tool is told. A parser that cannot be read costs that
+    sentence (pi's own "not found" stands), never the platform's tools."""
+    from app.domain.agent.harness.pi import catalog
+
+    def unreadable():
+        raise AttributeError("no parser")
+
+    monkeypatch.setattr(catalog, "cli_commands", unreadable)
+    runner = await with_tools(tmp_path)
+    try:
+        spec = json.loads(
+            (runner.state / "extension/platform.json").read_text(encoding="utf-8")
+        )
+        assert not spec["unavailable"]
+        assert "chat_send" in {tool["name"] for tool in spec["tools"]}
+        assert spec["commands"] == {}
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
 async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
     tmp_path,
 ):
@@ -656,22 +681,18 @@ async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
 async def test_a_cli_command_called_as_a_tool_is_refused_and_the_session_goes_on(
     tmp_path,
 ):
-    """A model that remembers the commands as tools (`cheese_worktree`) is told
-    to run `cheese worktree` in its bash, and the session is still answering
-    afterwards; a name that is no command either is no such tool."""
+    """A call that reaches the runner under a name the room was never given
+    (the extension sends only its registered tools) is no such tool, and the
+    session is still answering afterwards. What a model that calls a CLI
+    command as a tool reads is pi's result, rewritten by the extension
+    (`commands` in the manifest; tests/extension/platform.test.ts)."""
     runner = await with_tools(tmp_path)
     try:
         result = await call(
             runner.state, "cli", {"tool": "cheese_worktree", "arguments": {}}
         )
         assert result["status"] == 1
-        assert result["stderr"].startswith(
-            "cheese_worktree 不是工具：CLI 的命令在 bash 里跑，`cheese worktree …`"
-        )
-        invented = await call(
-            runner.state, "cli", {"tool": "cheese_frobnicate", "arguments": {}}
-        )
-        assert invented["stderr"] == "cheese_frobnicate: no such tool"
+        assert result["stderr"] == "cheese_worktree: no such tool"
         assert (await call(runner.state, "ping"))["alive"] is True
     finally:
         await runner.close()

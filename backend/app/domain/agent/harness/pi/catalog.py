@@ -8,6 +8,7 @@ commands, which a pi room runs with its `bash` as the other harnesses do
 (`cheese --help`), so the CLI's argparse tree is no tool here.
 """
 
+import argparse
 import importlib.resources
 import types
 from functools import cache
@@ -48,7 +49,10 @@ def cli_commands() -> dict[str, str]:
     commands: dict[str, str] = {}
 
     def walk(node, words: tuple[str, ...]) -> None:
-        subparsers = node._subparsers._group_actions[0] if node._subparsers else None
+        subparsers = next(
+            (a for a in node._actions if isinstance(a, argparse._SubParsersAction)),
+            None,
+        )
         if subparsers is None:
             name = "cheese_" + "_".join(w.replace("-", "_") for w in words)
             commands[name] = " ".join(("cheese", *words))

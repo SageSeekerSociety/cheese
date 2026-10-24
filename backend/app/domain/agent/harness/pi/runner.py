@@ -574,11 +574,14 @@ class Runner(runner.Runner[Journal]):
         if tools is None:
             try:
                 tools = catalog.tools()
+            except Exception as error:  # a room still opens without them
+                tools, reason = [], f"{type(error).__name__}: {error}"
+            try:
                 commands = {
                     name: catalog.not_a_tool(name) for name in catalog.cli_commands()
                 }
-            except Exception as error:  # a room still opens without them
-                tools, reason = [], f"{type(error).__name__}: {error}"
+            except Exception:  # pi's own "not found" is said instead
+                commands = {}
         (home / "platform.json").write_text(
             json.dumps(
                 {
@@ -703,12 +706,7 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        said = (
-            catalog.not_a_tool(tool)
-            if tool in catalog.cli_commands()
-            else f"{tool}: no such tool"
-        )
-        return {"status": 1, "stdout": "", "stderr": said}
+        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
         # A session may be named only some of an object's verbs
