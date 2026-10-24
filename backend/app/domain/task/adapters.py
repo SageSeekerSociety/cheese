@@ -91,6 +91,4 @@ class TaskTerms:
         return AcceptedTerms(
             default_role=protocol.default_role,
             compute_credits=protocol.compute_credits,
-            prompt=protocol.prompt,
-            skills=tuple(protocol.skills),
         )

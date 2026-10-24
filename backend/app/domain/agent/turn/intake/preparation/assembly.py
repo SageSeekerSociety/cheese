@@ -457,7 +457,11 @@ async def prepare(
         artifacts=artifact_refs,
         teaching=teaching,
         stages=stages,
-        skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
+        skill_bodies=await carried_bodies(
+            session,
+            topic,
+            carried_skills(agent, topic, teaching.teaching.skills if teaching else ()),
+        ),
         turn_images=turn_images,
         untitled=untitled,
     )

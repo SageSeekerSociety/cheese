@@ -44,6 +44,8 @@ const toastError = vi.fn()
 
 // 「默认队友」那一格自己按需拉的预设清单（走 `useAgentTypes` → `@/api`）。
 const listAgentTypes = vi.fn()
+// 「技能」那一格的候选：平台发货的技能目录（`useSkillCatalog`）。
+const listPlatformSkills = vi.fn()
 // 芝士：开对话走 `request`，问一句走事件流。事件流按 `script` 一条条念出来，照的是
 // 服务端真推的那几种（`tool`、`tool_args`、`change`、`delta`、`done`）。撤销芝士的改动
 // 走 `/assistant/changes`。
@@ -74,6 +76,11 @@ vi.mock('@/api/eventStream', async (original) => ({
       onEvent(event, data, String(++n))
     }
   },
+}))
+
+vi.mock('@/api/projectSkills', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  listPlatformSkills: (...a: unknown[]) => listPlatformSkills(...a),
 }))
 
 vi.mock('@/api/taskBoard', () => ({
@@ -224,7 +231,8 @@ async function publish(view: ReturnType<typeof render>) {
 
 /** 选中分类那枚下拉里的一项。选项画在浮层里，查询挂在 `document.body` 上找得到。 */
 async function pickCategory(view: ReturnType<typeof render>, name = '基础题') {
-  await fireEvent.mouseDown(view.getAllByRole('combobox')[0])
+  const field = view.container.querySelector('[data-agent-field="category"]') as HTMLElement
+  await fireEvent.mouseDown(within(field).getAllByRole('combobox')[0])
   await fireEvent.click(await view.findByRole('option', { name }))
   await nextTick()
 }
@@ -242,9 +250,8 @@ async function fillRequired(view: ReturnType<typeof render>, name = '用 gdb 定
   await fillSettings(view)
 }
 
-/** 点开「更多设置」，露出 AI 队友辅导那几格。 */
+/** 「AI 的设置」那几格画出来（它们一直摊开，不收在「更多设置」里）。 */
 async function ownTeaching(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('task-form-more'))
   await view.findByLabelText('本题补充要求')
 }
 
@@ -254,9 +261,8 @@ async function check(input: Element) {
   await nextTick()
 }
 
-/** 点开「更多设置」，等「默认队友」那一格画出来（它在那一节里）。 */
+/** 等「默认队友」那一格画出来（它在「AI 的设置」里，一直摊开）。 */
 async function openMore(view: ReturnType<typeof render>) {
-  await fireEvent.click(view.getByTestId('task-form-more'))
   await waitFor(() => expect(view.getByTestId('default-teammate')).toBeTruthy())
 }
 
@@ -350,6 +356,7 @@ beforeEach(() => {
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
+  listPlatformSkills.mockReset().mockResolvedValue({ data: [], total: 0 })
   listAgentTypes.mockReset().mockResolvedValue({
     data: [
       {
@@ -532,7 +539,34 @@ describe('发题页：发一道', () => {
     expect(sent().teachingOwn).toBe(true)
   })
 
-  it('打开了却一格没填：沿用空间设置，不带这一项', async () => {
+  it('AI 的设置不用点开「更多设置」：要求、默认队友、技能都在，「更多设置」仍收着', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+
+    expect(await view.findByLabelText('本题补充要求')).toBeTruthy()
+    expect(view.getByTestId('default-teammate')).toBeTruthy()
+    expect(view.getByTestId('teaching-skills')).toBeTruthy()
+    expect(view.getByTestId('task-form-more').getAttribute('aria-expanded')).toBe('false')
+    expect(view.queryByTestId('task-form-real-name')).toBeNull()
+  })
+
+  it('选了技能：发出去的 AI 设置带上它们', async () => {
+    listPlatformSkills.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    const skills = await view.findByTestId('teaching-skills')
+    await fireEvent.mouseDown(within(skills).getByRole('combobox', { name: '技能' }))
+    await fireEvent.click(await view.findByRole('option', { name: /wolfram/ }))
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    expect((sent() as { teaching?: { skills?: string[] } }).teaching?.skills).toEqual(['wolfram'])
+    expect(sent().teachingOwn).toBe(true)
+  })
+
+  it('一格没填：沿用空间设置，不带这一项', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)

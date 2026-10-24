@@ -15,7 +15,7 @@ import hashlib
 import re
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
@@ -135,7 +135,9 @@ def teaching_section(context: TeachingContext) -> str | None:
     **位置在角色之后、技能之前。** 它不是人设（那是角色），也不是工具箱（那是技能）。
     """
     teaching = context.teaching
-    if teaching.is_empty:
+    # 只配了技能的题目也是这样：技能正文走技能那一段（`carried_skills`），这一段
+    # 没有话要说。
+    if replace(teaching, skills=[]).is_empty:
         return None
     parts = ["## 辅导学生" + (f"（课程：{context.course}）" if context.course else "")]
     if teaching.mode in _MODE_SAYS:

@@ -20,6 +20,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
 import TaskFormGrading from '@/components/tasks/form/TaskFormGrading.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
+import TaskFormPart from '@/components/tasks/form/TaskFormPart.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
 import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
@@ -97,7 +98,6 @@ const more = (extra: Record<string, unknown> = {}) => ({
   accessControlEnabled: false,
   accessDomainGroupIds: [],
   requireRealName: false,
-  teachingCustom: false,
   ...extra,
 })
 
@@ -116,6 +116,23 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         props: { title: '时间' },
         slot: '这里是这一节的字段。',
         expect: '时间',
+      },
+    ],
+  },
+  {
+    id: 'task-form-part',
+    title: 'TaskFormPart',
+    about: '发题表单的一大块：题目内容、AI 的设置、发布设置。块名是一行引导词，下面接这一块的几节。',
+    file: 'src/components/tasks/form/TaskFormPart.vue',
+    component: TaskFormPart,
+    needs: UI,
+    states: [
+      {
+        name: '带一句说明的一块',
+        note: '块名下面可以有一句说明，说这一块管到哪里。',
+        props: { title: 'AI 的设置', hint: '用于从本题建出的项目' },
+        slot: '这里是这一块的几节。',
+        expect: 'AI 的设置',
       },
     ],
   },
@@ -382,7 +399,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-more',
     title: 'TaskFormMore',
-    about: '「更多设置」：可领取范围、实名、AI 指导。默认收起，收起时那一行写明现在设成了什么。',
+    about: '「更多设置」：可领取范围、实名。默认收起，收起时那一行写明现在设成了什么。',
     file: 'src/components/tasks/form/TaskFormMore.vue',
     component: TaskFormMore,
     needs: UI_T,
@@ -394,13 +411,12 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '全部成员可领取',
       },
       {
-        name: '收起（限了邮箱、要实名、单独写了指导）',
+        name: '收起（限了邮箱、要实名）',
         note: '限了哪几个邮箱域名组就写哪几个的名字。',
         props: more({
           accessControlEnabled: true,
           accessDomainGroupIds: [1],
           requireRealName: true,
-          teachingCustom: true,
         }),
         expect: '仅限 校内网络',
       },

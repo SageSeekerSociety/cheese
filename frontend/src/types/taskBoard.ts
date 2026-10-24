@@ -167,9 +167,8 @@ export interface TaskInheritanceTeaching extends SpaceTeaching {
  * that matches no shipped preset — a name nobody ships is not a teammate.
  */
 export interface TaskInheritanceAgent {
-  /** 预设类型名；题目只带了技能、没指定发货预设时为 null。 */
-  typeName: string | null
-  displayName: string | null
+  typeName: string
+  displayName: string
   skills: string[]
 }
 
@@ -177,14 +176,11 @@ export interface TaskInheritanceAgent {
 export interface TaskInheritanceData {
   taskId: number
   spaceId: number
+  /** 资源包：算力额度（`compute_credits`）。 */
   resourcePack: Record<string, unknown>
-  /** 建项目时那个芝士会带上的默认队友（类型 + 技能）；没指定 = null。 */
+  /** 建项目时那个芝士会带上的默认队友（类型 + 预设技能）；没指定 = null。题目给每个
+   *  队友的技能在 `teaching.skills`。 */
   agent: TaskInheritanceAgent | null
-  /**
-   * 题目包里「手动加的一段 prompt」—— 建项目时并进默认队友的人设正文。
-   * 没写 = null。与 `agent` 的技能一样，是**这道题**给的（每道题可以不同）。
-   */
-  prompt: string | null
   teaching: TaskInheritanceTeaching
   materials: TaskInheritanceMaterial[]
 }

@@ -3,7 +3,8 @@
 // `composables/useTaskInheritance.ts`，三处入口共用这一块渲染。
 //
 // 三样东西，缺一不可：资源包（吃到多少算力）、合成后的「AI 队友辅导」
-// （**连它来自哪里一起说**：空间、这道题、两者都有，或项目）、以及会被带上的资料。
+// （**连它来自哪里一起说**：空间、这道题、两者都有，或项目；连同项目里每个 AI 队友
+// 都带上的技能）、以及会被带上的资料。
 //
 // 合成在服务端由 `protocol.resolve()` 那一个循环算出来（`teaching.source` 也是
 // 它带出来的），这一块只把它摆出来，不重算、不猜。
@@ -42,16 +43,21 @@ const sourceLabel = computed(() => {
 /** 辅导里有没有一句话可说 —— 都没说时连标题都不摆。 */
 const hasTeaching = computed(() => {
   const g = teaching.value
-  return !!g && (!!g.mode || !!g.systemPrompt || !!g.privatePrompt || !!g.spacePrompt || !!g.learningGoals?.length)
+  return (
+    !!g &&
+    (!!g.mode ||
+      !!g.systemPrompt ||
+      !!g.privatePrompt ||
+      !!g.spacePrompt ||
+      !!g.learningGoals?.length ||
+      !!g.skills?.length)
+  )
 })
 
 const materials = computed(() => props.inheritance?.materials ?? [])
 
-/** 建项目时那个芝士会变成的默认队友（类型 + 技能）；上层没指定 = null。 */
+/** 建项目时那个芝士会变成的默认队友（类型 + 预设技能）；上层没指定 = null。 */
 const agent = computed(() => props.inheritance?.agent ?? null)
-
-/** 题目包自带的那段 prompt（建项目时并进默认队友的人设正文）；没写 = null。 */
-const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
 </script>
 
 <template>
@@ -78,8 +84,8 @@ const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
       <div class="inheritance__row">
         <span class="inheritance__label">{{ t('tasks.inheritance.agent') }}</span>
         <span v-if="agent" class="inheritance__value">
-          {{ agent.displayName ?? t('tasks.inheritance.agentSkillsOnly') }}
-          <span v-if="agent.typeName" class="inheritance__sublabel">· {{ agent.typeName }}</span>
+          {{ agent.displayName }}
+          <span class="inheritance__sublabel">· {{ agent.typeName }}</span>
         </span>
         <span v-else class="inheritance__value inheritance__value--none">
           {{ t('tasks.inheritance.agentNone') }}
@@ -93,21 +99,6 @@ const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
         <span v-else class="inheritance__value inheritance__value--none">
           {{ t('tasks.inheritance.agentSkillsNone') }}
         </span>
-      </div>
-
-      <!-- 题目包里「手动加的一段 prompt」：建项目时并进默认队友的人设正文。
-           没写也要说一句，留白会被读成「已经有一段」。 -->
-      <div class="inheritance__row">
-        <span class="inheritance__label">{{ t('tasks.inheritance.prompt') }}</span>
-        <span v-if="protocolPrompt" class="inheritance__value">
-          {{ t('tasks.inheritance.promptSet') }}
-        </span>
-        <span v-else class="inheritance__value inheritance__value--none">
-          {{ t('tasks.inheritance.promptNone') }}
-        </span>
-      </div>
-      <div v-if="protocolPrompt" class="inheritance__body">
-        <p class="inheritance__prompt">{{ protocolPrompt }}</p>
       </div>
 
       <!-- 指导：来源层写在标题旁边，是这块的重点。 -->
@@ -134,6 +125,12 @@ const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
         <div v-if="teaching?.privatePrompt" class="inheritance__list">
           <span class="inheritance__sublabel">{{ t('tasks.inheritance.privateGuidance') }}</span>
           <p class="inheritance__prompt">{{ teaching.privatePrompt }}</p>
+        </div>
+        <div v-if="teaching?.skills?.length" class="inheritance__list">
+          <span class="inheritance__sublabel">{{ t('tasks.inheritance.skills') }}</span>
+          <ul class="inheritance__skills">
+            <li v-for="skill in teaching.skills" :key="skill">{{ skill }}</li>
+          </ul>
         </div>
       </div>
 

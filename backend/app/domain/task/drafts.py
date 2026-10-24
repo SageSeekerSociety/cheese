@@ -497,6 +497,7 @@ def from_agent(
             or teaching.get("systemPrompt")
             or teaching.get("materialIds")
             or teaching.get("documentIds")
+            or teaching.get("skills")
         )
     return out
 

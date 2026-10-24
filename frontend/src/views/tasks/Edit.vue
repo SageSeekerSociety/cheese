@@ -16,6 +16,7 @@ import { storeToRefs } from 'pinia'
 
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -66,6 +67,7 @@ const editCategories = computed(() =>
 )
 
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 /** 附件直接传到这道题上、从这道题上摘：改题页上的增删当场生效，不等保存。 */
 const uploads = useAttachmentUploads({
@@ -340,7 +342,6 @@ onBeforeUnmount(() => void draft.flush())
       :classification-topics="taskData.space?.classificationTopics || []"
       :categories="editCategories"
       :domain-groups="domainGroups"
-      :teaching-custom="teachingOwn"
       :mentor-options="mentorChoices"
       :agent-writing="draft.writing.value"
       @invalid="formInvalid = $event"
@@ -358,18 +359,17 @@ onBeforeUnmount(() => void draft.flush())
         />
       </template>
       <template #teaching>
-        <div data-agent-field="ai_guidance">
-          <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-          <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-          <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" class="te__teaching" />
+        <div class="te__teaching" data-agent-field="ai_guidance">
+          <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" />
           <TeachingFields
             :model-value="teaching"
-            class="te__teaching"
             inherit
             :space-teaching="spaceStore.currentSpace?.teaching ?? null"
             :materials="materials"
             :materials-state="materialsState"
             :library-to="spaceLibraryPath(spaceId)"
+            :skill-catalog="skillCatalog"
+            :skill-catalog-failed="skillCatalogFailed"
             @update:model-value="setTeaching"
           />
         </div>
@@ -427,20 +427,10 @@ onBeforeUnmount(() => void draft.flush())
   line-height: var(--lh-12);
 }
 
-.te__label {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-}
-
-.te__hint {
-  margin: 4px 0 8px;
-}
-
 .te__teaching {
-  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .te__unsaved {

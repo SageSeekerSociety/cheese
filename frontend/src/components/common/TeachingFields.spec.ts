@@ -125,6 +125,7 @@ describe('TeachingFields', () => {
         learningGoals: [],
         materialIds: [],
         documentIds: [],
+        skills: [],
       })
     )
   })

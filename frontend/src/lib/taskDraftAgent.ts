@@ -44,8 +44,9 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   ai_mode: ['teaching', 'teachingOwn'],
 }
 
-/** 收在「更多设置」里的几格：芝士写到它们时那一块要展开。 */
-export const MORE_FIELDS = ['access', 'real_name', 'ai_guidance', 'ai_mode']
+/** 收在「更多设置」里的几格：芝士写到它们时那一块要展开。AI 的设置是表单自己的一块，
+ *  一直摊开，不在这里。 */
+export const MORE_FIELDS = ['access', 'real_name']
 
 // 芝士写的值，按原文比对（后端 `drafts.FORMS` 等同一份）。
 const FORMS: Record<string, 'USER' | 'TEAM'> = { 个人: 'USER', 团队: 'TEAM' }
