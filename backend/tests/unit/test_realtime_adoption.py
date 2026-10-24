@@ -66,3 +66,28 @@ async def test_a_read_from_before_a_turn_ended_does_not_bring_it_back():
     assert broker.adopt("room", still_open, read_at=broker.books_read()) == [
         ("turn", "cheese")
     ]
+
+
+@pytest.mark.anyio
+async def test_adopted_thread_work_notifies_the_parent_room():
+    """The main room hears when a thread's recovered turn starts and stops."""
+    broker = InProcessBroker()
+    broker.activity.note_thread("thread", "room")
+    async with broker.subscribe("room") as room:
+        broker.adopt("thread", [("turn", 123.0, "cheese")], read_at=broker.books_read())
+        assert not room.empty(), "The parent room was not told the thread is working"
+        assert room.get_nowait() == {
+            "type": "thread_activity",
+            "thread_id": "thread",
+            "member": "cheese",
+            "active": True,
+        }
+
+        await broker.publish("thread", {"type": "turn_finished", "turn_id": "turn"})
+        assert room.get_nowait() == {
+            "type": "thread_activity",
+            "thread_id": "thread",
+            "member": "cheese",
+            "active": False,
+        }
+        assert room.empty()

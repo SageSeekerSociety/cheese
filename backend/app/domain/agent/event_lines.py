@@ -38,7 +38,8 @@ def _diff_file_stats(diff: str) -> list[dict]:
     stats: list[dict] = []
     current: dict | None = None
     in_hunk = False
-    for line in diff.splitlines():
+    # Git separates patch lines with LF; other text separators are file content.
+    for line in diff.split("\n"):
         header = _DIFF_HEADER_RE.match(line)
         if header is not None:
             path = header.group("path")
