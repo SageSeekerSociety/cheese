@@ -155,28 +155,19 @@
     "teamLibrary": "{name}'s library"
   },
   "context": {
-    "page": "This page",
-    "pageOn": "Cheese reads this page. Click to leave it out",
-    "pageOff": "This question leaves the page out. Click to include it",
-    "selection": "Selected",
     "removeSelection": "Remove selected text",
-    "askedOn": "On {page}",
-    "withSelection": "With selected text",
-    "askSelection": "Ask Cheese"
+    "askSelection": "Ask Cheese",
+    "leavePage": "Leave this page out",
+    "includePage": "Include this page"
   },
   "cite": {
-    "title": "Cite a task, channel, document or file",
     "recent": "Recent",
     "inProject": "In {name}",
     "everywhere": "Your projects",
-    "search": "Searching “{query}”",
     "empty": "No matches",
     "back": "Back",
     "button": "Cite ({'@'})",
     "tooMany": "Cite at most {most} things",
-    "move": "Move",
-    "pick": "Cite",
-    "close": "Close",
     "loading": "Loading",
     "kinds": {
       "task": "Tasks",
@@ -184,6 +175,7 @@
       "doc": "Documents",
       "file": "Library files",
       "problem": "Problems"
-    }
+    },
+    "label": "Cite"
   }
 }

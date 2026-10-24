@@ -312,17 +312,19 @@ describe('AssistantPanel: what a question carries', () => {
     expect(view.getByText('搜索接入方案')).toBeTruthy()
     expect(view.getByText('数据集说明.pdf')).toBeTruthy()
     expect(view.queryByText(/<#/)).toBeNull()
-    expect(view.getByText('在频道「后端」')).toBeTruthy()
-    expect(view.getByText('附：选中的一段')).toBeTruthy()
+    expect(view.getByText('频道「后端」')).toBeTruthy()
+    expect(view.getByText('超时设成 600 秒')).toBeTruthy()
   })
 
-  it('the page can be left out and put back, and a selection taken off, above the box', async () => {
+  it('the page can be left out and put back, and a selection taken off, in the box beside the files', async () => {
     const view = mount({ pageLabel: '频道「后端」', selection: '超时设成 600 秒' })
 
-    await fireEvent.click(view.getByRole('button', { name: /当前页面/ }))
+    await fireEvent.click(view.getByRole('button', { name: '不带这一页' }))
     await fireEvent.click(view.getByRole('button', { name: '去掉选中的内容' }))
+    await view.rerender({ pageOff: true })
+    await fireEvent.click(view.getByRole('button', { name: '带上这一页' }))
 
-    expect(view.emitted('togglePage')).toHaveLength(1)
+    expect(view.emitted('togglePage')).toHaveLength(2)
     expect(view.emitted('clearSelection')).toHaveLength(1)
   })
 

@@ -219,13 +219,6 @@
           </button>
         </div>
       </Transition>
-      <AssistantContextRow
-        :page="pageLabel"
-        :page-off="pageOff"
-        :selection="selection"
-        @toggle-page="emit('togglePage')"
-        @clear-selection="emit('clearSelection')"
-      />
       <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
       <div class="ap__box">
         <CiteMenu
@@ -235,12 +228,14 @@
           :picker="cite"
           :project="project"
           :most="MOST_CITED"
-          :keys="mdAndUp"
         />
-        <ComposerChipRow
-          v-if="chips.length"
+        <AssistantContextRow
+          :page="pageLabel"
+          :page-off="pageOff"
+          :selection="selection"
           :atts="chips"
-          :topic-id="null"
+          @toggle-page="emit('togglePage')"
+          @clear-selection="emit('clearSelection')"
           @remove-att="(i: number) => emit('removeFile', i)"
         />
         <ComposerEditor
@@ -337,7 +332,6 @@ import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
-import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
 import { checklistOf, interleave } from '@/lib/assistantView'

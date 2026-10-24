@@ -155,28 +155,19 @@
     "teamLibrary": "团队「{name}」的资料库"
   },
   "context": {
-    "page": "当前页面",
-    "pageOn": "芝士会读这一页，点击不带",
-    "pageOff": "这一问不带当前页面，点击带上",
-    "selection": "选中",
     "removeSelection": "去掉选中的内容",
-    "askedOn": "在{page}",
-    "withSelection": "附：选中的一段",
-    "askSelection": "问芝士"
+    "askSelection": "问芝士",
+    "leavePage": "不带这一页",
+    "includePage": "带上这一页"
   },
   "cite": {
-    "title": "引用任务、频道、文档或文件",
     "recent": "最近去过",
     "inProject": "项目「{name}」里",
     "everywhere": "你参加的项目",
-    "search": "搜索「{query}」",
     "empty": "暂无匹配",
     "back": "返回",
     "button": "引用（{'@'}）",
     "tooMany": "最多引用 {most} 样",
-    "move": "选择",
-    "pick": "引用",
-    "close": "关闭",
     "loading": "正在读取",
     "kinds": {
       "task": "任务",
@@ -184,6 +175,7 @@
       "doc": "文档",
       "file": "资料库文件",
       "problem": "题目"
-    }
+    },
+    "label": "引用"
   }
 }

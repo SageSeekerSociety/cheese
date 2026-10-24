@@ -1,11 +1,10 @@
 <script setup lang="ts">
-// 面板上人说的一句：话里 `<#id>` 引用的东西画成标签（和输入框里挑中时一个样子），下面是
-// 随这一句交的文件，再下面一行小字写在哪一页问的、带没带选中的字。
+// 面板上人说的一句：话里 `<#id>` 引用的东西画成标签（和输入框里挑中时一个样子），下面
+// 每样一行、记号打头：随这一句交的文件、选中交给芝士的那段字、芝士读的那一页。
 import type { AssistantCited } from '@/stores/agentThread'
 
 import { computed } from 'vue'
 
-import { t } from '@/i18n'
 import { refChip, type RefNames, refTokens } from '@/lib/refChip'
 
 const props = defineProps<{
@@ -49,9 +48,11 @@ const html = computed(() => {
     <p v-for="name in files ?? []" :key="name" class="asked__file">
       <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
     </p>
-    <p v-if="askedOn || selection" class="asked__meta">
-      <span v-if="askedOn">{{ t('tasks.assistant.context.askedOn', { page: askedOn }) }}</span>
-      <span v-if="selection" :title="selection">{{ t('tasks.assistant.context.withSelection') }}</span>
+    <p v-if="selection" class="asked__file">
+      <v-icon size="14">mdi-format-quote-close</v-icon><span class="asked__one" data-user-content>{{ selection }}</span>
+    </p>
+    <p v-if="askedOn" class="asked__file">
+      <v-icon size="14">mdi-eye-outline</v-icon><span data-user-content>{{ askedOn }}</span>
     </p>
   </div>
 </template>
@@ -72,8 +73,7 @@ const html = computed(() => {
   margin: 0;
 }
 
-.asked__file,
-.asked__meta {
+.asked__file {
   display: flex;
   gap: 4px;
   align-items: center;
@@ -83,8 +83,10 @@ const html = computed(() => {
   color: var(--muted);
 }
 
-.asked__meta {
-  flex-wrap: wrap;
-  gap: 4px 12px;
+.asked__one {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

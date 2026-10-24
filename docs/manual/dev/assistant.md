@@ -173,9 +173,9 @@ covers:
 - **当前页面**：项目外框（`views/workspace/ProjectShell.vue`）按地址登记这一页：打开了文档是 `doc`，在频道、任务或支线里是 `topic`，别的页是 `project`，编号都是 UUID（`personal/pages.py`）。写给芝士时换成[编号](#refs)。能不能读按读来判（`ActorResolver.for_reading`）：归档项目的页也能问。频道页附上最近 12 条消息，文档页只附标题和编号，正文由芝士按需去读。
 - **团队的页**：团队文档页登记 `doc`，团队资料库页登记 `library`（编号是团队 id）。芝士没有读团队文档、别的团队资料库的工具，所以团队文档的正文开头（6000 字）和资料库最新 30 份的名字直接写进「当前页面」；本人的资料库写明用 `cheese_read library/<名字>` 读。能不能读按团队成员判（`assistant_deps.ProjectPages.team`）。
 
-**这一句带上什么**（`personal/citing.py`）：面板输入框上方是「当前页面」标签和「选中」标签。
+**这一句带上什么**（`personal/citing.py`）：面板输入框里和附件同一行（`AssistantContextRow` 用频道输入框的 `ComposerChipRow`）先是这一页和选中的字两枚标签。
 
-- 人点掉「当前页面」，或这一页没登记，请求带 `no_page: true`：不附页面，也不退回到话题挂着的那一页，芝士读到一段「这一问没有附上页面」（`pages.NO_PAGE`）。关掉只管这一页，换页后前端又带上（`stores/agent.ts` 的 `agentPageOff`）。
+- 人点掉这一页（×，划掉后 + 带回来），或这一页没登记，请求带 `no_page: true`：不附页面，也不退回到话题挂着的那一页，芝士读到一段「这一问没有附上页面」（`pages.NO_PAGE`）。关掉只管这一页，换页后前端又带上（`stores/agent.ts` 的 `agentPageOff`）。
 - 在页面上选中一段字点「问芝士」（`AgentSelectionAsk.vue`），这段字作为 `selection`（最多 2000 字）随下一句交出。这是唯一由浏览器交上来的正文：它和人自己贴进来的字一样，写给芝士时标明是资料、不是指令。输入框、可编辑的区域和项目文档里不出这个按钮（`data-agent-select="off"`，项目文档有自己的选区框）；团队文档的编辑器标着 `on`，照常出。
 - 输入框里打 `@` 挑一样东西（`useCitePicker`），正文里写下 `<#id>`：频道、任务、支线、文档是它自己的 UUID，资料库文件是 `file-<id>`，题目是 `problem-<id>`，一句最多 5 样（后端在校验里拒）。候选来自 `GET /api/assistant/citable?project=`：这个人参加的项目里他打得开的频道和这些频道的任务、这些项目和他所在团队的文档、眼前项目和他自己资料库的文件；题目打字时用 `/tasks/search` 搜。匹配和「最近去过」用 Ctrl+K 的同一套（`commands/palette/match.ts`、`recents.ts`）。
 - 服务端按 `<#id>` 逐样判断能不能打开，打不开的当作没引用；问题里的引用换成名字，后面附一段「用户引用的」写明每样是什么、用哪个编号读，团队文档和资料库文件附上正文。问题照原样存，`parts` 里记 `page`（在哪一页问的）、`selection`、`cited`（每样的 id、种类、名字），面板读回对话时照它画标签。

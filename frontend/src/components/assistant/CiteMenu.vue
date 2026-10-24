@@ -14,13 +14,10 @@ const props = defineProps<{
   /** 眼前这个项目叫什么；不在项目里是 null。 */
   project: string | null
   most: number
-  /** 键盘提示只在有实体键盘的地方给。 */
-  keys: boolean
 }>()
 
 const rows = computed(() => props.picker.rows.value)
 const active = computed(() => props.picker.active.value)
-const query = computed(() => props.picker.query.value)
 const kind = computed(() => props.picker.kind.value)
 const loading = computed(() => props.picker.loading.value)
 
@@ -44,19 +41,6 @@ const ICON: Record<CitableKind, string> = {
 const order = computed(() => {
   let n = 0
   return rows.value.map((row) => (row.type === 'item' || row.type === 'kind' ? n++ : -1))
-})
-
-const header = computed(() => {
-  if (kind.value) return t(`tasks.assistant.cite.kinds.${kind.value}`)
-  if (query.value) return t('tasks.assistant.cite.search', { query: query.value })
-  return t('tasks.assistant.cite.title')
-})
-
-const scope = computed(() => {
-  if (query.value && !kind.value) return t('tasks.assistant.cite.everywhere')
-  if (kind.value && props.project && kind.value !== 'file')
-    return t('tasks.assistant.cite.inProject', { name: props.project })
-  return ''
 })
 
 function groupLabel(label: 'recent' | 'kinds' | CitableKind): string {
@@ -102,12 +86,11 @@ defineExpose({ scrollActiveIntoView })
     ref="root"
     class="cite"
     role="listbox"
-    :aria-label="t('tasks.assistant.cite.title')"
+    :aria-label="t('tasks.assistant.cite.label')"
     :style="room ? { maxHeight: `min(360px, ${room}px)` } : undefined"
   >
-    <div class="cite__head">
+    <div v-if="kind" class="cite__head">
       <button
-        v-if="kind"
         type="button"
         class="cite__back"
         :aria-label="t('tasks.assistant.cite.back')"
@@ -115,8 +98,7 @@ defineExpose({ scrollActiveIntoView })
       >
         <v-icon size="16">mdi-chevron-left</v-icon>
       </button>
-      <span class="cite__title">{{ header }}</span>
-      <span v-if="scope" class="cite__scope">{{ scope }}</span>
+      <span class="cite__title">{{ t(`tasks.assistant.cite.kinds.${kind}`) }}</span>
     </div>
     <div ref="list" class="cite__list">
       <p v-if="loading" class="cite__empty">{{ t('tasks.assistant.cite.loading') }}</p>
@@ -154,11 +136,6 @@ defineExpose({ scrollActiveIntoView })
         </template>
         <p v-if="!rows.length" class="cite__empty">{{ t('tasks.assistant.cite.empty') }}</p>
       </template>
-    </div>
-    <div v-if="keys" class="cite__foot">
-      <span><kbd>↑</kbd><kbd>↓</kbd>{{ t('tasks.assistant.cite.move') }}</span>
-      <span><kbd>Enter</kbd>{{ t('tasks.assistant.cite.pick') }}</span>
-      <span><kbd>Esc</kbd>{{ t('tasks.assistant.cite.close') }}</span>
     </div>
   </div>
 </template>
@@ -206,11 +183,6 @@ defineExpose({ scrollActiveIntoView })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.cite__scope {
-  flex-shrink: 0;
-  margin-left: auto;
 }
 
 .cite__list {
@@ -271,25 +243,5 @@ defineExpose({ scrollActiveIntoView })
   padding: 12px;
   margin: 0;
   color: var(--muted);
-}
-
-.cite__foot {
-  display: flex;
-  gap: 14px;
-  padding: 6px 12px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-}
-
-.cite__foot kbd {
-  padding: 0 4px;
-  margin-right: 3px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: 4px;
 }
 </style>

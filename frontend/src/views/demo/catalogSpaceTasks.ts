@@ -542,7 +542,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
             },
           ],
         },
-        expect: '附：选中的一段',
+        expect: '超时设成 600 秒',
       },
       {
         get name() {
@@ -552,7 +552,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.assistantPanel.s14.note')
         },
         props: { pageLabel: '频道「后端」', pageOff: true },
-        expect: '当前页面',
+        expect: '频道「后端」',
       },
       {
         get name() {
@@ -569,7 +569,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           recents: ['a1', 'd1', 'c1', 'a3', 'file-f1'],
           cited: { d2: { kind: 'doc', title: '搜索接入方案' } },
         },
-        expect: '当前页面',
+        expect: '频道「后端」',
       },
     ],
   },
@@ -582,7 +582,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     file: 'src/components/assistant/CiteMenu.vue',
     component: CiteMenu,
     needs: UI_T,
-    args: { picker: citeDemo('@'), project: '知是', most: MOST_CITED, keys: true },
+    args: { picker: citeDemo('@'), project: '知是', most: MOST_CITED },
     states: [
       {
         get name() {
