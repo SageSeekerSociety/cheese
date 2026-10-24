@@ -11,12 +11,9 @@ from app.domain.assistant import gate
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from tests.conftest import seed_user
 from tests.delivery import delivery_task_id
-from tests.integration.test_accept_pr import (  # noqa: F401 (app_world is a fixture)
-    _ready_card,
-    _task_settled,
-    app_world,
-)
 from tests.integration.conftest import open_task, session_auth_headers
+from tests.integration.test_accept_pr import _ready_card, _task_settled
+from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_assistant_agent import (
     _acting,
     _as,

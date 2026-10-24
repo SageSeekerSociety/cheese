@@ -43,6 +43,4 @@ def test_a_message_said_to_a_running_session_carries_it_too():
 
 
 def test_what_she_wrote_herself_reads_as_before():
-    assert (
-        prompt_line(_block(), embeds_images=False) == "[alice]: 周五组会改到下午三点"
-    )
+    assert prompt_line(_block(), embeds_images=False) == "[alice]: 周五组会改到下午三点"
