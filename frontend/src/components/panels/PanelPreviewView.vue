@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -166,6 +166,57 @@ const commentPick = computed(() => {
 async function postFileComment(payload: { content: string; quote: string | null; anchor: QuotedContext | null }) {
   await props.comments?.post(payload)
   clearLocator()
+}
+
+/** 指认条上的「评论」出口：这句话挂成这一处的评论，不走对话。
+ *
+ *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
+const commentError = ref('')
+/** 读者动了几次指认（换一处、取消、换文件）。发评论回来时拿它比一比：中途动过就说明
+ *  他已经不在这一处了，别再替他打开评论栏。 */
+const pickGeneration = ref(0)
+// 换了一处指认就把上一次那句话撤掉：它说的是上一处，留着会让读者以为新指的这处也失败了。
+// 撤掉指认的路不止一条（条上的取消、面板上的 Escape、换一份文件、选另一段），只在取消
+// 那条路上清是清不干净的——挂在指认本身变了这里，几条路一起覆盖。
+watch(locator, () => {
+  commentError.value = ''
+  pickGeneration.value += 1
+})
+/** 这条出口正发着：发一条要等一会儿，这期间再点一次会挂出两条一样的评论。
+ *
+ *  指认条那个 `busy` 只反映页上钉一处那条路（`pageLocator.sending`），评论这条路
+ *  它照不到，所以在自己这里挡一道。 */
+const commenting = ref(false)
+async function commentHere() {
+  const body = locatorNote.value.trim()
+  if (!body || !props.comments || commenting.value) return
+  // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
+  const target = commentPick.value
+  const pick = target?.quote ?? null
+  // 发之前记一笔：发回来时这个数变了，就说明读者中途取消或换了一处。
+  // 这条出口自己收尾（不走 `postFileComment`，那个函数发完就清掉指认，会把这一笔也搅进去）。
+  const before = pickGeneration.value
+  commentError.value = ''
+  commenting.value = true
+  try {
+    await props.comments.post({ content: body, quote: pick, anchor: target?.anchor ?? null })
+  } catch (cause) {
+    // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
+    // 中途换过那一处就不写了：这句话说的是上一处，落在新的这一处下面会让人以为它也失败了。
+    if (pickGeneration.value === before) {
+      commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    }
+    return
+  } finally {
+    commenting.value = false
+  }
+  // 发的时候读者已经按了取消（指着的那一处没了）或换成了另一处：这条评论已经挂上去了，
+  // 但别再把评论栏打开——他刚刚明确表示不想留在这一处，弹出来的那一栏会盖住他正在做的事。
+  if (pickGeneration.value === before) {
+    clearLocator()
+    if (!props.comments.open.value) props.comments.toggle()
+  }
 }
 // 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
 // `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
@@ -375,8 +426,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :busy="pageLocator.sending.value"
+      :busy="pageLocator.sending.value || commenting"
+      :can-comment="!!commentTarget"
+      :comment-error="commentError"
       @send="sendLocator"
+      @comment="commentHere"
       @cancel="clearLocator"
     />
 

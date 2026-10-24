@@ -425,8 +425,27 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelLocator.s1.note')
         },
-        props: { target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' }, note: '' },
-        expect: '网页 · 第 2 屏',
+        props: {
+          target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
+          note: '这一处按不到',
+          canComment: true,
+        },
+        expect: '评论',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelLocator.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelLocator.s2.note')
+        },
+        // 挂不了评论的那一份（资料库原件、消息附件）只该露出「发送」这一条。
+        props: {
+          target: { label: 'library/报告.pdf', quote: '第 2 页' },
+          note: '这一处的数字不对',
+          canComment: false,
+        },
+        expect: '发送',
       },
     ],
   },
