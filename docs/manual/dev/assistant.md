@@ -264,7 +264,7 @@ covers:
 
 ## 面板 {#panel}
 
-题目页「问芝士」、发布页、改题页用的是同一个 `AssistantPanel`，输入框和工作台的是同一套零件（`ComposerEditor`、`ComposerChipRow`、`ComposerActions`），文件能点「+」选，也能拖进面板；芝士每一轮做的事由 `AssistantTurn` 画：说的话和调的工具按发生的先后排开（`lib/assistantView.ts` 的 `interleave`，按每一步的 `at`；没记位置的旧回答把步骤都排在话前面），接连调的工具一行一步（动词 + 一个参数，答完每组收成一行「N 步」），工具回来就打勾，最后几步都回来、还没写下一段话时末尾一行「思考中」；进度清单画在最上面，做完收成「N/N 项已完成」；分身挂在派它的那一步上，跟着转圈、打勾，写「进行中」「已交回」「已停下」「失败」，点开看它做过的几步；写进草稿的改动是一张卡（每格能撤销），`notes` 是「待你确认」，发布的结果带「查看题目」。话题一次读 30 个、一个话题先读最近 50 条消息（`GET /assistant/conversations?before=`、`GET /assistant/conversations/{id}/messages?before=<seq>`），翻到顶接着读：先读完最上面那个话题，再读它上面的话题；读回来的接在上面，眼前看着的不动。芝士在答时输入框照样能打字，打了字按钮是发送（插进这一轮），空着是停止。题目页的抽屉打开时才挂；发布页、改题页上它一直停在右边，窄屏是底部弹层。面板只拿 props、发事件，取数和流式读取在 `useAssistant`。
+题目页「问芝士」、发布页、改题页用的是同一个 `AssistantPanel`，输入框和工作台的是同一套零件（`ComposerEditor`、`ComposerChipRow`、`ComposerActions`），文件能点「+」选，也能拖进面板，芝士在答时也能交（随插话一起进这一轮）；麦克风和工作台输入框同一套（`composables/useComposerVoice.ts`），听写走 `POST /assistant/voice`：不在哪个项目里，费用记在本人账上，每天的秒数和频道里共用（`voice_inputs.project_id` 可以空着）；芝士每一轮做的事由 `AssistantTurn` 画：说的话和调的工具按发生的先后排开（`lib/assistantView.ts` 的 `interleave`，按每一步的 `at`；没记位置的旧回答把步骤都排在话前面），接连调的工具一行一步（动词 + 一个参数，答完每组收成一行「N 步」），工具回来就打勾，最后几步都回来、还没写下一段话时末尾一行「思考中」；进度清单画在最上面，做完收成「N/N 项已完成」；分身挂在派它的那一步上，跟着转圈、打勾，写「进行中」「已完成」「已停下」「失败」，点开看它做过的几步；写进草稿的改动是一张卡（每格能撤销），`notes` 是「待你确认」，发布的结果带「查看题目」。话题一次读 30 个、一个话题先读最近 50 条消息（`GET /assistant/conversations?before=`、`GET /assistant/conversations/{id}/messages?before=<seq>`），翻到顶接着读：先读完最上面那个话题，再读它上面的话题；读回来的接在上面，眼前看着的不动。芝士在答时输入框照样能打字，打了字或带了文件按钮是发送（插进这一轮），空着是停止。题目页的抽屉打开时才挂；发布页、改题页上它一直停在右边，窄屏是底部弹层。面板只拿 props、发事件，取数和流式读取在 `useAssistant`。
 
 发布页、改题页上，表单跟着芝士动（`useTaskDraft`、`useDraftAgent`）：
 

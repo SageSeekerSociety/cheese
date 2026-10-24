@@ -192,6 +192,29 @@
     </div>
 
     <footer class="ap__foot" :class="{ 'ap__foot--drop': dragOver }">
+      <Transition name="ap-strip">
+        <div v-if="voice.trouble.value" class="ap__strip" role="status">
+          <v-icon size="16">{{
+            voice.trouble.value.kind === 'denied' ? 'mdi-microphone-off' : 'mdi-alert-circle-outline'
+          }}</v-icon>
+          <span class="ap__strip-text">
+            {{
+              voice.trouble.value.kind === 'denied'
+                ? t('work.room.composer.voice.denied')
+                : voice.trouble.value.message || t('work.room.composer.voice.failed')
+            }}
+          </span>
+          <button
+            type="button"
+            class="ap__strip-x"
+            :aria-label="t('work.room.composer.voice.dismiss')"
+            :title="t('work.room.composer.voice.dismiss')"
+            @click="voice.trouble.value = null"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </button>
+        </div>
+      </Transition>
       <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
       <div class="ap__box">
         <ComposerChipRow
@@ -201,7 +224,9 @@
           @remove-att="(i: number) => emit('removeFile', i)"
         />
         <ComposerEditor
+          ref="editor"
           v-model="draft"
+          v-model:caret="caret"
           class="ap__input"
           :names="NO_NAMES"
           :placeholder="placeholder ?? t('tasks.assistant.placeholder')"
@@ -218,10 +243,33 @@
           :no-files="!canAttach"
           :files-label="t('tasks.assistant.files.add')"
           :busy="busy && !draft.trim() && !files.length"
+          :can-voice="canVoice"
+          :voice="voice.state.value"
+          :voice-swap="voiceSwap"
           @files="emit('attach', $event)"
           @send="submit"
           @stop="emit('stop')"
-        />
+          @voice="onVoice"
+          @voice-done="voice.finish()"
+          @voice-swap="swapVoice"
+        >
+          <!-- The recording bar grows out of the microphone, as in the channel composer. -->
+          <template #voice>
+            <Transition name="voice-grow" :duration="{ enter: 320, leave: 180 }">
+              <ComposerVoiceBar
+                v-if="voiceOpen"
+                :state="voice.state.value"
+                :elapsed="voice.elapsed.value"
+                :levels="voice.levels.value"
+                :max-seconds="VOICE_MAX_SECONDS"
+                :holding="holding"
+                :drag-x="dragX"
+                :armed="armed"
+                @cancel="voice.cancel()"
+              />
+            </Transition>
+          </template>
+        </ComposerActions>
       </div>
       <p class="ap__hint">{{ hint ?? t('tasks.assistant.hint') }}</p>
     </footer>
@@ -232,6 +280,7 @@
 // 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
 // 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
 // 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
+import type { VoiceHeard } from '@/composables/useVoiceInput'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
@@ -242,6 +291,8 @@ import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
+import { useComposerVoice } from '@/composables/useComposerVoice'
+
 import AssistantTurn from './AssistantTurn.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -251,6 +302,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
+import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
 import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
@@ -328,6 +380,8 @@ const props = withDefaults(
     hint?: string
     /** 能把文件交给芝士。 */
     canAttach?: boolean
+    /** 把说的一段交给后端听写；不给就没有麦克风。 */
+    hearVoice?: (wav: Blob) => Promise<VoiceHeard>
     files?: PanelFile[]
     closable?: boolean
     /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
@@ -355,6 +409,7 @@ const props = withDefaults(
     placeholder: undefined,
     hint: undefined,
     canAttach: false,
+    hearVoice: undefined,
     files: () => [],
     closable: true,
   }
@@ -486,7 +541,33 @@ function submit() {
   draft.value = ''
 }
 
+// 说一段：和频道的输入框同一套（`useComposerVoice`）。这里没有名册，说出来的 @ 原样落下。
+const editor = ref<InstanceType<typeof ComposerEditor> | null>(null)
+const caret = ref(0)
+const {
+  VOICE_MAX_SECONDS,
+  canVoice,
+  voice,
+  voiceOpen,
+  voiceSwap,
+  swapVoice,
+  onVoice,
+  onVoiceKey,
+  holding,
+  dragX,
+  armed,
+} = useComposerVoice({
+  draft,
+  caret,
+  editor,
+  enabled: () => !!props.hearVoice,
+  hear: (wav) => props.hearVoice!(wav),
+  expand: (text) => text,
+  isImeKey: (e) => composing.value || e.isComposing || e.keyCode === 229,
+})
+
 function onKeydown(e: KeyboardEvent) {
+  if (onVoiceKey(e)) return
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing.value) {
     e.preventDefault()
     submit()
@@ -769,6 +850,73 @@ function nearTop() {
 
 .ap__box:focus-within {
   border-color: var(--faint);
+}
+
+/* 语音没成：贴在输入框顶上的一条，和工作台输入框的提示条同一个样子。 */
+.ap__strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--danger-wash);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--danger-ink);
+}
+.ap__strip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
+}
+.ap__strip-x {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.ap__strip-x:hover {
+  background: var(--fill-2);
+}
+.ap-strip-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.ap-strip-leave-active {
+  transition:
+    opacity var(--dur-quick) var(--ease-in),
+    transform var(--dur-quick) var(--ease-in);
+}
+.ap-strip-enter-from,
+.ap-strip-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+/* 录音条从麦克风的位置往左展开成整行，说完了收回麦克风（同工作台输入框）。 */
+.voice-grow-enter-active :deep(.voice-bar__body) {
+  transition:
+    clip-path var(--dur-slow) var(--ease-out),
+    opacity 120ms var(--ease-out);
+}
+.voice-grow-leave-active :deep(.voice-bar__body) {
+  transition:
+    clip-path 180ms var(--ease-in),
+    opacity 180ms var(--ease-in);
+}
+.voice-grow-enter-from :deep(.voice-bar__body),
+.voice-grow-leave-to :deep(.voice-bar__body) {
+  clip-path: inset(0 0 0 calc(100% - 28px) round var(--radius-md));
+  opacity: 0;
 }
 
 /* 拖着文件进来：和工作台的输入框一样，那一圈加深、垫一层底色。 */

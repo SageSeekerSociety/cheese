@@ -60,7 +60,7 @@ import { toast } from 'vuetify-sonner'
 
 import { useAgentPointer } from '@/composables/useAgentPointer'
 
-import { downloadFile, libraryFileRawUrl } from '@/api'
+import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
@@ -215,6 +215,7 @@ const panelProps = computed(() => {
     placeholder: context.placeholder ?? t('tasks.assistant.anywhere.placeholder'),
     hint: context.hint ?? t('tasks.assistant.anywhere.hint'),
     canAttach: true,
+    hearVoice: hearAssistantVoice,
     closable: true,
     dockable: mdAndUp.value,
     docked: docked.value,

@@ -24,7 +24,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -38,8 +38,14 @@ from app.api.space_deps import get_space_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
+from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.personal import pages
@@ -60,6 +66,7 @@ from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
+from app.domain.voice.service import VoiceInputs
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -531,6 +538,43 @@ async def say_in(
         work_id=uuid.UUID(answering.work_id),
     )
     return ok({"said": True})
+
+
+#: A full-length recording at 16 kHz, 16-bit mono is 1.92 MB; anything far
+#: past that is not one the composer made.
+_VOICE_BYTES = 4 * 1024 * 1024
+
+
+class HeardOut(BaseModel):
+    text: str
+    raw: str
+    seconds: float
+    remaining_seconds: int
+
+
+@router.post("/voice", dependencies=[ROUTE_DECIDES], **typed_response(HeardOut))
+async def hear_voice(
+    db: DbSession,
+    auth: AuthUser,
+    file: UploadFile = File(...),
+) -> dict:
+    """Hear a WAV recording said to the person's own 芝士, as the composer in a
+    channel does: ``text`` tidied, ``raw`` word for word. It is in no project,
+    so the person pays for it, out of the same daily allowance."""
+    audio = await file.read(_VOICE_BYTES + 1)
+    if len(audio) > _VOICE_BYTES:
+        raise ValidationError(say("voiceTooLong", seconds=settings.voice_max_seconds))
+    heard = await VoiceInputs(db).hear(
+        user_id=auth.user_id, project_id=None, topic_id=None, audio=audio, names=[]
+    )
+    return ok(
+        {
+            "text": heard.text,
+            "raw": heard.raw,
+            "seconds": round(heard.seconds, 1),
+            "remaining_seconds": round(heard.remaining_seconds),
+        }
+    )
 
 
 class LookingOut(BaseModel):
