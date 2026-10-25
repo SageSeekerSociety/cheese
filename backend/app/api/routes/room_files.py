@@ -135,6 +135,28 @@ class RoomFileListOut(Page[RoomFileOut]):
     truncated: bool
 
 
+class RoomFileRevisionOut(BaseModel):
+    """一次保存留下的那一版：地址、第几版、版本号、大小、谁从哪条路存的。
+
+    `room_files.revision_out` 那一份的形状——保存、恢复、编辑器回调都回它。版本是内容
+    的哈希前 16 位，和读文件时拿到的是同一个 id（`domain/textfile.content_version`）。
+    """
+
+    id: str
+    path: str
+    seq: int
+    version: str
+    size: int
+    author: str
+    author_kind: str
+    #: 这一版从哪个门进来的：取值见 ``room_files.SOURCES``。
+    source: str
+    note: str | None
+    #: 在线编辑器（OnlyOffice）那次会话的钥匙；走别条路的保存是空的。
+    editor_key: str | None
+    created_at: str
+
+
 @router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
 async def list_files(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -426,7 +448,11 @@ async def open_in_editor(
     )
 
 
-@router.post("/topics/{topic_id}/files/text", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/topics/{topic_id}/files/text",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoomFileRevisionOut),
+)
 async def write_text_file(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
