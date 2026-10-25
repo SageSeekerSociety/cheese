@@ -585,9 +585,10 @@ async def open_live_editor(
         return ok({"enabled": False, "reason": "unsupported"})
     content = shown.get("content")
     if content is None:
-        # Text that is too large to read is still text: the editor opens it,
-        # the way the office editor does, and the ceiling is the preview's.
-        content = ""
+        # Text over the ceiling is not read into a body at all (`too_large`).
+        # Opening it live would seed the state with text nobody read, and the
+        # service's first store would write that back over the file.
+        return ok({"enabled": False, "reason": "too_large"})
     can_edit = actor.authenticated and await may(
         db, place.project_id, actor.handle, Permission.edit_content
     )

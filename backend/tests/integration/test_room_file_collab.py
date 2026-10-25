@@ -12,6 +12,7 @@ import base64
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.living_doc import collab
+from app.domain.textfile import MAX_TEXT_BYTES
 from tests.integration.conftest import post_project
 
 PATH = "notes/记录.md"
@@ -90,6 +91,17 @@ def test_only_this_rooms_text_opens_live(client):
     refused = _open(client, room, path="notes/图.png").json()["data"]
     assert refused["enabled"] is False
     assert refused["reason"] == "unsupported"
+
+
+def test_text_over_the_ceiling_does_not_open_live(client):
+    # Its text is never read into a body at all (`too_large`). Seeding the
+    # live state with anything — the empty string included — would let the
+    # service's first store write it over the file.
+    project, room = _room(client)
+    _put(client, project, room, b"x" * (MAX_TEXT_BYTES + 1))
+    refused = _open(client, room).json()["data"]
+    assert refused["enabled"] is False
+    assert refused["reason"] == "too_large"
 
 
 def test_a_store_through_the_service_becomes_a_version_of_the_file(client):
