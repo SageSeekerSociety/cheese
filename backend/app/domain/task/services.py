@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
@@ -16,8 +17,10 @@ from app.core.domain_errors import (
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
+from app.domain.project.services import ClaimInProgressError
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -27,6 +30,7 @@ from app.domain.space.repositories import (
 )
 from app.domain.task import package
 from app.domain.task.claims import members_claiming_through_another_team
+from app.domain.task.inputs import APPROVE_DISAPPROVED, APPROVE_NONE
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -169,8 +173,9 @@ class TaskMembershipService:
             membership = await self._repo.get_by_task_and_member(
                 task_id=task.id,  # type: ignore[arg-type]
                 member_id=team_id,
+                is_team=True,
             )
-            if membership is None or not membership.is_team:
+            if membership is None:
                 return False
         else:
             membership = await self._repo.get_user_membership(
@@ -196,23 +201,31 @@ class TaskMembershipService:
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """一份新的申请：总是等出题人通过（``approved`` 2）。名额、实名都在通过时看
-        （``update_membership``），这里只拒重复申请和团队那两条。"""
+        """领这道题：新的一份申请总是等出题人通过（``approved`` 2）。名额、实名都在
+        通过时看（``update_membership``），这里只看团队那两条。
 
-        # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
+        领一道自己（或自己的团队）已经领着的题不是错：答的就是那一份（等着通过
+        的、已经通过的都算），调用方接着打开它的项目。被拒的那一份不算领着，可以
+        重新申请。
+
+        先拿下这一份领取（``try_lock_claim``，到提交为止）再看、再写：同一个人或
+        同一个团队同时点两次，后到的那次不等前一次（它可能正在代码仓库服务那边建
+        仓库），当场说「正在建，过一会儿再试」，再试时拿到的就是前一次领下的那一份。
+        数据库另有一道唯一索引守着「一个成员一道题只有一份没被拒的领取」，上一个版本
+        并发插入时撞上它，这里读回已经在的那一份。"""
+
         now = datetime.now(UTC)
+        session = self._repo._session
+        if not await self._repo.try_lock_claim(task.id, member_id, is_team):  # type: ignore[arg-type]
+            raise ClaimInProgressError(say("claimInProgress"))
 
-        # 已存在参与记录则拒绝（DISAPPROVED 除外，允许重新申请）
-        existing = await self.get_membership_by_task_and_member(
-            task_id=task.id,
-            member_id=member_id,  # type: ignore[arg-type]
+        existing = await self._repo.get_by_task_and_member(
+            task_id=task.id,  # type: ignore[arg-type]
+            member_id=member_id,
+            is_team=is_team,
         )
-        if (
-            existing is not None
-            and existing.deleted_at is None
-            and existing.approved != 1
-        ):
-            raise BadRequestError("Member already participating in this task.")
+        if existing is not None and existing.approved != APPROVE_DISAPPROVED:
+            return existing
 
         # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
         if is_team:
@@ -236,7 +249,7 @@ class TaskMembershipService:
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
             member_id=member_id,
-            approved=2,
+            approved=APPROVE_NONE,
             is_team=is_team,
             email=email or "",
             phone=phone or "",
@@ -247,7 +260,20 @@ class TaskMembershipService:
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
         )
-        return await self._repo.save(membership)
+        try:
+            async with session.begin_nested():
+                return await self._repo.save(membership)
+        except IntegrityError:
+            # Another claim of this member landed first (one the lock above did
+            # not see: the previous release, during a deploy). It is the claim.
+            claimed = await self._repo.get_by_task_and_member(
+                task_id=task.id,  # type: ignore[arg-type]
+                member_id=member_id,
+                is_team=is_team,
+            )
+            if claimed is None:
+                raise
+            return claimed
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
         membership.deleted_at = datetime.now(UTC)
