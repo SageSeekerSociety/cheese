@@ -46,18 +46,25 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
         .where(AgentSession.work_lease["device_id"].as_string() == device)
     )
-    for session, project_id in rows:
-        lease = session.work_lease or {}
-        if lease.get("status", "ready") != "ready" or not lease.get("state"):
-            continue
-        if _names(lease["state"], state):
-            project = await ProjectService(db).get(project_id)
-            if project is None:
-                return None
-            return MachineCaller(
-                session_id=str(session.id),
-                project_id=str(project_id),
-                conversation_id=str(session.conversation_id),
-                agent_handle=await session_author(db, project, session.agent_handle),
-            )
-    return None
+    held = next(
+        (
+            (session, project_id)
+            for session, project_id in rows
+            if (session.work_lease or {}).get("status", "ready") == "ready"
+            and (session.work_lease or {}).get("state")
+            and _names(session.work_lease["state"], state)
+        ),
+        None,
+    )
+    if held is None:
+        return None
+    session, project_id = held
+    project = await ProjectService(db).get(project_id)
+    if project is None:
+        return None
+    return MachineCaller(
+        session_id=str(session.id),
+        project_id=str(project_id),
+        conversation_id=str(session.conversation_id),
+        agent_handle=await session_author(db, project, session.agent_handle),
+    )
