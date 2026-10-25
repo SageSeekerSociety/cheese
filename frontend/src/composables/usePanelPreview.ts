@@ -151,7 +151,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     agentHandle: () => props.agentHandle ?? null,
     agentName: () => props.agentName ?? '',
   })
-  const comments = usePanelPreviewComments({ props, state, people })
+  const comments = usePanelPreviewComments({ props, state, people, docPage: () => doc.docPage.value })
   const edits = usePanelPreviewEditing({
     props,
     state,

@@ -115,7 +115,6 @@
     "needsReview": "发布后需管理员审核",
     "publish": "发布",
     "teaching": {
-      "subtitle": "用于从本题创建的项目",
       "title": "AI 队友辅导"
     },
     "useTemplate": "使用模板",
@@ -150,7 +149,8 @@
       "failed": "《{name}》发布失败",
       "separator": "；",
       "removeFailed": "删除失败"
-    }
+    },
+    "starterNotSent": "题目已发布，起始代码没有放进去：{error}。在改题页重新上传"
   },
   "tasks": {
     "allTopics": "全部标签",

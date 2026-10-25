@@ -30,7 +30,7 @@ from tests.integration.conftest import (
 
 SPACE_GUIDE = {"mode": "guide", "systemPrompt": "空间的要求"}
 
-#: All six fields set, in the request's spelling — what the settings form sends.
+#: All seven fields set, in the request's spelling — what the settings form sends.
 #: `privatePrompt` 是出题人可见的那一格（`teaching_to_api(include_private=True)`），
 #: 这几条用的都是出题人/管理员的身份，所以它也在读回来的那一份里。
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
@@ -42,6 +42,7 @@ FULL_TEACHING = {
     "learningGoals": ["会读栈追踪"],
     "materialIds": [],
     "documentIds": [],
+    "skills": ["wolfram"],
 }
 
 #: What a level that says nothing reads back as.
@@ -52,6 +53,7 @@ EMPTY_TEACHING = {
     "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
+    "skills": [],
 }
 
 

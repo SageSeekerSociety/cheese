@@ -57,7 +57,7 @@ from app.domain.membership.services import (
     OwnershipService,
 )
 from app.domain.onboarding.start import start_steps
-from app.domain.project.forge import follow_github_rename
+from app.domain.project.forge import follow_github_rename, starter_push
 from app.domain.project.github_app import (
     github_app_read_token_for_project,
     parse_github_repo,
@@ -96,6 +96,7 @@ from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage import referrals
 from app.domain.usage.adapters import ComputeCredits
 
 logger = logging.getLogger("cheesex.projects")
@@ -257,6 +258,9 @@ async def create_project(
         project_id=body.id,
         owner_handle=who.handle,
     )
+    user_id = getattr(who, "user_id", None)
+    if user_id is not None:
+        await referrals.on_onboarded(db, user_id)
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
@@ -425,6 +429,15 @@ async def get_project(
             else []
         )
     ]
+    # The 题目's starter code this repository begins with (#4767): which
+    # version, whether it has landed yet (`pending` / `done` / `failed`), and
+    # the sentence a failed push is told with. Null without starter code.
+    push = await starter_push(project_id, db)
+    payload["starter"] = (
+        {"revision": push.revision, "state": push.state, "error": push.error}
+        if push is not None
+        else None
+    )
     _with_standing(
         payload,
         await standing(db, project_id, actor.handle) if actor.authenticated else None,

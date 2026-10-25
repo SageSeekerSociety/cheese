@@ -4,7 +4,7 @@
 （`library.records`）：先领一次上传的凭据（``POST /tasks/{id}/files/uploads``），
 按段领地址（``…/uploads/part``），浏览器把每一段连同它的 MD5 直接放进存储，再拿凭据、
 整份的 SHA-256 和每段的 MD5 来登记。放进、替换、删掉一份，题目记一版
-（`app.domain.task.package`）。
+（`app.domain.task.package`）。起始代码走同一条上传的路，登记在 ``PUT /tasks/{id}/starter``。
 
 看得见这道题就能看到清单；下载要是出题人、空间管理员或参与者（申请通过的人）（`package` 里的
 三条判据）。
@@ -46,6 +46,8 @@ class TaskFileOut(BaseModel):
 
 class TaskFilesOut(BaseModel):
     files: list[TaskFileOut]
+    #: 起始代码（#4767 第二节）：领题建项目时作为仓库第一个提交的那份 .zip；没有是 null。
+    starter: TaskFileOut | None
     #: 这个人能不能下载；不能的只看到名字。
     canDownload: bool
 
@@ -141,9 +143,11 @@ async def list_task_files(
     task = await _require_task(db, task_id)
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     rows = await package.files(db, task.id)
+    starter = await package.starter_file(db, task.id)
     return ok(
         {
             "files": [_file(row) for row in rows],
+            "starter": _file(starter) if starter is not None else None,
             "canDownload": await package.may_download(db, task, auth_user.user_id),
         }
     )
@@ -311,5 +315,57 @@ async def remove_task_file(
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
     await package.remove_file(db, task, by=auth_user.user_id, name=_name(name))
+    await db.commit()
+    return ok({"removed": True})
+
+
+@router.put(
+    "/{taskId}/starter",
+    summary="Set Task Starter Code",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskFilePlacedOut),
+)
+async def set_task_starter(
+    task_id: TaskId,
+    body: TaskFileUploaded,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """把传上来的一份 .zip 设成起始代码（和材料同一条分段上传），题目记一版。
+
+    当场查它能不能解开、有没有越出目录的路径或链接、大小和文件数在不在上限内，不合格
+    的说清楚为什么。已有一份的，旧的留作历史；已经领了题的项目不受影响。"""
+    task = await _require_task(db, task_id)
+    await package.refuse_unless_teacher(db, task, auth_user.user_id)
+    upload = _received(task.id, body)
+    verb = await package.set_starter(db, task, by=auth_user.user_id, data=upload)
+    await package.record(
+        db, task, by=auth_user.user_id, changes={package.STARTER_CHANGE: verb}
+    )
+    await db.commit()
+    return ok({"name": package.STARTER, "size": upload.size})
+
+
+@router.delete(
+    "/{taskId}/starter",
+    summary="Remove Task Starter Code",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskFileRemovedOut),
+)
+async def remove_task_starter(
+    task_id: TaskId,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """不要起始代码了，题目记一版；之后领题的人拿到的是一个由平台初始化的仓库。"""
+    task = await _require_task(db, task_id)
+    await package.refuse_unless_teacher(db, task, auth_user.user_id)
+    await package.remove_starter(db, task)
+    await package.record(
+        db,
+        task,
+        by=auth_user.user_id,
+        changes={package.STARTER_CHANGE: package.REMOVED},
+    )
     await db.commit()
     return ok({"removed": True})

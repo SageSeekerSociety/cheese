@@ -1071,7 +1071,7 @@ async def oauth_create_user(
     except UnprocessableEntityError as exc:
         return _oauth_error_redirect(request, "INVITE_CODE_REQUIRED", str(exc))
     invite_service = InviteCodeService(session)
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         try:
             await invite_service.validate_code(invite_code)
         except ValueError as exc:
@@ -1145,14 +1145,11 @@ async def oauth_create_user(
             try:
                 consumed = await invite_service.consume_code(invite_code)
             except ValueError as exc:
-                if settings.require_invite_code:
-                    await session.rollback()
-                    return _oauth_error_redirect(
-                        request, "INVALID_INVITE_CODE", str(_invite_code_error(exc))
-                    )
-                consumed = None
-            if consumed is not None:
-                await referrals.record_referral(session, consumed, user.id)
+                await session.rollback()
+                return _oauth_error_redirect(
+                    request, "INVALID_INVITE_CODE", str(_invite_code_error(exc))
+                )
+            await referrals.record_referral(session, consumed, user.id)
         response = await _complete_oauth_binding(
             request=request,
             session=session,

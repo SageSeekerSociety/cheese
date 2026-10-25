@@ -1463,9 +1463,17 @@ TASK_WRITE_DESCRIPTION = (
     "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人做这道题，"
     "空列表是空间全部成员都能做；attachments 题目附件，写用户交给你的文件 id，"
     "新题目整组替换，已发布的题目保存时追加上去；"
+    "starter 起始代码，写用户交给你的一个 .zip 文件 id：领题时解开作为项目代码仓库的"
+    "第一个提交，已发布的题目保存时换上这一份；"
+    "「AI 的设置」几格写的是从这道题建出的项目里 AI 队友怎么帮学生：ai_teammate "
+    "默认队友（写预设名称，或沿用上层设置）；"
     "ai_mode AI 队友怎么帮学生（引导为主、讲解与示例、先明确需求再实现、不加限制，"
     "或沿用空间设置）；ai_guidance 这道题的 AI 队友补充要求，和空间的要求同时生效，"
-    "空字符串是没有补充。分类、标签、导师、邮箱域名组只能用当前页面里列着的。\n"
+    "空字符串是没有补充；ai_private_guidance 出题人私有指导，AI 队友照做、学生看不到，"
+    "参考答案、评分口径写在这里；ai_goals 学习目标；ai_materials 让 AI 队友读的资料，"
+    "写空间资料库里的文件名，整组替换；ai_skills 项目里每个 AI 队友都带上的技能，"
+    "整组替换。分类、标签、导师、邮箱域名组、默认队友、资料和技能只能用当前页面里"
+    "列着的。\n"
     "\n"
     "template 是空间里的一份模板名称（当前页面列着）：先按模板填好名称、详情和几项"
     "设置，再写同一次给出的其他字段，和用户点「使用模板」一样。用户要按模板出题时，"
@@ -1575,6 +1583,10 @@ TASK_WRITE_FIELDS = {
         "items": {"type": "integer"},
         "description": "用户交给你的文件 id，作为题目附件",
     },
+    "starter": {
+        "type": "integer",
+        "description": "用户交给你的一个 .zip 文件 id，作为起始代码；0 是不要起始代码",
+    },
     "ai_mode": {
         "type": "string",
         "enum": [
@@ -1586,6 +1598,25 @@ TASK_WRITE_FIELDS = {
         ],
     },
     "ai_guidance": _text("这道题的 AI 队友补充要求；空字符串是没有补充"),
+    "ai_teammate": _text("默认队友的预设名称；沿用上层设置就写「沿用上层设置」"),
+    "ai_private_guidance": _text(
+        "出题人私有指导：AI 队友照做，学生看不到；空字符串是没有"
+    ),
+    "ai_goals": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "学习目标，一项一句；空列表是不设",
+    },
+    "ai_materials": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "让 AI 队友读的资料：空间资料库里的文件名；空列表是不给",
+    },
+    "ai_skills": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "项目里每个 AI 队友都带上的技能名称；空列表是不给",
+    },
     "notes": {
         "type": "array",
         "items": {
@@ -4624,7 +4655,9 @@ _TASK_FIELD_WORDS = {
     "accessControlEnabled": "access",
     "accessDomainGroupIds": "access",
     "attachmentIds": "attachments",
+    "starterAttachmentId": "starter",
     "teaching": "ai_guidance",
+    "defaultRole": "ai_teammate",
 }
 
 

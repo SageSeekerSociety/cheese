@@ -13,6 +13,7 @@ import type { PanelPreviewProps } from './types'
 import { computed, ref, watch } from 'vue'
 
 import { postFileThread } from '../../api/fileThreads'
+import { SLIDE_SUFFIXES } from '../../lib/fileKind'
 import { myHandle } from '../../me'
 import { useFileThreads } from '../useFileThreads'
 
@@ -21,6 +22,9 @@ export interface CommentsDeps {
   state: PreviewState
   /** 名册那一包（`useDocPeople`）：卡上的名字和头像从它来，和文档那一栏同一处。 */
   people: DocPeopleBundle
+  /** 屏幕上这一份是不是读成了网页（`docPage`）。网页那一档画不出标记（它在沙箱帧里），
+   *  所以栏关着时不必为它读评论串。 */
+  docPage: () => boolean
 }
 
 /** 一份文件上的评论串，和写一条新的那条路。 */
@@ -47,11 +51,29 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   watch(commentable, (current) => {
     if (!current) open.value = false
   })
-  // 正文上要画标记的那一档：这一份的线程列表在栏关着时也得读。标记是从线程列表算出来的，
+  // 要画标记的那几档：这一份的线程列表在栏关着时也得读。标记是从线程列表算出来的，
   // 等读者自己去点开那一栏才读，「哪儿有人评过」这件事就要他先想到去开栏才看得见——
-  // 而那正是标记要替他省掉的一步。今天只有 markdown 这一种读法画标记（`PreviewMarkdown`），
-  // 别的读法有了标记时，这里跟着放宽。
-  const drawsMarks = computed(() => commentable.value !== null && state.documentType.value?.view === 'markdown')
+  // 而那正是标记要替他省掉的一步。
+  //
+  // 哪几档画标记：markdown 画在正文上（`PreviewMarkdown`），转成 PDF 的文档画在页上
+  // （`PreviewPages`），表格画在格子上（`PreviewSheet`）。别的读法有了标记时，这里跟着加。
+  // 这一条和 `PanelPreviewView` 里 `liveAnchors` 收哪几种锚点是配对的——那边多收一种，
+  // 这边就得跟着多读一种，不然标记一个都不会出现（栏关着的时候列表根本没读）。
+  //
+  // 幻灯片要单独排掉：它也是 `view === 'pages'`，但页上画不出标记（评的是整页）——
+  // 圈进来就是每打开一份 pptx 都白打一次评论接口。
+  const drawsMarks = computed(() => {
+    const view = state.documentType.value?.view
+    if (commentable.value === null) return false
+    if (view === 'markdown') return true
+    // 读成网页时画的是沙箱帧，标记画不上去（`PreviewDocStage` 那一支挂的是 `PreviewPage`）。
+    // 表格也算在内：`.xlsx` 有网页这一种读法（`PAGE_FORMATS` 认它），切过去之后挂的是
+    // 网页那一支，表格查看器根本没上屏——这里先放行再排掉，等于每打开一份这样的表
+    // 白打一次评论接口。
+    if (deps.docPage()) return false
+    if (view === 'sheet') return true
+    return view === 'pages' && !SLIDE_SUFFIXES.has(state.documentSuffix.value)
+  })
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,
     () => commentable.value?.path ?? null,
