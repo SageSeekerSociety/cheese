@@ -69,6 +69,7 @@ FORM_FIELDS = frozenset(
         "attachmentFiles",
         "starterAttachmentId",
         "starterFile",
+        "removeStarter",
         "teaching",
         "teachingOwn",
     }
@@ -110,7 +111,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "mentors": ("mentors",),
     "access": ("accessControlEnabled", "accessDomainGroupIds"),
     "attachments": ("attachmentIds", "attachmentFiles"),
-    "starter": ("starterAttachmentId", "starterFile"),
+    "starter": ("starterAttachmentId", "starterFile", "removeStarter"),
     "ai_guidance": ("teaching", "teachingOwn"),
     "ai_mode": ("teaching", "teachingOwn"),
 }
@@ -533,6 +534,9 @@ def from_agent(
     if "starter" in args:
         out["starterAttachmentId"] = starter["id"] if starter else None
         out["starterFile"] = starter
+        # No file named is "no starter code": on a published 题目, saving the
+        # changes removes the one it has.
+        out["removeStarter"] = starter is None
     if "ai_guidance" in args or "ai_mode" in args:
         # The 题目's own guidance, on top of the space's: what 芝士 did not name
         # (the materials, the other of the two) stays as it is.
@@ -976,7 +980,7 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         + (
             f"{starter_file.get('name')}（files/{starter_file.get('id')}）"
             if isinstance(starter_file := fields.get("starterFile"), dict)
-            else ""
+            else ("（不要起始代码）" if fields.get("removeStarter") else "")
         ),
         "ai_mode: "
         + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),

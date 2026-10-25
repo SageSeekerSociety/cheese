@@ -6,8 +6,11 @@
 - 每一项的路径都要落在解包目录里面：拒绝绝对路径、盘符、`..`；
 - 只收普通文件和目录：符号链接、设备、管道一律拒绝（zip 格式没有硬链接）；
 - 文件数、解开后的总大小有上限，解开后比压缩包本身大得离谱的（压缩炸弹）拒绝；
-- `__MACOSX/`、`.DS_Store` 和任何一层叫 `.git` 的路径不要：前两样是压缩工具顺手
-  塞进来的，`.git` 会让 git 把那个目录当成另一个仓库；
+- `__MACOSX/`、`.DS_Store` 和任何一层叫 `.git`（大小写不论）的路径不要：前两样是
+  压缩工具顺手塞进来的，`.git` 是压缩整个仓库文件夹时带进来的 git 自己的东西；
+- 每一层名字不超过 255 字节、整条路径不超过 4096 字节，不含控制字符；其余 git 不收的
+  路径（`GIT~1` 这类 `.git` 的别名）问 git 自己，拒绝；
+- 只收 `zipfile` 解得开的压缩方式；
 - 整个压缩包只有一个顶层文件夹时，去掉这一层：多数人是右键压缩整个文件夹的。
 
 解开只写在一个临时目录里，用完就删。仓库里的 `.gitignore` 照常生效：起始代码就是出题人
@@ -35,8 +38,20 @@ from app.core.sentences import say
 log = logging.getLogger(__name__)
 
 #: 压缩工具顺手放进来、不属于代码的东西。
-_SKIPPED_DIRS = frozenset({"__MACOSX", ".git"})
+_SKIPPED_DIRS = frozenset({"__MACOSX"})
 _SKIPPED_NAMES = frozenset({".DS_Store"})
+#: 解得开的压缩方式：`zipfile` 只认这几种，别的（如 Deflate64）读的时候才报错。
+_METHODS = frozenset(
+    {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED, zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA}
+)
+#: 一层名字、一整条路径最多多少字节（UTF-8）：常见文件系统的上限。
+_NAME_BYTES = 255
+_PATH_BYTES = 4096
+#: git 自己存东西的那一层。压缩整个仓库文件夹时会带进来，跳过；大小写不论，
+#: 不区分大小写的盘上 `.GIT` 就是 `.git`。
+_GIT_DIR = ".git"
+#: 空文件的 blob：只为让 git 判一遍路径，不写任何内容。
+_EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 #: 解开后不到这么大时不看压缩比：几个高度重复的小文件压得很小是正常的。
 _RATIO_FLOOR = 64 * 1024 * 1024
 #: zip 的 general purpose flag：第 0 位是加密，第 11 位是文件名按 UTF-8 存。
@@ -96,6 +111,14 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
         parts = [part for part in name.split("/") if part not in ("", ".")]
         if ".." in parts:
             raise _refuse("starterUnsafeEntry", path=name)
+        if any(part.casefold() == _GIT_DIR for part in parts):
+            continue
+        if (
+            any(len(part.encode()) > _NAME_BYTES for part in parts)
+            or len(name.encode()) > _PATH_BYTES
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        ):
+            raise _refuse("starterNameInvalid", path=name)
         if info.create_system == _UNIX:
             kind = stat.S_IFMT(info.external_attr >> 16)
             if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
@@ -106,6 +129,8 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
             continue
         if info.flag_bits & _ENCRYPTED:
             raise _refuse("starterEncrypted")
+        if info.compress_type not in _METHODS:
+            raise _refuse("starterCompressionUnsupported", path=name)
         files.append(
             _Entry(
                 info=info,
@@ -139,7 +164,44 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
     for entry in files:
         if any(parent in seen for parent in entry.path.parents):
             raise _refuse("starterPathClash", path=str(entry.path))
+    _refuse_unless_git_accepts([str(entry.path) for entry in files])
     return files
+
+
+def _refuse_unless_git_accepts(paths: list[str]) -> None:
+    """每一条路径 git 都收得下：问 git 自己（`update-index` 判路径的那一套，连同
+    NTFS、HFS 上 `.git` 的别名，如 `GIT~1`、`.git.`），不在这里抄一份规矩。"""
+    with tempfile.TemporaryDirectory(prefix="starter-paths-") as temporary:
+        env = _git_env()
+        _git(Path(temporary), "init", "-q", env=env)
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                temporary,
+                "-c",
+                "core.protectNTFS=true",
+                "-c",
+                "core.protectHFS=true",
+                "update-index",
+                "--add",
+                "--index-info",
+            ],
+            input="".join(f"100644 {_EMPTY_BLOB}\t{path}\n" for path in paths),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=600,
+            check=False,
+        )
+    for line in result.stderr.splitlines():
+        if line.startswith("Ignoring path "):
+            raise _refuse(
+                "starterNameInvalid", path=line.removeprefix("Ignoring path ")
+            )
+    if result.returncode:
+        log.warning("starter path check failed: %s", result.stderr.strip())
+        raise GatewayUnavailableError(say("forgejoStarterPushFailed"))
 
 
 def _size(source: BinaryIO) -> int:
@@ -202,15 +264,21 @@ def _git(work: Path, *args: str, env: dict) -> None:
         raise GatewayUnavailableError(say("forgejoStarterPushFailed"))
 
 
+def _git_env() -> dict:
+    return {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+
+
 def push(starter: Starter, url: str, username: str, password: str) -> None:
     """解开起始代码，作为 `main` 上唯一的一个提交推到 `url`（一个空仓库）。
 
     凭据放在请求头里（和 `forge_migration.push` 一样），不进地址、不进 git 配置文件。"""
     env = {
-        **os.environ,
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
+        **_git_env(),
         "GIT_AUTHOR_NAME": AUTHOR_NAME,
         "GIT_AUTHOR_EMAIL": AUTHOR_EMAIL,
         "GIT_COMMITTER_NAME": AUTHOR_NAME,

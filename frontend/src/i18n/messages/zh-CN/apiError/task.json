@@ -66,5 +66,7 @@
   "teammateTaskByTeammate": "这里只供 AI 队友创建任务",
   "teammateTaskHereOnlyInThread": "只有支线可以原地转为任务",
   "teammateTaskSummaryRequired": "另开任务时要写明它要做什么",
-  "taskStarterHasItsOwnPlace": "{name} 是这道题的起始代码，在「起始代码」一栏里替换或删除"
+  "taskStarterHasItsOwnPlace": "{name} 是这道题的起始代码，在「起始代码」一栏里替换或删除",
+  "starterRemovedBeforePush": "出题人在放进仓库之前删掉了这份起始代码",
+  "starterPushGaveUp": "代码仓库服务一直没有接收起始代码，已经停止尝试"
 }

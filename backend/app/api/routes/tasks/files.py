@@ -360,6 +360,12 @@ async def remove_task_starter(
     """不要起始代码了，题目记一版；之后领题的人拿到的是一个由平台初始化的仓库。"""
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
-    await package.remove_starter(db, task, by=auth_user.user_id)
+    await package.remove_starter(db, task)
+    await package.record(
+        db,
+        task,
+        by=auth_user.user_id,
+        changes={package.STARTER_CHANGE: package.REMOVED},
+    )
     await db.commit()
     return ok({"removed": True})

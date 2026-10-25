@@ -42,5 +42,7 @@
   "versionOf": "{name} 第 {version} 版",
   "write": "写项目目标",
   "yesterday": "昨天",
-  "starterFrom": "代码仓库的起始代码来自题目第 {n} 版"
+  "starterFrom": "代码仓库的起始代码来自题目第 {n} 版",
+  "starterPending": "代码仓库正在放入题目第 {n} 版的起始代码",
+  "starterFailed": "题目第 {n} 版的起始代码没能放进代码仓库：{reason}"
 }

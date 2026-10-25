@@ -350,6 +350,9 @@ async def update_task(
             attachment_id=payload.starter_attachment_id,
             uploads=_attachment_service(db),
         )
+    elif payload.remove_starter and await package.starter_file(db, task.id):
+        await package.remove_starter(db, task)
+        changes[package.STARTER_CHANGE] = package.REMOVED
     await package.record(db, task, by=user_id, changes=changes)
     # What a taker is told about is what asks something new of them: the form,
     # the rubric's lines, a stage added or removed, a stage's due date. A

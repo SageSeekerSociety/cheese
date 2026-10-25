@@ -139,5 +139,7 @@
   "starterCompressionRatio": "The archive unpacks to far more than its own size, so it can't be starter code",
   "starterEmpty": "The archive holds no files",
   "starterPathClash": "{path} appears twice in the archive, or has the same name as a folder",
-  "forgejoStarterPushFailed": "Couldn't put the starter code into the project's code repository. Try again shortly"
+  "forgejoStarterPushFailed": "Couldn't put the starter code into the project's code repository. Try again shortly",
+  "starterNameInvalid": "{path} in the archive can't go into a code repository: the name is too long, has control characters, or git refuses it",
+  "starterCompressionUnsupported": "{path} in the archive uses an unsupported compression method. Compress it again as a standard zip"
 }

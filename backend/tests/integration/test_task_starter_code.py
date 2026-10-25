@@ -17,13 +17,14 @@ import io
 import stat
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.domain.project.models import Project
-from app.domain.task import package
+from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
 from tests.integration.test_task_files import (
     _add,
@@ -115,17 +116,32 @@ def _log(project_id: uuid.UUID) -> list[str]:
     ).splitlines()
 
 
-def _starter_revision(api_client: TestClient, project_id: uuid.UUID, token: str):
+def _starter(api_client: TestClient, project_id: uuid.UUID, token: str):
+    """项目说它的代码仓库从哪一版起始代码开始、放好了没有。"""
     resp = api_client.get(f"/projects/{project_id}", headers=_auth(token))
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["starter_revision"]
+    return resp.json()["data"]["starter"]
+
+
+@pytest.fixture
+def push_starters(db_session, _portal):
+    """跑一遍后台那件事：把领题记下的起始代码放进仓库，直到没有在等的。"""
+
+    @asynccontextmanager
+    async def sessions():
+        yield db_session
+
+    def run() -> dict[str, int]:
+        return _portal.call(starter_jobs.push_due, sessions)
+
+    return run
 
 
 # --- 领题时 -------------------------------------------------------------------------
 
 
 def test_a_claimed_task_s_repository_begins_with_its_starter_code(
-    api_client: TestClient, user_client: UserCreator
+    api_client: TestClient, user_client: UserCreator, push_starters
 ):
     board = new_board(user_client, api_client)
     starter = _upload_loose(api_client, board["creator_token"], "lab1.zip", _lab())
@@ -135,7 +151,10 @@ def test_a_claimed_task_s_repository_begins_with_its_starter_code(
     _, member_token = _member_of(user_client, api_client, board)
 
     project_id = _claim_project(api_client, task_id, member_token)
+    # 领题当场就回来了：仓库在后台放起始代码，项目说它在准备。
+    assert _starter(api_client, project_id, member_token)["state"] == "pending"
 
+    assert push_starters()["done"] == 1
     # 顶层文件夹去掉了，压缩工具塞进来的东西不在，可执行位留着。
     assert _main(project_id) == {
         "README.md": "100644",
@@ -147,11 +166,15 @@ def test_a_claimed_task_s_repository_begins_with_its_starter_code(
     assert _log(project_id) == [
         "Cheese <starter@users.invalid>|Starter code from task 带起始代码的题 (version 1)"
     ]
-    assert _starter_revision(api_client, project_id, member_token) == 1
+    assert _starter(api_client, project_id, member_token) == {
+        "revision": 1,
+        "state": "done",
+        "error": None,
+    }
 
 
 def test_a_new_starter_reaches_only_those_who_claim_after_it(
-    api_client: TestClient, user_client: UserCreator
+    api_client: TestClient, user_client: UserCreator, push_starters
 ):
     board = new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="中途换了起始代码的题")
@@ -160,16 +183,39 @@ def test_a_new_starter_reaches_only_those_who_claim_after_it(
     _, early_token = _member_of(user_client, api_client, board)
     early = _claim_project(api_client, task_id, early_token)
 
+    # 第一个人的仓库还没放好，出题人就换了一份：他拿到的仍是领题那一刻的那份。
     resp = _set_starter(api_client, task_id, board["creator_token"], _lab(b"v2\n"))
     assert resp.status_code == 200, resp.text
     _, late_token = _member_of(user_client, api_client, board)
     late = _claim_project(api_client, task_id, late_token)
+    push_starters()
 
     assert _show(early, "main:README.md") == "v1\n"
     assert _show(late, "main:README.md") == "v2\n"
     # 发布是第 1 版，放进起始代码第 2 版，换掉它第 3 版。
-    assert _starter_revision(api_client, early, early_token) == 2
-    assert _starter_revision(api_client, late, late_token) == 3
+    assert _starter(api_client, early, early_token)["revision"] == 2
+    assert _starter(api_client, late, late_token)["revision"] == 3
+
+
+def test_a_starter_removed_before_its_push_fails_saying_so(
+    api_client: TestClient, user_client: UserCreator, push_starters
+):
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="领了之后删了起始代码的题")
+    _set_starter(api_client, task_id, board["creator_token"], _lab())
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+    removed = api_client.delete(
+        f"/tasks/{task_id}/starter", headers=_auth(board["creator_token"])
+    )
+    assert removed.status_code == 200, removed.text
+
+    assert push_starters()["failed"] == 1
+    starter = _starter(api_client, project_id, member_token)
+    assert starter["state"] == "failed"
+    assert starter["error"]["key"] == "starterRemovedBeforePush"
+    # 不会再试：再跑一遍什么都不做。
+    assert push_starters() == {"done": 0, "failed": 0, "retried": 0, "lost": 0}
 
 
 def test_a_task_without_starter_code_opens_projects_as_before(
@@ -181,7 +227,7 @@ def test_a_task_without_starter_code_opens_projects_as_before(
 
     project_id = _claim_project(api_client, task_id, member_token)
 
-    assert _starter_revision(api_client, project_id, member_token) is None
+    assert _starter(api_client, project_id, member_token) is None
     assert _main(project_id) == {}
     assert not any(line.startswith("Cheese ") for line in _log(project_id))
 
@@ -191,6 +237,7 @@ def test_the_projects_agents_are_told_where_the_first_commit_came_from(
     user_client: UserCreator,
     db_session,
     _portal,
+    push_starters,
 ):
     board = new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="agent 要知道起始代码")
@@ -202,10 +249,14 @@ def test_the_projects_agents_are_told_where_the_first_commit_came_from(
         project = await db_session.get(Project, project_id)
         return await package.section_for_project(db_session, project)
 
-    section = _portal.call(read)
-    assert section is not None
-    assert "第 2 版的起始代码" in section
-    assert "新增起始代码" in section
+    before = _portal.call(read)
+    assert before is not None
+    assert "正在放入题目第 2 版的起始代码" in before
+    push_starters()
+    after = _portal.call(read)
+    assert after is not None
+    assert "第 2 版的起始代码，由平台提交" in after
+    assert "新增起始代码" in after
 
 
 # --- 出题人放进、换掉、删掉 ----------------------------------------------------------
@@ -336,3 +387,125 @@ def test_a_bad_archive_picked_on_the_publish_page_publishes_nothing(
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+
+
+# --- 上传时收下的，领题时一定放得进仓库 ---------------------------------------------
+
+
+def _with_method(data: bytes, method: int) -> bytes:
+    """同一个压缩包，每一项都标成用 ``method`` 压缩的（本地头和目录里各一处）。"""
+    raw = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = archive.infolist()
+        at = archive.start_dir
+    for info in infos:
+        start = info.header_offset + 8
+        raw[start : start + 2] = method.to_bytes(2, "little")
+    for _ in infos:
+        raw[at + 10 : at + 12] = method.to_bytes(2, "little")
+        name = int.from_bytes(raw[at + 28 : at + 30], "little")
+        extra = int.from_bytes(raw[at + 30 : at + 32], "little")
+        comment = int.from_bytes(raw[at + 32 : at + 34], "little")
+        at += 46 + name + extra + comment
+    return bytes(raw)
+
+
+def _named(name: bytes) -> bytes:
+    """一个压缩包，里面一份文件的名字原样是 ``name`` 这些字节。"""
+    placeholder = b"y" * len(name)
+    data = _zip(("lab/ok.txt", b"ok"), (placeholder.decode(), b"x"))
+    return data.replace(placeholder, name)
+
+
+@pytest.mark.parametrize(
+    ("archive", "key"),
+    [
+        (_zip(("lab/GIT~1/HEAD", b"ref"), ("lab/ok.txt", b"ok")), "starterNameInvalid"),
+        (_zip(("lab/.git /config", b"x"), ("lab/ok.txt", b"ok")), "starterNameInvalid"),
+        (_with_method(_zip(("lab/ok.txt", b"ok")), 9), "starterCompressionUnsupported"),
+        (_zip(("lab/" + "名" * 86 + ".txt", b"x")), "starterNameInvalid"),
+        (_named(b"lab/a\x00b.txt"), "starterNameInvalid"),
+    ],
+    ids=["git-short-name", "git-trailing-space", "deflate64", "long-name", "nul"],
+)
+def test_an_archive_a_claim_could_not_unpack_is_refused_at_upload(
+    api_client: TestClient, user_client: UserCreator, archive: bytes, key: str
+):
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="领题时会坏的压缩包")
+
+    resp = _set_starter(api_client, task_id, board["creator_token"], archive)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["i18n"]["key"] == key
+    listed = _files(api_client, task_id, board["creator_token"]).json()["data"]
+    assert listed["starter"] is None
+
+
+def test_a_repository_folder_in_any_case_is_left_out_and_the_claim_lands(
+    api_client: TestClient, user_client: UserCreator, push_starters
+):
+    """压缩整个仓库文件夹会带上版本库自己的那一层；不区分大小写的盘上 `.GIT` 就是它。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="带着版本库那一层的压缩包")
+    archive = _zip(
+        ("lab/.GIT/HEAD", b"ref: refs/heads/evil\n"),
+        ("lab/src/.Git/config", b"[core]\n"),
+        ("lab/main.py", b"print(1)\n"),
+    )
+    resp = _set_starter(api_client, task_id, board["creator_token"], archive)
+    assert resp.status_code == 200, resp.text
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+
+    assert push_starters()["done"] == 1
+    assert _main(project_id) == {"main.py": "100644"}
+
+
+def test_the_ai_teammate_removes_a_published_tasks_starter_code(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """芝士在改已发布题目的草稿里写 `starter: 0`，保存之后这道题就没有起始代码了，
+    并且记一版。"""
+    from app.core.sandbox_auth import mint_delegated_credential
+
+    board = new_board(user_client, api_client)
+    attachment = _upload_loose(api_client, board["creator_token"], "lab.zip", _lab())
+    task_id = _create_task(
+        api_client,
+        board,
+        name="要去掉起始代码的题",
+        rank=2,
+        starterAttachmentId=attachment,
+    )
+    listed = _files(api_client, task_id, board["creator_token"]).json()["data"]
+    assert listed["starter"] is not None
+    creator = board["creator"]
+    headers = {
+        "X-Cheese-Token": mint_delegated_credential(
+            user_id=creator.user_id,
+            handle=creator.username,
+            work=str(uuid.uuid4()),
+            ttl_s=300,
+            read_only=False,
+        )
+    }
+
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "starter": 0},
+        headers=headers,
+    )
+    assert written.status_code == 200, written.text
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": written.json()["data"]["draft"]},
+        headers=headers,
+    )
+    assert published.status_code == 200, published.text
+
+    listed = _files(api_client, task_id, board["creator_token"]).json()["data"]
+    assert listed["starter"] is None
+    latest = _portal.call(package.current, db_session, task_id)
+    assert latest is not None
+    assert latest.changes[package.STARTER_CHANGE] == package.REMOVED

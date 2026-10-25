@@ -42,5 +42,7 @@
   "versionOf": "{name} version {version}",
   "write": "Write project goals",
   "yesterday": "Yesterday",
-  "starterFrom": "The code repository started from the task's starter code, version {n}"
+  "starterFrom": "The code repository started from the task's starter code, version {n}",
+  "starterPending": "Adding the task's starter code, version {n}, to the code repository",
+  "starterFailed": "The task's starter code, version {n}, couldn't be added to the code repository: {reason}"
 }

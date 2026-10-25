@@ -191,6 +191,9 @@ class PatchTaskRequest(BaseModel):
     # A .zip the person uploaded the same way, to become the 题目's starter code
     # with this change (replacing the one it has); omitted leaves it as it is.
     starter_attachment_id: int | None = Field(default=None, alias="starterAttachmentId")
+    # True: the 题目 keeps no starter code after this change (芝士 wrote
+    # ``starter: 0``). Ignored when ``starterAttachmentId`` names a new one.
+    remove_starter: bool = Field(default=False, alias="removeStarter")
 
 
 class CreateSubmissionReviewRequest(BaseModel):

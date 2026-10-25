@@ -1,11 +1,9 @@
 """Project business logic."""
 
 import logging
-import tempfile
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +14,12 @@ from app.domain.delivery_events import SettleCard
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.environment import project_environment
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
-from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.models import (
+    AiMode,
+    Project,
+    ProjectGitInstallation,
+    ProjectStarterPush,
+)
 from app.domain.project.ports import (
     Claim,
     ComputeCredits,
@@ -299,19 +302,29 @@ class ProjectService:
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
-            # A 题目's starter code is the repository's first commit (#4767): the
-            # archive as it is at this moment, so a later replacement reaches
-            # only later claims. The bytes live in a temporary directory just
-            # for the push.
-            with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
-                starter = (
-                    await self._terms().starter(
-                        external_task_id, Path(temporary) / "starter.zip"
+            # A 题目's starter code is the repository's first commit (#4767):
+            # the archive as it is at this moment, so a later replacement
+            # reaches only later claims. The repository is created empty and
+            # the push runs after this transaction commits
+            # (`task.starter_jobs`): unpacking and pushing a large archive must
+            # not hold the claim open.
+            source = (
+                await self._terms().starter(external_task_id)
+                if external_task_id is not None
+                else None
+            )
+            await provision_repository(
+                project.id, self._session, initialize=source is None
+            )
+            if source is not None:
+                self._session.add(
+                    ProjectStarterPush(
+                        project_id=project.id,
+                        library_file_id=source.library_file_id,
+                        revision=source.revision,
+                        message=source.message,
                     )
-                    if external_task_id is not None
-                    else None
                 )
-                await provision_repository(project.id, self._session, starter=starter)
         # What the person said they wanted to do, carried into the project's
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)

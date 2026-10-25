@@ -86,6 +86,7 @@ PERIODIC_JOB_NAMES = (
     "assistant memory tidy",
     "feishu authorization renewal",
     "task deadline sweep",
+    "starter code pushes",
     "memory dream",
     "platform model roles refresh",
     "model spend cap alert",

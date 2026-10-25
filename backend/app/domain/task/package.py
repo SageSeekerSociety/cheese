@@ -15,7 +15,6 @@ import asyncio
 import io
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import BinaryIO
 from zoneinfo import ZoneInfo
 
@@ -33,7 +32,7 @@ from app.domain.library.service import clean_upload_name
 from app.domain.library.shelf import Shelf
 from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project import starter as starter_archive
-from app.domain.project.models import Project, ProjectForge
+from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
 from app.domain.task.models import (
     Task,
     TaskPackageRevision,
@@ -464,12 +463,13 @@ async def starter_file(session: AsyncSession, task_id: int) -> LibraryFileRecord
     )
 
 
-async def _spooled(location: str, key: str, size: int, into: BinaryIO) -> None:
-    """存储里 ``(location, key)`` 那一份字节，一段一段写进 ``into``。"""
-    if size:
-        async for piece in blob_store.store(location).chunks(key, 0, size - 1):
+async def write_file(row: LibraryFileRecord, into: BinaryIO) -> None:
+    """资料库里这一行的字节，一段一段写进 ``into``，不整份读进内存。"""
+    if row.bytes:
+        async for piece in blob_store.store(row.location).chunks(
+            row.blob_key, 0, row.bytes - 1
+        ):
             into.write(piece)
-    into.seek(0)
 
 
 class _Stored(io.RawIOBase):
@@ -571,20 +571,10 @@ async def set_starter_upload(
     return await set_starter(session, task, by=by, data=content)
 
 
-async def remove_starter(session: AsyncSession, task: Task, *, by: int) -> None:
-    """不要起始代码了（连同换下来的几版），记一版。之后领题的人拿到的是空仓库。"""
+async def remove_starter(session: AsyncSession, task: Task) -> None:
+    """不要起始代码了（连同换下来的几版），不另记一版（调用方把它算进自己那一版）。
+    之后领题的人拿到的是平台初始化的仓库。"""
     await library.remove(session, shelf=shelf(task.id), name=STARTER)
-    await record(session, task, by=by, changes={STARTER_CHANGE: REMOVED})
-
-
-async def fetch_starter(session: AsyncSession, task: Task, into: Path) -> int | None:
-    """领题这一刻的起始代码写到 ``into``，答题目现在是第几版；没有起始代码是 None。"""
-    row = await starter_file(session, task.id)
-    if row is None:
-        return None
-    with into.open("wb") as out:
-        await _spooled(row.location, row.blob_key, row.bytes, out)
-    return await current_number(session, task.id) or 1
 
 
 # --- 项目里的 agent ----------------------------------------------------------------
@@ -611,15 +601,22 @@ async def section_for_project(
         f"用 `cheese library get 题目/<名字>`。说明、阶段、提交内容和公开的评分要点在 "
         f"`library/题目/{BRIEF}`。",
     ]
-    started = await session.scalar(
-        select(ProjectForge.starter_revision).where(
-            ProjectForge.project_id == project.id
-        )
-    )
-    if started is not None:
+    push = await session.get(ProjectStarterPush, project.id)
+    if push is not None and push.state == StarterPushState.done:
         lines.append(
-            f"代码仓库 main 上的第一个提交是题目第 {started} 版的起始代码，"
+            f"代码仓库 main 上的第一个提交是题目第 {push.revision} 版的起始代码，"
             f"由平台提交；题目现在的那一份在 `library/题目/{STARTER}`。"
+        )
+    elif push is not None and push.state == StarterPushState.pending:
+        lines.append(
+            f"代码仓库正在放入题目第 {push.revision} 版的起始代码，放好之前 main "
+            "分支还不存在；起始代码在 `library/题目/"
+            f"{STARTER}`。"
+        )
+    elif push is not None:
+        lines.append(
+            f"题目第 {push.revision} 版的起始代码没能放进代码仓库，仓库是空的；"
+            f"起始代码在 `library/题目/{STARTER}`，需要时自己解开提交。"
         )
     if revision.number > 1:
         lines.append(

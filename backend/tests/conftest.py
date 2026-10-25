@@ -1271,14 +1271,14 @@ def stub_project_forge(monkeypatch, tmp_path):
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
-    async def provision_repository(project_id, session, *, starter=None, **kwargs):
+    async def provision_repository(project_id, session, *, initialize=True, **kwargs):
         existing = await forge.binding_for_project(project_id, session)
         project = await session.get(Project, project_id)
         if (
             existing is not None
             or (project.settings or {}).get("forge_kind") == "github_app"
         ):
-            return await provision(project_id, session, starter=starter, **kwargs)
+            return await provision(project_id, session, initialize=initialize, **kwargs)
         binding = ProjectForge(
             project_id=project_id,
             kind="forgejo",
@@ -1286,20 +1286,29 @@ def stub_project_forge(monkeypatch, tmp_path):
             url=f"https://forge.test/project-{project_id.hex}/code.git",
             api_url="https://forge.test/api/v1",
             default_branch="main",
-            starter_revision=starter.revision if starter is not None else None,
         )
         session.add(binding)
         await session.flush()
-        if starter is not None:
-            # Like the real forge: an empty repository, and the starter code
-            # pushed to it as the first commit by the code that pushes for real.
+        if initialize:
+            git_store.ensure_repo(project_id)
+        else:
+            # Like the real forge: an empty repository that a push fills in.
             repo = git_store.path(project_id)
             repo.mkdir(parents=True, exist_ok=True)
             git_store.git(repo, "init", "-q", "-b", "main")
             git_store.git(repo, "config", "receive.denyCurrentBranch", "updateInstead")
-            starter_code.push(starter, str(repo), username="test", password="test")
-        git_store.ensure_repo(project_id)
         return binding
+
+    async def push_starter(project_id, session, starter):
+        # The real push (unpack, commit, push) into the local repository; an
+        # empty one only, as the forge's own `empty` answer decides for real.
+        repo = git_store.path(project_id)
+        if git_store.run(
+            ["git", "rev-parse", "--verify", "-q", "main"], repo
+        ).returncode:
+            await asyncio.to_thread(
+                starter_code.push, starter, str(repo), username="test", password="test"
+            )
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1471,6 +1480,7 @@ def stub_project_forge(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "push_starter", push_starter)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
     monkeypatch.setattr(forge, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)

@@ -42,6 +42,8 @@ export interface TaskDraftFields {
   starterAttachmentId?: number | null
   /** 起始代码的名字和大小，页面列它用；发布时不带。 */
   starterFile?: { id: number; name: string; size: number } | null
+  /** 改已发布的题目时不要起始代码了（芝士写了 `starter: 0`）。 */
+  removeStarter?: boolean
   teaching?: SpaceTeaching
   teachingOwn?: boolean
 }
@@ -98,6 +100,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'attachmentFiles',
   'starterAttachmentId',
   'starterFile',
+  'removeStarter',
   'teaching',
   'teachingOwn',
 ]

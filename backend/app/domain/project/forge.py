@@ -38,13 +38,18 @@ from app.domain.project.github_app import (
     parse_github_repo,
     repository_named,
 )
-from app.domain.project.models import Project, ProjectForge, ProjectGitInstallation
+from app.domain.project.models import (
+    Project,
+    ProjectForge,
+    ProjectGitInstallation,
+    ProjectStarterPush,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
 )
 from app.domain.project.starter import Starter
-from app.domain.project.starter import push as push_starter
+from app.domain.project.starter import push as push_archive
 
 
 async def binding_for_project(
@@ -63,12 +68,46 @@ async def binding_for_project(
     return binding
 
 
-async def starter_revision(project_id: uuid.UUID, session: AsyncSession) -> int | None:
-    """The 题目 version whose starter code is the repository's first commit."""
-    return await session.scalar(
-        select(ProjectForge.starter_revision).where(
-            ProjectForge.project_id == project_id
+async def starter_push(
+    project_id: uuid.UUID, session: AsyncSession
+) -> ProjectStarterPush | None:
+    """The 题目 starter code this project's repository begins with, and where its
+    push stands; None for a repository that began without one."""
+    return await session.get(ProjectStarterPush, project_id)
+
+
+async def push_starter(
+    project_id: uuid.UUID, session: AsyncSession, starter: Starter
+) -> None:
+    """Push ``starter`` as the first commit on ``main`` of the project's empty
+    Forgejo repository. A repository that is no longer empty already has it (an
+    earlier attempt pushed and then lost its answer), and is left alone."""
+    binding = await binding_for_project(project_id, session)
+    if binding is None or binding.kind != "forgejo" or not binding.account_password:
+        raise GatewayUnavailableError(say("forgeNoRepository"))
+    username = binding.repo.split("/", 1)[0]
+    password = forge_password(binding)
+    endpoint = f"{binding.api_url.rstrip('/')}/repos/{binding.repo}"
+    # No connection of ours stays open while the forge works on a large push.
+    await release_read_session(session)
+    try:
+        async with forge_client(timeout=30, auth=(username, password)) as client:
+            response = await client.get(endpoint)
+    except httpx.TimeoutException as exc:
+        raise ForgeUnreachableError(say("forgeServiceTimeout")) from exc
+    except httpx.RequestError as exc:
+        raise ForgeUnreachableError(say("forgeServiceUnreachable")) from exc
+    if response.status_code != 200:
+        raise GatewayUnavailableError(
+            say("forgeReadFailed", status=response.status_code)
         )
+    if not response.json().get("empty"):
+        return
+    git_url = (
+        binding.api_url.removesuffix("/api/v1").rstrip("/") + f"/{binding.repo}.git"
+    )
+    await asyncio.to_thread(
+        push_archive, starter, git_url, username=username, password=password
     )
 
 
@@ -516,25 +555,19 @@ async def provision_repository(
     session: AsyncSession,
     *,
     initialize: bool = True,
-    starter: Starter | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> ProjectForge:
     """The project's Forgejo repository, made on first call.
 
-    With ``starter`` (a task's starter code, #4767) the repository is created
-    empty and the unpacked archive is pushed as the one commit on ``main``;
-    with ``initialize=False`` (a legacy repository about to be migrated in) it
-    is created empty and left so; otherwise Forgejo initialises ``main``. A failure raises and the
-    caller's transaction — the whole project creation — rolls back, as any
-    provisioning failure does; the retry adopts the account and repository
-    (both named after the project id) and pushes only while it is still empty.
+    ``initialize=False`` leaves it empty: a repository whose first commit comes
+    from elsewhere — a legacy repository migrated in, or a 题目's starter code
+    (`push_starter`, run in the background after the claim commits).
     """
     try:
         return await _provision_repository(
             project_id,
             session,
             initialize=initialize,
-            starter=starter,
             transport=transport,
         )
     except httpx.TimeoutException as exc:
@@ -548,7 +581,6 @@ async def _provision_repository(
     session: AsyncSession,
     *,
     initialize: bool,
-    starter: Starter | None,
     transport: httpx.AsyncBaseTransport | None,
 ) -> ProjectForge:
     existing = await binding_for_project(project_id, session)
@@ -602,7 +634,7 @@ async def _provision_repository(
                 json={
                     "name": "project",
                     "private": True,
-                    "auto_init": initialize and starter is None,
+                    "auto_init": initialize,
                     "default_branch": "main",
                 },
             )
@@ -614,13 +646,6 @@ async def _provision_repository(
                 say("forgejoRepoCreateFailed", status=response.status_code)
             )
         data = response.json()
-    if starter is not None and data.get("empty"):
-        # An attempt that rolled back may have pushed already; then it is not
-        # empty and its commit is the same archive's.
-        git_url = api.removesuffix("/api/v1") + f"/{username}/project.git"
-        await asyncio.to_thread(
-            push_starter, starter, git_url, username=username, password=password
-        )
     binding = ProjectForge(
         project_id=project_id,
         kind="forgejo",
@@ -629,7 +654,6 @@ async def _provision_repository(
         api_url=api,
         default_branch=data.get("default_branch") or "main",
         account_password=seal_forge_password(project_id, password),
-        starter_revision=starter.revision if starter is not None else None,
     )
     session.add(binding)
     await session.flush()

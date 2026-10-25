@@ -139,5 +139,7 @@
   "starterCompressionRatio": "压缩包解开后比它本身大得太多，不能作为起始代码",
   "starterEmpty": "压缩包里没有文件",
   "starterPathClash": "压缩包里的 {path} 出现了两次，或者和一个文件夹同名",
-  "forgejoStarterPushFailed": "起始代码没能放进项目的代码仓库，稍后重试"
+  "forgejoStarterPushFailed": "起始代码没能放进项目的代码仓库，稍后重试",
+  "starterNameInvalid": "压缩包里的 {path} 这个名字放不进代码仓库：名字太长、含控制字符，或者 git 不接受",
+  "starterCompressionUnsupported": "压缩包里的 {path} 用了不支持的压缩方式，用普通 zip 格式重新压缩"
 }

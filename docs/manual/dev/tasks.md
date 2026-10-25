@@ -226,11 +226,11 @@ covers:
 
 起始代码是题目资料库里名为 `起始代码.zip`（`package.STARTER`）的那一份：它有自己的登记接口（`PUT` / `DELETE /tasks/{id}/starter`），字节和材料走同一条分段上传（`POST /tasks/{id}/files/uploads` 起头）；材料清单不列它，材料接口碰到这个名字一律 422；替换照样留历史行，设上、换掉、删掉各记一版（`changes.starter` 是 `added` / `replaced` / `removed`）。发题页上题目还不存在，人选的压缩包留在页面上，发布之后再走这条上传（传不成时题目照样发布，提示到改题页重传）；芝士写进草稿的是人交给它的一份附件（`starterAttachmentId`，只认本人传的），随草稿发布。
 
-压缩包在登记时就查一遍（`project/starter.py` 的 `check`），领题时解开再查一遍（`unpack`），规矩是同一套：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git` 的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原。分段上传登记时才合成一份，所以登记在一个保存点里先放进来、再查：按范围从存储读压缩包末尾的目录（`package._Stored`），不整份取回、不进内存；不合格的退回保存点并删掉这份字节。内容损坏（CRC）要到领题时才发现。
+压缩包在登记时就查一遍（`project/starter.py` 的 `check`），解开时（`unpack`）走的是同一个函数（`_entries`），所以登记时收下的，领题时一定解得开、提交得上：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；`zipfile` 解不开的压缩方式（如 Deflate64）拒绝；每层名字超过 255 字节、整条路径超过 4096 字节、含控制字符（NUL 在内）的拒绝；其余路径问 git 自己（`update-index --index-info`，开着 `core.protectNTFS` 和 `core.protectHFS`），它不收的（`GIT~1`、`.git ` 这类 `.git` 的别名）拒绝，并说是哪一项；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git`（大小写不论）的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原。分段上传登记时才合成一份，所以登记在一个保存点里先放进来、再查：按范围从存储读压缩包末尾的目录（`package._Stored`），不整份取回、不进内存；不合格的退回保存点并删掉这份字节。内容损坏（CRC）要到领题时才发现。
 
-领题建项目时（`ProjectService.create` 带着题目 id，`for_participation` 也走这里），`TaskTerms.starter` 把那一刻的压缩包写进临时目录，`provision_repository` 不让 Forgejo `auto_init`，解开后以平台身份（`Cheese <starter@users.invalid>`）提交成 `main` 上唯一的提交，凭据放在请求头里推上去（同 `forge_migration.push`），`project_forges.starter_revision` 记下题目当时是第几版；项目总览和 agent 的「题目」一段据此说起始代码来自第几版。之后换压缩包只影响之后领题的人。仓库里自带的 `.gitignore` 照常生效。
+领题建项目时（`ProjectService.create` 带着题目 id，`for_participation` 也走这里），`TaskTerms.starter` 只记下此刻是资料库里哪一行、题目第几版，`provision_repository(initialize=False)` 建一个空仓库，再记一行 `project_starter_pushes`（`pending`），领题就提交返回了。解包和推送不在领题的事务里：大压缩包推上十几秒，领题那把题目锁（`lock_external_task`）不能跟着等，否则同时领题的人撞上锁超时。后台任务「starter code pushes」（`task.starter_jobs.push_due`，每 10 秒）一次领一行，租约提交之后才动手，干活时不占事务：按记下的那一行取字节（之后出题人换了压缩包，已经领了的人拿到的仍是领题那一刻的那份），解开后以平台身份（`Cheese <starter@users.invalid>`）提交成 `main` 上唯一的提交，凭据放在请求头里推上去（`forge.push_starter`，同 `forge_migration.push`）；仓库已经不空（上一次推成了、却没来得及记下）就不再推。仓库里自带的 `.gitignore` 照常生效。
 
-推送失败和建仓库失败一样：抛出，整个建项目（连同领题那次请求）回滚，没有半个项目。账号和仓库按项目 id 命名，重试时接着用；仓库还空着才推，已经推过的（上一次回滚前推成了）直接接着用。没有起始代码的题，建仓库和从前一样由 Forgejo 初始化 `main`。GitHub 仓库的项目不建 Forgejo 仓库，也就没有起始代码。
+推不成分两种：压缩包本身成不了提交（解包时被拒，或者出题人在推之前把起始代码删了），当场记 `failed`，`error` 是那句原因，不再重试；代码仓库服务一时没有回应，过一会儿再试（30 秒起、翻倍、最多 30 分钟），试满 8 次记 `failed`（`starterPushGaveUp`）。`GET /projects/{id}` 的 `starter` 说第几版、`pending` / `done` / `failed` 和原因，项目总览和 agent 的「题目」一段据此说起始代码在放、放好了，还是没放成。没有起始代码的题，建仓库和从前一样由 Forgejo 初始化 `main`。GitHub 仓库的项目不建 Forgejo 仓库，也就没有起始代码。
 
 ## 边界与坑 {#traps}
 

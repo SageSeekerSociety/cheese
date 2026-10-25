@@ -29,6 +29,7 @@ from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
     provision_repository,
+    push_starter,
     reconcile_repository_webhooks,
 )
 from app.domain.project.forgejo_tokens import ForgejoTokens, purge_expired_tokens
@@ -391,9 +392,11 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
         )
         session.add_all([seeded, plain])
         await session.flush()
-        with_code = await provision_repository(seeded.id, session, starter=starter)
+        with_code = await provision_repository(seeded.id, session, initialize=False)
         without = await provision_repository(plain.id, session)
         await session.commit()
+    async with db_factory() as session:
+        await push_starter(seeded.id, session, starter)
     headers = {"Authorization": "token " + admin}
     async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
         tree = await client.get(
@@ -417,8 +420,13 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
         assert commit.json()["commit"]["author"]["email"] == "starter@users.invalid"
         readme = await client.get(f"/repos/{without.repo}/contents/README.md")
         assert readme.status_code == 200, readme.text
-    assert with_code.starter_revision == 3
-    assert without.starter_revision is None
+    # Pushing again (an attempt whose answer was lost) leaves the repository be.
+    async with db_factory() as session:
+        await push_starter(seeded.id, session, starter)
+    async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
+        again = await client.get(f"/repos/{with_code.repo}/git/refs/heads/main")
+    again.raise_for_status()
+    assert again.json()[0]["object"]["sha"] == head["object"]["sha"]
 
 
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):
