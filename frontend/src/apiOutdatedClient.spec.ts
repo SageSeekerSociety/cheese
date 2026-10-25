@@ -121,9 +121,7 @@ describe('a page the backend calls outdated', () => {
     const { request } = await loadPage()
     const { useOutbox } = await import('./components/room/composables/useOutbox')
     const scope = effectScope()
-    const outbox = scope.run(() =>
-      useOutbox({ send: () => new Promise(() => {}), onDelivered: () => {} })
-    )!
+    const outbox = scope.run(() => useOutbox({ send: () => new Promise(() => {}), onDelivered: () => {} }))!
     outbox.enqueue({ content: '还在路上的一句话' })
 
     await settled(request('/projects'))

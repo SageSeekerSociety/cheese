@@ -22,7 +22,9 @@ _NOWHERE = "/no-such-route-for-the-generation-test"
 
 
 def test_a_page_below_the_generation_is_refused_with_its_code():
-    response = TestClient(app).post(_NOWHERE, headers={"X-Cheese-Api-Gen": str(CURRENT - 1)})
+    response = TestClient(app).post(
+        _NOWHERE, headers={"X-Cheese-Api-Gen": str(CURRENT - 1)}
+    )
 
     assert response.status_code == 409
     assert response.json()["error"]["name"] == "ClientOutdated"
