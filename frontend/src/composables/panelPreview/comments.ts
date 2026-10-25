@@ -66,9 +66,12 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     const view = state.documentType.value?.view
     if (commentable.value === null) return false
     if (view === 'markdown') return true
-    if (view === 'sheet') return true
     // 读成网页时画的是沙箱帧，标记画不上去（`PreviewDocStage` 那一支挂的是 `PreviewPage`）。
+    // 表格也算在内：`.xlsx` 有网页这一种读法（`PAGE_FORMATS` 认它），切过去之后挂的是
+    // 网页那一支，表格查看器根本没上屏——这里先放行再排掉，等于每打开一份这样的表
+    // 白打一次评论接口。
     if (deps.docPage()) return false
+    if (view === 'sheet') return true
     return view === 'pages' && !SLIDE_SUFFIXES.has(state.documentSuffix.value)
   })
   const threads = useFileThreads(

@@ -130,3 +130,17 @@ it('分页文档：评论栏还关着，也把这一份的评论读回来——�
   expect(bundle.open.value).toBe(false)
   expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/报价.pdf')
 })
+
+it('表格读成了网页：格子上画不出来（那一支挂的是网页），栏关着就别读', async () => {
+  // `.xlsx` 有网页这一种读法（`PAGE_FORMATS` 认它）。切过去之后上屏的是网页那一支，
+  // 表格查看器根本不在——先按「表格画得出标记」放行的写法会让每打开一份这样的表
+  // 白打一次评论接口。
+  const bundle = setup('output/预算.xlsx', () => true)
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+
+  // 切回表格那一档，该读。
+  const sheet = setup('output/预算.xlsx', () => false)
+  await vi.waitFor(() => expect(sheet.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
+})
