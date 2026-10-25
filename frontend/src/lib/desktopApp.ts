@@ -258,16 +258,34 @@ export type BrowserSignInEntry = 'signin' | 'signup' | 'recover'
  * which on these pages means a sign-in code).
  */
 export async function signInInBrowser(entry: BrowserSignInEntry, target: string, invite = ''): Promise<string> {
-  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   // If this does not land, the code that comes back has nothing to be traded
   // with and the sign-in fails the way it does for a code this app did not ask
   // for — a browser window the person can close.
-  storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
-  const query = new URLSearchParams({ entry, challenge: base64url(digest), ...(invite ? { invite } : {}) })
+  const challenge = await keepSignInVerifier(target)
+  const query = new URLSearchParams({ entry, challenge, ...(invite ? { invite } : {}) })
   const url = new URL(`/account/oauth/app?${query}`, window.location.origin).href
   window.open(url, '_blank')
   return url
+}
+
+/**
+ * Signs in with a provider whose sign-in runs on another origin of this
+ * deployment (the one its callback is registered on). The same hand-off as
+ * the app's: this page keeps the secret, the sign-in happens there, and the
+ * code comes back to this origin's AppSignInFinish.vue.
+ */
+export async function signInAtOrigin(origin: string, provider: string, target: string): Promise<void> {
+  const challenge = await keepSignInVerifier(target)
+  const query = new URLSearchParams({ entry: 'signin', challenge, provider, returnTo: window.location.origin })
+  window.location.assign(`${origin}/account/oauth/app?${query}`)
+}
+
+/** Keeps a new secret and where the sign-in is headed; returns the secret's hash. */
+async function keepSignInVerifier(target: string): Promise<string> {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+  storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
+  return base64url(digest)
 }
 
 /** The secret of the sign-in started last, and where it was headed; each is used at most once. */
