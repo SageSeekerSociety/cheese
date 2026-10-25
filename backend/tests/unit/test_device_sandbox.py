@@ -513,3 +513,16 @@ def test_a_platform_directory_someone_else_put_there_is_refused(tmp_path):
         confinement.own_directory(planted)
     mine = confinement.own_directory(tmp_path / "mine")
     assert mine.is_dir() and (mine.stat().st_mode & 0o777) == 0o700
+
+
+@linux
+def test_a_room_on_a_whole_machine_is_given_its_platform_socket_too(rooms):
+    """A room without a sandbox (a VM that is its own, or a machine its owner
+    gave over) makes its model calls on the platform socket as well: the
+    install makes the directory and names the socket."""
+    room = rooms(sandbox=False)
+    expected = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"') == str(expected)
+    made = expected.parent.lstat()
+    assert expected.parent.is_dir() and made.st_uid == os.getuid()
+    assert (made.st_mode & 0o777) == 0o700

@@ -35,6 +35,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
+from app.api.machine_caller import Caller
+from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
 from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
@@ -51,6 +53,7 @@ from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
     is_global_sandbox_token,
+    mint_scoped_token,
     personal_claims,
     scoped_token_claims,
 )
@@ -77,6 +80,14 @@ logger = logging.getLogger("cheesex.llm_proxy")
 # prefix sets the base to `https://host/api`. Living under `/api` here would
 # make this the one route that needs the prefix twice.
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# What a sandbox reaches on its platform socket: `/machine` plus its own path,
+# relayed by the device link owner (`app.api.machine_relay`).
+machine_router = APIRouter(prefix="/machine/llm", tags=["machine"])
+
+#: How long the credential made for one machine call lives: the length of the
+#: checks before the stream starts, which read it, and nothing after.
+_MACHINE_CALL_TOKEN_TTL_S = 300
 
 # What a rollout asks the backend it is about to stop (`deploy/deploy-docker.sh`).
 # The ingress never forwards `/_internal/`, so only the box itself reaches it.
@@ -109,6 +120,11 @@ _DROP_REQUEST_HEADERS = frozenset(
         "keep-alive",
         "transfer-encoding",
         "upgrade",
+        # Who a machine call is, as the device link owner vouched for it to
+        # this process; not the gateway's to see.
+        DEVICE_HEADER,
+        STATE_HEADER,
+        SECRET_HEADER,
     }
 )
 _DROP_RESPONSE_HEADERS = frozenset(
@@ -508,7 +524,43 @@ async def proxy(
     db: Annotated[AsyncSession, Depends(get_db)],
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
-    token = _caller_token(request)
+    return await _forward(path, request, db, chat, _caller_token(request))
+
+
+@machine_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
+async def machine_model(
+    path: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    caller: Caller,
+) -> StreamingResponse:
+    """The same model route, asked by a sandbox on its platform socket.
+
+    The sandbox holds no token; the caller is the session leasing it now
+    (``machine_caller``). The credential the checks below read is made here,
+    for this one call, and never leaves this process."""
+    token = mint_scoped_token(
+        project_id=caller.project_id,
+        topic_id=caller.conversation_id,
+        agent_handle=caller.agent_handle,
+        ttl_s=_MACHINE_CALL_TOKEN_TTL_S,
+    )
+    return await _forward(path, request, db, chat, token)
+
+
+async def _forward(
+    path: str,
+    request: Request,
+    db: AsyncSession,
+    chat: ChatService,
+    token: str,
+) -> StreamingResponse:
     person = personal_claims(token) if token else None
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):

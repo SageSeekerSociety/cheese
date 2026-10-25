@@ -73,13 +73,36 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, sys, urllib.request
-          busy = []
-          for status in ("in_progress", "queued", "waiting", "pending"):
+          import time, urllib.error
+          def runs(query):
               req = urllib.request.Request(
-                  f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/deploy-dev.yml/runs?status={status}&per_page=5",
+                  f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/deploy-dev.yml/runs?{query}",
                   headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json"},
               )
-              busy += json.load(urllib.request.urlopen(req, timeout=30))["workflow_runs"]
+              # The dev box's link to GitHub resets single connections (the deploy's
+              # image pulls retry for the same reason); try a few times, saying so.
+              for attempt in range(1, 7):
+                  try:
+                      return json.load(urllib.request.urlopen(req, timeout=30))["workflow_runs"]
+                  except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+                      if attempt == 6:
+                          raise
+                      print(f"::warning::GitHub API attempt {attempt} failed ({e}); retrying in {5 * attempt}s")
+                      time.sleep(5 * attempt)
+          # A run still queued behind one that has since started has usually been
+          # replaced by it, and GitHub can leave such a run listed as queued with no
+          # jobs, unable to be cancelled. Where the rule is too generous, the skipped
+          # run's deploy job still needs the box's one runner, which this merge holds,
+          # so it runs after the merge and never beside it.
+          started = [r["run_started_at"] or r["created_at"] for r in runs("per_page=20") if r["status"] not in ("queued", "waiting", "pending")]
+          latest_start = max(started, default="")
+          busy = []
+          for status in ("in_progress", "queued", "waiting", "pending"):
+              for r in runs(f"status={status}&per_page=20"):
+                  if status != "in_progress" and r["created_at"] < latest_start:
+                      print(f"::warning::ignoring {r['html_url']}: queued since {r['created_at']}, behind a release that started at {latest_start}")
+                      continue
+                  busy.append(r)
           if busy:
               print("::error::a dev release is running or waiting: " + ", ".join(r["html_url"] for r in busy))
               sys.exit(1)

@@ -155,6 +155,8 @@ blocks: cloud/binding
 
 Codex 和 Pi 不能用 `HTTPS_PROXY` 引流，它们被指向 `{平台地址}/llm/v1`。主 API 的这条路由校验调用方的短期令牌，换上项目的虚拟网关 key，再把上游响应原样流回去。Claude Code 通过模型隧道把 CONNECT 流量带到计量代理（`backend/app/domain/agent/machine_tunnel.py`）。所有会话都跑在会话主机上，云机器和用户电脑只执行命令、存文件，所以隧道助手也只在会话主机上：它拨会话主机到后端的那条路（`machine_address.tunnel_url`，在会话主机配置的后端地址上接 `/llm/tunnel`）。
 
+沙箱里的程序（比如仓库里的审查脚本）不用令牌：它连沙箱自己的平台 socket，问 `/llm/...`，后端按此刻租着这个沙箱的会话认人，走的就是上面这条路由（`machine_model`），额度和网关 key 都一样（`docs/remote-execution.md`）。
+
 无论哪种，上游 key 都不出平台主机：机器上只有它自己的短期令牌。
 
 ## 分身用哪个模型 {#subagent}
