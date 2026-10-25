@@ -26,7 +26,9 @@ def test_two_approvals_at_once_on_the_last_place_let_only_one_in(
     api_client, user_client, db_session, db_connection, _portal, app
 ):
     board = _new_board(user_client, api_client)
-    task = _create_task(api_client, board, name="只剩一个名额", participantLimit=1)
+    task = _create_task(
+        api_client, board, name="只剩一个名额", participantLimit=1, startMode="APPLY"
+    )
     claims = []
     for _ in range(2):
         _, token = _member_of(user_client, api_client, board)

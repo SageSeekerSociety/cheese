@@ -24,8 +24,8 @@ class ProjectCreate(BaseModel):
     # 项目归团队 (v4): the shared team this project belongs to. Omitted → the
     # owner's personal team is resolved server-side.
     team_id: int | None = None
-    # The 赛题 this project comes from, when it was created from one.
-    external_task_id: int | None = None
+    # No task field: a project from a task is made by starting the task
+    # (``POST /tasks/{id}/participations/*``), the one way in.
     forge_kind: Literal["forgejo", "github_app"] = "forgejo"
     # 建项目时问的那一句「你打算做什么」（#946 片 C）。可选：空串就是没问过或
     # 用户跳过了，那时新生房间里什么都不写——房间靠它自己的起手区块顶上。

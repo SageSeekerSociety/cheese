@@ -213,13 +213,12 @@ def _download(api_client: TestClient, task_id: int, token: str, name: str):
 
 
 def _project_from(api_client: TestClient, task_id: int, token: str) -> str:
+    """开始做这道题（已经开始了的就是继续做）：从题目来的项目只有这一条路。"""
     resp = api_client.post(
-        "/projects",
-        json={"name": "从题目来的项目", "external_task_id": task_id},
-        headers=_auth(token),
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["id"]
+    return resp.json()["data"]["project"]["id"]
 
 
 # --- 放得进、看得见、拿得到 ------------------------------------------------------
@@ -684,9 +683,11 @@ def test_the_materials_wait_for_the_application_to_be_approved(
     api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
     """材料只给参与者：申请还在等批的、被拒了的，题目页拿不到材料，也还没有从
-    这道题来的项目；申请通过了，材料和项目里的 `题目/` 才拿得到。"""
+    这道题来的项目；申请通过了，材料拿得到，开始做之后项目里的 `题目/` 也拿得到。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="通过了才拿得到材料的题")
+    task_id = _create_task(
+        api_client, board, name="通过了才拿得到材料的题", startMode="APPLY"
+    )
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
     _, waiting = _member_of(user_client, api_client, board)
     _, declined = _member_of(user_client, api_client, board)
@@ -714,8 +715,7 @@ def test_the_materials_wait_for_the_application_to_be_approved(
     )
     assert resp.status_code == 200, resp.text
     assert _download(api_client, task_id, waiting, "数据.csv").content == b"a,b\n"
-    page = api_client.get(f"/tasks/{task_id}", headers=_auth(waiting))
-    project_id = page.json()["data"]["task"]["myProject"]["id"]
+    project_id = _project_from(api_client, task_id, waiting)
     assert "题目" in _top_paths(api_client, project_id, waiting)
 
 

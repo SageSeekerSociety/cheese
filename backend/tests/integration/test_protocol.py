@@ -1,18 +1,17 @@
 """机构协议 enforcement on accept (spec §4.2/§4.4, #370).
 
 The terms now live on the 项目集 (`space_categories`) with a per-赛题 override,
-and a project accepts them by being created FROM the 赛题 — the link the 赛题
-page's button writes. This used to go through cheesex `task_templates` and a
+and a project accepts them by being started FROM the 赛题 — what the 赛题
+page's 开始 button does. This used to go through cheesex `task_templates` and a
 `project_task_links` row, a parallel 题目 hierarchy with no way to create it
 from the UI.
 """
 
-from tests.conftest import seed_claim, seed_task_with_protocol
+from tests.conftest import seed_task_with_protocol, start_task_project
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
     add_external_member,
     join_project_team,
-    post_project,
     session_auth_headers,
 )
 from tests.integration.test_accept import _make_card
@@ -30,13 +29,7 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
     task_id = seed_task_with_protocol(
         client, conditions=[{"required_topic": "结题", "reviewer_role": "mentor"}]
     )
-    seed_claim(client, task_id, handle=OWNER)
-    p = post_project(
-        client,
-        json={"name": "团队", "external_task_id": task_id},
-        owner=OWNER,
-    ).json()["data"]
-    pid = p["id"]
+    pid = start_task_project(client, task_id, handle=OWNER)
     # The mentor comes in from outside the team; user-1 is on the team.
     add_external_member(client, pid, "mentor-1", by=OWNER)
     join_project_team(client, pid, "user-1")

@@ -283,7 +283,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/space_announcements.py": 1,
     "app/api/routes/spaces.py": 10,
     "app/api/space_deps.py": 3,
-    "app/api/task_claims.py": 2,
+    "app/api/task_claims.py": 1,
     "app/api/task_deps.py": 1,
     "app/api/routes/spaces_analytics.py": 2,
     "app/api/routes/spaces_organization.py": 2,

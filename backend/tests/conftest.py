@@ -2792,6 +2792,83 @@ def seed_claim(
     _asyncio.run(_seed())
 
 
+def start_task_project(
+    client: TestClient,
+    task_id: int,
+    *,
+    handle: str | None = None,
+    team_id: int | None = None,
+    by: str | None = None,
+) -> str:
+    """开始做这道题: the one way a project is made from a task. The claim is
+    ``handle``'s for an individual task, ``team_id``'s for a team one (started
+    by ``by``, a member of that team); it is seeded approved through the DB
+    unless one is held already, which must then be approved. The project is
+    made the way the claim routes make it (``task_claims.start_claim``), with
+    the task's mentors agreed to. Returns the project's id.
+
+    Through the DB because the claim is not what those tests are about; the
+    claim routes themselves are tested in ``test_task_start_mode.py``.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.api.task_claims import start_claim
+    from app.domain.task.models import Task, TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    assert (handle is None) != (team_id is None), "a claim is by a person or a team"
+    actor_handle = by or handle
+    assert actor_handle is not None, "a team's claim is started by one of its members"
+
+    async def _start() -> str:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            users = UserRepository(session)
+            actor = await users.get_by_username(actor_handle)
+            if actor is None:
+                actor = await users.create_user(
+                    username=actor_handle, email=f"{actor_handle}@example.com"
+                )
+            member_id = team_id if team_id is not None else actor.id
+            claim = await session.scalar(
+                select(TaskMembership)
+                .where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.member_id == member_id,
+                    TaskMembership.is_team.is_(team_id is not None),
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.approved != 1,
+                )
+                .order_by(TaskMembership.approved)
+            )
+            if claim is None:
+                now = datetime.now(UTC)
+                claim = TaskMembership(
+                    task_id=task_id,
+                    member_id=member_id,
+                    is_team=team_id is not None,
+                    approved=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(claim)
+                await session.flush()
+            assert claim.approved == 0, "only an approved claim is started"
+            task = await session.get(Task, task_id)
+            project = await start_claim(
+                session,
+                task=task,
+                membership=claim,
+                acting_user_id=actor.id,
+                agreed_mentors=True,
+            )
+            await session.commit()
+            return str(project.id)
+
+    return client.portal.call(_start)  # type: ignore[attr-defined]
+
+
 def seed_task_with_protocol(
     client: TestClient,
     *,

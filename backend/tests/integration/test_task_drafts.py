@@ -303,7 +303,7 @@ def test_cheese_attaches_files_the_person_handed_over_and_sets_mentors(
             "name": "课题 A",
             "attachments": [mine],
             "mentors": [teacher.username],
-            "team_locking": "报名通过后锁定",
+            "team_locking": "申请通过后锁定",
         },
         headers=_as_cheese(teacher),
     )
@@ -669,3 +669,54 @@ def test_cheese_is_refused_an_ai_setting_the_space_does_not_offer(
             headers=_as_cheese(teacher),
         )
         assert refused.status_code == 400, (field, refused.text)
+
+
+def test_cheese_cannot_change_how_a_task_starts_once_someone_holds_a_claim(
+    api_client: TestClient, board: dict
+):
+    teacher, student = board["teacher"], board["stranger"]
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": board["space"]["id"],
+            "name": "Lab 4 有人开始做了",
+            "description": "用 C 写一个分配器。",
+            "difficulty": "中级",
+            "form": "个人",
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": written.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+    enrolled = api_client.post(
+        f"/tasks/{task_id}/participants",
+        params={"member": student.user_id},
+        json={},
+        headers=_headers(teacher),
+    )
+    assert enrolled.status_code == 200, enrolled.text
+
+    changed = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "start_mode": "申请制", "days_to_submit": 10},
+        headers=_as_cheese(teacher),
+    )
+    assert changed.status_code == 200, changed.text
+    refused = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": changed.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskStartModeLocked"
+    task = api_client.get(f"/tasks/{task_id}", headers=_headers(teacher)).json()[
+        "data"
+    ]["task"]
+    assert task["startMode"] == "DIRECT"

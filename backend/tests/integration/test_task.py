@@ -57,6 +57,7 @@ class TestTaskIntegration:
                 "description": "记录观察结果并注明资料来源",
                 "space": task_setup["space_id"],
                 "categoryId": task_setup["category_id"],
+                "startMode": "APPLY",
                 "submitterType": "TEAM" if as_team else "USER",
                 "resubmittable": True,
                 "editable": True,
@@ -86,8 +87,8 @@ class TestTaskIntegration:
         # An application waits for the publisher with no workspace yet.
         assert response.json()["data"]["project"] is None
         membership_id = response.json()["data"]["participant"]["id"]
-        # Approval opens the workspace and releases the pack once; approving
-        # again cannot mint it again.
+        # Approval makes no workspace yet; approving twice and then starting
+        # releases the pack once.
         for _ in range(2):
             response = api_client.patch(
                 f"/tasks/{task_id}/participants/{membership_id}",
@@ -1022,7 +1023,7 @@ class TestTaskEnumeration:
         task_id = multi_task_setup["task_ids"][0]
         resp = api_client.patch(
             f"/tasks/{task_id}",
-            json={"approved": "APPROVED", "participantLimit": 1},
+            json={"approved": "APPROVED", "participantLimit": 1, "startMode": "APPLY"},
             headers=headers,
         )
         assert resp.status_code == 200, resp.text
@@ -1304,6 +1305,7 @@ class TestParticipantManagement:
             "/tasks",
             json={
                 "name": f"Participant Test Task ({suffix})",
+                "startMode": "APPLY",
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
@@ -2962,6 +2964,7 @@ class TestParticipantWorkflow:
             "/tasks",
             json={
                 "name": f"Workflow Task ({suffix})",
+                "startMode": "APPLY",
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,

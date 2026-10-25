@@ -92,6 +92,30 @@ describe('writesView', () => {
     ])
   })
 
+  it.each([
+    ['DIRECT', '开始做这道题后锁定', '截止日期'],
+    ['APPLY', '申请通过后锁定', '截止日期'],
+  ] as const)('%s 的题：卡上的队伍锁定按开始方式说，不说报名', (startMode, locked, deadline) => {
+    setLocale('zh-CN')
+    const view = writesView(
+      [edit(1, 7, { teamLockingPolicy: 'LOCK_ON_APPROVAL', deadline: 0 }, { startMode })],
+      terms,
+      7
+    )
+
+    const rows = Object.fromEntries(view.changes[0].rows.map((r) => [r.key, r]))
+    expect(rows.team_locking.value).toBe(locked)
+    expect(rows.deadline.label).toBe(deadline)
+    expect(JSON.stringify(view.changes[0].rows)).not.toContain('报名')
+  })
+
+  it('直接开始的题：开始日期那一格叫开放日期', () => {
+    setLocale('zh-CN')
+    const view = writesView([edit(1, 7, { registrationStartAt: 0 }, { startMode: 'DIRECT' })], terms, 7)
+
+    expect(view.changes[0].rows[0].label).toBe('开放日期')
+  })
+
   it('存下阶段的影响只看草稿现在的样子：后一次写入说没人受影响，前一次的提醒就不在了', () => {
     setLocale('zh-CN')
     const failing = { key: 'stageEffectFailing', params: { n: 1 } }

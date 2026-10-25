@@ -49,8 +49,14 @@ const LABEL_KEYS: Record<string, string> = {
   ai_skills: 'spaces.teaching.fields.skills',
 }
 
-export function fieldLabel(key: string): string {
-  const label = LABEL_KEYS[key]
+/** 直接开始的题没有报名：两个日期是开放日期和交作业的截止日期。 */
+const DIRECT_LABEL_KEYS: Record<string, string> = {
+  deadline: 'tasks.form.dueOn',
+  registration_start: 'tasks.form.opensOn',
+}
+
+export function fieldLabel(key: string, startMode?: 'DIRECT' | 'APPLY'): string {
+  const label = (startMode === 'DIRECT' && DIRECT_LABEL_KEYS[key]) || LABEL_KEYS[key]
   return label ? t(label) : key
 }
 
@@ -67,7 +73,13 @@ const LEVELS: Record<number, string> = {
 }
 
 /** 一格的值，写成卡上那一行。 */
-export function valueText(key: string, value: unknown, terms: DraftTerms, before?: unknown): string {
+export function valueText(
+  key: string,
+  value: unknown,
+  terms: DraftTerms,
+  before?: unknown,
+  startMode?: 'DIRECT' | 'APPLY'
+): string {
   if (value === null || value === undefined || value === '') return t('tasks.assistant.changes.empty')
   switch (key) {
     case 'registration_start':
@@ -75,7 +87,9 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
     case 'days_to_submit':
       return t('tasks.assistant.changes.days', { n: Number(value) })
     case 'team_locking':
-      return value === 'LOCK_ON_APPROVAL' ? t('tasks.form.teamLocking.locked') : t('tasks.form.teamLocking.free')
+      // 锁在开始的那一刻：申请制是申请通过时，直接开始是开始做这道题时。
+      if (value !== 'LOCK_ON_APPROVAL') return t('tasks.form.teamLocking.free')
+      return startMode === 'DIRECT' ? t('tasks.form.teamLocking.lockedStart') : t('tasks.form.teamLocking.locked')
     case 'start_mode':
       return value === 'DIRECT' ? t('tasks.form.start.direct') : t('tasks.form.start.apply')
     case 'mentors':
@@ -255,8 +269,8 @@ export function changeView(edit: AssistantEdit, terms: DraftTerms, canUndo: bool
     rows.push({
       change: edit.id,
       key,
-      label: fieldLabel(key),
-      value: valueText(key, change.after, terms, (change as { before?: unknown }).before),
+      label: fieldLabel(key, edit.startMode),
+      value: valueText(key, change.after, terms, (change as { before?: unknown }).before, edit.startMode),
       undone: edit.undone.includes(key),
     })
   }

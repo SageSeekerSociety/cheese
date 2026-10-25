@@ -5,9 +5,9 @@ A claim is live unless it was rejected (``approved == 1``) or withdrawn
 while it waits.
 
 How a claim starts is the task's ``start_mode``: a task started directly takes
-a claim already approved, a task applied for takes it pending; either way the
-claim's project opens when the claim is approved (``starts_now``,
-``deadline_from``).
+a claim already approved, a task applied for takes it pending (``starts_now``,
+``deadline_from``). Either way the claim's project is made when its claimant
+starts it, once it is approved (``app.api.task_claims``).
 """
 
 from collections.abc import Sequence
@@ -18,9 +18,11 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.errors import ForbiddenError
-from app.core.sentences import say
-from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT
+from app.domain.task.inputs import (
+    APPROVE_APPROVED,
+    APPROVE_DISAPPROVED,
+    START_DIRECT,
+)
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.task.stages import list_stages
@@ -149,45 +151,41 @@ async def claim_of(
     )
 
 
-async def refuse_unless_project_follows_claim(
-    session: AsyncSession, *, task: Task, user_id: int, team_id: int | None
-) -> None:
-    """A project made from a task belongs to the team of the claim it comes
-    from: a person's claim puts it in their own name (their personal team, which
-    is also where a project with no team goes), a team's claim in that team.
-    Without an approved claim there is no project to make (a claim still
-    waiting for the publisher has none yet); any other team is refused by name,
-    so the person knows where to make it."""
-    repo = TaskMembershipRepository(session=session)
-    live = _live_claims(
-        task,
-        await repo.get_user_membership(task_id=task.id, user_id=user_id),
-        await repo.list_team_memberships_for_user(task_id=task.id, user_id=user_id),
-    )
-    if not live:
-        raise ForbiddenError(say("challengeProjectClaimFirst"))
-    live = [claim for claim in live if claim.approved == APPROVE_APPROVED]
-    if not live:
-        raise ForbiddenError(say("challengeProjectWaitsForApproval"))
-    team = (await session.get(Team, team_id)) if team_id is not None else None
-    if any(
-        claim.member_id == team_id
-        if claim.is_team
-        else team_id is None
-        or (team is not None and team.personal_owner_user_id == user_id)
-        for claim in live
-    ):
-        return
-    claim = live[0]
-    if claim.is_team:
-        claimant = await session.get(Team, claim.member_id)
-        raise ForbiddenError(
-            say(
-                "challengeProjectInClaimTeam",
-                team=claimant.name if claimant is not None else "",
+async def has_live_claim(session: AsyncSession, task_id: int) -> bool:
+    """Whether anyone holds a claim of this task that still counts: approved
+    or waiting. Once one does, how the task starts is fixed: the claims made
+    under one mode would read the other's rules (who sets the deadline, when
+    the project is made)."""
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.approved != APPROVE_DISAPPROVED,
+                )
             )
         )
-    raise ForbiddenError(say("challengeProjectInOwnName"))
+    )
+
+
+async def has_newer_claim(session: AsyncSession, claim: TaskMembership) -> bool:
+    """Whether the same member applied again after this claim: a later row of
+    theirs for the same task, not withdrawn. A rejected application with a
+    newer one beside it is history; the publisher decides the newer one."""
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    TaskMembership.task_id == claim.task_id,
+                    TaskMembership.member_id == claim.member_id,
+                    TaskMembership.is_team.is_(claim.is_team),
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.id > claim.id,
+                )
+            )
+        )
+    )
 
 
 @dataclass(frozen=True)

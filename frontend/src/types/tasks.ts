@@ -131,6 +131,8 @@ export interface Task {
     total: number
     /** 申请通过的份数：页面上的「参与人数」，名额满没满也按它。 */
     approved: number
+    /** 还算数的份数（通过的和等批准的）：有一份，开始方式就不能再改。 */
+    live?: number
     examples: TaskParticipantSummary[]
   }
   submittable: boolean

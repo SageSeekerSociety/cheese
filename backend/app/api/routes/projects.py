@@ -92,7 +92,6 @@ from app.domain.shell_catalog import Shell, ShellOut
 from app.domain.task import package
 from app.domain.task.adapters import TaskTerms
 from app.domain.task.claims import deadline_for_project, stages_for_project
-from app.domain.task.services import refuse_unless_project_follows_claim
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
@@ -205,19 +204,6 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
         raise ForbiddenError(say("teamProjectNotMember"))
 
 
-async def _require_claim(
-    db: DbSession, who: Actor, task_id: int, team_id: int | None
-) -> None:
-    """用一道题建项目的，得先申请了这道题，而且项目建在那份申请的团队下：个人申请的
-    建在自己名下，团队申请的建在那个团队下。等批的申请也算（申请那一刻就给它开了
-    项目）；被拒绝或退出的不算。"""
-    if who.user_id is None:
-        raise AuthenticationRequiredError(say("challengeProjectSignIn"))
-    await refuse_unless_project_follows_claim(
-        db, task_id=task_id, user_id=who.user_id, team_id=team_id
-    )
-
-
 @router.get("/resource-limits")
 async def resource_limits() -> dict:
     """Creation defaults, available before a project exists."""
@@ -242,10 +228,6 @@ async def create_project(
     # 「这个团队在不在」，是「你是不是这个团队的人」。
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
-    # 申请了这道题才能用它新建项目，而且只能建在那份申请的团队下：项目带着题目的
-    # 访问权和资源包，不能凭一个题号拿到，也不能挂到申请之外的团队去。
-    if body.external_task_id is not None:
-        await _require_claim(db, who, body.external_task_id, body.team_id)
     project = await ProjectService(
         db,
         default_teammate=default_teammate,

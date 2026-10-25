@@ -12,7 +12,7 @@
   "draftFormChoice": "参与方式只能是个人或团队",
   "draftIncomplete": "草稿还不完整，缺少：{fields}",
   "draftKeepsASubmissionItem": "至少要保留一项提交内容",
-  "draftLockingChoice": "队伍成员变更只能是允许变更或报名通过后锁定",
+  "draftLockingChoice": "队伍成员变更只能是允许变更、申请通过后锁定或开始做这道题后锁定",
   "draftMentorChoice": "{name} 不能当导师，可选的有：{names}",
   "draftNameLength": "名称不能为空，最多 100 字",
   "draftNeedsSpace": "新建草稿需要指定空间",
@@ -32,7 +32,7 @@
   "draftTooLarge": "草稿内容太长，无法保存",
   "draftTooMany": "一个空间里最多保存 {max} 份草稿，先删除不用的草稿",
   "draftUnknownFields": "草稿里没有这些字段：{fields}",
-  "mentorConsentRequired": "这道题有导师，同意导师加入项目后才能申请",
+  "mentorConsentRequired": "这道题有导师，同意导师加入项目后才能开始做",
   "mentorNotSpaceAdmin": "{handle} 不是这个空间的管理员，无法设为导师",
   "rubricLineNeedsName": "评分要点的每一项都需要填写项目名称",
   "rubricLineTooLong": "评分要点有一项写得太长：项目名称不超过 {item} 字，评分标准不超过 {criteria} 字",
@@ -55,7 +55,6 @@
   "taskFilesForTakers": "只有出题人、空间管理员和在做这道题的人能下载题目的材料",
   "taskPlacesFull": "这道题的 {limit} 个名额已满",
   "taskLockingPolicyInvalid": "队伍成员变更的设置无效",
-  "taskDirectNeedsDeadline": "直接开始的题要设截止日期，所有人在这天之前提交",
   "taskStartModeInvalid": "开始方式只能是直接开始或申请制",
   "taskOpeningNotFailed": "AI 队友接手这个任务时没有失败，不用重试",
   "taskOwnSessionCloses": "只有任务的负责人、协作者，或者在这个任务对话里工作的 AI 队友，可以关闭它",
@@ -77,5 +76,7 @@
   "starterPushGaveUp": "代码仓库服务一直没有接收起始代码，已经停止尝试",
   "starterMainTaken": "代码仓库的 main 分支在放入之前已经有了别的提交",
   "stageEffectFailing": "{n} 位参与者有已过截止、还没提交的阶段，保存后将判为未通过",
-  "stageEffectReopening": "{n} 位参与者将从未通过回到进行中"
+  "stageEffectReopening": "{n} 位参与者将从未通过回到进行中",
+  "taskStartModeLocked": "已经有人申请或开始做这道题，开始方式不能再改",
+  "claimHasNewerApplication": "这条申请已有更新的一份，处理新的那条"
 }

@@ -15,7 +15,12 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.conftest import seed_claim, seed_space, seed_task_with_protocol, seed_user
+from tests.conftest import (
+    seed_space,
+    seed_task_with_protocol,
+    seed_user,
+    start_task_project,
+)
 from tests.integration.conftest import (
     inbox,
     join_project_team,
@@ -501,10 +506,10 @@ def test_only_its_people_watch_a_screen_working_in_it(client):
 def test_counts_leave_out_what_is_written_in_it_for_those_outside(client):
     space_id = seed_space(client, "书院")
     external = seed_task_with_protocol(client, space_id=space_id)
-    seed_claim(client, external, handle="dave")
-    p = post_project(
-        client, json={"name": "队伍", "external_task_id": external}, owner="dave"
-    ).json()["data"]
+    started = start_task_project(client, external, handle="dave")
+    p = client.get(f"/projects/{started}", headers=session_auth_headers("dave")).json()[
+        "data"
+    ]
     for handle in ("alice", "bob"):
         join_project_team(client, p["id"], handle)
     post_message(client, p["root_topic_id"], "bob", {"content": "大家好"})

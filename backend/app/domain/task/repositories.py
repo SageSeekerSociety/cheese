@@ -438,7 +438,7 @@ class TaskRepository:
         max_team_size: int | None,
         team_locking_policy: str,
         access_control_enabled: bool = False,
-        start_mode: str = "APPLY",
+        start_mode: str = "DIRECT",
     ) -> Task:
         """Create and persist a new Task row."""
         now = datetime.now(UTC)

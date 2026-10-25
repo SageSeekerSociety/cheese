@@ -19,19 +19,18 @@ from app.domain.materials.models import Material
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task import teaching as teaching_context
 from app.domain.task.models import Task
-from tests.conftest import seed_claim, seed_task_with_protocol
+from tests.conftest import seed_task_with_protocol, start_task_project
 from tests.integration.conftest import a_team, post_project
 
 OWNER = "owner-1"
 GUIDE = {"mode": "guide", "system_prompt": "只讲循环，不碰递归。"}
 
 
-def _project(client, *, external_task_id: int | None = None, name: str = "团队") -> int:
-    body: dict = {"name": name}
-    if external_task_id is not None:
-        seed_claim(client, external_task_id, handle=OWNER)
-        body["external_task_id"] = external_task_id
-    return post_project(client, json=body, owner=OWNER).json()["data"]["id"]
+def _project(client, *, task_id: int | None = None) -> str:
+    """A project 开始做 ``task_id`` makes, or a plain one when there is no task."""
+    if task_id is not None:
+        return start_task_project(client, task_id, handle=OWNER)
+    return post_project(client, json={"name": "团队"}, owner=OWNER).json()["data"]["id"]
 
 
 def _seed_reference_rows(client, *, material: str, document: str) -> tuple[int, str]:
@@ -82,7 +81,7 @@ def _set_teaching(client, *, task_id: int, teaching: dict) -> None:
     asyncio.run(_run())
 
 
-def _for_project(client, project_id: int):
+def _for_project(client, project_id: str):
     """`for_project` for one project, plus every statement it sent to do it."""
     got: dict = {}
 
@@ -123,7 +122,7 @@ def test_a_course_project_starts_with_its_guidance(client):
             }
         },
     )
-    project_id = _project(client, external_task_id=task_id)
+    project_id = _project(client, task_id=task_id)
 
     context, _ = _for_project(client, project_id)
 
@@ -139,13 +138,13 @@ def test_a_course_project_starts_with_its_guidance(client):
 
 
 def test_a_project_that_is_not_a_course_asks_the_database_nothing(client):
-    """没有 `external_task_id` 的项目不是课程建的：一次查询都不发。
+    """不是从题目开始的项目不是课程建的：一次查询都不发。
 
     这条是「非课程项目一个字都不多加载」的另一半 —— 另半（不渲染那一段）在
     `tests/unit/test_task_teaching.py`。少了这一条，一个多查一次库的实现照样
     能全绿。
     """
-    project_id = _project(client, external_task_id=None)
+    project_id = _project(client)
 
     context, sent = _for_project(client, project_id)
 
@@ -155,7 +154,7 @@ def test_a_project_that_is_not_a_course_asks_the_database_nothing(client):
 
 def test_a_course_that_configured_nothing_resolves_to_no_context(client):
     task_id = seed_task_with_protocol(client)  # 有项目集，没有教学配置
-    project_id = _project(client, external_task_id=task_id)
+    project_id = _project(client, task_id=task_id)
 
     context, sent = _for_project(client, project_id)
 
@@ -170,7 +169,7 @@ def test_the_guidance_is_read_fresh_not_copied_into_the_project(client):
     这是生效语义里「已有项目的新会话」那一半 —— 配置不是注册时抄进项目的副本。
     """
     task_id = seed_task_with_protocol(client, override={"teaching": GUIDE})
-    project_id = _project(client, external_task_id=task_id)
+    project_id = _project(client, task_id=task_id)
     assert _for_project(client, project_id)[0].teaching.mode == "guide"
 
     _set_teaching(client, task_id=task_id, teaching={**GUIDE, "mode": "spec"})

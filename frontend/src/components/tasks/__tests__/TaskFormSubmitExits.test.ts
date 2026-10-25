@@ -75,6 +75,7 @@ interface MountOptions {
   initialData?: Record<string, unknown>
   isEditing?: boolean
   parametersOnly?: boolean
+  startModeLocked?: boolean
 }
 
 function mountForm(options: MountOptions = {}) {
@@ -83,6 +84,7 @@ function mountForm(options: MountOptions = {}) {
       initialData: options.initialData ?? {},
       isEditing: options.isEditing ?? false,
       parametersOnly: options.parametersOnly ?? false,
+      startModeLocked: options.startModeLocked ?? false,
       classificationTopics: [],
       categories: [{ id: 3, name: '课程作业', displayOrder: 0 }],
     },
@@ -358,16 +360,34 @@ describe('发题表单：两个阶段一个一个删掉', () => {
 })
 
 describe('发题表单：直接开始的题', () => {
-  it('截止日期写成提交截止、必填；空着发布就拦下，说缺截止日期', async () => {
-    // Editing a task that has no deadline yet (a new one starts with one filled in).
+  it('截止日期写成提交截止、可以不填：空着也发得出去，就是没有截止', async () => {
     const view = mountForm({ isEditing: true, initialData: { ...FILLED, startMode: 'DIRECT', deadline: null } })
 
     expect(view.container.textContent).toContain('tasks.form.dueOn')
     expect(view.container.textContent).not.toContain('tasks.form.registration')
-    await trySubmit(view)
+    const sent = await submitted(view)
 
-    await waitFor(() => expect(view.container.textContent).toContain('tasks.form.validation.dueRequired'))
-    expect(view.emitted().submit).toBeFalsy()
+    expect(sent.startMode).toBe('DIRECT')
+    expect(sent.deadline ?? null).toBeNull()
+  })
+
+  it('新发一道题：不选就是直接开始', async () => {
+    const view = mountForm({ initialData: FILLED })
+
+    const sent = await submitted(view)
+
+    expect(sent.startMode).toBe('DIRECT')
+  })
+
+  it('已经有人申请或开始做了：开始方式灰着改不了，写明为什么', async () => {
+    const view = mountForm({ isEditing: true, startModeLocked: true, initialData: { ...FILLED, startMode: 'APPLY' } })
+
+    const radios = Array.from(
+      view.container.querySelectorAll<HTMLInputElement>('[data-agent-field="start_mode"] input[type="radio"]')
+    )
+    expect(radios.length).toBe(2)
+    expect(radios.every((r) => r.disabled)).toBe(true)
+    expect(view.container.textContent).toContain('tasks.form.start.locked')
   })
 
   it.each([

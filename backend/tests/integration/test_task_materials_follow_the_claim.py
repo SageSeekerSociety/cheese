@@ -2,8 +2,8 @@
 
 Every project made from a task comes from one claim — a person's, or one
 team's — and lives in that claim's team: a person's claim in their own name,
-a team's claim in that team. The project opens when the claim is approved,
-so a claim still waiting, or rejected, has none. While that claim is live and
+a team's claim in that team. The project opens when the claimant starts an
+approved claim, so a claim still waiting, or rejected, has none. While that claim is live and
 approved, everyone in the project and the project's agents read the read-only
 `题目/` folder, and the claimants download the materials from the task page.
 After it was withdrawn or removed nobody reads `题目/` there, nor in a project
@@ -175,7 +175,7 @@ def test_a_persons_project_reads_the_task_only_while_their_claim_is_approved(
     _portal,
 ):
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name=f"个人题 {state}")
+    task_id = _create_task(api_client, board, name=f"个人题 {state}", startMode="APPLY")
     _add(api_client, task_id, board["creator_token"], "数据.csv", DATA)
     _, token = _member_of(user_client, api_client, board)
     participant, project_id = _claim_as_user(api_client, task_id, token)
@@ -221,7 +221,11 @@ def test_everyone_in_a_teams_project_reads_the_task_only_while_its_claim_is_appr
     teammate who joined afterwards all read the same thing."""
     board = _new_board(user_client, api_client)
     task_id = _create_task(
-        api_client, board, name=f"团队题 {state}", submitterType="TEAM"
+        api_client,
+        board,
+        name=f"团队题 {state}",
+        submitterType="TEAM",
+        startMode="APPLY",
     )
     _add(api_client, task_id, board["creator_token"], "数据.csv", DATA)
     _, owner_token = _member_of(user_client, api_client, board)
@@ -268,9 +272,11 @@ def test_a_claim_through_another_team_does_not_open_this_projects_task_folder(
     gives them the materials and its own project's `题目/`; the other team's
     project (one an earlier release opened while its claim waited) shows none
     while that team's claim waits — to them, to its other members, and to its
-    agents; and no new project can be made there from the task meanwhile."""
+    agents; and starting that team's claim meanwhile makes no new project."""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="两个团队", submitterType="TEAM")
+    task_id = _create_task(
+        api_client, board, name="两个团队", submitterType="TEAM", startMode="APPLY"
+    )
     _add(api_client, task_id, board["creator_token"], "数据.csv", DATA)
     both, both_token = _member_of(user_client, api_client, board)
     _, other_token = _member_of(user_client, api_client, board)
@@ -284,17 +290,8 @@ def test_a_claim_through_another_team_does_not_open_this_projects_task_folder(
     _, waiting_project = _claim_as_team(api_client, task_id, waiting_team, other_token)
     _back_to_waiting(db_session, _portal, waiting_claim)
     _join(db_session, _portal, waiting_team, both)
-    resp = api_client.post(
-        "/projects",
-        json={
-            "name": "在等的团队的另一个项目",
-            "external_task_id": task_id,
-            "team_id": waiting_team,
-        },
-        headers=_auth(other_token),
-    )
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["i18n"]["key"] == "challengeProjectWaitsForApproval"
+    _, started = _claim_as_team(api_client, task_id, waiting_team, other_token)
+    assert started is None
 
     assert _downloads(api_client, task_id, both_token)
     assert _reads_folder(api_client, approved_project, both_token)
@@ -306,36 +303,30 @@ def test_a_claim_through_another_team_does_not_open_this_projects_task_folder(
 # --- which team a project made from a task goes in -------------------------------
 
 
+def _personal_team(api_client: TestClient, token: str) -> int:
+    resp = api_client.get("/teams/my-teams", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    [own] = [t["id"] for t in resp.json()["data"]["teams"] if t["personal"]]
+    return own
+
+
 def test_a_project_from_a_persons_claim_goes_in_their_own_name(
     api_client: TestClient,
     user_client: UserCreator,
     upload_root: Path,  # noqa: F811
 ):
+    """Even for someone who also has a team of their own: the claim was theirs."""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="个人题建项目")
+    task_id = _create_task(api_client, board, name="个人题建项目", startMode="APPLY")
     _, token = _member_of(user_client, api_client, board)
+    _team(api_client, token)
     participant, _ = _claim_as_user(api_client, task_id, token)
     _decide(api_client, board, task_id, participant, "APPROVED")
-    _, first = _claim_as_user(api_client, task_id, token)
-    team_id, _ = _team(api_client, token)
+    _, project_id = _claim_as_user(api_client, task_id, token)
 
-    resp = api_client.post(
-        "/projects",
-        json={"name": "挂到团队", "external_task_id": task_id, "team_id": team_id},
-        headers=_auth(token),
-    )
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["i18n"]["key"] == "challengeProjectInOwnName"
-
-    own = api_client.get(f"/projects/{first}", headers=_auth(token)).json()["data"]
-    for team in (None, own["team_id"]):
-        resp = api_client.post(
-            "/projects",
-            json={"name": "自己名下", "external_task_id": task_id, "team_id": team},
-            headers=_auth(token),
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["data"]["team_id"] == own["team_id"]
+    project = api_client.get(f"/projects/{project_id}", headers=_auth(token))
+    assert project.status_code == 200, project.text
+    assert project.json()["data"]["team_id"] == _personal_team(api_client, token)
 
 
 def test_a_project_from_a_teams_claim_goes_in_that_team(
@@ -344,54 +335,32 @@ def test_a_project_from_a_teams_claim_goes_in_that_team(
     upload_root: Path,  # noqa: F811
 ):
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="团队题建项目", submitterType="TEAM")
-    _, token = _member_of(user_client, api_client, board)
-    claimed, claimed_name = _team(api_client, token)
-    other, _ = _team(api_client, token)
-    participant, _ = _claim_as_team(api_client, task_id, claimed, token)
-
-    # Waiting for the publisher: no project from the task yet.
-    resp = api_client.post(
-        "/projects",
-        json={"name": "还在等", "external_task_id": task_id, "team_id": claimed},
-        headers=_auth(token),
+    task_id = _create_task(
+        api_client, board, name="团队题建项目", submitterType="TEAM", startMode="APPLY"
     )
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["i18n"]["key"] == "challengeProjectWaitsForApproval"
+    _, token = _member_of(user_client, api_client, board)
+    claimed, _ = _team(api_client, token)
+    other, _ = _team(api_client, token)
+    participant, project_id = _claim_as_team(api_client, task_id, claimed, token)
+
+    # Waiting for the publisher: starting again makes no project from the task yet.
+    assert project_id is None
+    assert _claim_as_team(api_client, task_id, claimed, token)[1] is None
     _decide(api_client, board, task_id, participant, "APPROVED")
 
-    for team in (other, None):
-        resp = api_client.post(
-            "/projects",
-            json={"name": "别的团队", "external_task_id": task_id, "team_id": team},
-            headers=_auth(token),
-        )
-        assert resp.status_code == 403, resp.text
-        error = resp.json()["error"]["i18n"]
-        assert error["key"] == "challengeProjectInClaimTeam"
-        assert error["params"] == {"team": claimed_name}
-
+    # Not through another team, nor in their own name: the claim is the team's.
     resp = api_client.post(
-        "/projects",
-        json={"name": "申请的团队", "external_task_id": task_id, "team_id": claimed},
+        f"/tasks/{task_id}/participations/team",
+        json={"teamId": other},
         headers=_auth(token),
     )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["team_id"] == claimed
-
-
-def test_without_a_live_claim_no_project_is_made_from_the_task(
-    api_client: TestClient,
-    user_client: UserCreator,
-    upload_root: Path,  # noqa: F811
-):
-    board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="没申请的题")
-    _, token = _member_of(user_client, api_client, board)
+    assert resp.status_code == 400, resp.text
     resp = api_client.post(
-        "/projects",
-        json={"name": "没申请", "external_task_id": task_id},
-        headers=_auth(token),
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["i18n"]["key"] == "challengeProjectClaimFirst"
+    assert resp.status_code == 400, resp.text
+
+    _, project_id = _claim_as_team(api_client, task_id, claimed, token)
+    project = api_client.get(f"/projects/{project_id}", headers=_auth(token))
+    assert project.status_code == 200, project.text
+    assert project.json()["data"]["team_id"] == claimed

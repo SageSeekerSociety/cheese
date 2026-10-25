@@ -36,7 +36,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task import claims, package
-from app.domain.task.inputs import START_DIRECT, map_approve_type, map_start_mode
+from app.domain.task.inputs import map_approve_type, map_start_mode
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -185,10 +185,12 @@ async def update_task(
     if payload.default_deadline is not None:
         task.default_deadline = payload.default_deadline
     if payload.start_mode is not None:
-        task.start_mode = map_start_mode(payload.start_mode)
-    # Everyone on a task started directly hands in by its deadline.
-    if task.start_mode == START_DIRECT and task.deadline is None:
-        raise BadRequestError(say("taskDirectNeedsDeadline"))
+        start_mode = map_start_mode(payload.start_mode)
+        # Claims already made read their mode's rules (who sets the deadline,
+        # when the project is made); once anyone holds one, the mode stays.
+        if start_mode != task.start_mode and await claims.has_live_claim(db, task.id):
+            raise BadRequestError(say("taskStartModeLocked"))
+        task.start_mode = start_mode
 
     if payload.rank is not None:
         task.rank = payload.rank

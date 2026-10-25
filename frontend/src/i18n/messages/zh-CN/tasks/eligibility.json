@@ -11,5 +11,12 @@
   "TEAM_TOO_LARGE": "团队人数超过这道题的上限",
   "TEAM_TOO_SMALL": "团队人数少于这道题的要求",
   "USER_RANK_NOT_HIGH_ENOUGH": "你的等级还不够参与这道题",
-  "unknown": "暂时无法参与这道题"
+  "unknown": "暂时无法参与这道题",
+  "direct": {
+    "ALREADY_PARTICIPATING": "你已经开始做这道题",
+    "MEMBER_ALREADY_PARTICIPATING": "团队里有人已经通过别的团队开始做这道题",
+    "REGISTRATION_CLOSED": "这道题已经截止",
+    "REGISTRATION_NOT_STARTED": "这道题还没开放",
+    "TASK_NOT_APPROVED": "这道题还没有通过审核，通过后才能开始"
+  }
 }

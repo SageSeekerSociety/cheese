@@ -381,6 +381,7 @@ onBeforeUnmount(() => void draft.flush())
       :key="formKey"
       :initial-data="initialData"
       is-editing
+      :start-mode-locked="(taskData.participants?.live ?? 0) > 0"
       :classification-topics="taskData.space?.classificationTopics || []"
       :categories="editCategories"
       :domain-groups="domainGroups"

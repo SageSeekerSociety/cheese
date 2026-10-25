@@ -596,6 +596,9 @@ async def agent_write(
             "created": created,
             "version": row.version,
             "name": (row.fields or {}).get("name") or "",
+            # How the task starts once this write is in: the card says the
+            # team lock and the dates the way that mode means them.
+            "startMode": (row.fields or {}).get("startMode") or "DIRECT",
             "changed": {
                 k: {"before": b, "after": a} for k, (b, a) in written.changed.items()
             },

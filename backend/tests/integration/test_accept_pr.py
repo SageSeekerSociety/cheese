@@ -822,6 +822,14 @@ def app_world(client, monkeypatch):
         }
 
     monkeypatch.setattr(project_forge, "provision_repository", provision)
+
+    # A project started from a task gets its repository prepared and then
+    # bound (`ProjectService.for_participation`), not provisioned: it joins
+    # this world the same way.
+    async def bind_repository(session, prepared):
+        return await provision(prepared.project_id, session)
+
+    monkeypatch.setattr(project_forge, "bind_repository", bind_repository)
     monkeypatch.setattr(project_forge, "default_branch", default_branch)
     monkeypatch.setattr(project_forge, "branch_head", branch_head)
     monkeypatch.setattr(pr_publish, "branch_head", branch_head)

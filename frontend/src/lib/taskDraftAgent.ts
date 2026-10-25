@@ -63,7 +63,8 @@ const LEVELS: Record<string, number> = { 初级: 1, 中级: 2, 高级: 3 }
 const KINDS: Record<string, TaskSubmissionEntryType> = { 文件: 'FILE', 文字: 'TEXT' }
 const LOCKING: Record<string, 'NO_LOCK' | 'LOCK_ON_APPROVAL'> = {
   允许变更: 'NO_LOCK',
-  报名通过后锁定: 'LOCK_ON_APPROVAL',
+  申请通过后锁定: 'LOCK_ON_APPROVAL',
+  开始做这道题后锁定: 'LOCK_ON_APPROVAL',
 }
 const START_MODES: Record<string, 'DIRECT' | 'APPLY'> = { 直接开始: 'DIRECT', 申请制: 'APPLY' }
 const AI_MODES: Record<string, TeachingMode | null> = {

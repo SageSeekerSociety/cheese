@@ -125,6 +125,8 @@ export interface AssistantEdit {
   created: boolean
   version: number
   name: string
+  /** 写完这一次，草稿上的题怎么开始：卡上队伍锁定、日期两格按它说。 */
+  startMode?: 'DIRECT' | 'APPLY'
   changed: Record<string, { before: unknown; after: unknown }>
   kept: string[]
   notes: { field: string; text: string }[]
@@ -580,6 +582,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       created: payload.created === true,
       version: Number(payload.version) || 0,
       name: typeof payload.name === 'string' ? payload.name : '',
+      startMode: payload.startMode === 'APPLY' || payload.startMode === 'DIRECT' ? payload.startMode : undefined,
       changed: (payload.changed as AssistantEdit['changed']) ?? {},
       kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
       notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],

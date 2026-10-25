@@ -151,7 +151,14 @@ DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 # i18n-data: what a submission item is handed in as.
 KINDS = {"文件": "FILE", "文字": "TEXT"}
 # i18n-data: whether a team's members may change once it is approved.
-LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
+# The lock takes hold when the claim starts: when it is approved on a task
+# applied for, when it is made on a task started directly. 芝士 may say either;
+# the read-back says the one true of the task's mode.
+LOCKING = {
+    "允许变更": "NO_LOCK",
+    "申请通过后锁定": "LOCK_ON_APPROVAL",
+    "开始做这道题后锁定": "LOCK_ON_APPROVAL",
+}
 # i18n-data: how a claim of the 题目 starts, as the form names the two ways.
 START_MODES = {"直接开始": "DIRECT", "申请制": "APPLY"}
 # i18n-data: how the AI teammate helps, as the form names the four ways; the
@@ -1100,7 +1107,12 @@ def _view(
     forms = {v: k for k, v in FORMS.items()}
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
-    lockings = {v: k for k, v in LOCKING.items()}
+    lockings = {
+        "NO_LOCK": "允许变更",
+        "LOCK_ON_APPROVAL": "开始做这道题后锁定"
+        if fields.get("startMode") != "APPLY"
+        else "申请通过后锁定",
+    }
     starts = {v: k for k, v in START_MODES.items()}
     modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
@@ -1142,7 +1154,7 @@ def _view(
             f"{space.mentors.get(h, h)}（{h}）" for h in fields.get("mentors") or []
         ),
         f"registration_start: {when(fields.get('registrationStartAt'))}",
-        f"start_mode: {starts.get(str(fields.get('startMode')), '申请制')}",
+        f"start_mode: {starts.get(str(fields.get('startMode')), '直接开始')}",
         f"deadline: {when(fields.get('deadline'))}",
         f"days_to_submit: {fields.get('defaultDeadline') or ''}",
         f"category: {by_id.get(int(fields.get('categoryId') or 0), '')}",

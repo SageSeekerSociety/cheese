@@ -14,9 +14,9 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
-    mentors_agreed,
+    consent_before_a_direct_start,
 )
-from app.api.task_claims import open_claim_project
+from app.api.task_claims import release_to_claim_project, start_claim
 from app.api.task_deps import (
     get_task_membership_service,
 )
@@ -97,19 +97,27 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
     return ok(rows)
 
 
-async def _participation_response(db, task, membership, auth_user) -> dict:
-    """The claim, and its project when it has been approved.
+async def _participation_response(
+    db, task, membership, auth_user, *, starts: bool, agreed_mentors: bool
+) -> dict:
+    """The claim, and its project once the claimant has started it.
 
-    A claim approved now (a task started directly) or earlier opens its
-    project here, made if it has none. The claim is committed first: the place
-    it took is not held while the repository is made. A claim still waiting
-    for the publisher has no project yet; it opens on approval
-    (``patch_task_participant``).
+    开始 is 用这道题新建项目: a claim that is approved (a task started
+    directly, at once; a task applied for, once the publisher approved it) is
+    started by its claimant asking again, which makes its project, or answers
+    with the one it has (继续做). ``starts`` is False for a publisher enrolling
+    someone else: the project is made when that person starts. A claim still
+    waiting for the publisher has no project. The claim is committed before
+    the repository is made (``task_claims``).
     """
     project = None
-    if membership.approved == APPROVE_APPROVED:
-        project = await open_claim_project(
-            db, task=task, membership=membership, acting_user_id=auth_user.user_id
+    if starts and membership.approved == APPROVE_APPROVED:
+        project = await start_claim(
+            db,
+            task=task,
+            membership=membership,
+            acting_user_id=auth_user.user_id,
+            agreed_mentors=agreed_mentors,
         )
     return ok(
         {
@@ -188,22 +196,24 @@ async def create_task_participant(
                 )
 
     is_team = task.submitter_type == 1
-    # Someone claiming for themselves agrees to the mentors; a teacher
-    # enrolling a student is one of the people running the course.
-    mentors = await mentors_agreed(
-        db,
-        membership_service,
-        task=task,
-        member_id=member,
-        is_team=is_team,
-        agreed=payload.agree_mentors or member != auth_user.user_id,
-    )
     if is_team and not await team_service(db).is_team_member(member, auth_user.user_id):
         # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
         # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
         # 与 ``join_task_as_team`` 同一句话：要把一支队伍报上去，你先得是那支队的人。
         raise ForbiddenError(
             "You must be a member of this team to register it for a task"
+        )
+    # The claimant starts their own claim; a teacher enrolling a student makes
+    # the claim only, and the student starts it (and agrees to the mentors).
+    starts = is_team or member == auth_user.user_id
+    if starts:
+        await consent_before_a_direct_start(
+            db,
+            membership_service,
+            task=task,
+            member_id=member,
+            is_team=is_team,
+            agreed=payload.agree_mentors,
         )
     membership = await membership_service.create_membership(
         task=task,
@@ -214,10 +224,16 @@ async def create_task_participant(
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
-        mentors=mentors,
     )
 
-    return await _participation_response(db, task, membership, auth_user)
+    return await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=starts,
+        agreed_mentors=payload.agree_mentors,
+    )
 
 
 @router.post(
@@ -253,7 +269,7 @@ async def join_task_as_user(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    mentors = await mentors_agreed(
+    await consent_before_a_direct_start(
         db,
         membership_service,
         task=task,
@@ -271,9 +287,15 @@ async def join_task_as_user(
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
-        mentors=mentors,
     )
-    response = await _participation_response(db, task, membership, auth_user)
+    response = await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=True,
+        agreed_mentors=payload.agree_mentors,
+    )
     # Commit before answering (the claim, and the project it opened). ``get_db``
     # commits in its teardown, which FastAPI runs after the response has gone
     # out, so the task owner listing the participants right after a claim could
@@ -318,7 +340,7 @@ async def join_task_as_team(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    mentors = await mentors_agreed(
+    await consent_before_a_direct_start(
         db,
         membership_service,
         task=task,
@@ -336,11 +358,17 @@ async def join_task_as_team(
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
-        mentors=mentors,
     )
     # Committed before answering, as in ``join_task_as_user``: the publisher
     # lists the pending claims on the next request.
-    response = await _participation_response(db, task, membership, auth_user)
+    response = await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=True,
+        agreed_mentors=payload.agree_mentors,
+    )
     await db.commit()
     return response
 
@@ -410,15 +438,11 @@ async def patch_task_participant(
         await task_notices.personal_deadline_changed(
             db, task=task, membership=updated, by=auth_user.user_id, at=now
         )
-    # An approved claim has its project, under the claim's team: opened now,
-    # or found again. Every approved PATCH asks, so one whose repository could
-    # not be made last time (the forge unreachable after the approval was
-    # committed) gets it when the publisher tries again. The approval, its
-    # notice and the place it took are committed before the repository is made.
-    if updated.approved == APPROVE_APPROVED:
-        await open_claim_project(
-            db, task=task, membership=updated, acting_user_id=auth_user.user_id
-        )
+    # Approval makes no project: the claimant starts it (开始做这道题). A
+    # project an earlier release made while the claim waited gets the task's
+    # resources now.
+    if updated.approved == APPROVE_APPROVED and approved_before != APPROVE_APPROVED:
+        await release_to_claim_project(db, task=task, membership=updated)
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.

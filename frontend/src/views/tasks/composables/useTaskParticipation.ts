@@ -23,7 +23,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
   /** 直接开始的题点了就开始；申请制的题先申请，等出题人通过。 */
   const direct = () => taskData.value?.startMode === 'DIRECT'
 
-  /** 开始了就进项目；申请制的题这时还没有项目（通过时才建），留在题目页，按钮写着在等通过。 */
+  /** 开始了就进项目；申请制的题申请时还没有项目（通过后点「开始做这道题」才建），留在题目页。 */
   const opened = async (project: { id: string } | null) => {
     if (project) {
       toast.success(t('tasks.participation.started'))
@@ -87,8 +87,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
           applyReason: contactInfo.applyReason,
           personalAdvantage: undefined,
           remark: undefined,
-          // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
-          agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
+          // 直接开始的题，确认框里列出了导师，按下确认就是同意他们加入项目；申请时不问。
+          agreeMentors: direct() && (taskData.value.mentors?.length ?? 0) > 0,
         },
         teamId
       )
@@ -120,8 +120,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         applyReason: contactInfo?.applyReason,
         personalAdvantage: undefined,
         remark: undefined,
-        // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
-        agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
+        // 直接开始的题，确认框里列出了导师，按下确认就是同意他们加入项目；申请时不问。
+        agreeMentors: direct() && (taskData.value.mentors?.length ?? 0) > 0,
       })
 
       await loadTaskData()
@@ -133,18 +133,30 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     }
   }
 
-  /** 已经通过、却还没有项目的那份领取（上次建仓库没成）：再领一次就打开它。
-   *  它当初同意过的都已记下，这里不再问联系方式，也不再问导师。 */
-  const openApprovedClaim = async (claim: { type: 'USER' | 'TEAM'; memberId: number }) => {
-    if (!taskData.value) return
+  /** 已经通过、还没有项目的那份领取（申请制的题通过了，或上次建仓库没成）：点「开始做这道题」
+   *  先弹开始的确认框（导师在这一刻问），按了「开始做」才用这道题新建项目。联系方式申请时
+   *  已经给过，不再问。 */
+  const startingClaim = ref<{ type: 'USER' | 'TEAM'; memberId: number } | null>(null)
+  const openApprovedClaim = (claim: { type: 'USER' | 'TEAM'; memberId: number }) => {
+    startingClaim.value = claim
+    events.emit('start-dialog-open', true)
+  }
+
+  events.on('start-confirmed', async () => {
+    const claim = startingClaim.value
+    if (!taskData.value || !claim) return
     try {
-      const result = await TaskBoardApi.join(taskData.value.id, {}, claim.type === 'TEAM' ? claim.memberId : undefined)
+      const result = await TaskBoardApi.join(
+        taskData.value.id,
+        { agreeMentors: (taskData.value.mentors?.length ?? 0) > 0 },
+        claim.type === 'TEAM' ? claim.memberId : undefined
+      )
       await loadTaskData()
       await opened(result.project)
     } catch (error) {
       void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.startFailed') })
     }
-  }
+  })
 
   // 退出任务主逻辑
   const confirmLeaveTask = async () => {

@@ -62,10 +62,11 @@
   "rank": "Difficulty",
   "start": {
     "apply": "Apply first",
-    "applyHint": "Starts once the publisher approves the application; the time limit counts from that day",
+    "applyHint": "Can be started once the publisher approves the application; the time limit counts from that day",
     "direct": "Start directly",
-    "directHint": "Clicking “Start this task” starts it; everyone hands in by the deadline",
-    "label": "How it starts"
+    "directHint": "Clicking “Start this task” starts it; with a deadline, everyone hands in by it",
+    "label": "How it starts",
+    "locked": "Someone has already applied for or started this task, so how it starts can no longer change"
   },
   "registration": "Registration",
   "registrationEnd": "End date",
@@ -86,7 +87,6 @@
     "lockedHintStart": "The roster when the team starts is final",
     "lockedStart": "Locked once the team starts"
   },
-  "teamLockingPolicyLockOnApproval": "Locked on approval",
   "teamSize": "Team size",
   "teamSizeUnit": "people",
   "time": "Schedule",
@@ -96,7 +96,6 @@
   "validation": {
     "categoryRequired": "Choose a category",
     "completionRequired": "Time to complete is missing",
-    "dueRequired": "Deadline is missing",
     "nameRequired": "Name is missing",
     "rankRequired": "Choose a difficulty",
     "submitterTypeRequired": "Choose who takes it",
@@ -105,7 +104,7 @@
   "mentor": {
     "require": "Add mentors to participants' projects",
     "label": "Mentors",
-    "hint": "Students agree to them before applying or starting. Mentors see the project's public channels, documents and files"
+    "hint": "Students agree to them before starting. Mentors see the project's public channels, documents and files"
   },
   "grading": {
     "title": "Submission and grading",
@@ -156,5 +155,6 @@
     "ai": "AI settings",
     "aiHint": "For projects built from this task",
     "publish": "Publishing"
-  }
+  },
+  "dueNone": "No deadline"
 }

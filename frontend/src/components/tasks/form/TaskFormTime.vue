@@ -3,7 +3,8 @@
 // 申请制的题通过后几天内完成。
 //
 // 它只画：几样值都是 props 进来的，改一次往上报一次。今天以前的日子点不动。
-// 直接开始的题所有人按截止日期交，没有「限时几天」这一格。
+// 直接开始的题设了截止日期所有人按它交，不设就没有截止；没有「限时几天」这一格。
+// 有人申请或开始做了，开始方式就定了：这一格灰着，写明为什么。
 import type { TaskStartMode } from '@/types'
 
 import { computed } from 'vue'
@@ -21,6 +22,8 @@ defineProps<{
   registrationStartAtControl: FieldControl
   deadlineControl: FieldControl
   defaultDeadlineControl: FieldControl
+  /** 已经有人申请或开始做：开始方式不能再改。 */
+  startModeLocked?: boolean
 }>()
 
 const registrationStartAt = defineModel<Date | null | undefined>('registrationStartAt', { required: true })
@@ -49,7 +52,7 @@ const isAllowedDates = (date: unknown) => {
 <template>
   <TaskFormSection :title="t('tasks.form.time')">
     <BaseField data-agent-field="start_mode" :label="t('tasks.form.start.label')">
-      <v-radio-group v-model="startMode" hide-details density="compact" class="tf-choices">
+      <v-radio-group v-model="startMode" :disabled="startModeLocked" hide-details density="compact" class="tf-choices">
         <v-radio v-for="option in startOptions" :key="option.value" :value="option.value">
           <template #label>
             <span>
@@ -59,9 +62,12 @@ const isAllowedDates = (date: unknown) => {
           </template>
         </v-radio>
       </v-radio-group>
+      <p v-if="startModeLocked" class="tf-locked" data-testid="start-mode-locked">
+        {{ t('tasks.form.start.locked') }}
+      </p>
     </BaseField>
 
-    <!-- 直接开始的题：开放的那一天可空，截止日期必填，是所有人交作业的期限，不写成报名的截止。 -->
+    <!-- A task started directly: both dates may be empty; a deadline, when set, is everyone's hand-in date, not the end of an application window. -->
     <div v-if="startMode === 'DIRECT'" class="tf-grid">
       <BaseField :label="t('tasks.form.opensOn')" :error="errorOf(registrationStartAtControl)">
         <VDateInput
@@ -78,11 +84,12 @@ const isAllowedDates = (date: unknown) => {
           hide-details
         />
       </BaseField>
-      <BaseField data-agent-field="deadline" :label="t('tasks.form.dueOn')" required :error="errorOf(deadlineControl)">
+      <BaseField data-agent-field="deadline" :label="t('tasks.form.dueOn')" :error="errorOf(deadlineControl)">
         <template #default="{ id }">
           <VDateInput
             :id="id"
             v-model="deadline"
+            :placeholder="t('tasks.form.dueNone')"
             :aria-label="t('tasks.form.dueOn')"
             :allowed-dates="isAllowedDates"
             :error="Boolean(errorOf(deadlineControl))"
@@ -173,5 +180,12 @@ const isAllowedDates = (date: unknown) => {
 .tf-dates > :not(span) {
   flex: 1 1 0;
   min-width: 0;
+}
+
+.tf-locked {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 </style>

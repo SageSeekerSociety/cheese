@@ -52,6 +52,8 @@ const props = withDefaults(
     defaultMentor?: string
     /** 芝士正在写的那一格（它的字段名）：收起的「更多设置」里的就展开。 */
     agentWriting?: string | null
+    /** 改题时已经有人申请或开始做：开始方式不能再改。 */
+    startModeLocked?: boolean
   }>(),
   {
     initialData: null,
@@ -63,6 +65,7 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     agentWriting: null,
+    startModeLocked: false,
   }
 )
 
@@ -248,6 +251,7 @@ defineExpose({
         :registration-start-at-control="registrationStartAtProps"
         :deadline-control="deadlineProps"
         :default-deadline-control="defaultDeadlineProps"
+        :start-mode-locked="startModeLocked"
       />
 
       <TaskFormClassify

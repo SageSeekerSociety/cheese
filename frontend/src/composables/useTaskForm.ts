@@ -145,11 +145,6 @@ export function useTaskForm(
           message: t('tasks.form.validation.teamSizeOrder'),
           path: ['maxTeamSize'],
         })
-        // 直接开始的题所有人按截止日期交，没有截止日期就没有期限。
-        .refine((arg) => arg.startMode !== 'DIRECT' || arg.deadline != null, {
-          message: t('tasks.form.validation.dueRequired'),
-          path: ['deadline'],
-        })
     )
   )
 
@@ -171,7 +166,8 @@ export function useTaskForm(
       minTeamSize: props.initialData?.minTeamSize ?? 1,
       maxTeamSize: props.initialData?.maxTeamSize ?? 10,
       defaultDeadline: props.initialData?.defaultDeadline ?? 30,
-      startMode: props.initialData?.startMode ?? 'APPLY',
+      // 新题目默认直接开始；改题时是它原来的。
+      startMode: props.initialData?.startMode ?? 'DIRECT',
       // `||` 而不是 `??`：0 在这个表单里与「没有」是同一件事（后端不限时存的是 `null`，
       // 老行里可能是 0），留着它反而会被下面那条 `min(1)` 判成填错。
       participantLimit: props.initialData?.participantLimit || null,

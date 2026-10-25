@@ -15,7 +15,7 @@ from app.api.routes.tasks._common import (
     PatchTaskRequest,
 )
 from app.api.routes.tasks._writes import update_task
-from app.api.task_claims import open_claim_project, project_of_claim
+from app.api.task_claims import project_of_claim, release_to_claim_project
 from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
@@ -726,6 +726,7 @@ async def patch_task_membership_by_member(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
+    approved_before = membership.approved
     await membership_service.update_membership(
         membership=membership,
         task=task,
@@ -736,12 +737,10 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    # An approved claim has its project, opened now or found again, as on
+    # Approval makes no project, as on
     # ``PATCH /tasks/{id}/participants/{participantId}``.
-    if membership.approved == APPROVE_APPROVED:
-        await open_claim_project(
-            db, task=task, membership=membership, acting_user_id=auth_user.user_id
-        )
+    if membership.approved == APPROVE_APPROVED and approved_before != APPROVE_APPROVED:
+        await release_to_claim_project(db, task=task, membership=membership)
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

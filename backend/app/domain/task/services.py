@@ -57,9 +57,8 @@ from app.domain.task.submission_state import (
 )
 
 # Moved to ``task_service`` to keep this module under its size cap; re-exported
-# so ``from app.domain.task.services import TaskService`` still resolves (and it
-# is used below by ``ensure_task_visible_for_ordinary_user``).
-from app.domain.task.task_service import TaskService
+# so ``from app.domain.task.services import TaskService`` still resolves.
+from app.domain.task.task_service import TaskService as TaskService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
@@ -173,7 +172,6 @@ class TaskMembershipService:
         apply_reason: str | None,
         personal_advantage: str | None,
         remark: str | None,
-        mentors: Sequence[str] = (),
     ) -> TaskMembership:
         """领这道题。申请制的题（``START_APPLY``），新的一份申请等出题人通过
         （``approved`` 2），名额、实名都在通过时看（``update_membership``），这里
@@ -182,8 +180,11 @@ class TaskMembershipService:
         截止时间是题目自己的（``claims.deadline_from``）。领题的人不定自己的截止
         时间：申请制的在通过时定，个人的截止只由出题人在参与者名单上改。
 
-        ``mentors`` 是领题的人这一刻看到并同意了的导师：项目打开时（直接开始当场，
-        申请制通过时）加入的就是这几位，之后才加到题目上的人不算。
+        名额满了（通过的份数到了上限），新的申请也不收：申请了也通过不了。已经在等
+        的那些不受影响，出题人照常处理。
+
+        导师不在这里记：领题不建项目，开始做这道题（建项目）那一刻同意的导师才记下
+        （``app.api.task_claims.start_claim``）。
 
         领一道自己（或自己的团队）已经领着的题不是错：答的就是那一份（等着通过
         的、已经通过的都算），调用方接着打开它的项目。被拒的那一份不算领着，可以
@@ -229,6 +230,10 @@ class TaskMembershipService:
         direct = claims.starts_now(task)
         if direct:
             await self._check_approvable(task, member_id=member_id, is_team=is_team)
+        elif task.participant_limit:
+            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
+            if approved_count >= task.participant_limit:
+                raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
 
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
@@ -243,7 +248,6 @@ class TaskMembershipService:
             deadline=claims.deadline_from(task, now) if direct else None,
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
-            agreed_mentors=list(mentors),
         )
         return await self._repo.save(membership)
 
@@ -272,6 +276,15 @@ class TaskMembershipService:
 
         previous_approved = membership.approved
         new_approved = previous_approved if approved is None else approved
+
+        # 被拒的那一份，同一个人（或团队）后来又申请了：它成了旧账，处理新的那一份。
+        # 没有新的一份时，撤回拒绝照旧可以。
+        if (
+            previous_approved == APPROVE_DISAPPROVED
+            and new_approved != APPROVE_DISAPPROVED
+            and await claims.has_newer_claim(self._repo._session, membership)
+        ):
+            raise BadRequestError(say("claimHasNewerApplication"))
 
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
@@ -1365,23 +1378,6 @@ class TaskSubmissionReviewService:
             user_id=submission.submitter_id,
             task_rank=task_rank,
         )
-
-
-async def refuse_unless_project_follows_claim(
-    session: AsyncSession, *, task_id: int, user_id: int, team_id: int | None
-) -> None:
-    """A project may be built from ``task_id`` for this person only in the team
-    of their claim (`claims.refuse_unless_project_follows_claim`).
-
-    The entry point for other domains, so they need not wire the task
-    repositories themselves. A task that does not exist is a 404.
-    """
-    task = await TaskService(TaskRepository(session=session)).get_task(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-    await claims.refuse_unless_project_follows_claim(
-        session, task=task, user_id=user_id, team_id=team_id
-    )
 
 
 async def count_distinct_participants(

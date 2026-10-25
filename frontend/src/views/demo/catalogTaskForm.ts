@@ -197,14 +197,14 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-mentor-notice',
     title: 'TaskMentorNotice',
-    about: '申请确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    about: '开始做这道题时说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
     file: 'src/components/tasks/TaskMentorNotice.vue',
     component: TaskMentorNotice,
     needs: UI_T,
     states: [
       {
         name: '一位导师',
-        note: '申请前说清，学生同意后才能申请。',
+        note: '开始做（用这道题新建项目）前说清，学生同意后才能开始；申请时不问。',
         props: { names: '周立群' },
         expect: '会作为导师加入你的项目',
       },
@@ -375,9 +375,15 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '直接开始',
-        note: '直接开始的题所有人按截止日期交，没有完成期限这一格。',
+        note: '直接开始的题设了截止日期所有人按它交，不设就没有截止；没有完成期限这一格。',
         props: time({ startMode: 'DIRECT' }),
         expect: '直接开始',
+      },
+      {
+        name: '已经有人领了（开始方式改不了）',
+        note: '有人申请或开始做之后，开始方式灰着，下面一行写明为什么。',
+        props: time({ startMode: 'APPLY', startModeLocked: true }),
+        expect: '开始方式不能再改',
       },
     ],
   },
