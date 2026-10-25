@@ -238,6 +238,8 @@ export type SpaceTaskVisibilityStatus =
 export type SpaceMyPublishedTask = {
   taskId: number
   taskName: string
+  /** 怎么开始：直接开始的题没有申请。 */
+  startMode?: 'DIRECT' | 'APPLY'
   category: SpaceMyPublishedTaskCategory
   approved: AnalyticsApproveType
   visibilityStatus: SpaceTaskVisibilityStatus

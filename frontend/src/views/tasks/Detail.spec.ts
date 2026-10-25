@@ -292,6 +292,19 @@ describe('题目详情', () => {
     expect(claimButton(container)?.disabled).toBe(false)
   })
 
+  it.each([
+    ['整道题已经截止', { deadline: Date.now() - DAY }, null],
+    ['我自己的截止已经过了', {}, Date.now() - DAY],
+  ])('申请通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, task, mine) => {
+    const { container } = await mount(
+      { startMode: 'APPLY', joined: true, submittable: true, myProject: null, ...task },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }] }
+    )
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
   it('我的申请通过了：主操作是「继续做」，打开从这道题来的那个项目', async () => {
     const { container } = await mount(
       { joined: true, submittable: true, myProject: { id: 'p-7', name: '红黑树' } },

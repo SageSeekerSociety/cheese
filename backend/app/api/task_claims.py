@@ -10,6 +10,8 @@ waiting. The claim routes start it here; the task page reads it here for
 继续做.
 """
 
+from datetime import UTC, datetime
+
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.adapters import default_teammate
 from app.domain.living_doc.overview import seed_overview
@@ -17,6 +19,7 @@ from app.domain.membership.services import seat_mentors
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.task.adapters import TaskTerms, as_brief, as_claim
+from app.domain.task.claims import refuse_start_after_deadline
 from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.mentors import mentors_of, require_consent
 from app.domain.task.models import Task, TaskMembership
@@ -90,6 +93,7 @@ async def start_claim(
         db, task=task, membership=membership, user_id=acting_user_id
     )
     if project is None:
+        refuse_start_after_deadline(task, membership, datetime.now(UTC))
         await require_consent(db, task=task, agreed=agreed_mentors)
         membership.agreed_mentors = await mentors_of(db, task.id)
     return await _open_claim_project(

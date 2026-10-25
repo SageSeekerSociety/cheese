@@ -47,14 +47,14 @@ def test_a_task_lists_the_projects_made_from_it(client):
     assert client.get("/projects/by-task/12345").json()["data"]["total"] == 0
 
 
-def test_naming_a_task_when_making_a_project_does_not_tie_it_to_the_task(client):
+def test_naming_a_task_when_making_a_project_is_refused(client):
     """开始做这道题才会用它建项目：项目带着题目的访问权和资源包，不能凭一个题号
-    在新建项目时拿到。"""
+    在新建项目时拿到。带着题号来的（部署前打开的旧页面）被拒，什么也不建。"""
     task_id = seed_task_with_protocol(client)
 
     r = _create(client, external_task_id=task_id)
-    assert r.status_code == 200
-    assert r.json()["data"]["external_task_id"] is None
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["i18n"]["key"] == "projectFromTaskByStarting"
     assert client.get(f"/projects/by-task/{task_id}").json()["data"]["total"] == 0
 
 

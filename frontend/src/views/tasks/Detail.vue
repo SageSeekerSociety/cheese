@@ -177,7 +177,12 @@ const taskState = computed(() => {
 const claim = computed(() => {
   const task = taskData.value
   if (!task) return null
-  if (approvedWithoutProject.value) return { label: t('tasks.page.claim.start'), disabled: false }
+  // 过了整道题的截止，或者过了我自己的截止，就不能再开始做：开始只会建出一个已经判了未通过的项目。
+  const mine = myIdentity.value?.deadline
+  if (approvedWithoutProject.value)
+    return deadlinePassed.value || (mine != null && mine < Date.now())
+      ? { label: t('tasks.page.state.closed'), disabled: true }
+      : { label: t('tasks.page.claim.start'), disabled: false }
   if (myClaimPending.value || myClaimRejected.value) return null
   if (task.approved !== 'APPROVED')
     return {

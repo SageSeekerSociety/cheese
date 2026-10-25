@@ -142,5 +142,6 @@
   "starterNameInvalid": "压缩包里的 {path} 这个名字放不进代码仓库：名字太长、含控制字符，或者 git 不接受",
   "starterCompressionUnsupported": "压缩包里的 {path} 用了不支持的压缩方式，用普通 zip 格式重新压缩",
   "claimInProgress": "这次领取的项目正在创建，过一会儿再试一次",
-  "starterIgnoreUnreadable": "压缩包里的忽略规则 {path} 读不出来，为免把它要忽略的文件放进仓库，这份压缩包不能作为起始代码"
+  "starterIgnoreUnreadable": "压缩包里的忽略规则 {path} 读不出来，为免把它要忽略的文件放进仓库，这份压缩包不能作为起始代码",
+  "projectFromTaskByStarting": "这个页面已经过期：刷新题目页，点「开始做这道题」建项目"
 }

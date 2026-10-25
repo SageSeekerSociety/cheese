@@ -691,3 +691,217 @@ def test_a_rejected_application_with_a_newer_one_cannot_be_decided_again(
     only = _apply_again(client, task_id, alone)
     assert _decide(client, board, task_id, only, "DISAPPROVED").status_code == 200
     assert _decide(client, board, task_id, only, verdict).status_code == 200
+
+
+# --- races, the retired way in, and the deadline ---------------------------------
+
+
+def _paused_after(monkeypatch, name: str, during):
+    """Replace ``claims.<name>`` with the real check followed by a pause in
+    which ``during()`` runs on another thread for up to two seconds: a request
+    landing between the check and the write that follows it."""
+    import asyncio
+
+    from app.domain.task import claims
+
+    real = getattr(claims, name)
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    landed: list[concurrent.futures.Future] = []
+
+    async def paused(*args, **kwargs):
+        result = await real(*args, **kwargs)
+        future = pool.submit(during)
+        landed.append(future)
+        for _ in range(20):
+            if future.done():
+                break
+            await asyncio.sleep(0.1)
+        return result
+
+    monkeypatch.setattr(claims, name, paused)
+    return landed
+
+
+def _claims_of(client, task_id: int) -> list[tuple[int, int]]:
+    async def read() -> list[tuple[int, int]]:
+        async with client.test_factory() as session:
+            rows = await session.execute(
+                select(TaskMembership.member_id, TaskMembership.approved).where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.deleted_at.is_(None),
+                )
+            )
+            return [(m, a) for m, a in rows]
+
+    return client.portal.call(read)
+
+
+def _mode(client, task_id: int) -> str:
+    async def read() -> str:
+        from app.domain.task.models import Task
+
+        async with client.test_factory() as session:
+            return (await session.get(Task, task_id)).start_mode
+
+    return client.portal.call(read)
+
+
+def test_an_application_landing_during_a_change_of_mode_is_made_under_the_mode_that_stays(
+    client, monkeypatch
+):
+    """The change of mode and a first claim do not interleave: either the
+    change is refused because the claim is there, or the claim is made under
+    the new mode. Never a waiting application on a task that starts directly."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "改开始方式时有人申请")
+    student = _student(client, board)
+    landed = _paused_after(
+        monkeypatch, "has_live_claim", lambda: _start(client, task_id, student)
+    )
+
+    changed = _set_mode(client, board, task_id, "DIRECT")
+
+    [claim] = [r.result(timeout=10) for r in landed]
+    assert changed.status_code in (200, 400), changed.text
+    assert claim.status_code == 200, claim.text
+    expected = {"DIRECT": 0, "APPLY": 2}[_mode(client, task_id)]
+    assert [a for _, a in _claims_of(client, task_id)] == [expected]
+
+
+@pytest.mark.parametrize("verdict", ["APPROVED", "NONE"])
+@pytest.mark.parametrize("by_member", [False, True])
+def test_a_re_application_landing_while_an_old_rejection_is_undone_leaves_one_live_claim(
+    client, monkeypatch, verdict, by_member
+):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "撤回拒绝时又申请")
+    student = _student(client, board)
+    old = _data(_start(client, task_id, student))["participant"]
+    assert _decide(client, board, task_id, old["id"], "DISAPPROVED").status_code == 200
+    landed = _paused_after(
+        monkeypatch, "has_newer_claim", lambda: _start(client, task_id, student)
+    )
+
+    decided = (
+        client.patch(
+            f"/tasks/{task_id}/participants",
+            params={"member": old["memberId"]},
+            json={"approved": verdict},
+            headers=_auth(board["creator_token"]),
+        )
+        if by_member
+        else _decide(client, board, task_id, old["id"], verdict)
+    )
+
+    [again] = [r.result(timeout=10) for r in landed]
+    assert decided.status_code in (200, 400), decided.text
+    assert again.status_code in (200, 409), again.text
+    live = [a for _, a in _claims_of(client, task_id) if a != 1]
+    assert len(live) == 1, live
+
+
+def test_an_old_page_making_a_project_from_a_task_is_told_to_start_it(
+    client, monkeypatch
+):
+    """A page from before starting was the way in still sends the task with a
+    new project: it is refused with what to do, and no project is made."""
+    from tests.integration.conftest import post_project
+
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(client, board, name="旧页面建项目", startMode="DIRECT")
+
+    refused = post_project(
+        client, json={"name": "旧页面", "external_task_id": task_id}, owner="old-page"
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "projectFromTaskByStarting"
+
+    async def count() -> int:
+        async with client.test_factory() as session:
+            return await session.scalar(
+                select(func.count())
+                .select_from(Project)
+                .where(Project.owner_handle == "old-page")
+            )
+
+    assert client.portal.call(count) == 0
+
+
+def _past() -> int:
+    return int(time.time() * 1000) - DAY_MS
+
+
+def _move_task_deadline(client, board: dict, task_id: int, at: int) -> None:
+    _data(
+        client.patch(
+            f"/tasks/{task_id}",
+            json={"deadline": at},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+
+
+def test_nobody_starts_or_applies_once_the_task_has_closed(client, monkeypatch):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    direct = _create_task(client, board, name="截止了的直接开始", startMode="DIRECT")
+    applied = _apply_task(client, board, "截止了的申请制")
+    early, late = _student(client, board), _student(client, board)
+    started = _data(_start(client, direct, early))["project"]
+    for task_id in (direct, applied):
+        _move_task_deadline(client, board, task_id, _past())
+
+    for task_id in (direct, applied):
+        refused = _start(client, task_id, late)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"]["i18n"]["key"] == "taskClosedForStart"
+    assert [m for m, _ in _claims_of(client, applied)] == []
+    # Someone who started before it closed still continues into their project.
+    assert _data(_start(client, direct, early))["project"] == started
+
+
+def test_an_approved_application_is_not_started_after_the_task_closes(
+    client, monkeypatch
+):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "通过了但整道题截止了")
+    student = _student(client, board)
+    claim = _data(_start(client, task_id, student))["participant"]["id"]
+    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
+    _move_task_deadline(client, board, task_id, _past())
+
+    refused = _start(client, task_id, student)
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskClosedForStart"
+    assert _projects_of(client, task_id) == []
+
+
+def test_an_approved_application_is_not_started_after_its_own_deadline(
+    client, monkeypatch
+):
+    """Starting then would only make a project already failed."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "自己的截止过了")
+    student = _student(client, board)
+    claim = _data(_start(client, task_id, student))["participant"]["id"]
+    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
+    _data(
+        client.patch(
+            f"/tasks/{task_id}/participants/{claim}",
+            json={"deadline": _past()},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+
+    refused = _start(client, task_id, student)
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "claimDeadlinePassedForStart"
+    assert _projects_of(client, task_id) == []

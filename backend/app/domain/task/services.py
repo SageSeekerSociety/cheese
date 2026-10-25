@@ -221,6 +221,11 @@ class TaskMembershipService:
                     "through another team."
                 )
 
+        # 开始方式在这份领取写下之前重读，并且锁住不让它变（改开始方式的那一边
+        # 等这里提交）；题目整个截止了，不再收新的领取。
+        await claims.read_mode_for_claim(self._repo._session, task)
+        claims.refuse_start_after_deadline(task, None, now)
+
         # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
         if is_team:
             team = await self._repo._session.get(Team, member_id)
@@ -278,13 +283,21 @@ class TaskMembershipService:
         new_approved = previous_approved if approved is None else approved
 
         # 被拒的那一份，同一个人（或团队）后来又申请了：它成了旧账，处理新的那一份。
-        # 没有新的一份时，撤回拒绝照旧可以。
+        # 没有新的一份时，撤回拒绝照旧可以。先拿下这个成员在这道题上的领取锁
+        # （领题那条路拿的是同一把，到提交为止），再看有没有新的一份：正在写的
+        # 新申请要么已经提交、这里看得见，要么等这里提交后看见这份又活了的。
         if (
             previous_approved == APPROVE_DISAPPROVED
             and new_approved != APPROVE_DISAPPROVED
-            and await claims.has_newer_claim(self._repo._session, membership)
         ):
-            raise BadRequestError(say("claimHasNewerApplication"))
+            if not await self._repo.try_lock_claim(
+                task.id,  # type: ignore[arg-type]
+                membership.member_id,
+                membership.is_team,
+            ):
+                raise ClaimInProgressError(say("claimBeingChanged"))
+            if await claims.has_newer_claim(self._repo._session, membership):
+                raise BadRequestError(say("claimHasNewerApplication"))
 
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0

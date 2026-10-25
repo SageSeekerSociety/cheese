@@ -121,15 +121,21 @@ def test_a_personal_project_still_needs_no_team_named(client):
 
 
 def test_a_stranger_cannot_build_a_project_from_a_task(client):
-    """没报名的人拿一个题号建不了这道题的项目，更拿不到资源包：请求体里的题号
-    不认，建出来的只是一个和题目无关的普通项目。"""
+    """没报名的人拿一个题号建不了这道题的项目，更拿不到资源包：请求体里带题号的
+    建项目一律拒绝（用题目建项目只有「开始做这道题」一条路），什么也不建。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
 
-    made = _project(client, "freeloader", OUTSIDER, external_task_id=task_id)
+    r = post_project(
+        client,
+        json={"name": "freeloader", "external_task_id": task_id},
+        headers=session_auth_headers(OUTSIDER),
+        owner=OUTSIDER,
+    )
 
-    assert made["external_task_id"] is None
-    assert _grants(client, made["id"]) == []
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["i18n"]["key"] == "projectFromTaskByStarting"
+    assert client.get(f"/projects/by-task/{task_id}").json()["data"]["total"] == 0
 
 
 def test_a_pending_application_makes_no_project_and_so_no_pack(client):

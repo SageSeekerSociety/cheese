@@ -142,5 +142,6 @@
   "starterNameInvalid": "{path} in the archive can't go into a code repository: the name is too long, has control characters, or git refuses it",
   "starterCompressionUnsupported": "{path} in the archive uses an unsupported compression method. Compress it again as a standard zip",
   "claimInProgress": "The project for this claim is being created. Try again in a moment",
-  "starterIgnoreUnreadable": "The ignore rules in {path} in the archive can't be read. So that the files it lists are not committed, the archive can't be starter code"
+  "starterIgnoreUnreadable": "The ignore rules in {path} in the archive can't be read. So that the files it lists are not committed, the archive can't be starter code",
+  "projectFromTaskByStarting": "This page is out of date: refresh the task page and click “Start this task” to create its project"
 }

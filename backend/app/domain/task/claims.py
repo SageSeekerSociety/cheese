@@ -18,6 +18,8 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.errors import BadRequestError
+from app.core.sentences import say
 from app.domain.project.models import Project
 from app.domain.task.inputs import (
     APPROVE_APPROVED,
@@ -192,6 +194,45 @@ async def claim_of(
         await repo.get_user_membership(task_id=task.id, user_id=user_id),
         await repo.list_team_memberships_for_user(task_id=task.id, user_id=user_id),
     )
+
+
+async def hold_against_new_claims(session: AsyncSession, task_id: int) -> None:
+    """Hold the task's row against new claims until commit (``FOR UPDATE``).
+
+    Every new claim first reads the task's start mode under ``FOR KEY SHARE``
+    (``read_mode_for_claim``), which this waits for and then blocks: a claim
+    already being written is committed and counted before the caller reads
+    the claims, and one arriving later reads the mode the caller leaves. Claims
+    do not block one another on it (``FOR KEY SHARE`` is shared), nor do the
+    place counts (``hold_places`` is ``FOR NO KEY UPDATE``)."""
+    await session.execute(select(Task.id).where(Task.id == task_id).with_for_update())
+
+
+async def read_mode_for_claim(session: AsyncSession, task: Task) -> None:
+    """Read the task's start mode afresh under ``FOR KEY SHARE`` before a new
+    claim is written, so the claim is made under the mode the task has when
+    it commits: a change of mode (``hold_against_new_claims``) waits for it or
+    is waited for."""
+    await session.refresh(
+        task, attribute_names=["start_mode"], with_for_update={"key_share": True}
+    )
+
+
+def refuse_start_after_deadline(
+    task: Task, claim: TaskMembership | None, now: datetime
+) -> None:
+    """Nobody starts a task, or applies for it, once the whole task's deadline
+    has passed; nor starts their own claim once its own deadline has passed
+    (a project made then would only read failed)."""
+    if task.deadline is not None and task.deadline <= now:
+        raise BadRequestError(say("taskClosedForStart"))
+    if (
+        claim is not None
+        and claim.approved == APPROVE_APPROVED
+        and claim.deadline is not None
+        and claim.deadline <= now
+    ):
+        raise BadRequestError(say("claimDeadlinePassedForStart"))
 
 
 async def has_live_claim(session: AsyncSession, task_id: int) -> bool:

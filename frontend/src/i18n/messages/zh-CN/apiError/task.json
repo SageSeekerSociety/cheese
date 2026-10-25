@@ -78,5 +78,8 @@
   "stageEffectFailing": "{n} 位参与者有已过截止、还没提交的阶段，保存后将判为未通过",
   "stageEffectReopening": "{n} 位参与者将从未通过回到进行中",
   "taskStartModeLocked": "已经有人申请或开始做这道题，开始方式不能再改",
-  "claimHasNewerApplication": "这条申请已有更新的一份，处理新的那条"
+  "claimHasNewerApplication": "这条申请已有更新的一份，处理新的那条",
+  "taskClosedForStart": "这道题已经截止，不能再申请或开始做",
+  "claimDeadlinePassedForStart": "你的提交截止时间已经过了，不能再开始做这道题",
+  "claimBeingChanged": "这份申请正在处理，过一会儿再试一次"
 }

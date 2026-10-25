@@ -30,6 +30,7 @@ from app.auth.project_roles import Standing, is_owner, may, standing, standings_
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
+    BadRequestError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -226,6 +227,8 @@ async def create_project(
         raise AuthenticationRequiredError(say("projectCreateSignIn"))
     # 项目归团队 (v4) 的那支外键是**请求体**给的，所以要在这里过一道：问的不是
     # 「这个团队在不在」，是「你是不是这个团队的人」。
+    if body.external_task_id is not None:
+        raise BadRequestError(say("projectFromTaskByStarting"))
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
     project = await ProjectService(
@@ -235,7 +238,7 @@ async def create_project(
         overview=seed_overview,
         task_terms=TaskTerms(db),
     ).create(
-        **body.model_dump(exclude={"id"}),
+        **body.model_dump(exclude={"id", "external_task_id"}),
         project_id=body.id,
         owner_handle=who.handle,
     )
