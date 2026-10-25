@@ -241,6 +241,11 @@ const tabs = computed(() => {
       to: { name: routeNames.insights, params: params.value },
     })
   }
+  list.push({
+    key: 'versions',
+    label: t('tasks.page.tabs.versions'),
+    to: { name: routeNames.versions, params: params.value },
+  })
   return list
 })
 

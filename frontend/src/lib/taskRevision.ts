@@ -13,7 +13,15 @@ export interface TaskRevisionChanges {
   submission?: boolean
   rubric?: boolean
   files?: { added?: string[]; replaced?: string[]; removed?: string[] }
+  /** 起始代码那一份怎么了。 */
+  starter?: 'added' | 'replaced' | 'removed'
 }
+
+const STARTER_VERBS = {
+  added: 'work.overview.revisedStarterAdded',
+  replaced: 'work.overview.revisedStarterReplaced',
+  removed: 'work.overview.revisedStarterRemoved',
+} as const
 
 const PARTS = [
   ['description', 'work.overview.revisedPartDescription'],
@@ -45,5 +53,6 @@ export function revisionSummary(changes: TaskRevisionChanges | null | undefined)
     const names = changes.files?.[verb] ?? []
     if (names.length) clauses.push(t(label, { names: joined(names) }))
   }
+  if (changes.starter && changes.starter in STARTER_VERBS) clauses.push(t(STARTER_VERBS[changes.starter]))
   return joined(clauses)
 }

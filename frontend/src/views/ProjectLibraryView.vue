@@ -25,6 +25,7 @@ import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import DocMoveDialog from '../components/library/DocMoveDialog.vue'
 import DocShareDialog from '../components/library/DocShareDialog.vue'
@@ -52,6 +53,10 @@ import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
 import { refRoute } from '@/lib/refDirectory'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { TASK_FOLDER } from '@/lib/taskRevision'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
@@ -105,6 +110,14 @@ const inFolder = computed(() => browsing.value && !!dir.value)
 const readonlyHere = computed(
   () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
 )
+
+// 在 `题目/` 这一层：上面写一行它来自哪道题、现在第几版，连到题目页（`GET /projects/{id}`
+// 的 `task`，看的人看得到这个文件夹时才有）。
+const project = useQuery(
+  computed(() => projectQuery(props.projectId)),
+  queryClient
+)
+const taskHere = computed(() => (browsing.value && dir.value === TASK_FOLDER ? project.data.value?.task ?? null : null))
 
 // 拖进 `题目/` 的文件放不进去：说一句为什么，而不是什么也不发生。
 function dropHere(event: DragEvent) {
@@ -430,6 +443,22 @@ function read(file: LibraryFile) {
         </div>
 
         <LibraryCrumbs v-if="inFolder" :dir="dir" :root="t('navigation.project.library')" @go="goTo" />
+        <!-- Inside the read-only task folder: which task it belongs to, its version now, and its page. -->
+        <p v-if="taskHere" class="t-body c-muted library__task" data-testid="library-task-folder">
+          <span data-user-content>{{
+            taskHere.version
+              ? t('work.library.taskFolderFrom', { name: taskHere.name, version: taskHere.version })
+              : t('work.library.taskFolderFromUnversioned', { name: taskHere.name })
+          }}</span>
+          <router-link
+            class="library__task-link"
+            :to="{
+              name: TASK_ROUTE_NAMES.detail,
+              params: { spaceId: String(taskHere.space_id), taskId: String(taskHere.id) },
+            }"
+            >{{ t('work.library.taskFolderOpen') }}</router-link
+          >
+        </p>
 
         <div
           v-if="loading && !entries.length"
@@ -622,6 +651,22 @@ function read(file: LibraryFile) {
 
 .library--dragging {
   outline-color: var(--accent);
+}
+
+.library__task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.library__task-link {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+
+.library__task-link:hover {
+  text-decoration: underline;
 }
 
 .library__list {

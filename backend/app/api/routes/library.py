@@ -8,14 +8,13 @@
 
 import uuid
 from typing import Annotated, Literal
-from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.byte_response import blob_response
+from app.api.library_bytes import library_file_response
 from app.api.place import readable_rooms
 from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
@@ -33,7 +32,6 @@ from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.library.shelf import Shelf
-from app.domain.preview import office
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.team.services import team_service
@@ -120,48 +118,13 @@ async def library_file_raw(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    return await _raw(
+    return await library_file_response(
         db,
         await shelf_for(db, project_id, actor),
         _library_path(path),
         version,
         preview_pdf,
         request,
-    )
-
-
-async def _raw(
-    db: DbSession,
-    shelf: Shelf,
-    name: str,
-    version: uuid.UUID | None,
-    preview_pdf: bool,
-    request: Request,
-) -> Response:
-    stored = (
-        await library_records.stored_version(db, shelf, name, version)
-        if version is not None
-        else await library_records.stored_file(db, shelf, name)
-    )
-    filename = quote(name.rsplit("/", 1)[-1], safe="")
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": "default-src 'none'; sandbox",
-        "Cache-Control": "private, no-cache",
-    }
-    if preview_pdf:
-        data = await library_records.read_stored(stored)
-        pdf = await office.preview_pdf(data, name)
-        return Response(content=pdf, media_type="application/pdf", headers=headers)
-    return blob_response(
-        stored.location,
-        stored.key,
-        stored.size,
-        "application/octet-stream",
-        headers,
-        request.headers.get("range"),
-        request.headers.get("if-range"),
     )
 
 
@@ -675,7 +638,7 @@ async def team_library_file_raw(
 ) -> Response:
     """一份资料的字节，和项目资料库的那一条一样（`library_file_raw`）。"""
     await _team_member(team_id, db, resolver)
-    return await _raw(
+    return await library_file_response(
         db, _team_shelf(team_id), _library_path(path), version, preview_pdf, request
     )
 

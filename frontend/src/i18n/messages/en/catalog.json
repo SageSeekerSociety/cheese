@@ -1733,5 +1733,20 @@
       "name": "Five already cited",
       "note": "A question cites at most 5 things; typing {'@'} again only says so."
     }
+  },
+  "versionsView": {
+    "about": "Task detail 'Version history' tab: each version's number, time, author, what changed, and the files it held. Whether they download is the server's to say.",
+    "s1": {
+      "name": "Three versions, newest on top",
+      "note": "Default cell: version 3 is marked current; a draft deleted later keeps only its name in version 2; version 1's files were not recorded."
+    },
+    "s2": {
+      "name": "Opened from a project",
+      "note": "The address carries ?version=2: version 2 is marked and scrolled to."
+    },
+    "s3": {
+      "name": "Someone who has not started the task",
+      "note": "Sees every version and file name, with no download button and a note that files download once they start."
+    }
   }
 }

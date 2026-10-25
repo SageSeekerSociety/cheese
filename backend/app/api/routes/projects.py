@@ -21,6 +21,7 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
+from app.api.project_library import may_read_task_files
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import incomplete_tasks, project_task_rows
@@ -89,6 +90,7 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
+from app.domain.task import package
 from app.domain.task.adapters import TaskTerms
 from app.domain.task.claims import deadline_for_project, stages_for_project
 from app.domain.task.services import claim_backs_project
@@ -436,6 +438,23 @@ async def get_project(
     payload["starter"] = (
         {"revision": push.revision, "state": push.state, "error": push.error}
         if push is not None
+        else None
+    )
+    # The 题目 itself, for a reader who sees its `题目/` folder: where its page
+    # and its version history are, and which version it is at now.
+    found = (
+        await package.of_project(db, project_id)
+        if await may_read_task_files(db, project_id, actor)
+        else None
+    )
+    payload["task"] = (
+        {
+            "id": found[0].id,
+            "space_id": found[0].space_id,
+            "name": found[0].name,
+            "version": found[1],
+        }
+        if found is not None
         else None
     )
     _with_standing(

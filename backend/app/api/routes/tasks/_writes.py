@@ -65,8 +65,6 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
             creator_user_id=user_id,
         )
 
-    # 发布就是第 1 版，题目说明跟着写进题目资料库。
-    await package.record(db, task, by=user_id, changes={package.PUBLISHED: True})
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以在这里拷进题目资料库：题目已经建好
         # （``_create_task_entity`` 里 flush 过），权限那道门也已经在同一个请求里过了
@@ -88,6 +86,9 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
             attachment_id=payload.starter_attachment_id,
             uploads=_attachment_service(db),
         )
+    # 发布就是第 1 版，题目说明跟着写进题目资料库。材料和起始代码先放好再记：
+    # 这一版记下的文件（`TaskPackageRevision.files`）要有它们。
+    await package.record(db, task, by=user_id, changes={package.PUBLISHED: True})
 
     # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
     # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应

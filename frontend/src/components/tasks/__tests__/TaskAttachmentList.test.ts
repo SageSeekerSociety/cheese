@@ -8,9 +8,9 @@ import i18n from '@/i18n'
 
 const file = () => ({ name: '讲义.pdf', size: 2048, addedAt: 0 })
 
-const mount = (canDownload: boolean) =>
+const mount = (canDownload: boolean, previewable = false) =>
   render(TaskAttachmentList, {
-    props: { attachments: [file()], canDownload },
+    props: { attachments: [file()], canDownload, previewable },
     global: { plugins: [createVuetify(), i18n] },
   })
 
@@ -28,5 +28,19 @@ describe('题目材料清单', () => {
 
     expect(view.container.textContent).toContain('讲义.pdf')
     expect(view.queryByRole('button')).toBeNull()
+  })
+
+  it('点材料的名字是打开它，不是下载', async () => {
+    const view = mount(true, true)
+
+    await fireEvent.click(view.getByRole('button', { name: '讲义.pdf' }))
+    expect(view.emitted('open')).toEqual([[expect.objectContaining({ name: '讲义.pdf' })]])
+    expect(view.emitted('download')).toBeUndefined()
+  })
+
+  it('拿不到文件的人点名字打不开', () => {
+    const view = mount(false, true)
+
+    expect(view.queryByRole('button', { name: '讲义.pdf' })).toBeNull()
   })
 })

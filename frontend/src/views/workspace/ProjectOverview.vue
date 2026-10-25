@@ -28,7 +28,7 @@ import { uploadLibraryFile } from '@/lib/libraryApi'
 import { renderNoticeMessage } from '@/lib/noticeText'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
-import { TASK_FOLDER } from '@/lib/taskRevision'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
@@ -162,8 +162,16 @@ function pressTask(task: { taskId: string; roomId: string }) {
 function openArtifact(artifactId: string) {
   void router.push({ name: 'project-artifact', params: { projectId: props.projectId, artifactId } })
 }
-function openTaskFolder() {
-  void router.push({ name: 'project-library', params: { projectId: props.projectId }, query: { dir: TASK_FOLDER } })
+// 项目来自的那道题（`GET /projects/{id}` 的 `task`）：看的人看得到它的 `题目/` 才有。
+const fromTask = computed(() => project.data.value?.task ?? null)
+function openTaskVersion(version: number) {
+  const task = fromTask.value
+  if (!task) return
+  void router.push({
+    name: TASK_ROUTE_NAMES.versions,
+    params: { spaceId: String(task.space_id), taskId: String(task.id) },
+    query: { version: String(version) },
+  })
 }
 // 起草项目目标：材料先放进资料库（以后的人和 AI 队友都从那里读），再跳到项目目标那篇
 // 文档，由那里的 AI 队友接着写（`lib/overviewDraft`）。
@@ -204,6 +212,7 @@ function allTasks() {
     :challenge-deadline="challengeDeadline"
     :challenge-stages="challengeStages"
     :starter="starter"
+    :task-linked="fromTask !== null"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
@@ -223,7 +232,7 @@ function allTasks() {
     @open-task="openTask"
     @press-task="pressTask"
     @open-artifact="openArtifact"
-    @open-task-folder="openTaskFolder"
+    @open-task-version="openTaskVersion"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"
   />

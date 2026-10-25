@@ -66,5 +66,8 @@
   "versionsEmpty": "No versions",
   "versionsFailed": "Couldn't load the versions",
   "versionsLoading": "Loading versions",
-  "versionsTitle": "Versions of “{name}”"
+  "versionsTitle": "Versions of “{name}”",
+  "taskFolderFrom": "From the task “{name}”, now at version {version}",
+  "taskFolderFromUnversioned": "From the task “{name}”",
+  "taskFolderOpen": "Open task"
 }

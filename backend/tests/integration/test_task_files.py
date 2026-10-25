@@ -573,6 +573,176 @@ def test_the_projects_agents_are_told_the_version_and_what_changed(
     second = section()
     assert "第 2 版" in second
     assert "新增文件 数据.csv" in second
+    # 和项目总览上那一行一样，指到历史版本页上的这一版。
+    assert f"/spaces/{board['space_id']}/tasks/{task_id}/versions?version=2" in second
+
+
+# --- 历史版本：每一版改了什么、手上有哪几份，各版的文件拿得回来 ---------------------------
+
+
+def _versions(api_client: TestClient, task_id: int, token: str):
+    return api_client.get(f"/tasks/{task_id}/versions", headers=_auth(token))
+
+
+def _download_version(
+    api_client: TestClient, task_id: int, token: str, name: str, version: str
+):
+    return api_client.get(
+        f"/tasks/{task_id}/files/raw",
+        params={"name": name, "version": version},
+        headers=_auth(token),
+    )
+
+
+def _held(version: dict) -> dict[str, dict]:
+    return {f["name"]: f for f in version["files"]}
+
+
+def test_the_history_lists_each_version_with_the_files_it_held(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """新的在前：第几版、谁改的、改了什么；每一版手上的文件，按那一版的字节取回。
+    随题一起发出去的材料是第 1 版的。"""
+    board = _new_board(user_client, api_client)
+    token = board["creator_token"]
+    picked = _upload_loose(api_client, token, "讲义.pdf", MATERIAL)
+    task_id = _create_task(api_client, board, name="有历史的题", attachmentIds=[picked])
+    assert _add(api_client, task_id, token, "数据.csv", b"v1").status_code == 201
+    assert _replace(api_client, task_id, token, "数据.csv", b"v2").status_code == 200
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"description": "说明改了"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = _versions(api_client, task_id, token)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["canDownload"] is True
+    versions = body["versions"]
+    assert [(v["number"], v["changes"]) for v in versions] == [
+        (4, {"description": True}),
+        (3, {"files": {"replaced": ["数据.csv"]}}),
+        (2, {"files": {"added": ["数据.csv"]}}),
+        (1, {"published": True}),
+    ]
+    assert {v["author"]["username"] for v in versions} == {board["creator"].username}
+
+    first, second, third = versions[3], versions[2], versions[1]
+    assert set(_held(first)) == {"讲义.pdf", package.BRIEF}
+    assert set(_held(second)) == {"讲义.pdf", "数据.csv", package.BRIEF}
+
+    def bytes_of(version: dict, name: str) -> bytes:
+        resp = _download_version(
+            api_client, task_id, token, name, _held(version)[name]["id"]
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.content
+
+    assert bytes_of(first, "讲义.pdf") == MATERIAL
+    assert bytes_of(second, "数据.csv") == b"v1"
+    assert bytes_of(third, "数据.csv") == b"v2"
+    # 题目说明也是那一版的：第 1 版的说明写着第 1 版。
+    assert "第 1 版" in bytes_of(first, package.BRIEF).decode()
+    assert "说明改了" in bytes_of(versions[0], package.BRIEF).decode()
+
+
+def test_a_material_deleted_later_keeps_its_name_in_the_versions_that_had_it(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """删一份材料连同它的几版一起删，旧的版本里只剩名字，没有可下载的那一份。"""
+    board = _new_board(user_client, api_client)
+    token = board["creator_token"]
+    task_id = _create_task(api_client, board, name="删过材料的题")
+    _add(api_client, task_id, token, "草稿.txt", b"draft")
+    resp = api_client.delete(
+        f"/tasks/{task_id}/files", params={"name": "草稿.txt"}, headers=_auth(token)
+    )
+    assert resp.status_code == 200, resp.text
+
+    versions = _versions(api_client, task_id, token).json()["data"]["versions"]
+    assert versions[0]["changes"] == {"files": {"removed": ["草稿.txt"]}}
+    assert "草稿.txt" not in _held(versions[0])
+    assert _held(versions[1])["草稿.txt"] == {
+        "name": "草稿.txt",
+        "id": None,
+        "size": None,
+    }
+
+
+def test_the_history_is_for_who_sees_the_task_and_its_files_for_who_took_it(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """历史和材料清单同一道门：看得见题就看得到；各版的文件和现在的材料同一条下载判据。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="历史谁看得到")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
+    _, member_token = _member_of(user_client, api_client, board)
+
+    resp = _versions(api_client, task_id, member_token)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["canDownload"] is False
+    file_id = _held(body["versions"][0])["数据.csv"]["id"]
+    assert (
+        _download_version(
+            api_client, task_id, member_token, "数据.csv", file_id
+        ).status_code
+        == 403
+    )
+
+    _claim(api_client, board, task_id, member_token)
+    resp = _download_version(api_client, task_id, member_token, "数据.csv", file_id)
+    assert resp.status_code == 200
+    assert resp.content == b"a,b\n"
+
+    hidden = _create_task(
+        api_client, board, name="限可见范围的题", accessControlEnabled=True
+    )
+    assert _versions(api_client, hidden, member_token).status_code == 404
+
+
+def test_a_version_id_from_another_task_downloads_nothing(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """版本 id 只在它那道题里算数：拿得到这道题的材料，不等于拿得到别的题的。"""
+    board = _new_board(user_client, api_client)
+    token = board["creator_token"]
+    mine = _create_task(api_client, board, name="我领的题")
+    other = _create_task(api_client, board, name="别的题")
+    _add(api_client, mine, token, "数据.csv", b"mine")
+    _add(api_client, other, token, "数据.csv", b"secret")
+    _, member_token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, mine, member_token)
+    theirs = _held(_versions(api_client, other, token).json()["data"]["versions"][0])
+
+    resp = _download_version(
+        api_client, mine, member_token, "数据.csv", theirs["数据.csv"]["id"]
+    )
+    assert resp.status_code == 404
+
+
+def test_the_project_names_its_task_for_who_reads_the_task_folder(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """从题目来的项目说它来自哪道题、现在第几版（项目总览和 `题目/` 由此连到题目页）；
+    没领这道题的队友看不到 `题目/`，也拿不到这一项。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="项目连到题目")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
+    _, taker_token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, task_id, taker_token)
+    project_id = _project_from(api_client, task_id, taker_token)
+
+    resp = api_client.get(f"/projects/{project_id}", headers=_auth(taker_token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["task"] == {
+        "id": task_id,
+        "space_id": board["space_id"],
+        "name": "项目连到题目",
+        "version": 2,
+    }
 
 
 # --- 谁在项目里读得到 `题目/`：题目的判据，不是项目的名册 ------------------------------
@@ -670,6 +840,10 @@ def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
         _raw_in_project(api_client, project_id, b_token, "数据.csv").status_code == 403
     )
     assert "题目" not in _top_paths(api_client, project_id, b_token)
+    # 项目也不替他说出来自哪道题（总览、`题目/` 连到题目页靠的那一项）。
+    resp = api_client.get(f"/projects/{project_id}", headers=_auth(b_token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["task"] is None
     found = api_client.get(
         f"/projects/{project_id}/library", params={"q": "数据"}, headers=_auth(b_token)
     ).json()["data"]["data"]

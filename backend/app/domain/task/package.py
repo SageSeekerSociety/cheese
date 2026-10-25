@@ -13,7 +13,9 @@
 
 import asyncio
 import io
+import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import BinaryIO
 from zoneinfo import ZoneInfo
@@ -23,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.space_access import may_teach_task
 from app.core import blob_store
+from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.attachment.services import AttachmentService
@@ -258,7 +261,95 @@ async def record(
         )
     else:
         await library.add(session, shelf(task.id), BRIEF, content, handle, None)
+    # 这一版手上有哪几份：放进、替换、删掉都已经在这之前做完，题目说明刚换成这一版的。
+    revision.files = {row.name: str(row.id) for row in await _held(session, task.id)}
+    await session.flush()
     return revision
+
+
+async def _held(session: AsyncSession, task_id: int) -> list[LibraryFileRecord]:
+    """题目资料库里现在的每一份（材料、起始代码、题目说明），按放进来的先后。"""
+    return list(
+        await session.scalars(
+            select(LibraryFileRecord)
+            .where(shelf(task_id).holds(), LibraryFileRecord.superseded_at.is_(None))
+            .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
+        )
+    )
+
+
+@dataclass(frozen=True)
+class HeldFile:
+    """一版里的一份文件。``row`` 是那时的那一份；后来整份删掉了是 None（删一份材料
+    连同它换下来的几版一起删，`library.remove`），只剩名字。"""
+
+    name: str
+    row: LibraryFileRecord | None
+
+
+@dataclass(frozen=True)
+class Version:
+    """历史版本页上的一版：记下的那一行，和这一版手上的文件。``files`` 是 None 的，
+    是记版本时还没记文件的那几版（`TaskPackageRevision.files`）。"""
+
+    revision: TaskPackageRevision
+    files: list[HeldFile] | None
+
+
+def _shown_order(held: HeldFile) -> tuple[int, int, float, str]:
+    """材料在前、按放进来的先后，已经删掉的材料排在材料最后；起始代码、题目说明在后：
+    和题目页上的次序一样。"""
+    group = _NOT_MATERIALS.index(held.name) + 1 if held.name in _NOT_MATERIALS else 0
+    if held.row is None:
+        return (group, 1, 0.0, held.name)
+    return (group, 0, held.row.created_at.timestamp(), held.name)
+
+
+async def history(session: AsyncSession, task_id: int) -> list[Version]:
+    """这道题的每一版，新的在前，各带着那一版手上的文件。
+
+    最新的一版手上的就是资料库里现在的每一份：之后有任何改动都会记下新的一版。"""
+    revisions = list(
+        await session.scalars(
+            select(TaskPackageRevision)
+            .where(TaskPackageRevision.task_id == task_id)
+            .order_by(TaskPackageRevision.number.desc())
+        )
+    )
+    if not revisions:
+        return []
+    ids = {
+        uuid.UUID(row_id)
+        for revision in revisions
+        for row_id in (revision.files or {}).values()
+    }
+    rows = (
+        {
+            row.id: row
+            for row in await session.scalars(
+                select(LibraryFileRecord).where(
+                    shelf(task_id).holds(), LibraryFileRecord.id.in_(ids)
+                )
+            )
+        }
+        if ids
+        else {}
+    )
+    out: list[Version] = []
+    for i, revision in enumerate(revisions):
+        if revision.files is not None:
+            held = [
+                HeldFile(name, rows.get(uuid.UUID(row_id)))
+                for name, row_id in revision.files.items()
+            ]
+        elif i == 0:
+            held = [HeldFile(row.name, row) for row in await _held(session, task_id)]
+        else:
+            out.append(Version(revision, None))
+            continue
+        held.sort(key=_shown_order)
+        out.append(Version(revision, held))
+    return out
 
 
 # --- 材料 -------------------------------------------------------------------------
@@ -294,6 +385,16 @@ async def _project_task(session: AsyncSession, project_id) -> Task | None:
     if task is None or task.deleted_at is not None:
         return None
     return task
+
+
+async def of_project(
+    session: AsyncSession, project_id
+) -> tuple[Task, int | None] | None:
+    """项目来自的那道题，和它现在是第几版；不是从题目来的、或者那道题删了，是 None。"""
+    task = await _project_task(session, project_id)
+    if task is None:
+        return None
+    return task, await current_number(session, task.id)
 
 
 async def mount_for(session: AsyncSession, project_id, user_id: int | None) -> bool:
@@ -622,6 +723,14 @@ async def section_for_project(
     if revision.number > 1:
         lines.append(
             f"第 {revision.number} 版改了：{summary(revision.changes or {})}。"
-            "出题人改过题目，按新的这一版做。"
+            "出题人改过题目，按新的这一版做。这一版改了什么、每一版的文件，"
+            f"在题目的历史版本页：{version_page(task, revision.number)}"
         )
     return "\n".join(lines)
+
+
+def version_page(task: Task, number: int) -> str:
+    """题目历史版本页上第 `number` 版的地址（前端 `router/spaces.ts` 的
+    `TasksVersions`）。"""
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/spaces/{task.space_id}/tasks/{task.id}/versions?version={number}"
