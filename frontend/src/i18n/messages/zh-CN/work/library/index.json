@@ -52,6 +52,7 @@
   "restoreVersion": "恢复为当前",
   "restoredDone": "已把第 {n} 版恢复为当前",
   "search": "搜索标题和内容",
+  "tooLargeToPreview": "文件超过 {mb} MB，暂不支持预览，可下载查看",
   "topLevel": "资料库最上层",
   "unknownSource": "来源未知",
   "upload": "上传文件",

@@ -52,6 +52,7 @@
   "restoreVersion": "Restore as current",
   "restoredDone": "Version {n} is current again",
   "search": "Search titles and contents",
+  "tooLargeToPreview": "This file is over {mb} MB and can't be previewed. Download it to view",
   "topLevel": "Top level of the library",
   "unknownSource": "Unknown source",
   "upload": "Upload files",

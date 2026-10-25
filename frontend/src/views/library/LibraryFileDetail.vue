@@ -5,6 +5,8 @@
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 
+import { computed } from 'vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import NavLink from '@/components/common/NavLink.vue'
@@ -27,6 +29,12 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ download: []; replace: []; close: [] }>()
+
+/** 预览最多读多大的一份：和后端整份读字节的上限（`app/domain/library/records.py` 的
+ *  `READ_WHOLE_MAX_BYTES`）是同一个数。超过的服务端不转 PDF，浏览器也不该整份取回，
+ *  所以不去读，直接说只能下载。 */
+const PREVIEW_MAX_MB = 200
+const tooLarge = computed(() => props.file.bytes > PREVIEW_MAX_MB * 1024 * 1024)
 </script>
 
 <template>
@@ -72,7 +80,14 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
       </div>
     </header>
     <div class="library-detail__preview">
+      <div v-if="tooLarge" class="library-detail__large">
+        <p class="t-body c-muted">{{ t('work.library.tooLargeToPreview', { mb: PREVIEW_MAX_MB }) }}</p>
+        <BaseButton kind="secondary" size="sm" prepend-icon="mdi-download-outline" @click="emit('download')">
+          {{ t('work.library.download') }}
+        </BaseButton>
+      </div>
       <FileBytesPreview
+        v-else
         :filename="props.file.path"
         :source="`${props.file.path}#${props.revision}`"
         :read="props.read"
@@ -134,6 +149,19 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
   flex-wrap: wrap;
   gap: 4px;
   margin: 4px 0 0 -8px;
+}
+
+.library-detail__large {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.library-detail__large p {
+  margin: 0;
 }
 
 .library-detail__preview {

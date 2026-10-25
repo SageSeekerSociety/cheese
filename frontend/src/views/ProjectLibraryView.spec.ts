@@ -167,6 +167,25 @@ describe('资料库', () => {
     expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=预算表.xlsx', '预算表.xlsx')
   })
 
+  it('超过预览上限的一份：平静地说只能下载，给一颗下载，不读字节、不报错重试', async () => {
+    library = [...library, file('数据集.docx', { bytes: 300 * 1024 * 1024 })]
+    vi.mocked(libraryFileBytes).mockRejectedValue(new Error('这份文件太大（超过 200 MB），不能在这里打开，请下载后查看'))
+    const { container } = await mount('/projects/p1/library?file=数据集.docx')
+
+    const preview = await waitFor(() => {
+      const found = container.querySelector('.library-detail__preview') as HTMLElement
+      expect(found.textContent).toContain('暂不支持预览')
+      return found
+    })
+    expect(libraryFileBytes).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /重试/ })).toBeNull()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+
+    const download = Array.from(preview.querySelectorAll('button')).find((b) => b.textContent?.trim() === '下载')
+    await fireEvent.click(download as HTMLElement)
+    expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=数据集.docx', '数据集.docx')
+  })
+
   it('在这一页上放进来的每一份都上传，放完重新列一遍', async () => {
     const { container } = await mount()
     const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
