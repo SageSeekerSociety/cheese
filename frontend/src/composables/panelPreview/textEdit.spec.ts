@@ -252,6 +252,27 @@ it('编辑期间换了房间：会话收起来，存的是上一个房间里那�
   expect(api.writeRoomTextFile).not.toHaveBeenCalled()
 })
 
+it('已经开着的时候又按一次「编辑」：还是那一稿，打的字不丢，也不发第二次写', async () => {
+  // 编辑器开着时「编辑」那个按钮还在，再点一下会走到这里。重新钉一遍会把读者打的字
+  // 换回文件里的正文、把 `saving` 清掉，于是第二个「保存」带着同一个旧版本也发得出去。
+  const { bundle } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  bundle.begin()
+  expect(bundle.draft.value).toBe('# 我改的\n')
+
+  // 一次写在天上时同理。
+  const { bundle: second } = setup('notes/别的.md')
+  second.begin()
+  second.setDraft('# 我改的\n')
+  api.writeRoomTextFile.mockReturnValue(new Promise(() => {}))
+  void second.save()
+  second.begin()
+  expect(second.saving.value).toBe(true)
+  expect(second.draft.value).toBe('# 我改的\n')
+})
+
 it('空文件的正文是空串，不是 null：照样能改', async () => {
   // 「读不出版本」和「正文恰好是空的」是两回事：前者的 `content` 是 null。
   const { bundle } = setup('notes/空.md', { content: '', bytes: 0 })
