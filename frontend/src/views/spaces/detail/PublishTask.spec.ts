@@ -590,8 +590,8 @@ describe('发题页：发一道', () => {
 
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
-    // 草稿字段里没有它，发布后再按题目补写一次；这一格没动就不发那次补写。
-    expect(updateTask).not.toHaveBeenCalled()
+    // 发布的那份草稿里这一格是空的：服务端不带它，上一层生效。
+    expect(sent().defaultRole ?? null).toBeNull()
   })
 
   it('默认队友选了预设：发出去带上它的名字', async () => {
@@ -602,8 +602,8 @@ describe('发题页：发一道', () => {
     await pickTeammate(view, /学术研究/)
 
     await publish(view)
-    await waitFor(() => expect(updateTask).toHaveBeenCalledTimes(1))
-    expect(updateTask).toHaveBeenCalledWith(501, { defaultRole: 'academic-research' })
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    expect(sent().defaultRole).toBe('academic-research')
   })
 
   it('选一份模板：表单按它填好', async () => {

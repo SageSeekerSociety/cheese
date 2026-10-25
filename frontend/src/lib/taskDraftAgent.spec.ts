@@ -90,6 +90,46 @@ describe('previewOf：参与、时间和更多设置', () => {
   })
 })
 
+describe('previewOf：AI 的设置', () => {
+  const named = {
+    categories: [],
+    topics: [],
+    materials: [{ id: 7, name: '第 6 周讲义.pdf' }],
+    teammates: [{ name: 'academic-research', title: '学术研究' }],
+    teaching: { mode: 'guide' as const, systemPrompt: '先问他试过什么' },
+  }
+
+  it('芝士写到的几格换上，没写的照草稿现在的样子；队友和资料按名字对上', () => {
+    const shown = previewOf(
+      {
+        draft: 41,
+        ai_teammate: '学术研究',
+        ai_private_guidance: '参考答案在第 12 页',
+        ai_goals: ['能自己写出 LRU'],
+        ai_materials: ['第 6 周讲义.pdf', '不在资料库里的'],
+        ai_skills: ['wolfram'],
+      },
+      named
+    )
+    expect(shown.fields).toMatchObject({
+      defaultRole: 'academic-research',
+      teaching: {
+        mode: 'guide',
+        systemPrompt: '先问他试过什么',
+        privatePrompt: '参考答案在第 12 页',
+        learningGoals: ['能自己写出 LRU'],
+        materialIds: [7],
+        skills: ['wolfram'],
+      },
+      teachingOwn: true,
+    })
+  })
+
+  it('不认识的队友先不填，等服务端那一份', () => {
+    expect(previewOf({ ai_teammate: '没有这位' }, named).fields.defaultRole).toBeUndefined()
+  })
+})
+
 describe('previewOf：只改详情里的一段', () => {
   const terms = { categories: [], topics: [] }
   const markdown = '用 C 写一个缓存模拟器。\n\n替换策略为 LRU。'

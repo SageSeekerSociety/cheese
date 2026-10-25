@@ -369,3 +369,93 @@ def test_the_page_routes_do_not_take_cheeses_credential(
         headers=_as_cheese(board["teacher"]),
     )
     assert resp.status_code == 403
+
+
+def test_cheese_fills_every_ai_setting_and_the_published_task_has_them(
+    api_client: TestClient, board: dict
+):
+    """芝士 writes each field of 「AI 的设置」 in its own words — the default
+    teammate and every part of the 题目's guidance — and the 题目 it publishes
+    carries each of them."""
+    from app.domain.agent_type.library import preset_types
+
+    teacher = board["teacher"]
+    space_id = board["space"]["id"]
+    uploaded = api_client.post(
+        f"/spaces/{space_id}/materials",
+        files={
+            "file": ("week6.pdf", io.BytesIO(b"%PDF-1.4 week 6"), "application/pdf")
+        },
+        data={"type": "file"},
+        headers=_headers(teacher),
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    handout = next(
+        m
+        for m in api_client.get(
+            f"/spaces/{space_id}/materials", headers=_headers(teacher)
+        ).json()["data"]["materials"]
+        if m["name"] == "week6.pdf"
+    )
+    role, preset = next(iter(preset_types().items()))
+
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": space_id,
+            "name": "Lab 3 缓存模拟器",
+            "description": "用 C 写一个缓存模拟器。",
+            "difficulty": "中级",
+            "form": "个人",
+            "submission": [{"name": "csim.c", "kind": "文件"}],
+            "ai_teammate": preset.title,
+            "ai_mode": "引导为主",
+            "ai_guidance": "不要直接给出代码。",
+            "ai_private_guidance": "参考答案在讲义第 12 页。",
+            "ai_goals": ["能自己写出 LRU", "能讲清组相联"],
+            "ai_materials": ["week6.pdf"],
+            "ai_skills": ["wolfram"],
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    draft = written.json()["data"]["draft"]
+
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": draft},
+        headers=_as_cheese(teacher),
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+
+    task = api_client.get(f"/tasks/{task_id}", headers=_headers(teacher)).json()[
+        "data"
+    ]["task"]
+    assert task["defaultRole"] == role
+    teaching = task["teaching"]
+    assert teaching["mode"] == "guide"
+    assert teaching["systemPrompt"] == "不要直接给出代码。"
+    assert teaching["privatePrompt"] == "参考答案在讲义第 12 页。"
+    assert teaching["learningGoals"] == ["能自己写出 LRU", "能讲清组相联"]
+    assert teaching["materialIds"] == [handout["id"]]
+    assert teaching["skills"] == ["wolfram"]
+
+
+def test_cheese_is_refused_an_ai_setting_the_space_does_not_offer(
+    api_client: TestClient, board: dict
+):
+    """A skill, a file or a teammate the 题目 cannot have is refused, not
+    written."""
+    teacher = board["teacher"]
+    for field, value in (
+        ("ai_skills", ["no-such-skill"]),
+        ("ai_materials", ["missing.pdf"]),
+        ("ai_teammate", "no-such-teammate"),
+    ):
+        refused = api_client.post(
+            "/task-drafts/agent/write",
+            json={"space": board["space"]["id"], "name": "题", field: value},
+            headers=_as_cheese(teacher),
+        )
+        assert refused.status_code == 400, (field, refused.text)

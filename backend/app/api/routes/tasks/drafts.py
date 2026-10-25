@@ -376,12 +376,32 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
 
 async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
     return await drafts.terms(
-        db, spaces, space_id, await _zone(db, user_id), user_id=user_id
+        db,
+        spaces,
+        space_id,
+        await _zone(db, user_id),
+        user_id=user_id,
+        materials=await _library(db, space_id, user_id),
     )
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:
-    return await drafts.context(db, spaces, row, await _zone(db, user_id))
+    return await drafts.context(
+        db,
+        spaces,
+        row,
+        await _zone(db, user_id),
+        materials=await _library(db, row.space_id, row.user_id),
+    )
+
+
+async def _library(db, space_id: int, user_id: int) -> dict[str, int]:
+    """The space library's files this person sees, by name: what 芝士 may
+    point the 题目's AI teammates at (the page's picker lists the same)."""
+    listed = await SpaceMaterialService(
+        session=db, storage=get_storage_backend()
+    ).list_for_space(space_id=space_id, user_id=user_id)
+    return {str(m["name"]): int(m["id"]) for m in listed["materials"]}
 
 
 class SearchIn(BaseModel):
@@ -756,11 +776,12 @@ def _draft_parts(payload: dict) -> list[str]:
     """A draft write's parts: the fields as 芝士 names them, each one or a few
     form fields (``AGENT_FIELDS``)."""
     changed = payload.get("changed") or {}
-    return [
-        key
-        for key, targets in drafts.AGENT_FIELDS.items()
-        if any(t in changed for t in targets)
-    ]
+    parts: dict[tuple[str, ...], str] = {}
+    for key, targets in drafts.AGENT_FIELDS.items():
+        # Several of 芝士's fields write the one guidance: it is one part.
+        if any(t in changed for t in targets):
+            parts.setdefault(targets, key)
+    return list(parts.values())
 
 
 async def _put_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
