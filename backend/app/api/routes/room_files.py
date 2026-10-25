@@ -159,6 +159,23 @@ class RoomFileRevisionOut(BaseModel):
     created_at: str
 
 
+class LiveEditorOut(BaseModel):
+    """开实时编辑器要的那点东西：一份文档名、一张票、能不能改，加上它的正文。
+
+    `enabled` 为假时只有 `reason`（``not_configured``、``unsupported``），和
+    `open_in_editor` 同一个形状，界面按同一个办法说人话。`content` 是这份文件此刻
+    的 Markdown：编辑器拿它当起点，协作服务那边还没有活状态时也拿它做第一次转换。
+    """
+
+    enabled: bool
+    reason: str | None = None
+    document: str | None = None
+    ticket: str | None = None
+    read_only: bool | None = None
+    version: str | None = None
+    content: str | None = None
+
+
 @router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
 async def list_files(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -534,7 +551,7 @@ async def editor_fetches_file(link: str) -> Response:
     return _bytes_response(data, target.path.rsplit("/", 1)[-1], content_version(data))
 
 
-@router.get("/topics/{topic_id}/files/collab")
+@router.get("/topics/{topic_id}/files/collab", **typed_response(LiveEditorOut))
 async def open_live_editor(
     topic_id: uuid.UUID,
     path: str,
