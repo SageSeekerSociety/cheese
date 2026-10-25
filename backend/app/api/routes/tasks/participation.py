@@ -365,11 +365,12 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-    # Commit before answering, as in ``join_task_as_user``: the publisher lists
-    # the pending claims on the next request.
+    # The claim and the project it opens commit together, after both are
+    # settled, and before answering, as in ``join_task_as_user``: the publisher
+    # lists the pending claims on the next request.
+    response = await _participation_response(db, task, membership, auth_user)
     await db.commit()
-
-    return await _participation_response(db, task, membership, auth_user)
+    return response
 
 
 @router.patch(

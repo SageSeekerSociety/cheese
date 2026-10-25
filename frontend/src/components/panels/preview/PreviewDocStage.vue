@@ -18,6 +18,7 @@
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。编辑器开在全屏
 // 对话框里，那一层留在壳里（`PanelPreviewView`）；这一档只管按 `editing` 之外的那几
 // 样画：文档条上的「编辑」把路径发上去，开不开由外面记。
+import type { PanelPreviewTextEdit } from '@/composables/panelPreview/textEdit'
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
@@ -26,8 +27,10 @@ import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
+import PreviewMarkdownEdit from './PreviewMarkdownEdit.vue'
 import PreviewPage from './PreviewPage.vue'
 import PreviewPages from './PreviewPages.vue'
 import PreviewSheet from './PreviewSheet.vue'
@@ -36,6 +39,7 @@ import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { SLIDE_SUFFIXES } from '@/lib/fileKind'
 
 // The history pane only loads once someone opens it: most previews never do, and
 // every panel that shows a preview would otherwise carry it. Same reason, and the
@@ -72,6 +76,13 @@ const props = defineProps<{
     id: string
     quote: { text: string; heading: string | null; prefix: string; suffix: string }
   }[]
+  /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
+  pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
+  /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
+  sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
+  /** 这一份 markdown 的编辑会话（`composables/panelPreview/textEdit.ts` 那一包）。
+   *  开着的时候正文换成编辑器。 */
+  textEdit?: PanelPreviewTextEdit
   /** 现在打开的那一条：它那颗标记画得显眼些。 */
   activeAnchor?: string | null
 }>()
@@ -94,14 +105,32 @@ const emit = defineEmits<{
   'markdown-quote': [payload: MarkdownQuote]
   /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
   anchor: [id: string]
+  /** 正文的编辑收起来了（存成了或取消）：这一份的编辑会话由外面关掉。 */
+  'close-text-edit': []
   /** 页上钉了一处 / 那个钉不该再留了。 */
   pin: [payload: PagePin]
   dropped: []
 }>()
 
-// 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。
+// 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。markdown 走另一条
+// 路（预览格里直接编辑正文，`textEdit`），两种都收在「编辑」这一个按钮上。
+//
+// markdown 那一条在手机上不开：软键盘配 Monaco 不是一件值得存下去的事，编辑器在那边
+// 是只读的。让按钮露着、点开一个存不下去的只读编辑器，比不露更糟——和「改动」那一格
+// 同一条（那里手机上把「编辑」换成「全文」）。Office 那几个不受影响：它们开的是全屏
+// 对话框，手机上本来就是那一套。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
-const canEdit = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
+const { mdAndUp } = useDisplay()
+const officeEditable = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
+const textEditable = computed(
+  () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.textEdit?.canEdit.value
+)
+const canEdit = computed(() => officeEditable.value || textEditable.value)
+
+function startEdit() {
+  if (textEditable.value) props.textEdit?.begin()
+  else if (props.previewFile) emit('open-editor', props.previewFile.path)
+}
 
 // 下面那几句「转圈 / 缺服务 / 转不了」问的是「屏幕上现在有没有东西可看」，而东西
 // 有两种：印刷版（PDF 的字节）和网页版（渲染好的那一页）。两种视图一次只取一种，
@@ -148,12 +177,12 @@ defineExpose({ snapshot, clearMark })
       <span class="doc__type t-meta">{{ documentType.label }}</span>
       <v-spacer />
       <BaseButton
-        v-if="canEdit && previewFile"
+        v-if="canEdit"
         kind="secondary"
         size="sm"
         prepend-icon="mdi-pencil-outline"
         data-testid="edit-file"
-        @click="previewFile && emit('open-editor', previewFile.path)"
+        @click="startEdit"
       >
         {{ t('work.room.preview.edit') }}
       </BaseButton>
@@ -196,8 +225,15 @@ defineExpose({ snapshot, clearMark })
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
 
+    <PreviewMarkdownEdit
+      v-if="documentType.view === 'markdown' && textEdit?.draft.value != null"
+      :edit="textEdit"
+      @saved="emit('close-text-edit')"
+      @cancel="emit('close-text-edit')"
+      @draft="textEdit?.setDraft($event)"
+    />
     <PreviewMarkdown
-      v-if="documentType.view === 'markdown'"
+      v-else-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
       :anchors="anchors"
       :active-id="activeAnchor"
@@ -222,7 +258,7 @@ defineExpose({ snapshot, clearMark })
     </div>
     <div v-else class="doc__body">
       <PreviewSlides
-        v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
+        v-if="SLIDE_SUFFIXES.has(documentSuffix)"
         :data="docBytes"
         :pending="docLoading"
         :error="docError"
@@ -236,11 +272,22 @@ defineExpose({ snapshot, clearMark })
         ref="pagesRef"
         :data="docBytes"
         :context="slideContext"
+        :marks="pageAnchors"
+        :active-mark="activeAnchor"
         @quote="emit('quote', $event)"
         @pin="emit('pin', $event)"
+        @mark="emit('anchor', $event)"
         @dropped="emit('dropped')"
       />
-      <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="emit('cell', $event)" />
+      <PreviewSheet
+        v-else
+        :data="docBytes"
+        :kind="documentType.sheet ?? 'workbook'"
+        :marks="sheetAnchors"
+        :active-mark="activeAnchor"
+        @cell="emit('cell', $event)"
+        @mark="emit('anchor', $event)"
+      />
 
       <RevisionList :revs="props.revs" :path="documentSuffix === 'docx' ? previewFile.path : null" />
     </div>

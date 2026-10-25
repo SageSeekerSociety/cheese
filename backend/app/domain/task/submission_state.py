@@ -50,7 +50,12 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionReview,
 )
-from app.domain.task.stages import list_stages, stage_count
+from app.domain.task.stages import (
+    StageLine,
+    list_stages,
+    planned_stage_change,
+    stage_count,
+)
 
 #: 这条轴的五个取值。别处只 import，不要再写一遍字面量。
 COMPLETION_STATUS_NOT_SUBMITTED = "NOT_SUBMITTED"
@@ -70,6 +75,10 @@ STAGE_STATUSES = (
     STAGE_PASSED,
     STAGE_REJECTED,
 )
+#: 读给人看的第五个取值：这个阶段过了截止、一版也没交，这条领取因它未通过
+#: （:func:`out_of_time`）。领取自己的状态（:func:`stage_states_of`）和出题人看的
+#: 分布（:func:`stage_distribution`）里有它；完成状态的推导用的是上面那四个。
+STAGE_MISSED = "MISSED"
 
 
 @dataclass(frozen=True)
@@ -246,20 +255,48 @@ async def handed_in_for(
     return grouped
 
 
-async def stage_states_of(
-    session: AsyncSession, membership: TaskMembership
+def missed(
+    states: Sequence[str], stage_dues: Sequence[datetime | None], moment: datetime
 ) -> list[str]:
-    """这条领取每个阶段现在的状态。"""
-    count = stage_count(await list_stages(session, membership.task_id))
+    """一条获批的领取读到的各阶段状态：过了截止、一版也没交的阶段读
+    ``STAGE_MISSED``（这条领取因它未通过），不再读「未提交」。"""
+    return [
+        STAGE_MISSED
+        if state == STAGE_NOT_SUBMITTED
+        and index < len(stage_dues)
+        and past_deadline(stage_dues[index], moment)
+        else state
+        for index, state in enumerate(states)
+    ]
+
+
+async def stage_states_of(
+    session: AsyncSession,
+    membership: TaskMembership,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    """这条领取每个阶段现在的状态，读给人和它的 agent 看：获批的领取错过了截止的
+    阶段读 ``STAGE_MISSED``。"""
+    stages = await list_stages(session, membership.task_id)
     handed_in = (await handed_in_for(session, [membership.id])).get(membership.id, [])
-    return stage_states(handed_in, count)
+    states = stage_states(handed_in, stage_count(stages))
+    # Only an approved claim hands work in, so only it can miss a stage.
+    if membership.approved != 0:
+        return states
+    return missed(states, [s.due_at for s in stages], now or datetime.now(UTC))
 
 
 async def stage_distribution(
     session: AsyncSession, task_id: int
 ) -> list[dict[str, int]]:
-    """这道题每个阶段上，获批的领取各走到哪一步：每阶段一份 ``{状态: 人数}``。"""
-    count = stage_count(await list_stages(session, task_id))
+    """这道题每个阶段上，获批的领取各走到哪一步：每阶段一份 ``{状态: 人数}``。
+    和领取自己读到的一样（:func:`stage_states_of`），过了截止一版没交的数在
+    ``STAGE_MISSED``（未通过）里，不在「未提交」里。"""
+    stages = await list_stages(session, task_id)
+    count = stage_count(stages)
+    dues = [s.due_at for s in stages]
+    moment = datetime.now(UTC)
     claims = list(
         (
             await session.execute(
@@ -274,11 +311,12 @@ async def stage_distribution(
         .all()
     )
     handed_in = await handed_in_for(session, claims)
-    tallies = [Counter({s: 0 for s in STAGE_STATUSES}) for _ in range(count)]
+    tallies = [
+        Counter({s: 0 for s in (*STAGE_STATUSES, STAGE_MISSED)}) for _ in range(count)
+    ]
     for membership_id in claims:
-        for index, state in enumerate(
-            stage_states(handed_in.get(membership_id, []), count)
-        ):
+        states = stage_states(handed_in.get(membership_id, []), count)
+        for index, state in enumerate(missed(states, dues, moment)):
             tallies[index][state] += 1
     return [dict(t) for t in tallies]
 
@@ -292,17 +330,87 @@ async def derive_completion_status(
     """推这条领取现在该带哪个状态 —— 只读，不写。"""
     stages = await list_stages(session, membership.task_id)
     handed_in = (await handed_in_for(session, [membership.id])).get(membership.id, [])
-    states = stage_states(handed_in, stage_count(stages))
+    return _derived(
+        membership,
+        stage_states(handed_in, stage_count(stages)),
+        [s.due_at for s in stages],
+        now or datetime.now(UTC),
+    )
+
+
+def _derived(
+    membership: TaskMembership,
+    states: Sequence[str],
+    stage_dues: Sequence[datetime | None],
+    moment: datetime,
+) -> str:
     return completion_status_for(
         states,
         out_of_time=out_of_time(
             states,
             claim_deadline=membership.deadline,
             # Only an approved claim hands work in, so only it can miss a stage.
-            stage_dues=[s.due_at for s in stages] if membership.approved == 0 else [],
-            moment=now or datetime.now(UTC),
+            stage_dues=stage_dues if membership.approved == 0 else [],
+            moment=moment,
         ),
     )
+
+
+@dataclass(frozen=True)
+class StageChangeEffect:
+    """一次改阶段会让多少条领取跨过「未通过」那条线：``failing`` 现在不是、改完会是
+    ``FAILED``；``reopening`` 现在是、改完不再是。"""
+
+    failing: int
+    reopening: int
+
+
+async def stage_change_effect(
+    session: AsyncSession,
+    task_id: int,
+    lines: Sequence[StageLine],
+    *,
+    now: datetime | None = None,
+) -> StageChangeEffect:
+    """把题目的阶段存成 ``lines`` 会对它的领取做什么 —— 只算，不写。
+
+    和存的那一次走同一套：已交的提交按阶段的 id 跟着它的阶段走
+    （``replace_stages`` 的 ``stage_moves``），每条领取用同一个推导重推一遍
+    （:func:`refresh_task_claims`）；比的是它现在记着的那个状态，也就是人现在看到的。
+    出题人存之前据此知道会有几个人被判未通过、几个人回到进行中。"""
+    moment = now or datetime.now(UTC)
+    # The save's own check: a change it would refuse is refused here too.
+    change = await planned_stage_change(session, task_id, lines)
+    moved = change.moved
+    count = stage_count(change.lines)
+    dues = [line.due_at for line in change.lines]
+    claims = (
+        (
+            await session.execute(
+                select(TaskMembership).where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    handed_in = await handed_in_for(session, [claim.id for claim in claims])
+    failing = reopening = 0
+    for claim in claims:
+        rows = [
+            HandedIn(stage=moved[row.stage], version=row.version, verdict=row.verdict)
+            for row in handed_in.get(claim.id, [])
+            if row.stage in moved
+        ]
+        after = _derived(claim, stage_states(rows, count), dues, moment)
+        was_failed = claim.completion_status == COMPLETION_STATUS_FAILED
+        if after == COMPLETION_STATUS_FAILED and not was_failed:
+            failing += 1
+        elif was_failed and after != COMPLETION_STATUS_FAILED:
+            reopening += 1
+    return StageChangeEffect(failing=failing, reopening=reopening)
 
 
 async def refresh_completion_status(

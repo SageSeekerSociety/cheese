@@ -687,6 +687,161 @@ def platform_file(platform_dir, name):
         os.close(directory)
 
 
+#: Where `transcript_view.py` mounts this session's transcript, before it is
+#: bound at the path the build names. Beside the room's own platform directory,
+#: so the mount belongs to this room and the teardown can find it.
+TRANSCRIPT_VIEW = "transcript-view"
+#: The FUSE devices and config a machine needs before a view can be mounted,
+#: and the file the `user_allow_other` line goes in (`fuse_is_mountable`).
+DEV_FUSE = "/dev/fuse"
+FUSE_CONF = "/etc/fuse.conf"
+
+
+def start_transcript_view(home, release, config, platform_machine):
+    """Serve this session's transcript out here, and bind it where the build
+    names it (`transcript_view`). Started before the sandbox, and never waited
+    for: a machine without FUSE, or a session whose transcript is not written
+    yet, keeps the transcript at the path it always was — unreachable — and
+    the room runs exactly as it did.
+
+    Out here rather than inside, because a bubblewrap sandbox has no
+    `/dev/fuse` of its own: the view is this side's, and the sandbox reads it
+    through the machine's own read-only `/home`. It is given the room's scoped
+    environment, which is what names the room and carries the credential the
+    relay is asked with — the same environment the room's tools get.
+
+    Started wherever the room is, not only where it is sandboxed: a room given
+    the whole machine runs its tools here too, and the transcript is on the
+    session host either way. What the view needs is FUSE, not a sandbox."""
+    view = home / PLATFORM_DIR / TRANSCRIPT_VIEW
+    script = release / "remote-execution/transcript_view.py"
+    if not script.exists():
+        return
+    if not fuse_is_mountable(platform_machine):
+        return
+    with platform_file(home / PLATFORM_DIR, "transcript-view.log") as log:
+        subprocess.Popen(
+            [sys.executable, str(script), str(view)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            env={**os.environ, **config["env"], **transcript_view_env()},
+            start_new_session=True,
+        )
+
+
+def fuse_is_mountable(platform_machine):
+    """Whether this machine can mount a FUSE view at all, making it able where
+    this may.
+
+    Three things the view needs that a machine need not have: `/dev/fuse`, a
+    `fusermount` (the library calls it by name to mount), and `user_allow_other`
+    in `/etc/fuse.conf` — the view is mounted by this room's user and read by
+    root through a bind, and FUSE refuses a second reader without it.
+
+    The library itself is not checked here: it is handed over as a path
+    (`transcript_view_env`) once cheesehost places it, and a machine without it
+    fails into the view's own silent exit. Nothing places it yet — that wiring
+    lands with the toolchain pin, when the release exists (`toolchain.py`, and
+    `3f0f67dd5` for why the two go together).
+
+    The `user_allow_other` line is written as root where `platform_machine`
+    says the platform owns the machine. That line used to be installed by
+    `deploy/deploy-docker.sh` on the box that runs a deploy — which is the
+    *session* host, and the view is never mounted there: the executor is a pool
+    host, a machine the deploy script never touches. So it belongs here, on the
+    machine that mounts, and only on one the platform provisioned. A machine a
+    person enrolled is left alone: without the line the view is simply not
+    mounted and the room runs as it always did."""
+    if not Path(DEV_FUSE).exists():
+        return False
+    if shutil.which("fusermount") is None and shutil.which("fusermount3") is None:
+        return False
+    if _user_allow_other():
+        return True
+    if not platform_machine:
+        return False
+    return _grant_user_allow_other()
+
+
+def _user_allow_other():
+    try:
+        text = Path(FUSE_CONF).read_text()
+    except OSError:
+        return False
+    return any(
+        line.strip() == "user_allow_other"
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _grant_user_allow_other():
+    """Append `user_allow_other`, as root, where the platform owns the machine.
+
+    Through `sudo -n`, like every other root step here (`sandbox_tools`): a
+    machine that does not give this process root answers with an error rather
+    than a password prompt, and the room keeps running without the view. The
+    line is appended only when it is absent, read back through `sh` so there is
+    no window in which two rooms both decide to add it.
+
+    `subprocess.SubprocessError` is caught with the rest: `sudo` runs with a
+    `timeout`, and a root call that hangs raises `TimeoutExpired` — not an
+    `OSError` — out of a step that runs on every room start and must never be
+    what fails one. The view is optional; the room is not."""
+    try:
+        sudo(
+            [
+                "sh",
+                "-c",
+                "grep -qxF user_allow_other /etc/fuse.conf 2>/dev/null"
+                " || echo user_allow_other >> /etc/fuse.conf",
+            ],
+            "allowing the transcript view to be read",
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+    return _user_allow_other()
+
+
+def transcript_view_env():
+    """What the view needs in its environment to find FUSE on this machine.
+
+    `fusepy` looks for `libfuse` through `find_library`, which asks the loader
+    for a name in the machine's own library paths — and `ldconfig` is root's to
+    change. So a host the platform did not provision has no way to be given it
+    there, and this is the one that works without root: `FUSE_LIBRARY_PATH`,
+    which `fusepy` honours ahead of the search, pointed at the copy cheesehost
+    placed under the platform's own runtime. A machine that has neither the
+    runtime nor a system libfuse gets nothing here, and the view's own import
+    fails into its silent exit (`transcript_view.main`).
+
+    Nothing else comes from here. `fusermount` is found on PATH and `/dev/fuse`
+    is the kernel's; the runtime supplies only the library."""
+    library = placed_libfuse()
+    return {"FUSE_LIBRARY_PATH": str(library)} if library else {}
+
+
+def placed_libfuse():
+    """The placed `libfuse.so.2`, or None.
+
+    Under the platform's runtime beside bwrap and the host tools, which is
+    where cheesehost places what a machine lacks (`cli/internal/devenv`): one
+    directory per tool, the archive's own top level removed, so the file is
+    directly inside. A copy built for another architecture would not load, but
+    the directory is per machine and cheesehost places the one for the machine
+    it runs on, so its own name is the whole lookup.
+
+    The lookup is written for that placement and nothing has placed it yet:
+    `devenv.Ensure` places `bubblewrap` and `host-tools` only, and the
+    `fuse-runtime` line lands with the toolchain pin, when the release exists
+    (`3f0f67dd5`). Until then this answers None on every machine, which is the
+    same path as a machine that has no FUSE at all."""
+    root = execution_root(Path.home()) / "runtime"
+    candidate = root / "fuse-runtime" / "libfuse.so.2"
+    return candidate if candidate.exists() else None
+
+
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
@@ -1340,6 +1495,12 @@ def configure_idle(payload):
             ("execution-owner.json", {"resource": home.name}),
         ):
             write_beneath(home, Path(PLATFORM_DIR) / name, json.dumps(value))
+        # The session's transcript, readable at the path the build names after a
+        # compaction. Started before the sandbox so the mount is in place by the
+        # time a session reads it, out here because the sandbox has no
+        # `/dev/fuse` of its own, and wherever the room runs: a room given the
+        # whole machine reads the same path the same way.
+        start_transcript_view(home, release, config, platform_machine)
         with platform_file(platform_dir, "executor-bootstrap.log") as output:
             argv = [
                 sys.executable,

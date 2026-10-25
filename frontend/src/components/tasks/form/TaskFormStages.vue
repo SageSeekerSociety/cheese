@@ -8,12 +8,14 @@
 import type { StagedForm } from '@/lib/taskStages'
 import type { TaskRubricLine, TaskStage, TaskSubmissionSchemaEntry } from '@/types'
 
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VDateInput } from 'vuetify/labs/VDateInput'
 
 import TaskFormSection from './TaskFormSection.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { addStage, moveStage, removeStage } from '@/lib/taskStages'
 
 const props = defineProps<{
@@ -48,6 +50,22 @@ function setDue(index: number, value: unknown) {
 }
 
 const nameMissing = (stage: TaskStage) => props.missingName && !stage.name.trim()
+
+/** 要删的那一个阶段的序号：先问一句，答「删除」才删。 */
+const removing = ref<number | null>(null)
+const confirmingRemove = ref(false)
+
+function askRemove(index: number) {
+  removing.value = index
+  confirmingRemove.value = true
+}
+
+function confirmRemove() {
+  const index = removing.value
+  confirmingRemove.value = false
+  removing.value = null
+  if (index !== null) write(removeStage(form(), index))
+}
 </script>
 
 <template>
@@ -106,7 +124,7 @@ const nameMissing = (stage: TaskStage) => props.missingName && !stage.name.trim(
             icon="mdi-close"
             :title="t('tasks.form.stages.remove', { n: index + 1 })"
             :aria-label="t('tasks.form.stages.remove', { n: index + 1 })"
-            @click="write(removeStage(form(), index))"
+            @click="askRemove(index)"
           />
         </div>
         <v-textarea
@@ -134,6 +152,13 @@ const nameMissing = (stage: TaskStage) => props.missingName && !stage.name.trim(
         >{{ t('tasks.form.stages.add') }}</BaseButton
       >
     </div>
+    <ConfirmDialog
+      v-model="confirmingRemove"
+      :title="t('tasks.form.stages.removeTitle', { n: (removing ?? 0) + 1 })"
+      :confirm-label="t('tasks.form.stages.removeConfirm')"
+      danger
+      @confirm="confirmRemove"
+    />
   </TaskFormSection>
 </template>
 

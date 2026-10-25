@@ -10,11 +10,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
+from app.domain.space.models import SpaceAdminRelation
 from app.domain.task import package
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
-from app.domain.task.models import TaskMembership
+from app.domain.task.models import Task, TaskMembership
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 from tests.integration.test_task_drafts import _as_cheese
 
@@ -947,3 +948,223 @@ def test_several_changes_in_one_save_are_one_notice(api_client, board):
     [heard] = _changes_heard(api_client, board["student"])
     assert "修改了提交内容或评分要点" in heard
     assert "新增了阶段「答辩」" in heard
+
+
+def test_a_stage_missed_with_nothing_handed_in_reads_failed_to_its_claim(
+    api_client, board
+):
+    """需求分析 was due yesterday and nothing was handed in for it, so the claim
+    has failed for it: the student reads that stage as failed, not as not yet
+    handed in, while the stage still open reads not handed in."""
+    task_id = _publish(
+        api_client, board, stages=[{**STAGES[0], "dueAt": _ms(-1)}, STAGES[1]]
+    )
+    _claim(api_client, board, task_id)
+
+    mine = _progress(api_client, board["student"], task_id)["mine"]
+    assert mine["stages"] == ["MISSED", "NOT_SUBMITTED"]
+
+
+def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
+    api_client, board
+):
+    """Before saving, the publisher asks what the stages they are about to save
+    would do: moving an empty stage's due date into the past fails the claim,
+    moving it back takes the claim out of failed. Asking writes nothing, and
+    only whoever may change the task may ask."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    stages = _read(api_client, board, task_id)["stages"]
+    overdue = [{**stages[0], "dueAt": _ms(-1)}, stages[1]]
+
+    def effect(proposed, user=board["teacher"]):
+        return api_client.post(
+            f"/tasks/{task_id}/stages/effect",
+            json={"stages": proposed},
+            headers=_headers(user),
+        )
+
+    asked = effect(overdue)
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["data"] == {"failing": 1, "reopening": 0}
+    assert _completion(api_client, board, task_id, membership_id) == "NOT_SUBMITTED"
+    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 0}
+
+    saved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": overdue},
+        headers=_headers(board["teacher"]),
+    )
+    assert saved.status_code == 200, saved.text
+    assert _completion(api_client, board, task_id, membership_id) == "FAILED"
+    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 1}
+
+    assert effect(stages, board["student"]).status_code == 403
+
+
+def test_the_stage_change_preview_refuses_what_the_save_refuses(api_client, board):
+    """需求分析 holds a handed-in version that was sent back, and is past due, so
+    the claim has failed. Dropping that stage is refused by the save; asking
+    what the drop would do gets the same refusal, never a promise that the
+    claim goes back to in progress."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    returned = _submit(api_client, board, task_id, membership_id, NEED, ["需求"])
+    _review(api_client, board, task_id, membership_id, _id(returned), False)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    overdue = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [{**need, "dueAt": _ms(-1)}, impl]},
+        headers=_headers(board["teacher"]),
+    )
+    assert overdue.status_code == 200, overdue.text
+    assert _completion(api_client, board, task_id, membership_id) == "FAILED"
+
+    asked = api_client.post(
+        f"/tasks/{task_id}/stages/effect",
+        json={"stages": [impl]},
+        headers=_headers(board["teacher"]),
+    )
+    saved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [impl]},
+        headers=_headers(board["teacher"]),
+    )
+
+    assert saved.status_code == 400, saved.text
+    assert asked.status_code == 400, asked.text
+    assert asked.json()["error"]["i18n"] == saved.json()["error"]["i18n"]
+    assert asked.json()["error"]["i18n"]["key"] == "stageHasSubmissions"
+
+
+def test_cheese_writing_stages_hears_who_saving_them_would_fail(api_client, board):
+    """芝士 moves an empty stage's due date into the past in the task's changes:
+    before anything is saved, its answer and the person's change card say one
+    participant would be marked failed, as the edit page would."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "task": task_id,
+            "stages": [{**_as_written(need), "due": "2020-01-01"}, _as_written(impl)],
+        },
+        headers=_as_cheese(board["teacher"]),
+    )
+
+    assert written.status_code == 200, written.text
+    assert written.json()["data"]["stageEffect"] == (
+        "1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过"
+    )
+    assert [s["dueAt"] for s in _read(api_client, board, task_id)["stages"]] == [
+        None,
+        None,
+    ]
+
+
+def test_the_publisher_counts_a_missed_stage_as_failed_like_the_student_reads_it(
+    api_client, board
+):
+    """The student reads 需求分析 as failed once it is past due with nothing
+    handed in; the publisher's per-stage counts put them there too, not under
+    not yet handed in."""
+    task_id = _publish(
+        api_client, board, stages=[{**STAGES[0], "dueAt": _ms(-1)}, STAGES[1]]
+    )
+    _claim(api_client, board, task_id)
+
+    first, second = _progress(api_client, board["teacher"], task_id)["distribution"]
+    assert (first["MISSED"], first["NOT_SUBMITTED"]) == (1, 0)
+    assert (second["MISSED"], second["NOT_SUBMITTED"]) == (0, 1)
+
+
+def test_cheese_hears_no_counts_for_someone_who_may_no_longer_change_the_task(
+    api_client, board, db_session, _portal
+):
+    """A change draft outlives its writer's right to change the task: once the
+    writer is neither its publisher nor an admin of its space, 芝士 writing
+    stages into that draft hears nothing about the task's takers."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    teacher = board["teacher"]
+
+    def write(target: dict, due: str):
+        return api_client.post(
+            "/task-drafts/agent/write",
+            json={
+                **target,
+                "stages": [{**_as_written(need), "due": due}, _as_written(impl)],
+            },
+            headers=_as_cheese(teacher),
+        )
+
+    first = write({"task": task_id}, "2020-01-01")
+    assert first.status_code == 200, first.text
+    assert "stageEffect" in first.json()["data"]
+
+    async def revoke():
+        await db_session.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(creator_id=board["student"].user_id)
+        )
+        await db_session.execute(
+            delete(SpaceAdminRelation).where(
+                SpaceAdminRelation.space_id == board["space"]["id"],
+                SpaceAdminRelation.user_id == teacher.user_id,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(revoke)
+    db_session.expire_all()
+    again = write({"draft": first.json()["data"]["draft"]}, "2020-01-02")
+
+    assert again.status_code == 200, again.text
+    assert "stageEffect" not in again.json()["data"]
+
+
+def test_cheese_hears_the_drafts_stage_effect_on_a_write_that_changes_something_else(
+    api_client, board
+):
+    """The effect describes the draft as it stands: after 芝士 moved a stage's
+    due date into the past, renaming the task in the same draft still tells
+    that saving it would fail one participant; once the stages are the task's
+    own again, a write says nothing would."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    teacher = _as_cheese(board["teacher"])
+
+    moved = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "task": task_id,
+            "stages": [{**_as_written(need), "due": "2020-01-01"}, _as_written(impl)],
+        },
+        headers=teacher,
+    )
+    assert moved.status_code == 200, moved.text
+    draft = moved.json()["data"]["draft"]
+
+    renamed = api_client.post(
+        "/task-drafts/agent/write",
+        json={"draft": draft, "name": "改过名字的实验"},
+        headers=teacher,
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["changed"] == ["name"]
+    assert renamed.json()["data"]["stageEffect"] == (
+        "1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过"
+    )
+
+    restored = api_client.post(
+        "/task-drafts/agent/write",
+        json={"draft": draft, "stages": [_as_written(need), _as_written(impl)]},
+        headers=teacher,
+    )
+    assert restored.status_code == 200, restored.text
+    assert "stageEffect" not in restored.json()["data"]

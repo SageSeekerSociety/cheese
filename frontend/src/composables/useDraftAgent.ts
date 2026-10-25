@@ -156,7 +156,14 @@ export function useDraftAgent(options: DraftAgentOptions) {
         }),
     },
     view: () => ({
-      messages: panelMessages(assistant.messages.value, terms(), undoable, draft.id.value ?? null, options.ordinal),
+      messages: panelMessages(
+        assistant.messages.value,
+        terms(),
+        undoable,
+        draft.id.value ?? null,
+        options.ordinal,
+        assistant.edits.value
+      ),
       steps: assistant.steps.value.map(stepView),
       ...writesView(assistant.edits.value, terms(), draft.id.value ?? null, undoable, options.ordinal),
       results: assistant.published.value.map(resultView),

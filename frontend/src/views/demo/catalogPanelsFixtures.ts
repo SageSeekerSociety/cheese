@@ -20,13 +20,14 @@
  * `catalogPanels.ts`。
  */
 import type { MaybeRef, Ref } from 'vue'
+import type { PanelPreviewTextEdit } from '@/composables/panelPreview/textEdit'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
 import type { PanelPreviewBundle } from '@/composables/usePanelPreview'
 import type { PanelSiteBundle } from '@/composables/usePanelSite'
 import type { SessionInspectorBundle, SessionRead } from '@/composables/useSessionInspector'
-import type { Block, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
+import type { Block, FileContent, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
 import type { DiffLine, FileDiff } from '@/lib/diff'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { Routine, RoutineRun } from '@/lib/routine'
@@ -376,6 +377,9 @@ export function previewBundle(
       avatarOf: () => '',
     },
     revs: v.revs,
+    // 演示里编辑会话是活的（点「编辑」真能改、能收起），但保存不连后端——预览站不写
+    // 任何东西（同上面的 `refuseWrite`）。
+    textEdit: demoTextEdit(ref(v.previewFile)),
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
     editor: v.editor,
@@ -457,6 +461,57 @@ export function docBundle(
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
     undoAgentChanges: refuseWrite,
+  }
+}
+
+/** 预览格里就地改 markdown 的那个会话（`usePanelPreviewTextEdit` 的返回）。
+ *
+ *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件、正文
+ *  读得出来）。只有「存到后端」不连——预览站不写任何东西，存一下就当存成了、把编辑器
+ *  收起来（同上面那些 `refuseWrite` 的说明）。 */
+function demoTextEdit(file: Ref<FileContent | null>): PanelPreviewTextEdit {
+  const draft = ref<string | null>(null)
+  const error = ref('')
+  const saving = ref(false)
+  const conflicted = ref(false)
+  const pinnedPath = ref('')
+  const canEdit = computed(() => {
+    const f = file.value
+    if (!f || f.content === null || !f.version || f.binary || f.too_large) return false
+    if (f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
+    return (DOCUMENT_TYPES[suffixOf(f.path)]?.view ?? null) === 'markdown'
+  })
+  const close = () => {
+    draft.value = null
+    pinnedPath.value = ''
+    error.value = ''
+    conflicted.value = false
+    saving.value = false
+  }
+  return {
+    draft,
+    error,
+    saving,
+    conflicted,
+    pinnedPath,
+    canEdit,
+    begin() {
+      const f = file.value
+      if (!canEdit.value || !f || f.content === null) return
+      draft.value = f.content
+      pinnedPath.value = f.path
+      error.value = ''
+      conflicted.value = false
+    },
+    cancel: close,
+    save: async () => {
+      close()
+      return true
+    },
+    reload: noopAsync,
+    setDraft: (value: string) => {
+      draft.value = value
+    },
   }
 }
 

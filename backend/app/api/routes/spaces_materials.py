@@ -49,7 +49,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.space.material_service import SpaceMaterialService
@@ -119,7 +119,7 @@ async def upload_space_material(
     content = await file.read(settings.attachment_max_bytes + 1)
     if len(content) > settings.attachment_max_bytes:
         raise UnprocessableEntityError(
-            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+            say("fileTooLarge", size=size_text(settings.attachment_max_bytes))
         )
     item = await service.add(
         space_id=space_id,

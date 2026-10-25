@@ -97,6 +97,18 @@ describe('uploading a library file', () => {
     expect(body.parts).toEqual(['abcd', 'efgh', 'ij'].map((piece) => md5(piece)))
   })
 
+  it('reports how much of a large file has landed, part by part, up to the whole', async () => {
+    fakeServer('https://bucket.example/big', 4)
+    const reported: number[] = []
+
+    await uploadLibraryFile('p1', new File(['abcdefghij'], 'data.bin'), undefined, (sent) => reported.push(sent))
+
+    expect(reported[0]).toBe(0)
+    expect(reported.at(-1)).toBe(10)
+    expect([...reported].sort((a, b) => a - b)).toEqual(reported)
+    expect(reported.length).toBe(4)
+  })
+
   it('sends the bytes to the backend address when files are kept on its disk', async () => {
     const seen = fakeServer('/files/incoming/tok')
 

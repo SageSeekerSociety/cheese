@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ProjectOverviewView from './ProjectOverviewView.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { renderNoticeMessage } from '@/lib/noticeText'
 
 Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
 
@@ -244,6 +245,42 @@ it('领的题分了阶段：那一行截止换成阶段时间轴，写着这个�
 it('不是领题开的项目：不写截止', () => {
   const view = mount({ overviewText: '## 现在到哪了' })
   expect(view.queryByTestId('overview-deadline')).toBeNull()
+})
+
+it('仓库从题目的起始代码开始的：在放、放好了、没放成各说一句；没有起始代码的不写', () => {
+  const pending = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'pending', reason: '' } })
+  expect(pending.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库正在放入题目第 3 版的起始代码')
+
+  cleanup()
+  const done = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'done', reason: '' } })
+  expect(done.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库的起始代码来自题目第 3 版')
+
+  cleanup()
+  const failed = mount({
+    overviewText: '## 赛题要求',
+    starter: { revision: 3, state: 'failed', reason: '压缩包里没有文件' },
+  })
+  expect(failed.getByTestId('overview-starter').textContent?.trim()).toBe(
+    '题目第 3 版的起始代码没能放进代码仓库：压缩包里没有文件'
+  )
+
+  cleanup()
+  const plain = mount({ overviewText: '## 赛题要求', starter: null })
+  expect(plain.queryByTestId('overview-starter')).toBeNull()
+})
+
+it('main 先被占了而没放成的：题目第几版的起始代码只说一次', () => {
+  const view = mount({
+    overviewText: '## 赛题要求',
+    starter: {
+      revision: 3,
+      state: 'failed',
+      reason: renderNoticeMessage({ key: 'starterMainTaken' }, ''),
+    },
+  })
+  const line = view.getByTestId('overview-starter').textContent ?? ''
+  expect(line.split('题目第 3 版').length - 1).toBe(1)
+  expect(line).toContain('main 分支')
 })
 
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {

@@ -116,6 +116,9 @@ function mount(submitQuestion?: SubmitPreviewQuestion) {
   return render(PanelPreviewView, {
     props: { ...props, submitQuestion },
     global: {
+      // 文档条上「编辑」开不开看屏幕宽窄（`PreviewDocStage` 用了 `useDisplay`），
+      // 这一层得接上它。
+      plugins: [createVuetify({ components, directives })],
       stubs: {
         VBtn: { template: '<button><slot /></button>' },
         VIcon: true,

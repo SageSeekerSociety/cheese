@@ -35,6 +35,7 @@ function mount<Id extends number | string>(target: Parameters<typeof useAttachme
         h(TaskAttachmentPicker, {
           files: uploads.files.value,
           uploading: uploads.uploading.value,
+          percent: uploads.percent.value,
           maxFileBytes: uploads.maxFileBytes.value,
           replaceable: !!target.replace,
           onAdd: uploads.add,
@@ -58,7 +59,7 @@ describe('题目带的材料', () => {
 
   it('写的上限是接口报的那个数；问不到就不写这句话，选择照旧', async () => {
     const { view } = mount({ upload: vi.fn() })
-    await waitFor(() => expect(view.container.textContent).toContain('单个文件不超过 11.77 MB'))
+    await waitFor(() => expect(view.container.textContent).toContain('单个文件不超过 11.8 MB'))
     view.unmount()
 
     mocks.limits.mockRejectedValue(new Error('503 Service Unavailable'))
@@ -143,6 +144,48 @@ describe('题目带的材料', () => {
     await fireEvent.change(replacement, { target: { files: [pdf('新数据.csv', 300)] } })
     await waitFor(() => expect(sizes()).toEqual([300]))
     expect(ids()).toEqual(['数据(2).csv'])
+    view.unmount()
+  })
+
+  it('传一份大文件时写着传到了百分之几，传完就回到「添加文件」', async () => {
+    let finish: (name: string) => void = () => {}
+    const upload = vi.fn(
+      (_file: File, progress: (sent: number, total: number) => void) =>
+        new Promise<string>((resolve) => {
+          progress(37, 100)
+          finish = resolve
+        })
+    )
+    const { view, input } = mount<string>({ upload })
+    await fireEvent.change(input, { target: { files: [pdf('数据集.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByRole('button', { name: /上传中 37%/ })).toBeTruthy())
+    finish('数据集.csv')
+    await waitFor(() => expect(view.getByRole('button', { name: /添加文件/ })).toBeTruthy())
+    view.unmount()
+  })
+
+  it('上限和服务端那句拒绝写成同一个样子：「20 GB」，不是「20.00 GB」', async () => {
+    mocks.limits.mockResolvedValue({ maxFileBytes: 20 * 1024 ** 3 })
+    const { view } = mount({ upload: vi.fn() })
+
+    await waitFor(() => expect(view.container.textContent).toContain('单个文件不超过 20 GB'))
+    view.unmount()
+  })
+
+  it('只有图标的「移除」按钮，鼠标停上去写着它移除哪一份', async () => {
+    const { view, input } = mount<string>({ upload: vi.fn().mockResolvedValue('数据.csv') })
+    await fireEvent.change(input, { target: { files: [pdf('数据.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByTitle('移除 数据.csv')).toBeTruthy())
+    view.unmount()
+  })
+
+  it('只有图标的「替换」按钮，鼠标停上去写着它替换哪一份', async () => {
+    const { view, input } = mount<string>({ upload: vi.fn().mockResolvedValue('数据.csv'), replace: vi.fn() })
+    await fireEvent.change(input, { target: { files: [pdf('数据.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByTitle('替换 数据.csv')).toBeTruthy())
     view.unmount()
   })
 })

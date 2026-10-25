@@ -1256,40 +1256,45 @@ def stub_project_forge(monkeypatch, tmp_path):
     merge tests supply their own PR state; tests/forgejo exercises the real API.
     """
     from app.domain.project import forge
-    from app.domain.project.models import Project, ProjectForge
+    from app.domain.project import starter as starter_code
     from app.domain.repository import forge_files
     from app.domain.review import forge_clients
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
-    provision = forge.provision_repository
     default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
-    async def provision_repository(project_id, session, **kwargs):
-        existing = await forge.binding_for_project(project_id, session)
-        project = await session.get(Project, project_id)
-        if (
-            existing is not None
-            or (project.settings or {}).get("forge_kind") == "github_app"
-        ):
-            return await provision(project_id, session, **kwargs)
-        binding = ProjectForge(
+    async def prepare_repository(project_id, *, initialize=True, **kwargs):
+        # The forge's half of making a repository; recording it
+        # (`bind_repository`) is the real code.
+        if initialize:
+            git_store.ensure_repo(project_id)
+        else:
+            # Like the real forge: an empty, bare repository that a push
+            # fills in (no working tree, so no path is checked out anywhere).
+            repo = git_store.path(project_id)
+            repo.mkdir(parents=True, exist_ok=True)
+            git_store.git(repo, "init", "-q", "--bare", "-b", "main")
+        return forge.PreparedRepository(
             project_id=project_id,
-            kind="forgejo",
             repo=f"project-{project_id.hex}/code",
             url=f"https://forge.test/project-{project_id.hex}/code.git",
             api_url="https://forge.test/api/v1",
             default_branch="main",
+            sealed_password="",
         )
-        session.add(binding)
-        await session.flush()
-        git_store.ensure_repo(project_id)
-        return binding
+
+    async def starter_remote(project_id, session):
+        # The starter push reaches the local repository with the real git
+        # commands (ls-remote, fetch, push).
+        return starter_code.Remote(
+            url=str(git_store.path(project_id)), username="test", password="test"
+        )
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1460,7 +1465,8 @@ def stub_project_forge(monkeypatch, tmp_path):
             ],
         }
 
-    monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
+    monkeypatch.setattr(forge, "starter_remote", starter_remote)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
     monkeypatch.setattr(forge, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)

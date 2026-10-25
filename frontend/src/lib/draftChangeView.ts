@@ -12,6 +12,7 @@ import dayjs from 'dayjs'
 
 import { t } from '@/i18n'
 import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 
 /** 每个字段在表单上叫什么。 */
@@ -37,6 +38,7 @@ const LABEL_KEYS: Record<string, string> = {
   mentors: 'tasks.form.mentor.label',
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
+  starter: 'tasks.starterPicker.title',
   ai_teammate: 'spaces.teaching.defaultTeammate.title',
   ai_guidance: 'spaces.detail.publishTask.teaching.title',
   ai_mode: 'spaces.teaching.fields.mode',
@@ -83,6 +85,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
             .map((id) => terms.domainGroups?.find((g) => g.id === id)?.name ?? String(id))
             .join('、') || t('tasks.form.more.accessDomains')
         : t('tasks.form.more.accessAll')
+    case 'starter':
+      return (value as { name: string }).name
     case 'attachments':
       return (value as { name: string }[]).map((f) => f.name).join('、') || t('tasks.assistant.changes.none')
     case 'ai_guidance': {
@@ -159,6 +163,7 @@ function rowValue(key: string, edit: AssistantEdit) {
     return { after: on ? pick('accessDomainGroupIds')?.after ?? [] : false }
   }
   if (key === 'attachments') return { after: pick('attachmentFiles')?.after ?? [] }
+  if (key === 'starter') return { after: pick('starterFile')?.after ?? null }
   if (key === 'ai_guidance') {
     const own = pick('teachingOwn')?.after ?? true
     return { after: own ? pick('teaching')?.after ?? {} : {} }
@@ -286,7 +291,8 @@ export function writesView(
   terms: DraftTerms,
   current: number | null,
   canUndo: (edit: AssistantEdit) => boolean = () => false,
-  ordinal: (draft: number) => number | undefined = () => undefined
+  ordinal: (draft: number) => number | undefined = () => undefined,
+  effectOf: (draft: number) => AssistantEdit | undefined = (draft) => latestEffect(edits).get(draft)
 ): PanelWrites {
   // A change of the person's own settings is a card of its own, keyed below every draft.
   const group = (edit: AssistantEdit) => (isSetting(edit) ? -edit.id : edit.draft)
@@ -296,7 +302,8 @@ export function writesView(
     const card = merged(
       edits.filter((e) => group(e) === id),
       terms,
-      canUndo
+      canUndo,
+      effectOf
     )
     const collapsed = current !== null && id > 0 && id !== current
     return { ...card, ...(collapsed ? { collapsed, notes: [], canUndo: false } : {}), ordinal: ordinal(id) }
@@ -305,7 +312,12 @@ export function writesView(
 }
 
 /** 同一份草稿的几次写入并成一张卡：一格只留最后一次写的。 */
-function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: AssistantEdit) => boolean): PanelChange {
+function merged(
+  edits: AssistantEdit[],
+  terms: DraftTerms,
+  canUndo: (edit: AssistantEdit) => boolean,
+  effectOf: (draft: number) => AssistantEdit | undefined
+): PanelChange {
   const views = edits.map((e) => changeView(e, terms, canUndo(e)))
   const rows = new Map<string, PanelChangeRow>()
   for (const view of views)
@@ -314,13 +326,31 @@ function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: Assis
       rows.set(row.key, row)
     }
   const last = views[views.length - 1]
+  // 存下阶段的影响是草稿的事，不是哪一条回答的：每次写入都说草稿那一刻的影响，所以只看这份
+  // 草稿最新的那一次写入（不管在哪一条回答里），写在它的那张卡上，更早的卡不再写。
+  const latest = effectOf(last.draft)
+  const effect = latest && edits.includes(latest) ? latest.stageEffect : []
   return {
     ...last,
     created: views.some((v) => v.created),
     rows: [...rows.values()],
-    notes: views.flatMap((v) => v.notes),
+    notes: [
+      ...views.flatMap((v) => v.notes),
+      ...effect.map((said) => ({
+        key: 'stages',
+        label: fieldLabel('stages'),
+        text: renderNoticeMessage(said, ''),
+      })),
+    ],
     canUndo: views.some((v) => v.canUndo),
   }
+}
+
+/** 每份草稿最新的那一次写入，按写入的先后：它说的就是草稿现在存下去的影响。 */
+function latestEffect(edits: AssistantEdit[]): Map<number, AssistantEdit> {
+  const latest = new Map<number, AssistantEdit>()
+  for (const edit of edits) if (edit.kind === 'draft') latest.set(edit.draft, edit)
+  return latest
 }
 
 export function resultView(done: AssistantPublished): PanelResult {
@@ -340,8 +370,12 @@ export function panelMessages(
   terms: DraftTerms,
   canUndo: (edit: AssistantEdit) => boolean = () => false,
   current: number | null = null,
-  ordinal?: (draft: number) => number | undefined
+  ordinal?: (draft: number) => number | undefined,
+  /** 比这些消息更晚的写入：后面的话题、还在写的那条回答。 */
+  newer: AssistantEdit[] = []
 ) {
+  // 整段对话里每份草稿最新的那一次：前面的回答画自己的卡时也按它，重读这段对话得到同样的结果。
+  const effects = latestEffect([...messages.flatMap((m) => m.edits ?? []), ...newer])
   return messages.map((m) => ({
     role: m.role,
     text: m.text,
@@ -353,7 +387,7 @@ export function panelMessages(
     selection: m.selection,
     cited: m.cited,
     steps: withSubagents((m.steps ?? []).map(stepView), m.subagents),
-    ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
+    ...writesView(m.edits ?? [], terms, current, canUndo, ordinal, (draft) => effects.get(draft)),
     results: (m.published ?? []).map(resultView),
     proposals: (m.proposals ?? []).map(proposalView),
     handed: m.handed ?? [],
