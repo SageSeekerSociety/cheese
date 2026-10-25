@@ -30,8 +30,13 @@
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
 #                      existing images.
-#   DEPLOY_PULL_BUDGET_SECONDS   how long the pulls keep being retried, counted
-#                                from the first pull                (default 600)
+#   DEPLOY_GHCR_USERNAME / DEPLOY_GHCR_TOKEN  when the token is set, the deploy
+#                      logs in to ghcr.io with it (on stdin) before the first
+#                      pull, retried like a pull; unset, it uses the box's
+#                      stored login
+#   DEPLOY_PULL_BUDGET_SECONDS   how long the ghcr login and the pulls keep being
+#                                retried, counted from the first of them
+#                                                                   (default 600)
 #   DEPLOY_PULL_BACKOFF_CAP_SECONDS  the longest wait between attempts (default 30)
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
 #                      prune, see retain_ci_service_images() below (defaults
@@ -990,6 +995,10 @@ PULL_STARTED=""
 # reset, and then died pulling backend again for `dc run`. After a dropped
 # connection that prune only throws away progress; ENOSPC, which docker reports
 # as "no space left on device", is the one failure that freeing space cures.
+#
+# A registry that refuses the credential ("unauthorized", "denied") fails at
+# once: the same token is refused again on every later attempt, and waiting out
+# the budget would only delay the deploy's error by ten minutes.
 retry_pull() {
   local what="$1"
   shift
@@ -1007,6 +1016,10 @@ retry_pull() {
       return 0
     fi
     errors="${errors:+$errors; }attempt $attempt exited $rc"
+    if grep -qiE 'unauthorized|denied' "$out"; then
+      rm -f "$out"
+      fail "$what was refused by the registry on attempt $attempt (exit $rc); not retrying a rejected credential — see the docker output above"
+    fi
     log_disk "$what failed, attempt $attempt"
     delay="$(pull_backoff_delay "$attempt")"
     [ $((elapsed + delay)) -lt "$PULL_BUDGET_SECONDS" ] || break
@@ -1224,6 +1237,21 @@ trap 'on_exit 130' INT
 trap 'on_exit 143' TERM
 
 log_disk "before pull"
+
+# The deploy authenticates for its pulls instead of trusting the box's stored
+# login: the images are private, and a credential some other job's cleanup
+# removed must not fail the deploy. It goes through retry_pull because the
+# login meets the same resetting link the pulls do: dev deploy run 40138894358
+# (2026-10-24) died on its single login attempt with `read: connection reset by
+# peer`. The token reaches docker on stdin only, never on a command line.
+ghcr_login() {
+  printf '%s' "$DEPLOY_GHCR_TOKEN" \
+    | docker login ghcr.io --username "$DEPLOY_GHCR_USERNAME" --password-stdin
+}
+if [ -n "${DEPLOY_GHCR_TOKEN:-}" ]; then
+  [ -n "${DEPLOY_GHCR_USERNAME:-}" ] || fail "DEPLOY_GHCR_USERNAME is required with DEPLOY_GHCR_TOKEN"
+  retry_pull "ghcr login" ghcr_login
+fi
 
 COLLAB_EXPECTED=false
 case "$APP_IMAGE_SOURCE" in

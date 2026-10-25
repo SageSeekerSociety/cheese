@@ -318,18 +318,6 @@ jobs:
       # A docs commit can include queued code changes relative to the running
       # release. Only the running-version guard above may skip this deployment.
 
-      # Authenticate for the pull rather than trusting the box's stored login:
-      # the images are private, and a deploy must not fail because some other
-      # job's cleanup removed a credential.
-      - name: Log in to ghcr
-        if: steps.release.outputs.skip != 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          logout: false
-
       # The configured half of the admin roster, out of a repo variable. It is
       # MERGED with what the box's env file already names, and this is the point
       # of the step: the variable used to overwrite the file whenever it was
@@ -491,6 +479,10 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
+          # The script logs in to ghcr with this before its first pull, retried
+          # the way its pulls are (deploy-docker.sh, ghcr_login).
+          DEPLOY_GHCR_USERNAME: ${{ github.repository_owner }}
+          DEPLOY_GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Release the verified metering image
