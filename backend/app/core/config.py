@@ -1343,6 +1343,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
                 or parts.fragment
                 or parts.username
             ):
+                # i18n-exempt: refuses the boot; read by an operator in the log
                 raise RuntimeError(
                     f"FRONTEND_ALIASES entry {value!r} is not an https origin. "
                     "Write the scheme and host only, e.g. https://example.cn "

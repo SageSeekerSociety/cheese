@@ -58,6 +58,7 @@ class AppSignInStart(BaseModel):
     @classmethod
     def _ours(cls, value: str | None) -> str | None:
         if value is not None and not origins.is_ours(value):
+            # i18n-exempt: only a hand-made link sends one; no page shows it
             raise ValueError("returnTo is not an origin of this deployment")
         return value
 
