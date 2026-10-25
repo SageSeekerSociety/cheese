@@ -999,3 +999,65 @@ def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
     assert effect(stages).json()["data"] == {"failing": 0, "reopening": 1}
 
     assert effect(stages, board["student"]).status_code == 403
+
+
+def test_the_stage_change_preview_refuses_what_the_save_refuses(api_client, board):
+    """需求分析 holds a handed-in version that was sent back, and is past due, so
+    the claim has failed. Dropping that stage is refused by the save; asking
+    what the drop would do gets the same refusal, never a promise that the
+    claim goes back to in progress."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    returned = _submit(api_client, board, task_id, membership_id, NEED, ["需求"])
+    _review(api_client, board, task_id, membership_id, _id(returned), False)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    overdue = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [{**need, "dueAt": _ms(-1)}, impl]},
+        headers=_headers(board["teacher"]),
+    )
+    assert overdue.status_code == 200, overdue.text
+    assert _completion(api_client, board, task_id, membership_id) == "FAILED"
+
+    asked = api_client.post(
+        f"/tasks/{task_id}/stages/effect",
+        json={"stages": [impl]},
+        headers=_headers(board["teacher"]),
+    )
+    saved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": [impl]},
+        headers=_headers(board["teacher"]),
+    )
+
+    assert saved.status_code == 400, saved.text
+    assert asked.status_code == 400, asked.text
+    assert asked.json()["error"]["i18n"] == saved.json()["error"]["i18n"]
+    assert asked.json()["error"]["i18n"]["key"] == "stageHasSubmissions"
+
+
+def test_cheese_writing_stages_hears_who_saving_them_would_fail(api_client, board):
+    """芝士 moves an empty stage's due date into the past in the task's changes:
+    before anything is saved, its answer and the person's change card say one
+    participant would be marked failed, as the edit page would."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "task": task_id,
+            "stages": [{**_as_written(need), "due": "2020-01-01"}, _as_written(impl)],
+        },
+        headers=_as_cheese(board["teacher"]),
+    )
+
+    assert written.status_code == 200, written.text
+    assert written.json()["data"]["stageEffect"] == (
+        "1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过"
+    )
+    assert [s["dueAt"] for s in _read(api_client, board, task_id)["stages"]] == [
+        None,
+        None,
+    ]

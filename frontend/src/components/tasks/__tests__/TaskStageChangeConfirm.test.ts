@@ -33,12 +33,15 @@ beforeAll(() => {
 beforeEach(() => setLocale('zh-CN'))
 
 /** 页面那样用：保存先过 `allows`，过了才存。 */
-function mount(answer: StageChangeEffect) {
+function mount(answer: StageChangeEffect | Error) {
   let saved = 0
   let save: () => Promise<void> = async () => {}
   const Host = defineComponent({
     setup() {
-      const check = useStageChangeCheck(async () => answer)
+      const check = useStageChangeCheck(async () => {
+        if (answer instanceof Error) throw answer
+        return answer
+      })
       save = async () => {
         if (await check.allows([])) saved++
       }
@@ -80,6 +83,16 @@ describe('改阶段之前的那一句', () => {
     await save()
 
     expect(saved()).toBe(1)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('保存会被拒的修改：不弹人数，拿到的是保存那句拒绝，什么也不存', async () => {
+    const refusal = new Error('阶段「需求分析」已有提交，不能删除')
+    const { save, saved } = mount(refusal)
+
+    await expect(save()).rejects.toBe(refusal)
+
+    expect(saved()).toBe(0)
     expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 })

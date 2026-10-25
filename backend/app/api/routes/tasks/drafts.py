@@ -62,6 +62,8 @@ from app.domain.space.services import SpaceService
 from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.services import TaskService, ensure_task_readable
+from app.domain.task.stages import stage_lines
+from app.domain.task.submission_state import stage_change_effect
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/task-drafts", tags=["Tasks"])
@@ -568,6 +570,15 @@ async def agent_write(
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
+    # What saving these stages would do to the 题目's takers, told on the
+    # change card and to 芝士 before anything is saved, as the edit page does.
+    stage_effect = (
+        await _stage_effect_said(db, row)
+        if row.task_id is not None and "stages" in written.changed
+        else None
+    )
+    if stage_effect:
+        notes.append({"field": "stages", "text": stage_effect})
     if removed:
         # Never silently: the person reads on the change card what went with
         # the stages 芝士 removed, before anything is saved to the 题目.
@@ -609,6 +620,9 @@ async def agent_write(
             ),
             # Submission items and rubric lines that left with a removed stage.
             "removed": removed,
+            # Who saving the draft's stages would fail or take out of failed,
+            # or why the save would refuse them; absent when neither.
+            **({"stageEffect": stage_effect} if stage_effect else {}),
             # A template's skeleton, for 芝士 to fill under its headings.
             **(
                 {"description": drafts.markdown_of(row.fields or {})}
@@ -617,6 +631,25 @@ async def agent_write(
             ),
         }
     )
+
+
+async def _stage_effect_said(db, row) -> str | None:
+    """What saving the draft's stages onto its 题目 would do to the claims, in
+    the words the person reads (``stage_change_effect``, the edit page's own
+    check); the save's refusal when it would refuse them; None when nobody
+    would cross the failed line."""
+    try:
+        effect = await stage_change_effect(
+            db, row.task_id, stage_lines(drafts.published_form(row).get("stages") or [])
+        )
+    except BadRequestError as refused:
+        return str(refused.message)
+    said = []
+    if effect.failing:
+        said.append(str(say("stageEffectFailing", n=effect.failing)))
+    if effect.reopening:
+        said.append(str(say("stageEffectReopening", n=effect.reopening)))
+    return "；".join(said) or None
 
 
 async def _own_files(db, given, user_id: int) -> list[dict]:

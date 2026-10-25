@@ -52,10 +52,9 @@ from app.domain.task.models import (
 )
 from app.domain.task.stages import (
     StageLine,
-    keyed_by_name,
     list_stages,
+    planned_stage_change,
     stage_count,
-    stage_moves,
 )
 
 #: 这条轴的五个取值。别处只 import，不要再写一遍字面量。
@@ -374,11 +373,11 @@ async def stage_change_effect(
     （:func:`refresh_task_claims`）；比的是它现在记着的那个状态，也就是人现在看到的。
     出题人存之前据此知道会有几个人被判未通过、几个人回到进行中。"""
     moment = now or datetime.now(UTC)
-    old = await list_stages(session, task_id)
-    lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
-    moved = stage_moves([stage.key for stage in old], [line.key for line in lines])
-    count = stage_count(lines)
-    dues = [line.due_at for line in lines]
+    # The save's own check: a change it would refuse is refused here too.
+    change = await planned_stage_change(session, task_id, lines)
+    moved = change.moved
+    count = stage_count(change.lines)
+    dues = [line.due_at for line in change.lines]
     claims = (
         (
             await session.execute(

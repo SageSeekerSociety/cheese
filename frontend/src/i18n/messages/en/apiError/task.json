@@ -73,5 +73,7 @@
   "taskStarterHasItsOwnPlace": "{name} is this task's starter code. Replace or remove it under Starter code",
   "starterRemovedBeforePush": "The publisher removed this starter code before it reached the repository",
   "starterPushGaveUp": "The code repository service kept refusing the starter code, so the platform stopped trying",
-  "starterMainTaken": "The code repository's main branch already had other commits before the starter code could be added"
+  "starterMainTaken": "The code repository's main branch already had other commits before the starter code could be added",
+  "stageEffectFailing": "Participants with a stage past its due date and nothing handed in: {n}. Saving marks them as failed",
+  "stageEffectReopening": "Participants going from failed back to in progress: {n}"
 }
