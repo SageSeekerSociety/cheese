@@ -26,9 +26,9 @@ covers:
 
 | 套件 | 工作流 | 查什么 |
 |---|---|---|
-| backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器 |
+| backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器；`backend/tests/forgejo` 要真的 Forgejo，不在这里跑 |
 | frontend | `frontend.yml` | 类型检查、eslint、vitest |
-| e2e | `e2e.yml` | Playwright 端到端测试（只在合并后跑） |
+| e2e | `e2e.yml` | Playwright 端到端测试；`forgejo live` job 起一个固定版本的 Forgejo 容器（`backend/tests/forgejo/start.sh`），对着它跑 `backend/tests/forgejo` 的后端测试（都只在合并后跑） |
 | cli | `cli.yml` | Go 连接器的测试 |
 | guards | `repo-guards.yml` | 仓库规矩的机器检查和文档站构建（链接与锚点、每页的类型/摘要/涉及代码、参考页生成器），每次都跑 |
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
