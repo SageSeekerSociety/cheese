@@ -25,8 +25,9 @@ schema says nothing (``-> dict``, backend/openapi-untyped.json) has no fields
 to compare, so a change inside it goes unseen here; that ratchet only shrinks.
 
 Fields are compared by where they sit, ``$ref``s resolved, so renaming a model
-alone breaks nothing. Variants of ``anyOf``/``oneOf``/``allOf`` are merged:
-their fields pooled, a field's types the union over the variants, except
+alone breaks nothing (except a kind in a union whose kinds carry no
+discriminator, which is named after its model). Variants of
+``anyOf``/``oneOf``/``allOf`` are merged: their fields pooled, a field's types the union over the variants, except
 that a union of several object shapes (kinds of a quote, of a change) keeps
 each kind's fields apart: a new kind breaks nothing, while a new required
 field on a kind an old page sends does, and so does a kind removed.
