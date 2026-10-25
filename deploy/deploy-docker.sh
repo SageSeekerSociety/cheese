@@ -1643,10 +1643,10 @@ rollout_app() {
   fi
   if ! smoke_release "$backend_port" "$frontend_port"; then
     dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
-    # The first forge migration stopped the backends this release replaces
-    # (migrate_project_repositories), so then nothing serves until one passes.
-    if [ -f "$FORGE_CUTOVER_PENDING" ]; then
-      fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; the repository migration had already stopped $backend_from, so no backend serves until a release passes; retry this release from migration receipts once the check is fixed"
+    # The first forge migration stops the backends a release replaces
+    # (migrate_project_repositories): then nothing serves until one passes.
+    if [ -z "$old_backend" ] || [ "$(docker inspect --format '{{.State.Running}}' "$old_backend" 2>/dev/null)" != true ]; then
+      fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; $backend_from is not running (the repository migration stops it), so no backend serves until a release passes"
     fi
     fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; app-router was not switched and still points at $backend_from${frontend_from:+ and $frontend_from}"
   fi
