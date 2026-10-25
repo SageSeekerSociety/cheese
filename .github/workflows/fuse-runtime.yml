@@ -77,9 +77,19 @@ jobs:
           # (PEP 668) and every other workflow here that needs a package makes
           # one the same way. The script is run *by that venv's* interpreter so
           # the copy it loads is the copy it just installed.
+          #
+          # The version comes from `backend/uv.lock`, not written here: the
+          # point of this job is that the copy the smoke test loads is the copy
+          # a room's executor ships (`release.sources` takes `fuse.py` out of
+          # the installed `fusepy`), and a lock bump would otherwise leave this
+          # testing a version nothing runs.
+          fusepy="$(awk '/^name = "fusepy"$/{found=1; next}
+                         found && /^version = /{gsub(/[",]/,""); print $3; exit}' \
+                       backend/uv.lock)"
+          [ -n "$fusepy" ] || { echo "no fusepy in backend/uv.lock"; exit 1; }
           "$GITHUB_WORKSPACE/.github/scripts/ensure-apt.sh" fuse
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet fusepy==3.0.1
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "fusepy==$fusepy"
           "$RUNNER_TEMP/venv/bin/python" .github/scripts/fuse-view-smoke.py "$LIBRARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

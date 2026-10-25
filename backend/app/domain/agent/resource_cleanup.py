@@ -1311,10 +1311,27 @@ def stop_transcript_view(home: Path) -> None:
         # Nothing could release them. The record stays so a later attempt —
         # the one a failed `remove_tree` leads to — finds them again; deleting
         # it here would leave the mounts nameless for good.
+        #
+        # Written the way the helper writes it: through a temporary beside it,
+        # and an `OSError` is not raised on. This runs first in `stop_executor`
+        # and in the `remove` action, so an exception here would abort the rest
+        # of the teardown — `sandbox_release`, `check_no_writers`, `remove_tree`
+        # — over a bookkeeping file, and an interrupted in-place write would
+        # truncate the record and lose the mounts this branch keeps.
         held["mounts"] = left
-        record.write_text(json.dumps(held))
+        try:
+            temporary = Path(str(record) + ".next")
+            temporary.write_text(json.dumps(held))
+            temporary.replace(record)
+        except OSError:
+            pass
         return
-    record.unlink(missing_ok=True)
+    try:
+        record.unlink(missing_ok=True)
+    except OSError:
+        # Same reason: a record left behind names mounts that are already
+        # released, which the next attempt reads as nothing to do.
+        pass
 
 
 def _is_this_rooms_view(pid: int, home: Path) -> bool:

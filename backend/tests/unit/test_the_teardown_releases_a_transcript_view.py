@@ -58,6 +58,33 @@ def test_a_released_mount_leaves_nothing_behind(tmp_path, monkeypatch):
     assert not (home / ".cheese" / "transcript-view.json").exists()
 
 
+def test_a_record_that_cannot_be_rewritten_does_not_stop_the_teardown(
+    tmp_path, monkeypatch
+):
+    """A bookkeeping write must not abort the teardown around it.
+
+    This runs first in `stop_executor` and in the `remove` action. An `OSError`
+    out of it — a read-only or half-removed home — would take `sandbox_release`,
+    `check_no_writers` and `remove_tree` down with it, leaving the room in
+    pieces over a file that only records what is left. The mounts stay named by
+    the previous version, which is what the next attempt reads.
+    """
+    home = _room(tmp_path, monkeypatch)
+    monkeypatch.setattr(resource_cleanup, "mounted_at", lambda _path: True)
+    monkeypatch.setattr(resource_cleanup, "run_command", lambda *a, **k: None)
+    monkeypatch.setattr(resource_cleanup, "_is_this_rooms_view", lambda *a: False)
+    monkeypatch.setattr(
+        resource_cleanup.Path,
+        "write_text",
+        lambda self, _data: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    resource_cleanup.stop_transcript_view(home)
+
+    record = home / ".cheese" / "transcript-view.json"
+    assert json.loads(record.read_text())["mounts"] == ["/host/projects/a.jsonl"]
+
+
 def test_a_pid_the_record_names_is_not_signalled_unchecked(tmp_path, monkeypatch):
     """The record is the room's to write, so its pid is only a claim.
 

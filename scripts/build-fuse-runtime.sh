@@ -48,6 +48,17 @@ fi
 # compiler, `make`, `binutils` or even `curl` — so the recipe installs what it
 # runs, rather than leaving it to the caller to have done.
 #
+# The toolchain is not pinned, and it is a build input like any other: a
+# bookworm point release that bumps `gcc-12` or `binutils` changes the code
+# this produces, so a digest pinned from one run is reproduced only by a
+# machine carrying the same versions. What is verified today is the weaker
+# statement — two builds of one commit on one machine, at one moment, are
+# byte-identical — which is what makes the digest worth recording, since
+# without the flags below even that pair differs. The bubblewrap and host-tools
+# recipes take the same position: only the image is pinned, not `apk`'s
+# packages. Pinning the versions here would mean naming a snapshot archive, and
+# that belongs with the release step that first pins a digest.
+#
 # The network options are `.github/scripts/ensure-apt.sh`'s, carried inline:
 # that helper runs `sudo apt-get "$@"` and cannot be used from inside this
 # image, but the reason it has them applies here too — apt's own network waits
@@ -62,7 +73,7 @@ export DEBIAN_FRONTEND=noninteractive
 # shellcheck disable=SC2086 # separate -o flags: the split is the point
 apt-get $apt_net update -qq
 # shellcheck disable=SC2086
-apt-get $apt_net install -y -qq build-essential curl ca-certificates xz-utils >/dev/null
+apt-get $apt_net install -y -qq build-essential curl ca-certificates >/dev/null
 
 work=$(mktemp -d)
 cd "$work"
