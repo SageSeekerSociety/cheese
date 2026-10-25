@@ -14,7 +14,7 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import type { PagePin, SlideSource } from './slidesContext'
 
-import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
 import { useSelectionHighlight } from './selectionHighlight'
 
@@ -29,6 +29,11 @@ const props = defineProps<{
   /** 这一份文档已验证的身份。没有它就不让指位置：指出去的一定带版本，指着一个
    *  自己都说不上是哪一版的页面，受话人没法知道他说的是哪一份。 */
   context?: SlideSource
+  /** 这一份文件上已有的评论指着的那几处：第几页、页内比例（`page-pin` 的形状）。
+   *  页码在这一版里落不到任何一页上时自然不画（页数变了）。 */
+  marks?: readonly { id: string; page: number; x: number; y: number }[]
+  /** 现在打开的是哪一条：它那一处画得显眼些。 */
+  activeMark?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +43,8 @@ const emit = defineEmits<{
   (e: 'pin', payload: PagePin): void
   /** 屏上那一点被撤掉了（重排把它撤了），外面记着的那一点也跟着作废。 */
   (e: 'dropped'): void
+  /** 读者点了页上某一颗评论标记：把那一串评论打开。 */
+  (e: 'mark', id: string): void
 }>()
 
 /** `host` 是页里那块画布住的地方，和 `el` 分开是因为重画要 `replaceChildren`——
@@ -48,6 +55,18 @@ type PageSlot = {
   host: HTMLElement | null
   rendered: boolean
 }
+
+/** 这一页上被评论指着的那些地方。按页分好一次，别在模板里每页筛一遍整个列表
+ *  ——页多的时候那是「页数 × 标记数」，而它每次重渲染都跑。 */
+const marksByPage = computed(() => {
+  const byPage = new Map<number, { id: string; x: number; y: number }[]>()
+  for (const mark of props.marks ?? []) {
+    const on = byPage.get(mark.page)
+    if (on) on.push(mark)
+    else byPage.set(mark.page, [mark])
+  }
+  return byPage
+})
 
 const container = ref<HTMLElement | null>(null)
 const pages = ref<PageSlot[]>([])
@@ -404,8 +423,22 @@ onBeforeUnmount(() => {
       class="pv__page"
     >
       <div :ref="(el) => setHost(slot, el)" class="pv__canvas" />
-      <!-- 指过的那一点。画在页里，不画在容器上：页是按比例定位的，滚动和宽度变化
-           都跟着它走。 -->
+      <!-- Comment marks: one per thread whose page-pin lands on this page. Drawn inside
+           the page box, not on the container, so they follow the page as it is scaled
+           and scrolled. They take the pointer, because clicking one opens the rail. -->
+      <button
+        v-for="mark in marksByPage.get(slot.number) ?? []"
+        :key="mark.id"
+        type="button"
+        class="pv__cmt"
+        :class="{ 'is-active': mark.id === activeMark }"
+        :data-comment-mark="mark.id"
+        :style="{ left: `${mark.x * 100}%`, top: `${mark.y * 100}%` }"
+        :aria-label="t('work.room.comments.commentHere')"
+        :title="t('work.room.comments.commentHere')"
+        @click.stop="emit('mark', mark.id)"
+      />
+      <!-- The spot the reader just pointed at. -->
       <span
         v-if="marked && marked.page === slot.number"
         class="pv__pin"
@@ -488,6 +521,25 @@ onBeforeUnmount(() => {
   background: var(--accent);
   box-shadow: 0 0 0 2px var(--surface);
   pointer-events: none;
+}
+
+/* 有人在页上评过的一处：一颗琥珀的小点，点得到（评论栏靠它打开）。比「刚指的那一点」
+   小一圈、空心，一眼能分清「这是我的指认」和「这是别人留下的评论」。 */
+.pv__cmt {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  padding: 0;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.pv__cmt:hover,
+.pv__cmt.is-active {
+  background: var(--accent);
 }
 
 .pv__page :deep(canvas) {

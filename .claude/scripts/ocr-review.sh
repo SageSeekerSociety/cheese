@@ -34,7 +34,17 @@
 #                        value is worse than too high — 10 minutes on a five-file
 #                        change ended every group as `timeout` and produced nothing
 #   OCR_CONCURRENCY      concurrent subtasks (8)
-#   OCR_TOKEN_BUDGET     total token budget; 0 = unlimited (0)
+#   OCR_TOKEN_BUDGET     cap on total tokens (input+output) for the whole run
+#                        (8000000). Checked before every LLM round: a group over
+#                        it gets one final round to submit findings and is
+#                        reported as failed(budget), and no further group is
+#                        dispatched. Partial results are still published. 0 =
+#                        unlimited. The default is about twice the largest honest
+#                        run measured on this repo (10 files, 3.5M tokens), so it
+#                        is a brake on a runaway rather than a spend policy. The
+#                        wall clock is not enough on its own: it stops dispatching
+#                        and the groups already in flight run to completion and
+#                        bill for every round of it
 #   OCR_VERSION          open-code-review version to install and run (1.13.3)
 #
 # The binary is not committed: it is 54 MB, and a pinned npm install into a
@@ -52,7 +62,7 @@ EFFORT="${OCR_EFFORT:-low}"
 MAX_TOOLS="${OCR_MAX_TOOLS:-}"
 TIMEOUT_MIN="${OCR_TIMEOUT:-25}"
 CONCURRENCY="${OCR_CONCURRENCY:-8}"
-TOKEN_BUDGET="${OCR_TOKEN_BUDGET:-0}"
+TOKEN_BUDGET="${OCR_TOKEN_BUDGET:-8000000}"
 
 # The published linux-x64 binary for 1.13.3. A different platform or version is
 # a deliberate edit here, not something to discover at runtime.

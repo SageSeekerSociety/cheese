@@ -21,7 +21,7 @@ import shutil
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,8 @@ from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain import skill_library as native_skills
@@ -678,6 +680,16 @@ async def project_skill_catalog(
     not room: which teammate carries what is a project setting (and only a
     manager may change it — `projects_agents.py`)."""
     await _in_project(db, resolver, project_id, None)
+    items = _platform_catalog()
+    return ok(page(items, len(items)))
+
+
+@router.get("/skill-catalog", **typed_response(SkillCatalogOut))
+async def skill_catalog(_: AuthUserInfo = Depends(require_auth_user)) -> dict:
+    """The shipped skills, for a 题目's publisher picking the ones every
+    teammate of its projects carries (`Teaching.skills`). It names no project:
+    the catalog is the platform's and the same for everyone, and a 题目 being
+    written has no project yet — signing in is the whole gate."""
     items = _platform_catalog()
     return ok(page(items, len(items)))
 

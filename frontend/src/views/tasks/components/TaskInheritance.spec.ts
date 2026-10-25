@@ -30,7 +30,7 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
       source: 'both',
     },
     agent: null,
-    prompt: null,
+    packPrompt: null,
     materials: [],
     ...overrides,
   }
@@ -151,5 +151,14 @@ describe('建项目会继承什么', () => {
     const text = document.body.textContent ?? ''
     expect(text).toContain(i18n.global.t('tasks.inheritance.agentNone'))
     expect(text).not.toContain(i18n.global.t('tasks.inheritance.agentSkills'))
+  })
+
+  it('资源包带的那段 prompt 说明它会加给默认队友', () => {
+    setLocale('zh-CN')
+    mount(payload({ packPrompt: '先写测试再写实现' }))
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.packPrompt'))
+    expect(text).toContain('先写测试再写实现')
   })
 })

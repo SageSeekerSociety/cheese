@@ -115,7 +115,6 @@
     "needsReview": "An admin reviews it after publishing",
     "publish": "Publish",
     "teaching": {
-      "subtitle": "Applies to projects created from this challenge",
       "title": "AI teammate guidance"
     },
     "useTemplate": "Use template",
@@ -150,7 +149,8 @@
       "failed": "\"{name}\" could not be published",
       "separator": "; ",
       "removeFailed": "Could not delete"
-    }
+    },
+    "starterNotSent": "The task is published, but the starter code wasn't added: {error}. Upload it again on the edit page"
   },
   "tasks": {
     "allTopics": "All tags",

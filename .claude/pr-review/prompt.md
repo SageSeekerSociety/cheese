@@ -127,7 +127,12 @@ What you have to know about running it:
   topology line is what stops it, and what it produces then is a **partial**
   result: the groups that finished, with their findings, and the rest marked
   `failed` as `timeout`. A partial result is a result — use it, and say in the
-  summary which files it never got to.
+  summary which files it never got to. The run carries a token budget as well
+  (the script's default, about twice the largest honest run measured here), and
+  a group cut by it ends `failed` as `budget` the same way. Leave it alone
+  unless the change is much larger or smaller than that measurement: it is a
+  brake on a runaway, not a spend policy, and lowering it turns a large change
+  into a partial review rather than a cheaper one.
 - **A failed run is not a finding.** If the script exits non-zero, or every
   selected item ends `failed`, the review did not happen: say so in the
   summary, put the files under Not covered, and hand the card in with no
@@ -138,6 +143,14 @@ What you have to know about running it:
 
 OCR reports findings with a file, a line range, a category and a severity of
 its own (`critical`/`high`/`medium`/`low`). That is not this repo's bar.
+
+**Precomputed facts.** The "Precomputed facts" section below is not OCR's — it
+was computed at the pinned commit and is the one thing OCR cannot see: which
+public symbols the change adds or drops, where else those names are referenced,
+which of them are now orphaned (a name whose only remaining hit is its own
+definition), and the numbers the PR body states, recomputed. Read it before
+judging. An orphan is the shape of a contract broken across files, and a number
+in the PR body that does not recompute is a claim candidate for step 5.
 
 For each finding, decide whether it is a `blocker` or a `major` here — what
 must be fixed before this merges — and drop the rest. A `medium` from OCR is

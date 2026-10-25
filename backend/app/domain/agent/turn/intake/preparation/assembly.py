@@ -460,7 +460,11 @@ async def prepare(
         teaching=teaching,
         stages=stages,
         task_package=task_package,
-        skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
+        skill_bodies=await carried_bodies(
+            session,
+            topic,
+            carried_skills(agent, topic, teaching.teaching.skills if teaching else ()),
+        ),
         turn_images=turn_images,
         untitled=untitled,
     )

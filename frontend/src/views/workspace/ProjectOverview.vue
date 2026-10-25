@@ -5,7 +5,7 @@ import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
-import type { ChallengeDeadline, ChallengeStages } from '@/views/workspace/ProjectOverviewView.vue'
+import type { ChallengeDeadline, ChallengeStages, ProjectStarter } from '@/views/workspace/ProjectOverviewView.vue'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,6 +25,7 @@ import {
 } from '@/api'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { uploadLibraryFile } from '@/lib/libraryApi'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { TASK_FOLDER } from '@/lib/taskRevision'
@@ -90,6 +91,12 @@ const challengeStages = computed<ChallengeStages | null>(() => {
     })),
     statuses: rows.map((r) => r.status),
   }
+})
+// 代码仓库从题目的起始代码开始的：第几版、放好了没有，没放成的那句原因按读的人的语言写。
+const starter = computed<ProjectStarter | null>(() => {
+  const s = project.data.value?.starter
+  if (!s) return null
+  return { revision: s.revision, state: s.state, reason: renderNoticeMessage(s.error, '') }
 })
 // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(
@@ -196,6 +203,7 @@ function allTasks() {
     :overview-text="overviewText"
     :challenge-deadline="challengeDeadline"
     :challenge-stages="challengeStages"
+    :starter="starter"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"

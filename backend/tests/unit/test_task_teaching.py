@@ -166,6 +166,60 @@ def test_the_space_and_the_task_are_both_in_force() -> None:
     assert got.teaching_source == "both"
 
 
+def test_a_task_giving_only_skills_keeps_the_spaces_guidance_whole() -> None:
+    """Skills are not guidance: a 题目 that gives skills and says nothing else
+    leaves the space's requirements, goals and private guidance in force."""
+    space = {
+        "system_prompt": "空间的要求",
+        "learning_goals": ["写出循环"],
+        "private_prompt": "参考答案",
+    }
+    got = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"skills": ["wolfram"]}}),
+        project=_project(),
+    ).teaching
+
+    assert got.system_prompt == "空间的要求"
+    assert got.learning_goals == ["写出循环"]
+    assert got.private_prompt == "参考答案"
+    assert got.skills == ["wolfram"]
+    section = teaching_section(TeachingContext(course=None, teaching=got)) or ""
+    assert "空间的要求" in section
+
+
+def test_a_blank_default_teammate_on_a_task_inherits_the_categorys() -> None:
+    """A blank `default_role` (what 「继承」 stored) says nothing: the level
+    above stands."""
+    got = resolve(
+        category=_category(default_role="fullstack-engineer"),
+        task=_task({"default_role": ""}),
+    )
+
+    assert got.default_role == "fullstack-engineer"
+
+
+def test_the_skills_of_the_space_and_the_task_are_both_carried() -> None:
+    """Skills ride the guidance: the space's and the 题目's are both in force,
+    each named once, and a level with only skills is still a configuration."""
+    got = resolve(
+        space=_space({"skills": ["documents"]}),
+        task=_task({"teaching": {"skills": ["wolfram", "documents", "  "]}}),
+        project=_project(),
+    )
+
+    assert got.teaching.skills == ["documents", "wolfram"]
+    assert got.teaching_source == "both"
+
+
+def test_a_task_with_only_skills_adds_no_guidance_section() -> None:
+    """The skills reach the agent as skills; the 辅导学生 section has nothing to
+    say for them, so it is not there at all."""
+    context = TeachingContext(course=None, teaching=Teaching(skills=["wolfram"]))
+
+    assert teaching_section(context) is None
+
+
 def test_a_task_that_picks_no_way_of_helping_keeps_the_spaces() -> None:
     got = resolve(
         space=_space(GUIDE),
@@ -436,13 +490,17 @@ def test_applying_the_default_role_leaves_the_other_keys_alone() -> None:
     assert task.protocol_override["teaching"] == {"current_week": 3}
     assert task.protocol_override["shell"] == "course"
 
-    # 空串是一次写（明说「不要默认队友」），不是「没写」。
-    apply_task_default_role(task, "")
-    assert task.protocol_override["default_role"] == ""
-
-    # None 才是「没写」：不改动已经存下的那一格。
+    # None 是「没写」：不改动已经存下的那一格。
     apply_task_default_role(task, None)
-    assert task.protocol_override["default_role"] == ""
+    assert task.protocol_override["default_role"] == "academic-research"
+
+    # 空串是「继承」：清掉这道题自己的，项目集那份重新生效。
+    apply_task_default_role(task, "")
+    assert "default_role" not in task.protocol_override
+    assert task.protocol_override["shell"] == "course"
+    assert (
+        resolve(category=_category(default_role="fullstack-engineer"), task=task)
+    ).default_role == "fullstack-engineer"
 
 
 # ── 出题人私有指导 (#944 第二种可见性) ─────────────────────────────────────────

@@ -7,10 +7,11 @@
  */
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
+import { computed, h, reactive, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PanelPreviewView from './PanelPreviewView.vue'
@@ -22,12 +23,34 @@ import { previewBundles } from '@/test/panelBundles'
 // 会发的那一个事件：工作簿带工作表名，CSV 没有（和 `PreviewSheet` 一致）。
 vi.mock('./preview/PreviewSheet.vue', () => ({
   default: {
-    props: ['data', 'kind'],
-    emits: ['cell'],
-    template:
-      '<div data-testid="sheet">' +
-      "<button @click=\"$emit('cell', { address: 'B7', value: '1200', sheet: kind === 'csv' ? '' : 'Sheet1' })\">cell</button>" +
-      '</div>',
+    props: ['data', 'kind', 'marks', 'activeMark'],
+    emits: ['cell', 'mark'],
+    setup(
+      props: { kind?: string; marks?: readonly { id: string }[]; activeMark?: string | null },
+      { emit }: { emit: (e: string, p?: unknown) => void }
+    ) {
+      return () =>
+        h('div', { 'data-testid': 'sheet' }, [
+          h(
+            'button',
+            {
+              onClick: () =>
+                emit('cell', {
+                  address: 'B7',
+                  value: '1200',
+                  sheet: props.kind === 'csv' ? '' : 'Sheet1',
+                }),
+            },
+            'cell'
+          ),
+          h('span', {
+            'data-testid': 'marks',
+            'data-marks': JSON.stringify(props.marks ?? []),
+            'data-active': props.activeMark ?? '',
+          }),
+          h('button', { 'data-testid': 'open-mark', onClick: () => emit('mark', props.marks?.[0]?.id ?? '') }, 'mark'),
+        ])
+    },
   },
 }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
@@ -82,6 +105,7 @@ function props(overrides: Record<string, unknown> = {}) {
     docRendererMissing: false,
     docIdentity: context,
     docSnapshot: { bytes: docBytes, identity: context, sourceVersion: context.version },
+    slideContext: context,
     ...overrides,
   }
 }
@@ -170,4 +194,101 @@ it('提问出口不收（房间里没有芝士）时，这句话照旧作为一�
   const [payload] = ui.emitted().locate as { message: string }[][]
   expect(payload[0].message).toContain('B7')
   expect(payload[0].message).toContain('这个数字按季度摊')
+})
+
+/** 评论那一包：几条线程各挂一个锚点，栏关着（点标记才该把它打开）。 */
+function commentsWith(anchors: (Record<string, unknown> | null)[], state: (at: number) => string = () => 'open') {
+  const open = ref(false)
+  return {
+    target: computed(() => ({ topicId: 'room', path: 'budget.xlsx', version: 'v7' })),
+    open,
+    toggle: () => (open.value = !open.value),
+    author: 'me',
+    threads: {
+      state: reactive({
+        threads: anchors.map((anchor, at) => ({
+          comment: {
+            id: `c${at + 1}`,
+            author: 'li',
+            content: `第 ${at + 1} 条`,
+            anchor_quote: null,
+            anchor,
+            created_at: '',
+          },
+          revision: 1,
+          state: state(at),
+          replies: [],
+        })),
+        activity: {},
+        errors: {},
+        busy: false,
+        unknown: null,
+      }),
+      actions: {},
+      refresh: async () => {},
+    },
+    post: async () => {},
+    nameOf: (h: string) => h,
+    avatarOf: () => '',
+  }
+}
+
+/** 递给表格查看器的那几条标记（桩把它们写成 JSON 了）。 */
+function marksOn(ui: ReturnType<typeof mount>): { id: string; sheet: string; address: string }[] {
+  const el = ui.container.querySelector('[data-testid="marks"]') as HTMLElement | null
+  return el ? JSON.parse(el.dataset.marks ?? '[]') : []
+}
+
+const SHEET_CELL = {
+  kind: 'sheet-cell',
+  path: 'budget.xlsx',
+  source: 'committed',
+  task_id: 'task',
+  version: 'v7',
+  sheet: 'Sheet1',
+  address: 'B7',
+  value: '1200',
+}
+
+it('只把这版上没解决的格子评论交给表格，别的锚点和别的版本都不给', async () => {
+  // 三条：一条是这一版上的格子评论（给），一条记在上一版（不给——B7 在那一版可能是
+  // 别的东西），一条是别的种类的锚点（不给：它说的可能是正文里一句话，画到格子上是
+  // 凭空多出来的东西）。
+  const comments = commentsWith([
+    SHEET_CELL,
+    { ...SHEET_CELL, version: 'v6' },
+    { kind: 'text-range', version: 'v7', text: '一句话', heading: null, prefix: '', suffix: '' },
+  ])
+  const ui = mount(undefined, { comments: comments as never })
+  await waitFor(() => expect(marksOn(ui)).toHaveLength(1))
+  expect(marksOn(ui)[0]).toEqual({ id: 'c1', sheet: 'Sheet1', address: 'B7' })
+})
+
+it('屏上还是上一版的字节时不画：新一版记下的地址摆在旧一版上会指到别处', async () => {
+  // 换版时文件元数据先变，屏幕上的字节还在路上（或者读不出来，旧的那份就那样留着）。
+  // 照文件那一版放行的话，新一版记下的 B7 会画在旧一版的格子上。
+  const comments = commentsWith([SHEET_CELL])
+  const ui = mount(undefined, { comments: comments as never, slideContext: undefined })
+  await Promise.resolve()
+  expect(marksOn(ui)).toEqual([])
+})
+
+it('已解决的评论不交给表格：那一条说完了，不该还压在格子上', async () => {
+  const comments = commentsWith([SHEET_CELL], () => 'resolved')
+  const ui = mount(undefined, { comments: comments as never })
+  await Promise.resolve()
+  expect(marksOn(ui)).toEqual([])
+})
+
+it('点了格子上某一颗标记，把评论栏开在那一条上', async () => {
+  const comments = commentsWith([SHEET_CELL])
+  const ui = mount(undefined, { comments: comments as never })
+  await waitFor(() => expect(marksOn(ui)).toHaveLength(1))
+  expect(comments.open.value).toBe(false)
+
+  await fireEvent.click(ui.getByTestId('open-mark'))
+
+  await waitFor(() => expect(comments.open.value).toBe(true))
+  const el = ui.container.querySelector('[data-testid="marks"]') as HTMLElement
+  await waitFor(() => expect(el.dataset.active).toBe('c1'))
 })

@@ -17,13 +17,20 @@ const props = withDefaults(
     /** 这份字节是什么。CSV/TSV 是一串文本，工作簿是一个 zip，读法没有一处相同，
      *  而字节本身看不出区别 —— 后缀只有调用方知道（`lib/fileKind.sheetKindOf`）。 */
     kind?: 'workbook' | 'csv' | 'tsv' | 'ods'
+    /** 这一份文件上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。
+     *  地址在这一版里落不到任何一格上时自然不画（行列变了、表被删了）。 */
+    marks?: readonly { id: string; sheet: string; address: string }[]
+    /** 现在打开的是哪一条：它那一格画得显眼些。 */
+    activeMark?: string | null
   }>(),
-  { kind: 'workbook' }
+  { kind: 'workbook', marks: () => [], activeMark: null }
 )
 
 const emit = defineEmits<{
   /** 读者点了一个格子，带上它的地址和当前的值。 */
   (e: 'cell', payload: { address: string; value: string; sheet: string }): void
+  /** 读者点了某一格上的评论标记：把那一串评论打开。 */
+  (e: 'mark', id: string): void
 }>()
 
 type Sheet = {
@@ -65,6 +72,35 @@ const sourceText = ref('')
 let generation = 0
 
 const active = computed<Sheet | null>(() => sheets.value[activeIndex.value] ?? null)
+
+/** 一格在这一版里的地址：列名 + 行号，和工作表、和 `openpyxl` 用的是同一套。 */
+function addressAt(rowIndex: number, colIndex: number): string {
+  return `${columnName(colIndex)}${rowIndex + 1}`
+}
+
+/** 正在看的这张表上那些评论标记，按地址索引。
+ *
+ *  按工作表名先筛一道：地址只在它自己那张表里有意义，一本表里好几张表都可能有 `B7`。
+ *  地址在这一版里落不到任何一格上时（表更短了、或者那一格没画出来）自然不画 ——
+ *  和页上那几颗同一条，查看器不猜它挪到哪去了。
+ *
+ *  同一格上有多条时都摆出来（各自的圆点挨在一起），最后一个是正打开的那条：它画得
+ *  显眼、也压在最上面，点到的就是读者正看着的那一条。 */
+const marksByAddress = computed(() => {
+  const name = active.value?.name ?? ''
+  const byAddress = new Map<string, { id: string }[]>()
+  for (const mark of props.marks ?? []) {
+    if (mark.sheet !== name) continue
+    const on = byAddress.get(mark.address.toUpperCase())
+    if (on) on.push({ id: mark.id })
+    else byAddress.set(mark.address.toUpperCase(), [{ id: mark.id }])
+  }
+  for (const [address, on] of byAddress) {
+    const active = on.filter((m) => m.id === props.activeMark)
+    if (active.length) byAddress.set(address, [...on.filter((m) => m.id !== props.activeMark), ...active])
+  }
+  return byAddress
+})
 
 /** 0→A、25→Z、26→AA：电子表格的列名，和 openpyxl 用的是同一套。 */
 function columnName(index: number): string {
@@ -313,7 +349,7 @@ const canShowSource = computed(() => props.kind === 'csv' || props.kind === 'tsv
 function choose(rowIndex: number, colIndex: number) {
   const sheet = active.value
   if (!sheet) return
-  const address = `${columnName(colIndex)}${rowIndex + 1}`
+  const address = addressAt(rowIndex, colIndex)
   selected.value = address
   emit('cell', {
     address,
@@ -370,10 +406,25 @@ watch(
                 v-for="c in active.width"
                 :key="c"
                 class="ps__cell"
-                :class="{ 'ps__cell--on': selected === `${columnName(c - 1)}${r + 1}` }"
+                :class="{ 'ps__cell--on': selected === addressAt(r, c - 1) }"
                 @click="choose(r, c - 1)"
               >
-                {{ cellText(row[c - 1] ?? '') }}
+                <span class="ps__text">{{ cellText(row[c - 1] ?? '') }}</span>
+                <!-- Comment marks: one dot per thread whose sheet-cell lands on this cell.
+                     Drawn inside the cell so it moves with the cell when the table
+                     re-renders. -->
+                <button
+                  v-for="(mark, i) in marksByAddress.get(addressAt(r, c - 1)) ?? []"
+                  :key="mark.id"
+                  type="button"
+                  class="ps__cmt"
+                  :class="{ 'is-active': mark.id === activeMark }"
+                  :data-comment-mark="mark.id"
+                  :style="{ right: `${1 + i * 11}px` }"
+                  :aria-label="t('work.room.comments.commentHere')"
+                  :title="t('work.room.comments.commentHere')"
+                  @click.stop="emit('mark', mark.id)"
+                />
               </td>
             </tr>
           </tbody>
@@ -515,17 +566,43 @@ watch(
   max-width: 320px;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
+  position: relative;
 }
 .ps__cell:hover {
   background: var(--fill);
 }
-/* 选中的格子用一圈中性描边，不用琥珀：琥珀留给这一格里唯一的主操作（发送）。
+/* 文字自己截断，不靠格子的 overflow：格子改成相对定位之后，标记要能露在格子边上。 */
+.ps__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 选中的格子用一圈中性描边，不用琥珀：琥珀留给真正有评论的那几格。
    这也正好是电子表格本来的样子——一个粗边框，不是一块底色。 */
 .ps__cell--on {
   box-shadow: inset 0 0 0 2px var(--ink);
+}
+/* 有人在那一格上评过：右上角一颗琥珀的小点，点得到（评论栏靠它打开）。和页上那几颗
+   同一种形状，只是挂在格子的角上——表格里一格的坐标本来就是一个地址，没有「页内比例」
+   那回事。 */
+.ps__cmt {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.ps__cmt:hover,
+.ps__cmt.is-active {
+  background: var(--accent);
 }
 
 .ps__tabs {

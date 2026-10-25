@@ -10,6 +10,7 @@ import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
+import errorHandler from '@/services/ErrorHandler'
 
 export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskData>) {
   const { taskData, loadTaskData } = taskDataModule
@@ -85,8 +86,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       events.emit('reload-joined-teams')
       await router.push(`/projects/${result.project.id}`)
     } catch (error) {
-      toast.error(t('tasks.participation.teamClaimFailed'))
-      console.error('Failed to join task as team:', error)
+      // 服务端说了为什么（例如项目正在建、过一会儿再试），就说那一句。
+      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.teamClaimFailed') })
     }
   }
 
@@ -115,7 +116,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       await loadTaskData()
       await router.push(`/projects/${result.project.id}`)
     } catch (error) {
-      toast.error(t('tasks.participation.claimFailed'))
+      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.claimFailed') })
     }
   }
 

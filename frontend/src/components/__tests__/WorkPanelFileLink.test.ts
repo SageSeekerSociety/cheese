@@ -47,6 +47,9 @@ vi.mock('../CodeEditor.vue', () => ({
 vi.mock('../panels/preview/PreviewPages.vue', () => ({
   default: { name: 'PreviewPages', props: ['data'], template: '<div class="stub-pages" />' },
 }))
+// 分页文档开在预览格里时会读这一份的评论串（页上要画已有的评论标记）。这些用例问的
+// 是文件落在哪一格，不是评论，给一份空的。
+vi.mock('@/api/fileThreads', () => ({ listFileThreads: async () => ({ data: [], total: 0 }) }))
 
 const readPreviewFile = vi.fn()
 const listFiles = vi.fn()

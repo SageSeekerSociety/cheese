@@ -444,23 +444,33 @@ def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestCli
     assert holder["skills"] == expected
 
 
-def test_the_screen_shows_the_packs_prompt_and_skills(client: TestClient):
-    """题目包 (`resource_pack`) 里的 prompt 与 skill 名字，在建项目预览里也该看到
-    —— 「看得见」与「真的会落进配置」各自要有证据（后者见下一条）。"""
+def test_the_screen_shows_the_skills_every_teammate_will_carry(client: TestClient):
+    """题目给项目里每个 AI 队友的技能（`teaching.skills`），领题之前就看得到。"""
     task_id = seed_task_with_protocol(
         client,
-        resource_pack={"prompt": "先写测试再写实现", "skills": ["documents", "figma"]},
-        default_role="academic-research",
+        override={"teaching": {"skills": ["documents", "figma"]}},
     )
-    token = seed_user(client, "inheritance-pack-viewer")
+    token = seed_user(client, "inheritance-skills-viewer")
 
     data = _get(client, task_id=task_id, token=token)
 
-    assert data["prompt"] == "先写测试再写实现"
-    # 题目指定的 skill 与默认队友预设带的技能合在一格，去重。
-    assert "documents" in data["agent"]["skills"]
-    assert "figma" in data["agent"]["skills"]
-    assert data["agent"]["skills"].count("documents") == 1
+    assert data["teaching"]["skills"] == ["documents", "figma"]
+    assert data["teaching"]["source"] == "task"
+
+
+def test_the_screen_shows_the_pack_prompt_the_default_teammate_gets(
+    client: TestClient,
+):
+    """A 资源包's prompt is added to the default teammate of every project built
+    from the 题目, so the screen says it is in force before the 题目 is taken."""
+    task_id = seed_task_with_protocol(
+        client, resource_pack={"prompt": "先写测试再写实现"}
+    )
+    token = seed_user(client, "inheritance-pack-prompt-viewer")
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["packPrompt"] == "先写测试再写实现"
 
 
 def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
@@ -477,33 +487,16 @@ def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
     assert "privatePrompt" not in data["teaching"]
 
 
-def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
-    client: TestClient,
-):
-    """题目包自带的 prompt + skill 名字，建项目时落进默认队友的配置（#944 第二件）。
-
-    机制是 `_accept_task_protocol` → `set_type` / `configure` 同一条 configure：技能
-    并进 `configuration.skills`（去重），prompt 并进 `configuration.body`。
-    """
+def _default_teammate_body(client: TestClient, task_id: int, handle: str) -> str:
+    """Build a project from ``task_id`` for an approved participant and read
+    its default teammate's persona."""
     from app.domain.agent_instance.adapters import default_teammate
     from app.domain.agent_instance.models import AgentInstance
-    from app.domain.agent_type.library import preset_types
     from app.domain.project.services import ProjectService
     from app.domain.task.adapters import TaskTerms
     from app.domain.task.models import TaskMembership
     from app.domain.user.repositories import UserRepository
 
-    handle = "edu-pack-owner"
-    preset_skills = list(preset_types()["academic-research"].skills)
-    task_id = seed_task_with_protocol(
-        client,
-        resource_pack={
-            "prompt": "先写测试再写实现",
-            # documents 与预设重叠（考去重），figma 是题目额外给的。
-            "skills": ["documents", "figma"],
-        },
-        default_role="academic-research",
-    )
     seed_user(client, handle)
     holder: dict = {}
 
@@ -540,12 +533,28 @@ def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
             )
             assert instance is not None
             holder["body"] = instance.configuration.get("body") or ""
-            holder["skills"] = list(instance.configuration.get("skills") or [])
             await session.commit()
 
     asyncio.run(_build())
+    return holder["body"]
 
-    assert "先写测试再写实现" in holder["body"]
-    assert set(holder["skills"]) == {*preset_skills, "figma"}
-    assert holder["skills"].count("documents") == 1
-    assert "figma" in holder["skills"]
+
+def test_a_project_built_from_a_task_whose_pack_has_a_prompt_gets_it(
+    client: TestClient,
+):
+    """Until the contract migration moves a 资源包's prompt into the 题目's
+    guidance, a project built from the 题目 gets it at the end of its default
+    teammate's persona, with a preset and without one."""
+    with_preset = seed_task_with_protocol(
+        client,
+        resource_pack={"prompt": "先写测试再写实现"},
+        default_role="academic-research",
+    )
+    bare = seed_task_with_protocol(client, resource_pack={"prompt": "先写测试再写实现"})
+
+    assert _default_teammate_body(client, with_preset, "pack-prompt-preset").endswith(
+        "\n\n先写测试再写实现"
+    )
+    assert (
+        _default_teammate_body(client, bare, "pack-prompt-bare") == "先写测试再写实现"
+    )

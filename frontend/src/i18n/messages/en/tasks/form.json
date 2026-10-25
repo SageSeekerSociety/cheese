@@ -25,8 +25,6 @@
     "summaryDomains": "Only {names}",
     "summaryNoRealName": "No real name",
     "summaryRealName": "Real name required",
-    "summaryTeachingDefault": "AI teammates follow the space's guidance",
-    "summaryTeachingOwn": "This task adds AI teammate guidance",
     "title": "More settings"
   },
   "name": "Name",
@@ -136,5 +134,11 @@
     "remove": "Remove stage {n}",
     "nameRequired": "Every stage needs a name",
     "add": "Add stage"
+  },
+  "brief": "Brief",
+  "parts": {
+    "ai": "AI settings",
+    "aiHint": "For projects built from this task",
+    "publish": "Publishing"
   }
 }

@@ -24,6 +24,9 @@
   "draftStageAmbiguous": "有不止一个阶段叫「{name}」，写它的 id",
   "draftStageRemovedRows": "去掉的阶段带走了这些提交项和评分要点：{names}",
   "draftTagChoice": "标签 {unknown} 不在这个空间里，可用的有：{names}",
+  "draftMaterialChoice": "资料 {unknown} 不在这个空间的资料库里，可选的有：{names}",
+  "draftSkillChoice": "技能 {unknown} 不在可选的技能里，可选的有：{names}",
+  "draftTeammateChoice": "默认队友只能是：{names}",
   "draftTaskNotYours": "只有出题人和空间管理员可以修改这道题",
   "draftTemplateChoice": "模板只能是这个空间已有的：{names}",
   "draftTooLarge": "草稿内容太长，无法保存",
@@ -66,5 +69,9 @@
   "taskTitleTooLong": "标题在侧栏一行里放不下：一行约 {limit} 个半角字符宽（一个汉字算 2 个），这个标题是 {now} 个。写短一些再试一次。",
   "teammateTaskByTeammate": "这里只供 AI 队友创建任务",
   "teammateTaskHereOnlyInThread": "只有支线可以原地转为任务",
-  "teammateTaskSummaryRequired": "另开任务时要写明它要做什么"
+  "teammateTaskSummaryRequired": "另开任务时要写明它要做什么",
+  "taskStarterHasItsOwnPlace": "{name} 是这道题的起始代码，在「起始代码」一栏里替换或删除",
+  "starterRemovedBeforePush": "出题人在放进仓库之前删掉了这份起始代码",
+  "starterPushGaveUp": "代码仓库服务一直没有接收起始代码，已经停止尝试",
+  "starterMainTaken": "起始代码放进去之前，代码仓库的 main 分支已经有了别的提交，题目第 {revision} 版的起始代码没有放进去"
 }
