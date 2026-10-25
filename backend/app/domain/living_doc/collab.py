@@ -67,10 +67,27 @@ def document_name(document_id: uuid.UUID) -> str:
     return f"doc:{document_id}"
 
 
+#: A room file being edited together: ``roomfile:<the RoomFileCollab row's id>``.
+#: The service treats a name as opaque, so the two kinds coexist on one
+#: connection; only this backend reads the prefix.
+ROOM_FILE_PREFIX = "roomfile"
+
+
+def room_file_name(collab_id: uuid.UUID) -> str:
+    return f"{ROOM_FILE_PREFIX}:{collab_id}"
+
+
 def document_of(name: str) -> uuid.UUID:
     prefix, _, ident = name.partition(":")
     if prefix != "doc":
         raise ValueError(f"not a document: {name}")
+    return uuid.UUID(ident)
+
+
+def room_file_collab_of(name: str) -> uuid.UUID:
+    prefix, _, ident = name.partition(":")
+    if prefix != ROOM_FILE_PREFIX:
+        raise ValueError(f"not a room file's collab state: {name}")
     return uuid.UUID(ident)
 
 
@@ -85,15 +102,18 @@ async def document_named(session: AsyncSession, name: str) -> Document | None:
 
 def sign_ticket(
     *,
-    document_id: uuid.UUID,
+    name: str,
     handle: str,
     agent: bool,
     read_only: bool,
     suggest_only: bool,
 ) -> str:
+    """A ticket opening one live document, under whichever name it goes by
+    (``doc:<id>``, ``roomfile:<id>``). The service only checks that the name
+    the browser asks for is the one this ticket was cut for."""
     return jwt.encode(
         {
-            "doc": document_name(document_id),
+            "doc": name,
             "sub": handle,
             "agent": agent,
             "ro": read_only,

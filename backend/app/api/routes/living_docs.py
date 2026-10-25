@@ -546,7 +546,7 @@ async def document_ticket(
         {
             "document": collab.document_name(reached.doc.id),
             "ticket": collab.sign_ticket(
-                document_id=reached.doc.id,
+                name=collab.document_name(reached.doc.id),
                 handle=reached.actor.handle,
                 agent=agent,
                 read_only=read_only,
