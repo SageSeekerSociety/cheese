@@ -243,6 +243,20 @@ it('一片的内容太长就截在上限，两个角照旧指得回整片', asyn
   expect(payload.text).toHaveLength(2000)
 })
 
+it('截在上限时不把一个 emoji 劈成半个', async () => {
+  // 按 UTF-16 下标切会把代理对切开，屏幕上那个字变成一个问号。
+  const { container, emitted } = mount(utf8(`表情\n${'😀'.repeat(2500)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ text: string }]
+  expect([...payload.text]).toHaveLength(2000)
+  expect(payload.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+})
+
 it('按在同一格上松开是单击，不是一片', async () => {
   const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
   await waitFor(() => expect(grid(container).length).toBe(2))

@@ -132,9 +132,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function onSheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
     const area = `${payload.start}:${payload.end}`
     const where = payload.sheet ? `${payload.sheet}!${area}` : area
-    // 一片全是空格子时摊平的结果是几个制表符和换行：按空白判，和 `MessageQuote` 那条同一条。
-    const preview = payload.text.slice(0, 200)
-    openLocator(where, preview.trim() ? preview : t('work.room.preview.emptyCell'), where)
+    // 一片全是空格子时摊平的结果是几个制表符和换行，看着不是空的却什么也没有：按空白判，
+    // 和 `MessageQuote` 那条同一条。判的是整片的内容，不是截出来那 200 字——开头一片空格、
+    // 右下角有内容的表不能被说成空的。
+    openLocator(where, payload.text.trim() ? payload.text.slice(0, 200) : t('work.room.preview.emptyCell'), where)
     quoted.sheetRange(payload)
   }
 

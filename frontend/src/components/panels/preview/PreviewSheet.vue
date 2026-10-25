@@ -402,9 +402,11 @@ function choose(rowIndex: number, colIndex: number) {
   })
 }
 
-/** 换一张工作表：上一张表上圈的那一片不带过去，`B2:D4` 在另一张表里是另外几格。 */
+/** 换一张工作表：上一张表上圈的那一片、点的那一格都不带过去，`B2:D4` 在另一张表里
+ *  是另外几格。 */
 function switchSheet(index: number) {
   activeIndex.value = index
+  selected.value = ''
   dragging.value = false
   dragStart.value = null
   dragEnd.value = null
@@ -442,25 +444,36 @@ function endDrag() {
   const start = addressAt(range.row1, range.col1)
   const end = addressAt(range.row2, range.col2)
   // 摊平这一片的内容：一行一行地接，行与行之间用换行、格与格之间用制表符——和从表格
-  // 里复制出来的那一份一样，受话人一眼看得见里面是什么。上限截在最外面，免得一片
-  // 几千行跟着消息跑。
-  const lines: string[] = []
-  for (let row = range.row1; row <= range.row2; row += 1) {
-    const cells: string[] = []
-    for (let col = range.col1; col <= range.col2; col += 1) {
-      cells.push(sheet.rows[row]?.[col] ?? '')
+  // 里复制出来的那一份一样，受话人一眼看得见里面是什么。
+  //
+  // 一边接一边数，够了就停：上限不能等整片拼完再截。格子里存的是整格（只有画出来时才
+  // 截短），一本几十万格的表按整片拼出来就是几百 MB，为一个跟着消息走的摘要不值当。
+  // 数的是码点，不是 UTF-16 下标：一个 emoji 占两个下标，混着算的话「两千字」在上限上
+  // 按哪种说法都对不上；按码点切也不会把一个 emoji 劈成半个。
+  const parts: string[] = []
+  let used = 0
+  /** 再接一段；接得下整段就接整段，接不下只接开头那一点。够长了答 false。 */
+  function append(piece: string): boolean {
+    const room = RANGE_TEXT_CHARS - used
+    if (room <= 0) return false
+    const points = Array.from(piece)
+    if (points.length <= room) {
+      parts.push(piece)
+      used += points.length
+      return true
     }
-    lines.push(cells.join('\t'))
+    parts.push(points.slice(0, room).join(''))
+    used += room
+    return false
   }
-  // 一整格就超过上限时按整格算会漏过去，所以截在拼好之后：`slice` 不会把一个百万字的
-  // 格子原样带出去。
-  const flattened = lines.join('\n')
-  emit('range', {
-    sheet: sheet.name,
-    start,
-    end,
-    text: flattened.length > RANGE_TEXT_CHARS ? flattened.slice(0, RANGE_TEXT_CHARS) : flattened,
-  })
+  outer: for (let row = range.row1; row <= range.row2; row += 1) {
+    if (row > range.row1 && !append('\n')) break
+    for (let col = range.col1; col <= range.col2; col += 1) {
+      if (col > range.col1 && !append('\t')) break outer
+      if (!append(sheet.rows[row]?.[col] ?? '')) break outer
+    }
+  }
+  emit('range', { sheet: sheet.name, start, end, text: parts.join('') })
   selected.value = ''
   // 两个角留着：松手之后读者还得看得见自己刚选的是哪一片，和单击留下的那个框一样。
   // 下一次按下、或者点某一格（`choose`）时才换掉。

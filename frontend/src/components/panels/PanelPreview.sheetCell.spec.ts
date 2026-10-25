@@ -61,6 +61,22 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
             'data-marks': JSON.stringify(props.marks ?? []),
             'data-active': props.activeMark ?? '',
           }),
+          // 一片全是空格子摊平出来的那个形状：几个制表符和换行，不是空串。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'B1', text: '\t\n' }),
+            },
+            'range-empty'
+          ),
+          // 开头 200 字是空格子、内容在后面：不能被说成空的。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'B3', text: '\t\n'.repeat(150) + '1200' }),
+            },
+            'range-blank-start'
+          ),
           h('button', { 'data-testid': 'open-mark', onClick: () => emit('mark', props.marks?.[0]?.id ?? '') }, 'mark'),
         ])
     },
@@ -206,6 +222,22 @@ it('一片的评论标记画在它左上角那一格', async () => {
   const ui = mount(undefined, { comments: comments as never })
   await waitFor(() => expect(marksOn(ui)).toHaveLength(1))
   expect(marksOn(ui)[0]).toEqual({ id: 'c1', sheet: 'Sheet1', address: 'B2' })
+})
+
+it('一片全是空格子时说「空」，不说几个看不见的制表符', async () => {
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-empty'))
+
+  expect(ui.getByText('A1:B1')).toBeTruthy()
+  expect(ui.getByText('（空）')).toBeTruthy()
+})
+
+it('开头一片空格、内容在后面的一片不算空', async () => {
+  // 判空要判整片的内容，不是框里显示的那 200 字：否则这张表会被说成「（空）」。
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-blank-start'))
+
+  expect(ui.queryByText('（空）')).toBeNull()
 })
 
 it('CSV 没有工作表名，引用里 sheet 是空串，地址就是它自己', async () => {
