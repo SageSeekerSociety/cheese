@@ -39,8 +39,10 @@ from app.domain.agent.file_edits import announce_editor_save
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.living_doc import collab, room_file_collab
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
@@ -530,6 +532,74 @@ async def editor_fetches_file(link: str) -> Response:
         library.read_room_file, target.project_id, target.room_id, target.path
     )
     return _bytes_response(data, target.path.rsplit("/", 1)[-1], content_version(data))
+
+
+@router.get("/topics/{topic_id}/files/collab")
+async def open_live_editor(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A ticket that opens this room file in the live editor, where several
+    people edit it at once.
+
+    The counterpart of `open_in_editor` for the office files: same shape, same
+    gate (opening a room is enough to read; changing it needs
+    `edit_content`). The file gets a live state made for it on first open, and
+    its id is what the collaboration service names the document by.
+
+    Only text is served here: the office kinds go through OnlyOffice, whose
+    edits land as whole-file saves, not as a shared live document. A file that
+    is not there, or is not text, is refused with a code the screen words.
+    """
+    place, actor = await _in_room(db, resolver, topic_id)
+    clean = _room_path(path)
+    if not collab.enabled():
+        return ok({"enabled": False, "reason": "not_configured"})
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, clean
+    ):
+        raise NotFoundError(say("roomFileNotFound"))
+    shown = await asyncio.to_thread(
+        library.read_room_text_file, place.project_id, place.room_id, clean
+    )
+    if shown.get("binary"):
+        return ok({"enabled": False, "reason": "unsupported"})
+    content = shown.get("content")
+    if content is None:
+        # Text that is too large to read is still text: the editor opens it,
+        # the way the office editor does, and the ceiling is the preview's.
+        content = ""
+    can_edit = actor.authenticated and await may(
+        db, place.project_id, actor.handle, Permission.edit_content
+    )
+    agent = await IdentityService(db).is_agent(actor.handle)
+    row = await room_file_collab.open_for(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=clean,
+        content=content,
+    )
+    await db.commit()
+    name = collab.room_file_name(row.id)
+    return ok(
+        {
+            "enabled": True,
+            "document": name,
+            "ticket": collab.sign_ticket(
+                name=name,
+                handle=actor.handle,
+                agent=agent,
+                read_only=not can_edit,
+                suggest_only=False,
+            ),
+            "read_only": not can_edit,
+            "version": shown.get("version"),
+            "content": content,
+        }
+    )
 
 
 #: https://api.onlyoffice.com/docs/docs-api/usage-api/callback-handler/

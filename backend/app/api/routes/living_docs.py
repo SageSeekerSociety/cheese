@@ -53,7 +53,8 @@ from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
 from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc import collab
+from app.domain.library import service as library
+from app.domain.living_doc import collab, room_file_collab
 from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
@@ -72,6 +73,7 @@ from app.domain.mentions import (
     dangling_refs,
     dangling_refs_warning,
 )
+from app.domain.preview import office
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.project_permissions import Permission
@@ -906,9 +908,26 @@ async def _document(db, name: str):
 @internal.get("/documents/{name}")
 async def load_document(name: str, db: DbSession, _: ServiceOnly) -> dict:
     """What the service builds a live document from: the stored Yjs state, or
-    — for a document never opened live — its Markdown, which the service
-    converts and stores back, with the text it exports, before anyone edits
-    it."""
+    — for one never opened live — its Markdown, which the service converts and
+    stores back, with the text it exports, before anyone edits it.
+
+    Two kinds of thing arrive under this one route, told apart by the name:
+    a living document (``doc:<id>``) and a room file being edited together
+    (``roomfile:<id>``). The service treats the name as opaque, so they share
+    a route; only here does the prefix mean anything.
+    """
+    if name.startswith(collab.ROOM_FILE_PREFIX + ":"):
+        row = await room_file_collab.room_file_collab_named(db, name)
+        if row is None:
+            raise NotFoundError(say("roomFileNotFound"))
+        return {
+            "state": base64.b64encode(row.state).decode() if row.state else None,
+            "content": row.content,
+            # Room files version by content hash, not a counter: the service
+            # only echoes this back on a refusal, and a stable handle to the
+            # text is what a reader compares against anyway.
+            "doc_version": 0,
+        }
     doc = await _document(db, name)
     state = await DocumentJournal(db).state(doc.id)
     return {
@@ -945,6 +964,25 @@ async def store_document(
     _: ServiceOnly,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
+    if name.startswith(collab.ROOM_FILE_PREFIX + ":"):
+        row = await room_file_collab.room_file_collab_named(db, name)
+        if row is None:
+            raise NotFoundError(say("roomFileNotFound"))
+        actors = body.actors or ["system"]
+        agent = bool(actors) and await IdentityService(db).is_agent(actors[0])
+        answer = await room_file_collab.store(
+            db,
+            row,
+            state=base64.b64decode(body.state),
+            content=body.content,
+            actors=actors,
+            suggestions=body.suggestions,
+            author_kind="agent" if agent else "human",
+            warm_preview=office.prewarm,
+            file_store=library,
+        )
+        await db.commit()
+        return answer
     doc = await _document(db, name)
     stored = await store(
         db,
