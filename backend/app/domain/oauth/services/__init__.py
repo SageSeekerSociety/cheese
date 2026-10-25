@@ -35,7 +35,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.core.config import settings
+from app.core import origins
+from app.core.config import browser_origin, settings
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.repositories import OAuthConnectionRepository
@@ -55,6 +56,11 @@ from .tokens import (
     open_oauth_token,
     seal_oauth_token,
 )
+
+
+def _sign_in_origin(redirect_url: str) -> str | None:
+    origin = browser_origin(redirect_url)
+    return origin if origins.is_ours(origin) else None
 
 
 class OAuthService:
@@ -131,13 +137,19 @@ class OAuthService:
 
     def get_providers_config(self) -> list[dict]:
         """The providers a person can sign in with; the sign-in page renders
-        every entry as a button."""
+        every entry as a button.
+
+        ``origin`` is where a provider's sign-in has to run: the origin of the
+        callback it is registered with, when that is one of this deployment's
+        (`app.core.origins`). A page on another origin signs in there and has
+        the sign-in handed back (`app.api.routes.app_sign_in`)."""
         self._initialize()
         return [
             {
                 "id": p.config.id,
                 "name": p.config.name,
                 "scope": p.config.scope,
+                "origin": _sign_in_origin(p.config.redirect_url),
             }
             for p in self._providers.values()
         ]

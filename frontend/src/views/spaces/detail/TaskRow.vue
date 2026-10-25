@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 题目列表里的一行。左边是这道题是什么：标题、简介、谁发的、话题；右边是它现在怎样：
-// 状态、领了几个人、什么时候截止。整行点进题目页，列表的筛选跟着带过去。
+// 状态、几个人在做、什么时候截止。整行点进题目页，列表的筛选跟着带过去。
 import type { UserRefTarget } from '@/lib/userRef'
 import type { Task } from '@/types'
 
@@ -25,13 +25,23 @@ const summary = computed(() => splitOrigin(props.task.intro ?? '').summary)
 const publisher = computed(() => props.task.creator.nickname || props.task.creator.username)
 const date = (at: number) => dayjs(at).format(t('tasks.page.dateFormat'))
 
-const mine = computed(() => !!props.task.joined || !!props.task.joinedTeams?.length)
-
-const claimed = computed(() =>
-  props.task.participantLimit > 0
-    ? t('spaces.detail.tasks.row.claimedOf', { n: props.task.participants.total, limit: props.task.participantLimit })
-    : t('spaces.detail.tasks.row.claimed', { n: props.task.participants.total })
+/** 我在这道题上有一份没被拒的申请（个人或所在团队的）。`joined` 已经排除了被拒的；`joinedTeams`
+ *  不看审核，被拒的团队申请也在里面，所以不拿它判。 */
+const mine = computed(() => !!props.task.joined)
+/** 申请通过了才算在做（`submittable` 是服务端按通过的那份算的）；还在等的写「已申请」。 */
+const mineLabel = computed(() =>
+  props.task.submittable ? t('spaces.detail.tasks.row.mine') : t('spaces.detail.tasks.row.applied')
 )
+
+/** 参与的是人还是队，按题目的形式说：团队题数的是队伍。 */
+const claimed = computed(() => {
+  const n = props.task.participants.approved
+  const limit = props.task.participantLimit
+  const teams = props.task.submitterType === 'TEAM'
+  if (limit > 0)
+    return t(teams ? 'spaces.detail.tasks.row.claimedTeamsOf' : 'spaces.detail.tasks.row.claimedOf', { n, limit })
+  return t(teams ? 'spaces.detail.tasks.row.claimedTeams' : 'spaces.detail.tasks.row.claimed', { n })
+})
 
 const deadline = computed(() =>
   props.task.deadline == null
@@ -45,7 +55,7 @@ const deadline = computed(() =>
     <div class="tr__main">
       <div class="tr__title">
         <span class="tr__name">{{ task.name }}</span>
-        <span v-if="mine" class="tr__mine">{{ t('spaces.detail.tasks.row.mine') }}</span>
+        <span v-if="mine" class="tr__mine">{{ mineLabel }}</span>
       </div>
       <p v-if="summary" class="tr__intro">{{ summary }}</p>
       <div class="tr__meta">

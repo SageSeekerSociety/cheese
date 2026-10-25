@@ -629,6 +629,17 @@ class TaskMembershipRepository:
         result = await self._session.execute(membership_stmt)
         return list(result.scalars().all())
 
+    async def hold_places(self, task_id: int) -> None:
+        """锁住这道题的行，直到本事务结束：数名额和写下这一份通过要是一步。
+
+        两份通过同时进来时，不锁的话各自数到「还剩一个」、各自写下，名额就超了。
+        锁的是题目这一行（``FOR NO KEY UPDATE``）：两份通过彼此排队，新的申请
+        （插入时只拿外键的 ``KEY SHARE``）不被挡住。调用方锁完紧接着数、写，然后提交。
+        """
+        await self._session.execute(
+            select(Task.id).where(Task.id == task_id).with_for_update(key_share=True)
+        )
+
     async def count_approved_for_task(self, task_id: int) -> int:
         """Count approved memberships for a task (ApproveType.APPROVED = 0)."""
         stmt = select(func.count(TaskMembership.id)).where(

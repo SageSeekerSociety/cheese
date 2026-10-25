@@ -135,7 +135,8 @@ const myClaimRejected = computed(
 
 /** `participantLimit` 的 0 是「不限」，不是「一个人都不许」。 */
 const limit = computed(() => ((taskData.value?.participantLimit ?? 0) > 0 ? taskData.value!.participantLimit : null))
-const claimCount = computed(() => taskData.value?.participants.total ?? 0)
+/** 参与者：申请通过的人。「参与者」页签上的数和名额满没满都按它；还在等批准的在页签里另成「申请中」一格。 */
+const participantCount = computed(() => taskData.value?.participants.approved ?? 0)
 const deadlinePassed = computed(() => {
   const at = taskData.value?.deadline
   return at != null && at < Date.now()
@@ -144,7 +145,7 @@ const notStarted = computed(() => {
   const at = taskData.value?.registrationStartAt
   return at != null && at > Date.now()
 })
-const full = computed(() => limit.value !== null && claimCount.value >= limit.value)
+const full = computed(() => limit.value !== null && participantCount.value >= limit.value)
 
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
@@ -232,7 +233,7 @@ const tabs = computed(() => {
       key: 'roster',
       label: t('tasks.page.tabs.roster'),
       to: { name: routeNames.participants, params: params.value },
-      count: claimCount.value,
+      count: participantCount.value,
     })
     list.push({
       key: 'data',

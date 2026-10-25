@@ -104,7 +104,7 @@ def _mine(claim: TaskMembership | None, timezone: str | None) -> str | None:
     if claim is None:
         return None
     if claim.approved != 0:
-        return "你的领取：等待出题人批准；批准时才定下你的提交截止时间"
+        return "你的申请：等待出题人通过；通过那天开始做，那时才定下你的提交截止时间"
     return f"你的提交截止：{_when(claim.deadline, timezone)}"
 
 
@@ -137,7 +137,7 @@ def task_brief(
         ),
         f"题目截止：{_when(task.deadline, timezone)}",
         *([mine] if mine else []),
-        f"领取后提交期限：{task.default_deadline} 天",
+        f"限时：{task.default_deadline} 天，从开始做那天算起",
         f"（以上时间都是用户所在时区 {clock.tzinfo}，{clock.tzname()}）",
         f"可多次提交：{'是' if task.resubmittable else '否'}",
         "说明：",
@@ -147,7 +147,7 @@ def task_brief(
         lines.append(
             "材料（用 cheese_read 读）："
             if materials_readable
-            else "材料（领取获批后才能读取，现在读不到）："
+            else "材料（开始做这道题之后才能读取，现在读不到）："
         )
         lines += [
             f"- {name}（spaces/{task.space_id}/tasks/{task.id}/files/{name}）"

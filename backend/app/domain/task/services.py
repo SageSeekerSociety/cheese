@@ -189,7 +189,6 @@ class TaskMembershipService:
         task: Task,
         member_id: int,
         is_team: bool,
-        approved: int,
         deadline: datetime | None,
         email: str | None,
         phone: str | None,
@@ -197,23 +196,8 @@ class TaskMembershipService:
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
-
-        # 参与人数上限校验 — 仅在 enforce_task_participant_limit_check 开启时生效
-        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit
-        # 与 applicationConfig.enforceTaskParticipantLimitCheck 默认 false）。
-        if (
-            settings.enforce_task_participant_limit_check
-            and approved == 0
-            and task.participant_limit is not None
-        ):
-            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
-            if approved_count >= task.participant_limit:
-                if getattr(task, "auto_reject_when_full", False):
-                    # 自动拒绝：将 approved 改为 DISAPPROVED (1)
-                    approved = 1
-                else:
-                    raise BadRequestError("Task participant limit reached.")
+        """一份新的申请：总是等出题人通过（``approved`` 2）。名额、实名都在通过时看
+        （``update_membership``），这里只拒重复申请和团队那两条。"""
 
         # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
         now = datetime.now(UTC)
@@ -231,7 +215,7 @@ class TaskMembershipService:
             raise BadRequestError("Member already participating in this task.")
 
         # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
-        if is_team and approved != 1:
+        if is_team:
             already = await members_claiming_through_another_team(
                 self._repo._session,
                 task_id=task.id,  # type: ignore[arg-type]
@@ -249,16 +233,10 @@ class TaskMembershipService:
             if team is not None and team.personal_owner_user_id is not None:
                 raise BadRequestError("A team task is claimed by a team, not a person.")
 
-        # requireRealName：简化为只校验提交者本人
-        if task.require_real_name and self._realname_repo is not None and approved == 0:
-            has_identity = await self._realname_repo.has_identity(member_id)
-            if not has_identity:
-                raise BadRequestError("Missing required real name information.")
-
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
             member_id=member_id,
-            approved=approved,
+            approved=2,
             is_team=is_team,
             email=email or "",
             phone=phone or "",
@@ -301,11 +279,10 @@ class TaskMembershipService:
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
-            # 人数上限检查 — 仅在 enforce_task_participant_limit_check 开启时生效
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            # 名额只被通过了的申请占：申请随时可以交，通过时才看还有没有名额。
+            # participant_limit 的 0 是「不限」。
+            if task.participant_limit:
+                await self._repo.hold_places(task.id)  # type: ignore[arg-type]
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     raise TaskParticipantsReachedLimitError(
@@ -460,11 +437,8 @@ class TaskMembershipService:
                     }
                 )
 
-            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            # 名额满了（通过了的申请数到了上限；0 是不限）：题目页写「人数已满」。
+            if task.participant_limit:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -565,11 +539,8 @@ class TaskMembershipService:
                     }
                 )
 
-            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            # 名额满了（通过了的申请数到了上限；0 是不限）：题目页写「人数已满」。
+            if task.participant_limit:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(

@@ -205,15 +205,15 @@ covers:
 |---|---|
 | 谁能放进、替换、删掉 | 出题人本人，或这块板的所有者 / 管理员（`may_teach_task`） |
 | 谁能看到清单 | 看得见这道题的人 |
-| 谁能下载 | 出题人 / 板管理员 / **已经领取的人**（`is_participant`） |
+| 谁能下载 | 出题人 / 板管理员 / **参与者**，即申请通过的人（`is_approved_participant`）；等批的、被拒的、退出的都不能 |
 
-清单绝不比题目本身更保密——看不见材料就无法判断要不要领；下载比「看得见」窄一格、比「管得了」宽一格——领取者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/files`）先过题目详情那三道闸（`ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload`，前端据此显示「下载」还是「领取这道题之后才能下载」。
+清单绝不比题目本身更保密——看不见材料就无法判断要不要申请；下载比「看得见」窄一格、比「管得了」宽一格——参与者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/files`）先过题目详情那三道闸（`ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload`，前端据此显示「下载」还是「开始做这道题之后才能下载」。
 
 改题页直接上传，和资料库是同一条分段上传的路（`library.md` 的「资料库的记录表」一节）：领一次上传的凭据（`POST /tasks/{id}/files/uploads`），按段领地址（`…/uploads/part`），浏览器把每一段连同它的 MD5 放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
 
 ### 版本 {#task-package-revisions}
 
-`task_package_revisions` 记题目内容的每一版：发布是第 1 版（`changes = {"published": true}`），之后描述、阶段（名称、说明、截止时间、顺序）、提交内容、评分要点（含 `rubric_public`）、材料每变一次记下一版，`changes` 写明哪几样，材料带名字（`added` / `replaced` / `removed`）。`PATCH /tasks/{id}` 改之前、改之后各取一份比对（`_writes._package_parts`），和「领过的人收到要求变了的通知」是同一次比对。每记一版，题目资料库里的 `题目说明.md` 换成这一版的样子，它的历史就是每一版的说明；它不算材料，清单里不列，不能单独替换或删除。提交记下当时的版本号（`task_submission.package_revision`）。
+`task_package_revisions` 记题目内容的每一版：发布是第 1 版（`changes = {"published": true}`），之后描述、阶段（名称、说明、截止时间、顺序）、提交内容、评分要点（含 `rubric_public`）、材料每变一次记下一版，`changes` 写明哪几样，材料带名字（`added` / `replaced` / `removed`）。`PATCH /tasks/{id}` 改之前、改之后各取一份比对（`_writes._package_parts`），和「在做的人收到要求变了的通知」是同一次比对。每记一版，题目资料库里的 `题目说明.md` 换成这一版的样子，它的历史就是每一版的说明；它不算材料，清单里不列，不能单独替换或删除。提交记下当时的版本号（`task_submission.package_revision`）。
 
 ### 项目里的 `题目/` {#task-folder}
 

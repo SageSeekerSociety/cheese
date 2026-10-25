@@ -20,7 +20,7 @@
   "artifactNameTooLong": "产物的名字最长 {max} 个字",
   "artifactNeedsAbout": "新声明一项产物要用一句话说清它是什么、给谁的 —— 清单上只有名字的话，下一次交付判断不了「我做的是不是它的新一版」。写这样东西本身，不写这一版做了什么：这句话在第 1 版和第 20 版都得成立。",
   "artifactNotFound": "产物清单上没有这一项",
-  "challengeProjectClaimFirst": "领取这道题之后才能用它新建项目",
+  "challengeProjectClaimFirst": "申请做这道题之后才能用它新建项目",
   "challengeProjectSignIn": "登录后才能用题目新建项目",
   "changeSummaryTimeout": "改动摘要加载超时，请稍后刷新",
   "checkNameControlChars": "检查名不能包含 NUL 或换行",

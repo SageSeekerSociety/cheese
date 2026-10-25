@@ -6,7 +6,7 @@
 整份的 SHA-256 和每段的 MD5 来登记。放进、替换、删掉一份，题目记一版
 （`app.domain.task.package`）。
 
-看得见这道题就能看到清单；下载要是出题人、空间管理员或已经领取的人（`package` 里的
+看得见这道题就能看到清单；下载要是出题人、空间管理员或参与者（申请通过的人）（`package` 里的
 三条判据）。
 """
 
@@ -172,7 +172,7 @@ async def download_task_file(
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> Response:
-    """一份材料的字节。先过题目详情那三道闸，再看是不是出题人、空间管理员或领取的人。"""
+    """一份材料的字节。先过题目详情那三道闸，再看是不是出题人、空间管理员或参与者（申请通过的人）。"""
     task = await _require_task(db, task_id)
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     await package.refuse_unless_downloader(db, task, auth_user.user_id)

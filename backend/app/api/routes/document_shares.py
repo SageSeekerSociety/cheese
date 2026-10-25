@@ -167,13 +167,15 @@ class SharedDocumentOut(BaseModel):
 async def read_shared(token: str, db: DbSession, response: Response) -> dict:
     """The shared document's current version, for anyone holding the link."""
     doc = await _shared(db, token)
+    shared_by = await _shared_by(db, doc.id)
+    await db.commit()
     response.headers.update(_UNLISTED)
     return ok(
         {
             "title": doc.title,
             "content": doc.content,
             "updated_at": doc.updated_at,
-            "shared_by": await _shared_by(db, doc.id),
+            "shared_by": shared_by,
         }
     )
 

@@ -1,9 +1,9 @@
 {
   "claim": {
-    "claim": "Claim this challenge",
-    "notApproved": "Can be claimed once approved",
-    "pending": "Claim awaiting approval",
-    "rejected": "Claim declined"
+    "claim": "Apply to do this task",
+    "notApproved": "Can be applied for once approved",
+    "pending": "Applied, awaiting approval",
+    "rejected": "Application not approved"
   },
   "dateFormat": "MMM D",
   "delete": "Delete",

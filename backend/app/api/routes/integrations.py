@@ -336,11 +336,15 @@ async def feishu_authorize(
 
 @router.get("/integrations/feishu/callback")
 async def feishu_callback(
-    db: DbSession, code: str = "", state: str = "", error: str = ""
+    request: Request,
+    db: DbSession,
+    code: str = "",
+    state: str = "",
+    error: str = "",
 ) -> RedirectResponse:
     in_app = state.endswith(_IN_APP)
     landing = await _finish_feishu(db, code, state.removesuffix(_IN_APP), error)
-    return back_in_app(landing) if in_app else landing
+    return back_in_app(request, landing) if in_app else landing
 
 
 async def _finish_feishu(

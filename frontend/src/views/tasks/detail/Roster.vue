@@ -32,6 +32,7 @@ import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
@@ -97,7 +98,7 @@ function nameOf(id: number): string {
   return m?.member?.name ?? ''
 }
 
-/** 批准时顺手给这个人定截止：领取后 N 天（题目的「提交期限」），没设就 7 天。
+/** 批准时顺手给这个人定截止：从这天起 N 天（题目的「限时」），没设就 7 天。
  *  发题表单存的是天数，老数据里存的是毫秒，两种都换成天。 */
 async function approve(id: number) {
   const task = props.taskData
@@ -114,8 +115,9 @@ async function approve(id: number) {
     })
     toast.success(t('tasks.roster.approved', { name: nameOf(id) }))
     events.emit('participation-changed')
-  } catch {
-    toast.error(t('tasks.roster.approveFailed'))
+  } catch (e) {
+    // 服务端拒绝时说的那一句（比如名额已满）照原样给出题人看。
+    toast.error(axiosErrorMessage(e, t('tasks.roster.approveFailed')))
   } finally {
     busyId.value = null
   }
