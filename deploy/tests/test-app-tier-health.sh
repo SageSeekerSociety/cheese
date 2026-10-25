@@ -1858,6 +1858,103 @@ test_rollout_rollback_from_the_second_slot() {
   echo "PASS: a rollback from a release started beside backend-b returns to backend-b"
 }
 
+# A release is switched in only once its new slots have been used the way a
+# person uses them (deploy/release-smoke.py). A failed smoke test leaves
+# app-router and the slots serving exactly as they were.
+smoke_rollout_dir() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087
+  printf 'upstream frontend_active { server 127.0.0.1:18088; }\n' > "$run_dir/active/frontend.conf"
+  printf '%s' "$run_dir"
+}
+
+test_rollout_smoke_failure_keeps_the_serving_slots() {
+  local run_dir docker_log check
+  for check in provision login task websocket frontend-asset; do
+    run_dir="$(smoke_rollout_dir)"
+    docker_log="$run_dir/docker.log"
+    if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" \
+        APP_TIER_BACKEND_CONTAINER=blue-container APP_TIER_FRONTEND_CONTAINER=green-frontend \
+        APP_TIER_SMOKE_FAIL="$check" >"$run_dir/release.log" 2>&1; then
+      fail "a release whose $check smoke check failed was deployed"
+    fi
+    grep -q "smoke $check FAILED" "$run_dir/release.log" \
+      || { cat "$run_dir/release.log"; fail "the refusal does not name the $check check"; }
+    ! grep -q 'nginx -s reload' "$docker_log" || fail "app-router was switched although the $check check failed"
+    grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+      || fail "backend traffic moved although the $check check failed"
+    grep -Fq 'server 127.0.0.1:18088;' "$run_dir/active/frontend.conf" \
+      || fail "frontend traffic moved although the $check check failed"
+    ! grep -q -E 'kill --signal USR1|stop --time [0-9]+ (blue-container|green-frontend)| rm -f (backend|frontend)$' "$docker_log" \
+      || fail "the serving slots were touched although the $check check failed"
+    grep -q 'rm -f -s backend-b frontend-b' "$docker_log" || fail "the new slots were left running after the $check check failed"
+    rm -rf "$run_dir"
+  done
+  echo "PASS: a release that fails its smoke test never takes traffic, and the failure names the check"
+}
+
+test_rollout_smoke_passes_before_the_switch() {
+  local run_dir docker_log secret smoke_check reload
+  run_dir="$(smoke_rollout_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_FRONTEND_CONTAINER=green-frontend >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "a release that passed its smoke test was refused"; }
+  for check in provision frontend-index frontend-asset login me task websocket logout; do
+    grep -q "smoke $check ok" "$run_dir/release.log" || fail "the deploy log does not show the $check check"
+  done
+  smoke_check="$(log_line "$docker_log" ' python - check ')"
+  reload="$(log_line "$docker_log" 'exec cheese-app-router nginx -s reload')"
+  [ -n "$smoke_check" ] && [ "$smoke_check" -lt "$reload" ] || fail "the smoke test did not run before the switch"
+  grep -Fq -- '--backend http://127.0.0.1:18082 --frontend http://127.0.0.1:18084' "$docker_log" \
+    || fail "the smoke test did not use the new slots' own ports"
+  grep -Fq 'server 127.0.0.1:18082;' "$run_dir/active/backend.conf" || fail "backend traffic did not move after a passing smoke test"
+  secret="$(cat "$run_dir/ops/deploy-smoke.secret")"
+  [ "${#secret}" -ge 32 ] || fail "no smoke password was provisioned"
+  [ "$(stat -c %a "$run_dir/ops/deploy-smoke.secret" 2>/dev/null || stat -f %Lp "$run_dir/ops/deploy-smoke.secret")" = 600 ] \
+    || fail "the smoke password file is readable by others"
+  [ "$(grep -c "^smoke-password $secret\$" "$docker_log")" = 2 ] \
+    || fail "the provision and the check did not both get the password from the secret file"
+  ! grep -v '^smoke-password ' "$docker_log" | grep -qF "$secret" || fail "the smoke password appeared on a command line"
+  # The next release keeps the same account password.
+  : > "$docker_log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second release failed"
+  [ "$(cat "$run_dir/ops/deploy-smoke.secret")" = "$secret" ] || fail "a release rotated the smoke password"
+  rm -rf "$run_dir"
+  echo "PASS: a release that passes its smoke test switches in once, after it"
+}
+
+test_rollback_is_not_held_by_a_smoke_test() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=rollback >"$run_dir/release.log" 2>&1; then
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+  [ "$(grep -c ' python - check ' "$run_dir/docker.log")" = 1 ] \
+    || fail "the smoke test did not run exactly once, for the release and not for its rollback"
+  grep -q 'smoke: not run for a rollback' "$run_dir/release.log" || fail "the rollback did not say it skipped the smoke test"
+  grep -q 'rolled back to oldsha' "$run_dir/release.log" || fail "the release did not roll back"
+  rm -rf "$run_dir"
+  echo "PASS: a rollback returns to the previous release without a smoke test"
+}
+
+test_box_without_slots_skips_the_smoke_test() {
+  local run_dir
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-smoke.XXXXXX")"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=healthy APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" "$ROOT/deploy/deploy-docker.sh" testsha \
+    "$ROOT/deploy/compose/docker-compose.base.yml" >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "a box without slots failed to deploy"; }
+  grep -q 'smoke: skipped, this box has no app-router slots' "$run_dir/release.log" || fail "the skip was not logged"
+  ! grep -q 'smoke-password' "$run_dir/docker.log" || fail "a box without slots ran the smoke test"
+  [ ! -e "$run_dir/ops/deploy-smoke.secret" ] || fail "a box without slots was given a smoke account password"
+  rm -rf "$run_dir"
+  echo "PASS: a box without app-router slots skips the smoke test and says so"
+}
+
 # The preview owner (machine preview tunnels + preview content hosts) is a
 # separately released service, like device-connection, and the cutover has one
 # rule that matters more than any other: the owner must be up and healthy BEFORE
@@ -2516,6 +2613,10 @@ case "$CASE" in
   forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-unknown-upstream) test_rollout_refuses_an_upstream_it_did_not_write ;;
   rollout-rollback) test_rollout_rollback_returns_to_the_previous_slot ;;
+  smoke-refusal) test_rollout_smoke_failure_keeps_the_serving_slots ;;
+  smoke-pass) test_rollout_smoke_passes_before_the_switch ;;
+  smoke-rollback) test_rollback_is_not_held_by_a_smoke_test ;;
+  smoke-skip) test_box_without_slots_skips_the_smoke_test ;;
   rollout-rollback-b) test_rollout_rollback_from_the_second_slot ;;
   frontend-rollout) test_frontend_rollout_switches_with_the_backend ;;
   rollout-leftovers) test_rollout_clears_an_interrupted_release ;;
@@ -2604,6 +2705,10 @@ case "$CASE" in
     test_rollout_refuses_an_upstream_it_did_not_write
     test_rollout_rollback_returns_to_the_previous_slot
     test_rollout_rollback_from_the_second_slot
+    test_rollout_smoke_failure_keeps_the_serving_slots
+    test_rollout_smoke_passes_before_the_switch
+    test_rollback_is_not_held_by_a_smoke_test
+    test_box_without_slots_skips_the_smoke_test
     test_frontend_rollout_switches_with_the_backend
     test_rollout_clears_an_interrupted_release
     test_failed_port_takeover_gives_the_ports_back

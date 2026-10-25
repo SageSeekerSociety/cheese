@@ -1546,6 +1546,54 @@ wait_for_frontend() {
   return 1
 }
 
+# ---- Functional smoke test of the new slots, before the switch ----
+# /readyz says the new backend can serve, not that anyone can sign in, open a
+# task or hear from the server. So the new slots are used the way a person
+# uses them (deploy/release-smoke.py: sign in, /users/me, the smoke account's
+# own task, the inbox WebSocket, the frontend's index and one hashed script),
+# on their loopback ports, before app-router sends them anything. A failure
+# leaves app-router, and the slots serving, exactly as they were.
+#
+# Before the switch and not after it: everything checked is served by the new
+# slots themselves, and the only thing the switch changes is the upstream line
+# app-router reads, which the routed /readyz after rollout_app already probes.
+# A check after the switch could only fail into a rollback, a second switch.
+#
+# The account is the deploy's own (`deploy-smoke`). Its password is provisioned
+# once in ~/ops/deploy-smoke.secret, like the collab secret, and the account is
+# made or set to it in this release's image on every release. Only boxes with
+# app-router slots get here; the others (prod, etrip) never create either.
+SMOKE_SECRET="$HOME/ops/deploy-smoke.secret"
+# A rollback returns to the release that served before this one, and is not
+# held back by a smoke test of it.
+SMOKE_RELEASE=true
+# $1 the new backend's port, $2 the new frontend's ('' when it is not rolled).
+smoke_release() {
+  local backend_port="$1" frontend_port="$2" password image line rc=0
+  if [ "$SMOKE_RELEASE" != true ]; then
+    log "smoke: not run for a rollback; that release served before this one"
+    return 0
+  fi
+  if [ ! -s "$SMOKE_SECRET" ]; then
+    mkdir -p "$(dirname "$SMOKE_SECRET")"
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$SMOKE_SECRET" )
+    log "smoke: provisioned the smoke account's password in $SMOKE_SECRET"
+  fi
+  password="$(cat "$SMOKE_SECRET")"
+  image="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$IMAGE_TAG}"
+  log "smoke: checking the new slots before the switch (backend :$backend_port${frontend_port:+, frontend :$frontend_port})"
+  # The value travels in the environment, never on a command line.
+  {
+    DEPLOY_SMOKE_PASSWORD="$password" dc run --rm --no-deps -T -e DEPLOY_SMOKE_PASSWORD \
+      backend python - provision < "$HERE/release-smoke.py" \
+    && DEPLOY_SMOKE_PASSWORD="$password" docker run --rm -i --network host \
+      -e DEPLOY_SMOKE_PASSWORD "$image" python - check \
+      --backend "http://127.0.0.1:$backend_port" \
+      ${frontend_port:+--frontend "http://127.0.0.1:$frontend_port"} < "$HERE/release-smoke.py"
+  } 2>&1 | while IFS= read -r line; do log "  $line"; done || rc=$?
+  return "$rc"
+}
+
 rollout_app() {
   local backend_from backend_to backend_port old_backend old_backend_port handover switched_at
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
@@ -1587,6 +1635,10 @@ rollout_app() {
       dc rm -f -s "$backend_to" "$frontend_to" >/dev/null 2>&1 || true
       fail "next frontend ($frontend_to) is unhealthy; the running backend and frontend were not touched"
     fi
+  fi
+  if ! smoke_release "$backend_port" "$frontend_port"; then
+    dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
+    fail "the new slots failed the smoke test (the FAILED line above names the check); app-router still sends traffic to $backend_from${frontend_from:+ and $frontend_from}, which were not touched"
   fi
 
   local ports_now=false
@@ -1674,6 +1726,7 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
     dc up -d --no-deps frontend || fail "compose up frontend failed"
   fi
 else
+  log "smoke: skipped, this box has no app-router slots (ACTIVE_BACKEND_DIR unset) to check a release on before it serves"
   log "bringing up backend + frontend…"
   # The frontend waits on the backend's healthcheck, which is /readyz, so a
   # build that never becomes ready makes this `up` fail. Leave that verdict to
@@ -1809,6 +1862,7 @@ if [ "$code" != ok ]; then
         export COLLAB_IMAGE
         write_slots_overlay
         MODEL_STREAM_GRACE_SECONDS="$ROLLBACK_MODEL_STREAM_GRACE_SECONDS"
+        SMOKE_RELEASE=false
         # A subshell does not run the script's exit trap.
         trap 'retire_old_backend now "the rollback did not complete"' EXIT
         rollout_app

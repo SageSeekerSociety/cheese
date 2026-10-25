@@ -40,6 +40,27 @@ if [[ " $* " == *" python - "* ]]; then
     printf 'migration-touches ok\n'
     exit 0
   fi
+  # deploy/release-smoke.py: `provision` makes the smoke account, `check` uses
+  # the new slots. APP_TIER_SMOKE_FAIL=<check> makes that check fail. Each run
+  # records whether the password reached it through the environment.
+  if [[ "$script" == *'HANDLE = "deploy-smoke"'* ]]; then
+    [ -z "${APP_TIER_DOCKER_LOG:-}" ] \
+      || printf 'smoke-password %s\n' "${DEPLOY_SMOKE_PASSWORD:-missing}" >> "$APP_TIER_DOCKER_LOG"
+    if [[ " $* " == *" provision "* ]]; then
+      checks="provision"
+    else
+      checks="frontend-index frontend-asset login me task websocket logout"
+      [[ " $* " == *" --frontend "* ]] || checks="${checks#frontend-index frontend-asset }"
+    fi
+    for check in $checks; do
+      if [ "${APP_TIER_SMOKE_FAIL:-}" = "$check" ]; then
+        printf 'smoke %s FAILED fake failure\n' "$check"
+        exit 1
+      fi
+      printf 'smoke %s ok fake\n' "$check"
+    done
+    exit 0
+  fi
   # deploy/code-digest.py: the code a running relay runs (`exec`) and the code
   # the release's image would run (`compose … run`).
   if [[ "$script" == *code-digest* ]]; then
