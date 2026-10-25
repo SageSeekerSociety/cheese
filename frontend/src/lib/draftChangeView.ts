@@ -291,7 +291,8 @@ export function writesView(
   terms: DraftTerms,
   current: number | null,
   canUndo: (edit: AssistantEdit) => boolean = () => false,
-  ordinal: (draft: number) => number | undefined = () => undefined
+  ordinal: (draft: number) => number | undefined = () => undefined,
+  effectOf: (draft: number) => AssistantEdit | undefined = (draft) => latestEffect(edits).get(draft)
 ): PanelWrites {
   // A change of the person's own settings is a card of its own, keyed below every draft.
   const group = (edit: AssistantEdit) => (isSetting(edit) ? -edit.id : edit.draft)
@@ -301,7 +302,8 @@ export function writesView(
     const card = merged(
       edits.filter((e) => group(e) === id),
       terms,
-      canUndo
+      canUndo,
+      effectOf
     )
     const collapsed = current !== null && id > 0 && id !== current
     return { ...card, ...(collapsed ? { collapsed, notes: [], canUndo: false } : {}), ordinal: ordinal(id) }
@@ -310,7 +312,12 @@ export function writesView(
 }
 
 /** 同一份草稿的几次写入并成一张卡：一格只留最后一次写的。 */
-function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: AssistantEdit) => boolean): PanelChange {
+function merged(
+  edits: AssistantEdit[],
+  terms: DraftTerms,
+  canUndo: (edit: AssistantEdit) => boolean,
+  effectOf: (draft: number) => AssistantEdit | undefined
+): PanelChange {
   const views = edits.map((e) => changeView(e, terms, canUndo(e)))
   const rows = new Map<string, PanelChangeRow>()
   for (const view of views)
@@ -319,8 +326,10 @@ function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: Assis
       rows.set(row.key, row)
     }
   const last = views[views.length - 1]
-  // 存下阶段的影响只看草稿现在的样子：后一次写入说的换掉前一次的，说「没人受影响」就清掉。
-  const effect = [...edits].reverse().find((e) => Array.isArray(e.stageEffect))?.stageEffect ?? []
+  // 存下阶段的影响是草稿的事，不是哪一条回答的：只有这份草稿最新说的那一次（不管在哪一条
+  // 回答里）写在它的那张卡上；更早的卡不再写，说「没人受影响」就清掉。
+  const latest = effectOf(last.draft)
+  const effect = latest && edits.includes(latest) ? latest.stageEffect ?? [] : []
   return {
     ...last,
     created: views.some((v) => v.created),
@@ -335,6 +344,13 @@ function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: Assis
     ],
     canUndo: views.some((v) => v.canUndo),
   }
+}
+
+/** 每份草稿最新说过「存下阶段的影响」的那一次写入，按写入的先后。 */
+function latestEffect(edits: AssistantEdit[]): Map<number, AssistantEdit> {
+  const latest = new Map<number, AssistantEdit>()
+  for (const edit of edits) if (Array.isArray(edit.stageEffect)) latest.set(edit.draft, edit)
+  return latest
 }
 
 export function resultView(done: AssistantPublished): PanelResult {
@@ -354,8 +370,12 @@ export function panelMessages(
   terms: DraftTerms,
   canUndo: (edit: AssistantEdit) => boolean = () => false,
   current: number | null = null,
-  ordinal?: (draft: number) => number | undefined
+  ordinal?: (draft: number) => number | undefined,
+  /** 比这些消息更晚的写入：后面的话题、还在写的那条回答。 */
+  newer: AssistantEdit[] = []
 ) {
+  // 整段对话里每份草稿最新的那一次：前面的回答画自己的卡时也按它，重读这段对话得到同样的结果。
+  const effects = latestEffect([...messages.flatMap((m) => m.edits ?? []), ...newer])
   return messages.map((m) => ({
     role: m.role,
     text: m.text,
@@ -367,7 +387,7 @@ export function panelMessages(
     selection: m.selection,
     cited: m.cited,
     steps: withSubagents((m.steps ?? []).map(stepView), m.subagents),
-    ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
+    ...writesView(m.edits ?? [], terms, current, canUndo, ordinal, (draft) => effects.get(draft)),
     results: (m.published ?? []).map(resultView),
     proposals: (m.proposals ?? []).map(proposalView),
     handed: m.handed ?? [],
