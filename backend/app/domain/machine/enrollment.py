@@ -70,17 +70,9 @@ SSH_OPTS = [
 ]
 
 
-# What a Linux connector places for its rooms whatever the system has
-# (`cli/internal/devenv`), and enrollment hands a cloud machine first. The FUSE
-# runtime is in the list for the same reason and not because a sandbox needs
-# it: a room's transcript view is mounted on the machine its tools run on, and
-# for an ordinary room that is one of these pool hosts. Prewarming it trades
-# the machine's first start fetching it for the enrollment doing so, and the
-# pool host image the machine is cloned from is never touched — which is what
-# matters, because that image also reaches people's own machines. One of those
-# is not prewarmed: it fetches the runtime when its connector next starts, or
-# does without and keeps the transcript unreachable as it always was.
-SANDBOX_TOOLS = ("bubblewrap", "host-tools", "fuse-runtime")
+# What a Linux connector places for its rooms' sandboxes whatever the system
+# has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
+SANDBOX_TOOLS = ("bubblewrap", "host-tools")
 
 
 class EnrollmentError(RuntimeError):

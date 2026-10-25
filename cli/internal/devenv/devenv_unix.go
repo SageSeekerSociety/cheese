@@ -107,12 +107,6 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if runtime.GOOS == "linux" {
 		place("bubblewrap", filepath.Join(root, "bubblewrap"))
 		place("host-tools", "")
-		// The FUSE 2 library a room's transcript view is mounted through. Not
-		// on PATH: it is not a program. The executor finds it by path
-		// (`bootstrap.placed_libfuse`) and hands it to `fusepy` through
-		// `FUSE_LIBRARY_PATH`, because a machine's own loader paths are
-		// root's to change and the platform does not ask for root here.
-		place("fuse-runtime", "")
 	}
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))
