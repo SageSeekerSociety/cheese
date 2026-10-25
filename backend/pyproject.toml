@@ -55,6 +55,7 @@ dependencies = [
     # sent it; the image the app runs must have it.
     "pillow>=13.0.0",
     "cachetools==7.2.3",
+    "pathspec==0.12.1",
 ]
 
 [dependency-groups]

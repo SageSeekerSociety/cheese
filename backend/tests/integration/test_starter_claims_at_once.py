@@ -19,6 +19,7 @@ import os
 import time
 import uuid
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -162,3 +163,70 @@ def test_a_slow_repository_service_does_not_make_a_second_claim_fail(
 
     for status, body in results:
         assert status == 200, body
+
+
+def test_one_team_claiming_twice_at_once_makes_one_repository(client, monkeypatch):
+    """Two claims by the same team at the same moment (two teammates submitting
+    together) leave one project and one repository on the forge — not a second
+    repository nobody uses, waiting for a sweep."""
+    import asyncio
+
+    from app.common.auth import verify_access_token
+    from app.core.config import settings
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.living_doc.overview import seed_overview
+    from app.domain.project import forge
+    from app.domain.project.ports import Claim
+    from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms, as_brief
+    from app.domain.task.models import Task
+    from app.domain.usage.adapters import ComputeCredits
+
+    board = _board(client)
+    task_id = _create_task(client, board, name="一个团队同时领两次的题")
+    handle = f"student{uuid.uuid4().hex[:8]}"
+    student = seed_user(client, handle)
+    user_id = verify_access_token(student).user_id
+
+    # The forge answers slowly enough for the two claims to overlap there.
+    for name in ("prepare_repository", "provision_repository"):
+        quick = getattr(forge, name, None)
+        if quick is None:
+            continue
+
+        async def slow(*args, _quick=quick, **kwargs):
+            await asyncio.sleep(1)
+            return await _quick(*args, **kwargs)
+
+        monkeypatch.setattr(forge, name, slow)
+
+    async def claim() -> uuid.UUID:
+        async with client.test_request_factory() as session:
+            task = await session.get(Task, task_id)
+            service = ProjectService(
+                session,
+                default_teammate=default_teammate,
+                compute_credits=ComputeCredits(session),
+                overview=seed_overview,
+                task_terms=TaskTerms(session),
+            )
+            project = await service.for_participation(
+                task=as_brief(task),
+                claim=Claim(member_id=user_id, is_team=False, approved=False),
+                owner_handle=handle,
+            )
+            await session.commit()
+            return project.id
+
+    async def both():
+        return await asyncio.gather(claim(), claim())
+
+    first, second = client.portal.call(both)
+
+    assert first == second
+    repositories = [
+        path
+        for path in Path(settings.workspace_root).iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    ]
+    assert len(repositories) == 1, repositories

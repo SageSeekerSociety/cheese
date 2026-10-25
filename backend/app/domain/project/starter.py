@@ -15,16 +15,17 @@
 - 整个压缩包只有一个顶层文件夹时，去掉这一层：多数人是右键压缩整个文件夹的。
 
 提交不经过磁盘上的工作目录：每一项从压缩包直接流进 `git fast-import`，所以路径不因为
-在哪个目录干活而变长，压缩包里的东西也不会落到 git 自己的对象以外。压缩包里的每一份
-文件都进提交，它自带的 `.gitignore` 只是其中一份文件：起始代码就是出题人给的那些。
+在哪个目录干活而变长，压缩包里的东西也不会落到 git 自己的对象以外。压缩包自带的
+`.gitignore`（顶层和各个文件夹里的）照 git 的规矩生效：起始代码就是出题人提交这个
+文件夹时会得到的那一份，`.env`、`node_modules/`、构建产物不会进每个学生的仓库历史。
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import os
-import shutil
 import stat
 import subprocess
 import tempfile
@@ -32,7 +33,9 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import IO, BinaryIO
+
+import pathspec
 
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, UnprocessableEntityError
@@ -55,6 +58,9 @@ _PATH_BYTES = 4096
 _GIT_DIR = ".git"
 #: git 不收一条路径时，在 stderr 里说的那一行的开头（`update-index`）。
 _GIT_REFUSED = "Ignoring path "
+#: 压缩包里自带的忽略规则，和 git 一样按文件夹生效；太大的不当规则读。
+_GITIGNORE = ".gitignore"
+_GITIGNORE_BYTES = 1024 * 1024
 #: 空文件的 blob：只为让 git 判一遍路径，不写任何内容。
 _EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 #: 解开后不到这么大时不看压缩比：几个高度重复的小文件压得很小是正常的。
@@ -160,8 +166,44 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
     for entry in files:
         if any(parent in seen for parent in entry.path.parents):
             raise _refuse("starterPathClash", path=str(entry.path))
+    files = _not_ignored(archive, files)
+    if not files:
+        raise _refuse("starterEmpty")
     _refuse_unless_git_accepts([str(entry.path) for entry in files])
     return files
+
+
+def _not_ignored(archive: zipfile.ZipFile, files: list[_Entry]) -> list[_Entry]:
+    """The entries the archive's own `.gitignore` files (at the top and in any
+    folder) do not ignore: a working folder zipped as it is carries its `.env`,
+    `node_modules/` and build output, and the starter is what committing that
+    folder would give. git's rules, by `pathspec`'s `GitIgnoreSpec`: a deeper
+    file's patterns decide over a shallower one's, each relative to its own
+    folder."""
+    rules: dict[PurePosixPath, pathspec.GitIgnoreSpec] = {}
+    for entry in files:
+        if entry.path.name == _GITIGNORE and entry.info.file_size <= _GITIGNORE_BYTES:
+            stream = _read(archive.open, entry.info)
+            with stream:
+                text = _read(stream.read).decode("utf-8", errors="replace")
+            rules[entry.path.parent] = pathspec.GitIgnoreSpec.from_lines(
+                text.splitlines()
+            )
+    if not rules:
+        return files
+    kept = []
+    for entry in files:
+        ignored = None
+        # Shallowest first, so a deeper folder's verdict is the one that stands.
+        for folder in reversed(entry.path.parents):
+            spec = rules.get(folder)
+            if spec is not None:
+                verdict = spec.check_file(str(entry.path.relative_to(folder))).include
+                if verdict is not None:
+                    ignored = verdict
+        if not ignored:
+            kept.append(entry)
+    return kept
 
 
 def _refuse_unless_git_accepts(paths: list[str]) -> None:
@@ -214,6 +256,8 @@ def check(source: BinaryIO) -> int:
     try:
         with zipfile.ZipFile(source) as archive:
             return len(_entries(archive, _size(source)))
+    except _Unreadable as exc:
+        raise _refuse("starterNotZip") from exc.__cause__
     except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, ValueError) as exc:
         raise _refuse("starterNotZip") from exc
 
@@ -224,6 +268,29 @@ def _quoted(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+class _Unreadable(Exception):
+    """The archive's own bytes could not be read: a wrong CRC, a corrupt deflate,
+    bzip2 or lzma stream, a broken local header. Whatever exception the
+    decompressor raised, it is the archive's content, so no retry helps."""
+
+
+def _read(read, *args):
+    """Call a read of the archive; anything it raises is the archive's fault."""
+    try:
+        return read(*args)
+    except Exception as exc:  # the decoders raise zlib.error, OSError, EOFError …
+        raise _Unreadable from exc
+
+
+def _stream(zipped: zipfile.ZipFile, entry: _Entry, feed: IO[bytes]) -> None:
+    """One entry's bytes into ``feed``. Reading and writing fail apart: a read
+    error is the archive's, a write error is the importer's."""
+    stream = _read(zipped.open, entry.info)
+    with stream:
+        while chunk := _read(stream.read, 1024 * 1024):
+            feed.write(chunk)
+
+
 def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
     """The starter commit, built in a new bare repository at ``repository``, with
     no file ever written: each entry streams from the archive into `git
@@ -231,8 +298,10 @@ def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
     nothing the archive holds lands on a disk outside git's own objects. The
     same archive, message and time give the same commit. Returns its id.
 
-    An archive that cannot be read to its end (a corrupt entry) raises the
-    refusal that says so; nothing about it changes on a retry."""
+    An archive whose bytes cannot be read to their end (a corrupt entry, in any
+    of the ways a decompressor reports one) raises the refusal that says so:
+    nothing about it changes on a retry. Stopping the importer afterwards
+    cannot replace that error."""
     env = _git_env()
     _git(repository.parent, "init", "-q", "--bare", str(repository), env=env)
     stamp = f"{int(when.timestamp())} +0000"
@@ -246,6 +315,7 @@ def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
         )
         assert importer.stdin is not None
         feed = importer.stdin
+        unreadable: BaseException | None = None
         try:
             with archive.open("rb") as source, zipfile.ZipFile(source) as zipped:
                 entries = _entries(zipped, _size(source))
@@ -253,8 +323,7 @@ def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
                     feed.write(
                         f"blob\nmark :{mark}\ndata {entry.info.file_size}\n".encode()
                     )
-                    with zipped.open(entry.info) as stream:
-                        shutil.copyfileobj(stream, feed, 1024 * 1024)
+                    _stream(zipped, entry, feed)
                     feed.write(b"\n")
                 text = message.encode()
                 feed.write(
@@ -269,19 +338,22 @@ def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
                         f"M {mode} :{mark} {_quoted(str(entry.path))}\n".encode()
                     )
                 feed.write(b"done\n")
-        except (
-            zipfile.BadZipFile,
-            zipfile.LargeZipFile,
-            EOFError,
-            ValueError,
-            NotImplementedError,
-        ) as exc:
+        except (_Unreadable, zipfile.BadZipFile) as exc:
+            # What the decoder raised, not our wrapper around it.
+            unreadable = exc.__cause__ if isinstance(exc, _Unreadable) else exc
+            importer.kill()
+        except BaseException:
             importer.kill()
             importer.wait()
-            raise _refuse("starterNotZip") from exc
+            raise
         finally:
-            if not feed.closed:
+            # A killed importer's pipe refuses the last buffered bytes; that is
+            # the stop we asked for, not the error to report.
+            with contextlib.suppress(OSError):
                 feed.close()
+        if unreadable is not None:
+            importer.wait()
+            raise _refuse("starterNotZip") from unreadable
         if importer.wait(timeout=600):
             errors.seek(0)
             log.warning("starter fast-import failed: %s", errors.read().decode())

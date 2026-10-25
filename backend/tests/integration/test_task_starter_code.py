@@ -628,3 +628,103 @@ def test_a_main_made_before_the_push_is_not_called_the_starter(
     assert starter["state"] == "failed"
     assert starter["error"]["key"] == "starterMainTaken"
     assert _log(project_id) == ["Student <student@example.test>|Student work"]
+
+
+# --- 压缩包的内容坏了：永远放不进去，照实说 ----------------------------------------
+
+
+def _wrong_crc(data: bytes) -> bytes:
+    """The same archive with every entry's CRC in the directory off by one: the
+    directory reads fine, the bytes do not check out."""
+    raw = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        count, at = len(archive.infolist()), archive.start_dir
+    for _ in range(count):
+        crc = int.from_bytes(raw[at + 16 : at + 20], "little")
+        raw[at + 16 : at + 20] = ((crc + 1) % 2**32).to_bytes(4, "little")
+        name = int.from_bytes(raw[at + 28 : at + 30], "little")
+        extra = int.from_bytes(raw[at + 30 : at + 32], "little")
+        comment = int.from_bytes(raw[at + 32 : at + 34], "little")
+        at += 46 + name + extra + comment
+    return bytes(raw)
+
+
+def _broken_deflate(data: bytes) -> bytes:
+    """The same archive with the middle of its first entry's compressed bytes
+    overwritten."""
+    raw = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        info = archive.infolist()[0]
+    name = int.from_bytes(
+        raw[info.header_offset + 26 : info.header_offset + 28], "little"
+    )
+    extra = int.from_bytes(
+        raw[info.header_offset + 28 : info.header_offset + 30], "little"
+    )
+    start = info.header_offset + 30 + name + extra
+    middle = start + info.compress_size // 2
+    raw[middle : middle + 16] = b"\xff" * 16
+    return bytes(raw)
+
+
+_TEXT = "".join(f"line {i} of the starter\n" for i in range(4000)).encode()
+
+
+@pytest.mark.parametrize(
+    "archive",
+    [
+        _wrong_crc(_zip(("lab/main.py", _TEXT))),
+        _broken_deflate(_zip(("lab/main.py", _TEXT))),
+    ],
+    ids=["wrong-crc", "broken-deflate"],
+)
+def test_an_archive_whose_bytes_are_broken_fails_for_good_saying_so(
+    api_client: TestClient, user_client: UserCreator, push_starters, archive: bytes
+):
+    """上传时只读目录，内容坏了到放进仓库时才读得出来：那时照实说压缩包解不开，不再
+    重试，也不说「稍后重试」。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="内容坏了的压缩包")
+    resp = _set_starter(api_client, task_id, board["creator_token"], archive)
+    assert resp.status_code == 200, resp.text
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+
+    assert push_starters()["failed"] == 1
+    starter = _starter(api_client, project_id, member_token)
+    assert starter["state"] == "failed"
+    assert starter["error"]["key"] == "starterNotZip"
+    assert push_starters() == {"done": 0, "failed": 0, "retried": 0, "lost": 0}
+
+
+def test_the_archives_own_gitignore_files_keep_ignored_files_out(
+    api_client: TestClient, user_client: UserCreator, push_starters
+):
+    """出题人把自己的工作文件夹原样压缩：它的 `.gitignore`（顶层的、文件夹里的）挡掉的
+    `.env`、`node_modules/`、构建产物不进每个学生的仓库，和他自己提交时一样。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="带着 .gitignore 的文件夹")
+    archive = _zip(
+        ("lab/.gitignore", b".env\nnode_modules/\nbuild/\n"),
+        ("lab/.env", b"SECRET=1\n"),
+        ("lab/node_modules/left-pad/index.js", b"module.exports = 1\n"),
+        ("lab/build/out.bin", b"\0\0"),
+        ("lab/README.md", b"# Lab\n"),
+        ("lab/src/.gitignore", b"*.tmp\n!keep.tmp\n"),
+        ("lab/src/main.py", b"print(1)\n"),
+        ("lab/src/scratch.tmp", b"x"),
+        ("lab/src/keep.tmp", b"y"),
+    )
+    resp = _set_starter(api_client, task_id, board["creator_token"], archive)
+    assert resp.status_code == 200, resp.text
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+
+    assert push_starters()["done"] == 1
+    assert set(_main(project_id)) == {
+        ".gitignore",
+        "README.md",
+        "src/.gitignore",
+        "src/main.py",
+        "src/keep.tmp",
+    }

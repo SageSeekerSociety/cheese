@@ -51,6 +51,11 @@ from app.domain.user.models import User
 logger = logging.getLogger(__name__)
 
 
+#: Namespace of the ids of projects opened by claims: one id per (task, team),
+#: fixed forever — changing it would give an existing claim a second project.
+_CLAIMED_PROJECTS = uuid.UUID("ec0b38be-888e-42b5-bab5-2b0f87ac2e34")
+
+
 @dataclass(frozen=True)
 class ClaimedRepository:
     """What a claim settled before taking its lock: the repository it made on
@@ -383,11 +388,13 @@ class ProjectService:
         from app.domain.project.forge import prepare_repository
 
         # The repository is made on the forge before any lock is taken: no
-        # claim waits on the forge with a row locked. One made for a claim that
-        # then finds its project already there is never bound, and the orphan
-        # sweep removes it (`forge.sweep_orphan_accounts`).
+        # claim waits on the forge with a row locked. The project's id is this
+        # team's claim of this task, so two claims racing here name the same
+        # account and repository, and the forge makes it once (the second
+        # adopts it, `prepare_repository`): no second repository exists to be
+        # left behind.
         starter = await self._terms().starter(task.id)
-        project_id = uuid.uuid4()
+        project_id = uuid.uuid5(_CLAIMED_PROJECTS, f"{task.id}:{team_id}")
         repository = await prepare_repository(project_id, initialize=starter is None)
         # Two teammates submitting together must not leave two projects for one
         # application: this team's claims on this task go one at a time, from
