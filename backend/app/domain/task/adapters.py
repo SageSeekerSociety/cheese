@@ -92,8 +92,7 @@ class TaskTerms:
         return AcceptedTerms(
             default_role=protocol.default_role,
             compute_credits=protocol.compute_credits,
-            prompt=protocol.prompt,
-            skills=tuple(protocol.skills),
+            pack_prompt=protocol.pack_prompt,
         )
 
     async def starter(self, task_id: int) -> StarterSource | None:

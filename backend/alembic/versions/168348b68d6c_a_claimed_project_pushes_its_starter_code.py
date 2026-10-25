@@ -1,7 +1,7 @@
 """A claimed project's repository gets its 题目's starter code in the background
 
 Revision ID: 168348b68d6c
-Revises: e6b2d9f4a173
+Revises: b7d4e1a9c2f3
 Create Date: 2026-10-24
 
 #4767 §二. Claiming a 题目 with starter code records which archive the
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "168348b68d6c"
-down_revision: str | Sequence[str] | None = "e6b2d9f4a173"
+down_revision: str | Sequence[str] | None = "b7d4e1a9c2f3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

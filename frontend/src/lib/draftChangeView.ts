@@ -38,8 +38,13 @@ const LABEL_KEYS: Record<string, string> = {
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
   starter: 'tasks.starterPicker.title',
+  ai_teammate: 'spaces.teaching.defaultTeammate.title',
   ai_guidance: 'spaces.detail.publishTask.teaching.title',
   ai_mode: 'spaces.teaching.fields.mode',
+  ai_private_guidance: 'spaces.teaching.fields.privatePrompt',
+  ai_goals: 'spaces.teaching.fields.learningGoals',
+  ai_materials: 'spaces.teaching.fields.materials',
+  ai_skills: 'spaces.teaching.fields.skills',
 }
 
 export function fieldLabel(key: string): string {

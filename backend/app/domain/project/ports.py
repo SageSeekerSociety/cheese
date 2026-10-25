@@ -56,8 +56,7 @@ class DefaultTeammate(Protocol):
     覆盖；建项目那一次实例刚出生，本来也没有人设，所以那一条路不受这条规矩影响。
 
     形状就是 `AgentInstanceService.materialize_default` 加它的 `set_type`，改完就地
-    flush，调用方不用自己刷。题目包 (`resource_pack`) 带来的一块 prompt 与一组 skill
-    名字跟着同一次调用进来，落在同一份配置上（#944）。
+    flush，调用方不用自己刷。
     """
 
     async def __call__(
@@ -67,8 +66,7 @@ class DefaultTeammate(Protocol):
         *,
         display_name: str | None = None,
         type_name: str | None = None,
-        prompt: str | None = None,
-        skills: Sequence[str] = (),
+        pack_prompt: str | None = None,
     ) -> None: ...
 
 
@@ -291,10 +289,10 @@ class AcceptedTerms:
 
     default_role: str | None
     compute_credits: float
-    #: 题目包里「手动加的一段 prompt」与指定的一组技能名（#944）：建项目时并进
-    #: 默认队友的人设与技能。同住 resource_pack，走同一条整键继承。
-    prompt: str | None = None
-    skills: Sequence[str] = ()
+    #: The 资源包's prompt, appended to the default teammate's persona until the
+    #: contract migration after b7d4e1a9c2f3 moves it into the guidance (that
+    #: migration's PR removes it).
+    pack_prompt: str | None = None
 
 
 class TaskTerms(Protocol):

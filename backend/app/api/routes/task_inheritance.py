@@ -94,23 +94,15 @@ def _to_api(
     *,
     include_private: bool,
 ) -> dict:
-    agent = _agent_to_api(found.default_role)
-    # 题目包自带的 prompt + skills 与默认队友的技能是两回事，摆成各自的一格：
-    # 前者是**这道题**给的（每道题可以不同），后者是**那个类型预设**带的。
-    if agent is not None and found.skills:
-        agent["skills"] = list(dict.fromkeys([*agent["skills"], *found.skills]))
-    elif agent is None and found.skills:
-        # 没指定发货预设，但题目带了技能：也给一格「题目指定的队友技能」，不然
-        # 建项目时会带上、预览里却看不到。
-        agent = {"typeName": None, "displayName": None, "skills": list(found.skills)}
     return {
         "taskId": found.task_id,
         "spaceId": found.space_id,
         "resourcePack": found.resource_pack,
-        # 建项目时这个项目的芝士会带上的默认队友（类型 + 技能）；没指定 = None。
-        "agent": agent,
-        # 题目包里的「手动加的一段 prompt」；没写 = None。
-        "prompt": found.prompt,
+        # 建项目时这个项目的芝士会带上的默认队友（类型 + 预设技能）；没指定 = None。
+        # 题目给项目里每个队友的技能在 ``teaching.skills``，不在这一格。
+        "agent": _agent_to_api(found.default_role),
+        # 资源包里的那段 prompt，建项目时加给默认队友；没有 = None。
+        "packPrompt": found.pack_prompt,
         "teaching": _teaching_to_api(
             found.teaching,
             found.teaching_source,
@@ -130,7 +122,7 @@ async def get_task_inheritance(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    """建项目会继承的资源包、合成后的教学指导（含来源层）、会被带上的资料。
+    """建项目会继承的资源包（算力）、合成后的教学指导（含来源层与技能）、会被带上的资料。
 
     **判据是题目详情那三道闸**（``ensure_task_readable``）：未过审 403、看不见
     404、超出本板上限 404 —— 不是更宽的那一条 ``can_view_task``。后者在题目没开

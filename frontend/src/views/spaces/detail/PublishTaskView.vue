@@ -6,6 +6,7 @@
 // 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
 // 点哪份打开哪份；旁边写着存到哪了。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { SaveState } from '@/composables/useTaskDraft'
 import type { AgentType } from '@/cx_types'
 import type { NavTarget } from '@/lib/navTarget'
@@ -86,6 +87,9 @@ const props = withDefaults(
     /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
     agentTypes?: AgentType[]
     agentTypesFailed?: boolean
+    /** 「技能」那一格的候选，同样由容器取好传进来。 */
+    skillCatalog?: SkillChoice[]
+    skillCatalogFailed?: boolean
   }>(),
   {
     selectedCategoryId: undefined,
@@ -99,6 +103,8 @@ const props = withDefaults(
     spaceTeaching: null,
     agentTypes: () => [],
     agentTypesFailed: false,
+    skillCatalog: () => [],
+    skillCatalogFailed: false,
   }
 )
 
@@ -262,7 +268,6 @@ defineExpose({
             :categories="categories"
             :selected-category-id="selectedCategoryId"
             :domain-groups="domainGroups"
-            :teaching-custom="teachingOwn"
             :mentor-options="mentorOptions"
             :default-mentor="defaultMentor"
             :agent-writing="agentWriting"
@@ -326,22 +331,16 @@ defineExpose({
 
             <template #teaching>
               <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
-                <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-                <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-                <DefaultTeammatePicker
-                  v-model="defaultRole"
-                  :types="agentTypes"
-                  :types-failed="agentTypesFailed"
-                  class="pub__teammate"
-                />
+                <DefaultTeammatePicker v-model="defaultRole" :types="agentTypes" :types-failed="agentTypesFailed" />
                 <TeachingFields
                   :model-value="teaching"
-                  class="pub__teaching-fields"
                   inherit
                   :space-teaching="spaceTeaching"
                   :materials="materials"
                   :materials-state="materialsState"
                   :library-to="libraryTo"
+                  :skill-catalog="skillCatalog"
+                  :skill-catalog-failed="skillCatalogFailed"
                   @update:model-value="setTeaching"
                 />
               </div>
@@ -451,23 +450,9 @@ defineExpose({
   padding: 8px 16px 96px;
 }
 
-.pub__teaching-label {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-}
-
-.pub__teaching-hint {
-  margin: 4px 0 8px;
-}
-
-.pub__teammate {
-  margin-top: 12px;
-}
-
-.pub__teaching-fields {
-  margin-top: 4px;
+.pub__teaching {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 </style>

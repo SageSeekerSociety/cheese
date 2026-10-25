@@ -28,14 +28,19 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.space_access import may_teach_task
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.task.models import TaskDraft, new_stage_key
+from app.domain.agent_type.library import preset_types
+from app.domain.skill_library import native_skill_doc, shipped_skill_names
+from app.domain.task.models import Task, TaskDraft, new_stage_key
 from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
 
-#: The form's fields, as the page and ``POST /tasks`` name them. Three are the
+#: The form's fields, as the page and ``POST /tasks`` name them.
+#: ``defaultRole`` is the 题目's default teammate: a preset name, ``""`` to
+#: clear the 题目's own, or ``None`` to leave it as it is. Three are the
 #: page's own and never reach ``POST /tasks`` (``PAGE_ONLY``):
 #: ``descriptionMarkdown`` (the description as Markdown, which is what 芝士
 #: reads and edits), ``teachingOwn`` (whether the 题目 has its own AI 队友辅导)
@@ -72,6 +77,7 @@ FORM_FIELDS = frozenset(
         "removeStarter",
         "teaching",
         "teachingOwn",
+        "defaultRole",
     }
 )
 #: The page's own fields, left out of what is published: the files' names the
@@ -112,9 +118,29 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "access": ("accessControlEnabled", "accessDomainGroupIds"),
     "attachments": ("attachmentIds", "attachmentFiles"),
     "starter": ("starterAttachmentId", "starterFile", "removeStarter"),
+    "ai_teammate": ("defaultRole",),
+    # The guidance's fields all land in the one ``teaching``; the first of them
+    # stands for it where a change is said by field (``_draft_parts``).
     "ai_guidance": ("teaching", "teachingOwn"),
     "ai_mode": ("teaching", "teachingOwn"),
+    "ai_private_guidance": ("teaching", "teachingOwn"),
+    "ai_goals": ("teaching", "teachingOwn"),
+    "ai_materials": ("teaching", "teachingOwn"),
+    "ai_skills": ("teaching", "teachingOwn"),
 }
+
+#: The 芝士 fields that write the 题目's own guidance (``teaching``).
+_TEACHING_KEYS = (
+    "ai_mode",
+    "ai_guidance",
+    "ai_private_guidance",
+    "ai_goals",
+    "ai_materials",
+    "ai_skills",
+)
+
+# i18n-data: the default teammate 芝士 names when the 题目 says none of its own.
+INHERIT_TEAMMATE = "沿用上层设置"
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
 FORMS = {"个人": "USER", "团队": "TEAM"}
@@ -155,6 +181,9 @@ class Space:
     #: The space's 题目 templates (``Space.task_templates``): a name, what it is
     #: for, and the form it fills in.
     templates: tuple[dict, ...] = ()
+    #: The space library's files the person may point the AI teammates at
+    #: (``teaching.materialIds``), by name.
+    materials: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -196,9 +225,11 @@ async def terms(
     zone_name: str | None,
     *,
     user_id: int,
+    materials: dict[str, int] | None = None,
 ) -> Space:
     """The space's categories, tags, mentors and domain groups by name, and
-    the person's clock."""
+    the person's clock. ``materials`` are the space library's files the person
+    can see, by name: the space domain's to read, so the caller hands them in."""
     space = await spaces.get_space(space_id)
     if space is None:
         raise NotFoundError.for_resource("space", space_id)
@@ -223,6 +254,7 @@ async def terms(
             for t in (getattr(space, "task_templates", None) or [])
             if isinstance(t, dict) and str(t.get("name") or "").strip()
         ),
+        materials=dict(materials or {}),
     )
 
 
@@ -263,14 +295,55 @@ async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, 
 
 
 async def context(
-    session: AsyncSession, spaces: SpaceReads, row: TaskDraft, zone_name: str | None
+    session: AsyncSession,
+    spaces: SpaceReads,
+    row: TaskDraft,
+    zone_name: str | None,
+    *,
+    materials: dict[str, int] | None = None,
 ) -> str:
     """The draft as 芝士 is shown it: with a question asked on its page, and
     when it reads it."""
-    space = await terms(session, spaces, row.space_id, zone_name, user_id=row.user_id)
+    space = await terms(
+        session,
+        spaces,
+        row.space_id,
+        zone_name,
+        user_id=row.user_id,
+        materials=materials,
+    )
     names = await task_names(session, [row])
     name = names.get(row.task_id or 0)
-    return scene(row, name) + "\n" + agent_view(row, space, task_name=name)
+    private = await private_shown(session, row)
+    return (
+        scene(row, name)
+        + "\n"
+        + agent_view(row, space, task_name=name, private=private)
+    )
+
+
+async def private_shown(session: AsyncSession, row: TaskDraft) -> bool:
+    """Whether a draft's private guidance is shown to its writer: a new 题目's
+    is their own; changes to a published one only while they may teach it
+    (``may_teach_task``), checked when it is read — an admin who opened the
+    changes and has since lost the board no longer reads it."""
+    if row.task_id is None:
+        return True
+    task = await session.get(Task, row.task_id)
+    return task is not None and await may_teach_task(
+        session=session, task=task, user_id=row.user_id
+    )
+
+
+def without_private(fields: dict) -> dict:
+    """The draft's fields with the 题目's private guidance left out."""
+    teaching = fields.get("teaching")
+    if not isinstance(teaching, dict) or "privatePrompt" not in teaching:
+        return fields
+    return {
+        **fields,
+        "teaching": {k: v for k, v in teaching.items() if k != "privatePrompt"},
+    }
 
 
 def scene(draft: TaskDraft, task_name: str | None = None) -> str:
@@ -537,24 +610,107 @@ def from_agent(
         # No file named is "no starter code": on a published 题目, saving the
         # changes removes the one it has.
         out["removeStarter"] = starter is None
-    if "ai_guidance" in args or "ai_mode" in args:
-        # The 题目's own guidance, on top of the space's: what 芝士 did not name
-        # (the materials, the other of the two) stays as it is.
-        teaching = dict(current.get("teaching") or {})
-        if "ai_guidance" in args:
-            teaching["systemPrompt"] = str(args["ai_guidance"] or "").strip() or None
-        if "ai_mode" in args:
-            if args["ai_mode"] not in AI_MODES:
-                raise BadRequestError(say("draftAiModeChoice"))
-            teaching["mode"] = AI_MODES[args["ai_mode"]]
+    if "ai_teammate" in args:
+        out["defaultRole"] = _teammate(args["ai_teammate"], current)
+    if any(key in args for key in _TEACHING_KEYS):
+        teaching = _teaching(args, space, dict(current.get("teaching") or {}))
         out["teaching"] = teaching
         out["teachingOwn"] = bool(
             teaching.get("mode")
             or teaching.get("systemPrompt")
+            or teaching.get("privatePrompt")
+            or teaching.get("learningGoals")
             or teaching.get("materialIds")
             or teaching.get("documentIds")
+            or teaching.get("skills")
         )
     return out
+
+
+def _teaching(args: dict, space: Space, teaching: dict) -> dict:
+    """The 题目's own guidance, on top of the space's, with what 芝士 named
+    written in: what it did not name stays as it is."""
+    for key, target in (
+        ("ai_guidance", "systemPrompt"),
+        ("ai_private_guidance", "privatePrompt"),
+    ):
+        if key in args:
+            teaching[target] = str(args[key] or "").strip() or None
+    if "ai_mode" in args:
+        if args["ai_mode"] not in AI_MODES:
+            raise BadRequestError(say("draftAiModeChoice"))
+        teaching["mode"] = AI_MODES[args["ai_mode"]]
+    if "ai_goals" in args:
+        teaching["learningGoals"] = list(
+            dict.fromkeys(
+                str(g).strip() for g in args["ai_goals"] or [] if str(g).strip()
+            )
+        )
+    if "ai_materials" in args:
+        names = _named(args["ai_materials"])
+        unknown = [n for n in names if n not in space.materials]
+        if unknown:
+            raise BadRequestError(
+                say(
+                    "draftMaterialChoice",
+                    unknown="、".join(unknown),
+                    names=_names(space.materials),
+                )
+            )
+        teaching["materialIds"] = [space.materials[n] for n in names]
+    if "ai_skills" in args:
+        names = _named(args["ai_skills"])
+        catalog = skill_catalog()
+        unknown = [n for n in names if n not in catalog]
+        if unknown:
+            raise BadRequestError(
+                say(
+                    "draftSkillChoice",
+                    unknown="、".join(unknown),
+                    names="、".join(catalog) or "—",
+                )
+            )
+        teaching["skills"] = names
+    return teaching
+
+
+def _named(given) -> list[str]:
+    return list(dict.fromkeys(str(n).strip() for n in given or [] if str(n).strip()))
+
+
+def skill_catalog() -> dict[str, str]:
+    """The skills a 题目 may give its projects' teammates: the shipped ones
+    whose guidance can be put in a prompt, name -> what it is for (the list
+    ``GET /skill-catalog`` answers)."""
+    out: dict[str, str] = {}
+    for name in shipped_skill_names():
+        doc = native_skill_doc(name)
+        if doc is not None:
+            out[name] = doc[0]
+    return out
+
+
+def teammates() -> dict[str, str]:
+    """The platform's teammate presets 芝士 may name: title -> type name."""
+    return {preset.title: name for name, preset in preset_types().items()}
+
+
+def _teammate(given, current: dict) -> str | None:
+    """The default teammate 芝士 named, as ``defaultRole``: a preset by its
+    title or type name; ``INHERIT_TEAMMATE`` (or blank) leaves the level above
+    in force — ``""`` clears the 题目's own where the draft has one, ``None``
+    writes nothing where it has none."""
+    word = str(given or "").strip()
+    if not word or word == INHERIT_TEAMMATE:
+        return None if current.get("defaultRole") is None else ""
+    presets = teammates()
+    if word in presets:
+        return presets[word]
+    if word in presets.values():
+        return word
+    raise BadRequestError(
+        say("draftTeammateChoice", names="、".join([*presets, INHERIT_TEAMMATE]))
+    )
 
 
 def _mentors(given, space: Space) -> list[str]:
@@ -781,7 +937,13 @@ def _is_doc_json(text: str) -> bool:
         return False
 
 
-def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) -> str:
+def agent_view(
+    draft: TaskDraft,
+    space: Space,
+    *,
+    task_name: str | None = None,
+    private: bool,
+) -> str:
     """The draft as 芝士 reads it: every field in its own words, the way it
     writes them back."""
     head = (
@@ -797,17 +959,22 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
         draft.fields or {},
         space,
         "</草稿>",
+        private=private,
     )
 
 
-def published_view(task_id: int, name: str, fields: dict, space: Space) -> str:
-    """A published 题目 as 芝士 reads it, in the same words as a draft."""
+def published_view(
+    task_id: int, name: str, fields: dict, space: Space, *, private: bool
+) -> str:
+    """A published 题目 as 芝士 reads it, in the same words as a draft.
+    ``private``: the reader may teach it, so its private guidance is said."""
     return _view(
         f"<题目 id={task_id} 空间id={space.id} 空间={space.name}>",
         f"题目 {task_id}（已发布）：{name}",
         fields,
         space,
         "</题目>",
+        private=private,
     )
 
 
@@ -911,7 +1078,15 @@ def doc_markdown(text: str) -> str:
     return "\n\n".join(b for b in blocks if b.strip())
 
 
-def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) -> str:
+def _view(
+    open_tag: str,
+    head: str,
+    fields: dict,
+    space: Space,
+    close_tag: str,
+    *,
+    private: bool,
+) -> str:
     by_id = {v: k for k, v in space.categories.items()}
     tag_by_id = {v: k for k, v in space.tags.items()}
     forms = {v: k for k, v in FORMS.items()}
@@ -920,6 +1095,9 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
     lockings = {v: k for k, v in LOCKING.items()}
     modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
+    material_by_id = {v: k for k, v in space.materials.items()}
+    preset_titles = {v: k for k, v in teammates().items()}
+    teaching = fields.get("teaching") or {}
 
     def when(ms) -> str:
         if not ms:
@@ -982,10 +1160,30 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
             if isinstance(starter_file := fields.get("starterFile"), dict)
             else ("（不要起始代码）" if fields.get("removeStarter") else "")
         ),
-        "ai_mode: "
-        + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),
-        "ai_guidance: "
-        + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
+        "ai_teammate: "
+        + (
+            preset_titles.get(
+                str(fields.get("defaultRole")), str(fields.get("defaultRole"))
+            )
+            if fields.get("defaultRole")
+            else INHERIT_TEAMMATE
+        ),
+        "ai_mode: " + modes.get(teaching.get("mode"), "沿用空间设置"),
+        "ai_guidance: " + str(teaching.get("systemPrompt") or "（无）"),
+        *(
+            ["ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）")]
+            if private
+            else []
+        ),
+        "ai_goals: " + ("、".join(teaching.get("learningGoals") or []) or "（无）"),
+        "ai_materials: "
+        + (
+            "、".join(
+                material_by_id.get(m, str(m)) for m in teaching.get("materialIds") or []
+            )
+            or "（无）"
+        ),
+        "ai_skills: " + ("、".join(teaching.get("skills") or []) or "（无）"),
         "stages:" + ("" if stages else " （不分阶段）"),
         *(
             f"  {n}. {s.get('name')}"
@@ -1013,6 +1211,9 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         f"这个空间的模板：{_templates(space)}",
         f"可以当导师的人：{_people_said(space)}",
         f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
+        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT_TEAMMATE])}",
+        f"这个空间资料库里可以给 AI 队友读的资料：{_names(space.materials)}",
+        f"可以给项目里每个 AI 队友带上的技能：{'、'.join(skill_catalog()) or '（无）'}",
         close_tag,
     ]
     return "\n".join(lines)
@@ -1075,6 +1276,12 @@ def published_form(draft: TaskDraft) -> dict:
     fields["intro"] = intro_of(draft.fields or {})
     if not draft.fields.get("teachingOwn", False):
         fields.pop("teaching", None)
+    # A new 题目 has no own default teammate to clear: "" and None both mean
+    # the level above stands, which is what leaving the key out says.
+    if fields.get("defaultRole") is None or (
+        draft.task_id is None and not fields.get("defaultRole")
+    ):
+        fields.pop("defaultRole", None)
     return fields
 
 
@@ -1148,4 +1355,7 @@ def task_form(task: dict) -> dict:
         "stages": task.get("stages") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
+        # The 题目's own default teammate; None when it has none, so leaving the
+        # draft as it is writes nothing.
+        "defaultRole": task.get("defaultRole"),
     }

@@ -1,7 +1,7 @@
 // 「AI 队友辅导」在表单上那几格与接口那一份之间的翻译。
 //
 // 服务端存的是**整份**（`SpaceTeaching`，见 `backend/app/domain/task/protocol.py`）：
-// 方式、补充要求、出题人私有指导、学习目标、资料、文档。空间和题目两层同时生效，
+// 方式、补充要求、出题人私有指导、学习目标、资料、文档、技能。空间和题目两层同时生效，
 // 所以题目那一层留空就是只用空间的；写了什么就在空间的基础上加什么。
 //
 // 空间设置页和发题页、改题页对同一份东西用同一套规矩，放在这里免得几处各写一遍。
@@ -21,6 +21,8 @@ export type TeachingDraft = {
   materialIds: number[]
   /** 表单上不改，原样带着：老配置里写过的团队文档不因为换了表单就丢掉。 */
   documentIds: string[]
+  /** 项目里每个 AI 队友都带上的技能名。 */
+  skills: string[]
 }
 
 export function emptyTeachingDraft(): TeachingDraft {
@@ -31,6 +33,7 @@ export function emptyTeachingDraft(): TeachingDraft {
     learningGoals: '',
     materialIds: [],
     documentIds: [],
+    skills: [],
   }
 }
 
@@ -51,6 +54,7 @@ export function draftFromConfig(config?: SpaceTeaching | null): TeachingDraft {
     learningGoals: (config?.learningGoals ?? []).join(', '),
     materialIds: [...(config?.materialIds ?? [])],
     documentIds: [...(config?.documentIds ?? [])],
+    skills: [...(config?.skills ?? [])],
   }
 }
 
@@ -63,6 +67,7 @@ export function buildTeaching(draft: TeachingDraft): SpaceTeaching {
     learningGoals: splitList(draft.learningGoals),
     materialIds: [...draft.materialIds],
     documentIds: [...draft.documentIds],
+    skills: [...draft.skills],
   }
 }
 
@@ -91,6 +96,7 @@ export function isTeachingBlank(teaching?: SpaceTeaching | null): boolean {
     !teaching.privatePrompt?.trim() &&
     (teaching.learningGoals?.length ?? 0) === 0 &&
     (teaching.materialIds?.length ?? 0) === 0 &&
-    (teaching.documentIds?.length ?? 0) === 0
+    (teaching.documentIds?.length ?? 0) === 0 &&
+    (teaching.skills?.length ?? 0) === 0
   )
 }

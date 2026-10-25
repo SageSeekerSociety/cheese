@@ -14,8 +14,10 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useStarterUpload } from '@/composables/useStarterUpload'
@@ -76,6 +78,8 @@ const editCategories = computed(() =>
 )
 
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
+const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 
 /** 附件直接放进这道题的资料库、在那里替换和删掉：改题页上的增删换当场生效，不等保存，
  *  每一次都让题目记一版。认的是它在资料库里的名字。 */
@@ -110,6 +114,10 @@ const mentorChoices = computed(() =>
 
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
+/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。`raw` 是这道题原始的覆盖值，
+ *  草稿里存的是保存时要交的那一格（`defaultRolePayload`；`null` = 不动）。 */
+const defaultRole = ref('')
+const defaultRoleRaw = ref<string | null>(null)
 
 /** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
 function setTeaching(value: SpaceTeaching) {
@@ -131,7 +139,9 @@ async function openChanges() {
   initialData.value = row.fields as Partial<TaskFormSubmitData>
   teaching.value = { ...(row.fields.teaching ?? {}) }
   teachingOwn.value = !!row.fields.teachingOwn && !isTeachingBlank(teaching.value)
-  draft.baseline({ teaching: teaching.value, teachingOwn: teachingOwn.value })
+  // `null` 是「不动」：这一格就是这道题原来的样子。
+  defaultRole.value = row.fields.defaultRole ?? defaultRoleRaw.value ?? ''
+  draft.baseline({ teaching: teaching.value, teachingOwn: teachingOwn.value, defaultRole: rolePayload() })
   formKey.value++
   draftReady.value = true
 }
@@ -142,6 +152,12 @@ const unsaved = computed(() => (draft.draft.value?.version ?? 0) > 0)
 watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
   deep: true,
 })
+/** 默认队友在草稿里的那一格：本来没写、又选「继承」→ `null`（不动项目集那份）；本来写过、
+ *  又选回「继承」→ `''`，明确清掉这道题的覆盖。 */
+function rolePayload(): string | null {
+  return defaultRolePayload(defaultRole.value, defaultRoleRaw.value) ?? null
+}
+watch(defaultRole, () => draft.changed({ defaultRole: rolePayload() }))
 
 type FormHandle = InstanceType<typeof TaskForm>
 const form = ref<FormHandle | null>(null)
@@ -155,6 +171,7 @@ watch(form, (f) =>
             // 不在表单上的 AI 指导由页面自己填。
             if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
             if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+            if ('defaultRole' in fields) defaultRole.value = fields.defaultRole ?? defaultRoleRaw.value ?? ''
             return f.apply(fields)
           },
         }
@@ -169,6 +186,9 @@ const terms = () => ({
   topics: (taskData.value?.space?.classificationTopics ?? []).map((topic) => ({ id: topic.id, name: topic.name })),
   domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
+  materials: materials.value.map(({ id, name }) => ({ id, name })),
+  teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  teaching: teaching.value,
 })
 
 const agent = useDraftAgent({
@@ -200,10 +220,6 @@ onMounted(() => {
 
 // --- 保存 ---------------------------------------------------------------------------
 
-/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。`raw` 是这道题原始的覆盖值。 */
-const defaultRole = ref('')
-const defaultRoleRaw = ref<string | null>(null)
-
 const formInvalid = ref(0)
 const attempted = ref(false)
 const saving = ref(false)
@@ -233,16 +249,11 @@ async function onSubmit(data: TaskFormSubmitData) {
         // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
+        defaultRole: rolePayload(),
       })
     )
     await TaskDraftsApi.publish(row.id)
     draft.gone()
-    // 默认队友（#944）：本来没写、又选回「继承」→ 不带这个键（不动项目集那份）；
-    // 本来写过、又选回「继承」→ 带空串，明确清掉这道题的覆盖。
-    const role = defaultRolePayload(defaultRole.value, defaultRoleRaw.value)
-    if (role !== undefined) {
-      await TaskBoardApi.update(taskId, { defaultRole: role })
-    }
     if (resubmit.value) {
       await TaskBoardApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
@@ -367,7 +378,6 @@ onBeforeUnmount(() => void draft.flush())
       :classification-topics="taskData.space?.classificationTopics || []"
       :categories="editCategories"
       :domain-groups="domainGroups"
-      :teaching-custom="teachingOwn"
       :mentor-options="mentorChoices"
       :agent-writing="draft.writing.value"
       @invalid="formInvalid = $event"
@@ -395,18 +405,22 @@ onBeforeUnmount(() => void draft.flush())
         </div>
       </template>
       <template #teaching>
-        <div data-agent-field="ai_guidance">
-          <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-          <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-          <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" class="te__teaching" />
+        <div class="te__teaching" data-agent-field="ai_guidance">
+          <DefaultTeammatePicker
+            v-model="defaultRole"
+            :raw-value="defaultRoleRaw"
+            :types="agentTypes"
+            :types-failed="agentTypesFailed"
+          />
           <TeachingFields
             :model-value="teaching"
-            class="te__teaching"
             inherit
             :space-teaching="spaceStore.currentSpace?.teaching ?? null"
             :materials="materials"
             :materials-state="materialsState"
             :library-to="spaceLibraryPath(spaceId)"
+            :skill-catalog="skillCatalog"
+            :skill-catalog-failed="skillCatalogFailed"
             @update:model-value="setTeaching"
           />
         </div>
@@ -470,20 +484,10 @@ onBeforeUnmount(() => void draft.flush())
   gap: 16px;
 }
 
-.te__label {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-}
-
-.te__hint {
-  margin: 4px 0 8px;
-}
-
 .te__teaching {
-  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .te__unsaved {

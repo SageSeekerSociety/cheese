@@ -115,7 +115,6 @@
     "needsReview": "An admin reviews it after publishing",
     "publish": "Publish",
     "teaching": {
-      "subtitle": "Applies to projects created from this challenge",
       "title": "AI teammate guidance"
     },
     "useTemplate": "Use template",
