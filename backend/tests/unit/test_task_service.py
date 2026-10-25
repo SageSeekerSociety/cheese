@@ -26,6 +26,17 @@ from app.domain.task.services import (
 _NOW = datetime.now(UTC)
 
 
+class _Savepoint:
+    """What ``session.begin_nested()`` gives: an async context that commits
+    nothing here."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def _make_task(**overrides):
     defaults = {
         "id": 1,
@@ -202,8 +213,11 @@ class TestTaskMembershipService:
     async def test_create_membership_happy_path(self):
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 0
+        repo.try_lock_claim.return_value = True
         repo.get_by_task_and_member.return_value = None
         repo.save.side_effect = lambda m: m
+        repo._session = Mock()
+        repo._session.begin_nested.return_value = _Savepoint()
 
         svc, _ = self._build_service(repo=repo)
         task = _make_task(participant_limit=10)
@@ -226,26 +240,29 @@ class TestTaskMembershipService:
         repo.save.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_create_membership_rejects_duplicate(self):
+    async def test_claiming_again_answers_with_the_claim_held(self):
         repo = AsyncMock()
         existing = _make_membership()
+        repo.try_lock_claim.return_value = True
         repo.get_by_task_and_member.return_value = existing
 
         svc, _ = self._build_service(repo=repo)
         task = _make_task()
 
-        with pytest.raises(BadRequestError, match="already participating"):
-            await svc.create_membership(
-                task=task,
-                member_id=42,
-                is_team=False,
-                deadline=None,
-                email=None,
-                phone=None,
-                apply_reason=None,
-                personal_advantage=None,
-                remark=None,
-            )
+        result = await svc.create_membership(
+            task=task,
+            member_id=42,
+            is_team=False,
+            deadline=None,
+            email=None,
+            phone=None,
+            apply_reason=None,
+            personal_advantage=None,
+            remark=None,
+        )
+
+        assert result is existing
+        repo.save.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_soft_delete_membership(self):
