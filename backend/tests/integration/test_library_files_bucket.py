@@ -226,6 +226,35 @@ def test_a_teams_library_takes_a_file_as_large_as_the_bucket_takes(
     assert taken.status_code == 200, taken.text
 
 
+def _team_room(client, new_files_go_to, store: str) -> dict:
+    new_files_go_to(store)
+    headers = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    team = client.post(
+        "/teams", json={"name": "资料组", "handle": f"room-{store}"}, headers=headers
+    )
+    assert team.status_code == 201, team.text
+    room = client.get(
+        f"/teams/{team.json()['data']['team']['id']}/library/room", headers=headers
+    )
+    assert room.status_code == 200, room.text
+    return room.json()["data"]
+
+
+def test_a_teams_library_kept_in_the_bucket_holds_twenty_gigabytes(
+    client, new_files_go_to
+):
+    """Files kept in the bucket: a team's library holds 20 GB."""
+    assert _team_room(client, new_files_go_to, "bucket")["total"] == 20 * 1024**3
+
+
+def test_a_teams_library_kept_on_this_servers_disk_holds_one_gigabyte(
+    client, new_files_go_to
+):
+    """Files kept on this server's own disk: a team's library holds 1 GB, so
+    no team can fill the server's disk with 20."""
+    assert _team_room(client, new_files_go_to, "local")["total"] == 1024**3
+
+
 def test_a_file_in_parts_reads_back_whole(client, new_files_go_to, monkeypatch):
     """A file larger than one part arrives in several and reads back as the
     file. The part size is lowered so a test-sized file takes several."""
