@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""bundle.py and its two hooks in pr-review.sh prepare, on a throwaway repository.
+"""bundle.py's inherit hook in pr-review.sh prepare, on a throwaway repository.
 
     python3 .claude/scripts/test_pr_review_bundle.py
 
   a) a delta round whose increment only merged main inherits the last conclusion: no
      reviewer, result.json written, post prints 增量自; a code increment does not.
-  b) the call slices carry the call site of a touched function and no unrelated file.
-  c) a type error on a changed line shows up in REVIEW.md's pyright section.
 
-The stand-in `gh` answers prepare's reads; no network, no credentials. (c) runs against a
-stand-in pyright that prints pyright's own JSON shape, and once more against the real one
-when this machine has it.
+The stand-in `gh` answers prepare's reads; no network, no credentials. The `facts` half of
+this file — call slices and single-file pyright for subagents to read — went with the
+subagent method: open-code-review reads the files itself now, and nothing downstream of
+prepare ever consumed that section.
 """
 
 import json
@@ -169,7 +168,10 @@ class Bundle(unittest.TestCase):
         text = Path(out.stdout.strip()).read_text()
         self.assertNotIn("## Inherited conclusion", text)
         self.assertIn("## Incremental review", text)
-        self.assertIn("## Bundle", text)
+        # The Bundle section went with the subagent method (see the module docstring): a
+        # code increment has to reach the run as a review, and nothing in REVIEW.md may
+        # still promise the seat a section prepare no longer writes.
+        self.assertNotIn("## Bundle", text)
         self.assertFalse((Path(out.stdout.strip()).parent / "result.json").exists())
 
     def test_a_previous_round_with_a_major_is_not_inherited(self):
@@ -219,130 +221,6 @@ class Bundle(unittest.TestCase):
         kept.write_text(json.dumps({"findings": [{"severity": "minor"}]}))
         result, _ = bundle.inherit(str(self.work), "main", self.reviewed, self.merged, str(prev), str(kept))
         self.assertIsNotNone(result, "a kept round with only minors is no reason to re-review")
-
-    # ----------------------------------------------------------------- b) slices
-    def commit_on_branch(self, name, start, files):
-        work = self.work
-        git(work, "checkout", "-q", "-b", name, start)
-        try:
-            for path, text in files.items():
-                (work / path).write_text(text)
-            git(work, "commit", "-qam", name)
-            return git(work, "rev-parse", "HEAD")
-        finally:
-            git(work, "checkout", "-q", "main")
-
-    def test_b_a_removed_line_starting_with_two_dashes_is_not_a_file_header(self):
-        start = self.commit_on_branch("dash-base", self.base, {
-            "a.py": "X = '''\n-- banner\n'''\n\n\ndef late(x):\n    return x\n"})
-        head = self.commit_on_branch("dash-head", start, {
-            "a.py": "X = '''\n'''\n\n\ndef late(x):\n    return x + 1\n"})
-        text = "\n".join(bundle.section_slices(str(self.work), start, head))
-        self.assertIn("### 改动 `late`", text)
-
-    def test_b_a_function_under_an_if_is_sliced(self):
-        start = self.commit_on_branch("if-base", self.base, {
-            "a.py": "import sys\n\nif sys.version_info >= (3,):\n    def guarded(x):\n        return x\n"})
-        head = self.commit_on_branch("if-head", start, {
-            "a.py": "import sys\n\nif sys.version_info >= (3,):\n    def guarded(x):\n        return x * 2\n"})
-        text = "\n".join(bundle.section_slices(str(self.work), start, head))
-        self.assertIn("### 改动 `guarded`", text)
-
-    def test_b_a_pure_deletion_does_not_mark_the_next_function_changed(self):
-        head = self.commit_on_branch("drop-first", self.base, {
-            "a.py": "def unrelated_helper():\n    return 0\n"})
-        files = bundle.changed_lines(str(self.work), self.base, head)
-        self.assertEqual(files["a.py"][1], set(), "a pure deletion adds no changed lines")
-        text = "\n".join(bundle.section_slices(str(self.work), self.base, head))
-        self.assertIn("### 删除 `compute`", text)
-        self.assertNotIn("改动 `unrelated_helper`", text)
-
-
-    def test_b_slices_carry_the_call_site_and_no_unrelated_file(self):
-        text = "\n".join(bundle.section_slices(str(self.work), self.base, self.reviewed))
-        self.assertIn("### 改动 `compute`（a.py:1）", text)
-        self.assertIn("`b.py:5`", text)
-        self.assertIn("return compute(41)", text)
-        self.assertNotIn("c.py", text)
-        self.assertNotIn("unrelated_helper", text, "an untouched function is not sliced")
-
-    def test_b_a_deleted_function_lists_who_still_calls_it(self):
-        work = self.work
-        git(work, "checkout", "-q", "-b", "delete-compute", self.reviewed)
-        try:
-            (work / "a.py").write_text("def unrelated_helper():\n    return 0\n")
-            git(work, "commit", "-qam", "drop compute")
-            head = git(work, "rev-parse", "HEAD")
-        finally:
-            git(work, "checkout", "-q", "main")
-        text = "\n".join(bundle.section_slices(str(work), self.reviewed, head))
-        self.assertIn("### 删除 `compute`", text)
-        self.assertIn("`b.py:5`", text)
-
-    def test_b_a_line_deleted_inside_a_function_slices_that_function(self):
-        start = self.commit_on_branch("mid-base", self.base, {
-            "a.py": "def keep(x):\n    x += 1\n    x += 2\n    return x\n"})
-        head = self.commit_on_branch("mid-head", start, {
-            "a.py": "def keep(x):\n    x += 1\n    return x\n"})
-        text = "\n".join(bundle.section_slices(str(self.work), start, head))
-        self.assertIn("### 改动 `keep`（a.py:1）", text)
-
-    def test_b_an_inner_function_is_sliced_once(self):
-        start = self.commit_on_branch("inner-base", self.base, {
-            "a.py": "def outer():\n    def inner():\n        return 1\n    return inner\n"})
-        head = self.commit_on_branch("inner-head", start, {
-            "a.py": "def outer():\n    def inner():\n        return 2\n    return inner\n"})
-        text = "\n".join(bundle.section_slices(str(self.work), start, head))
-        self.assertIn("### 改动 `outer.inner`", text)
-        self.assertNotIn("### 改动 `outer`（", text)
-
-    def test_b_a_typescript_function_is_sliced_with_its_caller(self):
-        work = self.work
-        git(work, "checkout", "-q", "-b", "ts-head", self.base)
-        try:
-            (work / "util.ts").write_text("export function shout(s: string) {\n  return s + '!';\n}\n")
-            (work / "use.ts").write_text("import { shout } from './util';\nconsole.log(shout('hi'));\n")
-            git(work, "add", "util.ts", "use.ts")
-            git(work, "commit", "-qm", "ts")
-            head = git(work, "rev-parse", "HEAD")
-        finally:
-            git(work, "checkout", "-q", "main")
-        text = "\n".join(bundle.section_slices(str(work), self.base, head))
-        self.assertIn("### 改动 `shout`（util.ts:1）", text)
-        self.assertIn("`use.ts:2`", text)
-
-    def test_b_a_deleted_function_nobody_calls_says_so_and_a_failed_grep_does_not(self):
-        start = self.commit_on_branch("lonely-base", self.base, {
-            "a.py": A_BASE + "\n\ndef lonely_function_xyz():\n    return 1\n"})
-        head = self.commit_on_branch("lonely-head", start, {"a.py": A_BASE})
-        text = "\n".join(bundle.section_slices(str(self.work), start, head))
-        self.assertIn("删掉之后已经没人用它", text)
-        with self.assertRaises(RuntimeError):
-            bundle.call_sites(str(self.work), "0" * 40, "compute", "a.py")
-
-    # ---------------------------------------------------------------- c) pyright
-    def test_c_a_type_error_reaches_review_md(self):
-        out = self.run_script("pyright", self.reviewed, "prepare", PR, self.reviewed)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        text = Path(out.stdout.strip()).read_text()
-        self.assertIn("## B2. 单文件 pyright", text)
-        self.assertIn("⚠ `a.py:3` FAKE TYPE ERROR（reportAssignmentType）", text)
-        self.assertIn("\n- `a.py:6` FAKE OFF THE DIFF", text, "an error on an unchanged line is not marked")
-        self.assertNotIn("FAKE WARNING", text, "warnings are not listed")
-
-    def test_c_real_pyright_reports_the_bad_assignment(self):
-        cmd = bundle.find_pyright(str(REPO_ROOT), None)
-        if not cmd:
-            self.skipTest("no pyright on this machine; the stand-in test above still runs")
-        tree = self.tmp / "tree-real"
-        git(self.work, "worktree", "add", "-q", "--detach", str(tree), self.reviewed)
-        try:
-            text = "\n".join(bundle.section_pyright(str(self.work), str(tree), self.base, self.reviewed,
-                                                    " ".join(cmd)))
-        finally:
-            git(self.work, "worktree", "remove", "--force", str(tree))
-        self.assertIn("⚠ `a.py:2`", text)
-        self.assertIn("reportAssignmentType", text)
 
 
 if __name__ == "__main__":

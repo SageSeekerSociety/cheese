@@ -26,11 +26,13 @@
 #       subagent topology that tier spends. A tier G change is mechanical: no
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
-#       Also appends PRECOMPUTED.md (.claude/pr-review/precompute.py): symbol refs and
-#       the PR body's numbers recomputed. It runs no tests: those are CI's and the seat's.
-#       Then BUNDLE.md (.claude/pr-review/bundle.py): the source of every function the diff
-#       touched, its call sites in other files, and single-file pyright errors (PYRIGHT
-#       overrides the command), so the reviewers do not open the files themselves.
+#       It writes PRECOMPUTED.md (precompute.py): the public symbols the change adds,
+#       drops or changes and where else they are referenced, plus the numbers the PR body
+#       states recomputed. The method's step 3 tells the seat to read it. The BUNDLE.md
+#       section prepare used to append as well — call slices and single-file pyright for
+#       the subagents — went with the subagent method; the reading is one
+#       open-code-review run now (see .claude/scripts/ocr-review.sh) and it opens the
+#       files itself.
 #       A --since round whose increment §4 does not re-review (only a merge of the base
 #       branch, or only tests, docs or copy) and whose last round on this machine had no
 #       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
@@ -422,13 +424,16 @@ EOF
     echo "$dir/REVIEW.md"
     return 0
   fi
+  # The facts OCR does not produce for itself: which public symbols the change adds or
+  # drops and where else they are referenced, and the numbers the PR body states
+  # recomputed. The orphan scan in the first section is what caught the `--no-filename`
+  # bug that made every reference count zero.
   python3 "$HERE/../pr-review/precompute.py" --repo "$ROOT" --tree "$tree" --base "$merge_base" --head "$sha" --pr-body "$dir/pr.md" --scripts "$HERE" --out "$dir/PRECOMPUTED.md" >&2 && { printf '\n' ; cat "$dir/PRECOMPUTED.md"; } >> "$dir/REVIEW.md" || echo "pr-review: precompute failed; REVIEW.md carries no PRECOMPUTED section" >&2
-  # Call slices and single-file pyright, so the reviewers read the bundle instead of the
-  # files. A delta round slices only the increment.
-  python3 "$HERE/../pr-review/bundle.py" facts --repo "$ROOT" --tree "$tree" --base "${since:-$merge_base}" \
-      --head "$sha" ${PYRIGHT:+--pyright "$PYRIGHT"} --out "$dir/BUNDLE.md" >&2 \
-    && { printf '\n'; cat "$dir/BUNDLE.md"; } >> "$dir/REVIEW.md" \
-    || echo "pr-review: bundle failed; REVIEW.md carries no Bundle section" >&2
+  # No Bundle section: `bundle.py facts` sliced the changed functions and ran single-file
+  # pyright for the subagents to read instead of opening the files. The reading is one
+  # open-code-review run now, and it reads the files itself — nothing in REVIEW.md, and
+  # nothing on the card, ever consumed that section. Dropping it also drops a full-tree
+  # pyright from every prepare.
   echo "$dir/REVIEW.md"
 }
 
