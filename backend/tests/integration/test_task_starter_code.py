@@ -27,7 +27,6 @@ from app.core.config import settings
 from app.domain.project.models import Project, ProjectStarterPush
 from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
-from tests.integration.test_task_files import _create_task as _create_task_of
 from tests.integration.test_task_files import (
     _add,
     _auth,
@@ -38,6 +37,7 @@ from tests.integration.test_task_files import (
     _upload_loose,
     upload_root,  # noqa: F401 — the fixture every test here uses (pytestmark)
 )
+from tests.integration.test_task_files import _create_task as _create_task_of
 from tests.integration.test_task_files import _new_board as new_board
 from tests.support import git_store
 

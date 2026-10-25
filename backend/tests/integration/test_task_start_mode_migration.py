@@ -74,7 +74,4 @@ def test_every_existing_task_is_applied_for_and_the_old_release_still_reads_and_
             raise AssertionError("a start mode outside DIRECT/APPLY was stored")
 
         db.downgrade(BEFORE)
-        assert (
-            db.fetch(f"SELECT {OLD_COLUMNS} FROM task {OURS} ORDER BY id")
-            == before
-        )
+        assert db.fetch(f"SELECT {OLD_COLUMNS} FROM task {OURS} ORDER BY id") == before
