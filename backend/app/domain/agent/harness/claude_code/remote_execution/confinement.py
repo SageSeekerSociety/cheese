@@ -138,7 +138,7 @@ def sbpl(path):
     return json.dumps(os.path.realpath(str(path)))
 
 
-def seatbelt_profile(*, owner, writable, readable, link):
+def seatbelt_profile(*, owner, writable, readable, link, dialled=()):
     """The macOS sandbox for a room, as `sandbox_argv` builds the
     Linux one: the machine readable and nothing of it writable, and of the
     owner's home only what is named.
@@ -155,8 +155,13 @@ def seatbelt_profile(*, owner, writable, readable, link):
     dialled only in the room's own directories (another program of the
     owner's listening on one, a terminal multiplexer among them, runs
     outside), and nothing is handed to LaunchServices or the pasteboard, both
-    of which act outside the sandbox on its behalf."""
-    readable = [*writable, *readable]
+    of which act outside the sandbox on its behalf.
+
+    `dialled` (the directory of the platform socket the connector serves) is
+    readable and its sockets may be dialled, and nothing in it is writable:
+    the room can reach the platform there but not put a socket of its own in
+    the connector's place."""
+    readable = [*writable, *dialled, *readable]
     prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
     for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
         if owner in prefix.parents:
@@ -197,7 +202,7 @@ def seatbelt_profile(*, owner, writable, readable, link):
             *(
                 f"(allow network-outbound (remote unix-socket {path}))"
                 for path in [
-                    *(f"(subpath {sbpl(item)})" for item in writable),
+                    *(f"(subpath {sbpl(item)})" for item in (*writable, *dialled)),
                     '(literal "/private/var/run/mDNSResponder")',
                 ]
             ),
@@ -210,7 +215,18 @@ def seatbelt_profile(*, owner, writable, readable, link):
 
 
 def start_seatbelt(
-    argv, *, sandbox_exec, owner, home, store, tmp, readable, sockets, env, **options
+    argv,
+    *,
+    sandbox_exec,
+    owner,
+    home,
+    store,
+    tmp,
+    readable,
+    sockets,
+    env,
+    platform=None,
+    **options,
 ):
     """Start `argv` under `sandbox-exec` with the room's profile, which runs
     it as the process it starts: that process is the sandbox's first. The
@@ -219,11 +235,14 @@ def start_seatbelt(
     for directory in (store, tmp):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     sockets.mkdir(exist_ok=True, mode=0o700)
+    if platform is not None:
+        platform.mkdir(exist_ok=True, mode=0o700)
     profile = seatbelt_profile(
         owner=owner,
         writable=[home, store, sockets],
         readable=readable,
         link=Path(str(sockets) + ".sock"),
+        dialled=[] if platform is None else [platform],
     )
     process = subprocess.Popen(
         [sandbox_exec, "-p", profile, *argv],
@@ -255,6 +274,7 @@ def sandbox_argv(
     claude,
     sockets,
     fds,
+    platform=None,
     programs=(),
     network=True,
 ):
@@ -271,7 +291,10 @@ def sandbox_argv(
     socket. `/tmp` and `/var/tmp` are a
     directory of the room's own on disk, with the one directory of the
     machine's /tmp that holds this executor's sockets bound back, so the
-    connector can still reach it.
+    connector can still reach it, and the one that holds the platform socket
+    the connector serves bound back read-only: the room dials it, and cannot
+    unlink it or bind a socket of its own in its place (measured with
+    bubblewrap 0.13 on 2026-10-25: a writable bind lets the room replace it).
 
     Its own pid namespace too: no other room's processes to signal, trace, or
     reach a filesystem through via /proc. That makes the pid an executor
@@ -291,6 +314,8 @@ def sandbox_argv(
     for directory in (store, toolchain, tmp):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     sockets.mkdir(exist_ok=True, mode=0o700)
+    if platform is not None:
+        platform.mkdir(exist_ok=True, mode=0o700)
     command = [
         bwrap,
         "--unshare-user",
@@ -369,6 +394,7 @@ def sandbox_argv(
         "--bind",
         str(sockets),
         str(sockets),
+        *(() if platform is None else ("--ro-bind", str(platform), str(platform))),
         "--chdir",
         str(workdir),
         "--",
