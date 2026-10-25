@@ -44,6 +44,7 @@
   "revisionContentGone": "This version's content is no longer available",
   "roomFileNameTaken": "A file with this name is already in the channel",
   "roomFileNotFound": "This file isn't in the channel",
+  "roomFileMovedOn": "This file was changed by someone else after you opened it. Refresh to see the latest, then edit",
   "templateNotFound": "This template doesn't exist",
   "templateSuffixRequired": "The “{template}” template must be saved as .{suffix}",
   "tooManySameNameFiles": "Too many files with the same name: {name}",

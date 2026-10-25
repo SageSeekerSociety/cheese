@@ -44,6 +44,7 @@
   "revisionContentGone": "这一版的内容不在了",
   "roomFileNameTaken": "频道里已经有同名的文件",
   "roomFileNotFound": "频道里没有这份文件",
+  "roomFileMovedOn": "这份文件在你打开之后被别人改过了。刷新看最新的，再改动",
   "templateNotFound": "没有这个模板",
   "templateSuffixRequired": "「{template}」模板要存成 .{suffix}",
   "tooManySameNameFiles": "同名文件太多：{name}",
