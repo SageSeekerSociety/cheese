@@ -398,9 +398,14 @@ async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:
 async def _library(db, space_id: int, user_id: int) -> dict[str, int]:
     """The space library's files this person sees, by name: what 芝士 may
     point the 题目's AI teammates at (the page's picker lists the same)."""
-    listed = await SpaceMaterialService(
-        session=db, storage=get_storage_backend()
-    ).list_for_space(space_id=space_id, user_id=user_id)
+    try:
+        listed = await SpaceMaterialService(
+            session=db, storage=get_storage_backend()
+        ).list_for_space(space_id=space_id, user_id=user_id)
+    except NotFoundError:
+        # Not one of the space's people: its library is not theirs to see,
+        # so there is nothing in it they could point the teammates at.
+        return {}
     return {str(m["name"]): int(m["id"]) for m in listed["materials"]}
 
 
