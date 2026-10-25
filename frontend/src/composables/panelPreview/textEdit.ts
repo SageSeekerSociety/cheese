@@ -56,7 +56,7 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
    *  这段时间里，面板会照旧重读这一份（轮询、收工、读者按了刷新），`previewFile`
    *  说不动就被换成别人的新版。照那时候的版本去存，服务端一比「对得上」，打进去的字
    *  就盖掉了别人的改动——正是这一条路要挡的事。钉住之后，别人先改过的还会是 409。 */
-  const pinned = ref<{ path: string; version: string; content: string } | null>(null)
+  const pinned = ref<{ room: string; path: string; version: string; content: string } | null>(null)
   const pinnedPath = computed(() => pinned.value?.path ?? '')
 
   /** 这一份能不能在预览里直接改：是文本、是这个房间的文件、正文读得出来。
@@ -79,10 +79,13 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
   function begin() {
     const file = state.previewFile.value
     if (!canEdit.value || !file || file.content === null || !file.version) return
-    pinned.value = { path: file.path, version: file.version, content: file.content }
+    // 房间也钉住：`save()` 用的是这一份自己的房间，不是此刻 `props.topicId` 说的那个。
+    // 一次换房间如果新房间的文件碰巧同名同内容，只用路径认不出来，字就写到另一个房里了。
+    pinned.value = { room: props.topicId!, path: file.path, version: file.version, content: file.content }
     draft.value = file.content
     error.value = ''
     conflicted.value = false
+    saving.value = false
   }
 
   function cancel() {
@@ -90,6 +93,9 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     draft.value = null
     error.value = ''
     conflicted.value = false
+    // 会话没了，这一程的「正在保存…」也就到此为止。留在 true 上，下一个编辑器
+    // 一打开就是「正在保存…」、存和取消都灰着——那一次存早就和屏幕无关了。
+    saving.value = false
   }
 
   // 屏幕上那份文件换掉了（读者切到了别的文件、芝士换了当前预览）：编辑器里打的是
@@ -105,11 +111,18 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     }
   )
 
+  // 换了房间（哪怕是同一个路径的预览）也一样收：这一稿说的是上一个房间的那一份。
+  watch(
+    () => props.topicId,
+    (room) => {
+      if (pinned.value && room !== pinned.value.room) cancel()
+    }
+  )
+
   /** 存下去。答 true 表示存住了；false 是没存成（原因在 `error`/`conflicted`）。 */
   async function save(): Promise<boolean> {
     const target = pinned.value
-    const tid = props.topicId
-    if (!target || !tid || draft.value === null || saving.value) return false
+    if (!target || draft.value === null || saving.value) return false
     // 这一版要送出去的正文：连着 `await` 之前取好。写这段时间里读者还能接着打字，
     // 那几笔不在这一版里——落下来的正文不能是它们。
     const sent = draft.value
@@ -122,7 +135,7 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     error.value = ''
     conflicted.value = false
     try {
-      const saved = await writeRoomTextFile(tid, target.path, sent, target.version)
+      const saved = await writeRoomTextFile(target.room, target.path, sent, target.version)
       // 这一程飞在天上时，读者可能已经收起编辑器、或者开了另一份。那这一次落下来就
       // 和现在的屏幕无关：不去动现在这一份的正文和版本。答 false——报了 `saved`，
       // 宿主那一下就按「存成了」把现在这一份的编辑器也收掉。
@@ -159,11 +172,10 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
    *  不按就还留着，再存一次仍是 409，不会有人被悄悄盖掉。 */
   async function reload(): Promise<void> {
     const target = pinned.value
-    const tid = props.topicId
-    if (!target || !tid) return
+    if (!target) return
     error.value = ''
     try {
-      const latest = await readPreviewFile(tid, target.path)
+      const latest = await readPreviewFile(target.room, target.path)
       if (pinned.value !== target) return
       if (latest.content === null || !latest.version) {
         // 读到了，但这一份现在交不出正文（成了二进制、或者大得读不动）。这是一次
@@ -172,7 +184,12 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
         error.value = t('work.room.preview.fileReadFailed')
         return
       }
-      pinned.value = { path: target.path, version: latest.version, content: latest.content }
+      pinned.value = {
+        room: target.room,
+        path: target.path,
+        version: latest.version,
+        content: latest.content,
+      }
       draft.value = latest.content
       conflicted.value = false
       const file = state.previewFile.value

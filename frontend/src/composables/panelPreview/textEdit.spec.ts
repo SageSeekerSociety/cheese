@@ -4,7 +4,7 @@
  * 规则：能改的只有这个房间的文本文件（空文件也算）；存的时候带的是**打开时读到的那一
  * 版**，别人先改过就报冲突、谁的都不丢；没改过的存一次不写一版历史。
  */
-import { createApp, defineComponent, nextTick } from 'vue'
+import { createApp, defineComponent, nextTick, reactive } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { createPreviewState } from './previewState'
@@ -31,7 +31,9 @@ beforeEach(() => {
 
 afterEach(() => apps.splice(0).forEach((app) => app.unmount()))
 
-/** 一份摆进预览格里的文件，和它那个编辑会话。 */
+/** 一份摆进预览格里的文件，和它那个编辑会话。
+ *
+ *  `room` 是 `ref` 而不是死值：换房间那一支要改它，看会话跟不跟得上。 */
 function setup(path: string, over: Record<string, unknown> = {}) {
   const state = createPreviewState()
   state.previewFile.value = {
@@ -43,23 +45,21 @@ function setup(path: string, over: Record<string, unknown> = {}) {
     too_large: false,
     ...over,
   } as never
+  // `props.topicId` 在产品里是反应式的（换房间时要能看出来），所以这里也留个把手。
+  const props = reactive({ topicId: 'room', projectId: 'project' })
   const refreshDocument = vi.fn()
   let bundle!: ReturnType<typeof usePanelPreviewTextEdit>
   const app = createApp(
     defineComponent({
       setup() {
-        bundle = usePanelPreviewTextEdit({
-          props: { topicId: 'room', projectId: 'project' } as never,
-          state,
-          refreshDocument,
-        })
+        bundle = usePanelPreviewTextEdit({ props: props as never, state, refreshDocument })
         return () => null
       },
     })
   )
   app.mount(document.createElement('div'))
   apps.push(app)
-  return { bundle, refreshDocument, state }
+  return { bundle, refreshDocument, state, props }
 }
 
 it('markdown 房间文件：能改，存下去带的是读到的那个版本', async () => {
@@ -205,6 +205,51 @@ it('存下去这一程里读者接着打字：落下来的正文是送出去的�
   // 送出去的是第一版；预览台上那份记的也得是第一版，不是读者后敲的字。
   expect(api.writeRoomTextFile).toHaveBeenCalledWith('room', 'notes/记录.md', '# 第一版\n', 'v1')
   expect(state.previewFile.value?.content).toBe('# 第一版\n')
+})
+
+it('存着一半时读者把编辑器收了：那一次落地之后还能再存', async () => {
+  // `saving` 只有在「这一次存还归它管」时才被放下来。会话没了（读者收起编辑器）
+  // 就没人放了——于是下一个编辑器一打开就是「正在保存…」，存和取消都灰着，
+  // 那一次存早和屏幕无关了。
+  const { bundle } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  let release!: (v: { path: string; version: string; seq: number }) => void
+  api.writeRoomTextFile.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve
+    })
+  )
+  const inflight = bundle.save()
+
+  bundle.cancel()
+  release({ path: 'notes/记录.md', version: 'v2', seq: 2 })
+  await inflight
+
+  expect(bundle.saving.value).toBe(false)
+
+  // 再打开、再改、再存：这一程要真的发得出去。
+  bundle.begin()
+  bundle.setDraft('# 又一次\n')
+  api.writeRoomTextFile.mockResolvedValue({ path: 'notes/记录.md', version: 'v3', seq: 3 })
+  expect(await bundle.save()).toBe(true)
+  expect(api.writeRoomTextFile).toHaveBeenLastCalledWith('room', 'notes/记录.md', '# 又一次\n', 'v1')
+})
+
+it('编辑期间换了房间：会话收起来，存的是上一个房间里那一份的地址', async () => {
+  // 换房间时那一格先清空，如果新房间的文件恰好同名，光看路径认不出来：这一稿说的
+  // 是上一个房间的那一份，往哪儿写要用它自己记着的房间。
+  const { bundle, props } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  props.topicId = 'another-room'
+  await nextTick()
+
+  expect(bundle.draft.value).toBeNull()
+  expect(await bundle.save()).toBe(false)
+  expect(api.writeRoomTextFile).not.toHaveBeenCalled()
 })
 
 it('空文件的正文是空串，不是 null：照样能改', async () => {
