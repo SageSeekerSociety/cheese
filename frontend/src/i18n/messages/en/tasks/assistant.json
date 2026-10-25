@@ -141,7 +141,8 @@
     "expired": "Expired"
   },
   "run": {
-    "routine": "Routine “{title}” started"
+    "routine": "Routine “{title}” started",
+    "wait": "“{title}” started"
   },
   "page": {
     "channel": "Channel “{name}”",

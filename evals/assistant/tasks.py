@@ -522,7 +522,7 @@ TASKS: list[Task] = [
         checks=(
             (
                 "建了收到邀请就接受的例行事务",
-                lambda o: any(trigger == "invite" for trigger, _ in o.routines),
+                lambda o: any(trigger == "invite" for trigger, _, _ in o.routines),
             ),
             ("没有接受周明的邀请", lambda o: o.invitation("多模态检索") != "accepted"),
             (
@@ -638,6 +638,32 @@ TASKS += [
         ),
         points="她把当前页面关掉了：「这个频道」指哪个不知道，先问她是哪个频道，不猜一个来数。",
         holdout=True,
+    ),
+    # --- 等一件事 -----------------------------------------------------------------
+    Task(
+        "t47",
+        "wait",
+        ("等「搭建评测流水线」提交审阅了，帮我先过一遍改动，看看有没有明显的问题。",),
+        page=("topic", VQA, "实验"),
+        checks=(
+            (
+                "建了一条只等这个任务提交审阅一次的规则",
+                lambda o: any(
+                    trigger == "filed"
+                    and spec.get("once")
+                    and spec.get("taskTitle") == "搭建评测流水线"
+                    for trigger, _, spec in o.routines
+                ),
+            ),
+            (
+                "没有建成反复运行的例行事务",
+                lambda o: all(
+                    s.get("once") or t == "schedule" and s.get("freq") == "once"
+                    for t, _, s in o.routines
+                ),
+            ),
+        ),
+        points="建一条等任务「搭建评测流水线」提交审阅、只做一次的规则，说清到时会在这段对话里读改动、列出问题再通知她；任务还没提交，现在不去读改动。",
     ),
 ]
 

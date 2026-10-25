@@ -518,8 +518,8 @@ function followLink(event: MouseEvent) {
 const { t } = useI18n()
 
 /** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
-function runLine(shown?: { routine?: string }): string {
-  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
+function runLine(shown?: { routine?: string; wait?: string }): string {
+  return t(`tasks.assistant.run.${shown?.wait ? 'wait' : 'routine'}`, { title: shown?.wait ?? shown?.routine ?? '' })
 }
 const markdown = new MarkdownRenderer()
 

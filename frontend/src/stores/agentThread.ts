@@ -91,9 +91,10 @@ export interface AssistantHanded {
   bytes: number
 }
 
-/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行。 */
+/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行，或这段对话里等的哪件事到了。 */
 export interface AssistantShown {
   routine?: string
+  wait?: string
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及

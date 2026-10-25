@@ -912,7 +912,7 @@ async def _start_one(
         ) or DEFAULT_TIMEZONE
         run.status, run.started_at = "running", now
         question = _first_message(routine, run, now, tz)
-        shown = {"routine": routine.title}
+        shown = {"wait" if once(routine) else "routine": routine.title}
         user_id = run.user_id
         await session.commit()
     try:

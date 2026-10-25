@@ -141,7 +141,8 @@
     "expired": "已过期"
   },
   "run": {
-    "routine": "例行事务「{title}」开始运行"
+    "routine": "例行事务「{title}」开始运行",
+    "wait": "「{title}」开始运行"
   },
   "page": {
     "channel": "频道「{name}」",
