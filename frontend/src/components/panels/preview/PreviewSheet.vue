@@ -6,7 +6,7 @@
 // 芝士用 openpyxl 打开的也是 B7，两边说的是同一个格子。换成 PDF 就只剩一段文字，
 // 要靠找。
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
 
@@ -65,8 +65,9 @@ const selected = ref<string>('')
  *  发出去之前两个角会摆回左上、右下。 */
 const dragStart = ref<{ row: number; col: number } | null>(null)
 const dragEnd = ref<{ row: number; col: number } | null>(null)
-/** 刚拖完那一下：`mouseup` 之后浏览器还会补一个 `click`，没有它那一格会再发一次单格。 */
-let justDragged = false
+/** 鼠标还按着没有。松开之后两个角要留着（读者得看见自己选了哪一片），但那一瞬间
+ *  手势就已经结束了：再跟着指针走，画的就不是刚才发出去的那一片了。 */
+const dragging = ref(false)
 
 /** 此刻高亮的那一片：拖的时候跟着手走，拖完了留着，让读者看见自己选了哪儿。 */
 const markedRange = computed(() => {
@@ -296,6 +297,10 @@ async function open(data: ArrayBuffer) {
   failure.value = ''
   sheets.value = []
   selected.value = ''
+  // 换了一份文件，上一份上圈的那一片不该跟着过来：坐标在另一张表里另有意义。
+  dragging.value = false
+  dragStart.value = null
+  dragEnd.value = null
   sourceText.value = ''
   endClipped.value = false
   // 换一份文件就回到表格：上一个是 csv、这个不是，留在原文视图会看见一片空白，
@@ -384,11 +389,6 @@ const notice = computed(() => {
 const canShowSource = computed(() => props.kind === 'csv' || props.kind === 'tsv')
 
 function choose(rowIndex: number, colIndex: number) {
-  // 刚拖完那一下浏览器补的 `click`：这一片已经发出去了，别再发一次单格。
-  if (justDragged) {
-    justDragged = false
-    return
-  }
   const sheet = active.value
   if (!sheet) return
   const address = addressAt(rowIndex, colIndex)
@@ -402,20 +402,36 @@ function choose(rowIndex: number, colIndex: number) {
   })
 }
 
+/** 换一张工作表：上一张表上圈的那一片不带过去，`B2:D4` 在另一张表里是另外几格。 */
+function switchSheet(index: number) {
+  activeIndex.value = index
+  dragging.value = false
+  dragStart.value = null
+  dragEnd.value = null
+}
+
 /** 按下：这一片从这一格起。 */
 function startDrag(rowIndex: number, colIndex: number) {
+  dragging.value = true
   dragStart.value = { row: rowIndex, col: colIndex }
   dragEnd.value = { row: rowIndex, col: colIndex }
-  justDragged = false
 }
 
-/** 经过一格：拖着的时候这一片的另一个角跟着走。 */
+/** 经过一格：正按着的时候这一片的另一个角跟着走。松开之后路过别的格子不改它——
+ *  那一片已经说出去了，改的是屏幕上的画，对不上刚才发的那一份。 */
 function extendDrag(rowIndex: number, colIndex: number) {
-  if (dragStart.value) dragEnd.value = { row: rowIndex, col: colIndex }
+  if (!dragging.value) return
+  dragEnd.value = { row: rowIndex, col: colIndex }
 }
 
-/** 松开：真拖过别的格子才发这一片；按在同一点上是单击，交给 `choose`。 */
+/** 松开：真拖过别的格子才发这一片；按在同一点上是单击，交给 `choose`。
+ *
+ *  挂在 `window` 上而不是格子上：拖到最后一行、最后一列时，手很可能是在表外面松开
+ *  的 —— 只挂在格子上，那一下就白拖了。`window` 上这个也会收到表内的松开（冒泡），
+ *  所以格子上不必再挂一个。 */
 function endDrag() {
+  if (!dragging.value) return
+  dragging.value = false
   const range = markedRange.value
   const sheet = active.value
   if (!range || !sheet) {
@@ -423,29 +439,36 @@ function endDrag() {
     dragEnd.value = null
     return
   }
-  justDragged = true
   const start = addressAt(range.row1, range.col1)
   const end = addressAt(range.row2, range.col2)
   // 摊平这一片的内容：一行一行地接，行与行之间用换行、格与格之间用制表符——和从表格
   // 里复制出来的那一份一样，受话人一眼看得见里面是什么。上限截在最外面，免得一片
   // 几千行跟着消息跑。
   const lines: string[] = []
-  let budget = RANGE_TEXT_CHARS
-  for (let row = range.row1; row <= range.row2 && budget > 0; row += 1) {
+  for (let row = range.row1; row <= range.row2; row += 1) {
     const cells: string[] = []
-    for (let col = range.col1; col <= range.col2 && budget > 0; col += 1) {
-      const cell = sheet.rows[row]?.[col] ?? ''
-      budget -= cell.length + 1
-      cells.push(cell)
+    for (let col = range.col1; col <= range.col2; col += 1) {
+      cells.push(sheet.rows[row]?.[col] ?? '')
     }
     lines.push(cells.join('\t'))
-    budget -= 1
   }
-  emit('range', { sheet: sheet.name, start, end, text: lines.join('\n') })
+  // 一整格就超过上限时按整格算会漏过去，所以截在拼好之后：`slice` 不会把一个百万字的
+  // 格子原样带出去。
+  const flattened = lines.join('\n')
+  emit('range', {
+    sheet: sheet.name,
+    start,
+    end,
+    text: flattened.length > RANGE_TEXT_CHARS ? flattened.slice(0, RANGE_TEXT_CHARS) : flattened,
+  })
   selected.value = ''
   // 两个角留着：松手之后读者还得看得见自己刚选的是哪一片，和单击留下的那个框一样。
   // 下一次按下、或者点某一格（`choose`）时才换掉。
 }
+
+// 松开的那一下可能在表外面：挂在 `window` 上才收得到。挂一次、卸组件时摘掉。
+onMounted(() => window.addEventListener('mouseup', endDrag))
+onBeforeUnmount(() => window.removeEventListener('mouseup', endDrag))
 
 watch(
   [() => props.data, () => props.kind],
@@ -499,7 +522,6 @@ watch(
                 :class="{ 'ps__cell--on': selected === addressAt(r, c - 1), 'ps__cell--in': inRange(r, c - 1) }"
                 @mousedown="startDrag(r, c - 1)"
                 @mouseenter="extendDrag(r, c - 1)"
-                @mouseup="endDrag"
                 @click="choose(r, c - 1)"
               >
                 <span class="ps__text">{{ cellText(row[c - 1] ?? '') }}</span>
@@ -536,7 +558,7 @@ watch(
           type="button"
           class="ps__tab"
           :class="{ 'ps__tab--on': i === activeIndex }"
-          @click="activeIndex = i"
+          @click="switchSheet(i)"
         >
           {{ sheet.name }}
         </button>

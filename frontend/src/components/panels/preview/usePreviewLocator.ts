@@ -132,7 +132,9 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function onSheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
     const area = `${payload.start}:${payload.end}`
     const where = payload.sheet ? `${payload.sheet}!${area}` : area
-    openLocator(where, payload.text.slice(0, 200) || t('work.room.preview.emptyCell'), where)
+    // 一片全是空格子时摊平的结果是几个制表符和换行：按空白判，和 `MessageQuote` 那条同一条。
+    const preview = payload.text.slice(0, 200)
+    openLocator(where, preview.trim() ? preview : t('work.room.preview.emptyCell'), where)
     quoted.sheetRange(payload)
   }
 

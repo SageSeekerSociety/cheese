@@ -228,6 +228,21 @@ it('从右下往左上拖也一样：两个角摆回左上、右下', async () =
   expect(payload.end).toBe('B3')
 })
 
+it('一片的内容太长就截在上限，两个角照旧指得回整片', async () => {
+  // 一格几千字跟着消息跑没有意义；截断只是不搬内容，地址还是整片的地址。
+  const { container, emitted } = mount(utf8(`说明\n${'字'.repeat(3000)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string; text: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('A2')
+  expect(payload.text).toHaveLength(2000)
+})
+
 it('按在同一格上松开是单击，不是一片', async () => {
   const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
   await waitFor(() => expect(grid(container).length).toBe(2))
@@ -238,6 +253,35 @@ it('按在同一格上松开是单击，不是一片', async () => {
 
   expect(emitted().range).toBeUndefined()
   expect(emitted().cell).toEqual([[{ address: 'B2', value: '90', sheet: '' }]])
+})
+
+it('松开之后指针路过别的格子，画着的还是刚才发出去的那一片', async () => {
+  // 松开那一刻这一片就说定了；再跟着指针走，屏幕上画的就不是消息里写的那一片了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+  expect(emitted().range).toHaveLength(1)
+})
+
+it('在表外面松开也算数：拖到边上那一下不会白拖', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  // 行号那一列在表格里、但不是格子：拖到最后一列之后手常常落在这里。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+
+  expect(emitted().range).toHaveLength(1)
+  // 松开之后再来一下不会把同一片再发一次。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+  expect(emitted().range).toHaveLength(1)
 })
 
 it('拖的时候那一片有底色，松开之后留着；单击不留', async () => {

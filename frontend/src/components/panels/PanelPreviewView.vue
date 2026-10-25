@@ -290,20 +290,17 @@ const pageAnchors = computed(() =>
  *  这一版照样按**屏幕上那份字节**算（`slideContext`），理由和页上那几颗同一条。 */
 const sheetAnchors = computed(() => {
   const version = props.slideContext?.version ?? null
-  // 一片的标记画在它左上角那一格：锚点里两个角都在，而表格只按格画。
-  const ranges = liveAnchors('sheet-range', version).flatMap(({ id, anchor }) => {
-    const sheet = anchor.sheet
-    const start = anchor.start
-    if (typeof sheet !== 'string' || typeof start !== 'string' || !start) return []
-    return [{ id, sheet, address: start }]
-  })
-  const cells = liveAnchors('sheet-cell', version).flatMap(({ id, anchor }) => {
-    const sheet = anchor.sheet
-    const address = anchor.address
-    if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
-    return [{ id, sheet, address }]
-  })
-  return [...cells, ...ranges]
+  // 两档的锚点只差在哪个字段是地址：单格是 `address`，一片的标记画在它左上角那一格
+  // （锚点里两个角都在，而表格只按格画）。取地址这一步写成一处，加一档时不会漏掉形状判定。
+  function pick(kind: string, field: 'address' | 'start') {
+    return liveAnchors(kind, version).flatMap(({ id, anchor }) => {
+      const sheet = anchor.sheet
+      const address = anchor[field]
+      if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
+      return [{ id, sheet, address }]
+    })
+  }
+  return [...pick('sheet-cell', 'address'), ...pick('sheet-range', 'start')]
 })
 /** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
 function openAnchor(id: string) {

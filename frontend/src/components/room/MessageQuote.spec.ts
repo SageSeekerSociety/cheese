@@ -219,12 +219,13 @@ it('表格一片：CSV 没有工作表名，区域就是它自己', () => {
         sheet: '',
         start: 'A1',
         end: 'C3',
-        text: '',
+        // 表格里圈一片空格子，摊平出来的就是这个形状：几个制表符和换行。
+        text: '\t\t\n\t\t',
       },
     },
   })
 
   expect(container.textContent).toContain('引用区域 A1:C3')
-  // 一片里什么都没有时不装作有内容。
+  // 一片里什么都没有时不装作有内容 —— 几个制表符不是「有内容」。
   expect(container.textContent).toContain('（空）')
 })
