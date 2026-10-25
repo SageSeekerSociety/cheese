@@ -36,7 +36,7 @@
   "newFolderConfirm": "新建",
   "noMatch": "暂无匹配的资料",
   "previewError": "无法预览这份文件",
-  "readonlyDrop": "{folder}/ 里是题目的材料，只能读，不能放进文件",
+  "readonlyDrop": "「{folder}」文件夹是只读的，里面是题目的材料，不能放进文件",
   "readonlyFolderMeta": "只读 · {n} 份文件 · {when}",
   "references": "被 {n} 条消息引用",
   "replace": "替换为新版本",
@@ -69,5 +69,6 @@
   "versionsTitle": "「{name}」的版本",
   "taskFolderFrom": "来自题目「{name}」，当前第 {version} 版",
   "taskFolderFromUnversioned": "来自题目「{name}」",
-  "taskFolderOpen": "打开题目"
+  "taskFolderOpen": "打开题目",
+  "uploadProcessing": "正在上传 {name} · 处理中…"
 }

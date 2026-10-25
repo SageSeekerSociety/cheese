@@ -197,6 +197,7 @@ defineExpose({
         v-model:submission-schema="submissionSchema"
         v-model:rubric="rubric"
         :missing-name="stageMissingName"
+        :editing="isEditing"
       />
 
       <TaskFormGrading

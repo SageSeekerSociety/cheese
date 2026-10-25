@@ -21,6 +21,8 @@ import { addStage, moveStage, removeStage } from '@/lib/taskStages'
 const props = defineProps<{
   /** 点过发布后，有没写名称的阶段。 */
   missingName?: boolean
+  /** 改题页：删掉的阶段要等「保存更改」才落到题目上，有人交过的会在那时被拒。 */
+  editing?: boolean
 }>()
 
 const stages = defineModel<TaskStage[]>('stages', { required: true })
@@ -158,7 +160,9 @@ function confirmRemove() {
       :confirm-label="t('tasks.form.stages.removeConfirm')"
       danger
       @confirm="confirmRemove"
-    />
+    >
+      <template v-if="editing" #default>{{ t('tasks.form.stages.removeBody') }}</template>
+    </ConfirmDialog>
   </TaskFormSection>
 </template>
 

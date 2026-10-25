@@ -22,7 +22,7 @@
   "libraryPathRelative": "path 必须是资料库里的相对路径",
   "libraryPrefixReserved": "{prefix}/ 留给资料库，频道文件不能写在这里",
   "libraryTaskFolderNeedsApprovedClaim": "这个项目的申请还没通过或已不再有效，读不到 {folder}/ 里的材料",
-  "libraryTaskFolderReadOnly": "{folder}/ 里是题目的材料，只能读，不能放进、替换、改名或删除",
+  "libraryTaskFolderReadOnly": "「{folder}」文件夹是只读的，里面是题目的材料，不能放进、替换、改名或删除",
   "libraryTeamMembersOnly": "只有团队成员可以查看这个资料库",
   "libraryVersionIsCurrent": "这一版已经是现在这一份",
   "libraryVersionNotFound": "找不到这一版",

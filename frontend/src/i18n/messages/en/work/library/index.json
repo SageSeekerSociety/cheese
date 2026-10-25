@@ -36,7 +36,7 @@
   "newFolderConfirm": "Create",
   "noMatch": "No matching files",
   "previewError": "Could not preview this file",
-  "readonlyDrop": "{folder}/ holds the task's materials. It's read-only, so files can't be added there",
+  "readonlyDrop": "The “{folder}” folder is read-only. It holds the task's materials, so files can't be added there",
   "readonlyFolderMeta": "Read-only · {n} files · {when}",
   "references": "Referenced by {n} messages",
   "replace": "Replace with new version",
@@ -69,5 +69,6 @@
   "versionsTitle": "Versions of “{name}”",
   "taskFolderFrom": "From the task “{name}”, now at version {version}",
   "taskFolderFromUnversioned": "From the task “{name}”",
-  "taskFolderOpen": "Open task"
+  "taskFolderOpen": "Open task",
+  "uploadProcessing": "Uploading {name} · Processing…"
 }

@@ -11,35 +11,45 @@
       @retry="emit('retry')"
     />
     <p v-else-if="!versions.length" class="t-body c-muted">{{ t('tasks.versions.empty') }}</p>
-    <ol v-else class="tv__list">
-      <li
-        v-for="(version, index) in versions"
-        :key="version.number"
-        :ref="(el) => remember(version.number, el)"
-        class="tv__item"
-        :class="{ 'tv__item--focus': version.number === focus }"
-        :aria-current="version.number === focus ? 'true' : undefined"
-        data-testid="task-version"
-      >
-        <div class="tv__head">
-          <h2 class="tv__title t-title">{{ t('tasks.versions.numbered', { n: version.number }) }}</h2>
-          <span v-if="index === 0" class="tv__now t-meta-read">{{ t('tasks.versions.current') }}</span>
-        </div>
-        <p class="tv__meta t-meta-read">
-          <span>{{ when(version.at) }}</span>
-          <span v-if="version.author" data-user-content>{{ version.author.nickname || version.author.username }}</span>
-        </p>
-        <p class="tv__what t-body">{{ revisionSummary(version.changes) }}</p>
-        <TaskAttachmentList
-          v-if="version.files?.length"
-          :attachments="version.files"
-          :can-download="canDownload"
-          :downloading="downloading?.version === version.number ? downloading.name : null"
-          @download="emit('download', version.number, $event)"
-        />
-        <p v-else-if="version.files === null" class="t-meta-read">{{ t('tasks.versions.filesUnknown') }}</p>
-      </li>
-    </ol>
+    <template v-else>
+      <p v-if="lockedNote" class="tv__locked t-body c-muted" data-testid="versions-locked">
+        {{ t('tasks.attachments.locked') }}
+      </p>
+      <ol class="tv__list">
+        <li
+          v-for="(version, index) in versions"
+          :key="version.number"
+          :ref="(el) => remember(version.number, el)"
+          class="tv__item"
+          :class="{ 'tv__item--focus': version.number === focus }"
+          :aria-current="version.number === focus ? 'true' : undefined"
+          data-testid="task-version"
+        >
+          <div class="tv__head">
+            <h2 class="tv__title t-title">{{ t('tasks.versions.numbered', { n: version.number }) }}</h2>
+            <span v-if="index === 0" class="tv__now t-meta-read">{{ t('tasks.versions.current') }}</span>
+          </div>
+          <p class="tv__meta t-meta-read">
+            <span>{{ when(version.at) }}</span>
+            <span v-if="version.author" data-user-content>{{
+              version.author.nickname || version.author.username
+            }}</span>
+          </p>
+          <p class="tv__what t-body">{{ revisionSummary(version.changes) }}</p>
+          <TaskAttachmentList
+            v-if="version.files?.length"
+            :attachments="version.files"
+            :can-download="canDownload"
+            :downloading="downloading?.version === version.number ? downloading.name : null"
+            previewable
+            locked-said-above
+            @download="emit('download', version.number, $event)"
+            @open="emit('open', version.number, $event)"
+          />
+          <p v-else-if="version.files === null" class="t-meta-read">{{ t('tasks.versions.filesUnknown') }}</p>
+        </li>
+      </ol>
+    </template>
   </div>
 </template>
 
@@ -47,7 +57,7 @@
 import type { ComponentPublicInstance } from 'vue'
 import type { TaskVersionData, TaskVersionFileData } from '@/types/taskFiles'
 
-import { nextTick, watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
@@ -71,9 +81,17 @@ const props = withDefaults(
   { loading: false, failed: false, failureReason: null, focus: null, downloading: null }
 )
 
-const emit = defineEmits<{ download: [version: number, file: TaskVersionFileData]; retry: [] }>()
+const emit = defineEmits<{
+  download: [version: number, file: TaskVersionFileData]
+  /** 点文件名打开预览（能下载的人才点得开）。 */
+  open: [version: number, file: TaskVersionFileData]
+  retry: []
+}>()
 
 const { t } = useI18n()
+
+/** 不能下载的人：「开始做之后才能下载」在页签上方说一次，不在每一行重复。 */
+const lockedNote = computed(() => !props.canDownload && props.versions.some((v) => v.files?.length))
 
 function when(at: number): string {
   return dayjs(at).format(t('tasks.roster.dateTimeFormat'))
@@ -100,6 +118,10 @@ watch(
 <style scoped>
 .tv {
   max-width: 680px;
+}
+
+.tv__locked {
+  margin: 0 0 12px;
 }
 
 .tv__list {

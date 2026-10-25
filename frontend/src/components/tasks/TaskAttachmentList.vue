@@ -27,7 +27,7 @@
         >
           {{ t('tasks.attachments.download') }}
         </BaseButton>
-        <span v-else class="ta__locked">{{ t('tasks.attachments.locked') }}</span>
+        <span v-else-if="!lockedSaidAbove" class="ta__locked">{{ t('tasks.attachments.locked') }}</span>
       </template>
     </li>
   </ul>
@@ -49,8 +49,10 @@ withDefaults(
     downloading?: string | null
     /** 点名字打开预览。 */
     previewable?: boolean
+    /** 「开始做之后才能下载」已经在清单上方说过一次，每行不再重复。 */
+    lockedSaidAbove?: boolean
   }>(),
-  { downloading: null, previewable: false }
+  { downloading: null, previewable: false, lockedSaidAbove: false }
 )
 
 const emit = defineEmits<{ download: [file: T]; open: [file: T] }>()

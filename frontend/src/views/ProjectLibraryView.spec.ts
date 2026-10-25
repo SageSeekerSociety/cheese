@@ -206,6 +206,21 @@ describe('资料库', () => {
     await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
   })
 
+  it('字节传完了平台还在收：写「处理中」，不停在 100%', async () => {
+    vi.mocked(uploadLibraryFile).mockImplementation(
+      (_shelf, _file, _folder, progress) =>
+        new Promise(() => {
+          progress?.(100, 100)
+        })
+    )
+    const { container } = await mount()
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], '数据集.tar')])
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('处理中'))
+    expect(screen.getByRole('status').textContent).not.toContain('100%')
+  })
+
   it('上传一份大文件时写着传到了百分之几，传完就不写了', async () => {
     let finish: () => void = () => {}
     vi.mocked(uploadLibraryFile).mockImplementation(
@@ -397,10 +412,7 @@ describe('资料库的文件夹', () => {
     const area = container.querySelector('.library') as HTMLElement
     await fireEvent.drop(area, { dataTransfer: { files: [new File(['a'], 'a.txt')] } })
 
-    expect(await screen.findByRole('alert')).toHaveProperty(
-      'textContent',
-      expect.stringContaining('只能读，不能放进文件')
-    )
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('文件夹是只读的'))
     expect(uploadLibraryFile).not.toHaveBeenCalled()
   })
 

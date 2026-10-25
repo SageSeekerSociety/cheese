@@ -47,5 +47,6 @@
   "starterFailed": "题目第 {n} 版的起始代码没能放进代码仓库：{reason}",
   "revisedStarterAdded": "新增起始代码",
   "revisedStarterReplaced": "替换起始代码",
-  "revisedStarterRemoved": "删除起始代码"
+  "revisedStarterRemoved": "删除起始代码",
+  "starterFailedNext": "可以在资料库「{folder}」文件夹里下载 {file}，自己提交到代码仓库；文件夹里没有就向出题人要一份"
 }
