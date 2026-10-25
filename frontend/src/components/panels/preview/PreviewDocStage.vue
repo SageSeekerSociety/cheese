@@ -275,6 +275,7 @@ defineExpose({ snapshot, clearMark })
         :marks="pageAnchors"
         :active-mark="activeAnchor"
         @quote="emit('quote', $event)"
+        @page-context="emit('page-context', $event)"
         @pin="emit('pin', $event)"
         @mark="emit('anchor', $event)"
         @dropped="emit('dropped')"

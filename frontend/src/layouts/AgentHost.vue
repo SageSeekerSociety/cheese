@@ -62,13 +62,14 @@
 import type { AssistantHanded } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, provide, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
 import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
+import { useAgentRules } from '@/composables/useAgentRules'
 
 import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
@@ -76,6 +77,7 @@ import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AgentSelectionAsk from '@/components/assistant/AgentSelectionAsk.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { agentRulesKey } from '@/lib/agentRules'
 import { onAssistantChange } from '@/lib/inboxLive'
 import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
@@ -130,8 +132,17 @@ watch(
   { immediate: true }
 )
 
+// 芝士建的自动化：回答里那张卡片的状态和取消、暂停、恢复。
+const rules = useAgentRules(agentThread.current, agentThread.busy)
+provide(agentRulesKey, rules)
+
 // 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
-onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+onBeforeUnmount(
+  onAssistantChange((conversation) => {
+    void agentThread.heard(conversation).catch(() => undefined)
+    void rules.load()
+  })
+)
 
 // 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
 // 服务端只记几十秒，看着的时候隔一会儿说一次。
@@ -245,6 +256,7 @@ const panelProps = computed(() => {
       Object.values(agentPicked.value).map((item) => [item.id, { kind: item.kind, title: item.title }])
     ),
     searchProblems: citing.searchProblems,
+    rules: agentThread.rules.value,
   }
 })
 

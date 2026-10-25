@@ -1087,6 +1087,10 @@ class RoutineOut(BaseModel):
     #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
     paused: str
     nextRunAt: str | None = None
+    #: Fires once, and runs in the conversation it was asked for in.
+    once: bool
+    #: The conversation it was asked for in.
+    conversationId: str | None = None
     lastRun: RoutineRunOut | None = None
     #: What its runs cost over the last seven days, in credits.
     weekCredits: float
@@ -1115,6 +1119,8 @@ async def _routines_out(db, user_id: int) -> dict:
                 "nextRunAt": r.next_run_at.isoformat()
                 if r.next_run_at and r.state == "active"
                 else None,
+                "once": routine_personal.once(r),
+                "conversationId": str(r.conversation_id) if r.conversation_id else None,
                 "lastRun": None
                 if r.id not in last
                 else {

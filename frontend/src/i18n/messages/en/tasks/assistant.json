@@ -141,7 +141,11 @@
     "expired": "Expired"
   },
   "run": {
-    "routine": "Routine “{title}” started"
+    "routine": "Automation “{title}” started",
+    "wait": "“{title}” started",
+    "filed": "Task “{task}” went to review",
+    "accepted": "Task “{task}”: the delivery was accepted",
+    "rejected": "Task “{task}”: the delivery was returned"
   },
   "page": {
     "channel": "Channel “{name}”",
@@ -177,5 +181,22 @@
       "problem": "Problems"
     },
     "label": "Cite"
+  },
+  "rule": {
+    "waiting": "Waiting",
+    "on": "On",
+    "started": "Started",
+    "gaveUp": "Did not happen within {days} days; stopped waiting",
+    "cancelled": "Cancelled",
+    "ended": "Ended",
+    "paused": {
+      "person": "Paused",
+      "credits": "Out of credits; paused",
+      "away": "Away for long; paused"
+    },
+    "cancel": "Cancel",
+    "pause": "Pause",
+    "resume": "Resume",
+    "failed": "Could not do that"
   }
 }

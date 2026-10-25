@@ -27,6 +27,7 @@ from app.api.assistant_deps import (
     show_proposal,
     tell_change,
     tell_handed,
+    tell_rule,
     where_of,
 )
 from app.api.auth import ActorResolverDep
@@ -58,7 +59,12 @@ from app.domain.room_task.awaiting import WaitingItem
 from app.domain.routine import personal as routine_personal
 from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
-from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
+from app.domain.user.services import (
+    names_by_handles,
+    search_accounts,
+    timezones_by_ids,
+    user_by_handle,
+)
 
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
@@ -1126,6 +1132,18 @@ class RoutineIn(BaseModel):
     at: str = ""
     #: An event routine's project, by its short name: only what happens there.
     project: str = ""
+    #: Fire on the first thing only, and run in this conversation.
+    once: bool = False
+    #: ``mention``: only these people, by handle or name.
+    people: list[str] | None = None
+    #: ``mention``: only in this channel or task, by its ref.
+    where: str = ""
+    #: ``filed`` / ``decided``: this task, by its ref.
+    task: str = ""
+    #: ``filed`` / ``decided``: any task the person asked for.
+    mine: bool = False
+    #: ``decided``: only ``accepted`` or only ``rejected``.
+    outcome: str = ""
 
 
 def _routine_line(row, tz: str | None) -> str:
@@ -1138,6 +1156,8 @@ def _routine_line(row, tz: str | None) -> str:
         if row.next_run_at and row.state == "active"
         else ""
     )
+    if routine_personal.once(row) and row.trigger != "schedule":
+        nxt += "，等到一次就结束"
     return (
         f"- 「{row.title}」{state}：{routine_personal.describe(row)}{nxt}；"
         f"要做的事：{row.note or row.title}（编号 {row.id}）"
@@ -1160,13 +1180,34 @@ async def _routine_spec(db, access, body: RoutineIn) -> tuple[str, dict]:
             if v not in ("", None)
         }
         return trigger, spec
-    if not body.project:
-        return trigger, {}
-    project = await address.project_by_ref(db, body.project)
-    if project is None:
-        raise NotFoundError.for_resource("project", body.project)
-    await access.project(project.id)
-    return trigger, {"project": str(project.id), "projectName": project.name}
+    spec: dict = {
+        "once": body.once,
+        "mine": body.mine,
+        "outcome": body.outcome,
+    }
+    if body.project:
+        project = await address.project_by_ref(db, body.project)
+        if project is None:
+            raise NotFoundError.for_resource("project", body.project)
+        await access.project(project.id)
+        spec |= {"project": str(project.id), "projectName": project.name}
+    if body.people:
+        handles = [(await _named(db, who.lstrip("@")))[0] for who in body.people]
+        names = await names_by_handles(db, handles)
+        spec |= {"from": handles, "fromNames": [names.get(h, h) for h in handles]}
+    if body.where:
+        _, place, _ = await _place(db, access, body.where)
+        spec |= (
+            {"place": {"kind": "task", "id": str(place.task.id)}}
+            if place.task is not None
+            else {"place": {"kind": "topic", "id": str(place.room.id)}}
+        ) | {"placeName": where_of(place)}
+    if body.task:
+        _, place, _ = await _place(db, access, body.task)
+        if place.task is None:
+            raise BadRequestError(say("assistantRefUnknown", ref=body.task))
+        spec |= {"task": str(place.task.id), "taskTitle": place.task.title}
+    return trigger, spec
 
 
 @router.post("/routine", include_in_schema=False)
@@ -1183,10 +1224,10 @@ async def agent_routine(
     if body.action == "list":
         rows = await routine_personal.mine(db, me.user_id)
         if not rows:
-            return ok({"text": "用户还没有例行事务。"})
+            return ok({"text": "用户还没有自动化。"})
         return ok(
             {
-                "text": f"用户的例行事务（{len(rows)} 条，最多 "
+                "text": f"用户的自动化（{len(rows)} 条，只做一次的和反复做的各最多 "
                 f"{routine_personal.MAX_ROUTINES} 条）：\n"
                 + "\n".join(_routine_line(r, me.timezone) for r in rows)
             }
@@ -1206,7 +1247,8 @@ async def agent_routine(
             spec=spec,
         )
         await db.commit()
-        return ok({"text": "已建好例行事务：\n" + _routine_line(row, me.timezone)})
+        await tell_rule(questions, claims, routine_personal.card(row))
+        return ok({"text": "已建好自动化：\n" + _routine_line(row, me.timezone)})
     try:
         routine_id = uuid.UUID(_need(body.routine, "routine"))
     except ValueError as exc:
@@ -1218,7 +1260,7 @@ async def agent_routine(
         title = row.title
         await db.delete(row)
         await db.commit()
-        return ok({"text": f"已删除例行事务「{title}」。"})
+        return ok({"text": f"已删除自动化「{title}」。"})
     if body.action == "pause":
         routine_personal.pause(row)
     elif body.action == "resume":
@@ -1226,7 +1268,7 @@ async def agent_routine(
     else:
         trigger, spec = (
             await _routine_spec(db, ProjectPages(db, resolver), body)
-            if body.trigger or body.freq or body.project
+            if body.trigger or body.freq or body.project or body.task
             else (None, None)
         )
         await routine_personal.change(
@@ -1239,7 +1281,8 @@ async def agent_routine(
             spec=spec,
         )
     await db.commit()
-    return ok({"text": "例行事务现在是：\n" + _routine_line(row, me.timezone)})
+    await tell_rule(questions, claims, routine_personal.card(row))
+    return ok({"text": "自动化现在是：\n" + _routine_line(row, me.timezone)})
 
 
 class NotifyMeIn(BaseModel):
