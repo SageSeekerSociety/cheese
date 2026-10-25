@@ -72,9 +72,7 @@ describe('改阶段之前的那一句', () => {
 
     const first = save()
     const dialog = await screen.findByRole('alertdialog')
-    expect(dialog.textContent).toContain(
-      '爱丽丝、第 4 组有已过截止、还没提交的阶段（「需求分析」），保存后将判为未通过'
-    )
+    expect(dialog.textContent).toContain('「需求分析」已过截止，爱丽丝、第 4 组还没提交，保存后将判为未通过')
     expect(dialog.textContent).toContain('鲍勃将从未通过回到进行中')
     await fireEvent.click(button('取消'))
     await first
@@ -87,13 +85,19 @@ describe('改阶段之前的那一句', () => {
     expect(saved()).toBe(1)
   })
 
-  it('人多时只点前几个名字，后面写「等 N 人」', async () => {
+  it('阶段在句首，人在后；人多时只点前几个名字，后面写「等 N 人」', async () => {
     const names = ['甲', '乙', '丙', '丁', '戊', '己', '庚']
-    const { save } = mount({ ...nobody, failing: 7, reopening: 0, failingNames: names, failingStages: ['实现'] })
+    const { save } = mount({
+      ...nobody,
+      failing: 7,
+      reopening: 0,
+      failingNames: names,
+      failingStages: ['需求分析', '实现'],
+    })
 
     void save()
     const dialog = await screen.findByRole('alertdialog')
-    expect(dialog.textContent).toContain('甲、乙、丙、丁、戊等 7 人有已过截止、还没提交的阶段（「实现」）')
+    expect(dialog.textContent).toContain('「需求分析」、「实现」已过截止，甲、乙、丙、丁、戊等 7 人还没提交')
     expect(dialog.textContent).not.toContain('己')
   })
 

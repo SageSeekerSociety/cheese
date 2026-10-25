@@ -5,7 +5,8 @@
     "inheritHint": "Use whatever the level above sets",
     "loadFailed": "Couldn't load the presets; only inherit is available",
     "title": "Default teammate",
-    "willClear": "Saving clears the teammate set on this level"
+    "willClear": "Saving clears the teammate set on this level",
+    "inheritNone": "The category sets no default teammate"
   },
   "fields": {
     "learningGoals": "Learning goals",

@@ -30,17 +30,16 @@ function who(names: string[], count: number): string {
   return count > NAMES_SHOWN ? t('tasks.edit.stageEffect.whoMore', { names: shown, n: count }) : shown
 }
 
+/** 阶段在前、人在后：「「需求分析」「实现」已过截止，张三、李四还没提交，…」。 */
 const failingLine = computed(() => {
   const e = props.effect
   if (!e?.failing) return ''
-  const stages = e.failingStages.length
-    ? t('tasks.edit.stageEffect.failingStages', {
-        stages: e.failingStages
-          .map((name) => t('tasks.edit.stageEffect.stage', { name }))
-          .join(t('tasks.edit.stageEffect.joiner')),
-      })
-    : ''
-  return t('tasks.edit.stageEffect.failing', { who: who(e.failingNames, e.failing), stages })
+  const people = who(e.failingNames, e.failing)
+  if (!e.failingStages.length) return t('tasks.edit.stageEffect.failingNoStage', { who: people })
+  const stages = e.failingStages
+    .map((name) => t('tasks.edit.stageEffect.stage', { name }))
+    .join(t('tasks.edit.stageEffect.joiner'))
+  return t('tasks.edit.stageEffect.failing', { stages, who: people })
 })
 
 const reopeningLine = computed(() => {

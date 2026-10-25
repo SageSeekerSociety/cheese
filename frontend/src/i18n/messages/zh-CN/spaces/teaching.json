@@ -5,7 +5,8 @@
     "inheritHint": "用上层设置的那一位",
     "loadFailed": "读不到预设清单，暂时只能沿用上层",
     "title": "默认队友",
-    "willClear": "保存后将清除这一层单独指定的队友"
+    "willClear": "保存后将清除这一层单独指定的队友",
+    "inheritNone": "项目集未设置默认队友"
   },
   "fields": {
     "learningGoals": "本节学习目标",

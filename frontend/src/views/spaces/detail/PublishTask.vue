@@ -336,6 +336,13 @@ function onFormReady(fields: TaskDraftFields) {
   draft.baseline(fields)
 }
 
+/** 「默认队友」沿用的那一位：表单上选中的项目集设的；还没选项目集时不知道。 */
+const inheritedRole = computed(() => {
+  const id = live.value.categoryId ?? preselectedCategoryId.value
+  const category = activeCategories.value.find((c) => c.id === id)
+  return category ? category.defaultRole ?? null : undefined
+})
+
 /** 这一组里已经发出去的（发布后草稿就没了，这一排还留着它，标「已发布」）。 */
 const publishedInGroup = ref<{ id: number; name: string; conversationId: string }[]>([])
 const flagged = ref(false)
@@ -573,6 +580,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :agent-types-failed="agentTypesFailed"
     :skill-catalog="skillCatalog"
     :skill-catalog-failed="skillCatalogFailed"
+    :inherited-role="inheritedRole"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"

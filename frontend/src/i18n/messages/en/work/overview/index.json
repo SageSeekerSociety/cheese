@@ -48,5 +48,6 @@
   "revisedStarterAdded": "added the starter code",
   "revisedStarterReplaced": "replaced the starter code",
   "revisedStarterRemoved": "removed the starter code",
-  "starterFailedNext": "You can download {file} from the “{folder}” folder in the library and commit it to the repository yourself; if it isn't there, ask the publisher for a copy"
+  "starterFailedNext": "You can download {file} from {folder} in the library and commit it to the repository yourself; if it isn't there, ask the publisher for a copy",
+  "starterFolder": "the “{folder}” folder"
 }

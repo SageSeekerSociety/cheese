@@ -21,8 +21,11 @@ import { addStage, moveStage, removeStage } from '@/lib/taskStages'
 const props = defineProps<{
   /** 点过发布后，有没写名称的阶段。 */
   missingName?: boolean
-  /** 改题页：删掉的阶段要等「保存更改」才落到题目上，有人交过的会在那时被拒。 */
+  /** 改题页：删掉的阶段要等「保存更改」才落到题目上。 */
   editing?: boolean
+  /** 改题页：删掉一个阶段之后的样子能不能存，不能就交回服务端那句拒绝（有人交过的阶段
+   *  删不掉）。点 ✕ 时就问，不等到保存。 */
+  removalRefusal?: (stages: TaskStage[]) => Promise<string | null>
 }>()
 
 const stages = defineModel<TaskStage[]>('stages', { required: true })
@@ -57,7 +60,16 @@ const nameMissing = (stage: TaskStage) => props.missingName && !stage.name.trim(
 const removing = ref<number | null>(null)
 const confirmingRemove = ref(false)
 
-function askRemove(index: number) {
+/** 点 ✕ 时服务端说的不能删的原因。 */
+const refusal = ref('')
+
+async function askRemove(index: number) {
+  refusal.value = ''
+  const reason = props.removalRefusal ? await props.removalRefusal(stages.value.filter((_, i) => i !== index)) : null
+  if (reason) {
+    refusal.value = reason
+    return
+  }
   removing.value = index
   confirmingRemove.value = true
 }
@@ -145,6 +157,7 @@ function confirmRemove() {
         />
       </div>
       <p v-if="missingName" class="tfst__error" role="alert">{{ t('tasks.form.stages.nameRequired') }}</p>
+      <p v-if="refusal" class="tfst__error" role="alert" data-testid="stage-remove-refused">{{ refusal }}</p>
       <BaseButton
         kind="secondary"
         size="sm"

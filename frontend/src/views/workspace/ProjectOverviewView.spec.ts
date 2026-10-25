@@ -286,12 +286,14 @@ it('仓库从题目的起始代码开始的：在放、放好了、没放成各�
   expect(plain.queryByTestId('overview-starter')).toBeNull()
 })
 
-it('起始代码没放成：接着说下一步怎么办；在放、放好了的不说', () => {
+it('起始代码没放成：接着说下一步怎么办，「题目」文件夹点得开；在放、放好了的不说', async () => {
   const failed = mount({
     overviewText: '## 赛题要求',
     starter: { revision: 3, state: 'failed', reason: '压缩包里没有文件' },
   })
   expect(failed.getByTestId('overview-starter-next').textContent).toContain('起始代码.zip')
+  await fireEvent.click(failed.getByRole('button', { name: '「题目」文件夹' }))
+  expect(failed.emitted('open-task-folder')).toEqual([[]])
 
   cleanup()
   const pending = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'pending', reason: '' } })

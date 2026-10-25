@@ -150,6 +150,15 @@ describe('题目的起始代码', () => {
     await waitFor(() => expect(current()).toBeNull())
   })
 
+  it('页面给了上限：说明里写着多大收得下，更大的去改题页传', () => {
+    const view = render(TaskStarterPicker, {
+      props: { file: null, uploading: false, maxBytes: 100 * 1024 * 1024 },
+      global: { plugins: [createVuetify({ components }), i18n] },
+    })
+    expect(view.container.textContent).toContain('不超过 100 MB')
+    expect(view.container.textContent).toContain('改题页')
+  })
+
   it('字节传完了平台还在收：写「处理中」，不停在「上传中 100%」', async () => {
     const upload = vi.fn(
       (file: File, progress: (sent: number, total: number) => void) =>

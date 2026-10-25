@@ -150,7 +150,7 @@
     "add": "添加阶段",
     "removeTitle": "删除第 {n} 个阶段？",
     "removeConfirm": "删除",
-    "removeBody": "点「保存更改」后生效。已经有人提交的阶段不能删除，保存时会被拒绝"
+    "removeBody": "点「保存更改」后生效"
   },
   "brief": "说明",
   "parts": {

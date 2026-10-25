@@ -93,6 +93,8 @@ const props = withDefaults(
     /** 「技能」那一格的候选，同样由容器取好传进来。 */
     skillCatalog?: SkillChoice[]
     skillCatalogFailed?: boolean
+    /** 选中的项目集设的默认队友（`null` = 没设；不给 = 还没选项目集）。 */
+    inheritedRole?: string | null
   }>(),
   {
     selectedCategoryId: undefined,
@@ -100,6 +102,7 @@ const props = withDefaults(
     starter: null,
     starterUploading: false,
     starterPercent: null,
+    inheritedRole: undefined,
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
@@ -330,6 +333,7 @@ defineExpose({
                   :file="starter"
                   :uploading="starterUploading"
                   :percent="starterPercent"
+                  :max-bytes="maxFileBytes"
                   @pick="emit('pick-starter', $event)"
                   @remove="emit('remove-starter')"
                 />
@@ -338,7 +342,12 @@ defineExpose({
 
             <template #teaching>
               <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
-                <DefaultTeammatePicker v-model="defaultRole" :types="agentTypes" :types-failed="agentTypesFailed" />
+                <DefaultTeammatePicker
+                  v-model="defaultRole"
+                  :types="agentTypes"
+                  :types-failed="agentTypesFailed"
+                  :inherited="inheritedRole"
+                />
                 <TeachingFields
                   :model-value="teaching"
                   inherit

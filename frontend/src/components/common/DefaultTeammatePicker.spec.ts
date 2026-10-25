@@ -50,7 +50,8 @@ function mount(
   modelValue = '',
   rawValue: string | null = null,
   types: AgentType[] = PRESETS.data,
-  typesFailed = false
+  typesFailed = false,
+  inherited?: string | null
 ) {
   picked = null
   return render(DefaultTeammatePicker, {
@@ -59,6 +60,7 @@ function mount(
       rawValue,
       types,
       typesFailed,
+      inherited,
       'onUpdate:modelValue': (value: string) => (picked = value),
     },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -133,6 +135,17 @@ describe('DefaultTeammatePicker', () => {
     expect(await view.findByRole('option', { name: /defaultTeammate\.inherit/ })).toBeTruthy()
     expect(view.queryByRole('option', { name: /学术研究/ })).toBeNull()
     expect(picked).toBeNull()
+  })
+
+  it('沿用上层设置时写出沿用的是哪一位；上层没设就说没设', () => {
+    const view = mount('', null, PRESETS.data, false, 'academic-research')
+    expect(view.getByTestId('default-teammate-inherited').textContent).toContain('学术研究')
+
+    cleanup()
+    const none = mount('', null, PRESETS.data, false, null)
+    expect(none.getByTestId('default-teammate-inherited').textContent).toContain(
+      'spaces.teaching.defaultTeammate.inheritNone'
+    )
   })
 
   it('本来写过、现在选回「沿用上层设置」：说一句保存会清掉', () => {

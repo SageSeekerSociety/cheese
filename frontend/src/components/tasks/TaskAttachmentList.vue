@@ -94,17 +94,18 @@ const { t } = useI18n()
   text-overflow: ellipsis;
 }
 
+/* A name that opens a preview reads as a link before it is hovered. */
 .ta__open {
   padding: 0;
   border: 0;
   background: none;
+  color: var(--accent-ink);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .ta__open:hover {
-  color: var(--accent-ink);
   text-decoration: underline;
 }
 

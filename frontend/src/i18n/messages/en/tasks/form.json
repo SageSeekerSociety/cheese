@@ -150,7 +150,7 @@
     "add": "Add stage",
     "removeTitle": "Delete stage {n}?",
     "removeConfirm": "Delete",
-    "removeBody": "This takes effect when you click Save changes. A stage someone has already handed work in for can't be deleted; the save will be refused"
+    "removeBody": "This takes effect when you click Save changes"
   },
   "brief": "Brief",
   "parts": {

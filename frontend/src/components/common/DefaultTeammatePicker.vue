@@ -27,13 +27,23 @@ const props = withDefaults(
     types?: AgentType[]
     /** 清单没读到时为 true：只留「沿用上层设置」那一项，并在副标题里说一句。 */
     typesFailed?: boolean
+    /** 上一层（项目集）设的那一位：预设名；`null` = 上一层也没设；不给 = 不知道上一层是哪个。
+     *  知道时「沿用上层设置」写出沿用的是谁，和「方式」那张卡片一样。 */
+    inherited?: string | null
   }>(),
-  { types: () => [], typesFailed: false }
+  { types: () => [], typesFailed: false, inherited: undefined }
 )
 
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
 const { t } = useI18n()
+
+/** 沿用的是谁：上一层那一位的名字，上一层没设时说没设；不知道上一层时为空。 */
+const inheritedText = computed(() => {
+  if (props.inherited === undefined) return ''
+  if (props.inherited === null) return t('spaces.teaching.defaultTeammate.inheritNone')
+  return props.types.find((type) => type.name === props.inherited)?.title ?? props.inherited
+})
 
 const items = computed(() => [
   {
@@ -41,7 +51,7 @@ const items = computed(() => [
     title: t('spaces.teaching.defaultTeammate.inherit'),
     subtitle: props.typesFailed
       ? t('spaces.teaching.defaultTeammate.loadFailed')
-      : t('spaces.teaching.defaultTeammate.inheritHint'),
+      : inheritedText.value || t('spaces.teaching.defaultTeammate.inheritHint'),
   },
   ...props.types.map((type) => ({
     value: type.name,
@@ -76,6 +86,13 @@ const willClear = computed(() => (props.modelValue ?? '') === '' && props.rawVal
         <v-list-item v-bind="itemProps" role="option" :subtitle="item.raw?.subtitle" />
       </template>
     </v-select>
+    <p
+      v-if="(modelValue ?? '') === '' && inheritedText"
+      class="teammate__note"
+      data-testid="default-teammate-inherited"
+    >
+      {{ inheritedText }}
+    </p>
     <p v-if="willClear" class="teammate__note" data-testid="default-teammate-will-clear">
       {{ t('spaces.teaching.defaultTeammate.willClear') }}
     </p>

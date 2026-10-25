@@ -108,6 +108,8 @@ const emit = defineEmits<{
   'retry-progress': []
   /** 看题目的第几版：题目页上的历史版本。 */
   'open-task-version': [version: number]
+  /** 打开项目资料库里的「题目」文件夹。 */
+  'open-task-folder': []
 }>()
 
 // Only a project from a staged task shows the timeline, so the overview loads it
@@ -260,7 +262,19 @@ function stateOf(task: RoomTask): TaskState {
             {{ starterText }}
           </p>
           <p v-if="starter?.state === 'failed'" class="ov-deadline t-body c-muted" data-testid="overview-starter-next">
-            {{ t('work.overview.starterFailedNext', { folder: TASK_FOLDER, file: STARTER_FILE }) }}
+            <i18n-t keypath="work.overview.starterFailedNext" tag="span">
+              <template #folder>
+                <button
+                  type="button"
+                  class="ov-inline-link"
+                  data-testid="overview-task-folder"
+                  @click="emit('open-task-folder')"
+                >
+                  {{ t('work.overview.starterFolder', { folder: TASK_FOLDER }) }}
+                </button>
+              </template>
+              <template #file>{{ STARTER_FILE }}</template>
+            </i18n-t>
           </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
@@ -568,6 +582,19 @@ function stateOf(task: RoomTask): TaskState {
 .ov-event:hover {
   background: var(--fill);
 }
+.ov-inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ov-inline-link:hover {
+  text-decoration: underline;
+}
+
 .ov-event--still {
   cursor: default;
 }
