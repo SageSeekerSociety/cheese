@@ -85,6 +85,35 @@ def test_a_record_that_cannot_be_rewritten_does_not_stop_the_teardown(
     assert json.loads(record.read_text())["mounts"] == ["/host/projects/a.jsonl"]
 
 
+def test_a_record_of_the_wrong_shape_does_not_stop_the_teardown(tmp_path, monkeypatch):
+    """The room writes this file, so its *shape* is a claim too.
+
+    `json.loads` accepts `[]`, `5` and `"x"` as readily as an object, and a
+    `mounts` that is not a list parses just as well. `.get` on the first raises
+    `AttributeError` and iterating the second raises `TypeError` — either of
+    which aborts everything after it, because this is the first step of
+    `stop_executor` and of the `remove` action. Nothing is left to undo in a
+    record of the wrong shape, so the call has to return and let the teardown
+    continue.
+    """
+    for bad in (
+        "[]",
+        "5",
+        '"x"',
+        "null",
+        '{"mounts": 5}',
+        '{"mounts": "a"}',
+        '{"pid": "abc"}',
+    ):
+        home = tmp_path / f"room-{abs(hash(bad))}"
+        (home / ".cheese").mkdir(parents=True)
+        (home / ".cheese" / "transcript-view.json").write_text(bad)
+        monkeypatch.setattr(resource_cleanup, "mounted_at", lambda _path: False)
+        monkeypatch.setattr(resource_cleanup, "run_command", lambda *a, **k: None)
+
+        resource_cleanup.stop_transcript_view(home)  # must not raise
+
+
 def test_a_pid_the_record_names_is_not_signalled_unchecked(tmp_path, monkeypatch):
     """The record is the room's to write, so its pid is only a claim.
 
