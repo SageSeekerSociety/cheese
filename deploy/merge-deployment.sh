@@ -37,6 +37,11 @@ say "log: $LOG"
 # The scratch Postgres is the version the platform's database runs.
 SCRATCH_IMAGE=paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
 SCRATCH_PORT=55432
+# An empty Redis for the source copy's migrations: one of them copies 2FA
+# settings out of REDIS_URL, and the backend's Redis holds this deployment's
+# users, not the source's. (The source's own Redis is not in an export.)
+SCRATCH_REDIS_IMAGE=valkey/valkey:8.0.2
+SCRATCH_REDIS_PORT=56379
 
 BACKEND="$(bash "$HERE/app-container.sh" backend)" || { say "no backend is running here"; exit 1; }
 IMAGE="$(docker inspect -f '{{.Image}}' "$BACKEND")"
@@ -46,7 +51,7 @@ WORK="$(mktemp -d)"
 chmod 700 "$WORK"
 SCRATCH=""
 cleanup() {
-  [ -n "$SCRATCH" ] && docker rm -f "$SCRATCH" >/dev/null 2>&1 || true
+  [ -n "$SCRATCH" ] && docker rm -f "$SCRATCH" "$SCRATCH-redis" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -103,6 +108,8 @@ say "scratch database $SCRATCH"
 docker run -d --name "$SCRATCH" --network "container:$BACKEND" \
   -e POSTGRES_PASSWORD="$PW" -v "$EXPORT:/export:ro" \
   "$SCRATCH_IMAGE" -c port="$SCRATCH_PORT" >/dev/null
+docker run -d --name "$SCRATCH-redis" --network "container:$BACKEND" \
+  "$SCRATCH_REDIS_IMAGE" valkey-server --port "$SCRATCH_REDIS_PORT" --save "" >/dev/null
 for _ in $(seq 1 60); do
   docker exec "$SCRATCH" pg_isready -q -p "$SCRATCH_PORT" -U postgres && break
   sleep 1
@@ -125,6 +132,7 @@ SOURCE_URL="postgresql://postgres:$PW@127.0.0.1:$SCRATCH_PORT/source"
 say "migrating the source copy to this release's head"
 beside -e "DATABASE_URL=postgresql+asyncpg://postgres:$PW@127.0.0.1:$SCRATCH_PORT/source" \
   -e "DATA_ENCRYPTION_KEY=$KEYRING" "${source_env[@]}" \
+  -e "REDIS_URL=redis://127.0.0.1:$SCRATCH_REDIS_PORT/0" \
   -e FILES_STORE=local -e WORKSPACE_ROOT=/tmp/merge-scratch \
   -e STORAGE_TYPE=local -e STORAGE_LOCAL_PATH=/export/uploads \
   -v "$EXPORT:/export:ro" "$IMAGE" alembic upgrade head
