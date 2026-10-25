@@ -32,7 +32,7 @@
  * 代价是一个一直不点任何东西的页面会一直停在旧版本上，直到下一次点击。修严重问题的
  * 那一版等不起这一下：它把 index.html 里的 `cx-min-build` 调高，落在它之前的页面就
  * 提示刷新（`promptIfBelowMinBuild`）。普通发版不动这个数，照旧不问人。改坏了旧页面在用
- * 的接口的那一版也等不起：它调高 API 代数，后端拒掉旧页面的请求，旧页面自己换上新版
+ * 的接口的那一版也等不起：它调高 API 代数，后端拒掉旧页面的请求，旧页面提示刷新
  * （lib/apiGeneration.ts）。
  */
 import type { Router } from 'vue-router'

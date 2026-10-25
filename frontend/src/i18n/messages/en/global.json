@@ -20,7 +20,7 @@
   "cancel": "Cancel",
   "updateFailed": "Couldn't update",
   "outdatedClient": {
-    "message": "A new version of this page is out and this one can no longer be used. Messages not yet sent are lost on refresh, so copy them first.",
+    "message": "A new version of this page is out and this one can no longer be used. Copy anything not yet saved or sent before you refresh.",
     "refresh": "Refresh"
   },
   "requiredUpdate": {

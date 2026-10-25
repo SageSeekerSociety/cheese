@@ -6,7 +6,7 @@
 import type { ApiEnvelope } from '../cx_types'
 
 import { t } from '../i18n'
-import { apiGenerationHeaders, CLIENT_OUTDATED, reloadOutdatedPage } from '../lib/apiGeneration'
+import { apiGenerationHeaders, askToReload, CLIENT_OUTDATED } from '../lib/apiGeneration'
 import { storageGet } from '../lib/browserStorage'
 import { desktopAppHeaders } from '../lib/desktopApp'
 import { refusalText, refusalWords } from '../lib/noticeText'
@@ -96,7 +96,7 @@ export function refusalError(res: Response, body: unknown, path: string): ApiErr
   const http = `HTTP ${res.status}`
   const said = serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`
   const name = (body as { error?: { name?: string } } | null)?.error?.name
-  if (name === CLIENT_OUTDATED) reloadOutdatedPage()
+  if (name === CLIENT_OUTDATED) askToReload()
   return new ApiError(res.status, said, name)
 }
 
@@ -311,7 +311,7 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
         message?: string
         error?: { name?: string; message?: string; retryable?: boolean; data?: unknown }
       }
-      if (details.error?.name === CLIENT_OUTDATED) reloadOutdatedPage()
+      if (details.error?.name === CLIENT_OUTDATED) askToReload()
       if (
         details.error?.retryable !== false &&
         attempt < GET_RETRY_DELAYS_MS.length &&

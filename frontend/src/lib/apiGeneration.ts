@@ -1,6 +1,7 @@
 /**
- * A page left open across a deploy that broke the API it was built for loads
- * the current build, instead of sending the backend a shape it no longer takes.
+ * A page left open across a deploy that broke the API it was built for is told
+ * to load the current build, instead of sending the backend a shape it no
+ * longer takes.
  *
  * pwa.ts swaps builds on the next navigation, so a page that stays on one room
  * or task for hours keeps the old code until then; while the backend's API is
@@ -11,27 +12,19 @@
  * was built for; the backend refuses one below its own as `ClientOutdated`
  * (409, or close code 4409 on a WebSocket: backend/app/core/api_generation.py).
  *
- * On that refusal the page reloads by itself, the way staleBuild.ts does: the
- * waiting service worker takes over first, or the reload could come back with
- * the old index.html. Two cases ask the person instead, with a refresh button
- * that stays until used:
- * - Messages not yet stored. The outbox is deliberately kept off disk
- *   (lib/composerDrafts.ts), so a reload drops them; the person decides when.
- *   Typed drafts are on disk and survive the reload, and a pane with unsaved
- *   edits guards the reload with the browser's own `beforeunload` question.
- * - A reload from this same generation already happened in this tab. The page
- *   that came back is still outdated (the new frontend is not served yet, or
- *   a cache answered), and reloading again would loop. Where the tab cannot
- *   remember that (blocked storage), it never reloads by itself, for the same
- *   reason.
+ * On that refusal the page asks for a refresh, with a button that stays until
+ * used, rather than reloading by itself: what a person has typed is not all on
+ * disk. Chat drafts are (lib/composerDrafts.ts), but the outbox is deliberately
+ * not, and neither are the task form, a review comment or an agent's settings,
+ * and a reload would drop them without a word. The button reloads the way
+ * staleBuild.ts does: the waiting service worker takes over first, or the
+ * reload could come back with the old index.html.
  */
 import { watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
-import { storageGet, storageSet } from '@/lib/browserStorage'
-import { holdsUnsentMessages } from '@/lib/composerDrafts'
 import { takeWaitingWorker } from '@/pwa'
 
 /** The generation this build speaks; absent in builds of the other vite configs, which then say nothing. */
@@ -40,8 +33,6 @@ const GENERATION = import.meta.env.VITE_API_GENERATION
 /** The refusal's `error.name`, and its WebSocket close code. */
 export const CLIENT_OUTDATED = 'ClientOutdated'
 export const CLIENT_OUTDATED_CLOSE = 4409
-
-const RELOADED_KEY = 'cheese:api-generation-reloaded'
 
 /** Headers that tell the backend which API generation this page speaks. */
 export function apiGenerationHeaders(): Record<string, string> {
@@ -57,33 +48,25 @@ function reload(): void {
   void takeWaitingWorker({ check: true }).finally(() => window.location.reload())
 }
 
-let handled = false
-
-/** The backend said this page is outdated: load the current build, or ask first (see the file header). */
-export function reloadOutdatedPage(): void {
-  if (handled) return
-  handled = true
-  const reloadedAlready = storageGet(RELOADED_KEY, 'session') === GENERATION
-  if (holdsUnsentMessages() || reloadedAlready || !storageSet(RELOADED_KEY, GENERATION ?? '', 'session')) {
-    ask()
-    return
-  }
-  reload()
+function show(): void {
+  toast.warning(t('global.outdatedClient.message'), {
+    // The page cannot be used until it is refreshed; the button stays until it is.
+    duration: Number.POSITIVE_INFINITY,
+    action: { label: t('global.outdatedClient.refresh'), onClick: reload },
+  })
 }
 
+let asked = false
+
 /**
- * The refresh button, once the page has something to show it in. A page that
- * reloaded onto a build still outdated is refused on its first requests, before
- * the shell that holds the notices (AppShell) is on screen, and a notice raised
- * then is never shown.
+ * The backend said this page is outdated: ask for a refresh, once. A page
+ * refused on its first requests is refused before the shell that holds the
+ * notices (AppShell) is on screen, and a notice raised then is never shown, so
+ * it waits for the first screen.
  */
-function ask(): void {
-  const show = () =>
-    toast.warning(t('global.outdatedClient.message'), {
-      // The page cannot be used until it is refreshed; the button stays until it is.
-      duration: Number.POSITIVE_INFINITY,
-      action: { label: t('global.outdatedClient.refresh'), onClick: reload },
-    })
+export function askToReload(): void {
+  if (asked) return
+  asked = true
   if (firstPaintDone.value) {
     show()
     return

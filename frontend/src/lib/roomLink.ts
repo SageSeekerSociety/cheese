@@ -26,7 +26,7 @@
 import type { RoomSnapshot } from '@/query/snapshot'
 
 import { authToken, BASE } from '@/api/http'
-import { apiGenerationQuery, CLIENT_OUTDATED_CLOSE, reloadOutdatedPage } from '@/lib/apiGeneration'
+import { apiGenerationQuery, askToReload, CLIENT_OUTDATED_CLOSE } from '@/lib/apiGeneration'
 import { reloadIfBehind } from '@/pwa'
 
 const OPEN = 1
@@ -169,7 +169,7 @@ class Link {
     }
     socket.onclose = (event: CloseEvent) => {
       if (this.socket !== socket) return
-      if (event.code === CLIENT_OUTDATED_CLOSE) reloadOutdatedPage()
+      if (event.code === CLIENT_OUTDATED_CLOSE) askToReload()
       const opened = this.ready
       this.forget(socket)
       this.endAll(false)

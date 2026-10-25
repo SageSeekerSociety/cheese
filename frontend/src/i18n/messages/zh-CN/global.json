@@ -30,7 +30,7 @@
   "transportWriteFailure": "服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试（HTTP {status}）",
   "updateFailed": "更新失败",
   "outdatedClient": {
-    "message": "页面已有新版本，当前版本无法继续使用。还没发出的消息刷新后会丢失，先复制下来",
+    "message": "页面已有新版本，当前版本无法继续使用。刷新前先把还没保存或没发出的内容复制下来",
     "refresh": "刷新"
   },
   "requiredUpdate": {

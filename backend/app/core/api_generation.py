@@ -15,8 +15,8 @@ web build bakes the same file in and sends it on every request
 (``X-Cheese-Api-Gen``; ``?api_gen=`` on a WebSocket, where a browser cannot set
 a header). A request carrying a lower number is refused here before any route
 sees it — ``409`` named ``ClientOutdated`` over HTTP, close code ``4409`` on a
-WebSocket, accepted first so the page can read the code — and the page loads
-the current build (``frontend/src/lib/apiGeneration.ts``).
+WebSocket, accepted first so the page can read the code — and the page asks
+to be refreshed onto the current build (``frontend/src/lib/apiGeneration.ts``).
 
 A request that carries no number is never refused: the CLI, the desktop app's
 own calls, MCP, the connector, scripts and anything else that is not the web

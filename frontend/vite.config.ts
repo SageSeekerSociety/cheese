@@ -685,7 +685,7 @@ export default defineConfig({
   define: {
     'process.env': {},
     // The API generation this build speaks, sent on every request so the backend
-    // can tell a page left open across a breaking deploy to reload
+    // can tell a page left open across a breaking deploy to refresh
     // (backend/app/core/api_generation.py). One file for both halves; the image
     // build brings it in through the `api` context (build.yml, Dockerfile).
     'import.meta.env.VITE_API_GENERATION': JSON.stringify(

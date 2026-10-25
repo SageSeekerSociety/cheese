@@ -1,7 +1,6 @@
 // 跨着一次「改坏旧接口」的发版开着的一页：后端说它落后了（409 ClientOutdated，或房间连接
-// 以 4409 关掉），它就换上新版——先让新版的 worker 接管再刷新，只刷一次；手里还有没发出去的
-// 消息时，不替人刷新，留一个「刷新」让人自己点。
-import { effectScope } from 'vue'
+// 以 4409 关掉），它就请人刷新——不替人刷新，因为人写了一半的东西不全在磁盘上；人点了
+// 「刷新」，先让新版的 worker 接管再刷新。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -63,8 +62,6 @@ let answer: () => Response
 
 beforeEach(() => {
   vi.resetModules()
-  sessionStorage.clear()
-  localStorage.clear()
   notices.length = 0
   order = []
   reload = vi.fn(() => order.push('reload'))
@@ -79,12 +76,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-/** A page freshly loaded: its modules start from nothing, the tab's session storage stays. */
-async function loadPage() {
-  vi.resetModules()
-  return await import('./api')
-}
-
 /** The page's first screen is drawn (main.ts arms this on the app's router). */
 async function paintFirstScreen() {
   const { armAfterFirstPaint, firstPaintDone } = await import('./lib/afterFirstPaint')
@@ -94,17 +85,12 @@ async function paintFirstScreen() {
   await vi.waitFor(() => expect(firstPaintDone.value).toBe(true))
 }
 
-async function settled(work: Promise<unknown>) {
-  await work.catch(() => {})
-  await vi.waitFor(() => expect(order.length + notices.length).toBeGreaterThan(0))
-  // Let the worker hand-over and the reload behind it run out.
-  await new Promise((resolve) => setTimeout(resolve, 0))
-}
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('a page the backend calls outdated', () => {
   it('says which API generation it was built for on every request', async () => {
     answer = ok
-    const { request } = await loadPage()
+    const { request } = await import('./api')
     await request('/projects')
 
     expect(GENERATION).toMatch(/^\d+$/)
@@ -113,53 +99,44 @@ describe('a page the backend calls outdated', () => {
     )
   })
 
-  it('loads the new build once, after its worker takes over, however many requests are refused', async () => {
-    const { request, ApiError } = await loadPage()
+  it('asks once for a refresh, however many requests are refused, and does not reload by itself', async () => {
+    const { request, ApiError } = await import('./api')
+    await paintFirstScreen()
 
     const refused = await Promise.allSettled([request('/projects'), request('/topics', { method: 'POST' })])
-    await settled(Promise.resolve())
+    await tick()
 
     expect(refused.map((r) => r.status === 'rejected' && r.reason instanceof ApiError && r.reason.code)).toEqual([
       'ClientOutdated',
       'ClientOutdated',
     ])
-    expect(order).toEqual(['worker takes over', 'reload'])
-    expect(notices).toEqual([])
-  })
-
-  it('asks instead when the page holds a message not yet sent, and reloads when told to', async () => {
-    const { request } = await loadPage()
-    await paintFirstScreen()
-    const { useOutbox } = await import('./components/room/composables/useOutbox')
-    const scope = effectScope()
-    const outbox = scope.run(() => useOutbox({ send: () => new Promise(() => {}), onDelivered: () => {} }))!
-    outbox.enqueue({ content: '还在路上的一句话' })
-
-    await settled(request('/projects'))
-
+    expect(notices).toHaveLength(1)
     expect(reload).not.toHaveBeenCalled()
-    expect(notices).toHaveLength(1)
-    notices[0].action?.onClick?.()
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
-    scope.stop()
   })
 
-  it('asks instead of reloading again when the build it reloaded onto is still outdated', async () => {
-    await settled((await loadPage()).request('/projects'))
-    expect(reload).toHaveBeenCalledOnce()
+  it('reloads onto the new build when told to, after its worker takes over', async () => {
+    const { request } = await import('./api')
+    await paintFirstScreen()
+    await request('/projects').catch(() => {})
 
+    notices[0].action?.onClick?.()
+
+    await vi.waitFor(() => expect(order).toEqual(['worker takes over', 'reload']))
+  })
+
+  it('keeps the request for a refresh until there is a screen to show it on', async () => {
+    const { request } = await import('./api')
     // Refused on its first requests, before anything is on screen to hold a notice.
-    await (await loadPage()).request('/projects').catch(() => {})
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await request('/projects').catch(() => {})
+    await tick()
     expect(notices).toEqual([])
 
     await paintFirstScreen()
 
-    expect(reload).toHaveBeenCalledOnce()
     expect(notices).toHaveLength(1)
   })
 
-  it('reloads when its room connection is closed as outdated', async () => {
+  it('asks for a refresh when its room connection is closed as outdated', async () => {
     const sockets: FakeSocket[] = []
     class FakeSocket {
       onopen: (() => void) | null = null
@@ -173,13 +150,15 @@ describe('a page the backend calls outdated', () => {
       close() {}
     }
     vi.stubGlobal('WebSocket', FakeSocket)
-    await loadPage()
+    await paintFirstScreen()
     const { openRoomChannel } = await import('./lib/roomLink')
 
     openRoomChannel('room-1')
     expect(new URL(sockets[0].url).searchParams.get('api_gen')).toBe(GENERATION)
     // happy-dom's CloseEvent drops `code`; a browser's carries it.
     sockets[0].onclose?.({ code: 4409 } as CloseEvent)
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+
+    expect(notices).toHaveLength(1)
+    expect(reload).not.toHaveBeenCalled()
   })
 })
