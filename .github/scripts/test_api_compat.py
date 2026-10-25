@@ -175,6 +175,48 @@ class BreakingForAnOldPage(unittest.TestCase):
         kinds(head, "block_id", "file", "url")
         self.assertEqual(api_compat.breaking_changes(base, head), [])
 
+    def test_a_new_required_field_on_a_kind_already_sent_breaks(self):
+        def kinds(doc, extra_required):
+            _schemas(doc)["PostIn"]["properties"]["quote"] = {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "required": ["kind", "block_id", *extra_required],
+                        "properties": {
+                            "kind": {"const": "block", "type": "string"},
+                            "block_id": {"type": "string"},
+                            "frame_id": {"type": "string"},
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "required": ["kind", "path"],
+                        "properties": {"kind": {"const": "file", "type": "string"}, "path": {"type": "string"}},
+                    },
+                ]
+            }
+
+        base = _document()
+        kinds(base, [])
+        head = copy.deepcopy(base)
+        kinds(head, ["frame_id"])
+        self.assertNotEqual(api_compat.breaking_changes(base, head), [])
+
+    def test_a_kind_removed_from_a_request_union_breaks(self):
+        def kinds(doc, *names):
+            _schemas(doc)["PostIn"]["properties"]["quote"] = {
+                "oneOf": [
+                    {"type": "object", "properties": {"kind": {"const": name}}, "required": ["kind"]}
+                    for name in names
+                ]
+            }
+
+        base = _document()
+        kinds(base, "block", "file")
+        head = copy.deepcopy(base)
+        kinds(head, "block")
+        self.assertNotEqual(api_compat.breaking_changes(base, head), [])
+
     def test_a_new_required_field_in_an_optional_object_already_sent_breaks(self):
         def nested(doc, *required):
             _schemas(doc)["PostIn"]["properties"]["poll"] = {

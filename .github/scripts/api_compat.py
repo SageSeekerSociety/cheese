@@ -26,17 +26,17 @@ to compare, so a change inside it goes unseen here; that ratchet only shrinks.
 
 Fields are compared by where they sit, ``$ref``s resolved, so renaming a model
 alone breaks nothing. Variants of ``anyOf``/``oneOf``/``allOf`` are merged:
-their fields pooled, a field's types the union over the variants. A field
-inside one of several alternative shapes (a union of kinds, not ``X | None``)
-counts as never required: an old page sends only the kinds it knew, so a new
-kind with fields of its own breaks nothing.
+their fields pooled, a field's types the union over the variants, except
+that a union of several object shapes (kinds of a quote, of a change) keeps
+each kind's fields apart: a new kind breaks nothing, while a new required
+field on a kind an old page sends does, and so does a kind removed.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 
@@ -67,13 +67,30 @@ def fields(spec: dict, schema: dict | None) -> dict[str, Field]:
     ``{}`` a map's values."""
     out: dict[str, Field] = {}
     if schema is not None:
-        _walk(spec, schema, "", out, required=True, seen=(), conditional=False)
+        _walk(spec, schema, "", out, required=True, seen=())
     return out
 
 
-def _walk(spec, schema, at, out, *, required, seen, conditional):
-    """``conditional``: ``at`` sits inside one of several alternatives, so a
-    field there is required only when that alternative is the one sent."""
+def _kind(spec: dict, variant: dict, index: int) -> str | None:
+    """What names one object shape among several in a union — its
+    discriminator value, else its model's name — or None when it is not an
+    object (``string | integer`` is one value of several types, not shapes)."""
+    schema, ref = _resolve(spec, variant)
+    properties = schema.get("properties")
+    if not properties:
+        return None
+    for name, child in properties.items():
+        child, _ = _resolve(spec, child)
+        if "const" in child:
+            return f"{name}={json.dumps(child['const'])}"
+        if len(child.get("enum", ())) == 1:
+            return f"{name}={json.dumps(child['enum'][0])}"
+    if ref:
+        return ref.rsplit("/", 1)[-1].removesuffix("-Input").removesuffix("-Output")
+    return str(index)
+
+
+def _walk(spec, schema, at, out, *, required, seen):
     schema, ref = _resolve(spec, schema)
     field = out.setdefault(at, Field())
     field.required = field.required or required
@@ -86,13 +103,16 @@ def _walk(spec, schema, at, out, *, required, seen, conditional):
         seen = (*seen, ref)
     alternatives = [*schema.get("anyOf", ()), *schema.get("oneOf", ())]
     variants = [*alternatives, *schema.get("allOf", ())]
-    # `X | None` is one alternative, not a choice between shapes: X's required
-    # fields are required whenever X is sent.
-    shapes = [v for v in alternatives if _resolve(spec, v)[0].get("type") != "null"]
-    for variant in alternatives:
-        _walk(spec, variant, at, out, required=False, seen=seen, conditional=conditional or len(shapes) > 1)
+    # A union of several object shapes keeps each shape's fields apart, under
+    # `<kind>`: a new kind is a new place, and an old kind keeps its own
+    # required fields. `X | None` is one shape and stays where it is.
+    kinds = [_kind(spec, v, i) for i, v in enumerate(alternatives)]
+    several = sum(k is not None for k in kinds) > 1
+    for variant, kind in zip(alternatives, kinds, strict=True):
+        place = f"{at}<{kind}>" if several and kind is not None else at
+        _walk(spec, variant, place, out, required=False, seen=seen)
     for variant in schema.get("allOf", ()):
-        _walk(spec, variant, at, out, required=False, seen=seen, conditional=conditional)
+        _walk(spec, variant, at, out, required=False, seen=seen)
     kind = schema.get("type")
     if kind is not None:
         field.types.update(kind if isinstance(kind, list) else [kind])
@@ -104,15 +124,12 @@ def _walk(spec, schema, at, out, *, required, seen, conditional):
         field.enum = (field.enum or set()) | {json.dumps(schema["const"])}
     needed = set(schema.get("required", ()))
     for name, child in schema.get("properties", {}).items():
-        _walk(
-            spec, child, f"{at}.{name}", out,
-            required=name in needed and not conditional, seen=seen, conditional=conditional,
-        )
+        _walk(spec, child, f"{at}.{name}", out, required=name in needed, seen=seen)
     if "items" in schema and isinstance(schema["items"], dict):
-        _walk(spec, schema["items"], f"{at}[]", out, required=False, seen=seen, conditional=conditional)
+        _walk(spec, schema["items"], f"{at}[]", out, required=False, seen=seen)
     extra = schema.get("additionalProperties")
     if isinstance(extra, dict) and extra:
-        _walk(spec, extra, f"{at}{{}}", out, required=False, seen=seen, conditional=conditional)
+        _walk(spec, extra, f"{at}{{}}", out, required=False, seen=seen)
 
 
 def _operations(spec: dict) -> dict[str, dict]:
@@ -193,7 +210,7 @@ def _request_breaks(old: dict[str, Field], new: dict[str, Field]) -> list[str]:
 def _parent(at: str) -> str | None:
     """The pointer of the object holding ``at``; None for a parameter or the
     body itself."""
-    cut = max(at.rfind("."), at.rfind("[]"), at.rfind("{}"))
+    cut = max(at.rfind("."), at.rfind("[]"), at.rfind("{}"), at.rfind("<"))
     return at[:cut] if cut > 0 else None
 
 
