@@ -12,9 +12,9 @@ separate data — don't conflate them.
 
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
-| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
+| **dev / test** | `okcheese.com` (mainland entry `okcheese.cn`) | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
 | **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | Docker Compose (`deploy/deploy-docker.sh`) | **published GitHub Release → approval** |
-| **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
+| **etrip** | `ruc-etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
 - dev and prod are on ghg's private `192.168.16.0/24` (no public inbound). etrip

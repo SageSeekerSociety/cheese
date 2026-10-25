@@ -14,7 +14,7 @@ dev and production are separate deployments that inherit nothing from each other
 
 ## The company's knowledge is in Feishu
 
-What the product is for, who it serves and the team's product decisions live in the Feishu wiki, not the code. Before deciding anything a user or partner will see — copy, scenarios, positioning — read the relevant pages through `lark-cli` and name them in the PR; where you could not reach Feishu, say so in the PR instead of working from the code. Setup: `docs/feishu-lark.md`.
+What the product is for, who it serves and the team's product decisions live in the Feishu wiki, not the code. Before deciding anything a user or partner will see — copy, scenarios, positioning — read the relevant pages through `lark-cli` and name them in the PR; where you could not reach Feishu, say so in the PR instead of working from the code. The team's norms for product and engineering decisions are in 《产品与工程决策的方法》 (https://acnxgqu0961c.feishu.cn/wiki/Ah2Yw7eF8itAlrkoynpcdhisnIC) and 《产品思维：每个人的职责》 (https://acnxgqu0961c.feishu.cn/wiki/Jb1MwOwxyi6cMIkiKMWcFJ65nUe). Setup: `docs/feishu-lark.md`.
 
 ## Read the issues before the docs
 
@@ -24,7 +24,7 @@ A design still being argued lives in issues; whatever `docs/` says about it pred
 
 Build every decision for the end state: nothing here is yet too expensive to replace, so a decision made now is one we live with. Before changing anything, find the root cause from first principles and how mature systems solve the same problem, and build that design in its smallest complete form. A change that works around the cause instead of removing it — a special case, a retry or probe around a failure, a sweep that cleans up after something the design should prevent, a step a later stage would discard — is not merged, and one already on main is reverted. Where the right design is not settled, leave the problem open in an issue with what is known rather than spend work on a stopgap.
 
-Finish a decided change completely: leave no expiry note, compatibility path, deprecation marker, dual-write, flag keeping the old branch reachable, or doc section about the old way. Those protect existing users, which we have none of; each is more to unwind and a place the next reader mistakes for something in use. Adopting a replacement means deleting what it replaced, and the change is finished only when the code that chooses changes — check there, not in the menu, the contract or the doc.
+Finish a decided change completely: no expiry note, compatibility path, deprecation marker, dual-write, flag keeping the old branch reachable, or doc section about the old way, unless keeping one is itself the decision. People use the platform now, so a compatibility path may stay when the pull request states it as a design decision: whose data or workflow it protects, what carrying it costs, and the change that removes it. While the platform is young, a path that brings more debt than the disruption it spares is not kept; the data is migrated and the people affected are told instead. Every kept path is more to unwind and a place the next reader mistakes for something in use. Adopting a replacement means deleting what it replaced, and the change is finished only when the code that chooses changes — check there, not in the menu, the contract or the doc.
 
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
 
