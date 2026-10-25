@@ -281,8 +281,8 @@ their loopback ports the way a person does, before app-router sends them
 anything: the sign-in route refuses a wrong password, `/users/me` names the
 deploy's own account, that account's own task opens through
 `/topics/{task}/task` (a project and task it creates the first time), the inbox
-WebSocket every signed-in page holds sends its first frame, sign-out ends the
-session, and the new frontend serves `index.html` and the hashed script it
+WebSocket every signed-in page holds sends its first frame, sign-out answers,
+and the new frontend serves `index.html` and the hashed script it
 names. Each check prints one `smoke <check> ok|FAILED` line into the deploy
 log. Any failure removes the new slots and stops the release with app-router
 untouched, so a release that is ready but cannot be used never takes traffic.

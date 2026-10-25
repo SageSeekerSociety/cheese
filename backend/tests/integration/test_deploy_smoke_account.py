@@ -11,11 +11,14 @@ database, opens its session). These pin what provisioning may do:
   wrong ones;
 - a person's account is never the one it uses, even one holding the handle
   `deploy-smoke` with a password of its own, and that account keeps working;
-- an account the deploy made and that was closed is replaced, not a traceback.
+- an account the deploy made and that was closed is replaced, not a traceback;
+- nobody can hold its task page back by creating a project first: its project
+  is the one it owns by name, with an id the server picks.
 """
 
 import importlib.util
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,13 +33,17 @@ from app.domain.user.sessions import SessionService
 SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "release-smoke.py"
 
 
-@pytest.fixture
-def smoke(db_factory, monkeypatch):
-    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_factory)
+def load_script():
     spec = importlib.util.spec_from_file_location("release_smoke", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    yield module
+    return module
+
+
+@pytest.fixture
+def smoke(db_factory, monkeypatch):
+    monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_factory)
+    yield load_script()
     sys.modules.pop("release_smoke", None)
 
 
@@ -99,3 +106,30 @@ async def test_a_closed_smoke_account_is_replaced(smoke, db_factory):
     second, _, _ = await smoke.provision()
 
     assert second != first
+
+
+def test_a_project_someone_else_made_first_does_not_block_the_task(client):
+    from tests.conftest import seed_user
+
+    smoke = load_script()
+    token = seed_user(client, "smoke-owner")
+    auth = {"Authorization": f"Bearer {token}"}
+    user_id = verify_access_token(token).user_id
+    # The id an earlier version derived from the account's public user id,
+    # and the same name, taken first by another person.
+    derived = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"https://okcheese.com/deploy-smoke/{user_id}"
+    )
+    taken = client.post(
+        "/projects",
+        json={"id": str(derived), "name": smoke.PROJECT_NAME},
+        headers={"Authorization": f"Bearer {seed_user(client, 'someone-else')}"},
+    )
+    assert taken.status_code == 200, taken.text
+
+    task_id = smoke.own_task(client, "", auth, "smoke-owner")
+    assert smoke.own_task(client, "", auth, "smoke-owner") == task_id
+
+    task = client.get(f"/topics/{task_id}/task", headers=auth)
+    assert task.status_code == 200, task.text
+    assert task.json()["data"]["project_id"] != str(derived)

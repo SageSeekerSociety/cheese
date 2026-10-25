@@ -33,12 +33,12 @@ session inside the release's image instead.
                         the route, its rate limiter and the account lookup work,
                         and no account's failure count moves
         me              GET /users/me names the smoke account
-        task            the account's own task, made once (a project with a
-                        fixed id, one task in its 综合 room), opened with
+        task            the account's own task, made once (a project it owns
+                        by name, one task in its 综合 room), opened with
                         GET /topics/{task}/task, as the task page does
         websocket       WS /notifications/inbox, the connection every signed-in
                         page holds, sends its first frame
-        logout          POST /users/auth/logout ends the session provision opened
+        logout          POST /users/auth/logout with the session's refresh token
 
 Every step is bounded (TIMEOUT seconds a request, CREATE_TIMEOUT for the
 first run's project, which provisions a repository, PROVISION_TIMEOUT for the
@@ -55,7 +55,6 @@ import os
 import re
 import secrets
 import sys
-import uuid
 
 # A domain the platform never mails (app/core/email.py PLACEHOLDER_EMAIL_DOMAINS).
 SMOKE_EMAIL = "deploy-smoke@placeholder.internal"
@@ -79,14 +78,6 @@ class Failed(Exception):
 
 def passed(check: str, detail: str) -> None:
     print(f"smoke {check} ok {detail}", flush=True)
-
-
-def project_id(user_id: int) -> uuid.UUID:
-    """Fixed per account, so creating it is idempotent (POST /projects returns
-    the earlier project for an id its owner already holds)."""
-    return uuid.uuid5(
-        uuid.NAMESPACE_URL, f"https://okcheese.com/deploy-smoke/{user_id}"
-    )
 
 
 async def provision() -> tuple[int, str, str]:
@@ -174,11 +165,21 @@ def check_frontend(client, frontend: str) -> None:
     passed("frontend-asset", f"{asset}: HTTP 200, {len(response.content)} bytes")
 
 
-def own_task(client, backend: str, auth: dict, user_id: int) -> str:
-    """The smoke account's task, made the first time; its id."""
-    pid = str(project_id(user_id))
+def own_task(client, backend: str, auth: dict, handle: str) -> str:
+    """The smoke account's task, made the first time; its id.
+
+    Its project is the one it owns by PROJECT_NAME. The server picks a new
+    project's id: an id the deploy could work out, anybody could too, and
+    taking it first would hold every release back."""
     projects = data(client, "task", "GET", f"{backend}/projects", headers=auth)
-    project = next((p for p in projects["data"] if p.get("id") == pid), None)
+    project = next(
+        (
+            p
+            for p in projects["data"]
+            if p.get("owner_handle") == handle and p.get("name") == PROJECT_NAME
+        ),
+        None,
+    )
     if project is None:
         project = data(
             client,
@@ -186,12 +187,15 @@ def own_task(client, backend: str, auth: dict, user_id: int) -> str:
             "POST",
             f"{backend}/projects",
             headers=auth,
-            json={"id": pid, "name": PROJECT_NAME},
+            json={"name": PROJECT_NAME},
             timeout=CREATE_TIMEOUT,
         )
     room = project.get("root_topic_id")
     if not room:
-        raise Failed("task", f"project {pid} has no room: {json.dumps(project)[:300]}")
+        raise Failed(
+            "task",
+            f"project {project.get('id')} has no room: {json.dumps(project)[:300]}",
+        )
     tasks = data(
         client, "task", "GET", f"{backend}/topics/{room}/tasks?limit=0", headers=auth
     )
@@ -234,7 +238,7 @@ def check_backend(client, backend: str, user_id: int, token: str, refresh: str) 
         raise Failed("me", f"names user {named!r}, not {user_id}")
     passed("me", f"HTTP 200, user {named}")
 
-    task_id = own_task(client, backend, auth, user_id)
+    task_id = own_task(client, backend, auth, me["user"]["username"])
     task = data(client, "task", "GET", f"{backend}/topics/{task_id}/task", headers=auth)
     if task.get("id") != task_id:
         raise Failed(
@@ -265,7 +269,7 @@ def check_backend(client, backend: str, user_id: int, token: str, refresh: str) 
         f"{backend}/users/auth/logout",
         headers={"Cookie": f"cheese_refresh={refresh}"},
     )
-    passed("logout", "HTTP 200, session ended")
+    passed("logout", "HTTP 200")
 
 
 def check(backend: str, frontend: str | None) -> None:
