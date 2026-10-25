@@ -79,9 +79,11 @@ jobs:
                   headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json"},
               )
               return json.load(urllib.request.urlopen(req, timeout=30))["workflow_runs"]
-          # A run still queued behind one that has since started will never deploy:
-          # the deploy group cancels a waiting run when a later one arrives, and GitHub
-          # can leave such a run listed as queued with no jobs, unable to be cancelled.
+          # A run still queued behind one that has since started has usually been
+          # replaced by it, and GitHub can leave such a run listed as queued with no
+          # jobs, unable to be cancelled. Where the rule is too generous, the skipped
+          # run's deploy job still needs the box's one runner, which this merge holds,
+          # so it runs after the merge and never beside it.
           started = [r["run_started_at"] or r["created_at"] for r in runs("per_page=20") if r["status"] not in ("queued", "waiting", "pending")]
           latest_start = max(started, default="")
           busy = []
