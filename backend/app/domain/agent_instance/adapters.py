@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,14 +95,12 @@ async def default_teammate(
     *,
     display_name: str | None = None,
     type_name: str | None = None,
-    prompt: str | None = None,
-    skills: Sequence[str] = (),
+    pack_prompt: str | None = None,
 ) -> None:
     """`app.domain.project.ports.DefaultTeammate`：这个项目的默认 AI 队友。
 
     两次调用按次序做：先播（没有才播，播种和席位都在 `materialize_default` 里，它
-    自己收尾时 flush），人设和题目包自带的 prompt / skill 名字只在队友**还没有**
-    人设的时候落 —— 一个项目自己挑过的人设不该被后来的一次赛题报名覆盖。收的是那一
+    自己收尾时 flush），人设只在队友**还没有**人设的时候落 —— 一个项目自己挑过的人设不该被后来的一次赛题报名覆盖。收的是那一
     行 `Project` 本身，因为播种要就地写回 ``default_agent_instance_id``、也要读
     ``root_topic_id`` 才坐得下席位。"""
     agents = AgentInstanceService(session)
@@ -112,8 +109,10 @@ async def default_teammate(
         if type_name:
             await agents.set_type(teammate, type_name)
             await session.flush()
-        if prompt or skills:
-            await agents.apply_protocol(teammate, prompt=prompt, skills=list(skills))
+        if pack_prompt:
+            # The 资源包's prompt, until the contract migration after
+            # b7d4e1a9c2f3 moves it into the 题目's guidance.
+            await agents.append_to_persona(teammate, pack_prompt)
 
 
 async def project_team(

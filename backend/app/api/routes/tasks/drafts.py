@@ -173,12 +173,14 @@ async def _editable_task(db, task_id: int, user_id: int):
     return task
 
 
-async def _task_as_form(db, task) -> dict:
+async def _task_as_form(db, task, *, private: bool) -> dict:
     """The published 题目 as its edit form starts out: every field the form
     saves back, so a change draft saved with one field changed leaves the rest
-    as they are — its stages, submission items, rubric and tags included."""
+    as they are — its stages, submission items, rubric and tags included.
+    ``private``: the reader may teach the 题目 (``may_teach_task``), so its
+    private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
-    model = _task_to_api_model(task, include_private_teaching=True)
+    model = _task_to_api_model(task, include_private_teaching=private)
     model.update(await _task_requirements(service, task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
@@ -196,7 +198,8 @@ async def _edit_draft(db, task, user_id: int, conversation_id=None):
         user_id=user_id,
         space_id=task.space_id,
         task_id=task.id,
-        fields=await _task_as_form(db, task),
+        # Only those who may teach it get here (``_editable_task``).
+        fields=await _task_as_form(db, task, private=True),
         conversation_id=conversation_id,
     )
 
@@ -265,13 +268,14 @@ async def read_draft(
 ) -> dict:
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
-    return ok(
-        _full(
-            row,
-            await _task_names(db, [row]),
-            await drafts.published_items(db, [row]),
-        )
+    shown = _full(
+        row,
+        await _task_names(db, [row]),
+        await drafts.published_items(db, [row]),
     )
+    if not await drafts.private_shown(db, row):
+        shown["fields"] = drafts.without_private(shown["fields"])
+    return ok(shown)
 
 
 class SaveIn(BaseModel):
@@ -376,12 +380,37 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
 
 async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
     return await drafts.terms(
-        db, spaces, space_id, await _zone(db, user_id), user_id=user_id
+        db,
+        spaces,
+        space_id,
+        await _zone(db, user_id),
+        user_id=user_id,
+        materials=await _library(db, space_id, user_id),
     )
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:
-    return await drafts.context(db, spaces, row, await _zone(db, user_id))
+    return await drafts.context(
+        db,
+        spaces,
+        row,
+        await _zone(db, user_id),
+        materials=await _library(db, row.space_id, row.user_id),
+    )
+
+
+async def _library(db, space_id: int, user_id: int) -> dict[str, int]:
+    """The space library's files this person sees, by name: what 芝士 may
+    point the 题目's AI teammates at (the page's picker lists the same)."""
+    try:
+        listed = await SpaceMaterialService(
+            session=db, storage=get_storage_backend()
+        ).list_for_space(space_id=space_id, user_id=user_id)
+    except NotFoundError:
+        # Not one of the space's people: its library is not theirs to see,
+        # so there is nothing in it they could point the teammates at.
+        return {}
+    return {str(m["name"]): int(m["id"]) for m in listed["materials"]}
 
 
 class SearchIn(BaseModel):
@@ -451,8 +480,13 @@ async def agent_read(
         raise NotFoundError.for_resource("task", body.task)
     await ensure_task_readable(session=db, task=task, user_id=user_id)
     terms = await _space_terms(db, spaces, task.space_id, user_id)
+    teaches = await may_teach_task(session=db, task=task, user_id=user_id)
     text = drafts.published_view(
-        task.id, task.name, await _task_as_form(db, task), terms
+        task.id,
+        task.name,
+        await _task_as_form(db, task, private=teaches),
+        terms,
+        private=teaches,
     )
     pending = await drafts.for_task(db, user_id, task.id)
     if pending is not None:
@@ -756,11 +790,12 @@ def _draft_parts(payload: dict) -> list[str]:
     """A draft write's parts: the fields as 芝士 names them, each one or a few
     form fields (``AGENT_FIELDS``)."""
     changed = payload.get("changed") or {}
-    return [
-        key
-        for key, targets in drafts.AGENT_FIELDS.items()
-        if any(t in changed for t in targets)
-    ]
+    parts: dict[tuple[str, ...], str] = {}
+    for key, targets in drafts.AGENT_FIELDS.items():
+        # Several of 芝士's fields write the one guidance: it is one part.
+        if any(t in changed for t in targets):
+            parts.setdefault(targets, key)
+    return list(parts.values())
 
 
 async def _put_back(db, resolver, same, parts: list[str], redo: bool) -> dict:
