@@ -1,18 +1,17 @@
-"""b7d4e1a9c2f3: a 资源包's prompt and skills become the 题目's AI guidance.
+"""b7d4e1a9c2f3: a 资源包's skills are given by the 题目's AI guidance too.
 
-Each 题目 gets the prompt and skills of the 资源包 it was reading — its own
-when it overrides the 资源包, its 项目集's otherwise. What every teammate reads
-stays what it was: the same requirements, goals, private guidance and skills
-reach the default teammate a project already has, only from the guidance
-instead of from its own configuration, and a teammate added later now gets
-them too.
+The migration runs while the previous release serves, so it changes nothing
+that release reads — only the guidance's ``skills``, which it does not read,
+is added to. Under this release every teammate of a project built from the 题目
+reads what its default teammate read before, and a teammate added later now
+carries the pack's skills too.
 """
 
 import json
 import uuid
 from types import SimpleNamespace as NS
 
-from app.domain.agent.harness.opening import DEFAULT_TEACHING_PROMPT, teaching_section
+from app.domain.agent.harness.opening import teaching_section
 from app.domain.agent.turn.intake.context import carried_skills
 from app.domain.task.protocol import resolve
 from app.domain.task.teaching import TeachingContext
@@ -62,12 +61,6 @@ def _task(db, task_id: int, space: int, category: int, override: dict | None) ->
     )
 
 
-def _override(db, task_id: int) -> dict:
-    return json.loads(
-        db.fetchval("SELECT protocol_override::text FROM task WHERE id = $1", task_id)
-    )
-
-
 def _built_from(db, task: int, configuration: dict) -> uuid.UUID:
     """A project built from ``task`` before the move: its default teammate has
     what project creation copied into it."""
@@ -91,20 +84,39 @@ def _built_from(db, task: int, configuration: dict) -> uuid.UUID:
     return agent
 
 
-def _configuration(db, agent) -> dict:
-    return json.loads(
-        db.fetchval(
-            "SELECT configuration::text FROM agent_instances WHERE id = $1", agent
-        )
-    )
+def _rows(db) -> dict:
+    """Everything the previous release reads that this migration could touch."""
+
+    def table(sql: str) -> dict:
+        return {r[0]: r[1] for r in db.fetch(sql)}
+
+    return {
+        "space": table("SELECT id, teaching::text FROM space"),
+        "packs": table("SELECT id, resource_pack::text FROM space_categories"),
+        "tasks": table("SELECT id, protocol_override::text FROM task"),
+        "agents": table("SELECT id, configuration::text FROM agent_instances"),
+    }
 
 
-def _reads(db, task: int, agent) -> tuple[set[str], set[str], set[str]]:
-    """What the teammates of a project built from ``task`` read, as the
-    platform resolves it: the lines of the guidance section and the default
-    teammate's persona (headings aside — where a line sits may move), the
-    skills the default teammate carries, and the ones a teammate added later
-    carries."""
+def _without_guidance_skills(override: str | None):
+    """A 题目's override as the previous release reads it: the guidance's
+    ``skills`` is a key it does not know, and no override reads as an empty one."""
+    value = json.loads(override) if override is not None else {}
+    teaching = value.get("teaching")
+    if isinstance(teaching, dict):
+        rest = {k: v for k, v in teaching.items() if k != "skills"}
+        if rest:
+            value["teaching"] = rest
+        else:
+            del value["teaching"]
+    return value
+
+
+def _reads(db, task: int, agent, room_skills: list[str]):
+    """What the teammates of a project built from ``task`` read under this
+    release: the lines of the guidance section and the default teammate's
+    persona, the skills the default teammate carries, and the ones a teammate
+    added later with no skills of its own carries."""
     row = db.fetchrow(
         "SELECT t.protocol_override::text AS o, c.resource_pack::text AS p,"
         " s.teaching::text AS s FROM task t"
@@ -117,7 +129,11 @@ def _reads(db, task: int, agent) -> tuple[set[str], set[str], set[str]]:
         category=NS(resource_pack=json.loads(row["p"])),
         task=NS(protocol_override=json.loads(row["o"]) if row["o"] else None),
     )
-    config = _configuration(db, agent)
+    config = json.loads(
+        db.fetchval(
+            "SELECT configuration::text FROM agent_instances WHERE id = $1", agent
+        )
+    )
     section = (
         teaching_section(TeachingContext(course=None, teaching=protocol.teaching)) or ""
     )
@@ -126,7 +142,7 @@ def _reads(db, task: int, agent) -> tuple[set[str], set[str], set[str]]:
         for line in f"{section}\n{config.get('body') or ''}".splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
-    room = NS(skills=[])
+    room = NS(skills=room_skills)
     course = protocol.teaching.skills
     return (
         lines,
@@ -135,10 +151,14 @@ def _reads(db, task: int, agent) -> tuple[set[str], set[str], set[str]]:
     )
 
 
-#: (空间's guidance, 资源包, 题目's own override): the shapes a 题目 may be in.
+#: (空间's guidance, 资源包, 题目's own override).
 CASES = {
-    "a skills-only pack under a space's requirements": (
-        {"system_prompt": "SPACE_REQUIREMENT: never reveal the solution"},
+    "a skills-only pack under a space saying everything": (
+        {
+            "system_prompt": "SPACE_REQUIREMENT: never reveal the solution",
+            "learning_goals": ["GOAL"],
+            "private_prompt": "SECRET",
+        },
         {"compute_credits": 5, "skills": ["wolfram"]},
         None,
     ),
@@ -147,13 +167,8 @@ CASES = {
         {"prompt": PACK_PROMPT},
         None,
     ),
-    "a space saying everything, a task saying nothing": (
-        {
-            "mode": "guide",
-            "system_prompt": "SPACE_REQUIREMENT",
-            "learning_goals": ["GOAL"],
-            "private_prompt": "SECRET",
-        },
+    "a prompt and skills, a task saying nothing": (
+        {"mode": "guide", "system_prompt": "SPACE_REQUIREMENT"},
         {"prompt": PACK_PROMPT, "skills": ["documents", "wolfram"]},
         None,
     ),
@@ -165,145 +180,83 @@ CASES = {
 }
 
 
-def test_every_teammate_reads_what_the_default_teammate_read_before():
+def _seed(db) -> dict:
+    built = {}
+    for n, (name, (space_teaching, pack, override)) in enumerate(CASES.items()):
+        space, category = _board(db, n, space_teaching=space_teaching, pack=pack)
+        task = _task(db, 9500 + n, space, category, override)
+        # What project creation did with the pack (`apply_protocol`): a preset
+        # with no skills of its own, so the copies are all it carries.
+        persona = PERSONA + (f"\n\n{pack['prompt']}" if "prompt" in pack else "")
+        agent = _built_from(
+            db, task, {"body": persona, "skills": list(pack.get("skills", []))}
+        )
+        built[name] = (task, agent)
+    return built
+
+
+def test_nothing_the_previous_release_reads_changes():
     with database_at(BEFORE) as db:
-        built = {}
-        for n, (name, (space_teaching, pack, override)) in enumerate(CASES.items()):
-            space, category = _board(db, n, space_teaching=space_teaching, pack=pack)
-            task = _task(db, 9500 + n, space, category, override)
-            # What project creation did with the pack (`apply_protocol`).
-            persona = PERSONA + (f"\n\n{pack['prompt']}" if "prompt" in pack else "")
-            skills = list(dict.fromkeys(["documents", *pack.get("skills", [])]))
-            agent = _built_from(db, task, {"body": persona, "skills": skills})
-            built[name] = (task, agent, _reads(db, task, agent))
+        _seed(db)
+        before = _rows(db)
 
         db.upgrade(AFTER)
 
-        for name, (task, agent, before) in built.items():
-            lines, skills, _ = before
-            after_lines, after_skills, later = _reads(db, task, agent)
+        after = _rows(db)
+        assert after["space"] == before["space"]
+        assert after["packs"] == before["packs"]
+        assert after["agents"] == before["agents"]
+        assert {k: _without_guidance_skills(v) for k, v in after["tasks"].items()} == {
+            k: _without_guidance_skills(v) for k, v in before["tasks"].items()
+        }
+
+
+def test_every_teammate_reads_what_the_default_teammate_read_before():
+    room = ["ROOM_SKILL"]
+    with database_at(BEFORE) as db:
+        built = {
+            name: (task, agent, _reads(db, task, agent, room))
+            for name, (task, agent) in _seed(db).items()
+        }
+
+        db.upgrade(AFTER)
+
+        for name, (task, agent, (lines, skills, _)) in built.items():
+            after_lines, after_skills, later = _reads(db, task, agent, room)
             assert after_lines == lines, name
             assert after_skills == skills, name
             # A teammate added after the project was built carries the pack's
-            # skills too, which it never did.
+            # skills too, on top of what it carried (the room's).
             pack = CASES[name][1]
-            assert set(pack.get("skills", [])) <= later, name
-
-
-def test_the_default_requirements_stay_in_front_of_the_moved_prompt():
-    with database_at(BEFORE) as db:
-        space, category = _board(
-            db,
-            0,
-            space_teaching={"learning_goals": ["write a loop"]},
-            pack={"prompt": PACK_PROMPT},
-        )
-        task = _task(db, 9500, space, category, None)
-
-        db.upgrade(AFTER)
-
-        said = _override(db, task)["teaching"]["system_prompt"]
-        assert said.startswith(DEFAULT_TEACHING_PROMPT) and said.endswith(PACK_PROMPT)
+            assert set(pack.get("skills", [])) | set(room) <= later, name
 
 
 def test_a_task_with_its_own_pack_reads_only_its_own():
     with database_at(BEFORE) as db:
-        space, category = _board(
-            db,
-            0,
-            space_teaching={},
-            pack={"prompt": PACK_PROMPT, "skills": ["wolfram"]},
-        )
+        space, category = _board(db, 0, space_teaching={}, pack={"skills": ["wolfram"]})
         task = _task(
             db,
             9500,
             space,
             category,
-            {"resource_pack": {"compute_credits": 10, "prompt": "这道题自己的。"}},
+            {"resource_pack": {"compute_credits": 10, "skills": ["documents"]}},
         )
 
         db.upgrade(AFTER)
 
-        assert _override(db, task)["teaching"] == {"system_prompt": "这道题自己的。"}
-
-
-def test_the_previous_release_still_reads_the_pack_while_it_serves():
-    """The migration runs under the previous release, which builds projects
-    from the 资源包: its keys stay for a later migration to remove."""
-    pack = {"compute_credits": 50, "prompt": PACK_PROMPT, "skills": ["wolfram"]}
-    with database_at(BEFORE) as db:
-        _, category = _board(db, 0, space_teaching={}, pack=pack)
-
-        db.upgrade(AFTER)
-
-        assert (
-            json.loads(
-                db.fetchval(
-                    "SELECT resource_pack::text FROM space_categories WHERE id = $1",
-                    category,
-                )
-            )
-            == pack
+        override = json.loads(
+            db.fetchval("SELECT protocol_override::text FROM task WHERE id = $1", task)
         )
-
-
-def test_an_edited_persona_and_a_projects_own_guidance_are_left_alone():
-    with database_at(BEFORE) as db:
-        space, category = _board(
-            db,
-            0,
-            space_teaching={},
-            pack={"prompt": PACK_PROMPT, "skills": ["wolfram"]},
-        )
-        task = _task(db, 9500, space, category, None)
-        edited = _built_from(db, task, {"body": "改过的人设", "skills": ["wolfram"]})
-        owned = _built_from(
-            db, task, {"body": f"{PERSONA}\n\n{PACK_PROMPT}", "skills": ["wolfram"]}
-        )
-        db.execute(
-            "UPDATE projects SET settings = $1::json"
-            " WHERE default_agent_instance_id = $2",
-            json.dumps({"teaching": {"system_prompt": "PROJECT_GUIDANCE"}}),
-            owned,
-        )
-
-        db.upgrade(AFTER)
-
-        assert _configuration(db, edited) == {"body": "改过的人设", "skills": []}
-        assert _configuration(db, owned) == {
-            "body": f"{PERSONA}\n\n{PACK_PROMPT}",
-            "skills": ["wolfram"],
-        }
-
-
-def test_a_tasks_blank_default_teammate_becomes_inherit():
-    """The page's 「继承」 stored ``""``, which read as "no teammate"; it now
-    clears the 题目's own so its 项目集's default is in force."""
-    with database_at(BEFORE) as db:
-        space, category = _board(db, 0, space_teaching={}, pack={})
-        task = _task(db, 9500, space, category, {"default_role": ""})
-
-        db.upgrade(AFTER)
-
-        assert "default_role" not in _override(db, task)
+        assert override["teaching"] == {"skills": ["documents"]}
 
 
 def test_running_it_again_changes_nothing():
     with database_at(BEFORE) as db:
-        space, category = _board(
-            db,
-            0,
-            space_teaching={"learning_goals": ["GOAL"], "private_prompt": "SECRET"},
-            pack={"prompt": PACK_PROMPT, "skills": ["wolfram"]},
-        )
-        task = _task(db, 9500, space, category, None)
-        agent = _built_from(
-            db, task, {"body": f"{PERSONA}\n\n{PACK_PROMPT}", "skills": ["wolfram"]}
-        )
+        _seed(db)
         db.upgrade(AFTER)
-        once = (_override(db, task), _configuration(db, agent))
+        once = _rows(db)
 
         db.downgrade(BEFORE)
         db.upgrade(AFTER)
 
-        assert (_override(db, task), _configuration(db, agent)) == once
+        assert _rows(db) == once

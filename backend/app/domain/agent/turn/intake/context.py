@@ -75,9 +75,9 @@ def carried_skills(
     队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
     都进提示词，只会让模型在互相冲突的规矩里挑一份。
 
-    题目给的那几个（``course``）是出题人对项目里**每一个**队友说的：后来加进项目的
-    队友、自己带了技能的队友都一样带上，每一轮现读、叠在最后、去重。带着题目技能的
-    队友也算带了技能，同样不再回落到房间的。
+    题目给的那几个（``course``）是出题人对项目里**每一个**队友说的，叠在上面这份之上，
+    不顶替它：后来加进项目的队友、自己带了技能的队友、回落到房间的队友都一样带上，
+    每一轮现读、叠在最后、去重。
 
     都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
     这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
@@ -87,8 +87,7 @@ def carried_skills(
         for name in (agent.configuration or {}).get("skills") or []
         if isinstance(name, str)
     ]
-    fallback = [] if carried or course else list(topic.skills or [])
-    return list(dict.fromkeys([*carried, *fallback, *course]))
+    return list(dict.fromkeys([*(carried or topic.skills or []), *course]))
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:

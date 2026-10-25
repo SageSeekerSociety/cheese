@@ -487,6 +487,56 @@ def test_a_published_tasks_private_guidance_is_read_only_by_who_may_teach_it(
     assert "SECRET_ANSWER_4777" not in seen
 
 
+def test_an_admin_who_lost_the_board_no_longer_reads_a_drafts_private_guidance(
+    api_client: TestClient, board: dict
+):
+    """Changes to a published 题目 carry its private guidance only while their
+    writer may still teach it: a board admin who opened them and was then
+    removed reads them without it, on the page and through 芝士."""
+    teacher, admin = board["teacher"], board["stranger"]
+    space_id = board["space"]["id"]
+    draft = _start(
+        api_client,
+        board,
+        fields={
+            **FORM,
+            "teaching": {"privatePrompt": "SECRET_ANSWER_4777"},
+            "teachingOwn": True,
+        },
+    )
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+    made = api_client.post(
+        f"/spaces/{space_id}/managers",
+        json={"userId": admin.user_id, "role": "ADMIN"},
+        headers=_headers(teacher),
+    )
+    assert made.status_code == 201, made.text
+    changes = api_client.post(
+        "/task-drafts", json={"task": task_id}, headers=_headers(admin)
+    )
+    assert changes.status_code == 201, changes.text
+    changes_id = changes.json()["data"]["id"]
+    assert "SECRET_ANSWER_4777" in changes.text
+
+    removed = api_client.delete(
+        f"/spaces/{space_id}/managers/{admin.user_id}", headers=_headers(teacher)
+    )
+    assert removed.status_code in (200, 204), removed.text
+
+    page = api_client.get(f"/task-drafts/{changes_id}", headers=_headers(admin))
+    assert page.status_code == 200, page.text
+    assert "SECRET_ANSWER_4777" not in page.text
+    read = api_client.post(
+        "/task-drafts/agent/read", json={"draft": changes_id}, headers=_as_cheese(admin)
+    )
+    assert read.status_code == 200, read.text
+    assert "SECRET_ANSWER_4777" not in read.text
+
+
 def test_inheriting_the_default_teammate_brings_back_the_categorys(
     api_client: TestClient, board: dict, db_session, _portal
 ):

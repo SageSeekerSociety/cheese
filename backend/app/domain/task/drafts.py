@@ -28,11 +28,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.space_access import may_teach_task
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_type.library import preset_types
 from app.domain.skill_library import native_skill_doc, shipped_skill_names
-from app.domain.task.models import TaskDraft, new_stage_key
+from app.domain.task.models import Task, TaskDraft, new_stage_key
 from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
@@ -306,7 +307,36 @@ async def context(
     )
     names = await task_names(session, [row])
     name = names.get(row.task_id or 0)
-    return scene(row, name) + "\n" + agent_view(row, space, task_name=name)
+    private = await private_shown(session, row)
+    return (
+        scene(row, name)
+        + "\n"
+        + agent_view(row, space, task_name=name, private=private)
+    )
+
+
+async def private_shown(session: AsyncSession, row: TaskDraft) -> bool:
+    """Whether a draft's private guidance is shown to its writer: a new 题目's
+    is their own; changes to a published one only while they may teach it
+    (``may_teach_task``), checked when it is read — an admin who opened the
+    changes and has since lost the board no longer reads it."""
+    if row.task_id is None:
+        return True
+    task = await session.get(Task, row.task_id)
+    return task is not None and await may_teach_task(
+        session=session, task=task, user_id=row.user_id
+    )
+
+
+def without_private(fields: dict) -> dict:
+    """The draft's fields with the 题目's private guidance left out."""
+    teaching = fields.get("teaching")
+    if not isinstance(teaching, dict) or "privatePrompt" not in teaching:
+        return fields
+    return {
+        **fields,
+        "teaching": {k: v for k, v in teaching.items() if k != "privatePrompt"},
+    }
 
 
 def scene(draft: TaskDraft, task_name: str | None = None) -> str:
@@ -891,7 +921,13 @@ def _is_doc_json(text: str) -> bool:
         return False
 
 
-def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) -> str:
+def agent_view(
+    draft: TaskDraft,
+    space: Space,
+    *,
+    task_name: str | None = None,
+    private: bool,
+) -> str:
     """The draft as 芝士 reads it: every field in its own words, the way it
     writes them back."""
     head = (
@@ -907,9 +943,7 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
         draft.fields or {},
         space,
         "</草稿>",
-        # A draft is its writer's own, and changes to a published 题目 are
-        # drafted only by those who may teach it: the private guidance is theirs.
-        private=True,
+        private=private,
     )
 
 

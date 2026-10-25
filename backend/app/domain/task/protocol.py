@@ -24,8 +24,8 @@ when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 **教学配置 (#8d772257).** 一门课不只是给额度，它还教。`teaching` 键承载这件事 ——
 AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、可以读的课件、项目里每个 AI
 队友每一轮都带上的技能。控制 AI 的设置只在这一处：资源包里曾经也带过一段 prompt
-和一组技能名，只在建项目时抄给默认队友一次，后来的队友拿不到，题目改了也跟不上
-（#4767 把它们并进了这里，迁移 b7d4e1a9c2f3）。
+和一组技能名，只在建项目时抄给默认队友一次，后来的队友拿不到，题目改了也跟不上；
+这里不读资源包里的那两个键（#4767）。
 
 **两层同时生效（10-20 空间这一轮）。** 空间 (`Space.teaching`) 说这块板上的 AI 队友
 一般怎么帮，题目在它上面再加：自己的补充要求、自己的资料，也可以换一种方式。两层
@@ -34,7 +34,7 @@ AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、�
 """
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 #: Keys a 题目 may override. Anything else on the 分组 is inherited as-is.
@@ -191,6 +191,13 @@ class Teaching:
             return self
         if self.is_empty:
             return task
+        if replace(task, skills=[]).is_empty:
+            # A 题目 that gives skills and says nothing else of how to help
+            # leaves the space's guidance as it is, its goals and private
+            # guidance included: skills are not guidance.
+            return replace(
+                self, skills=list(dict.fromkeys([*self.skills, *task.skills]))
+            )
         return Teaching(
             mode=task.mode or self.mode,
             system_prompt=task.system_prompt,
@@ -396,6 +403,10 @@ def resolve(
                 # presence rule below cannot express. `_resolve_teaching` owns it.
                 continue
             value = _level_value(source, key)
+            if key == "default_role" and not (isinstance(value, str) and value.strip()):
+                # A blank default teammate is a level saying nothing — the
+                # page's 「继承」 wrote it — so the level above stands.
+                continue
             if value is not None:
                 values[key] = value
     teaching, teaching_source = _resolve_teaching(

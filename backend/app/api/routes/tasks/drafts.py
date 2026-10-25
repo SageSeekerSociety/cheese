@@ -268,13 +268,14 @@ async def read_draft(
 ) -> dict:
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
-    return ok(
-        _full(
-            row,
-            await _task_names(db, [row]),
-            await drafts.published_items(db, [row]),
-        )
+    shown = _full(
+        row,
+        await _task_names(db, [row]),
+        await drafts.published_items(db, [row]),
     )
+    if not await drafts.private_shown(db, row):
+        shown["fields"] = drafts.without_private(shown["fields"])
+    return ok(shown)
 
 
 class SaveIn(BaseModel):
