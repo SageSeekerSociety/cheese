@@ -275,7 +275,7 @@ it('main 先被占了而没放成的：题目第几版的起始代码只说一�
     starter: {
       revision: 3,
       state: 'failed',
-      reason: renderNoticeMessage({ key: 'starterMainTaken', params: { revision: 3 } }, ''),
+      reason: renderNoticeMessage({ key: 'starterMainTaken' }, ''),
     },
   })
   const line = view.getByTestId('overview-starter').textContent ?? ''
