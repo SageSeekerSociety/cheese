@@ -1895,7 +1895,7 @@ test_rollout_smoke_failure_keeps_the_serving_slots() {
 }
 
 test_rollout_smoke_passes_before_the_switch() {
-  local run_dir docker_log secret smoke_check reload
+  local run_dir docker_log secret user other smoke_check reload
   run_dir="$(smoke_rollout_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_BACKEND_CONTAINER=blue-container \
@@ -1910,17 +1910,28 @@ test_rollout_smoke_passes_before_the_switch() {
   grep -Fq -- '--backend http://127.0.0.1:18082 --frontend http://127.0.0.1:18084' "$docker_log" \
     || fail "the smoke test did not use the new slots' own ports"
   grep -Fq 'server 127.0.0.1:18082;' "$run_dir/active/backend.conf" || fail "backend traffic did not move after a passing smoke test"
-  secret="$(cat "$run_dir/ops/deploy-smoke.secret")"
+  user="$(sed -n 's/^DEPLOY_SMOKE_USER=//p' "$run_dir/ops/deploy-smoke.secret")"
+  secret="$(sed -n 's/^DEPLOY_SMOKE_PASSWORD=//p' "$run_dir/ops/deploy-smoke.secret")"
   [ "${#secret}" -ge 32 ] || fail "no smoke password was provisioned"
+  # Sign-in failures are counted per handle: one anybody could guess would let
+  # anybody hold the releases back.
+  [ "${#user}" -ge 16 ] && [[ "$user" != *deploy* ]] && [[ "$user" != *smoke* ]] \
+    || fail "the smoke account's handle is guessable: '$user'"
   [ "$(stat -c %a "$run_dir/ops/deploy-smoke.secret" 2>/dev/null || stat -f %Lp "$run_dir/ops/deploy-smoke.secret")" = 600 ] \
-    || fail "the smoke password file is readable by others"
-  [ "$(grep -c "^smoke-password $secret\$" "$docker_log")" = 2 ] \
-    || fail "the provision and the check did not both get the password from the secret file"
-  ! grep -v '^smoke-password ' "$docker_log" | grep -qF "$secret" || fail "the smoke password appeared on a command line"
-  # The next release keeps the same account password.
+    || fail "the smoke secret file is readable by others"
+  [ "$(grep -c "^smoke-account $user $secret\$" "$docker_log")" = 2 ] \
+    || fail "the provision and the check did not both get the account from the secret file"
+  ! grep -v '^smoke-account ' "$docker_log" | grep -qF "$secret" || fail "the smoke password appeared on a command line"
+  # The next release keeps the same account.
   : > "$docker_log"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second release failed"
-  [ "$(cat "$run_dir/ops/deploy-smoke.secret")" = "$secret" ] || fail "a release rotated the smoke password"
+  grep -q "^smoke-account $user $secret\$" "$docker_log" || fail "a release changed the smoke account"
+  # A second box gets an account of its own.
+  other="$(smoke_rollout_dir)"
+  rollout_run "$other" env ACTIVE_FRONTEND_DIR="$other/active" >/dev/null 2>&1 || fail "release on a second box failed"
+  [ "$(sed -n 's/^DEPLOY_SMOKE_USER=//p' "$other/ops/deploy-smoke.secret")" != "$user" ] \
+    || fail "two boxes were given the same smoke handle"
+  rm -rf "$other"
   rm -rf "$run_dir"
   echo "PASS: a release that passes its smoke test switches in once, after it"
 }
@@ -1949,7 +1960,7 @@ test_box_without_slots_skips_the_smoke_test() {
     "$ROOT/deploy/compose/docker-compose.base.yml" >"$run_dir/release.log" 2>&1 \
     || { cat "$run_dir/release.log"; fail "a box without slots failed to deploy"; }
   grep -q 'smoke: skipped, this box has no app-router slots' "$run_dir/release.log" || fail "the skip was not logged"
-  ! grep -q 'smoke-password' "$run_dir/docker.log" || fail "a box without slots ran the smoke test"
+  ! grep -q 'smoke-account' "$run_dir/docker.log" || fail "a box without slots ran the smoke test"
   [ ! -e "$run_dir/ops/deploy-smoke.secret" ] || fail "a box without slots was given a smoke account password"
   rm -rf "$run_dir"
   echo "PASS: a box without app-router slots skips the smoke test and says so"

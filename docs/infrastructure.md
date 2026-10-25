@@ -278,16 +278,20 @@ network name (`backend`, dialled by `device-connection` and the office editor;
 The smoke test (`smoke_release` in `deploy/deploy-docker.sh`, which runs
 `deploy/release-smoke.py` in the release's backend image) uses the new slots on
 their loopback ports the way a person does, before app-router sends them
-anything: it signs in as the deploy's own account `deploy-smoke`, reads
+anything: it signs in as the deploy's own account, reads
 `/users/me`, opens that account's own task (a project and task it creates the
 first time) through `/topics/{task}/task`, gets the first frame of the inbox
 WebSocket every signed-in page holds, signs out, and fetches the new frontend's
 `index.html` and the hashed script it names. Each check prints one `smoke
 <check> ok|FAILED` line into the deploy log. Any failure removes the new slots
 and stops the release with app-router untouched, so a release that is ready but
-cannot be used never takes traffic. The account's password is generated once
-into `~/ops/deploy-smoke.secret` (mode 600) and the account is created, or set
-to that password, in the release's image on every release. A rollback does not
+cannot be used never takes traffic. The account's handle and password are
+generated once into `~/ops/deploy-smoke.secret` (mode 600) and the account is
+created, or set to that password, in the release's image on every release. The
+handle is random per box because sign-in failures are counted per handle: a
+handle anyone could guess would let anyone hold releases back. An account by
+that handle that the deploy did not make is refused, never taken over; deleting
+the secret file makes the next release start a new account. A rollback does not
 smoke-test the release it returns to, and a box without app-router slots
 (prod, etrip) skips the test and logs that it did.
 

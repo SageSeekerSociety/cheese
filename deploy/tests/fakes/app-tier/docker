@@ -42,10 +42,10 @@ if [[ " $* " == *" python - "* ]]; then
   fi
   # deploy/release-smoke.py: `provision` makes the smoke account, `check` uses
   # the new slots. APP_TIER_SMOKE_FAIL=<check> makes that check fail. Each run
-  # records whether the password reached it through the environment.
-  if [[ "$script" == *'HANDLE = "deploy-smoke"'* ]]; then
+  # records the account it was handed through the environment.
+  if [[ "$script" == *'def check_backend('* ]]; then
     [ -z "${APP_TIER_DOCKER_LOG:-}" ] \
-      || printf 'smoke-password %s\n' "${DEPLOY_SMOKE_PASSWORD:-missing}" >> "$APP_TIER_DOCKER_LOG"
+      || printf 'smoke-account %s %s\n' "${DEPLOY_SMOKE_USER:-missing}" "${DEPLOY_SMOKE_PASSWORD:-missing}" >> "$APP_TIER_DOCKER_LOG"
     if [[ " $* " == *" provision "* ]]; then
       checks="provision"
     else

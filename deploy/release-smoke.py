@@ -7,12 +7,19 @@ new backend and frontend slots pass their health checks and before app-router
 is switched to them. Any failure leaves app-router where it was: the new slots
 are removed and the release stops, so a broken release never takes traffic.
 
+The account is the deploy's own, named by DEPLOY_SMOKE_USER and signed in with
+DEPLOY_SMOKE_PASSWORD, both from the box's ~/ops/deploy-smoke.secret. The handle
+is random per box and carries no fixed word: sign-in failures are counted per
+handle (app/core/login_security.py), so anyone who knew it could hold every
+release back with a few wrong passwords, and account search matches substrings
+of handles and nicknames. What the account is for is in its profile intro,
+which search does not read. Its address is one the platform never mails.
+
   python - provision
       In this release's backend image with the box's backend env (`compose
-      run`). Makes sure the smoke account exists and signs in with the password
-      in DEPLOY_SMOKE_PASSWORD (the box's ~/ops/deploy-smoke.secret). The
-      account is the deploy's own, not a person's: handle `deploy-smoke`, an
-      address the platform never mails.
+      run`). Creates the account, or sets its password to the secret's when the
+      secret changed. An account by that handle that this file did not make
+      (another address) is refused, never taken over.
 
   python - check --backend URL [--frontend URL]
       In the same image on the host network, against the new slots' loopback
@@ -28,9 +35,10 @@ are removed and the release stops, so a broken release never takes traffic.
                         page holds, sends its first frame
         logout          POST /users/auth/logout ends the session the check opened
 
-Every check is bounded (TIMEOUT seconds) and prints one line, `smoke <check> ok
-<what it got>` or `smoke <check> FAILED <what it got>`; the first failure ends the
-run with status 1.
+Every step is bounded (TIMEOUT seconds a request, CREATE_TIMEOUT for the
+first run's project, which provisions a repository, PROVISION_TIMEOUT for the
+provision) and prints one line, `smoke <check> ok <what it got>` or `smoke
+<check> FAILED <what it got>`; the first failure ends the run with status 1.
 """
 
 from __future__ import annotations
@@ -43,16 +51,21 @@ import re
 import sys
 import uuid
 
-HANDLE = "deploy-smoke"
+HANDLE = os.environ.get("DEPLOY_SMOKE_USER", "")
 # A domain the platform never mails (app/core/email.py PLACEHOLDER_EMAIL_DOMAINS).
-EMAIL = "deploy-smoke@placeholder.internal"
-NICKNAME = "部署冒烟"
-# Fixed, so creating it is idempotent (POST /projects returns the earlier project
-# for an id its owner already holds).
-PROJECT_ID = uuid.uuid5(uuid.NAMESPACE_URL, "https://okcheese.com/deploy-smoke/project")
+EMAIL = f"{HANDLE}@placeholder.internal"
+INTRO = "部署冒烟测试账号：每次发布切流量前，部署用它把新版本登录、打开任务、连实时通道走一遍。不是真人。"
+# Fixed per account, so creating it is idempotent (POST /projects returns the
+# earlier project for an id its owner already holds).
+PROJECT_ID = uuid.uuid5(
+    uuid.NAMESPACE_URL, f"https://okcheese.com/deploy-smoke/{HANDLE}"
+)
 PROJECT_NAME = "部署冒烟"
 TASK_TITLE = "部署冒烟：打开这件任务"
 TIMEOUT = 10.0
+CREATE_TIMEOUT = 60.0
+PROVISION_TIMEOUT = 60.0
+RESET_HINT = "remove ~/ops/deploy-smoke.secret and the next release makes a new account"
 
 
 class Failed(Exception):
@@ -76,17 +89,30 @@ async def provision(password: str) -> None:
 
     async with AsyncSessionLocal() as db:
         users = UserRepository(session=db)
+        profiles = UserProfileRepository(session=db)
         auth = UserAuthService(
             user_repo=users,
-            profile_repo=UserProfileRepository(session=db),
+            profile_repo=profiles,
             stats_repo=UserStatisticsRepository(session=db),
         )
         user = await users.get_by_username(HANDLE)
         if user is None:
-            await auth.register_with_password(
-                username=HANDLE, nickname=NICKNAME, email=EMAIL, password=password
-            )
+            try:
+                user, profile = await auth.register_with_password(
+                    username=HANDLE, nickname=HANDLE, email=EMAIL, password=password
+                )
+            except ValueError as exc:
+                # A closed account, or one whose handle differs only in case.
+                raise Failed(
+                    "provision", f"cannot create {HANDLE}: {exc}; {RESET_HINT}"
+                ) from None
+            await profiles.update_profile(profile, intro=INTRO)
             state = "created"
+        elif user.email != EMAIL:
+            raise Failed(
+                "provision",
+                f"{HANDLE} belongs to {user.email}, not this box's smoke account; {RESET_HINT}",
+            )
         elif not await auth.verify_password(user, password):
             # The secret file was replaced: the account follows it.
             await users.update_password(user.id, await hash_password(password))
@@ -95,6 +121,15 @@ async def provision(password: str) -> None:
             state = "present"
         await db.commit()
     passed("provision", f"account {HANDLE} {state}")
+
+
+async def bounded_provision(password: str) -> None:
+    try:
+        await asyncio.wait_for(provision(password), PROVISION_TIMEOUT)
+    except TimeoutError:
+        raise Failed(
+            "provision", f"no answer from the database within {PROVISION_TIMEOUT:.0f}s"
+        ) from None
 
 
 def request(client, check: str, method: str, url: str, **kwargs):
@@ -156,6 +191,7 @@ def own_task(client, backend: str, auth: dict) -> str:
             f"{backend}/projects",
             headers=auth,
             json={"id": str(PROJECT_ID), "name": PROJECT_NAME},
+            timeout=CREATE_TIMEOUT,
         )
     room = project.get("root_topic_id")
     if not room:
@@ -257,12 +293,15 @@ def main() -> int:
     parser.add_argument("--frontend")
     args = parser.parse_args()
     password = os.environ.get("DEPLOY_SMOKE_PASSWORD", "")
-    if not password:
-        print("smoke FAILED: DEPLOY_SMOKE_PASSWORD is empty", flush=True)
+    if not HANDLE or not password:
+        print(
+            "smoke setup FAILED: DEPLOY_SMOKE_USER or DEPLOY_SMOKE_PASSWORD is empty",
+            flush=True,
+        )
         return 1
     try:
         if args.mode == "provision":
-            asyncio.run(provision(password))
+            asyncio.run(bounded_provision(password))
         else:
             check(
                 args.backend.rstrip("/"),

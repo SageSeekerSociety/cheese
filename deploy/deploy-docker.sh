@@ -1559,35 +1559,42 @@ wait_for_frontend() {
 # app-router reads, which the routed /readyz after rollout_app already probes.
 # A check after the switch could only fail into a rollback, a second switch.
 #
-# The account is the deploy's own (`deploy-smoke`). Its password is provisioned
-# once in ~/ops/deploy-smoke.secret, like the collab secret, and the account is
-# made or set to it in this release's image on every release. Only boxes with
-# app-router slots get here; the others (prod, etrip) never create either.
+# The account is the deploy's own. Its handle and password are provisioned once
+# in ~/ops/deploy-smoke.secret, like the collab secret, and the account is made
+# or set to that password in this release's image on every release. The handle
+# is random per box: sign-in failures are counted per handle, so a handle anyone
+# could guess would let anyone hold every release back (deploy/release-smoke.py).
+# Only boxes with app-router slots get here; the others (prod, etrip) never
+# create either.
 SMOKE_SECRET="$HOME/ops/deploy-smoke.secret"
 # A rollback returns to the release that served before this one, and is not
 # held back by a smoke test of it.
 SMOKE_RELEASE=true
 # $1 the new backend's port, $2 the new frontend's ('' when it is not rolled).
 smoke_release() {
-  local backend_port="$1" frontend_port="$2" password image line rc=0
+  local backend_port="$1" frontend_port="$2" user password image line rc=0
   if [ "$SMOKE_RELEASE" != true ]; then
     log "smoke: not run for a rollback; that release served before this one"
     return 0
   fi
-  if [ ! -s "$SMOKE_SECRET" ]; then
+  user="$(sed -n 's/^DEPLOY_SMOKE_USER=//p' "$SMOKE_SECRET" 2>/dev/null || true)"
+  password="$(sed -n 's/^DEPLOY_SMOKE_PASSWORD=//p' "$SMOKE_SECRET" 2>/dev/null || true)"
+  if [ -z "$user" ] || [ -z "$password" ]; then
     mkdir -p "$(dirname "$SMOKE_SECRET")"
-    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$SMOKE_SECRET" )
-    log "smoke: provisioned the smoke account's password in $SMOKE_SECRET"
+    user="$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    password="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    ( umask 077; printf 'DEPLOY_SMOKE_USER=%s\nDEPLOY_SMOKE_PASSWORD=%s\n' "$user" "$password" > "$SMOKE_SECRET" )
+    log "smoke: provisioned the smoke account's handle and password in $SMOKE_SECRET"
   fi
-  password="$(cat "$SMOKE_SECRET")"
   image="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$IMAGE_TAG}"
   log "smoke: checking the new slots before the switch (backend :$backend_port${frontend_port:+, frontend :$frontend_port})"
-  # The value travels in the environment, never on a command line.
+  # The values travel in the environment, never on a command line.
   {
-    DEPLOY_SMOKE_PASSWORD="$password" dc run --rm --no-deps -T -e DEPLOY_SMOKE_PASSWORD \
+    DEPLOY_SMOKE_USER="$user" DEPLOY_SMOKE_PASSWORD="$password" dc run --rm --no-deps -T \
+      -e DEPLOY_SMOKE_USER -e DEPLOY_SMOKE_PASSWORD \
       backend python - provision < "$HERE/release-smoke.py" \
-    && DEPLOY_SMOKE_PASSWORD="$password" docker run --rm -i --network host \
-      -e DEPLOY_SMOKE_PASSWORD "$image" python - check \
+    && DEPLOY_SMOKE_USER="$user" DEPLOY_SMOKE_PASSWORD="$password" docker run --rm -i --network host \
+      -e DEPLOY_SMOKE_USER -e DEPLOY_SMOKE_PASSWORD "$image" python - check \
       --backend "http://127.0.0.1:$backend_port" \
       ${frontend_port:+--frontend "http://127.0.0.1:$frontend_port"} < "$HERE/release-smoke.py"
   } 2>&1 | while IFS= read -r line; do log "  $line"; done || rc=$?
@@ -1638,7 +1645,7 @@ rollout_app() {
   fi
   if ! smoke_release "$backend_port" "$frontend_port"; then
     dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
-    fail "the new slots failed the smoke test (the FAILED line above names the check); app-router still sends traffic to $backend_from${frontend_from:+ and $frontend_from}, which were not touched"
+    fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; app-router was not switched and still points at $backend_from${frontend_from:+ and $frontend_from}"
   fi
 
   local ports_now=false
