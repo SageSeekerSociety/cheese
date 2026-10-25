@@ -169,7 +169,9 @@ describe('资料库', () => {
 
   it('超过预览上限的一份：平静地说只能下载，给一颗下载，不读字节、不报错重试', async () => {
     library = [...library, file('数据集.docx', { bytes: 300 * 1024 * 1024 })]
-    vi.mocked(libraryFileBytes).mockRejectedValue(new Error('这份文件太大（超过 200 MB），不能在这里打开，请下载后查看'))
+    vi.mocked(libraryFileBytes).mockRejectedValue(
+      new Error('这份文件太大（超过 200 MB），不能在这里打开，请下载后查看')
+    )
     const { container } = await mount('/projects/p1/library?file=数据集.docx')
 
     const preview = await waitFor(() => {

@@ -3,7 +3,16 @@
 // 为避开它。返回的都是 payload（新栈），不再是整只 `{code,message,data}` 信封。
 //
 // 从旧网络栈搬过来时地址、查询、正文与超时一字未改。题目的材料在 `@/api/taskFiles`。
-import type { EncodedCursorPage, Page, Task, TaskMembership, TaskProgress, TaskSubmission, TeamSummary } from '@/types'
+import type {
+  EncodedCursorPage,
+  Page,
+  Task,
+  TaskMembership,
+  TaskProgress,
+  TaskStage,
+  TaskSubmission,
+  TeamSummary,
+} from '@/types'
 import type {
   AddTaskParticipantRequestData,
   PatchTaskParticipantRequestData,
@@ -205,6 +214,13 @@ export namespace TaskBoardApi {
   /** 每个阶段上的进度：我的，和（批改的人才有）全体的分布。 */
   export const progress = (taskId: number) =>
     axiosRequest<TaskProgress>({ url: `/tasks/${taskId}/progress`, method: 'GET' }, true)
+
+  /** 把题目的阶段存成 `stages` 会让几条领取被判未通过、几条从未通过回来（只算不写）。 */
+  export const stageEffect = (taskId: number, stages: TaskStage[]) =>
+    axiosRequest<{ failing: number; reopening: number }>(
+      { url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } },
+      true
+    )
 
   export const updateSubmission = (
     taskId: number,

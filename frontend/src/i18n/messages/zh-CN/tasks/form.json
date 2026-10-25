@@ -133,7 +133,9 @@
     "moveDown": "下移第 {n} 个阶段",
     "remove": "删除第 {n} 个阶段",
     "nameRequired": "每个阶段都需要填写名称",
-    "add": "添加阶段"
+    "add": "添加阶段",
+    "removeTitle": "删除第 {n} 个阶段？",
+    "removeConfirm": "删除"
   },
   "brief": "说明",
   "parts": {

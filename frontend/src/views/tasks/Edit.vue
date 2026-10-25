@@ -23,6 +23,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
+import { useStageChangeCheck } from './composables/useStageChangeCheck'
 import { useTaskData } from './composables'
 
 import { TaskBoardApi } from '@/api/taskBoard'
@@ -43,6 +44,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskStageChangeConfirm from '@/components/tasks/TaskStageChangeConfirm.vue'
 import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
@@ -225,6 +227,9 @@ const attempted = ref(false)
 const saving = ref(false)
 const resubmit = ref(false)
 
+// 改了阶段的截止、增删了阶段，存下去可能让学生被判未通过或回到进行中：存之前先说有几个人。
+const stageCheck = useStageChangeCheck((stages) => TaskBoardApi.stageEffect(taskId, stages))
+
 /** 审核没通过的题，改完可以一并重新提交审核。 */
 const rejected = computed(() => taskData.value?.approved === 'DISAPPROVED')
 
@@ -238,6 +243,7 @@ async function onSubmit(data: TaskFormSubmitData) {
   if (saving.value) return
   saving.value = true
   try {
+    if (data.stages && !(await stageCheck.allows(data.stages))) return
     await draft.flush()
     const row = await draft.ensure()
     // 表单校验过的样子就是要保存的样子：先存进修改草稿，再把草稿保存到题目上。
@@ -428,6 +434,7 @@ onBeforeUnmount(() => void draft.flush())
         </div>
       </template>
     </TaskForm>
+    <TaskStageChangeConfirm :effect="stageCheck.effect.value" @answer="stageCheck.answer" />
   </div>
 </template>
 
