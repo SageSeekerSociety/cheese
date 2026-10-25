@@ -292,7 +292,10 @@ def api_selected(outputs, tier):
     change edits the frontend too, so the job runs whatever else the paths
     selected. The same condition is the job's ``if:`` in required-ci.yml.
     """
-    return tier != "draft" and outputs.get("backend") == "true"
+    # A main push with no base to compare against (no `main-green` anchor,
+    # or one that could not be read) has every path in scope and nothing to
+    # print a base document from; the full frontend suite runs on the paths.
+    return tier != "draft" and outputs.get("backend") == "true" and bool(outputs.get("base"))
 
 
 def api_failures(needs, outputs, tier):

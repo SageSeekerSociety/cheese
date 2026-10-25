@@ -142,7 +142,7 @@ jobs:
   # dependencies.
   api:
     needs: scope
-    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.base != ''
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     outputs:
