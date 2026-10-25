@@ -27,7 +27,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.task import package
+from app.domain.task import claims, package
 from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.inputs import APPROVE_DISAPPROVED, APPROVE_NONE
 from app.domain.task.models import (
@@ -156,36 +156,6 @@ class TaskMembershipService:
     ) -> TaskMembership | None:
         return await self._repo.get_by_task_and_member(
             task_id=task_id, member_id=member_id, is_team=is_team
-        )
-
-    async def has_live_claim(
-        self, *, task: Task, user_id: int, team_id: int | None
-    ) -> bool:
-        """Whether a project built from ``task`` has a claim behind it.
-
-        An individual task is claimed by the person; a team task by the team the
-        project belongs to. A claim is live unless it was rejected or withdrawn,
-        so a pending application counts: its workspace is opened at claim time.
-        """
-        if task.submitter_type == 1:
-            if team_id is None:
-                return False
-            membership = await self._repo.get_by_task_and_member(
-                task_id=task.id,  # type: ignore[arg-type]
-                member_id=team_id,
-                is_team=True,
-            )
-            if membership is None:
-                return False
-        else:
-            membership = await self._repo.get_user_membership(
-                task_id=task.id,  # type: ignore[arg-type]
-                user_id=user_id,
-            )
-        return (
-            membership is not None
-            and membership.deleted_at is None
-            and membership.approved != 1
         )
 
     async def create_membership(
@@ -1368,10 +1338,11 @@ class TaskSubmissionReviewService:
         )
 
 
-async def claim_backs_project(
+async def refuse_unless_project_follows_claim(
     session: AsyncSession, *, task_id: int, user_id: int, team_id: int | None
-) -> bool:
-    """Whether a project may be built from ``task_id`` for this person and team.
+) -> None:
+    """A project may be built from ``task_id`` for this person only in the team
+    of their claim (`claims.refuse_unless_project_follows_claim`).
 
     The entry point for other domains, so they need not wire the task
     repositories themselves. A task that does not exist is a 404.
@@ -1379,9 +1350,9 @@ async def claim_backs_project(
     task = await TaskService(TaskRepository(session=session)).get_task(task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    return await TaskMembershipService(
-        TaskMembershipRepository(session=session)
-    ).has_live_claim(task=task, user_id=user_id, team_id=team_id)
+    await claims.refuse_unless_project_follows_claim(
+        session, task=task, user_id=user_id, team_id=team_id
+    )
 
 
 async def count_distinct_participants(

@@ -13,7 +13,9 @@
 
 import asyncio
 import io
+import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import BinaryIO
 from zoneinfo import ZoneInfo
@@ -23,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.space_access import may_teach_task
 from app.core import blob_store
-from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
+from app.core.config import settings
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from app.core.sentences import say
 from app.domain.attachment.services import AttachmentService
 from app.domain.library import records as library
@@ -33,6 +41,8 @@ from app.domain.library.shelf import Shelf
 from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project import starter as starter_archive
 from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
+from app.domain.task.claims import claim_of, project_claim
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskPackageRevision,
@@ -40,7 +50,6 @@ from app.domain.task.models import (
     TaskStage,
     TaskSubmissionSchemaEntry,
 )
-from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.user.models import User
 
 #: 题目资料库里每一版生成的那份题目说明。它不是出题人传的材料：材料清单里不列它，
@@ -258,7 +267,109 @@ async def record(
         )
     else:
         await library.add(session, shelf(task.id), BRIEF, content, handle, None)
+    # 这一版手上有哪几份：放进、替换、删掉都已经在这之前做完，题目说明刚换成这一版的。
+    revision.files = {row.name: str(row.id) for row in await _held(session, task.id)}
+    await session.flush()
     return revision
+
+
+async def _held(session: AsyncSession, task_id: int) -> list[LibraryFileRecord]:
+    """题目资料库里现在的每一份（材料、起始代码、题目说明），按放进来的先后。"""
+    return list(
+        await session.scalars(
+            select(LibraryFileRecord)
+            .where(shelf(task_id).holds(), LibraryFileRecord.superseded_at.is_(None))
+            .order_by(LibraryFileRecord.created_at, LibraryFileRecord.id)
+        )
+    )
+
+
+@dataclass(frozen=True)
+class HeldFile:
+    """一版里的一份文件。``row`` 是那时的那一份；后来整份删掉了是 None（删一份材料
+    连同它换下来的几版一起删，`library.remove`），只剩名字。"""
+
+    name: str
+    row: LibraryFileRecord | None
+
+
+@dataclass(frozen=True)
+class Version:
+    """历史版本页上的一版：记下的那一行，和这一版手上的文件。``files`` 是 None 的，
+    是记版本时还没记文件的那几版（`TaskPackageRevision.files`）。"""
+
+    revision: TaskPackageRevision
+    files: list[HeldFile] | None
+
+
+async def version_file(
+    session: AsyncSession, task_id: int, number: int, name: str
+) -> LibraryFileRecord:
+    """第 `number` 版手上叫 `name` 的那一份：只认那一版记下的文件，别的版本的同名文件
+    不算。那一版不存在、没记下文件、没有这个名字、或者后来整份删掉了，都是 404。"""
+    revision = await session.scalar(
+        select(TaskPackageRevision).where(
+            TaskPackageRevision.task_id == task_id,
+            TaskPackageRevision.number == number,
+        )
+    )
+    row_id = (revision.files or {}).get(name) if revision is not None else None
+    row = await session.get(LibraryFileRecord, uuid.UUID(row_id)) if row_id else None
+    if row is None or not shelf(task_id).owns(row):
+        raise NotFoundError(say("libraryVersionNotFound"))
+    return row
+
+
+def _shown_order(held: HeldFile) -> tuple[int, int, float, str]:
+    """材料在前、按放进来的先后，已经删掉的材料排在材料最后；起始代码、题目说明在后：
+    和题目页上的次序一样。"""
+    group = _NOT_MATERIALS.index(held.name) + 1 if held.name in _NOT_MATERIALS else 0
+    if held.row is None:
+        return (group, 1, 0.0, held.name)
+    return (group, 0, held.row.created_at.timestamp(), held.name)
+
+
+async def history(session: AsyncSession, task_id: int) -> list[Version]:
+    """这道题的每一版，新的在前，各带着那一版手上的文件。没记下文件的那几版（这一列
+    加上之前记的）是 None，最新的一版也一样：不拿现在的文件冒充它那时的。"""
+    revisions = list(
+        await session.scalars(
+            select(TaskPackageRevision)
+            .where(TaskPackageRevision.task_id == task_id)
+            .order_by(TaskPackageRevision.number.desc())
+        )
+    )
+    if not revisions:
+        return []
+    ids = {
+        uuid.UUID(row_id)
+        for revision in revisions
+        for row_id in (revision.files or {}).values()
+    }
+    rows = (
+        {
+            row.id: row
+            for row in await session.scalars(
+                select(LibraryFileRecord).where(
+                    shelf(task_id).holds(), LibraryFileRecord.id.in_(ids)
+                )
+            )
+        }
+        if ids
+        else {}
+    )
+    out: list[Version] = []
+    for revision in revisions:
+        if revision.files is None:
+            out.append(Version(revision, None))
+            continue
+        held = [
+            HeldFile(name, rows.get(uuid.UUID(row_id)))
+            for name, row_id in revision.files.items()
+        ]
+        held.sort(key=_shown_order)
+        out.append(Version(revision, held))
+    return out
 
 
 # --- 材料 -------------------------------------------------------------------------
@@ -267,8 +378,11 @@ async def record(
 #
 # - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`may_teach_task`）。
 # - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要申请。
-# - 谁能下载：出题人 / 板管理员 / 参与者（申请通过的人）。等批的、被拒的、退出的
-#   都不能：材料是给开始做这道题的人的。
+# - 谁能下载：出题人 / 板管理员 / 参与者——名下有一份还在、已经通过的申请（自己的，
+#   或所在团队的）。等批的、被拒的、退出的、不再有效的都不能：材料是给开始做这道题
+#   的人的。
+# - 从题目来的项目里，`题目/` 跟着这个项目来自的那一份申请走：它还在、已经通过，项目
+#   里的人和 agent 都看得到；否则谁都看不到。
 
 
 async def refuse_unless_teacher(
@@ -281,40 +395,37 @@ async def refuse_unless_teacher(
 async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
     if await may_teach_task(session, task=task, user_id=user_id):
         return True
-    return await TaskVisibilityService(session=session).is_approved_participant(
-        task_id=task.id, user_id=user_id
-    )
+    claim = await claim_of(session, task=task, user_id=user_id)
+    return claim is not None and claim.approved == APPROVE_APPROVED
 
 
-async def _project_task(session: AsyncSession, project_id) -> Task | None:
+async def task_folder_shown(session: AsyncSession, project_id) -> bool:
+    """这个项目的资料库里有没有 `题目/`：项目来自的那一份申请（个人的或一个团队的，
+    `claims.project_claim`）还在、已经通过。项目里每个人、每个 agent 看到的都一样——
+    看的是项目的那一份申请，不是读的人自己名下别的申请。"""
     project = await session.get(Project, project_id)
     if project is None or project.external_task_id is None:
-        return None
+        return False
     task = await session.get(Task, project.external_task_id)
     if task is None or task.deleted_at is not None:
+        return False
+    claim = await project_claim(session, task=task, team_id=project.team_id)
+    return claim is not None and claim.approved == APPROVE_APPROVED
+
+
+async def shown_task(
+    session: AsyncSession, project_id
+) -> tuple[Task, int | None] | None:
+    """项目的 `题目/` 在的时候（`task_folder_shown`），它来自的那道题和现在第几版：
+    项目总览、`题目/` 的页头由此连到题目页。不在的时候是 None——跟着项目的那一份
+    申请走，不跟着读的人。"""
+    if not await task_folder_shown(session, project_id):
         return None
-    return task
-
-
-async def mount_for(session: AsyncSession, project_id, user_id: int | None) -> bool:
-    """这个人在这个项目的资料库里看不看得到 `题目/`：按题目自己的下载判据，不按项目
-    的成员名单（同一个团队里没领题的人、被出题人撤掉的人，项目都还进得去）。"""
-    if user_id is None:
-        return False
-    task = await _project_task(session, project_id)
-    return task is not None and await may_download(session, task, user_id)
-
-
-async def mount_for_agents(session: AsyncSession, project_id) -> bool:
-    """项目里的 agent 看不看得到 `题目/`：它们替这个项目干活，项目是领了这道题的那个人
-    开的，所以按项目所有者的判据——他还拿得到材料，项目里的 agent 就读得到。"""
     project = await session.get(Project, project_id)
-    if project is None or not project.owner_handle:
-        return False
-    owner = await session.scalar(
-        select(User.id).where(User.username == project.owner_handle)
-    )
-    return await mount_for(session, project_id, owner)
+    assert project is not None and project.external_task_id is not None  # shown
+    task = await session.get(Task, project.external_task_id)
+    assert task is not None  # shown
+    return task, await current_number(session, task.id)
 
 
 async def refuse_unless_downloader(
@@ -592,7 +703,7 @@ async def section_for_project(
     if task is None or task.deleted_at is not None:
         return None
     revision = await current(session, task.id)
-    if revision is None or not await mount_for_agents(session, project.id):
+    if revision is None or not await task_folder_shown(session, project.id):
         return None
     lines = [
         "## 题目",
@@ -622,6 +733,14 @@ async def section_for_project(
     if revision.number > 1:
         lines.append(
             f"第 {revision.number} 版改了：{summary(revision.changes or {})}。"
-            "出题人改过题目，按新的这一版做。"
+            "出题人改过题目，按新的这一版做。这一版改了什么、每一版的文件，"
+            f"在题目的历史版本页：{version_page(task, revision.number)}"
         )
     return "\n".join(lines)
+
+
+def version_page(task: Task, number: int) -> str:
+    """题目历史版本页上第 `number` 版的地址（前端 `router/spaces.ts` 的
+    `TasksVersions`）。"""
+    base = settings.frontend_url.rstrip("/")
+    return f"{base}/spaces/{task.space_id}/tasks/{task.id}/versions?version={number}"

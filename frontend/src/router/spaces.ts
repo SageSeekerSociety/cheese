@@ -130,6 +130,13 @@ export default {
               component: () => import('@/views/tasks/detail/Insights.vue'),
               meta: { titleKey: 'navigation.pages.taskData' },
             },
+            {
+              // `?version=N` 落到第 N 版：项目里「题目更新」那一行、芝士读到的那一段都指到这里。
+              path: 'versions',
+              name: 'TasksVersions',
+              component: () => import('@/views/tasks/detail/Versions.vue'),
+              meta: { titleKey: 'navigation.pages.taskVersions' },
+            },
           ],
         },
         {

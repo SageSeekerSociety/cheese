@@ -106,6 +106,11 @@ class HubDevice:
     )
     session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     local_fs_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    # Streams the machine's sandboxes opened on their platform sockets, by
+    # stream id (``machine``): they live on this link and end with it.
+    # (``machine.MachineStream``; not imported here, which would make the two
+    # modules a cycle.)
+    machine_streams: dict[str, Any] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 
@@ -177,6 +182,12 @@ class HubDevice:
         for future in waiting:
             if not future.done():
                 future.set_exception(LinkInterrupted(self.device_id))
+        # The connector closed their sockets when the link went: nobody is
+        # left to read an answer.
+        for stream in self.machine_streams.values():
+            if stream.task is not None:
+                stream.task.cancel()
+        self.machine_streams.clear()
         return True
 
 

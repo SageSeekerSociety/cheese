@@ -93,8 +93,8 @@ class Outcome:
     _members: dict[tuple[str, str], list[str]]
     #: What the asker's 芝士 remembers of them after the task, file by file.
     memories: list[str] = field(default_factory=list)
-    #: The asker's routines after the task: (trigger, what the person said).
-    routines: list[tuple[str, str]] = field(default_factory=list)
+    #: The asker's rules after the task: (trigger, what the person said, spec).
+    routines: list[tuple[str, str, dict]] = field(default_factory=list)
 
     @property
     def answer(self) -> str:
@@ -301,9 +301,9 @@ async def read_outcome(
             )
         ]
         routines = [
-            (str(trigger), str(words))
-            for trigger, words in await q(
-                "select trigger, words from assistant_routines where user_id = :u",
+            (str(trigger), str(words), dict(spec or {}))
+            for trigger, words, spec in await q(
+                "select trigger, words, spec from assistant_routines where user_id = :u",
                 u=uid,
             )
         ]
@@ -511,7 +511,10 @@ def judge(http_gateway, key: str, task, outcome: Outcome) -> dict:
     # Its own routines are hers alone and pass no authorization check, so
     # they are in no list above: without them a routine it did set up reads
     # to the judge as one it only claims to have.
-    did += [f"建了例行事务（{trigger}）：{words}" for trigger, words in outcome.routines]
+    did += [
+        f"建了{'只做一次的规则' if spec.get('once') else '例行事务'}（{trigger}）：{words}"
+        for trigger, words, spec in outcome.routines
+    ]
     prompt = (
         f"<对话>\n{said}\n</对话>\n<芝士的操作>\n"
         + ("\n".join(did) or "无")

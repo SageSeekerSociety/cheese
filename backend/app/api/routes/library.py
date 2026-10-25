@@ -8,14 +8,13 @@
 
 import uuid
 from typing import Annotated, Literal
-from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.byte_response import blob_response
+from app.api.library_bytes import library_file_response
 from app.api.place import readable_rooms
 from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
@@ -33,7 +32,6 @@ from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.library.shelf import Shelf
-from app.domain.preview import office
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.team.services import team_service
@@ -120,9 +118,9 @@ async def library_file_raw(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    return await _raw(
+    return await library_file_response(
         db,
-        await shelf_for(db, project_id, actor),
+        await shelf_for(db, project_id),
         _library_path(path),
         version,
         preview_pdf,
@@ -130,44 +128,9 @@ async def library_file_raw(
     )
 
 
-async def _raw(
-    db: DbSession,
-    shelf: Shelf,
-    name: str,
-    version: uuid.UUID | None,
-    preview_pdf: bool,
-    request: Request,
-) -> Response:
-    stored = (
-        await library_records.stored_version(db, shelf, name, version)
-        if version is not None
-        else await library_records.stored_file(db, shelf, name)
-    )
-    filename = quote(name.rsplit("/", 1)[-1], safe="")
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": "default-src 'none'; sandbox",
-        "Cache-Control": "private, no-cache",
-    }
-    if preview_pdf:
-        data = await library_records.read_stored(stored)
-        pdf = await office.preview_pdf(data, name)
-        return Response(content=pdf, media_type="application/pdf", headers=headers)
-    return blob_response(
-        stored.location,
-        stored.key,
-        stored.size,
-        "application/octet-stream",
-        headers,
-        request.headers.get("range"),
-        request.headers.get("if-range"),
-    )
-
-
 def _shelf(project_id: uuid.UUID) -> Shelf:
     # 写的那几条路用它：`题目/` 底下谁都写不进去（`mount.refuse_write`），
-    # 读的路一律按读的人取（`shelf_for`）。
+    # 读的路一律取 `shelf_for` 给的那一份（`题目/` 有没有，看项目的申请）。
     return Shelf.of_project(project_id, with_task=False)
 
 
@@ -186,9 +149,9 @@ async def library_file_link(
     """一份资料的下载地址，几分钟内开始取都有效：给 `cheese library get`，字节从
     存储直接到机器上，不经过这里，也不整份读进谁的内存。文件存在本服务器盘上时，
     地址是本后端自己的一条（``/files/outgoing/…``），照样按段给。`题目/` 底下的
-    那几份按读的人取（`shelf_for`），和下载那一条一样。"""
-    actor = await _reader(project_id, db, resolver)
-    shelf = await shelf_for(db, project_id, actor)
+    那几份照 `shelf_for` 取，和下载那一条一样。"""
+    await _reader(project_id, db, resolver)
+    shelf = await shelf_for(db, project_id)
     name = _library_path(path.strip().removeprefix("library/"))
     stored = await library_records.stored_file(db, shelf, name)
     url = await library_records.download_url(db, shelf, name)
@@ -207,7 +170,7 @@ async def list_library_versions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     versions = await library_records.versions(
-        db, await shelf_for(db, project_id, actor), _library_path(path)
+        db, await shelf_for(db, project_id), _library_path(path)
     )
     return ok({"versions": versions})
 
@@ -254,7 +217,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        await shelf_for(db, project_id, actor),
+        await shelf_for(db, project_id),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -273,7 +236,7 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    shelf = await shelf_for(db, project_id, actor)
+    shelf = await shelf_for(db, project_id)
     return ok(await library_listing.one(db, shelf, rooms, _library_path(path)))
 
 
@@ -284,11 +247,9 @@ async def library_file_text(
     """一份资料读成文本，给芝士读（`cheese_library(action=read)` 读 `library/` 开头的地址）：
     文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
-    actor = await _reader(project_id, db, resolver)
+    await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(
-        db, await shelf_for(db, project_id, actor), name
-    )
+    found = await library_records.read_text(db, await shelf_for(db, project_id), name)
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
@@ -675,7 +636,7 @@ async def team_library_file_raw(
 ) -> Response:
     """一份资料的字节，和项目资料库的那一条一样（`library_file_raw`）。"""
     await _team_member(team_id, db, resolver)
-    return await _raw(
+    return await library_file_response(
         db, _team_shelf(team_id), _library_path(path), version, preview_pdf, request
     )
 

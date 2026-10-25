@@ -11,11 +11,15 @@
 # it was given. What stays ours is the judgement: which findings count as
 # blocker or major, and what goes into the card.
 #
-# WHERE THE MODEL COMES FROM: the same pair every sandbox already has —
-# $CHEESE_API and $CHEESE_TOKEN. The base URL is `$CHEESE_API/llm`; the client
-# appends `/v1`, so `$CHEESE_API/llm/v1` would ask for `/llm/v1/v1/messages`
-# and get a 404. Only models the gateway allows for this project work; the
-# Claude ids are blocked on it.
+# WHERE THE MODEL COMES FROM: the sandbox's platform socket,
+# $CHEESE_PLATFORM_SOCKET, which needs no credential: the platform knows whose
+# the call is by which socket it came in on, and charges it like any other call
+# of the session. open-code-review takes a URL, so platform_loopback.py gives
+# it one on a loopback port with a random prefix. A sandbox installed before
+# the socket existed falls back to $CHEESE_API/llm with $CHEESE_TOKEN. Either
+# base ends in `/llm`; the client appends `/v1`, so a base ending in `/llm/v1`
+# would ask for `/llm/v1/v1/messages` and get a 404. Only models the gateway
+# allows for this project work; the Claude ids are blocked on it.
 #
 # Usage:
 #   .claude/scripts/ocr-review.sh --from REF --to REF [--out FILE]
@@ -90,8 +94,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FROM" ] && [ -n "$TO" ] || die "need --from and --to (or two positional refs)"
-[ -n "${CHEESE_API:-}" ] || die "CHEESE_API is not set; this repo's model channel comes from the platform environment"
-[ -n "${CHEESE_TOKEN:-}" ] || die "CHEESE_TOKEN is not set; run inside a task sandbox"
+if [ -S "${CHEESE_PLATFORM_SOCKET:-}" ]; then
+  # The helper lives exactly as long as this script.
+  exec {LOOPBACK}< <(exec python3 "$(dirname "${BASH_SOURCE[0]}")/platform_loopback.py")
+  LOOPBACK_PID=$!
+  trap 'kill "$LOOPBACK_PID" 2>/dev/null' EXIT
+  read -r -t 10 -u "$LOOPBACK" BASE || die "platform_loopback.py did not start"
+  LLM_URL="$BASE/llm" LLM_TOKEN="machine"
+else
+  [ -n "${CHEESE_API:-}" ] || die "CHEESE_API is not set; this repo's model channel comes from the platform environment"
+  [ -n "${CHEESE_TOKEN:-}" ] || die "CHEESE_TOKEN is not set; run inside a task sandbox"
+  LLM_URL="${CHEESE_API%/}/llm" LLM_TOKEN="$CHEESE_TOKEN"
+fi
 
 REPO="$(git rev-parse --show-toplevel)"
 # A partial clone (blob:none) carries commits but not file contents, and fetches
@@ -163,8 +177,8 @@ INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).vers
 OUT="${OUT:-$CACHE/results/$(printf '%s..%s' "$FROM" "$TO" | sha256sum | cut -c1-16).json}"
 mkdir -p "$(dirname "$OUT")"
 
-OCR_LLM_URL="${CHEESE_API%/}/llm" \
-OCR_LLM_TOKEN="$CHEESE_TOKEN" \
+OCR_LLM_URL="$LLM_URL" \
+OCR_LLM_TOKEN="$LLM_TOKEN" \
 OCR_LLM_MODEL="$MODEL" \
   "$CLI" review \
     --repo "$REPO" \

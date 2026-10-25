@@ -207,7 +207,7 @@ async def upload_attachment(
         name = clean_artifact_path(library_path)
         # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
         ref = library.library_ref(name)
-        reads_task = await may_read_path(db, topic.project_id, actor, ref)
+        reads_task = await may_read_path(db, topic.project_id, ref)
         stored = await library_records.stored_file(
             db, Shelf.of_project(topic.project_id, with_task=reads_task), name
         )
@@ -354,7 +354,7 @@ async def attachment_raw(
             topic.project_id,
             room_id,
             clean,
-            with_task=await may_read_path(db, topic.project_id, actor, clean),
+            with_task=await may_read_path(db, topic.project_id, clean),
         )
         response: Response
         if isinstance(stored, library_records.Stored):
@@ -377,7 +377,7 @@ async def attachment_raw(
             clean,
             task,
             source,
-            with_task=await may_read_path(db, topic.project_id, actor, clean),
+            with_task=await may_read_path(db, topic.project_id, clean),
         )
         response = media_bytes_response(
             data,
@@ -428,7 +428,7 @@ async def attachment_as_pdf(
         clean,
         task,
         source,
-        with_task=await may_read_path(db, topic.project_id, actor, clean),
+        with_task=await may_read_path(db, topic.project_id, clean),
     )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
@@ -496,7 +496,7 @@ async def attachment_as_html(
         clean,
         task,
         source,
-        with_task=await may_read_path(db, topic.project_id, actor, clean),
+        with_task=await may_read_path(db, topic.project_id, clean),
     )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(

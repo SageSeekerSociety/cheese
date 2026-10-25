@@ -283,7 +283,7 @@ describe('AssistantPanel', () => {
         { role: 'assistant', text: '今天没有待办。', at: '2026-10-01T00:00:05Z' },
       ],
     })
-    expect(view.getByText('例行事务「每日待办」开始运行')).toBeTruthy()
+    expect(view.getByText('自动化「每日待办」开始运行')).toBeTruthy()
     expect(view.queryByText(/<平台>/)).toBeNull()
   })
 })

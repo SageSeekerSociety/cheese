@@ -29,7 +29,6 @@ import { openAgentConversation } from '@/stores/agent'
 const rules = ref<AssistantRules | null>(null)
 const memory = ref<AssistantMemory | null>(null)
 const routines = ref<AssistantRoutine[]>([])
-const routineLimit = ref(0)
 const recent = ref<AssistantActivityItem[]>([])
 const loading = ref(true)
 const failed = ref(false)
@@ -54,7 +53,6 @@ async function load() {
     memory.value = kept
     recent.value = done.items
     routines.value = mine.routines
-    routineLimit.value = mine.limit
   } catch {
     failed.value = true
   } finally {
@@ -125,7 +123,6 @@ async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
     :rules="rules"
     :memory="memory"
     :routines="routines"
-    :routine-limit="routineLimit"
     :recent="recent"
     :loading="loading"
     :failed="failed"

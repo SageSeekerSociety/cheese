@@ -205,7 +205,7 @@ async def room_file_raw(
     clean = clean_artifact_path(path)
     name = library.library_name(clean)
     if name is not None:
-        shelf = await shelf_for(db, place.project_id, actor)
+        shelf = await shelf_for(db, place.project_id)
         data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(
@@ -290,7 +290,7 @@ async def copy_into_room(
         raise ValidationError(say("unsupportedFileType"))
     name = library.library_name(source)
     if name is not None:
-        shelf = await shelf_for(db, place.project_id, actor)
+        shelf = await shelf_for(db, place.project_id)
         data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(

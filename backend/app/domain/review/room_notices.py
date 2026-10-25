@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.sentences import say
+from app.domain import happenings
 from app.domain.addressing import Event
 from app.domain.deliverables import artifacts
 from app.domain.delivery_events import SettleCard
@@ -192,6 +193,34 @@ async def _settle_the_card(
         # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError("settle_card was not handed in")
     await settle_card(session, card.id, {"outcome": outcome})
+    if outcome in ("accepted", "rejected") and card.task_id is not None:
+        task = await session.get(Task, card.task_id)
+        if task is not None:
+            await _happened(
+                session, happenings.TASK_DECIDED, card, task, outcome=outcome
+            )
+
+
+async def _happened(
+    session: AsyncSession, kind: str, card: AcceptCard, task: Task, **more: str
+) -> None:
+    """说给等着这件事的规则听（`happenings`）：哪个任务、谁提的、谁审。"""
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
+    await happenings.happened(
+        session,
+        kind,
+        task_id=task.id,
+        project_id=task.project_id,
+        payload={
+            "title": task.title,
+            "number": task.number,
+            "topicId": str(task.room_id),
+            "reporter": task.reporter_handle or "",
+            "createdBy": task.created_by or "",
+            "reviewers": list(reviewers),
+            **more,
+        },
+    )
 
 
 async def _announce_filed(
@@ -250,6 +279,7 @@ async def _announce_filed(
         ),
         about_card=card.id,
     )
+    await _happened(session, happenings.TASK_FILED, card, task)
 
 
 async def _announce_new_artifact(

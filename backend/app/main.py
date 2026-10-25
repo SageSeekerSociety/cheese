@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
+from app.api import machine_relay
 from app.api.admin_deps import PlatformAdminDep
 from app.api.deps import (
     get_consumptions,
@@ -65,6 +66,7 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.device_hub import machine as machine_streams
 from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
@@ -995,6 +997,11 @@ async def app_version() -> dict:
         }
     )
 
+
+# A backend that owns its device links answers its sandboxes' platform sockets
+# itself; with a connection owner, the owner relays them here over HTTP.
+if not settings.device_connection_url:
+    machine_streams.serve(machine_relay.in_process(app))
 
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
