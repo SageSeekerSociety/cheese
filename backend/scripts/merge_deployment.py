@@ -15,19 +15,20 @@ What comes over, for each kind in ``KINDS`` (parents before children):
 
 - A source row whose primary key is here with the same identity (its
   ``created_at``, or the columns its kind names) is the same row: both
-  deployments have it from the history they share. A row an earlier batch
-  inserted is that row here, under the key it got then, and is left as that
-  batch wrote it: the same export under another batch name brings nothing twice. It changes only if the
+  deployments have it from the history they share. It changes only if the
   manifest lists it as changed on the source since then. Then the source wins
   for the columns the source deployment itself had (``--source-columns``: a
-  column a migration added on the way here holds this deployment's value), except
-  when this row's ``updated_at`` is later than the source's: both sides changed
-  it, this side last, so it stays, and the report names it.
+  column a migration added on the way here holds this deployment's value),
+  except when this row's ``updated_at`` is later than the source's: both sides
+  changed it, this side last, so it stays, and the report names it.
+- A source row an earlier batch inserted is that row here, under the key it
+  got then, and stays as that batch wrote it: the same export under another
+  batch name brings nothing twice.
 - Any other source row is new. If a row here already is that thing by its
   natural key (an account by email, an OAuth link by provider id, a passkey by
   credential, a profile by its user, a membership by who and what it joins),
-  the source row becomes that row and nothing is written. Otherwise it is inserted, keeping its id when the id is
-  free here and taking the next one from this deployment's sequence when it is
+  the source row becomes that row and nothing is written. Otherwise it is
+  inserted, keeping its id when the id is free here and taking the next one from this deployment's sequence when it is
   not. Every column that names a row of a kind here — a foreign key or not,
   polymorphic or inside JSON — is rewritten to the id that row has here.
 - An account whose email is under a domain the manifest lists is not brought,
@@ -1072,9 +1073,9 @@ async def run_import(
                 h
                 for (h,) in await session.execute(
                     text(
-                        # Closed accounts and deleted teams keep their names:
-                        # ``is_username_taken`` and ``uq_team_handle_lower``
-                        # count every row.
+                        # Closed accounts keep their names (``is_username_taken``)
+                        # and so do deleted teams (``uq_team_handle_lower``
+                        # covers every row).
                         'SELECT lower(username) FROM "user"'
                         " UNION SELECT lower(handle) FROM team WHERE handle IS NOT NULL"
                     )
