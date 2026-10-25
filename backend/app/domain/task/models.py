@@ -476,7 +476,8 @@ class TaskPackageRevision(Base):
 
     ``changes`` names the parts: ``published`` on the first; ``description``,
     ``stages``, ``submission``, ``rubric`` when those changed; ``files`` with the names
-    ``added``, ``replaced`` and ``removed``.
+    ``added``, ``replaced`` and ``removed``; ``starter`` with ``added``,
+    ``replaced`` or ``removed``.
     """
 
     __tablename__ = "task_package_revisions"
@@ -504,6 +505,10 @@ class TaskPackageRevision(Base):
     #: Who made the change (``user.id``).
     author_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     changes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    #: What the 题目's library held at this version: each name mapped to the
+    #: ``library_files.id`` it was then, so the history page can hand out the
+    #: files of any version. Null on versions recorded before it was kept.
+    files: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )

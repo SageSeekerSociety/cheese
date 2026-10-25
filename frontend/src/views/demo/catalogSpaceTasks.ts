@@ -30,6 +30,7 @@ import {
   TASK_LATEST,
   TASK_REVIEWS,
   TASK_ROSTER,
+  TASK_VERSIONS,
 } from './catalogSpaceTasksFixtures'
 
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -45,6 +46,7 @@ import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
+import VersionsView from '@/views/tasks/detail/VersionsView.vue'
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -510,6 +512,49 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           },
         },
         expect: '仅批改的人可见',
+      },
+    ],
+  },
+  {
+    id: 'versions-view',
+    title: 'VersionsView',
+    get about() {
+      return t('catalog.versionsView.about')
+    },
+    file: 'src/views/tasks/detail/VersionsView.vue',
+    component: VersionsView,
+    needs: UI_T,
+    args: { versions: TASK_VERSIONS, canDownload: true },
+    states: [
+      {
+        get name() {
+          return t('catalog.versionsView.s1.name')
+        },
+        get note() {
+          return t('catalog.versionsView.s1.note')
+        },
+        props: {},
+        expect: '第 3 版',
+      },
+      {
+        get name() {
+          return t('catalog.versionsView.s2.name')
+        },
+        get note() {
+          return t('catalog.versionsView.s2.note')
+        },
+        props: { focus: 2 },
+        expectSelector: '.tv__item--focus',
+      },
+      {
+        get name() {
+          return t('catalog.versionsView.s3.name')
+        },
+        get note() {
+          return t('catalog.versionsView.s3.note')
+        },
+        props: { canDownload: false },
+        expect: '开始做这道题之后才能下载',
       },
     ],
   },

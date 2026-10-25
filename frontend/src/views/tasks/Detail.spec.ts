@@ -135,6 +135,7 @@ function makeRouter() {
           // 领取者也是真页签：出题人在这里批了领取、判了一版，页头和我的进度跟不跟得上，要它来量。
           { path: 'participants', name: 'TasksParticipants', component: TaskRoster },
           { path: 'insights', name: 'TasksInsights', component: stub },
+          { path: 'versions', name: 'TasksVersions', component: stub },
         ],
       },
       { path: '/spaces/:spaceId/tasks/:taskId/edit', name: 'TasksEdit', component: stub },
@@ -461,6 +462,13 @@ describe('题目详情', () => {
     expect(getParticipants).not.toHaveBeenCalled()
     expect(hrefs(container)).not.toContain(`${BASE}/participants`)
     expect(hrefs(container)).not.toContain(`${BASE}/insights`)
+  })
+
+  it('看得见这道题的人都有「历史版本」页签，不必是出题人', async () => {
+    const { container } = await mount()
+
+    const tab = [...container.querySelectorAll('a')].find((a) => a.getAttribute('href') === `${BASE}/versions`)
+    expect(tab?.textContent?.trim()).toBe('历史版本')
   })
 
   it('出题人：领取者和数据两个页签都在', async () => {

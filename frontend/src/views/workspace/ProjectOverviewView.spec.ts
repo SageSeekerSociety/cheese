@@ -130,8 +130,8 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
-it('题目更新了：写到了第几版、改了什么，点开去看题目的材料', async () => {
-  const item: ProgressItem = {
+function revised(version: number, changes: ProgressItem['changes']): ProgressItem {
+  return {
     kind: 'revised',
     at: new Date().toISOString(),
     taskId: null,
@@ -141,13 +141,28 @@ it('题目更新了：写到了第几版、改了什么，点开去看题目的�
     by: null,
     artifactId: null,
     artifactName: '',
-    version: 3,
-    changes: { rubric: true, files: { replaced: ['数据.csv'] } },
+    version,
+    changes,
   }
-  const view = mount({ progress: [item] })
+}
+
+it('题目更新了：写到了第几版、改了什么，点开去看历史版本里的那一版', async () => {
+  const item = revised(3, { rubric: true, files: { replaced: ['数据.csv'] } })
+  const view = mount({ progress: [item], taskLinked: true })
   const line = view.getByText('第 3 版：改了评分要点、替换 数据.csv')
   await fireEvent.click(line)
-  expect(view.emitted('open-task-folder')).toEqual([[]])
+  expect(view.emitted('open-task-version')).toEqual([[3]])
+})
+
+it('看不到这道题的人：题目更新那一行点不开', () => {
+  const view = mount({ progress: [revised(3, { rubric: true })], taskLinked: false })
+  const line = view.getByText('第 3 版：改了评分要点')
+  expect(line.closest('button')?.disabled).toBe(true)
+})
+
+it('只换了起始代码的那一版：写明换了起始代码', () => {
+  const view = mount({ progress: [revised(2, { starter: 'replaced' })] })
+  expect(view.getByText('第 2 版：替换起始代码')).toBeTruthy()
 })
 
 it('题目的阶段改了：这一版写明改了阶段', () => {
