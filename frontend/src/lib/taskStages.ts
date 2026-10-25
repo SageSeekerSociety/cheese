@@ -135,4 +135,4 @@ export const STAGE_TONE: Record<TaskStageStatus, 'muted' | 'warn' | 'ok' | 'dang
   MISSED: 'danger',
 }
 
-export const STAGE_STATUSES: TaskStageStatus[] = ['NOT_SUBMITTED', 'PENDING_REVIEW', 'PASSED', 'REJECTED']
+export const STAGE_STATUSES: TaskStageStatus[] = ['NOT_SUBMITTED', 'PENDING_REVIEW', 'PASSED', 'REJECTED', 'MISSED']

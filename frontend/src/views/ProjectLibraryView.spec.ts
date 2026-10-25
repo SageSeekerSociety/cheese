@@ -183,8 +183,11 @@ describe('资料库', () => {
     expect(screen.queryByRole('button', { name: /重试/ })).toBeNull()
     expect(container.querySelector('[role="alert"]')).toBeNull()
 
-    const download = Array.from(preview.querySelectorAll('button')).find((b) => b.textContent?.trim() === '下载')
-    await fireEvent.click(download as HTMLElement)
+    // One way to download, not two: the page's own 下载 stands for the note too.
+    const downloads = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '下载')
+    expect(downloads).toHaveLength(1)
+    expect(preview.querySelector('button')).toBeNull()
+    await fireEvent.click(downloads[0])
     expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/library/raw?path=数据集.docx', '数据集.docx')
   })
 
@@ -380,7 +383,8 @@ describe('资料库的文件夹', () => {
     library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
     const { container, router } = await open()
     const taskRow = screen.getByText('题目').closest('.library-row') as HTMLElement
-    expect(taskRow.textContent).toContain('只读')
+    // 「只读」 is set apart from the count, so it never reads as 「只读 1 份文件」.
+    expect(taskRow.textContent).toContain('只读 · 1 份文件')
 
     await router.push('/projects/p1/library?dir=题目')
     await waitFor(() => expect(rowNames(container)).toEqual(['数据.csv']))

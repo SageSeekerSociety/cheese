@@ -15,7 +15,7 @@ import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
-import { refusalText, renderNoticeMessage } from '@/lib/noticeText'
+import { type NoticeMessage, refusalText, renderNoticeMessage } from '@/lib/noticeText'
 
 export interface AssistantConversation {
   id: string
@@ -115,6 +115,10 @@ export interface AssistantEdit {
   changed: Record<string, { before: unknown; after: unknown }>
   kept: string[]
   notes: { field: string; text: string }[]
+  /** 存下这份草稿的阶段会让几个人被判未通过、几个人回到进行中（或保存会被拒的那句），
+   *  按句子的键和参数给，读的人用自己的语言读。`null` = 这次写入没说这件事；空 = 现在
+   *  没人受影响，把之前说的清掉。 */
+  stageEffect: NoticeMessage[] | null
   undone: string[]
 }
 
@@ -563,6 +567,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       changed: (payload.changed as AssistantEdit['changed']) ?? {},
       kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
       notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
+      stageEffect: Array.isArray(payload.stageEffect) ? (payload.stageEffect as NoticeMessage[]) : null,
       undone: Array.isArray(payload.undone) ? (payload.undone as string[]) : [],
     }
   }

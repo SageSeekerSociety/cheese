@@ -48,7 +48,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sentences import say
+from app.core.sentences import NoticeText, say
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.agent import gateway_catalog
@@ -572,13 +572,13 @@ async def agent_write(
     ]
     # What saving these stages would do to the 题目's takers, told on the
     # change card and to 芝士 before anything is saved, as the edit page does.
+    # None: this write says nothing about it (no stages written, or the writer
+    # may no longer change the 题目); [] clears what an earlier write said.
     stage_effect = (
-        await _stage_effect_said(db, row)
+        await _stage_effect(db, row, user_id)
         if row.task_id is not None and "stages" in written.changed
         else None
     )
-    if stage_effect:
-        notes.append({"field": "stages", "text": stage_effect})
     if removed:
         # Never silently: the person reads on the change card what went with
         # the stages 芝士 removed, before anything is saved to the 题目.
@@ -603,6 +603,13 @@ async def agent_write(
             },
             "kept": written.kept,
             "notes": notes,
+            # Replaces, never adds to, what an earlier write in the answer said:
+            # the card shows the effect of the draft as it now stands.
+            **(
+                {"stageEffect": [s.descriptor() for s in stage_effect]}
+                if stage_effect is not None
+                else {}
+            ),
         },
     )
     await db.commit()
@@ -622,7 +629,11 @@ async def agent_write(
             "removed": removed,
             # Who saving the draft's stages would fail or take out of failed,
             # or why the save would refuse them; absent when neither.
-            **({"stageEffect": stage_effect} if stage_effect else {}),
+            **(
+                {"stageEffect": "；".join(str(s) for s in stage_effect)}
+                if stage_effect
+                else {}
+            ),
             # A template's skeleton, for 芝士 to fill under its headings.
             **(
                 {"description": drafts.markdown_of(row.fields or {})}
@@ -633,23 +644,28 @@ async def agent_write(
     )
 
 
-async def _stage_effect_said(db, row) -> str | None:
-    """What saving the draft's stages onto its 题目 would do to the claims, in
-    the words the person reads (``stage_change_effect``, the edit page's own
-    check); the save's refusal when it would refuse them; None when nobody
-    would cross the failed line."""
+async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
+    """What saving the draft's stages onto its 题目 would do to the claims, as
+    sentences (``stage_change_effect``, the edit page's own check): the save's
+    refusal when it would refuse them; empty when nobody would cross the
+    failed line. None for someone who may not change the 题目 now — a draft
+    outlives its writer's rights, and the counts are the 题目's, like its
+    private guidance (``_editable_task``)."""
+    task = await TaskService.of(db).get_task(row.task_id)
+    if task is None or not await may_teach_task(session=db, task=task, user_id=user_id):
+        return None
     try:
         effect = await stage_change_effect(
             db, row.task_id, stage_lines(drafts.published_form(row).get("stages") or [])
         )
     except BadRequestError as refused:
-        return str(refused.message)
+        return [refused.message]
     said = []
     if effect.failing:
-        said.append(str(say("stageEffectFailing", n=effect.failing)))
+        said.append(say("stageEffectFailing", n=effect.failing))
     if effect.reopening:
-        said.append(str(say("stageEffectReopening", n=effect.reopening)))
-    return "；".join(said) or None
+        said.append(say("stageEffectReopening", n=effect.reopening))
+    return said
 
 
 async def _own_files(db, given, user_id: int) -> list[dict]:

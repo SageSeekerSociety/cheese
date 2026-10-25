@@ -65,7 +65,7 @@ function rowMeta(file: LibraryFile): string {
 }
 
 function folderMeta(folder: LibraryFolder): string {
-  return t('work.library.folderMeta', {
+  return t(folder.readonly ? 'work.library.readonlyFolderMeta' : 'work.library.folderMeta', {
     n: folder.count,
     when: relTime(new Date(folder.modified * 1000).toISOString()),
   })
@@ -183,11 +183,7 @@ function entryKey(row: unknown): string {
             <v-icon icon="mdi-folder-outline" size="20" class="library-row__icon" />
             <span class="library-row__id">
               <span class="library-row__name t-body" data-user-content>{{ item.folder.name }}</span>
-              <span v-if="item.folder.readonly" class="library-row__meta t-meta">
-                <span class="c-muted">{{ t('work.library.readonly') }}</span>
-                <span class="c-faint">{{ folderMeta(item.folder) }}</span>
-              </span>
-              <span v-else class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
+              <span class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
             </span>
           </button>
           <AdaptiveMenu

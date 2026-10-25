@@ -12,6 +12,7 @@ import dayjs from 'dayjs'
 
 import { t } from '@/i18n'
 import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 
 /** 每个字段在表单上叫什么。 */
@@ -318,11 +319,20 @@ function merged(edits: AssistantEdit[], terms: DraftTerms, canUndo: (edit: Assis
       rows.set(row.key, row)
     }
   const last = views[views.length - 1]
+  // 存下阶段的影响只看草稿现在的样子：后一次写入说的换掉前一次的，说「没人受影响」就清掉。
+  const effect = [...edits].reverse().find((e) => Array.isArray(e.stageEffect))?.stageEffect ?? []
   return {
     ...last,
     created: views.some((v) => v.created),
     rows: [...rows.values()],
-    notes: views.flatMap((v) => v.notes),
+    notes: [
+      ...views.flatMap((v) => v.notes),
+      ...effect.map((said) => ({
+        key: 'stages',
+        label: fieldLabel('stages'),
+        text: renderNoticeMessage(said, ''),
+      })),
+    ],
     canUndo: views.some((v) => v.canUndo),
   }
 }

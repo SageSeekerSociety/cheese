@@ -12,7 +12,7 @@ import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
-import { fmtFileSize } from '@/lib/usageFormat'
+import { fmtFileSize, fmtSizeLimit } from '@/lib/usageFormat'
 
 defineProps<{
   files: PickedAttachment[]
@@ -63,7 +63,7 @@ function onReplacement(event: Event) {
 <template>
   <BaseField
     :label="t('tasks.attachmentPicker.title')"
-    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: fmtFileSize(maxFileBytes) }) : undefined"
+    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: fmtSizeLimit(maxFileBytes) }) : undefined"
   >
     <div class="tap">
       <ul v-if="files.length" class="tap__list">
@@ -84,6 +84,7 @@ function onReplacement(event: Event) {
             icon="mdi-close"
             size="sm"
             :disabled="uploading"
+            :title="t('tasks.attachmentPicker.remove', { name: file.name })"
             :aria-label="t('tasks.attachmentPicker.remove', { name: file.name })"
             @click="emit('remove', file.id)"
           />

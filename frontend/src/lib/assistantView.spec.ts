@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { checklistOf, interleave, type PanelStep, stepError, stepView, withSubagents } from './assistantView'
 import { writesView } from './draftChangeView'
 
-import { t } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 describe('stepError', () => {
   it('平台原样的回应只说是哪一类', () => {
@@ -88,6 +88,30 @@ describe('writesView', () => {
       ['difficulty', t('tasks.form.beginner'), 1],
       ['name', 'B', 2],
     ])
+  })
+
+  it('存下阶段的影响只看草稿现在的样子：后一次写入说没人受影响，前一次的提醒就不在了', () => {
+    setLocale('zh-CN')
+    const failing = { key: 'stageEffectFailing', params: { n: 1 } }
+    const moved = edit(1, 7, { stages: [] }, { stageEffect: [failing] })
+    const restored = edit(2, 7, { stages: [] }, { stageEffect: [] })
+
+    expect(writesView([moved], terms, 7).changes[0].notes.map((n) => n.text)).toEqual([
+      '1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过',
+    ])
+    expect(writesView([moved, restored], terms, 7).changes[0].notes).toEqual([])
+  })
+
+  it('存下阶段的影响按读的人的语言写', () => {
+    setLocale('en')
+    try {
+      const said = edit(1, 7, { stages: [] }, { stageEffect: [{ key: 'stageEffectFailing', params: { n: 1 } }] })
+      expect(writesView([said], terms, 7).changes[0].notes.map((n) => n.text)).toEqual([
+        'Participants with a stage past its due date and nothing handed in: 1. Saving marks them as failed',
+      ])
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('一份文件拆成几道题：开着的那份展开，别的各收成一行，写明是第几道', () => {

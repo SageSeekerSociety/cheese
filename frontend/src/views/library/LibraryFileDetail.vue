@@ -80,12 +80,10 @@ const tooLarge = computed(() => props.file.bytes > PREVIEW_MAX_MB * 1024 * 1024)
       </div>
     </header>
     <div class="library-detail__preview">
-      <div v-if="tooLarge" class="library-detail__large">
-        <p class="t-body c-muted">{{ t('work.library.tooLargeToPreview', { mb: PREVIEW_MAX_MB }) }}</p>
-        <BaseButton kind="secondary" size="sm" prepend-icon="mdi-download-outline" @click="emit('download')">
-          {{ t('work.library.download') }}
-        </BaseButton>
-      </div>
+      <!-- The download is the one already on the page: the header's on desktop, the bottom bar's on a phone. -->
+      <p v-if="tooLarge" class="library-detail__large t-body c-muted">
+        {{ t('work.library.tooLargeToPreview', { mb: PREVIEW_MAX_MB }) }}
+      </p>
       <FileBytesPreview
         v-else
         :filename="props.file.path"
@@ -152,16 +150,9 @@ const tooLarge = computed(() => props.file.bytes > PREVIEW_MAX_MB * 1024 * 1024)
 }
 
 .library-detail__large {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
+  margin: 0;
   padding: 24px;
   text-align: center;
-}
-
-.library-detail__large p {
-  margin: 0;
 }
 
 .library-detail__preview {

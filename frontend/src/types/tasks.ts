@@ -78,7 +78,7 @@ export interface TaskStage {
 }
 
 /** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。`MISSED`
- *  只出现在一条领取自己的状态里：过了截止、一版也没交，这条领取因它未通过。 */
+ *  是过了截止、一版也没交，这条领取因它未通过：领取自己的状态和出题人看的人数里都有。 */
 export type TaskStageStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'PASSED' | 'REJECTED' | 'MISSED'
 
 /** `GET /tasks/{id}/progress`：每个阶段上的进度。不分阶段的题算一个阶段。 */

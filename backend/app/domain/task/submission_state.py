@@ -75,9 +75,9 @@ STAGE_STATUSES = (
     STAGE_PASSED,
     STAGE_REJECTED,
 )
-#: 读给一条领取看的第五个取值：这个阶段过了截止、一版也没交，这条领取因它未通过
-#: （:func:`out_of_time`）。只在 :func:`stage_states_of` 里出现；分布和完成状态的推导
-#: 用的是上面那四个。
+#: 读给人看的第五个取值：这个阶段过了截止、一版也没交，这条领取因它未通过
+#: （:func:`out_of_time`）。领取自己的状态（:func:`stage_states_of`）和出题人看的
+#: 分布（:func:`stage_distribution`）里有它；完成状态的推导用的是上面那四个。
 STAGE_MISSED = "MISSED"
 
 
@@ -290,8 +290,13 @@ async def stage_states_of(
 async def stage_distribution(
     session: AsyncSession, task_id: int
 ) -> list[dict[str, int]]:
-    """这道题每个阶段上，获批的领取各走到哪一步：每阶段一份 ``{状态: 人数}``。"""
-    count = stage_count(await list_stages(session, task_id))
+    """这道题每个阶段上，获批的领取各走到哪一步：每阶段一份 ``{状态: 人数}``。
+    和领取自己读到的一样（:func:`stage_states_of`），过了截止一版没交的数在
+    ``STAGE_MISSED``（未通过）里，不在「未提交」里。"""
+    stages = await list_stages(session, task_id)
+    count = stage_count(stages)
+    dues = [s.due_at for s in stages]
+    moment = datetime.now(UTC)
     claims = list(
         (
             await session.execute(
@@ -306,11 +311,12 @@ async def stage_distribution(
         .all()
     )
     handed_in = await handed_in_for(session, claims)
-    tallies = [Counter({s: 0 for s in STAGE_STATUSES}) for _ in range(count)]
+    tallies = [
+        Counter({s: 0 for s in (*STAGE_STATUSES, STAGE_MISSED)}) for _ in range(count)
+    ]
     for membership_id in claims:
-        for index, state in enumerate(
-            stage_states(handed_in.get(membership_id, []), count)
-        ):
+        states = stage_states(handed_in.get(membership_id, []), count)
+        for index, state in enumerate(missed(states, dues, moment)):
             tallies[index][state] += 1
     return [dict(t) for t in tallies]
 

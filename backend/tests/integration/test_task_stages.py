@@ -10,11 +10,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
+from app.domain.space.models import SpaceAdminRelation
 from app.domain.task import package
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
-from app.domain.task.models import TaskMembership
+from app.domain.task.models import Task, TaskMembership
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 from tests.integration.test_task_drafts import _as_cheese
 
@@ -1061,3 +1062,66 @@ def test_cheese_writing_stages_hears_who_saving_them_would_fail(api_client, boar
         None,
         None,
     ]
+
+
+def test_the_publisher_counts_a_missed_stage_as_failed_like_the_student_reads_it(
+    api_client, board
+):
+    """The student reads 需求分析 as failed once it is past due with nothing
+    handed in; the publisher's per-stage counts put them there too, not under
+    not yet handed in."""
+    task_id = _publish(
+        api_client, board, stages=[{**STAGES[0], "dueAt": _ms(-1)}, STAGES[1]]
+    )
+    _claim(api_client, board, task_id)
+
+    first, second = _progress(api_client, board["teacher"], task_id)["distribution"]
+    assert (first["MISSED"], first["NOT_SUBMITTED"]) == (1, 0)
+    assert (second["MISSED"], second["NOT_SUBMITTED"]) == (0, 1)
+
+
+def test_cheese_hears_no_counts_for_someone_who_may_no_longer_change_the_task(
+    api_client, board, db_session, _portal
+):
+    """A change draft outlives its writer's right to change the task: once the
+    writer is neither its publisher nor an admin of its space, 芝士 writing
+    stages into that draft hears nothing about the task's takers."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    teacher = board["teacher"]
+
+    def write(target: dict, due: str):
+        return api_client.post(
+            "/task-drafts/agent/write",
+            json={
+                **target,
+                "stages": [{**_as_written(need), "due": due}, _as_written(impl)],
+            },
+            headers=_as_cheese(teacher),
+        )
+
+    first = write({"task": task_id}, "2020-01-01")
+    assert first.status_code == 200, first.text
+    assert "stageEffect" in first.json()["data"]
+
+    async def revoke():
+        await db_session.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(creator_id=board["student"].user_id)
+        )
+        await db_session.execute(
+            delete(SpaceAdminRelation).where(
+                SpaceAdminRelation.space_id == board["space"]["id"],
+                SpaceAdminRelation.user_id == teacher.user_id,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(revoke)
+    db_session.expire_all()
+    again = write({"draft": first.json()["data"]["draft"]}, "2020-01-02")
+
+    assert again.status_code == 200, again.text
+    assert "stageEffect" not in again.json()["data"]
