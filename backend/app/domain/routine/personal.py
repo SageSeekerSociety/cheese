@@ -196,6 +196,8 @@ def describe(routine: AssistantRoutine) -> str:
     """When the rule runs, in a line."""
     if routine.trigger in EVENTS:
         said = _event_said(routine.trigger, routine.spec)
+        if not once(routine):
+            said = f"每次{said}"
         name = routine.spec.get("projectName")
         return f"{said}（只看项目「{name}」）" if name else said
     if routine.spec.get("freq") == "once":
@@ -203,8 +205,18 @@ def describe(routine: AssistantRoutine) -> str:
         day = f"{at.month}月{at.day}日"
         if at.year != local_time(_now(), routine.timezone).year:
             day = f"{at.year}年{day}"
-        return f"{day} {at:%H:%M} 运行一次"
+        return f"{day} {at:%H:%M}"
     return str(schedule.describe(routine.spec, routine.timezone))
+
+
+def card(routine: AssistantRoutine) -> dict:
+    """A rule as its card in the answer it was made in shows it: when, and
+    what it does. Its state is read live, by ``id``."""
+    return {
+        "id": str(routine.id),
+        "when": describe(routine),
+        "note": routine.note or routine.title,
+    }
 
 
 def _event_said(trigger: str, spec: dict) -> str:
@@ -569,6 +581,7 @@ async def _run(
     routine_id: uuid.UUID | None = None,
     conversation_id: uuid.UUID | None = None,
     detail: str = "",
+    shown: dict | None = None,
     skipped: str = "",
 ) -> bool:
     """Write a run once per occurrence — ``skipped``, why it will not run —
@@ -581,6 +594,7 @@ async def _run(
             routine_id=routine_id,
             occurrence=occurrence,
             detail=detail,
+            shown=shown,
             conversation_id=conversation_id,
             status="skipped" if skipped else "queued",
             error=skipped,
@@ -697,6 +711,7 @@ async def _happened(session: AsyncSession, now: datetime) -> int:
                             occurrence=f"{routine.id}:h:{happening.id}",
                             conversation_id=routine.conversation_id if one else None,
                             detail=await _detail(session, happening),
+                            shown=_shown(happening),
                             skipped=OVER_LIMIT if over else "",
                         )
                         and not over
@@ -762,6 +777,15 @@ async def _detail(session: AsyncSession, happening: Happening) -> str:
     return f"{task}的提交{OUTCOMES.get(str(said.get('outcome')), '有了结论')}了"
 
 
+def _shown(happening: Happening) -> dict | None:
+    """What happened, as the conversation shows it when a rule waiting once
+    for it runs there: a task's review, by the task's title."""
+    if happening.kind == happenings.NOTIFIED:
+        return None
+    outcome = str(happening.payload.get("outcome") or "filed")
+    return {"task": str(happening.payload.get("title") or ""), "event": outcome}
+
+
 async def _given_up(session: AsyncSession, now: datetime) -> int:
     """Rules waiting once for something that has not happened in
     ``WAITS_FOR``: done, and the person told in the conversation they were
@@ -807,7 +831,7 @@ def _first_message(
     opening = (
         f"用户在这段对话里让你等的事到了（「{routine.title}」：{describe(routine)}）。"
         if once(routine)
-        else f"例行事务「{routine.title}」现在运行（{describe(routine)}）。"
+        else f"自动化「{routine.title}」现在运行（{describe(routine)}）。"
     )
     return "\n".join(
         [
@@ -923,7 +947,11 @@ async def _start_one(
         ) or DEFAULT_TIMEZONE
         run.status, run.started_at = "running", now
         question = _first_message(routine, run, now, tz)
-        shown = {"wait" if once(routine) else "routine": routine.title}
+        shown = (
+            {"wait": routine.title, **(run.shown or {})}
+            if once(routine)
+            else {"routine": routine.title}
+        )
         user_id = run.user_id
         await session.commit()
     try:

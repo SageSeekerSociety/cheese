@@ -163,6 +163,30 @@ def _make_routine(client, gw, me: dict, said: str, **args) -> AssistantRoutine:
     return routine
 
 
+def test_the_rule_cheese_makes_stays_in_its_answer_as_a_card(client, gateway):
+    """The rule shows where it was asked for, and still does on reading the
+    conversation again: what it waits for, what it will do, which rule."""
+    me = _auth(client, "asker")
+    routine = _make_routine(
+        client,
+        gateway,
+        me,
+        "每天早上八点把我的待办发给我",
+        title="每日待办",
+        note="列出待办",
+        trigger="schedule",
+        freq="daily",
+        time="08:00",
+    )
+
+    r = client.get(f"/assistant/conversations/{routine.conversation_id}", headers=me)
+    [answer] = [m for m in r.json()["data"]["messages"] if m["role"] == "assistant"]
+    [card] = answer["parts"]["rules"]
+    assert card["id"] == str(routine.id)
+    assert card["when"].startswith("每天 08:00")
+    assert card["note"] == "列出待办"
+
+
 class _Keeper:
     """The gate's model: stops everything, and keeps what it was shown."""
 
@@ -217,11 +241,11 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
         "data"
     ]["messages"]
     assert [m["role"] for m in said] == ["platform", "assistant"]
-    assert "例行事务「每日待办」现在运行" in said[0]["text"]
+    assert "自动化「每日待办」现在运行" in said[0]["text"]
     assert said[1]["text"] == "今天没有待办。"
     # The person is told, and the notice opens the run's conversation.
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "例行事务「每日待办」已完成"
+    assert notice["content"] == "自动化「每日待办」已完成"
     assert notice["assistantConversation"] == str(run.conversation_id)
     assert notice["quote"] == "今天没有待办。"
     # The next time is tomorrow's.
@@ -269,12 +293,10 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
     assert time.monotonic() - started < 60
     assert (run.status, run.asked) == ("done", 1)
     shown = keeper.shown[0]
-    assert (
-        "[用户（建这条例行事务时说）] 每天早上看一下我的项目频道有什么新消息" in shown
-    )
-    assert "例行事务「看频道」现在运行" not in shown
+    assert "[用户（建这条自动化时说）] 每天早上看一下我的项目频道有什么新消息" in shown
+    assert "自动化「看频道」现在运行" not in shown
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "例行事务「看频道」有 1 项操作待你确认"
+    assert notice["content"] == "自动化「看频道」有 1 项操作待你确认"
     [card] = _cards(client, user_id)
     assert card.state == "pending" and card.work == str(run.id)
 
@@ -621,7 +643,7 @@ def test_out_of_credits_a_persons_routines_pause_and_they_are_told_once(client):
         "第二条": ("paused", "credits"),
     }
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "额度已用完，例行事务已暂停"
+    assert notice["content"] == "额度已用完，自动化已暂停"
     assert other.id
 
 
@@ -647,7 +669,7 @@ def test_routines_of_someone_away_for_long_pause_until_they_resume_them(client):
     [row] = _routines(client, routine.user_id)
     assert (row.state, row.paused) == ("paused", "away")
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "你已 14 天未登录，例行事务已暂停"
+    assert notice["content"] == "你已 14 天未登录，自动化已暂停"
     resumed = client.post(f"/assistant/routines/{routine.id}/resume", headers=me)
     assert resumed.json()["data"]["routines"][0]["state"] == "active"
 
@@ -825,7 +847,7 @@ def test_a_one_off_routine_that_ran_is_done_frees_its_place_and_is_cleared_later
 
     [listed] = client.get("/assistant/routines", headers=me).json()["data"]["routines"]
     assert (listed["state"], listed["nextRunAt"]) == ("done", None)
-    assert "运行一次" in listed["when"]
+    assert listed["once"] is True
     paused = client.post(f"/assistant/routines/{routine.id}/pause", headers=me)
     assert paused.status_code in (400, 422), paused.text
 

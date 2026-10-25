@@ -184,6 +184,8 @@
       }}</BaseButton>
     </div>
 
+    <AssistantRuleCard v-for="rule in rules" :key="rule.id" :rule="rule" />
+
     <AgentProposal
       v-for="proposal in proposals"
       :key="proposal.id"
@@ -201,14 +203,16 @@
 // （`interleave`），接连调的几个工具一行一步，答完每一组收成一行「N 步」；写进草稿的改动
 // 是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个「查看题目」。默认
 // 插槽放话后面的一句（已停止、排队中）；再后面是它交给人的文件（一份一张卡，点了下载），
-// 和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
+// 它建的自动化（`AssistantRuleCard`），和它替人起草、等人确认的消息和任务（`AgentProposal`）。
+// 只拿 props、只发事件。
 import type { ChecklistItem, PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
-import type { AssistantHanded } from '@/stores/agentThread'
+import type { AssistantHanded, AssistantRule } from '@/stores/agentThread'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AgentProposal from '@/components/agent/AgentProposal.vue'
+import AssistantRuleCard from '@/components/assistant/AssistantRuleCard.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { fmtBytes } from '@/lib/changesTree'
 import { leafOf } from '@/lib/libraryFolders'
@@ -226,12 +230,14 @@ const props = withDefaults(
     proposals?: PanelProposal[]
     /** 这一轮交给人的文件：存在他的资料库里，点了下载。 */
     files?: AssistantHanded[]
+    /** 这一轮建或改的自动化。 */
+    rules?: AssistantRule[]
     /** 正在发出的那一件。 */
     sending?: number | null
     /** 这一轮还在答：步骤不收起。 */
     live?: boolean
   }>(),
-  { proposals: () => [], files: () => [], sending: null, live: false, checklist: null }
+  { proposals: () => [], files: () => [], rules: () => [], sending: null, live: false, checklist: null }
 )
 
 const emit = defineEmits<{

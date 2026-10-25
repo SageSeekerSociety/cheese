@@ -27,6 +27,7 @@ from app.api.assistant_deps import (
     show_proposal,
     tell_change,
     tell_handed,
+    tell_rule,
     where_of,
 )
 from app.api.auth import ActorResolverDep
@@ -1223,10 +1224,10 @@ async def agent_routine(
     if body.action == "list":
         rows = await routine_personal.mine(db, me.user_id)
         if not rows:
-            return ok({"text": "用户还没有例行事务。"})
+            return ok({"text": "用户还没有自动化。"})
         return ok(
             {
-                "text": f"用户的例行事务（{len(rows)} 条，最多 "
+                "text": f"用户的自动化（{len(rows)} 条，只做一次的和反复做的各最多 "
                 f"{routine_personal.MAX_ROUTINES} 条）：\n"
                 + "\n".join(_routine_line(r, me.timezone) for r in rows)
             }
@@ -1246,7 +1247,8 @@ async def agent_routine(
             spec=spec,
         )
         await db.commit()
-        return ok({"text": "已建好例行事务：\n" + _routine_line(row, me.timezone)})
+        await tell_rule(questions, claims, routine_personal.card(row))
+        return ok({"text": "已建好自动化：\n" + _routine_line(row, me.timezone)})
     try:
         routine_id = uuid.UUID(_need(body.routine, "routine"))
     except ValueError as exc:
@@ -1258,7 +1260,7 @@ async def agent_routine(
         title = row.title
         await db.delete(row)
         await db.commit()
-        return ok({"text": f"已删除例行事务「{title}」。"})
+        return ok({"text": f"已删除自动化「{title}」。"})
     if body.action == "pause":
         routine_personal.pause(row)
     elif body.action == "resume":
@@ -1279,7 +1281,8 @@ async def agent_routine(
             spec=spec,
         )
     await db.commit()
-    return ok({"text": "例行事务现在是：\n" + _routine_line(row, me.timezone)})
+    await tell_rule(questions, claims, routine_personal.card(row))
+    return ok({"text": "自动化现在是：\n" + _routine_line(row, me.timezone)})
 
 
 class NotifyMeIn(BaseModel):

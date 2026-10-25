@@ -64,10 +64,11 @@ interface StoredParts {
   proposals?: AssistantProposal[]
   /** 问题带的文件名。 */
   files?: string[]
-  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条例行事务。 */
+  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条自动化、发生了什么。 */
   shown?: AssistantShown
   /** 芝士交给人的文件。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 问题是在哪一页问的（那一页的名字）。 */
   page?: string
   /** 问题带着的、人在页面上选中的那段字。 */
@@ -91,10 +92,21 @@ export interface AssistantHanded {
   bytes: number
 }
 
-/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行，或这段对话里等的哪件事到了。 */
+/** 芝士建或改的一条自动化（`cheese_routine`），回答里的那张卡片：什么时候、做什么。
+ *  它现在怎样（等待中、已开始……）按 `id` 另读。 */
+export interface AssistantRule {
+  id: string
+  when: string
+  note: string
+}
+
+/** 平台说的那一句在面板上怎么写：哪条自动化开始运行，或这段对话里等的事到了——任务的
+ *  审阅（`task`、`event`）时说是哪件事。 */
 export interface AssistantShown {
   routine?: string
   wait?: string
+  task?: string
+  event?: string
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -170,6 +182,7 @@ export interface AssistantMessage {
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写：面板说一句，不留一段空白。 */
   silent?: boolean
   /** 这一轮派出的分身。 */
@@ -255,6 +268,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const proposals = ref<AssistantProposal[]>([])
   /** 这一轮交出来的文件。 */
   const handed = ref<AssistantHanded[]>([])
+  const rules = ref<AssistantRule[]>([])
   /** 这一轮派出的分身，做到哪了。 */
   const subagents = ref<AssistantSubagent[]>([])
   /** 在等会话机空出来，还没开始答。 */
@@ -518,6 +532,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     | 'files'
     | 'shown'
     | 'handed'
+    | 'rules'
     | 'silent'
     | 'subagents'
     | 'askedOn'
@@ -546,6 +561,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       published: parts.published ?? [],
       proposals: parts.proposals ?? [],
       handed: parts.handed ?? [],
+      rules: parts.rules ?? [],
     }
   }
 
@@ -638,6 +654,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
       subagents.value = payload.branches as AssistantSubagent[]
     } else if (event === 'handed') {
       handed.value = [...handed.value, payload as unknown as AssistantHanded]
+    } else if (event === 'rule') {
+      const rule = payload as unknown as AssistantRule
+      rules.value = [...rules.value.filter((r) => r.id !== rule.id), rule]
     } else if (event === 'proposal') {
       proposals.value = [...proposals.value, payload as unknown as AssistantProposal]
     } else if (event === 'published') {
@@ -664,6 +683,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published.value = []
     proposals.value = []
     handed.value = []
+    rules.value = []
     subagents.value = []
     let answer = ''
     let failed = false
@@ -714,7 +734,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         edits.value.length > 0 ||
         published.value.length > 0 ||
         proposals.value.length > 0 ||
-        handed.value.length > 0
+        handed.value.length > 0 ||
+        rules.value.length > 0
       if (current.value === conversation && ((answer && !failed && done) || stopped || did))
         messages.value = [
           ...messages.value,
@@ -728,6 +749,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             published: published.value,
             proposals: proposals.value,
             handed: handed.value,
+            rules: rules.value,
             ...(subagents.value.length ? { subagents: subagents.value } : {}),
             ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
@@ -741,6 +763,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         published.value = []
         proposals.value = []
         handed.value = []
+        rules.value = []
         subagents.value = []
       }
     }
@@ -852,6 +875,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published,
     proposals,
     handed,
+    rules,
     subagents,
     queued,
     notice,

@@ -7,6 +7,10 @@ transaction it happens in, one row in `happenings` each, and read once by the
 sweep it wakes. Nothing reads the cursor any more; the column is dropped in a
 later release, once no deployed backend maps it.
 
+A run says what started it as its conversation shows it
+(`assistant_runs.shown`): a rule waiting once runs in the conversation it
+was asked for in, and the line there names what happened.
+
 Revision ID: e5a17c93d2b4
 Revises: a7d3e5c91f20
 """
@@ -26,7 +30,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with_lock_retries('"user"')
+    with_lock_retries('"user", assistant_runs')
     op.create_table(
         "happenings",
         sa.Column("id", sa.BigInteger(), sa.Identity(), primary_key=True),
@@ -50,7 +54,11 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_happenings_user_id", "happenings", ["user_id"])
+    op.add_column(
+        "assistant_runs", sa.Column("shown", postgresql.JSONB(), nullable=True)
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("assistant_runs", "shown")
     op.drop_table("happenings")

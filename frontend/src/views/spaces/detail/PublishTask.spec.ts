@@ -58,7 +58,7 @@ vi.mock('@/api', async (original) => ({
   listAgentTypes: (...a: unknown[]) => listAgentTypes(...a),
   request: (...a: unknown[]) => apiRequest(...a),
   AgentChangesApi: { undo: (...a: unknown[]) => undoChange(...a), redo: vi.fn() },
-  // 面板上「正在等的事」：这里没有。
+  // 回答里自动化卡片的状态：这里没有自动化。
   getAssistantRoutines: async () => ({ routines: [], limit: 20 }),
 }))
 

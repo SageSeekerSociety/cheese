@@ -358,6 +358,9 @@ class AssistantRun(UuidPk, Base):
     occurrence: Mapped[str] = mapped_column(String(200), nullable=False)
     #: What started it, as the run is told it.
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: What started it, as the conversation shows it (``{"task", "event"}``
+    #: for a task's review), when that is more than the rule's name.
+    shown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "assistant_conversations.id",

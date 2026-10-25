@@ -11,6 +11,7 @@ import { ref } from 'vue'
 
 import { MOST_CITED, useCitePicker } from '@/composables/useCitePicker'
 
+import CatalogAgentRules from './CatalogAgentRules.vue'
 import { PANEL_DONE, PANEL_LIVE, PANEL_SPLIT } from './catalogSpaceTasksFixtures'
 import {
   ASSISTANT_MEMORY,
@@ -50,6 +51,33 @@ function citeDemo(text: string) {
     scrollActiveIntoView: () => {},
   })
 }
+
+/** 自动化卡片的例子：让芝士等「接入搜索」提交审阅后先过一遍改动。 */
+const RULE_CARD = { id: 'w1', when: '任务「接入搜索」提交审阅时', note: '读改动，对照任务要求列出问题' }
+const RULE_ASKED = {
+  role: 'user',
+  text: '等「接入搜索」提交审阅了，帮我先过一遍改动，看看有没有明显的问题',
+  at: '2026-10-25T09:00:00Z',
+}
+const RULE_MADE = {
+  role: 'assistant',
+  text: '好的。任务「接入搜索」提交审阅时，我会在这段对话里读改动、对照任务要求列出问题，再通知你。',
+  at: '2026-10-25T09:00:08Z',
+  rules: [RULE_CARD],
+}
+const RULE_FIRED = [
+  {
+    role: 'platform',
+    text: '',
+    at: '2026-10-25T14:32:00Z',
+    shown: { wait: '审阅接入搜索的提交', task: '接入搜索', event: 'filed' },
+  },
+  {
+    role: 'assistant',
+    text: '看完了，有两处要注意：\n\n1. 任务要求失败时重试一次，改动里没有重试，超时直接报错。\n2. 新加的搜索接口没有测试。\n\n其余和要求一致。要我把这两点写成审阅意见吗？',
+    at: '2026-10-25T14:33:10Z',
+  },
+]
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -509,30 +537,70 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
         },
         expect: '频道「后端」',
       },
+    ],
+  },
+  {
+    id: 'agent-rules',
+    title: 'AssistantRuleCard',
+    get about() {
+      return t('catalog.agentRules.about')
+    },
+    file: 'src/components/assistant/AssistantRuleCard.vue',
+    component: CatalogAgentRules,
+    needs: UI_T_R,
+    args: { busy: false, streaming: null, tool: null, notice: null, context: '' },
+    states: [
       {
         get name() {
-          return t('catalog.assistantPanel.s16.name')
+          return t('catalog.agentRules.s1.name')
         },
         get note() {
-          return t('catalog.assistantPanel.s16.note')
+          return t('catalog.agentRules.s1.note')
         },
-        // 让芝士等任务提交审阅后再看：它建了一条只做一次的规则，列在输入框上方。
+        props: { states: { w1: { state: 'waiting' } }, messages: [RULE_ASKED, RULE_MADE] },
+        expect: '任务「接入搜索」提交审阅时',
+      },
+      {
+        get name() {
+          return t('catalog.agentRules.s2.name')
+        },
+        get note() {
+          return t('catalog.agentRules.s2.note')
+        },
+        props: { states: { w1: { state: 'started' } }, messages: [RULE_ASKED, RULE_MADE, ...RULE_FIRED] },
+        expect: '提交审阅了',
+      },
+      {
+        get name() {
+          return t('catalog.agentRules.s3.name')
+        },
+        get note() {
+          return t('catalog.agentRules.s3.note')
+        },
         props: {
+          states: {
+            a: { state: 'waiting' },
+            b: { state: 'started' },
+            c: { state: 'cancelled' },
+            d: { state: 'gaveUp' },
+            e: { state: 'on' },
+            f: { state: 'paused', why: 'credits' },
+          },
           messages: [
             {
-              role: 'user',
-              text: '等「接入搜索」提交审阅了，帮我先过一遍改动',
-              at: '2026-10-25T09:00:00Z',
-            },
-            {
               role: 'assistant',
-              text: '好的。任务「接入搜索」提交审阅时，我会在这里读改动、对照任务要求列出问题，再通知你。',
+              text: '',
               at: '2026-10-25T09:00:08Z',
+              rules: ['a', 'b', 'c', 'd']
+                .map((id) => ({ ...RULE_CARD, id }))
+                .concat(
+                  { id: 'e', when: '每次你提的任务被退回时', note: '把审阅意见整理成待办' },
+                  { id: 'f', when: '每天 08:00', note: '列出我的待办' }
+                ),
             },
           ],
-          waits: [{ id: 'w1', title: '审阅接入搜索的提交', when: '任务「接入搜索」提交审阅时' }],
         },
-        expect: '审阅接入搜索的提交',
+        expect: '已停止等待',
       },
     ],
   },
@@ -592,7 +660,6 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
       rules: ASSISTANT_RULES,
       memory: ASSISTANT_MEMORY,
       routines: ASSISTANT_ROUTINES,
-      routineLimit: 20,
       recent: ASSISTANT_RECENT,
       loading: false,
       failed: false,
@@ -609,7 +676,7 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
           return t('catalog.settingsAssistantView.s1.note')
         },
         props: {},
-        expect: '例行事务',
+        expect: '自动化',
       },
       {
         get name() {
@@ -623,7 +690,7 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
           memory: { enabled: false, items: [] },
           rules: { ...ASSISTANT_RULES, askItems: [], allowItems: [] },
         },
-        expect: '暂无例行事务',
+        expect: '暂无自动化',
       },
     ],
   },
