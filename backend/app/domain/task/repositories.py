@@ -2,13 +2,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select
+from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
-from app.domain.task.inputs import APPROVE_APPROVED
+from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -596,17 +596,9 @@ class TaskMembershipRepository:
         task_id: int,
         user_id: int,
     ) -> TaskMembership | None:
-        """Return membership row for a USER-type participant, if any."""
-        stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
-            and_(
-                TaskMembership.task_id == task_id,
-                TaskMembership.member_id == user_id,
-                TaskMembership.is_team.is_(False),
-                TaskMembership.deleted_at.is_(None),
-            )
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        """The person's own (not team) claim of this task, as
+        ``get_by_task_and_member`` picks it."""
+        return await self.get_by_task_and_member(task_id, user_id, is_team=False)
 
     async def list_team_memberships_for_user(
         self,
@@ -695,16 +687,46 @@ class TaskMembershipRepository:
         self,
         task_id: int,
         member_id: int,
+        is_team: bool | None = None,
     ) -> TaskMembership | None:
-        stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
-            and_(
-                TaskMembership.task_id == task_id,
-                TaskMembership.member_id == member_id,
-                TaskMembership.deleted_at.is_(None),
+        """The member's claim of this task: the approved one, else the newest
+        that was not rejected, else the newest rejected one. There can be
+        several live rows: a rejected application stays beside the one that
+        reapplied, and nothing in the database yet stops a duplicate claim
+        (two requests before the claim lock existed). This picks one and never
+        raises for that. ``is_team`` keeps a person and a team with the same
+        number apart (when the caller knows which it means)."""
+        conditions = [
+            TaskMembership.task_id == task_id,
+            TaskMembership.member_id == member_id,
+            TaskMembership.deleted_at.is_(None),
+        ]
+        if is_team is not None:
+            conditions.append(TaskMembership.is_team.is_(is_team))
+        stmt: Select[tuple[TaskMembership]] = (
+            select(TaskMembership)
+            .where(and_(*conditions))
+            .order_by(
+                (TaskMembership.approved == APPROVE_APPROVED).desc(),
+                (TaskMembership.approved == APPROVE_DISAPPROVED).asc(),
+                TaskMembership.created_at.desc(),
+                TaskMembership.id.desc(),
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(stmt)
+
+    async def try_lock_claim(self, task_id: int, member_id: int, is_team: bool) -> bool:
+        """Take this member's claim of this task until commit, unless another
+        transaction holds it now; never waits. The holder may be opening the
+        claim's project and making its repository on the forge; a second
+        request stuck behind it would time out, so it is told instead."""
+        return bool(
+            await self._session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"task-membership:{task_id}:{member_id}:{is_team}"},
             )
         )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def save(self, membership: TaskMembership) -> TaskMembership:
         self._session.add(membership)

@@ -765,9 +765,8 @@ def test_a_record_nested_deep_is_kept_and_read_back(client, tmp_path):
 
 @pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])
 def test_the_lines_read_out_is_what_a_transcript_holds(client, tmp_path, harness):
-    """`lines=true` is the shape `cheese transcript` writes to a file: one row
-    per record, the same keys whichever harness wrote it, and the subagent's
-    thread named."""
+    """`lines=true` gives one row per record, the same keys whichever harness
+    wrote it, and the subagent's thread named."""
     session = _Session(client, tmp_path, harness, _room_for(client))
     work = str(uuid.uuid4())
     session.write(session.records(work))

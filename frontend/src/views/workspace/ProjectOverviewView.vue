@@ -41,6 +41,15 @@ export interface ChallengeStages {
   statuses: TaskStageStatus[]
 }
 
+export interface ProjectStarter {
+  /** 题目第几版的起始代码。 */
+  revision: number
+  /** 还在放进仓库、已经放好、没放成。 */
+  state: 'pending' | 'done' | 'failed'
+  /** 没放成的原因，已经按读的人的语言写好；别的时候是空的。 */
+  reason: string
+}
+
 export interface ChallengeDeadline {
   /** 截止那一刻（毫秒）。 */
   at: number
@@ -58,6 +67,8 @@ const props = defineProps<{
   challengeDeadline?: ChallengeDeadline | null
   /** 题目分了阶段时，用阶段时间轴代替那一行截止时间；不分阶段是 null。 */
   challengeStages?: ChallengeStages | null
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有；没有起始代码、或读不到，是 null。 */
+  starter?: ProjectStarter | null
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -109,6 +120,15 @@ const deadlineText = computed(() => {
   if (!d) return ''
   const when = dayjs(d.at).format(t('tasks.roster.dateTimeFormat'))
   return d.mine ? t('work.overview.myDeadline', { when }) : t('work.overview.taskDeadline', { when })
+})
+
+// ---- 起始代码：在放、放好了、没放成，各一句 ----
+const starterText = computed(() => {
+  const s = props.starter
+  if (!s) return ''
+  if (s.state === 'pending') return t('work.overview.starterPending', { n: s.revision })
+  if (s.state === 'failed') return t('work.overview.starterFailed', { n: s.revision, reason: s.reason })
+  return t('work.overview.starterFrom', { n: s.revision })
 })
 
 // ---- 现状：写成过、或者正在写，才有这一块 ----
@@ -229,6 +249,9 @@ function stateOf(task: RoomTask): TaskState {
           />
           <p v-else-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">
             {{ deadlineText }}
+          </p>
+          <p v-if="starterText" class="ov-deadline t-body" data-testid="overview-starter">
+            {{ starterText }}
           </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>

@@ -79,6 +79,15 @@ async def create_task_from(payload: CreateTaskRequest, *, db, user_id: int) -> d
             attachment_ids=payload.attachment_ids,
             uploads=_attachment_service(db),
         )
+    if payload.starter_attachment_id is not None:
+        # 起始代码同理，也是第 1 版的一部分；解不开的这里就拒绝，整道题不建。
+        await package.set_starter_upload(
+            db,
+            task,
+            by=user_id,
+            attachment_id=payload.starter_attachment_id,
+            uploads=_attachment_service(db),
+        )
 
     # 写到这里就完了 —— 题目、话题关系行、提交表单、材料都已落库，下面全是读。
     # 先提交再构造响应：``get_db`` 的提交在 ``yield`` 的退出码里，而那段跑在响应
@@ -318,7 +327,7 @@ async def update_task(
     # claim derives to; re-derive them in this same transaction.
     if package_before[package.STAGES] != package_after[package.STAGES]:
         await refresh_task_claims(db, task.id)
-    changes = {
+    changes: dict = {
         part: True
         for part, value in package_after.items()
         if package_before[part] != value
@@ -333,6 +342,17 @@ async def update_task(
             uploads=_attachment_service(db),
         )
         changes |= package.files_changed(added=added)
+    if payload.starter_attachment_id is not None:
+        changes[package.STARTER_CHANGE] = await package.set_starter_upload(
+            db,
+            task,
+            by=user_id,
+            attachment_id=payload.starter_attachment_id,
+            uploads=_attachment_service(db),
+        )
+    elif payload.remove_starter and await package.starter_file(db, task.id):
+        await package.remove_starter(db, task)
+        changes[package.STARTER_CHANGE] = package.REMOVED
     await package.record(db, task, by=user_id, changes=changes)
     # What a taker is told about is what asks something new of them: the form,
     # the rubric's lines, a stage added or removed, a stage's due date. A

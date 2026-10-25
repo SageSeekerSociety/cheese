@@ -194,6 +194,8 @@ COPY --chown=cheese:python scripts/feedback_status.py ./scripts/
 COPY --chown=cheese:python scripts/retained_files.py ./scripts/
 # An operator mails the 「知是正在内测」 letter with this (dry run unless --send).
 COPY --chown=cheese:python scripts/send_beta_notice.py ./scripts/
+# The merge job (deploy/merge-deployment.sh) runs this beside the backend.
+COPY --chown=cheese:python scripts/merge_deployment.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

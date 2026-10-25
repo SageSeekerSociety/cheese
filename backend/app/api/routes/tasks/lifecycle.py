@@ -664,6 +664,7 @@ async def delete_task_participant_by_member(
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,
         member_id=member,
+        is_team=task.submitter_type == 1,
     )
     if membership is None:
         raise NotFoundError("Participant not found")
@@ -704,6 +705,7 @@ async def patch_task_membership_by_member(
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,
         member_id=member,
+        is_team=task.submitter_type == 1,
     )
     if membership is None:
         raise NotFoundError("Participant not found")
