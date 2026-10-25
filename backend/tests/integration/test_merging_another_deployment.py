@@ -132,6 +132,11 @@ async def deployments(db_factory, monkeypatch, tmp_path):
         await _user(conn, 2, "bob", "bob@example.com", FORK)
         await _user(conn, 6, "frank", "frank@example.com", FORK)
         await _task(conn, 9, 1, FORK)
+        await conn.execute(
+            "INSERT INTO user_profile (id, user_id, nickname, intro, avatar_id,"
+            " created_at, updated_at) VALUES (1, 1, 'alice', '', 0, $1, $1)",
+            FORK,
+        )
     # Since then, here: carol registered (taking id 3), bob renamed himself
     # later than anything the source did to him, frank changed his password.
     await _user(tgt, 3, "carol", "carol@example.com", AFTER)
@@ -144,6 +149,12 @@ async def deployments(db_factory, monkeypatch, tmp_path):
         AFTER,
     )
     await _material(tgt, 7, 1, AFTER)
+    # A team here was deleted; its handle stays its own.
+    await tgt.execute(
+        "INSERT INTO team (id, name, intro, description, avatar_id, created_at,"
+        " updated_at, deleted_at, handle) VALUES (901, 'o', '', '', 0, $1, $1, $1, 'crew')",
+        AFTER,
+    )
     await tgt.execute(
         'UPDATE "user" SET username = $1, updated_at = $2::timestamptz WHERE id = 2',
         "bobby",
@@ -179,7 +190,19 @@ async def deployments(db_factory, monkeypatch, tmp_path):
         ],
         AFTER,
     )
+    # alice picked a new avatar on the source.
+    await src.execute(
+        "INSERT INTO avatar (id, url, name, created_at, avatar_type, usage_count)"
+        " VALUES (5, '', 'me.png', $1, 'upload', 1)",
+        AFTER,
+    )
+    await src.execute("UPDATE user_profile SET avatar_id = 5 WHERE id = 1")
     await _material(src, 7, 3, DAVE)
+    await src.execute(
+        "INSERT INTO team (id, name, intro, description, avatar_id, created_at,"
+        " updated_at, handle) VALUES (950, 'c', '', '', 0, $1, $1, 'crew')",
+        DAVE,
+    )
     await _task(src, 10, 3, AFTER)
     # The task hands its AI teammate the material dave uploaded.
     await src.execute(
@@ -207,7 +230,10 @@ async def deployments(db_factory, monkeypatch, tmp_path):
         await tgt.close()
 
 
-MANIFEST = {"changed": {"user": [1, 2]}, "skip_account_email_domains": [AGENTS]}
+MANIFEST = {
+    "changed": {"user": [1, 2], "user_profile": [1]},
+    "skip_account_email_domains": [AGENTS],
+}
 
 
 async def _import(source_uploads, *, batch="b1", dry=False):
@@ -308,6 +334,16 @@ async def test_the_sources_people_and_work_arrive_under_this_deployments_ids(
     assert material != 7
     override = json.loads(task["protocol_override"])
     assert override["teaching"]["material_ids"] == [material]
+    # dave's team arrives under a handle nobody here has ever had.
+    assert await tgt.fetchval("SELECT handle FROM team WHERE id = 950") == "team-950"
+    # alice's profile shows the avatar she picked there.
+    assert (
+        await tgt.fetchval(
+            "SELECT a.name FROM user_profile p JOIN avatar a ON a.id = p.avatar_id"
+            " WHERE p.user_id = 1"
+        )
+        == "me.png"
+    )
     # The new task has its first version, as a task published here has.
     assert (
         await tgt.fetchval(

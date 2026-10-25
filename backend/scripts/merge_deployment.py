@@ -1067,9 +1067,11 @@ async def run_import(
                 h
                 for (h,) in await session.execute(
                     text(
-                        'SELECT lower(username) FROM "user" WHERE deleted_at IS NULL'
-                        " UNION SELECT lower(handle) FROM team"
-                        " WHERE handle IS NOT NULL AND deleted_at IS NULL"
+                        # Closed accounts and deleted teams keep their names:
+                        # ``is_username_taken`` and ``uq_team_handle_lower``
+                        # count every row.
+                        'SELECT lower(username) FROM "user"'
+                        " UNION SELECT lower(handle) FROM team WHERE handle IS NOT NULL"
                     )
                 )
             }
@@ -1213,7 +1215,10 @@ def _final(plan: Plan) -> dict[str, Any]:
 
 
 async def _referrers(
-    session: AsyncSession, tables: dict[str, Table], inserted: dict[str, set[str]]
+    session: AsyncSession,
+    tables: dict[str, Table],
+    inserted: dict[str, set[str]],
+    journaled: dict[str, set[str]],
 ) -> list[str]:
     """Rows that name a row the batch inserted and are not the batch's own:
     through a foreign key, or through a reference column of a merged kind."""
@@ -1263,7 +1268,7 @@ async def _referrers(
             ),
             {"ids": "{" + ",".join(str(json.loads(k)[pk]) for k in keys) + "}"},
         )
-        mine = inserted.get(child, set())
+        mine = journaled.get(child, set())
         for (key,) in rows:
             if json.dumps(key, sort_keys=True) not in mine:
                 found.append(f"{child} {key} ({column} -> {parent})")
@@ -1312,10 +1317,15 @@ async def run_revert(*, batch: str, dry: bool) -> dict[str, Any]:
             if now != r.written:
                 drifted.append(f"{r.table_name} {r.target_key}")
         inserted: dict[str, set[str]] = defaultdict(set)
+        journaled: dict[str, set[str]] = defaultdict(set)
         for r in rows:
+            key = json.dumps(r.target_key, sort_keys=True)
+            journaled[r.table_name].add(key)
             if r.previous is None:
-                inserted[r.table_name].add(json.dumps(r.target_key, sort_keys=True))
-        named = await _referrers(session, tables, inserted)
+                inserted[r.table_name].add(key)
+        # A row the batch itself updated to point at one it inserted is put back
+        # before that one goes (the revert walks the journal backwards).
+        named = await _referrers(session, tables, inserted, journaled)
         if named:
             raise Refused(
                 "rows made here since the import name rows it brought, so taking the"
