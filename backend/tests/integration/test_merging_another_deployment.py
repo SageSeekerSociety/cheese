@@ -36,7 +36,7 @@ def _dsn(name: str) -> str:
 async def _empty(conn: asyncpg.Connection) -> None:
     tables = await conn.fetch(
         "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        " AND tablename NOT IN ('alembic_version', 'spatial_ref_sys')"
+        " AND tablename NOT IN ('alembic_version', 'spatial_ref_sys', 'plans')"
     )
     await conn.execute(
         "TRUNCATE "
