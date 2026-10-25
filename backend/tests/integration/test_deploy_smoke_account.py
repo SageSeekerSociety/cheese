@@ -1,16 +1,17 @@
-"""The deploy's smoke account is its own, and is never anyone else's.
+"""The deploy's smoke account is its own, cannot be signed into, and never
+touches anyone else's account.
 
-Before a release takes traffic, deploy/release-smoke.py signs in as an account
-the deploy provisions on every release (`provision`, run in the release's image
-against the deployment's database). These pin what that provisioning may do:
+Before a release takes traffic, deploy/release-smoke.py uses it on the new
+slots (`provision`, run in the release's image against the deployment's
+database, opens its session). These pin what provisioning may do:
 
-- it makes the account the first time, and that account signs in with the
-  password from the box's secret, at an address the platform never mails;
-- when the secret's password changed, the account follows it;
-- an account by that handle that the deploy did not make is refused and left
-  exactly as it was: never signed into, never given the deploy's password;
-- a handle a closed account still holds is refused with a message that says
-  what to do, not a traceback.
+- it makes the account the first time and finds the same one afterwards, and
+  the session it opens is that account's;
+- no password signs into it, so nobody can hold releases back by sending it
+  wrong ones;
+- a person's account is never the one it uses, even one holding the handle
+  `deploy-smoke` with a password of its own, and that account keeps working;
+- an account the deploy made and that was closed is replaced, not a traceback.
 """
 
 import importlib.util
@@ -20,19 +21,17 @@ from pathlib import Path
 
 import pytest
 
-from app.core.email import is_placeholder_email
+from app.common.auth import verify_access_token
 from app.domain.dashboard.user_statistics import UserStatisticsRepository
-from app.domain.user.passwords import hash_password
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 from app.domain.user.services import UserAuthService
+from app.domain.user.sessions import SessionService
 
 SCRIPT = Path(__file__).resolve().parents[3] / "deploy" / "release-smoke.py"
-HANDLE = "a3f09c1d7be24e5f8a61"
 
 
 @pytest.fixture
 def smoke(db_factory, monkeypatch):
-    monkeypatch.setenv("DEPLOY_SMOKE_USER", HANDLE)
     monkeypatch.setattr("app.db.session.AsyncSessionLocal", db_factory)
     spec = importlib.util.spec_from_file_location("release_smoke", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -41,70 +40,62 @@ def smoke(db_factory, monkeypatch):
     sys.modules.pop("release_smoke", None)
 
 
+def auth_service(db) -> UserAuthService:
+    return UserAuthService(
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+        stats_repo=UserStatisticsRepository(session=db),
+    )
+
+
 async def signs_in(db_factory, handle: str, password: str) -> bool:
     async with db_factory() as db:
-        auth = UserAuthService(
-            user_repo=UserRepository(session=db),
-            profile_repo=UserProfileRepository(session=db),
-            stats_repo=UserStatisticsRepository(session=db),
+        return (
+            await auth_service(db).authenticate(username=handle, password=password)
+            is not None
         )
-        return await auth.authenticate(username=handle, password=password) is not None
 
 
-async def test_makes_the_account_and_follows_the_secret(smoke, db_factory, capsys):
-    await smoke.provision("first-password-0123456789")
-    assert await signs_in(db_factory, HANDLE, "first-password-0123456789")
+async def test_the_session_is_the_smoke_accounts_and_no_password_opens_it(
+    smoke, db_factory
+):
+    user_id, token, refresh = await smoke.provision()
+    again, _, _ = await smoke.provision()
+    assert again == user_id
+
+    claims = verify_access_token(token)
+    assert claims.user_id == user_id
     async with db_factory() as db:
-        user = await UserRepository(session=db).get_by_username(HANDLE)
-    assert is_placeholder_email(user.email)
-
-    await smoke.provision("first-password-0123456789")
-    await smoke.provision("rotated-password-0123456789")
-    assert await signs_in(db_factory, HANDLE, "rotated-password-0123456789")
-    assert not await signs_in(db_factory, HANDLE, "first-password-0123456789")
-    lines = capsys.readouterr().out.splitlines()
-    assert lines == [
-        f"smoke provision ok account {HANDLE} created",
-        f"smoke provision ok account {HANDLE} present",
-        f"smoke provision ok account {HANDLE} password set from the secret file",
-    ]
+        user = await UserRepository(session=db).get_by_id(user_id)
+        assert await SessionService(db).started_at(user_id, claims.sid) is not None
+    for password in ("", "password", user.username, "deploy-smoke"):
+        assert not await signs_in(db_factory, user.username, password)
 
 
-async def test_an_account_it_did_not_make_is_refused_and_left_alone(smoke, db_factory):
+async def test_a_persons_account_is_never_used_or_changed(smoke, db_factory):
     async with db_factory() as db:
-        await UserAuthService(
-            user_repo=UserRepository(session=db),
-            profile_repo=UserProfileRepository(session=db),
-            stats_repo=UserStatisticsRepository(session=db),
-        ).register_with_password(
-            username=HANDLE,
+        person, _ = await auth_service(db).register_with_password(
+            username="deploy-smoke",
             nickname="someone",
             email="someone@example.com",
             password="their-own-password-1",
         )
         await db.commit()
 
-    with pytest.raises(smoke.Failed) as refused:
-        await smoke.provision("deploy-password-0123456789")
+    user_id, token, _ = await smoke.provision()
 
-    assert refused.value.check == "provision"
-    assert "deploy-smoke.secret" in refused.value.detail
-    assert await signs_in(db_factory, HANDLE, "their-own-password-1")
-    assert not await signs_in(db_factory, HANDLE, "deploy-password-0123456789")
+    assert user_id != person.id
+    assert verify_access_token(token).user_id != person.id
+    assert await signs_in(db_factory, "deploy-smoke", "their-own-password-1")
 
 
-async def test_a_handle_a_closed_account_holds_is_refused_plainly(smoke, db_factory):
+async def test_a_closed_smoke_account_is_replaced(smoke, db_factory):
+    first, _, _ = await smoke.provision()
     async with db_factory() as db:
-        user = await UserRepository(session=db).create_user(
-            username=HANDLE,
-            email="closed@example.com",
-            hashed_password=await hash_password("closed-password-1"),
-        )
+        user = await UserRepository(session=db).get_by_id(first)
         user.deleted_at = datetime.now(UTC)
         await db.commit()
 
-    with pytest.raises(smoke.Failed) as refused:
-        await smoke.provision("deploy-password-0123456789")
+    second, _, _ = await smoke.provision()
 
-    assert refused.value.check == "provision"
-    assert "deploy-smoke.secret" in refused.value.detail
+    assert second != first

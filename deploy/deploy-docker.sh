@@ -1549,55 +1549,53 @@ wait_for_frontend() {
 # ---- Functional smoke test of the new slots, before the switch ----
 # /readyz says the new backend can serve, not that anyone can sign in, open a
 # task or hear from the server. So the new slots are used the way a person
-# uses them (deploy/release-smoke.py: sign in, /users/me, the smoke account's
-# own task, the inbox WebSocket, the frontend's index and one hashed script),
-# on their loopback ports, before app-router sends them anything. A failure
-# leaves app-router, and the slots serving, exactly as they were.
+# uses them (deploy/release-smoke.py: the sign-in route, /users/me, the smoke
+# account's own task, the inbox WebSocket, sign-out, the frontend's index and
+# one hashed script), on their loopback ports, before app-router sends them
+# anything. A failure leaves app-router, and the slots serving, as they were.
 #
 # Before the switch and not after it: everything checked is served by the new
 # slots themselves, and the only thing the switch changes is the upstream line
 # app-router reads, which the routed /readyz after rollout_app already probes.
 # A check after the switch could only fail into a rollback, a second switch.
 #
-# The account is the deploy's own. Its handle and password are provisioned once
-# in ~/ops/deploy-smoke.secret, like the collab secret, and the account is made
-# or set to that password in this release's image on every release. The handle
-# is random per box: sign-in failures are counted per handle, so a handle anyone
-# could guess would let anyone hold every release back (deploy/release-smoke.py).
-# Only boxes with app-router slots get here; the others (prod, etrip) never
-# create either.
-SMOKE_SECRET="$HOME/ops/deploy-smoke.secret"
+# The account is the deploy's own and has no password: `provision` finds or
+# makes it in this release's image and opens a session for it, which reaches
+# `check` through the environment and never the log. A password sign-in would
+# let anyone who sends that handle wrong passwords hold every release back
+# (deploy/release-smoke.py says why). Only boxes with app-router slots get
+# here; the others (prod, etrip) never create the account.
+#
 # A rollback returns to the release that served before this one, and is not
 # held back by a smoke test of it.
 SMOKE_RELEASE=true
 # $1 the new backend's port, $2 the new frontend's ('' when it is not rolled).
 smoke_release() {
-  local backend_port="$1" frontend_port="$2" user password image line rc=0
+  local backend_port="$1" frontend_port="$2" image out session line rc=0
+  local DEPLOY_SMOKE_USER_ID="" DEPLOY_SMOKE_TOKEN="" DEPLOY_SMOKE_REFRESH=""
   if [ "$SMOKE_RELEASE" != true ]; then
     log "smoke: not run for a rollback; that release served before this one"
     return 0
   fi
-  user="$(sed -n 's/^DEPLOY_SMOKE_USER=//p' "$SMOKE_SECRET" 2>/dev/null || true)"
-  password="$(sed -n 's/^DEPLOY_SMOKE_PASSWORD=//p' "$SMOKE_SECRET" 2>/dev/null || true)"
-  if [ -z "$user" ] || [ -z "$password" ]; then
-    mkdir -p "$(dirname "$SMOKE_SECRET")"
-    user="$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    password="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    ( umask 077; printf 'DEPLOY_SMOKE_USER=%s\nDEPLOY_SMOKE_PASSWORD=%s\n' "$user" "$password" > "$SMOKE_SECRET" )
-    log "smoke: provisioned the smoke account's handle and password in $SMOKE_SECRET"
-  fi
   image="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$IMAGE_TAG}"
   log "smoke: checking the new slots before the switch (backend :$backend_port${frontend_port:+, frontend :$frontend_port})"
-  # The values travel in the environment, never on a command line.
-  {
-    DEPLOY_SMOKE_USER="$user" DEPLOY_SMOKE_PASSWORD="$password" dc run --rm --no-deps -T \
-      -e DEPLOY_SMOKE_USER -e DEPLOY_SMOKE_PASSWORD \
-      backend python - provision < "$HERE/release-smoke.py" \
-    && DEPLOY_SMOKE_USER="$user" DEPLOY_SMOKE_PASSWORD="$password" docker run --rm -i --network host \
-      -e DEPLOY_SMOKE_USER -e DEPLOY_SMOKE_PASSWORD "$image" python - check \
-      --backend "http://127.0.0.1:$backend_port" \
-      ${frontend_port:+--frontend "http://127.0.0.1:$frontend_port"} < "$HERE/release-smoke.py"
-  } 2>&1 | while IFS= read -r line; do log "  $line"; done || rc=$?
+  out="$(dc run --rm --no-deps -T backend python - provision < "$HERE/release-smoke.py" 2>&1)" || rc=$?
+  # The session line carries its tokens: it is kept out of the log.
+  printf '%s\n' "$out" | { grep -v '^smoke-session ' || true; } | while IFS= read -r line; do log "  $line"; done
+  [ "$rc" = 0 ] || return "$rc"
+  session="$(printf '%s\n' "$out" | sed -n 's/^smoke-session //p' | tail -n 1)"
+  read -r DEPLOY_SMOKE_USER_ID DEPLOY_SMOKE_TOKEN DEPLOY_SMOKE_REFRESH <<< "$session" || true
+  if [ -z "${DEPLOY_SMOKE_REFRESH:-}" ]; then
+    log "  smoke provision FAILED it opened no session"
+    return 1
+  fi
+  # The tokens travel in the environment, never on a command line.
+  DEPLOY_SMOKE_USER_ID="$DEPLOY_SMOKE_USER_ID" DEPLOY_SMOKE_TOKEN="$DEPLOY_SMOKE_TOKEN" \
+    DEPLOY_SMOKE_REFRESH="$DEPLOY_SMOKE_REFRESH" docker run --rm -i --network host \
+    -e DEPLOY_SMOKE_USER_ID -e DEPLOY_SMOKE_TOKEN -e DEPLOY_SMOKE_REFRESH "$image" python - check \
+    --backend "http://127.0.0.1:$backend_port" \
+    ${frontend_port:+--frontend "http://127.0.0.1:$frontend_port"} < "$HERE/release-smoke.py" 2>&1 \
+    | while IFS= read -r line; do log "  $line"; done || rc=$?
   return "$rc"
 }
 
