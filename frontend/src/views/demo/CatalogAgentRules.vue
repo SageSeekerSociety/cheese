@@ -9,7 +9,14 @@ import { provide } from 'vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { agentRulesKey } from '@/lib/agentRules'
 
-const props = defineProps<{ states: Record<string, AgentRuleNow>; messages: PanelMessage[] }>()
+const props = defineProps<{
+  states: Record<string, AgentRuleNow>
+  messages: PanelMessage[]
+  streaming: string | null
+  tool: string | null
+  notice: string | null
+  busy: boolean
+}>()
 
 provide(agentRulesKey, {
   now: (id: string) => props.states[id] ?? null,
@@ -18,5 +25,12 @@ provide(agentRulesKey, {
 </script>
 
 <template>
-  <AssistantPanel v-bind="$attrs" :messages="messages" />
+  <AssistantPanel
+    v-bind="$attrs"
+    :messages="messages"
+    :streaming="streaming"
+    :tool="tool"
+    :notice="notice"
+    :busy="busy"
+  />
 </template>
