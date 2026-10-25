@@ -200,7 +200,7 @@ async def list_document_revisions(
         clean,
         task,
         source,
-        with_task=await may_read_path(db, topic.project_id, actor, clean),
+        with_task=await may_read_path(db, topic.project_id, clean),
     )
     try:
         found = revisions_in(raw, clean)

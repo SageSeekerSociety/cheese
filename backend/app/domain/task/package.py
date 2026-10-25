@@ -33,6 +33,8 @@ from app.domain.library.shelf import Shelf
 from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project import starter as starter_archive
 from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
+from app.domain.task.claims import claim_of, project_claim
+from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
     TaskPackageRevision,
@@ -40,7 +42,6 @@ from app.domain.task.models import (
     TaskStage,
     TaskSubmissionSchemaEntry,
 )
-from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.user.models import User
 
 #: 题目资料库里每一版生成的那份题目说明。它不是出题人传的材料：材料清单里不列它，
@@ -267,8 +268,11 @@ async def record(
 #
 # - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`may_teach_task`）。
 # - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要申请。
-# - 谁能下载：出题人 / 板管理员 / 参与者（申请通过的人）。等批的、被拒的、退出的
-#   都不能：材料是给开始做这道题的人的。
+# - 谁能下载：出题人 / 板管理员 / 参与者——名下有一份还在、已经通过的申请（自己的，
+#   或所在团队的）。等批的、被拒的、退出的、不再有效的都不能：材料是给开始做这道题
+#   的人的。
+# - 从题目来的项目里，`题目/` 跟着这个项目来自的那一份申请走：它还在、已经通过，项目
+#   里的人和 agent 都看得到；否则谁都看不到。
 
 
 async def refuse_unless_teacher(
@@ -281,40 +285,22 @@ async def refuse_unless_teacher(
 async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
     if await may_teach_task(session, task=task, user_id=user_id):
         return True
-    return await TaskVisibilityService(session=session).is_approved_participant(
-        task_id=task.id, user_id=user_id
-    )
+    claim = await claim_of(session, task=task, user_id=user_id)
+    return claim is not None and claim.approved == APPROVE_APPROVED
 
 
-async def _project_task(session: AsyncSession, project_id) -> Task | None:
+async def task_folder_shown(session: AsyncSession, project_id) -> bool:
+    """这个项目的资料库里有没有 `题目/`：项目来自的那一份申请（个人的或一个团队的，
+    `claims.project_claim`）还在、已经通过。项目里每个人、每个 agent 看到的都一样——
+    看的是项目的那一份申请，不是读的人自己名下别的申请。"""
     project = await session.get(Project, project_id)
     if project is None or project.external_task_id is None:
-        return None
+        return False
     task = await session.get(Task, project.external_task_id)
     if task is None or task.deleted_at is not None:
-        return None
-    return task
-
-
-async def mount_for(session: AsyncSession, project_id, user_id: int | None) -> bool:
-    """这个人在这个项目的资料库里看不看得到 `题目/`：按题目自己的下载判据，不按项目
-    的成员名单（同一个团队里没领题的人、被出题人撤掉的人，项目都还进得去）。"""
-    if user_id is None:
         return False
-    task = await _project_task(session, project_id)
-    return task is not None and await may_download(session, task, user_id)
-
-
-async def mount_for_agents(session: AsyncSession, project_id) -> bool:
-    """项目里的 agent 看不看得到 `题目/`：它们替这个项目干活，项目是领了这道题的那个人
-    开的，所以按项目所有者的判据——他还拿得到材料，项目里的 agent 就读得到。"""
-    project = await session.get(Project, project_id)
-    if project is None or not project.owner_handle:
-        return False
-    owner = await session.scalar(
-        select(User.id).where(User.username == project.owner_handle)
-    )
-    return await mount_for(session, project_id, owner)
+    claim = await project_claim(session, task=task, team_id=project.team_id)
+    return claim is not None and claim.approved == APPROVE_APPROVED
 
 
 async def refuse_unless_downloader(
@@ -592,7 +578,7 @@ async def section_for_project(
     if task is None or task.deleted_at is not None:
         return None
     revision = await current(session, task.id)
-    if revision is None or not await mount_for_agents(session, project.id):
+    if revision is None or not await task_folder_shown(session, project.id):
         return None
     lines = [
         "## 题目",

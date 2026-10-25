@@ -122,7 +122,7 @@ async def library_file_raw(
     await resolver.authorize_project(actor, project_id=project_id)
     return await _raw(
         db,
-        await shelf_for(db, project_id, actor),
+        await shelf_for(db, project_id),
         _library_path(path),
         version,
         preview_pdf,
@@ -167,7 +167,7 @@ async def _raw(
 
 def _shelf(project_id: uuid.UUID) -> Shelf:
     # 写的那几条路用它：`题目/` 底下谁都写不进去（`mount.refuse_write`），
-    # 读的路一律按读的人取（`shelf_for`）。
+    # 读的路一律取 `shelf_for` 给的那一份（`题目/` 有没有，看项目的申请）。
     return Shelf.of_project(project_id, with_task=False)
 
 
@@ -186,9 +186,9 @@ async def library_file_link(
     """一份资料的下载地址，几分钟内开始取都有效：给 `cheese library get`，字节从
     存储直接到机器上，不经过这里，也不整份读进谁的内存。文件存在本服务器盘上时，
     地址是本后端自己的一条（``/files/outgoing/…``），照样按段给。`题目/` 底下的
-    那几份按读的人取（`shelf_for`），和下载那一条一样。"""
-    actor = await _reader(project_id, db, resolver)
-    shelf = await shelf_for(db, project_id, actor)
+    那几份照 `shelf_for` 取，和下载那一条一样。"""
+    await _reader(project_id, db, resolver)
+    shelf = await shelf_for(db, project_id)
     name = _library_path(path.strip().removeprefix("library/"))
     stored = await library_records.stored_file(db, shelf, name)
     url = await library_records.download_url(db, shelf, name)
@@ -207,7 +207,7 @@ async def list_library_versions(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     versions = await library_records.versions(
-        db, await shelf_for(db, project_id, actor), _library_path(path)
+        db, await shelf_for(db, project_id), _library_path(path)
     )
     return ok({"versions": versions})
 
@@ -254,7 +254,7 @@ async def list_library(
     rooms = await readable_rooms(db, resolver, actor, project_id)
     entries, after = await library_listing.page(
         db,
-        await shelf_for(db, project_id, actor),
+        await shelf_for(db, project_id),
         rooms,
         dir=dir.strip("/"),
         flat=flat,
@@ -273,7 +273,7 @@ async def library_file(
     """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
-    shelf = await shelf_for(db, project_id, actor)
+    shelf = await shelf_for(db, project_id)
     return ok(await library_listing.one(db, shelf, rooms, _library_path(path)))
 
 
@@ -284,11 +284,9 @@ async def library_file_text(
     """一份资料读成文本，给芝士读（`cheese_library(action=read)` 读 `library/` 开头的地址）：
     文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
     （项目总览、资料库里的文档）也读得到项目给它的材料。"""
-    actor = await _reader(project_id, db, resolver)
+    await _reader(project_id, db, resolver)
     name = _library_path(path.strip().removeprefix("library/"))
-    found = await library_records.read_text(
-        db, await shelf_for(db, project_id, actor), name
-    )
+    found = await library_records.read_text(db, await shelf_for(db, project_id), name)
     return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
