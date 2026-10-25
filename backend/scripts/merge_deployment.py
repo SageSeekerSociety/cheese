@@ -28,8 +28,8 @@ What comes over, for each kind in ``KINDS`` (parents before children):
   natural key (an account by email, an OAuth link by provider id, a passkey by
   credential, a profile by its user, a membership by who and what it joins),
   the source row becomes that row and nothing is written. Otherwise it is
-  inserted, keeping its id when the id is free here and taking the next one from this deployment's sequence when it is
-  not. Every column that names a row of a kind here — a foreign key or not,
+  inserted, keeping its id when the id is free here and taking the next one
+  from this deployment's sequence when it is not. Every column that names a row of a kind here — a foreign key or not,
   polymorphic or inside JSON — is rewritten to the id that row has here.
 - An account whose email is under a domain the manifest lists is not brought,
   and neither is any row that names one.
