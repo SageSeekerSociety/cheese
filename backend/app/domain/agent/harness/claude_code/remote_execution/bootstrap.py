@@ -1052,6 +1052,7 @@ def start_sandbox(
     env,
     connect,
     release,
+    platform=None,
     **options,
 ):
     """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
@@ -1080,6 +1081,7 @@ def start_sandbox(
                 claude.parent,
             ],
             sockets=sockets,
+            platform=platform,
             env=env,
             **options,
         )
@@ -1105,6 +1107,7 @@ def start_sandbox(
                 workdir=home / CHECKOUT_DIR,
                 claude=claude,
                 sockets=sockets,
+                platform=platform,
                 fds=fds,
                 programs=[execution_root(owner) / "runtime/git"],
                 network=connect,
@@ -1515,6 +1518,11 @@ def configure_idle(payload):
                 # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
                 directory = Path(runtime["socket_directory"](state))
+                # Where the connector serves this sandbox's platform socket
+                # (`cli/internal/host/machine.go`); made here, before the
+                # sandbox, so the sandbox is shown it from the start.
+                platform = Path(runtime["platform_socket_directory"](state))
+                env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                 # The service makes this link in the /tmp it is shown, which is
                 # its own; clients outside dial the machine's.
                 public = Path(runtime["socket_path"](state))
@@ -1528,6 +1536,7 @@ def configure_idle(payload):
                     home=home,
                     claude=Path(config["claude"]),
                     sockets=directory,
+                    platform=platform,
                     limits=config["sandbox"],
                     env=env,
                     connect=platform_machine,

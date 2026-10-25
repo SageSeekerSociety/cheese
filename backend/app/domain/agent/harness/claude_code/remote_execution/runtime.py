@@ -102,6 +102,7 @@ lock = core.lock
 resolve_program = core.resolve_program
 socket_path = core.socket_path
 socket_directory = core.socket_directory
+platform_socket_directory = core.platform_socket_directory
 connect = core.connect
 claude_shell = core.claude_shell
 native_path = core.native_path

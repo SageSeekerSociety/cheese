@@ -14,15 +14,7 @@ import (
 // The authenticated server supplies the recorded executor state directory.
 // Requests use the existing device WebSocket and the resident executor socket.
 func executorExchange(ctx context.Context, state, input string, send func([]byte) error) error {
-	expanded, err := resolveScreenWorkDir(state)
-	if err != nil {
-		return err
-	}
-	resolved, err := filepath.EvalSymlinks(expanded)
-	if err != nil {
-		return err
-	}
-	resolved, err = filepath.Abs(resolved)
+	resolved, err := resolveState(state)
 	if err != nil {
 		return err
 	}
@@ -53,7 +45,24 @@ func executorExchange(ctx context.Context, state, input string, send func([]byte
 	}
 }
 
+// resolveState is the state directory the backend named, as this machine
+// holds it: expanded, its links followed, absolute.
+func resolveState(state string) (string, error) {
+	expanded, err := resolveScreenWorkDir(state)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(expanded)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(resolved)
+}
+
 func (h *Host) runExecutor(m link.Msg) {
+	if resolved, err := resolveState(m.Path); err == nil {
+		h.listenMachine(m.Path, resolved)
+	}
 	timeout := time.Duration(m.Timeout) * time.Second
 	if timeout <= 0 {
 		timeout = 660 * time.Second

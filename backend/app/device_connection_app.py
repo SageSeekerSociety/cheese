@@ -11,12 +11,14 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.api import machine_relay
 from app.api.routes.connector import router as connector_router
 from app.api.routes.execution import router as execution_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.obs import configure_logging
 from app.domain.agent.device_hub import DeviceOffline, device_hub, offline_headers
+from app.domain.agent.device_hub import machine as machine_streams
 from app.domain.agent.device_hub_rpc import STREAMED_EXEC, screen_to_json
 
 # The same logging as the business backend: plain tracebacks rendered off the
@@ -93,6 +95,11 @@ async def admit_execution_request() -> AsyncIterator[None]:
 
 
 app.include_router(execution_router, dependencies=[Depends(admit_execution_request)])
+
+# What a sandbox asks on its platform socket is answered by the business
+# backend; this process only knows which device and state it came in on.
+if settings.connector_origin_url:
+    machine_streams.serve(machine_relay.over_http(settings.connector_origin_url))
 
 
 @app.get("/healthz")
