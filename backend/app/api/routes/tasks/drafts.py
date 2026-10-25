@@ -659,8 +659,11 @@ async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
             db, row.task_id, stage_lines(drafts.published_form(row).get("stages") or [])
         )
     except BadRequestError as refused:
+        # Every refusal of a stage change is a platform sentence (``say``).
+        if not isinstance(refused.message, NoticeText):
+            raise
         return [refused.message]
-    said = []
+    said: list[NoticeText] = []
     if effect.failing:
         said.append(say("stageEffectFailing", n=effect.failing))
     if effect.reopening:
