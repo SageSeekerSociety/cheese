@@ -101,6 +101,8 @@ def _to_api(
         # 建项目时这个项目的芝士会带上的默认队友（类型 + 预设技能）；没指定 = None。
         # 题目给项目里每个队友的技能在 ``teaching.skills``，不在这一格。
         "agent": _agent_to_api(found.default_role),
+        # 资源包里的那段 prompt，建项目时加给默认队友；没有 = None。
+        "packPrompt": found.pack_prompt,
         "teaching": _teaching_to_api(
             found.teaching,
             found.teaching_source,

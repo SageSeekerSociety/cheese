@@ -176,6 +176,8 @@ export interface TaskInheritanceData {
   /** 建项目时那个芝士会带上的默认队友（类型 + 预设技能）；没指定 = null。题目给每个
    *  队友的技能在 `teaching.skills`。 */
   agent: TaskInheritanceAgent | null
+  /** 资源包里的那段 prompt：建项目时加在默认队友的人设末尾；没有 = null。 */
+  packPrompt: string | null
   teaching: TaskInheritanceTeaching
   materials: TaskInheritanceMaterial[]
 }

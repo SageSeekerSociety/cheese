@@ -458,6 +458,21 @@ def test_the_screen_shows_the_skills_every_teammate_will_carry(client: TestClien
     assert data["teaching"]["source"] == "task"
 
 
+def test_the_screen_shows_the_pack_prompt_the_default_teammate_gets(
+    client: TestClient,
+):
+    """A 资源包's prompt is added to the default teammate of every project built
+    from the 题目, so the screen says it is in force before the 题目 is taken."""
+    task_id = seed_task_with_protocol(
+        client, resource_pack={"prompt": "先写测试再写实现"}
+    )
+    token = seed_user(client, "inheritance-pack-prompt-viewer")
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["packPrompt"] == "先写测试再写实现"
+
+
 def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
     """私有指导（#944 第二种可见性）只给出题人/板管理员：一个普通登录用户读这道题
     的继承清单时，`privatePrompt` 那个键根本不在（不是空串，是没有）。"""

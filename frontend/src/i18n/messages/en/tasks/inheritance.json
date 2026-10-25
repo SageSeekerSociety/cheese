@@ -21,5 +21,6 @@
   "spacePrompt": "The space's requirements",
   "taskPrompt": "This task's requirements",
   "title": "What this project inherits",
-  "skills": "Skills every AI teammate carries"
+  "skills": "Skills every AI teammate carries",
+  "packPrompt": "Added to the default teammate when the project is built"
 }

@@ -58,6 +58,9 @@ const materials = computed(() => props.inheritance?.materials ?? [])
 
 /** 建项目时那个芝士会变成的默认队友（类型 + 预设技能）；上层没指定 = null。 */
 const agent = computed(() => props.inheritance?.agent ?? null)
+
+/** 资源包里的那段 prompt，建项目时加给默认队友；没有 = null。 */
+const packPrompt = computed(() => props.inheritance?.packPrompt ?? null)
 </script>
 
 <template>
@@ -99,6 +102,12 @@ const agent = computed(() => props.inheritance?.agent ?? null)
         <span v-else class="inheritance__value inheritance__value--none">
           {{ t('tasks.inheritance.agentSkillsNone') }}
         </span>
+      </div>
+
+      <!-- The pack's prompt: appended to the default teammate's persona when the project is built. -->
+      <div v-if="packPrompt" class="inheritance__body" data-testid="inheritance-pack-prompt">
+        <span class="inheritance__sublabel">{{ t('tasks.inheritance.packPrompt') }}</span>
+        <p class="inheritance__prompt" data-user-content>{{ packPrompt }}</p>
       </div>
 
       <!-- 指导：来源层写在标题旁边，是这块的重点。 -->

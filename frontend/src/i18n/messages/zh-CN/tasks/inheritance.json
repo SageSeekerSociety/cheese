@@ -21,5 +21,6 @@
   "spacePrompt": "空间的要求",
   "taskPrompt": "这道题的要求",
   "title": "将继承什么",
-  "skills": "每个 AI 队友带上的技能"
+  "skills": "每个 AI 队友带上的技能",
+  "packPrompt": "建项目时加给默认队友的要求"
 }

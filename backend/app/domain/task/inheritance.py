@@ -57,6 +57,9 @@ class TaskInheritance:
     #: 名字，不带那个预设的人设与技能 —— 预设是 `app.domain.agent_type` 那一域的事，
     #: 由路由层去问（和资料同一条分工：这一域不 import 兄弟域）。
     default_role: str | None = None
+    #: 资源包里还带着的那段 prompt：建项目时加在默认队友的人设末尾
+    #: （`Protocol.pack_prompt`）。收尾迁移把它并进指导之后，这一格随那条路一起删。
+    pack_prompt: str | None = None
     #: 上面那份指导**来自哪一层** —— ``space`` / ``category`` / ``task`` /
     #: ``project``，或 None（四层都没说）。由 ``resolve`` 的同一个循环带出，界面
     #: 据此写「来自项目集」而不是只给一串合成结果。
@@ -86,4 +89,5 @@ async def for_task(
         teaching=protocol.teaching,
         teaching_source=protocol.teaching_source,
         default_role=protocol.default_role,
+        pack_prompt=protocol.pack_prompt,
     )
