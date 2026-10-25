@@ -139,6 +139,14 @@ What you have to know about running it:
 OCR reports findings with a file, a line range, a category and a severity of
 its own (`critical`/`high`/`medium`/`low`). That is not this repo's bar.
 
+**Precomputed facts.** The "Precomputed facts" section below is not OCR's — it
+was computed at the pinned commit and is the one thing OCR cannot see: which
+public symbols the change adds or drops, where else those names are referenced,
+which of them are now orphaned (a name whose only remaining hit is its own
+definition), and the numbers the PR body states, recomputed. Read it before
+judging. An orphan is the shape of a contract broken across files, and a number
+in the PR body that does not recompute is a claim candidate for step 5.
+
 For each finding, decide whether it is a `blocker` or a `major` here — what
 must be fixed before this merges — and drop the rest. A `medium` from OCR is
 usually not one: 88% of the minors this method used to file were never acted on
