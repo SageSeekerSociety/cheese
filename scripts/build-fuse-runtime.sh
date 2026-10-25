@@ -13,7 +13,12 @@
 #   sh scripts/build-fuse-runtime.sh <output dir>
 set -eu
 version=2.9.9
-revision="2.9.9-cheese.1"
+# `-cheese.2`: the header patch below, without which there is no arm64 artifact
+# at all. x64's bytes are unchanged by it — verified by building both ways and
+# comparing — but one release name covers both architectures, and the first
+# published arm64 library is a different artifact from anything the name would
+# otherwise have stood for.
+revision="2.9.9-cheese.2"
 # The release tarball's own text, from libfuse's `COPYING` and `COPYING.LIB`.
 # FUSE 2.9.9 is LGPL-2.1 for the library and GPL-2.0 for the utilities; the
 # utilities are not built here (`--disable-util`), so the package is the
@@ -30,6 +35,10 @@ baseline=debian:bookworm
 baseline_codename=bookworm
 
 out=$(mkdir -p "${1:?output directory}" && cd "$1" && pwd)
+# Where the checkout is, for the patch this applies (the same spelling
+# `build-forge-cli.sh` uses). The build itself runs in a temporary directory and
+# never needs it.
+root=$(cd "$(dirname "$0")/.." && pwd)
 case "$(uname -m)" in
   x86_64) platform=linux-x64 ;;
   aarch64) platform=linux-arm64 ;;
@@ -81,6 +90,32 @@ curl -fsSL --retry 5 --retry-all-errors -o source.tar.gz "$source_url"
 echo "$source_sha256  source.tar.gz" | sha256sum -c -
 tar -xf source.tar.gz
 cd "fuse-$version"
+# The one header patch this needs, applied the way `build-forge-cli.sh` applies
+# its own: `-R --dry-run` first, so a tree that already carries it is left
+# alone. Upstream's `fuse_kernel.h` opens by defining five type *macros*
+# (`__u64 uint64_t` and the rest) and never undefines them, so the names stay
+# rewritten for the whole translation unit that includes it. On aarch64 that
+# breaks the build: `<signal.h>` reaches `<asm-generic/int-ll64.h>`, whose
+# `typedef unsigned long long __u64;` becomes a second `uint64_t` with a
+# different underlying type, and `fuse_loop_mt.c` — which includes
+# `fuse_lowlevel.h` before `fuse_kernel.h` — stops with "conflicting types for
+# uint64_t". x86_64 never reached that header this way, which is why only the
+# arm leg failed. Nothing needs the macros past the last struct, so the patch
+# takes them back out at the end of the file. The patch is the whole change:
+# the recipe stays otherwise stock, so a digest still names upstream's source.
+#
+# `patch` comes from the baseline image's `dpkg-dev`, which `build-essential`
+# depends on. Checked rather than assumed: without it the `||` branch would
+# also fail with "command not found" under `set -eu`, which is loud, but the
+# message would be about a missing command rather than about why it is needed.
+command -v patch >/dev/null || {
+  echo "no patch(1); the header fix cannot be applied and aarch64 will not build" >&2
+  exit 1
+}
+patchfile="$root/scripts/patches/fuse-kernel-undef-types.patch"
+[ -f "$patchfile" ] || { echo "no $patchfile" >&2; exit 1; }
+patch --force -R -p1 --dry-run < "$patchfile" >/dev/null 2>&1 \
+  || patch --force -p1 < "$patchfile"
 # `--disable-util` leaves out `fusermount`, deliberately. The library falls
 # back to `execvp("fusermount")` (`lib/mount.c`) when the path it was compiled
 # with is not there, so a machine's own distribution copy — the one with the

@@ -41,12 +41,11 @@ jobs:
       # against, so one artifact serves Ubuntu 22.04, RHEL 9 and everything
       # after them.
       #
-      # Only x64 was built while this recipe was written; aarch64 fails in
-      # upstream 2.9.9's own header before this recipe is reached — its
-      # `fuse_kernel.h` takes `uint64_t` from `<sys/types.h>`, which supplies
-      # it on x86_64 and does not on aarch64, so the first use is a conflicting
-      # redefinition. This job is where that has to be settled, with a patch to
-      # the header, before a release carrying an arm64 artifact is cut.
+      # Both architectures build, now that the recipe applies its one header
+      # patch (`scripts/patches/fuse-kernel-undef-types.patch`): upstream's
+      # `fuse_kernel.h` leaks five type macros, and on aarch64 a later system
+      # header redefines one of them. The comment on the patch in the recipe
+      # has the whole chain.
       - name: Build on the baseline distribution
         run: |
           docker run --rm -v "$PWD:/work" -w /work \
@@ -85,12 +84,11 @@ jobs:
           # the lock with nothing to say so.
           #
           # What this does not do is *follow* a lock bump: `backend/uv.lock` is
-          # not in this workflow's `paths:`, because a lock-only pull request
-          # would then build both architectures and the arm leg is expected to
-          # fail until the header patch lands. So the version is current at
+          # not in this workflow's `paths:`, so a lock-only pull request does
+          # not build both architectures for it. The version is current at
           # every run and a bump is exercised at the next one — the recipe
-          # changing is what brings it back. Adding the lock to `paths:` is the
-          # way to close that gap once arm builds.
+          # changing is what brings it back. Adding the lock to `paths:` is how
+          # to close that gap.
           fusepy="$(awk '/^name = "fusepy"$/{found=1; next}
                          found && /^version = /{gsub(/[",]/,""); print $3; exit}' \
                        backend/uv.lock)"
