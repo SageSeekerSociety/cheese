@@ -73,7 +73,7 @@ export const DOC_SHARE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '分享人还有受邀名额',
-        note: '页脚右侧写明谁的名额、还剩几个，链接带着邀请码进注册页。',
+        note: '页脚左侧写明作者与芝士协作署名，右侧「认识知是 →」链接带着邀请码进注册页。',
         props: {
           doc: {
             title: '组会纪要',
@@ -82,7 +82,7 @@ export const DOC_SHARE_ENTRIES: CatalogEntry[] = [
             shared_by: { handle: 'alice', nickname: '爱丽丝', code: 'K7Q2M9', seats_left: 2 },
           },
         },
-        expect: '凭此链接进入',
+        expect: '认识知是',
       },
       {
         name: '链接已失效',
