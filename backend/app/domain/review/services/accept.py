@@ -708,7 +708,7 @@ async def _stop_accept_conflict(
     )
     note = (
         f"采纳未完成：PR #{number} 和目标分支冲突了（合并态：dirty），"
-        "GitHub 现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
+        "代码托管服务现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
         "所以这次采纳停下：解完冲突、检查绿了之后再重新采纳。"
     )
     await self._session.rollback()

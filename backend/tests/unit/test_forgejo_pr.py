@@ -128,11 +128,78 @@ async def test_checks_use_latest_result_per_context_and_read_all_pages():
     assert state == "pending"
 
 
+@pytest.fixture
+def quick_merge_check(monkeypatch):
+    """Forgejo's merge check settles in seconds; these fakes settle in ms."""
+    monkeypatch.setattr(ForgejoClient, "MERGE_CHECK_WAIT_S", 0.2, raising=False)
+    monkeypatch.setattr(ForgejoClient, "MERGE_CHECK_POLL_S", 0.01, raising=False)
+
+
+def checking_forge(*, checks_left, base_commits_missing_from_head):
+    """A Forgejo whose merge check of PR 7 is still running for `checks_left`
+    reads of the PR (`mergeable: false` meanwhile, as Forgejo answers), then
+    finds no conflict. `base_commits_missing_from_head` is what its compare
+    API counts for `head...base`."""
+    reads = {"left": checks_left}
+
+    def server(request):
+        path = request.url.path
+        if "/compare/" in path:
+            return httpx.Response(
+                200, json={"total_commits": base_commits_missing_from_head}
+            )
+        checking = reads["left"] > 0
+        reads["left"] -= 1
+        return httpx.Response(
+            200, json=proposal(title="Report", mergeable=not checking)
+        )
+
+    return ForgejoClient(
+        "https://forge.example/api/v1", transport=httpx.MockTransport(server)
+    )
+
+
 @pytest.mark.anyio
-async def test_merge_refusal_does_not_echo_secret_or_claim_success():
+async def test_a_pr_forgejo_is_still_checking_is_not_read_as_a_conflict(
+    quick_merge_check,
+):
+    client = checking_forge(checks_left=3, base_commits_missing_from_head=1)
+    status = await client.pull_request_status(
+        owner="acme", repo="docs", number=7, token="secret"
+    )
+    assert status.mergeable is True
+    assert status.mergeable_state == "clean"
+
+
+@pytest.mark.anyio
+async def test_a_check_outlasting_the_wait_is_unknown_when_no_conflict_is_possible(
+    quick_merge_check,
+):
+    client = checking_forge(checks_left=10**6, base_commits_missing_from_head=0)
+    status = await client.pull_request_status(
+        owner="acme", repo="docs", number=7, token="secret"
+    )
+    assert status.mergeable is None
+    assert status.mergeable_state == "unknown"
+
+
+@pytest.mark.anyio
+async def test_a_diverged_pr_forgejo_keeps_refusing_is_a_conflict(quick_merge_check):
+    client = checking_forge(checks_left=10**6, base_commits_missing_from_head=2)
+    status = await client.pull_request_status(
+        owner="acme", repo="docs", number=7, token="secret"
+    )
+    assert status.mergeable is False
+    assert status.mergeable_state == "dirty"
+
+
+@pytest.mark.anyio
+async def test_merge_refusal_does_not_echo_secret_or_claim_success(quick_merge_check):
     def server(request):
         if request.method == "POST":
             return httpx.Response(405, json={"message": "request had token secret"})
+        if "/compare/" in request.url.path:
+            return httpx.Response(200, json={"total_commits": 1})
         return httpx.Response(200, json=proposal(title="Report", mergeable=False))
 
     client = ForgejoClient(
