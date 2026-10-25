@@ -30,7 +30,7 @@ from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.task import package
 from app.domain.task.services import ensure_task_readable
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import user_service
 
 router = APIRouter(prefix="/tasks")
 
@@ -243,18 +243,17 @@ async def list_task_versions(
     author_ids = list(
         {v.revision.author_id for v in versions if v.revision.author_id is not None}
     )
-    users = await UserRepository(session=db).get_by_ids(author_ids)
-    profiles = await UserProfileRepository(session=db).get_profiles_by_user_ids(
-        author_ids
-    )
+    users = user_service(db)
+    handles = await users.get_handles_by_ids(author_ids)
+    profiles = await users.get_users_by_ids(author_ids)
 
     def author(user_id: int | None) -> dict | None:
-        user = users.get(user_id) if user_id is not None else None
-        if user is None:
+        handle = handles.get(user_id) if user_id is not None else None
+        if user_id is None or handle is None:
             return None
-        profile = profiles.get(user.id)
-        nickname = profile.nickname if profile and profile.nickname else user.username
-        return {"id": user.id, "username": user.username, "nickname": nickname}
+        profile = profiles.get(user_id)
+        nickname = profile.nickname if profile and profile.nickname else handle
+        return {"id": user_id, "username": handle, "nickname": nickname}
 
     return ok(
         {
