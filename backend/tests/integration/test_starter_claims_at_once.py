@@ -168,7 +168,8 @@ def test_a_slow_repository_service_does_not_make_a_second_claim_fail(
 def test_one_team_claiming_twice_at_once_makes_one_repository(client, monkeypatch):
     """Two claims by the same team at the same moment (two teammates submitting
     together) leave one project and one repository on the forge — not a second
-    repository nobody uses, waiting for a sweep."""
+    repository nobody uses, waiting for a sweep. The second is told at once to
+    ask again, without waiting on the forge behind the first."""
     import asyncio
 
     from app.common.auth import verify_access_token
@@ -228,11 +229,17 @@ def test_one_team_claiming_twice_at_once_makes_one_repository(client, monkeypatc
 
     async def both():
         await personal_team()
-        return await asyncio.gather(claim(), claim())
+        return await asyncio.gather(claim(), claim(), return_exceptions=True)
 
-    first, second = client.portal.call(both)
+    outcomes = client.portal.call(both)
 
-    assert first == second
+    opened = [one for one in outcomes if isinstance(one, uuid.UUID)]
+    refused = [one for one in outcomes if not isinstance(one, uuid.UUID)]
+    # The one that came second is told to ask again, and asking again finds the
+    # project the first opened.
+    assert len(opened) == 1 and len(refused) == 1, outcomes
+    assert refused[0].retryable, refused[0]
+    assert client.portal.call(claim) == opened[0]
     repositories = [
         path
         for path in Path(settings.workspace_root).iterdir()

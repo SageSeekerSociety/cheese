@@ -51,9 +51,11 @@ from app.domain.user.models import User
 logger = logging.getLogger(__name__)
 
 
-#: Namespace of the ids of projects opened by claims: one id per (task, team),
-#: fixed forever — changing it would give an existing claim a second project.
-_CLAIMED_PROJECTS = uuid.UUID("ec0b38be-888e-42b5-bab5-2b0f87ac2e34")
+class ClaimInProgressError(ConflictError):
+    """This team's claim of this task is being opened by another request right
+    now; asking again in a moment finds its project."""
+
+    retryable = True
 
 
 @dataclass(frozen=True)
@@ -387,21 +389,19 @@ class ProjectService:
         # deferred-import: tests replace these names on app.domain.project.forge
         from app.domain.project.forge import prepare_repository
 
-        # The repository is made on the forge before any lock is taken: no
-        # claim waits on the forge with a row locked. The project's id is this
-        # team's claim of this task, so two claims racing here name the same
-        # account and repository, and the forge makes it once (the second
-        # adopts it, `prepare_repository`): no second repository exists to be
-        # left behind.
-        starter = await self._terms().starter(task.id)
-        project_id = uuid.uuid5(_CLAIMED_PROJECTS, f"{task.id}:{team_id}")
-        repository = await prepare_repository(project_id, initialize=starter is None)
-        # Two teammates submitting together must not leave two projects for one
-        # application: this team's claims on this task go one at a time, from
-        # here to commit, and nothing under this lock leaves the database.
-        await self._repo.lock_claim(task.id, team_id)
+        # Two teammates submitting together must not leave two projects, or two
+        # repositories, for one application. This team's claim of this task is
+        # taken here, until commit, before the repository is made; a second
+        # claim arriving meanwhile is turned away at once (it asks again and
+        # finds the project) rather than waiting on the forge behind this one.
+        # No claim of another team or another task ever meets this lock.
+        if not await self._repo.try_lock_claim(task.id, team_id):
+            raise ClaimInProgressError(say("claimInProgress"))
         if (found := await self._claimed_project(task.id, team_id)) is not None:
             return found
+        starter = await self._terms().starter(task.id)
+        project_id = uuid.uuid4()
+        repository = await prepare_repository(project_id, initialize=starter is None)
         project = await self.create(
             name=task.name[:200],
             owner_handle=owner_handle,

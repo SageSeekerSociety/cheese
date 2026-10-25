@@ -141,5 +141,7 @@
   "starterPathClash": "{path} appears twice in the archive, or has the same name as a folder",
   "forgejoStarterPushFailed": "Couldn't put the starter code into the project's code repository. Try again shortly",
   "starterNameInvalid": "{path} in the archive can't go into a code repository: the name is too long, has control characters, or git refuses it",
-  "starterCompressionUnsupported": "{path} in the archive uses an unsupported compression method. Compress it again as a standard zip"
+  "starterCompressionUnsupported": "{path} in the archive uses an unsupported compression method. Compress it again as a standard zip",
+  "claimInProgress": "This team's claim of this task is being opened by another request. Try again in a few seconds to see its project",
+  "starterIgnoreUnreadable": "The ignore rules in {path} in the archive can't be read. So that the files it lists are not committed, the archive can't be starter code"
 }

@@ -16,7 +16,7 @@
 
 提交不经过磁盘上的工作目录：每一项从压缩包直接流进 `git fast-import`，所以路径不因为
 在哪个目录干活而变长，压缩包里的东西也不会落到 git 自己的对象以外。压缩包自带的
-`.gitignore`（顶层和各个文件夹里的）照 git 的规矩生效：起始代码就是出题人提交这个
+`.gitignore`（顶层和各个文件夹里的）由 git 自己判（`git check-ignore`）：起始代码就是出题人提交这个
 文件夹时会得到的那一份，`.env`、`node_modules/`、构建产物不会进每个学生的仓库历史。
 """
 
@@ -34,8 +34,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import IO, BinaryIO
-
-import pathspec
 
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, UnprocessableEntityError
@@ -58,9 +56,8 @@ _PATH_BYTES = 4096
 _GIT_DIR = ".git"
 #: git 不收一条路径时，在 stderr 里说的那一行的开头（`update-index`）。
 _GIT_REFUSED = "Ignoring path "
-#: 压缩包里自带的忽略规则，和 git 一样按文件夹生效；太大的不当规则读。
+#: 压缩包里自带的忽略规则，由 git 自己判（`_not_ignored`）。
 _GITIGNORE = ".gitignore"
-_GITIGNORE_BYTES = 1024 * 1024
 #: 空文件的 blob：只为让 git 判一遍路径，不写任何内容。
 _EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 #: 解开后不到这么大时不看压缩比：几个高度重复的小文件压得很小是正常的。
@@ -174,36 +171,48 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
 
 
 def _not_ignored(archive: zipfile.ZipFile, files: list[_Entry]) -> list[_Entry]:
-    """The entries the archive's own `.gitignore` files (at the top and in any
-    folder) do not ignore: a working folder zipped as it is carries its `.env`,
-    `node_modules/` and build output, and the starter is what committing that
-    folder would give. git's rules, by `pathspec`'s `GitIgnoreSpec`: a deeper
-    file's patterns decide over a shallower one's, each relative to its own
-    folder."""
-    rules: dict[PurePosixPath, pathspec.GitIgnoreSpec] = {}
-    for entry in files:
-        if entry.path.name == _GITIGNORE and entry.info.file_size <= _GITIGNORE_BYTES:
-            stream = _read(archive.open, entry.info)
-            with stream:
-                text = _read(stream.read).decode("utf-8", errors="replace")
-            rules[entry.path.parent] = pathspec.GitIgnoreSpec.from_lines(
-                text.splitlines()
-            )
+    """The entries `git add -A` would commit from the unpacked tree, as far as
+    the archive's own `.gitignore` files (at the top and in any folder) decide:
+    a working folder zipped as it is carries its `.env`, `node_modules/` and
+    build output, and the starter is what committing that folder would give.
+
+    git decides, not a copy of its rules: only the `.gitignore` files are put
+    in a scratch repository, at their places, and `git check-ignore --no-index`
+    judges every path against them — an excluded folder whose files cannot be
+    re-included, a byte-order mark, a file of any size, as git itself does. A
+    `.gitignore` that cannot be put there is refused with its name, so the files
+    it lists are never committed by default."""
+    rules = [entry for entry in files if entry.path.name == _GITIGNORE]
     if not rules:
         return files
-    kept = []
-    for entry in files:
-        ignored = None
-        # Shallowest first, so a deeper folder's verdict is the one that stands.
-        for folder in reversed(entry.path.parents):
-            spec = rules.get(folder)
-            if spec is not None:
-                verdict = spec.check_file(str(entry.path.relative_to(folder))).include
-                if verdict is not None:
-                    ignored = verdict
-        if not ignored:
-            kept.append(entry)
-    return kept
+    env = _git_env()
+    with tempfile.TemporaryDirectory(prefix="starter-ignore-") as temporary:
+        root = Path(temporary)
+        _git(root, "init", "-q", env=env)
+        for entry in rules:
+            stream = _read(archive.open, entry.info)
+            with stream:
+                content = _read(stream.read)
+            try:
+                target = root / entry.path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            except OSError as exc:
+                raise _refuse("starterIgnoreUnreadable", path=str(entry.path)) from exc
+        result = subprocess.run(
+            ["git", "-C", temporary, "check-ignore", "--no-index", "--stdin", "-z"],
+            input=b"".join(str(entry.path).encode() + b"\0" for entry in files),
+            capture_output=True,
+            env=env,
+            timeout=600,
+            check=False,
+        )
+    # 0: some are ignored; 1: none are; anything else is git failing.
+    if result.returncode not in (0, 1):
+        log.warning("starter ignore check failed: %s", result.stderr.decode().strip())
+        raise GatewayUnavailableError(say("forgejoStarterPushFailed"))
+    ignored = {path for path in result.stdout.decode().split("\0") if path}
+    return [entry for entry in files if str(entry.path) not in ignored]
 
 
 def _refuse_unless_git_accepts(paths: list[str]) -> None:

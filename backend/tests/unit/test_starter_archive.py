@@ -1,10 +1,13 @@
 """A starter-code archive becomes the commit its publisher meant (#4767 §二)."""
 
 import io
+import os
 import subprocess
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from app.domain.project import starter
 
@@ -70,3 +73,93 @@ def test_a_path_as_long_as_upload_allows_still_becomes_a_commit(tmp_path: Path):
 
     assert starter.check(io.BytesIO(buffer.getvalue())) == 2
     assert _tree(tmp_path, buffer.getvalue()) == {long: b"deep", "README.md": b"readme"}
+
+
+#: Unpacked trees and what the starter commit must hold of each: exactly what
+#: `git add -A` commits from that tree, asked of git itself below.
+IGNORE_CASES = {
+    "plain": {".gitignore": b".env\n", ".env": b"S=1", "a.txt": b"a"},
+    "folder": {
+        ".gitignore": b"node_modules/\n",
+        "node_modules/x/i.js": b"1",
+        "a.txt": b"a",
+    },
+    "nested-negation": {
+        "src/.gitignore": b"*.tmp\n!keep.tmp\n",
+        "src/x.tmp": b"x",
+        "src/keep.tmp": b"k",
+        "src/a.py": b"p",
+    },
+    "root-negation": {
+        ".gitignore": b"*.log\n!keep.log\n",
+        "x.log": b"x",
+        "keep.log": b"k",
+    },
+    "anchored": {
+        ".gitignore": b"/build\n",
+        "build/out": b"o",
+        "src/build/kept": b"k",
+    },
+    "double-star": {".gitignore": b"**/cache/\n", "a/b/cache/c": b"c", "a/b/d": b"d"},
+    "comments": {".gitignore": b"# notes\n\n*.o\n", "x.o": b"o", "x.c": b"c"},
+    "escaped-hash": {".gitignore": b"\\#secret\n", "#secret": b"s", "public": b"p"},
+    "ignores-itself": {
+        ".gitignore": b".gitignore\nlocal/\n",
+        "local/x": b"x",
+        "a": b"a",
+    },
+    "excluded-folder-negated-inside": {
+        ".gitignore": b"build/\n",
+        "build/.gitignore": b"!keep.txt\n",
+        "build/keep.txt": b"k",
+        "a.txt": b"a",
+    },
+    "excluded-folder-negated-at-root": {
+        ".gitignore": b"build/\n!build/keep.txt\n",
+        "build/keep.txt": b"k",
+        "a.txt": b"a",
+    },
+    "byte-order-mark": {
+        ".gitignore": b"\xef\xbb\xbf.env\n",
+        ".env": b"S",
+        "a.txt": b"a",
+    },
+    "over-a-megabyte": {
+        ".gitignore": b"#" * (1024 * 1024 + 1) + b"\n.env\n",
+        ".env": b"S",
+        "a.txt": b"a",
+    },
+}
+
+
+def _git_add_all(tmp_path: Path, files: dict[str, bytes]) -> set[str]:
+    tree = tmp_path / "tree"
+    for name, data in files.items():
+        (tree / name).parent.mkdir(parents=True, exist_ok=True)
+        (tree / name).write_bytes(data)
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    for args in (("init", "-q"), ("add", "-A")):
+        subprocess.run(["git", "-C", str(tree), *args], check=True, env=env)
+    listed = subprocess.run(
+        ["git", "-C", str(tree), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+        env=env,
+    ).stdout
+    return {name.decode() for name in listed.split(b"\0") if name}
+
+
+@pytest.mark.parametrize("case", sorted(IGNORE_CASES))
+def test_the_starter_holds_exactly_what_git_add_would_commit(tmp_path: Path, case):
+    files = IGNORE_CASES[case]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+        # A second top entry, so the archive's own top folder is never stripped.
+        archive.writestr("zz-top.txt", b"z")
+
+    (tmp_path / "built").mkdir()
+    built = set(_tree(tmp_path / "built", buffer.getvalue()))
+
+    assert built == _git_add_all(tmp_path, {**files, "zz-top.txt": b"z"})

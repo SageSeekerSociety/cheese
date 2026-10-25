@@ -728,3 +728,128 @@ def test_the_archives_own_gitignore_files_keep_ignored_files_out(
         "src/main.py",
         "src/keep.tmp",
     }
+
+
+# --- 领取的项目 id 随机、猜不到；一个团队的领取不会撞上它以前的项目 -----------------
+
+
+def _claim_and_withdraw_later(
+    api_client: TestClient, task_id: int, token: str
+) -> tuple[uuid.UUID, int]:
+    """领题：开出的项目，和撤回时要用的那一条领取。"""
+    resp = api_client.post(
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    return uuid.UUID(data["project"]["id"]), data["participant"]["id"]
+
+
+def _withdraw(api_client: TestClient, task_id: int, participant: int, token: str):
+    gone = api_client.delete(
+        f"/tasks/{task_id}/participants/{participant}", headers=_auth(token)
+    )
+    assert gone.status_code == 204, gone.text
+
+
+def test_a_claim_after_the_first_project_moved_to_another_team_opens_a_new_one(
+    api_client: TestClient, user_client: UserCreator
+):
+    """领题开的项目被搬进了另一个团队；撤回再领，领到的是一个新项目，不撞上搬走的那个。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="项目搬走后再领")
+    _, member_token = _member_of(user_client, api_client, board)
+    first, claim = _claim_and_withdraw_later(api_client, task_id, member_token)
+    team = api_client.post(
+        "/teams",
+        json={"name": f"队 {uuid.uuid4().hex[:6]}", "intro": "队", "avatarId": 1},
+        headers=_auth(member_token),
+    )
+    assert team.status_code == 201, team.text
+    moved = api_client.post(
+        f"/projects/{first}/move",
+        json={"team_id": team.json()["data"]["team"]["id"]},
+        headers=_auth(member_token),
+    )
+    assert moved.status_code == 200, moved.text
+    _withdraw(api_client, task_id, claim, member_token)
+
+    again = _claim_project(api_client, task_id, member_token)
+
+    assert again != first
+
+
+def test_a_claim_after_the_first_project_was_handed_over_opens_a_new_one(
+    api_client: TestClient, user_client: UserCreator
+):
+    """领题开的项目交给了别人；撤回再领，领到的是一个新项目。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="项目交出去后再领")
+    _, member_token = _member_of(user_client, api_client, board)
+    first, claim = _claim_and_withdraw_later(api_client, task_id, member_token)
+    heir = user_client.create_user()
+    heir_token = user_client.login(api_client, heir.username, heir.password)
+    # Only someone in the project can be handed it.
+    invited = api_client.post(
+        f"/projects/{first}/invitations",
+        json={"user_handle": heir.username},
+        headers=_auth(member_token),
+    )
+    assert invited.status_code == 200, invited.text
+    joined = api_client.post(
+        f"/invitations/{invited.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=_auth(heir_token),
+    )
+    assert joined.status_code == 200, joined.text
+    offered = api_client.post(
+        f"/projects/{first}/transfer",
+        json={"to_handle": heir.username},
+        headers=_auth(member_token),
+    )
+    assert offered.status_code == 200, offered.text
+    taken = api_client.post(
+        f"/transfers/{offered.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=_auth(heir_token),
+    )
+    assert taken.status_code == 200, taken.text
+    _withdraw(api_client, task_id, claim, member_token)
+
+    again = _claim_project(api_client, task_id, member_token)
+
+    assert again != first
+
+
+def test_nobody_can_take_a_claims_project_id_ahead_of_it(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """项目 id 不由题目和团队推得出来：别人抢先用推算出的 id 建一个项目，也挡不住
+    这个团队领题。（推算的办法是一度用过的那一个。）"""
+    from app.domain.team.services import team_service
+
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="项目 id 被人抢先")
+    student, member_token = _member_of(user_client, api_client, board)
+
+    async def personal_team() -> int:
+        team = await team_service(db_session).ensure_personal_team(student.user_id)
+        await db_session.commit()
+        return team.id
+
+    team_id = _portal.call(personal_team)
+    guessed = uuid.uuid5(
+        uuid.UUID("ec0b38be-888e-42b5-bab5-2b0f87ac2e34"), f"{task_id}:{team_id}"
+    )
+    squatter = user_client.create_user()
+    squatter_token = user_client.login(api_client, squatter.username, squatter.password)
+    taken = api_client.post(
+        "/projects",
+        json={"id": str(guessed), "name": "抢先建的"},
+        headers=_auth(squatter_token),
+    )
+    assert taken.status_code == 200, taken.text
+
+    claimed = _claim_project(api_client, task_id, member_token)
+
+    assert claimed != guessed
