@@ -31,7 +31,7 @@ const readDraft = vi.fn()
 const saveDraft = vi.fn()
 const publishDraft = vi.fn()
 const removeDraft = vi.fn()
-const checkStarter = vi.fn()
+const uploadStarter = vi.fn()
 const updateTask = vi.fn()
 
 const spaceDetail = vi.fn()
@@ -101,7 +101,7 @@ vi.mock('@/api/taskDrafts', () => ({
     save: (...a: unknown[]) => saveDraft(...a),
     publish: (...a: unknown[]) => publishDraft(...a),
     remove: (...a: unknown[]) => removeDraft(...a),
-    checkStarter: (...a: unknown[]) => checkStarter(...a),
+    uploadStarter: (...a: unknown[]) => uploadStarter(...a),
   },
 }))
 
@@ -358,7 +358,7 @@ beforeEach(() => {
   saveDraft.mockImplementation(async () => ({ version: 2, updatedAt: '2026-10-20T08:01:00Z' }))
   publishDraft.mockImplementation(async () => ({ task: { id: 501, approved: false }, draftId: 61 }))
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
-  checkStarter.mockImplementation(async () => ({}))
+  uploadStarter.mockImplementation(async () => ({ id: 51 }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
   listPlatformSkills.mockReset().mockResolvedValue({ data: [], total: 0 })
@@ -550,7 +550,7 @@ describe('发题页：发一道', () => {
   })
 
   it('选了起始代码当场就查：不合格的发布前说出原因、不留下，发出去不带它', async () => {
-    checkStarter.mockRejectedValue(new Error('压缩包里的 lab/../../evil.txt 指向压缩包以外的位置'))
+    uploadStarter.mockRejectedValue(new Error('压缩包里的 lab/../../evil.txt 指向压缩包以外的位置'))
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)
@@ -586,7 +586,7 @@ describe('发题页：发一道', () => {
 
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
-    expect(sent().starterAttachmentId).toBe(41)
+    expect(sent().starterAttachmentId).toBe(51)
   })
 
   it('本题写了补充要求、选了方式：整份带上', async () => {

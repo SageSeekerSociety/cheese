@@ -151,13 +151,12 @@ async function uploadLoose(file: File, progress: UploadProgress): Promise<number
   return id
 }
 const uploads = useAttachmentUploads({ upload: uploadLoose })
-/** 起始代码：选完就传成附件、当场查一遍能不能作为起始代码（和放进题目时同一个检查），
- *  不合格的这里就说原因、不留下，发布前就知道。合格的随草稿存着、随草稿发布，和芝士
- *  替人写进草稿的那一份走同一条路。 */
+/** 起始代码：选完就交给服务端，先查能不能作为起始代码（和放进题目时同一个检查），合格
+ *  才存成附件；不合格的这里就说原因、什么都不存，发布前就知道。合格的随草稿存着、随草稿
+ *  发布，和芝士替人写进草稿的那一份走同一条路。 */
 const starter = useStarterUpload<number>({
   upload: async (file, progress) => {
-    const id = await uploadLoose(file, progress)
-    await TaskDraftsApi.checkStarter(id)
+    const { id } = await TaskDraftsApi.uploadStarter(file, (event) => progress(event.loaded, event.total ?? file.size))
     return { id, name: file.name, size: file.size }
   },
 })

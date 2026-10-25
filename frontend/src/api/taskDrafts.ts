@@ -1,7 +1,9 @@
 // 题目草稿（`/task-drafts`）：发布页、改题页边写边存，发布时由服务端照草稿发出去。
 // 形状见 `@/types/taskDrafts`。
+import type { AxiosProgressEvent } from 'axios'
 import type { Task, TaskDraft, TaskDraftFields, TaskDraftSummary } from '@/types'
 
+import { axiosRequest } from './axiosHttp'
 import { request } from './http'
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
@@ -26,9 +28,19 @@ export namespace TaskDraftsApi {
 
   export const remove = (id: number) => request<Record<string, never>>(`/task-drafts/${id}`, { method: 'DELETE' })
 
-  /** 发布页上刚传成附件的起始代码：能不能作为起始代码，不能时服务端说为什么。 */
-  export const checkStarter = (attachmentId: number) =>
-    request<Record<string, never>>('/task-drafts/starter-check', json('POST', { attachmentId }))
+  /** 发布页上刚选的起始代码：服务端先查能不能作为起始代码，合格才存成附件、交回 id；
+   *  不合格时说为什么，什么都不存。转发浏览器的上传进度。 */
+  export const uploadStarter = (file: File, onProgress?: (event: AxiosProgressEvent) => void) => {
+    const data = new FormData()
+    data.append('file', file)
+    return axiosRequest<{ id: number }>({
+      url: '/task-drafts/starter',
+      method: 'POST',
+      data,
+      timeout: 60000,
+      onUploadProgress: onProgress,
+    })
+  }
 
   /** 发布：新题目发出去，或把修改保存到已发布的题目上。草稿随之删除。 */
   export const publish = (id: number) =>
