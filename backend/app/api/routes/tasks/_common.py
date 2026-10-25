@@ -27,6 +27,8 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task.inputs import (
+    START_APPLY,
+    map_start_mode,
     map_submitter_type,
 )
 from app.domain.task.mentors import require_consent, set_mentors
@@ -54,6 +56,9 @@ class CreateTaskRequest(BaseModel):
     space: int
     participant_limit: int | None = Field(default=None, alias="participantLimit")
     default_deadline: int = Field(default=30, alias="defaultDeadline")
+    # How a claim starts: ``DIRECT`` (straight away, by ``deadline``) or
+    # ``APPLY`` (on approval, ``defaultDeadline`` days from then).
+    start_mode: str = Field(default="APPLY", alias="startMode")
     deadline: int | None = None
     registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
     require_real_name: bool = Field(default=False, alias="requireRealName")
@@ -152,6 +157,7 @@ class PatchTaskRequest(BaseModel):
         default=None, alias="hasParticipantLimit"
     )
     default_deadline: int | None = Field(default=None, alias="defaultDeadline")
+    start_mode: str | None = Field(default=None, alias="startMode")
     rank: int | None = None
     has_rank: bool | None = Field(default=None, alias="hasRank")
     approved: str | None = None
@@ -229,6 +235,7 @@ async def _create_task_entity(
         space_id = payload.space
         participant_limit = payload.participant_limit
         default_deadline = payload.default_deadline
+        start_mode = map_start_mode(payload.start_mode)
         deadline_ms = payload.deadline
         registration_start_ms = payload.registration_start_at
         require_real_name = payload.require_real_name
@@ -287,6 +294,7 @@ async def _create_task_entity(
             default_deadline = int(default_deadline_raw)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+        start_mode = map_start_mode(str(payload.get("startMode") or START_APPLY))
 
         deadline_ms = payload.get("deadline")
         registration_start_ms = payload.get("registrationStartAt")
@@ -436,6 +444,7 @@ async def _create_task_entity(
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
         access_control_enabled=access_control_enabled,
+        start_mode=start_mode,
     )
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。

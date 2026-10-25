@@ -218,6 +218,68 @@ def test_cheese_writes_a_new_draft_in_its_own_words(
     assert "deadline: 2026-11-08 23:59" in read
 
 
+def test_cheese_sets_how_the_task_starts_and_the_task_starts_that_way(
+    api_client: TestClient, board: dict
+):
+    """芝士 fills 开始方式 in the form's words; the published 题目 starts that way,
+    and a change 芝士 writes to it is saved onto it."""
+    teacher = board["teacher"]
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": board["space"]["id"],
+            "name": "Lab 3 缓存模拟器",
+            "description": "用 C 写一个缓存模拟器。",
+            "difficulty": "中级",
+            "form": "个人",
+            "start_mode": "直接开始",
+            "deadline": "2026-11-08 23:59",
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    draft = written.json()["data"]["draft"]
+    read = api_client.post(
+        "/task-drafts/agent/read", json={"draft": draft}, headers=_as_cheese(teacher)
+    ).json()["data"]["text"]
+    assert "start_mode: 直接开始" in read
+
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": draft},
+        headers=_as_cheese(teacher),
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+    page = api_client.get(f"/tasks/{task_id}", headers=_headers(teacher))
+    assert page.json()["data"]["task"]["startMode"] == "DIRECT"
+
+    refused = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "start_mode": "先到先得"},
+        headers=_as_cheese(teacher),
+    )
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "taskStartModeInvalid"
+
+    changed = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "start_mode": "申请制", "days_to_submit": 10},
+        headers=_as_cheese(teacher),
+    )
+    assert changed.status_code == 200, changed.text
+    saved = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": changed.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+    assert saved.status_code == 200, saved.text
+    task = api_client.get(f"/tasks/{task_id}", headers=_headers(teacher)).json()[
+        "data"
+    ]["task"]
+    assert (task["startMode"], task["defaultDeadline"]) == ("APPLY", 10)
+
+
 def _upload(api_client: TestClient, user, name: str = "课题说明.pdf") -> int:
     resp = api_client.post(
         "/attachments",

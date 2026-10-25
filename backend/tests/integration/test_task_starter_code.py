@@ -27,10 +27,10 @@ from app.core.config import settings
 from app.domain.project.models import Project, ProjectStarterPush
 from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
+from tests.integration.test_task_files import _create_task as _create_task_of
 from tests.integration.test_task_files import (
     _add,
     _auth,
-    _create_task,
     _files,
     _member_of,
     _post_task,
@@ -43,6 +43,11 @@ from tests.support import git_store
 
 #: 字节落在 tmp_path：`test_task_files` 的同一个夹具。
 pytestmark = pytest.mark.usefixtures("upload_root")
+
+
+def _create_task(api_client: TestClient, board: dict, **more) -> int:
+    """直接开始的题：领题这一下就通过了、开出了项目，起始代码推进那个项目。"""
+    return _create_task_of(api_client, board, **{"startMode": "DIRECT", **more})
 
 
 def _zip(*entries: tuple[str, bytes] | zipfile.ZipInfo, data: bytes = b"") -> bytes:
@@ -92,23 +97,13 @@ def _set_starter(api_client: TestClient, task_id: int, token: str, data: bytes):
     )
 
 
-def _claim_project(
-    api_client: TestClient, task_id: int, token: str, *, approver: str | None = None
-) -> uuid.UUID:
-    """领题：领题这一下就开出了项目。给了 ``approver``（出题人的凭据）就当场批准。"""
+def _claim_project(api_client: TestClient, task_id: int, token: str) -> uuid.UUID:
+    """领题：直接开始的题，领题这一下就通过了、开出了项目。"""
     resp = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()["data"]
-    if approver is not None:
-        approved = api_client.patch(
-            f"/tasks/{task_id}/participants/{data['participant']['id']}",
-            json={"approved": "APPROVED"},
-            headers=_auth(approver),
-        )
-        assert approved.status_code == 200, approved.text
-    return uuid.UUID(data["project"]["id"])
+    return uuid.UUID(resp.json()["data"]["project"]["id"])
 
 
 def _main(project_id: uuid.UUID) -> dict[str, str]:
@@ -255,9 +250,7 @@ def test_the_projects_agents_are_told_where_the_first_commit_came_from(
     _set_starter(api_client, task_id, board["creator_token"], _lab())
     _, member_token = _member_of(user_client, api_client, board)
     # The agents read the task once the claim is approved.
-    project_id = _claim_project(
-        api_client, task_id, member_token, approver=board["creator_token"]
-    )
+    project_id = _claim_project(api_client, task_id, member_token)
 
     async def read() -> str | None:
         project = await db_session.get(Project, project_id)

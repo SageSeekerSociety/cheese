@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from app.domain.assistant.models import AssistantMessage
 from app.domain.notification.preferences import local_time
+from app.domain.task.inputs import START_DIRECT
 from app.domain.task.models import Task, TaskMembership
 
 _RULES = (
@@ -139,7 +140,14 @@ def task_brief(
         ),
         f"题目截止：{_when(task.deadline, timezone)}",
         *([mine] if mine else []),
-        f"限时：{task.default_deadline} 天，从开始做那天算起",
+        *(
+            ["开始方式：直接开始，点「开始做这道题」就开始，所有人都按题目截止时间交"]
+            if task.start_mode == START_DIRECT
+            else [
+                "开始方式：申请制，点「申请做这道题」后等出题人通过，通过后才开始",
+                f"限时：{task.default_deadline} 天，从申请通过那天算起",
+            ]
+        ),
         f"（以上时间都是用户所在时区 {clock.tzinfo}，{clock.tzname()}）",
         f"可多次提交：{'是' if task.resubmittable else '否'}",
         "说明：",

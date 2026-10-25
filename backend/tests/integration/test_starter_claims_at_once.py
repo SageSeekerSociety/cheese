@@ -29,10 +29,13 @@ from tests.conftest import seed_user
 from tests.integration.conftest import create_approved_space
 from tests.integration.test_task_files import (
     _auth,
-    _create_task,
     upload_root,  # noqa: F401
 )
-from tests.integration.test_task_starter_code import _main, _set_starter
+from tests.integration.test_task_starter_code import (
+    _create_task,
+    _main,
+    _set_starter,
+)
 
 pytestmark = pytest.mark.usefixtures("upload_root")
 

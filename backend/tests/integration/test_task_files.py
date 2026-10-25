@@ -24,6 +24,7 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.task import package
+from app.domain.task.models import TaskMembership
 from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
@@ -614,16 +615,28 @@ def test_a_board_manager_who_did_not_publish_may_download_without_claiming(
 
 
 def test_no_read_path_reaches_the_task_folder_before_the_claim_is_approved(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,
+    db_session,
+    _portal,
 ):
-    """`题目/` 跟着项目来自的那份申请走：还在等通过时，资料库的清单、搜索、读文本、
-    取字节、`cheese library get` 先要的下载地址都拿不到它；通过之后都拿得到。"""
+    """`题目/` 跟着项目来自的那份申请走：还在等通过时（早先的版本在申请时就开了
+    项目，这样的项目还在），资料库的清单、搜索、读文本、取字节、`cheese library get`
+    先要的下载地址都拿不到它；通过之后都拿得到。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="通过前读不到")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"secret\n")
     _, token = _member_of(user_client, api_client, board)
-    participant = _claim(api_client, board, task_id, token, approve=False)
+    participant = _claim(api_client, board, task_id, token)
     project_id = _project_from(api_client, task_id, token)
+
+    async def back_to_waiting() -> None:
+        claim = await db_session.get(TaskMembership, participant)
+        claim.approved = 2
+        await db_session.flush()
+
+    _portal.call(back_to_waiting)
     headers = _auth(token)
 
     def reads() -> dict[str, int]:
@@ -668,8 +681,8 @@ def test_no_read_path_reaches_the_task_folder_before_the_claim_is_approved(
 def test_the_materials_wait_for_the_application_to_be_approved(
     api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
-    """材料只给参与者：申请还在等批的、被拒了的，题目页和项目里的 `题目/` 都拿不到，
-    申请通过了才拿得到。"""
+    """材料只给参与者：申请还在等批的、被拒了的，题目页拿不到材料，也还没有从
+    这道题来的项目；申请通过了，材料和项目里的 `题目/` 才拿得到。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="通过了才拿得到材料的题")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
@@ -683,14 +696,14 @@ def test_the_materials_wait_for_the_application_to_be_approved(
         headers=_auth(board["creator_token"]),
     )
     assert resp.status_code == 200, resp.text
-    project_id = _project_from(api_client, task_id, waiting)
 
     for token in (waiting, declined):
         assert _files(api_client, task_id, token).json()["data"]["canDownload"] is False
         resp = _download(api_client, task_id, token, "数据.csv")
         assert resp.status_code == 403
         assert resp.json()["error"]["i18n"]["key"] == "taskFilesForTakers"
-    assert "题目" not in _top_paths(api_client, project_id, waiting)
+        page = api_client.get(f"/tasks/{task_id}", headers=_auth(token))
+        assert page.json()["data"]["task"]["myProject"] is None
 
     resp = api_client.patch(
         f"/tasks/{task_id}/participants/{waiting_claim}",
@@ -699,6 +712,8 @@ def test_the_materials_wait_for_the_application_to_be_approved(
     )
     assert resp.status_code == 200, resp.text
     assert _download(api_client, task_id, waiting, "数据.csv").content == b"a,b\n"
+    page = api_client.get(f"/tasks/{task_id}", headers=_auth(waiting))
+    project_id = page.json()["data"]["task"]["myProject"]["id"]
     assert "题目" in _top_paths(api_client, project_id, waiting)
 
 

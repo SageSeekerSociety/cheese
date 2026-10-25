@@ -382,7 +382,7 @@ class ProjectService:
             if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
-        if (found := await self._claimed_project(task.id, team_id)) is not None:
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
             return found
         # deferred-import: tests replace these names on app.domain.project.forge
         from app.domain.project.forge import prepare_repository
@@ -395,7 +395,7 @@ class ProjectService:
         # No claim of another team or another task ever meets this lock.
         if not await self._repo.try_lock_claim(task.id, team_id):
             raise ClaimInProgressError(say("claimInProgress"))
-        if (found := await self._claimed_project(task.id, team_id)) is not None:
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
             return found
         starter = await self._terms().starter(task.id)
         project_id = uuid.uuid4()
@@ -427,7 +427,7 @@ class ProjectService:
         await self._seed_overview(project, brief)
         return project
 
-    async def _claimed_project(
+    async def claimed_project(
         self, task_id: int, team_id: int | None
     ) -> Project | None:
         """The project this team already opened for this task, if any."""

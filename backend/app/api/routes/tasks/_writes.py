@@ -35,8 +35,8 @@ from app.domain.space.repositories import (
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
-from app.domain.task import package
-from app.domain.task.inputs import map_approve_type
+from app.domain.task import claims, package
+from app.domain.task.inputs import map_approve_type, map_start_mode
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -152,6 +152,7 @@ async def update_task(
         task.require_real_name = payload.require_real_name
 
     # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
+    deadline_before = task.deadline
     if payload.deadline is not None:
         try:
             task.deadline = datetime.fromtimestamp(
@@ -182,6 +183,8 @@ async def update_task(
     # 默认截止天数 / 排名
     if payload.default_deadline is not None:
         task.default_deadline = payload.default_deadline
+    if payload.start_mode is not None:
+        task.start_mode = map_start_mode(payload.start_mode)
 
     if payload.rank is not None:
         task.rank = payload.rank
@@ -322,6 +325,7 @@ async def update_task(
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
+    await claims.follow_the_task_deadline(db, task=task, before=deadline_before)
     package_after = await _package_parts(service, task)
     # A stage added, dropped, moved or given another due date changes what every
     # claim derives to; re-derive them in this same transaction.

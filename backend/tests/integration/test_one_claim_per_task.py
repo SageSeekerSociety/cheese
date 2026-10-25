@@ -182,6 +182,16 @@ def test_a_rejected_claim_frees_its_members_to_claim_with_another_team(
     assert _claim_as_team(api_client, task_id, second, token).status_code in (200, 201)
 
 
+def _approve_all(api_client: TestClient, board: dict, task_id: int) -> None:
+    for claim in _participants(api_client, task_id, board["token"]):
+        resp = api_client.patch(
+            f"/tasks/{task_id}/participants/{claim['id']}",
+            json={"approved": "APPROVED"},
+            headers=_auth(board["token"]),
+        )
+        assert resp.status_code == 200, resp.text
+
+
 def _create_project(api_client: TestClient, token: str, task_id: int, team_id=None):
     body = {"name": "从题目来的项目", "external_task_id": task_id}
     if team_id is not None:
@@ -199,6 +209,7 @@ def test_only_someone_who_claimed_an_individual_task_can_build_a_project_from_it
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(claimer)
     )
     assert resp.status_code in (200, 201), resp.text
+    _approve_all(api_client, board, task_id)
 
     assert _create_project(api_client, claimer, task_id).status_code == 200
     assert _create_project(api_client, bystander, task_id).status_code == 403
@@ -211,6 +222,7 @@ def test_a_team_task_project_must_belong_to_the_team_that_claimed_it(
     claimed, other = _team(api_client, token), _team(api_client, token)
     task_id = _task(api_client, board, "TEAM")
     assert _claim_as_team(api_client, task_id, claimed, token).status_code in (200, 201)
+    _approve_all(api_client, board, task_id)
 
     assert _create_project(api_client, token, task_id, claimed).status_code == 200
     assert _create_project(api_client, token, task_id, other).status_code == 403

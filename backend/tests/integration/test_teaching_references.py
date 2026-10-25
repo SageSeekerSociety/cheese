@@ -176,6 +176,12 @@ def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) 
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert claimed.status_code in (200, 201), claimed.text
+    decided = api_client.patch(
+        f"/tasks/{task_id}/participants/{claimed.json()['data']['participant']['id']}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["token"]),
+    )
+    assert decided.status_code == 200, decided.text
 
 
 def _project_under(

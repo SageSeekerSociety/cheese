@@ -16,6 +16,7 @@ from app.api.routes.tasks._common import (
     TaskParticipantRequest,
     require_mentor_consent,
 )
+from app.api.task_claims import open_claim_project
 from app.api.task_deps import (
     get_task_membership_service,
 )
@@ -34,11 +35,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.agent_instance.adapters import default_teammate
-from app.domain.living_doc.overview import seed_overview
-from app.domain.membership.services import seat_mentors
 from app.domain.notification.preferences import local_time
-from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
@@ -46,12 +43,11 @@ from app.domain.space.repositories import (
 from app.domain.task.access import (
     ensure_task_joinable,
 )
-from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
+    APPROVE_APPROVED,
     map_approve_type_to_int,
 )
-from app.domain.task.mentors import mentors_of
 from app.domain.task.repositories import (
     TaskRepository,
 )
@@ -60,12 +56,7 @@ from app.domain.task.services import (
     TaskService,
 )
 from app.domain.task_notices import notices as task_notices
-from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
-from app.domain.usage.adapters import ComputeCredits
-from app.domain.user.repositories import (
-    UserRepository,
-)
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/tasks")
@@ -107,42 +98,25 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
 
 
 async def _participation_response(db, task, membership, auth_user) -> dict:
+    """The claim, and its project when it has been approved.
 
-    owner_id = auth_user.user_id if membership.is_team else membership.member_id
-    if membership.is_team:
-        members = await team_service(db).get_team_members(membership.member_id)
-        if not any(member.user_id == owner_id for member in members):
-            owner_id = next(
-                (
-                    member.user_id
-                    for member in members
-                    if member.role == TeamMemberRole.OWNER
-                ),
-                None,
-            )
-            if owner_id is None:
-                raise NotFoundError("Team owner not found")
-    owner = await UserRepository(session=db).get_by_id(owner_id)
-    if owner is None:
-        raise NotFoundError("Participant user not found")
-    service = ProjectService(
-        db,
-        default_teammate=default_teammate,
-        compute_credits=ComputeCredits(db),
-        overview=seed_overview,
-        task_terms=TaskTerms(db),
-        seat_mentors=seat_mentors,
-    )
-    mentors = tuple(await mentors_of(db, task.id))
-    project = await service.for_participation(
-        task=as_brief(task, mentors=mentors),
-        claim=as_claim(membership),
-        owner_handle=owner.username,
-    )
+    A claim approved now (a task started directly) or earlier opens its
+    project here, made if it has none. The claim is committed first: the place
+    it took is not held while the repository is made. A claim still waiting
+    for the publisher has no project yet; it opens on approval
+    (``patch_task_participant``).
+    """
+    project = None
+    if membership.approved == APPROVE_APPROVED:
+        project = await open_claim_project(
+            db, task=task, membership=membership, acting_user_id=auth_user.user_id
+        )
     return ok(
         {
             "participant": _membership_to_api_model(membership),
-            "project": {
+            "project": None
+            if project is None
+            else {
                 "id": str(project.id),
                 "name": project.name,
                 "root_topic_id": str(project.root_topic_id),
@@ -301,7 +275,7 @@ async def join_task_as_user(
         remark=payload.remark,
     )
     response = await _participation_response(db, task, membership, auth_user)
-    # Commit before answering (the claim and the project it opens). ``get_db``
+    # Commit before answering (the claim, and the project it opened). ``get_db``
     # commits in its teardown, which FastAPI runs after the response has gone
     # out, so the task owner listing the participants right after a claim could
     # find no pending record yet. Same reason as the commit in ``create_task``.
@@ -365,8 +339,7 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-    # The claim and the project it opens commit together, after both are
-    # settled, and before answering, as in ``join_task_as_user``: the publisher
+    # Committed before answering, as in ``join_task_as_user``: the publisher
     # lists the pending claims on the next request.
     response = await _participation_response(db, task, membership, auth_user)
     await db.commit()
@@ -422,13 +395,13 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    await ProjectService(
-        db,
-        default_teammate=default_teammate,
-        compute_credits=ComputeCredits(db),
-        overview=seed_overview,
-        task_terms=TaskTerms(db),
-    ).activate_participation(task=as_brief(task), claim=as_claim(updated))
+    # Approved now: the claim's project opens, under the claim's team. The
+    # approval (and the place it took) is committed before the repository is
+    # made.
+    if updated.approved == APPROVE_APPROVED != approved_before:
+        await open_claim_project(
+            db, task=task, membership=updated, acting_user_id=auth_user.user_id
+        )
     # The claimer hears the decision, and a moved deadline on a claim already
     # approved (one being approved now gets its deadline with the decision).
     now = datetime.now(UTC)

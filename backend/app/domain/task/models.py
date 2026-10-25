@@ -6,6 +6,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -35,6 +36,9 @@ task_access_domain_seq = Sequence("task_access_domain_seq")
 
 class Task(Base):
     __tablename__ = "task"
+    __table_args__ = (
+        CheckConstraint("start_mode IN ('DIRECT', 'APPLY')", name="ck_task_start_mode"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, task_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -65,6 +69,12 @@ class Task(Base):
         "registration_start_at", DateTime(timezone=True), nullable=True
     )
     default_deadline: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # How a claim of this task starts (``inputs.START_DIRECT`` / ``START_APPLY``):
+    # straight away with the task's own deadline, or on the publisher's approval
+    # with ``default_deadline`` days from then.
+    start_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="APPLY", server_default="APPLY"
+    )
     resubmittable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     rank: Mapped[int | None] = mapped_column("rank", Integer, nullable=True)
