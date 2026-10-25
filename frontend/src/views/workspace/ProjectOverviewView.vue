@@ -69,6 +69,8 @@ const props = defineProps<{
   challengeStages?: ChallengeStages | null
   /** 代码仓库从题目第几版的起始代码开始、放好了没有；没有起始代码、或读不到，是 null。 */
   starter?: ProjectStarter | null
+  /** 「题目更新」那几行能不能点到题目的历史版本页：看的人看得到这道题的 `题目/` 才能。 */
+  taskLinked?: boolean
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -104,8 +106,8 @@ const emit = defineEmits<{
   'open-artifact': [artifactId: string]
   'all-tasks': []
   'retry-progress': []
-  /** 看题目的材料：项目资料库的 `题目/`。 */
-  'open-task-folder': []
+  /** 看题目的第几版：题目页上的历史版本。 */
+  'open-task-version': [version: number]
 }>()
 
 // Only a project from a staged task shows the timeline, so the overview loads it
@@ -178,7 +180,7 @@ function progressTitle(item: ProgressItem): string {
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
-  else if (item.kind === 'revised') emit('open-task-folder')
+  else if (item.kind === 'revised' && item.version) emit('open-task-version', item.version)
   else if (item.taskId && item.roomId) emit('open-task', { taskId: item.taskId, roomId: item.roomId })
 }
 
@@ -313,7 +315,12 @@ function stateOf(task: RoomTask): TaskState {
               <h3 class="ov-day__label t-meta c-faint">{{ group.day }}</h3>
               <ul class="ov-events">
                 <li v-for="item in group.items" :key="`${item.kind}:${item.taskId ?? item.artifactId}:${item.at}`">
-                  <button type="button" class="ov-event" @click="openProgress(item)">
+                  <button
+                    type="button"
+                    class="ov-event"
+                    :disabled="item.kind === 'revised' && !taskLinked"
+                    @click="openProgress(item)"
+                  >
                     <span class="ov-event__kind" :class="`ov-event__kind--${item.kind}`">
                       {{ t(`work.overview.kind.${item.kind}`) }}
                     </span>
@@ -551,6 +558,12 @@ function stateOf(task: RoomTask): TaskState {
 }
 .ov-event:hover {
   background: var(--fill);
+}
+.ov-event:disabled {
+  cursor: default;
+}
+.ov-event:disabled:hover {
+  background: transparent;
 }
 .ov-event__kind {
   font-size: 13px;

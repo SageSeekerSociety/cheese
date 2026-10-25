@@ -2,13 +2,15 @@
 //
 // 字节不经过后端上传，和资料库是同一条分段上传的路（`./partUpload`）：按段直接放进
 // 存储，再拿凭据和哈希登记。放进、替换、删掉一份，题目记一版。
-import type { TaskFileData, TaskFileListData } from '@/types/taskFiles'
+import type { TaskFileData, TaskFileListData, TaskVersionListData } from '@/types/taskFiles'
+
+import { t } from '../i18n'
 
 import { axiosRequest } from './axiosHttp'
-import { BASE } from './http'
+import { authHeaders, BASE } from './http'
 import { sendInParts, type UploadProgress } from './partUpload'
 
-export type { TaskFileData, TaskFileListData }
+export type { TaskFileData, TaskFileListData, TaskVersionListData }
 
 const base = (taskId: number) => `/tasks/${taskId}/files`
 
@@ -58,8 +60,30 @@ export function removeTaskStarter(taskId: number): Promise<{ removed: boolean }>
   return axiosRequest({ url: `/tasks/${taskId}/starter`, method: 'DELETE' }, true)
 }
 
-/** 一份材料的字节。门在服务端：带的是这次请求自己的 Authorization。`downloadFile`
+/** 一份材料的字节；`version` 是第几版，取那一版手上的这份文件（只认那一版记下的），
+ *  不给就是现在这一份。门在服务端：带的是这次请求自己的 Authorization。`downloadFile`
  *  补在末尾的 `download=true` 这里没有对应的参数，后端不看它。 */
-export function taskFileRawUrl(taskId: number, name: string): string {
-  return `${BASE}${base(taskId)}/raw?name=${encodeURIComponent(name)}`
+export function taskFileRawUrl(taskId: number, name: string, version?: number): string {
+  const url = `${BASE}${base(taskId)}/raw?name=${encodeURIComponent(name)}`
+  return version ? `${url}&version=${version}` : url
+}
+
+/** 一份材料现在的字节，给题目页上的预览；Office 文档由服务端转成 PDF 再给。 */
+export async function taskFileBytes(taskId: number, name: string, asPdf = false): Promise<ArrayBuffer> {
+  const response = await fetch(taskFileRawUrl(taskId, name) + (asPdf ? '&preview_pdf=true' : ''), {
+    headers: authHeaders(),
+  })
+  if (response.ok) return response.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await response.json())?.message || '')
+  } catch {
+    /* Keep the HTTP error when the server sent no JSON. */
+  }
+  throw new Error(message || t('files.library.readFailed', { status: response.status }))
+}
+
+/** 题目的历史版本，新的在前。看得见这道题的人都拿得到，各版文件能不能下载在 `canDownload` 里。 */
+export function listTaskVersions(taskId: number): Promise<TaskVersionListData> {
+  return axiosRequest({ url: `/tasks/${taskId}/versions`, method: 'GET' }, true)
 }

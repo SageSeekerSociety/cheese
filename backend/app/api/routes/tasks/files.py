@@ -11,13 +11,12 @@
 """
 
 from typing import Annotated
-from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.api.byte_response import blob_response
+from app.api.library_bytes import library_file_response
 from app.api.response import ok, typed_response
 from app.api.task_deps import _require_task
 from app.api.write_access import ROUTE_DECIDES
@@ -30,6 +29,7 @@ from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.task import package
 from app.domain.task.services import ensure_task_readable
+from app.domain.user.services import user_service
 
 router = APIRouter(prefix="/tasks")
 
@@ -173,30 +173,114 @@ async def download_task_file(
     task_id: TaskId,
     name: str,
     request: Request,
+    version: Annotated[int | None, Query(ge=1)] = None,
+    preview_pdf: bool = False,
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> Response:
-    """一份材料的字节。先过题目详情那三道闸，再看是不是出题人、空间管理员或参与者（申请通过的人）。"""
+    """一份材料的字节。先过题目详情那三道闸，再看是不是出题人、空间管理员或参与者（申请通过的人）。
+
+    `version`：第几版，取那一版手上的这份文件当时的字节——只认那一版记下的文件；不给
+    就是现在这一份。`preview_pdf`：Office 文档转成 PDF，给题目页上的预览。"""
     task = await _require_task(db, task_id)
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     await package.refuse_unless_downloader(db, task, auth_user.user_id)
     name = _name(name)
-    stored = await library_records.stored_file(db, package.shelf(task.id), name)
-    filename = quote(name.rsplit("/", 1)[-1], safe="")
-    return blob_response(
-        stored.location,
-        stored.key,
-        stored.size,
-        "application/octet-stream",
+    row_id = (
+        (await package.version_file(db, task.id, version, name)).id
+        if version is not None
+        else None
+    )
+    return await library_file_response(
+        db, package.shelf(task.id), name, row_id, preview_pdf, request
+    )
+
+
+class TaskVersionAuthorOut(BaseModel):
+    id: int
+    username: str
+    nickname: str
+
+
+class TaskVersionFileOut(BaseModel):
+    """一版里的一份文件，按 ``/files/raw?name=&version=<第几版>`` 取。这份材料后来
+    整份删掉了的，``size`` 是 null，只剩名字，取不到。"""
+
+    name: str
+    size: int | None
+
+
+class TaskVersionOut(BaseModel):
+    number: int
+    #: 记下这一版的时刻（毫秒）。
+    at: int
+    author: TaskVersionAuthorOut | None
+    #: 这一版改了什么（`TaskPackageRevision.changes`）。
+    changes: dict
+    #: 这一版手上的文件；记版本时还没记文件的那几版是 null。
+    files: list[TaskVersionFileOut] | None
+
+
+class TaskVersionsOut(BaseModel):
+    versions: list[TaskVersionOut]
+    #: 这个人能不能下载各版的文件；不能的只看到名字。
+    canDownload: bool
+
+
+@router.get(
+    "/{taskId}/versions",
+    summary="List Task Versions",
+    **typed_response(TaskVersionsOut),
+)
+async def list_task_versions(
+    task_id: TaskId,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """题目的历史版本，新的在前：第几版、什么时候、谁改的、改了什么、那一版手上的文件。
+
+    看得见这道题就看得到（题目详情那三道闸），和材料清单一样；各版文件的下载走
+    ``/files/raw?version=``，判据和下载现在的材料是同一条。"""
+    task = await _require_task(db, task_id)
+    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
+    versions = await package.history(db, task.id)
+    author_ids = list(
+        {v.revision.author_id for v in versions if v.revision.author_id is not None}
+    )
+    users = user_service(db)
+    handles = await users.get_handles_by_ids(author_ids)
+    profiles = await users.get_users_by_ids(author_ids)
+
+    def author(user_id: int | None) -> dict | None:
+        handle = handles.get(user_id) if user_id is not None else None
+        if user_id is None or handle is None:
+            return None
+        profile = profiles.get(user_id)
+        nickname = profile.nickname if profile and profile.nickname else handle
+        return {"id": user_id, "username": handle, "nickname": nickname}
+
+    return ok(
         {
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            # 同一个名字可以被替换成新的一份。
-            "Cache-Control": "private, no-cache",
-        },
-        request.headers.get("range"),
-        request.headers.get("if-range"),
+            "versions": [
+                {
+                    "number": v.revision.number,
+                    "at": int(v.revision.created_at.timestamp() * 1000),
+                    "author": author(v.revision.author_id),
+                    "changes": v.revision.changes or {},
+                    "files": None
+                    if v.files is None
+                    else [
+                        {
+                            "name": held.name,
+                            "size": held.row.bytes if held.row else None,
+                        }
+                        for held in v.files
+                    ],
+                }
+                for v in versions
+            ],
+            "canDownload": await package.may_download(db, task, auth_user.user_id),
+        }
     )
 
 

@@ -571,6 +571,8 @@ def test_the_projects_agents_are_told_the_version_and_what_changed(
     second = section()
     assert "第 2 版" in second
     assert "新增文件 数据.csv" in second
+    # 和项目总览上那一行一样，指到历史版本页上的这一版。
+    assert f"/spaces/{board['space_id']}/tasks/{task_id}/versions?version=2" in second
 
 
 # --- 谁在项目里读得到 `题目/`：题目的判据，不是项目的名册 ------------------------------

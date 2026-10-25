@@ -24,6 +24,7 @@ import ProjectLibraryView from './ProjectLibraryView.vue'
 vi.mock('../api', () => ({
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
+  getProject: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
@@ -46,7 +47,8 @@ vi.mock('../lib/libraryApi', () => ({
   listLibraryFolders: vi.fn(async () => []),
 }))
 
-const { deleteLibraryFile, downloadFile } = await import('../api')
+const { deleteLibraryFile, downloadFile, getProject } = await import('../api')
+const { queryClient } = await import('../query/client')
 const { libraryFileBytes, listProjectLibrary, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import(
   '../lib/libraryApi'
 )
@@ -93,6 +95,9 @@ beforeEach(() => {
   vi.mocked(uploadLibraryFile).mockResolvedValue({ path: '新.txt', bytes: 1 })
   vi.mocked(replaceLibraryFile).mockResolvedValue({ path: '预算表.xlsx', bytes: 1 })
   vi.mocked(libraryFileBytes).mockResolvedValue(new ArrayBuffer(0))
+  // 项目那一行（`GET /projects/{id}`）：不是从题目来的项目。缓存是全局一份，每条测试从空的开始。
+  queryClient.clear()
+  vi.mocked(getProject).mockResolvedValue({ id: 'p1', name: '项目', task: null } as never)
 })
 
 const Blank = defineComponent({ render: () => h('div') })
@@ -103,6 +108,7 @@ async function renderRaw(url = '/projects/p1/library') {
     routes: [
       { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
+      { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: Blank },
     ],
   })
   await router.push(url)
@@ -396,6 +402,21 @@ describe('资料库的文件夹', () => {
       expect.stringContaining('只能读，不能放进文件')
     )
     expect(uploadLibraryFile).not.toHaveBeenCalled()
+  })
+
+  it('题目的材料那个文件夹里写明来自哪道题、现在第几版，并连到题目页', async () => {
+    vi.mocked(getProject).mockResolvedValue({
+      id: 'p1',
+      name: '项目',
+      task: { id: 7, space_id: 3, name: '实验一', version: 4 },
+    } as never)
+    library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
+    const { container, router } = await open()
+    expect(container.textContent).not.toContain('来自题目')
+
+    await router.push('/projects/p1/library?dir=题目')
+    await waitFor(() => expect(container.textContent).toContain('来自题目「实验一」，当前第 4 版'))
+    expect(screen.getByRole('link', { name: '打开题目' }).getAttribute('href')).toBe('/spaces/3/tasks/7')
   })
 
   it('移动或重命名把新的完整名字交给服务端，再重新列一遍', async () => {
