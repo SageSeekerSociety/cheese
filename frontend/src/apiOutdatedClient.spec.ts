@@ -2,6 +2,7 @@
 // 以 4409 关掉），它就换上新版——先让新版的 worker 接管再刷新，只刷一次；手里还有没发出去的
 // 消息时，不替人刷新，留一个「刷新」让人自己点。
 import { effectScope } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('virtual:pwa-register', () => ({ registerSW: () => async () => {} }))
@@ -84,6 +85,15 @@ async function loadPage() {
   return await import('./api')
 }
 
+/** The page's first screen is drawn (main.ts arms this on the app's router). */
+async function paintFirstScreen() {
+  const { armAfterFirstPaint, firstPaintDone } = await import('./lib/afterFirstPaint')
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: {} }] })
+  armAfterFirstPaint(router)
+  await router.push('/')
+  await vi.waitFor(() => expect(firstPaintDone.value).toBe(true))
+}
+
 async function settled(work: Promise<unknown>) {
   await work.catch(() => {})
   await vi.waitFor(() => expect(order.length + notices.length).toBeGreaterThan(0))
@@ -119,6 +129,7 @@ describe('a page the backend calls outdated', () => {
 
   it('asks instead when the page holds a message not yet sent, and reloads when told to', async () => {
     const { request } = await loadPage()
+    await paintFirstScreen()
     const { useOutbox } = await import('./components/room/composables/useOutbox')
     const scope = effectScope()
     const outbox = scope.run(() => useOutbox({ send: () => new Promise(() => {}), onDelivered: () => {} }))!
@@ -137,7 +148,12 @@ describe('a page the backend calls outdated', () => {
     await settled((await loadPage()).request('/projects'))
     expect(reload).toHaveBeenCalledOnce()
 
-    await settled((await loadPage()).request('/projects'))
+    // Refused on its first requests, before anything is on screen to hold a notice.
+    await (await loadPage()).request('/projects').catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(notices).toEqual([])
+
+    await paintFirstScreen()
 
     expect(reload).toHaveBeenCalledOnce()
     expect(notices).toHaveLength(1)

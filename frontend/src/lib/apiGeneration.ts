@@ -25,9 +25,11 @@
  *   remember that (blocked storage), it never reloads by itself, for the same
  *   reason.
  */
+import { watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { holdsUnsentMessages } from '@/lib/composerDrafts'
 import { takeWaitingWorker } from '@/pwa'
@@ -63,11 +65,32 @@ export function reloadOutdatedPage(): void {
   handled = true
   const reloadedAlready = storageGet(RELOADED_KEY, 'session') === GENERATION
   if (holdsUnsentMessages() || reloadedAlready || !storageSet(RELOADED_KEY, GENERATION ?? '', 'session')) {
-    toast.warning(t('global.outdatedClient.message'), {
-      duration: Number.POSITIVE_INFINITY,
-      action: { label: t('global.outdatedClient.refresh'), onClick: reload },
-    })
+    ask()
     return
   }
   reload()
+}
+
+/**
+ * The refresh button, once the page has something to show it in. A page that
+ * reloaded onto a build still outdated is refused on its first requests, before
+ * the shell that holds the notices (AppShell) is on screen, and a notice raised
+ * then is never shown.
+ */
+function ask(): void {
+  const show = () =>
+    toast.warning(t('global.outdatedClient.message'), {
+      // The page cannot be used until it is refreshed; the button stays until it is.
+      duration: Number.POSITIVE_INFINITY,
+      action: { label: t('global.outdatedClient.refresh'), onClick: reload },
+    })
+  if (firstPaintDone.value) {
+    show()
+    return
+  }
+  const stop = watch(firstPaintDone, (done) => {
+    if (!done) return
+    stop()
+    show()
+  })
 }
