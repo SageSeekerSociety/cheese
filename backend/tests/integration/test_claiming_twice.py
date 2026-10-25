@@ -187,3 +187,86 @@ def test_two_teammates_claiming_at_once_get_one_claim_and_one_project(
     assert _project(_claim(client, task_id, owner, team_id)) == opened
     assert _project(_claim(client, task_id, mate, team_id)) == opened
     assert _live_claims(client, task_id) == 1
+
+
+def _duplicate(client, claim_id: int) -> int:
+    """Seed what nothing in the database stops yet: a second live claim of the
+    same member and task. The original is approved and older; the duplicate is
+    a newer pending application. Returns the approved claim's id."""
+
+    async def seed() -> int:
+        async with client.test_factory() as session:
+            original = await session.get(TaskMembership, claim_id)
+            assert original is not None
+            original.approved = 0
+            later = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=original.task_id,
+                    member_id=original.member_id,
+                    is_team=original.is_team,
+                    approved=2,
+                    email="",
+                    phone="",
+                    completion_status=original.completion_status,
+                    created_at=later,
+                    updated_at=later,
+                    pitch="",
+                )
+            )
+            await session.commit()
+            return original.id
+
+    return client.portal.call(seed)
+
+
+def _claimed(response) -> int:
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["participant"]["id"]
+
+
+def test_a_person_holding_two_live_claims_still_gets_the_approved_one(
+    client, monkeypatch
+):
+    """Duplicate claims already in the database never reach a server error:
+    the task still opens, and claiming again answers with the approved claim
+    and its project."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(client, board, name="重复的两份领取")
+    student = seed_user(client, f"student{uuid.uuid4().hex[:8]}")
+    _on_board(client, board, student)
+    first = _claim(client, task_id, student)
+    opened = _project(first)
+    approved = _duplicate(client, _claimed(first))
+
+    shown = client.get(f"/tasks/{task_id}", headers=_auth(student))
+    again = _claim(client, task_id, student)
+
+    assert shown.status_code == 200, shown.text
+    assert _claimed(again) == approved
+    assert _project(again) == opened
+
+
+def test_a_team_holding_two_live_claims_still_gets_the_approved_one(
+    client, monkeypatch
+):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(
+        client, board, name="队里重复的两份领取", submitterType="TEAM", maxTeamSize=5
+    )
+    owner = seed_user(client, f"owner{uuid.uuid4().hex[:8]}")
+    mate = seed_user(client, f"mate{uuid.uuid4().hex[:8]}")
+    _on_board(client, board, owner)
+    team_id = _shared_team(client, owner, _on_board(client, board, mate))
+    first = _claim(client, task_id, owner, team_id)
+    opened = _project(first)
+    approved = _duplicate(client, _claimed(first))
+
+    for token in (owner, mate):
+        again = _claim(client, task_id, token, team_id)
+        assert _claimed(again) == approved
+        assert _project(again) == opened
+        shown = client.get(f"/tasks/{task_id}", headers=_auth(token))
+        assert shown.status_code == 200, shown.text

@@ -26,17 +26,6 @@ from app.domain.task.services import (
 _NOW = datetime.now(UTC)
 
 
-class _Savepoint:
-    """What ``session.begin_nested()`` gives: an async context that commits
-    nothing here."""
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-
 def _make_task(**overrides):
     defaults = {
         "id": 1,
@@ -216,8 +205,6 @@ class TestTaskMembershipService:
         repo.try_lock_claim.return_value = True
         repo.get_by_task_and_member.return_value = None
         repo.save.side_effect = lambda m: m
-        repo._session = Mock()
-        repo._session.begin_nested.return_value = _Savepoint()
 
         svc, _ = self._build_service(repo=repo)
         task = _make_task(participant_limit=10)

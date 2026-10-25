@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
@@ -153,9 +152,10 @@ class TaskMembershipService:
         self,
         task_id: int,
         member_id: int,
+        is_team: bool,
     ) -> TaskMembership | None:
         return await self._repo.get_by_task_and_member(
-            task_id=task_id, member_id=member_id
+            task_id=task_id, member_id=member_id, is_team=is_team
         )
 
     async def has_live_claim(
@@ -211,11 +211,10 @@ class TaskMembershipService:
         先拿下这一份领取（``try_lock_claim``，到提交为止）再看、再写：同一个人或
         同一个团队同时点两次，后到的那次不等前一次（它可能正在代码仓库服务那边建
         仓库），当场说「正在建，过一会儿再试」，再试时拿到的就是前一次领下的那一份。
-        数据库另有一道唯一索引守着「一个成员一道题只有一份没被拒的领取」，上一个版本
-        并发插入时撞上它，这里读回已经在的那一份。"""
+        数据库里还没有约束挡住重复的领取（#4824），已经有重复时
+        ``get_by_task_and_member`` 按通过的、再按最新的挑一份。"""
 
         now = datetime.now(UTC)
-        session = self._repo._session
         if not await self._repo.try_lock_claim(task.id, member_id, is_team):  # type: ignore[arg-type]
             raise ClaimInProgressError(say("claimInProgress"))
 
@@ -260,20 +259,7 @@ class TaskMembershipService:
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
         )
-        try:
-            async with session.begin_nested():
-                return await self._repo.save(membership)
-        except IntegrityError:
-            # Another claim of this member landed first (one the lock above did
-            # not see: the previous release, during a deploy). It is the claim.
-            claimed = await self._repo.get_by_task_and_member(
-                task_id=task.id,  # type: ignore[arg-type]
-                member_id=member_id,
-                is_team=is_team,
-            )
-            if claimed is None:
-                raise
-            return claimed
+        return await self._repo.save(membership)
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
         membership.deleted_at = datetime.now(UTC)

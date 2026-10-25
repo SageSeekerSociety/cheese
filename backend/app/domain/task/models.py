@@ -163,16 +163,6 @@ class TaskMembership(Base):
             "deadline",
             postgresql_where=SWEEPABLE_ROWS,
         ),
-        # 一个成员（人或团队）一道题只有一份还在、没被拒的领取：领着的再领一次答的
-        # 是那一份，同时点两次也只落下一份。被拒的那份留在重新申请的旁边，所以不算。
-        Index(
-            "uq_task_membership_live_claim",
-            "task_id",
-            "member_id",
-            "is_team",
-            unique=True,
-            postgresql_where=text("deleted_at IS NULL AND approved <> 1"),
-        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, task_membership_seq, primary_key=True)
