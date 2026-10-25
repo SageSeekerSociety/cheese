@@ -87,7 +87,9 @@ def test_a_zero_size_asks_where_it_is_without_pulling_any_of_it(tmp_path):
 
     answer = transcript_chunk(config, SESSION, offset=0, size=0)
 
-    assert answer["path"] == str(config / "projects" / "-home-cheese--room" / f"{SESSION}.jsonl")
+    assert answer["path"] == str(
+        config / "projects" / "-home-cheese--room" / f"{SESSION}.jsonl"
+    )
     assert answer["size"] == 16
     assert answer["data"] == ""
 
@@ -98,4 +100,6 @@ def test_where_it_is_still_names_only_this_session(tmp_path):
     other.write_bytes(b"someone else's conversation")
 
     assert transcript_chunk(config, SESSION, offset=0, size=0)["path"] != str(other)
-    assert transcript_chunk(config, "no-such-session", offset=0, size=0) == {"missing": True}
+    assert transcript_chunk(config, "no-such-session", offset=0, size=0) == {
+        "missing": True
+    }

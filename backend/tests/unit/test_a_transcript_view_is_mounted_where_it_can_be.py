@@ -19,11 +19,17 @@ def _machine(monkeypatch, tmp_path, *, fuse=True, fusermount=True, allow=None):
     conf = tmp_path / "fuse.conf"
     if allow is not None:
         conf.write_text("# comment\n" + ("user_allow_other\n" if allow else ""))
-    monkeypatch.setattr(bootstrap.Path, "exists", lambda self: fuse and str(self) == "/dev/fuse")
+    monkeypatch.setattr(
+        bootstrap.Path, "exists", lambda self: fuse and str(self) == "/dev/fuse"
+    )
     monkeypatch.setattr(
         bootstrap.shutil,
         "which",
-        lambda name: "/usr/bin/fusermount" if fusermount and name.startswith("fusermount") else None,
+        lambda name: (
+            "/usr/bin/fusermount"
+            if fusermount and name.startswith("fusermount")
+            else None
+        ),
     )
     monkeypatch.setattr(bootstrap, "FUSE_CONF", str(conf))
     return conf
