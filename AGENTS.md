@@ -74,6 +74,12 @@ Locally, run the test files your change touches, to find a failure faster than a
 
 **The same goes for the whole backend unit suite.** A sandbox is missing what parts of it need, so a whole `backend/tests/unit` run reddens on the environment rather than on your change, and reading those failures one at a time costs more than the suite does. The full suite belongs to CI.
 
+## Use what you changed before calling it done
+
+CI checks what the tests encode; nobody has yet watched the change work. Whoever made a change, person or agent, uses it by hand in the running app once it is deployed — on dev after the deploy that contains it, or on a test environment before merge — doing what a user would do to reach the changed behaviour, not only loading the page. The pull request body gets a `Hands-on check` section saying what was done and what was seen; a change no user can reach (CI, docs, a refactor with no visible effect) says so there instead. A problem found this way is fixed or reverted before other work.
+
+A change to anything a user sees — a screen, a control, its copy — also comes with a PDF of the affected screens before and after, explained in the user's language, handed with the pull request link to whoever asked for the change. A frontend change with no visible effect needs none.
+
 ## Report real bugs, not theoretical ones
 
 An audit finding needs a way to actually happen — a crash, corruption, a security hole, a wrong result; style opinions and "this could in principle" are noise that buries the real ones.
