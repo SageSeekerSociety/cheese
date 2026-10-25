@@ -1,6 +1,6 @@
 # Retrying a registry operation until a time budget is spent. Sourced by
-# deploy-docker.sh (the image pulls) and deploy/ghcr-login.sh (the login before
-# a deploy). The sourcing script defines log, fail, log_disk <when> and
+# deploy-docker.sh (the image pulls), deploy/ghcr-login.sh (the login before
+# a deploy) and deploy/merge-deployment.sh (its scratch images). The sourcing script defines log, fail, log_disk <when> and
 # reclaim_before_pull_retry (what to do before retrying an attempt that failed
 # on a full disk) before calling retry_pull.
 #
