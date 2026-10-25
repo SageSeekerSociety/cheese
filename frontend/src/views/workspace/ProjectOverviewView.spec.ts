@@ -246,6 +246,28 @@ it('不是领题开的项目：不写截止', () => {
   expect(view.queryByTestId('overview-deadline')).toBeNull()
 })
 
+it('仓库从题目的起始代码开始的：在放、放好了、没放成各说一句；没有起始代码的不写', () => {
+  const pending = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'pending', reason: '' } })
+  expect(pending.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库正在放入题目第 3 版的起始代码')
+
+  cleanup()
+  const done = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'done', reason: '' } })
+  expect(done.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库的起始代码来自题目第 3 版')
+
+  cleanup()
+  const failed = mount({
+    overviewText: '## 赛题要求',
+    starter: { revision: 3, state: 'failed', reason: '压缩包里没有文件' },
+  })
+  expect(failed.getByTestId('overview-starter').textContent?.trim()).toBe(
+    '题目第 3 版的起始代码没能放进代码仓库：压缩包里没有文件'
+  )
+
+  cleanup()
+  const plain = mount({ overviewText: '## 赛题要求', starter: null })
+  expect(plain.queryByTestId('overview-starter')).toBeNull()
+})
+
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {
   const view = mount({ overviewText: '', agentName: '芝士' })
   await fireEvent.click(view.getByRole('button', { name: t('work.overview.draft', { agent: '芝士' }) }))

@@ -24,9 +24,9 @@ const vuetify = createVuetify({ components, directives })
 
 afterEach(cleanup)
 
-function mountWorkbook() {
+function mountWorkbook(marks: { id: string; sheet: string; address: string }[] = []) {
   return render(PreviewSheet, {
-    props: { data: analysisWorkbookBytes(), kind: 'workbook' as const },
+    props: { data: analysisWorkbookBytes(), kind: 'workbook' as const, marks },
     global: { plugins: [vuetify] },
   })
 }
@@ -55,4 +55,16 @@ it('工作簿里的每一张表都在，切得过去', async () => {
   }
   await fireEvent.click(await screen.findByRole('button', { name: '说明' }))
   await waitFor(() => expect(grid(container)[0]).toEqual(['数据来源', '【文件名 / 表名 / 链接】']))
+})
+
+it('标记按工作表名归属：只有它自己那张表上才画', async () => {
+  // `B2` 在每一张表里都是一格，所以要靠工作表名分清说的是哪一张。第一张表是「数据」，
+  // 这里把标记记在「汇总」上——切过去才看得见。
+  const { container } = mountWorkbook([{ id: 'c1', sheet: '汇总', address: 'A1' }])
+
+  await waitFor(() => expect(grid(container).length).toBeGreaterThan(1))
+  expect(container.querySelectorAll('.ps__cmt')).toHaveLength(0)
+
+  await fireEvent.click(await screen.findByRole('button', { name: '汇总' }))
+  await waitFor(() => expect(container.querySelectorAll('.ps__cmt')).toHaveLength(1))
 })

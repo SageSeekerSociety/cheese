@@ -253,6 +253,18 @@ class TaskBrief:
 
 
 @dataclass(frozen=True)
+class StarterSource:
+    """领题这一刻的起始代码：题目资料库里那一行的 id，题目第几版，第一个提交怎么写。
+
+    只记是哪一份，不取字节：解开、推送在领题提交之后另做
+    （`app.domain.project.models.ProjectStarterPush`）。"""
+
+    library_file_id: uuid.UUID
+    revision: int
+    message: str
+
+
+@dataclass(frozen=True)
 class Claim:
     """一条赛题报名：谁报的、是不是小队、审过没有。
 
@@ -311,6 +323,10 @@ class TaskTerms(Protocol):
 
     async def terms(self, task_id: int) -> AcceptedTerms:
         """这道赛题审过之后要落的条款。"""
+        ...
+
+    async def starter(self, task_id: int) -> StarterSource | None:
+        """这道题此刻的起始代码是哪一份（#4767 第二节）；没有、题已经没了给 ``None``。"""
         ...
 
 

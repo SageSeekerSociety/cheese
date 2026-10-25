@@ -37,6 +37,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
 import { isTeachingBlank } from '@/lib/teaching'
 
 const props = withDefaults(
@@ -54,6 +55,9 @@ const props = withDefaults(
     attachments: PickedAttachment<number>[]
     uploading: boolean
     maxFileBytes: number | null
+    /** 起始代码：选好的那一份 .zip，和它是否正在上传。 */
+    starter?: { name: string; size: number } | null
+    starterUploading?: boolean
     materials: SpaceMaterial[]
     materialsState: SpaceMaterialsState
     libraryTo: string
@@ -89,6 +93,8 @@ const props = withDefaults(
   }>(),
   {
     selectedCategoryId: undefined,
+    starter: null,
+    starterUploading: false,
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
@@ -123,6 +129,8 @@ const emit = defineEmits<{
   'import-files': [files: File[]]
   'add-attachments': [files: File[]]
   'remove-attachment': [id: number]
+  'pick-starter': [file: File]
+  'remove-starter': []
   submit: [data: TaskFormSubmitData]
   change: [fields: TaskDraftFields]
   'form-ready': [fields: TaskDraftFields]
@@ -304,13 +312,21 @@ defineExpose({
             </template>
 
             <template #attachments>
-              <TaskAttachmentPicker
-                :files="attachments"
-                :uploading="uploading"
-                :max-file-bytes="maxFileBytes"
-                @add="emit('add-attachments', $event)"
-                @remove="emit('remove-attachment', Number($event))"
-              />
+              <div class="pub__files">
+                <TaskAttachmentPicker
+                  :files="attachments"
+                  :uploading="uploading"
+                  :max-file-bytes="maxFileBytes"
+                  @add="emit('add-attachments', $event)"
+                  @remove="emit('remove-attachment', Number($event))"
+                />
+                <TaskStarterPicker
+                  :file="starter"
+                  :uploading="starterUploading"
+                  @pick="emit('pick-starter', $event)"
+                  @remove="emit('remove-starter')"
+                />
+              </div>
             </template>
 
             <template #teaching>
@@ -343,6 +359,12 @@ defineExpose({
 }
 
 /* 左边这一栏多宽，取决于两侧的侧栏和芝士：顶栏按自己的宽窄收，不按窗口。 */
+.pub__files {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .pub__head {
   container-type: inline-size;
 }

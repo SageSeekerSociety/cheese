@@ -1,7 +1,7 @@
 """Record what merging another deployment's export wrote, batch by batch
 
 Revision ID: a7d3e5c91f20
-Revises: b7d4e1a9c2f3
+Revises: 168348b68d6c
 Create Date: 2026-10-25
 
 ``scripts/merge_deployment.py`` brings rows and files from another Cheese
@@ -22,7 +22,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "a7d3e5c91f20"
-down_revision: str | Sequence[str] | None = "b7d4e1a9c2f3"
+down_revision: str | Sequence[str] | None = "168348b68d6c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
