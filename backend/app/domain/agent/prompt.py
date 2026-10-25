@@ -266,15 +266,15 @@ async def live_inputs(
 async def _reads_task_files(
     session: AsyncSession, project_id: uuid.UUID, paths: list[str]
 ) -> bool:
-    """Whether the room's agent reads the `题目/` files among ``paths``: as the
-    project's owner may (`package.mount_for_agents`). No question asked when
-    none of them is one."""
+    """Whether the room's agent reads the `题目/` files among ``paths``: while
+    the claim the project came from is live and approved
+    (`package.task_folder_shown`). No question asked when none of them is one."""
     if not any(
         (name := library.library_name(path)) is not None and mount.under(name)
         for path in paths
     ):
         return False
-    return await package.mount_for_agents(session, project_id)
+    return await package.task_folder_shown(session, project_id)
 
 
 async def model_images(

@@ -73,7 +73,7 @@ async def document_image(
         raise UnprocessableEntityError(say("docTeamNoImages"))
     name = library.library_name(clean)
     if name is not None:
-        shelf = await shelf_for(db, project_id, reached.actor)
+        shelf = await shelf_for(db, project_id)
         data = await library_records.read(db, shelf, name)
     elif reached.place is not None:
         data = await asyncio.to_thread(

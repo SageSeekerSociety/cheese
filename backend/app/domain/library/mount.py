@@ -6,8 +6,9 @@
 给的，项目里谁都改不了它。
 
 项目来自哪道题目记在 `projects.external_task_id`；题目删掉了，这个文件夹跟着不见。
-谁看得到它，归题目自己的下载判据（出题人、空间管理员、申请通过的参与者），不归项目的成员
-名单：读的那一侧判好了，放在 `Shelf.with_task` 上交进来，没说就看不到。
+有没有它，跟着项目来自的那一份申请走（`task.package.task_folder_shown`）：还在、已经
+通过，项目里的人和 agent 都看得到；等批、被拒、退出或不再有效，谁都看不到。读的那一侧
+判好了，放在 `Shelf.with_task` 上交进来，没说就看不到。
 
 题目那一侧的行在这里只读两列（`id`、`deleted_at`），读的是那张表本身：题目那一包要往
 资料库里写它的材料，资料库就不能反过来认得它（`.importlinter` C3）。
@@ -47,8 +48,8 @@ async def mounted(session: AsyncSession, shelf: Shelf) -> int | None:
 
 
 async def task_of(session: AsyncSession, shelf: Shelf) -> int | None:
-    """读的这个人在这个资料库里看得到的那道题目的资料库：挂着一个，而且他按题目的
-    判据拿得到它的材料（`Shelf.with_task`）。"""
+    """这个资料库里看得到的那道题目的资料库：挂着一个，而且项目来自的那一份申请还在、
+    已经通过（`Shelf.with_task`）。"""
     if not shelf.with_task:
         return None
     return await mounted(session, shelf)
@@ -56,7 +57,7 @@ async def task_of(session: AsyncSession, shelf: Shelf) -> int | None:
 
 async def resolve(session: AsyncSession, shelf: Shelf, name: str) -> tuple[Shelf, str]:
     """`name` 实际在哪个资料库、在那里叫什么：`题目/` 底下的在题目那一边，去掉前缀；
-    别的原样。读的人按题目的判据拿不到它的材料，就是拿不到（403），不落回项目自己
+    别的原样。项目的申请没有通过或不再有效时，就是拿不到（403），不落回项目自己
     在这个前缀下被盖住的那几行。"""
     if not name.startswith(PREFIX):
         return shelf, name
@@ -64,7 +65,7 @@ async def resolve(session: AsyncSession, shelf: Shelf, name: str) -> tuple[Shelf
     if task_id is None:
         return shelf, name
     if not shelf.with_task:
-        raise ForbiddenError(say("taskFilesForTakers"))
+        raise ForbiddenError(say("libraryTaskFolderNeedsApprovedClaim", folder=FOLDER))
     return Shelf.of_task(task_id), name[len(PREFIX) :]
 
 

@@ -5,7 +5,7 @@
 
 1. **放进 / 替换 / 删掉**：出题人本人，或这块板的所有者 / 管理员；
 2. **看得见清单**：看得见这道题的人（题目详情那三道闸）；
-3. **拿得到文件**：出题人 / 板管理员 / 已经领取的人。
+3. **拿得到文件**：出题人 / 板管理员 / 申请通过、仍然有效的人。
 
 发布是第 1 版；说明、提交内容、评分要点、材料每变一次记下一版，写明改了什么。
 """
@@ -15,7 +15,6 @@ from __future__ import annotations
 import io
 import time
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,7 +24,6 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.task import package
-from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
@@ -615,91 +613,56 @@ def test_a_board_manager_who_did_not_publish_may_download_without_claiming(
     assert resp.content == MATERIAL
 
 
-def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
-    api_client: TestClient,
-    user_client: UserCreator,
-    upload_root: Path,
-    db_session,
-    _portal,
+def test_no_read_path_reaches_the_task_folder_before_the_claim_is_approved(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
-    """个人题的项目挂在一个团队下：团队里没领这道题的人进得了项目，题目的材料他照样
-    拿不到——和在题目页上一样。"""
+    """`题目/` 跟着项目来自的那份申请走：还在等通过时，资料库的清单、搜索、读文本、
+    取字节、`cheese library get` 先要的下载地址都拿不到它；通过之后都拿得到。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="个人题进团队")
+    task_id = _create_task(api_client, board, name="通过前读不到")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"secret\n")
-    _, a_token = _member_of(user_client, api_client, board)
-    _claim(api_client, board, task_id, a_token)
-    resp = api_client.post(
-        "/teams",
-        json={
-            "name": f"队 {unique_int(10000000, 99999999)}",
-            "intro": "x",
-            "description": "x",
-            "avatarId": 1,
-        },
-        headers=_auth(a_token),
-    )
-    assert resp.status_code == 201, resp.text
-    team_id = resp.json()["data"]["team"]["id"]
-    b_user, b_token = _member_of(user_client, api_client, board)
+    _, token = _member_of(user_client, api_client, board)
+    participant = _claim(api_client, board, task_id, token, approve=False)
+    project_id = _project_from(api_client, task_id, token)
+    headers = _auth(token)
 
-    async def join() -> None:
-        now = datetime.now(UTC)
-        db_session.add(
-            TeamUserRelation(
-                team_id=team_id,
-                user_id=b_user.user_id,
-                role=TeamMemberRole.MEMBER,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await db_session.flush()
+    def reads() -> dict[str, int]:
+        found = api_client.get(
+            f"/projects/{project_id}/library", params={"q": "数据"}, headers=headers
+        ).json()["data"]["data"]
+        return {
+            "listed": int("题目" in _top_paths(api_client, project_id, token)),
+            "found": len(found),
+            "raw": _raw_in_project(
+                api_client, project_id, token, "数据.csv"
+            ).status_code,
+            "text": api_client.get(
+                f"/projects/{project_id}/library/text",
+                params={"path": "题目/数据.csv"},
+                headers=headers,
+            ).status_code,
+            "link": api_client.get(
+                f"/projects/{project_id}/library/link",
+                params={"path": "题目/数据.csv"},
+                headers=headers,
+            ).status_code,
+        }
 
-    _portal.call(join)
-    resp = api_client.post(
-        "/projects",
-        json={"name": "个人题挂团队", "external_task_id": task_id, "team_id": team_id},
-        headers=_auth(a_token),
+    assert reads() == {"listed": 0, "found": 0, "raw": 403, "text": 403, "link": 403}
+
+    resp = api_client.patch(
+        f"/tasks/{task_id}/participants/{participant}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
     )
     assert resp.status_code == 200, resp.text
-    project_id = resp.json()["data"]["id"]
-
-    assert _download(api_client, task_id, b_token, "数据.csv").status_code == 403
-    assert (
-        _raw_in_project(api_client, project_id, b_token, "数据.csv").status_code == 403
-    )
-    assert "题目" not in _top_paths(api_client, project_id, b_token)
-    found = api_client.get(
-        f"/projects/{project_id}/library", params={"q": "数据"}, headers=_auth(b_token)
-    ).json()["data"]["data"]
-    assert found == []
-    text = api_client.get(
-        f"/projects/{project_id}/library/text",
-        params={"path": "题目/数据.csv"},
-        headers=_auth(b_token),
-    )
-    assert text.status_code == 403
-    # `cheese library get` 先要的下载地址也一样不给。
+    assert reads() == {"listed": 1, "found": 1, "raw": 200, "text": 200, "link": 200}
     link = api_client.get(
         f"/projects/{project_id}/library/link",
         params={"path": "题目/数据.csv"},
-        headers=_auth(b_token),
+        headers=headers,
     )
-    assert link.status_code == 403
-
-    # 领了题的那个人照旧读得到，下载地址取到的也是那份字节。
-    resp = _raw_in_project(api_client, project_id, a_token, "数据.csv")
-    assert resp.status_code == 200
-    assert resp.content == b"secret\n"
-    link = api_client.get(
-        f"/projects/{project_id}/library/link",
-        params={"path": "题目/数据.csv"},
-        headers=_auth(a_token),
-    )
-    assert link.status_code == 200, link.text
     assert api_client.get(link.json()["data"]["url"]).content == b"secret\n"
-    assert "题目" in _top_paths(api_client, project_id, a_token)
 
 
 def test_the_materials_wait_for_the_application_to_be_approved(
@@ -739,17 +702,17 @@ def test_the_materials_wait_for_the_application_to_be_approved(
     assert "题目" in _top_paths(api_client, project_id, waiting)
 
 
-def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
+def test_a_claim_no_longer_valid_stops_the_task_reaching_its_project(
     api_client: TestClient,
     user_client: UserCreator,
     upload_root: Path,
     db_session,
     _portal,
 ):
-    """出题人撤掉了一个领取：他的项目还在，题目的材料（现在的和以后改的）他读不到了，
-    项目里的 agent 也不再被告知题目。"""
+    """申请不再有效：项目还在，题目的材料（现在的和以后改的）读不到了，项目里的
+    agent 也不再被告知题目。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="撤掉的人")
+    task_id = _create_task(api_client, board, name="不再有效的申请")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"v1\n")
     _, token = _member_of(user_client, api_client, board)
     participant = _claim(api_client, board, task_id, token)
