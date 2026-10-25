@@ -13,6 +13,7 @@ import type { PanelPreviewProps } from './types'
 import { computed, ref, watch } from 'vue'
 
 import { postFileThread } from '../../api/fileThreads'
+import { SLIDE_SUFFIXES } from '../../lib/fileKind'
 import { myHandle } from '../../me'
 import { useFileThreads } from '../useFileThreads'
 
@@ -51,14 +52,18 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   // 等读者自己去点开那一栏才读，「哪儿有人评过」这件事就要他先想到去开栏才看得见——
   // 而那正是标记要替他省掉的一步。
   //
-  // 哪些读法画标记：markdown 画在正文上（`PreviewMarkdown`），分页文档画在页上
-  // （`PreviewPages`）。别的读法有了标记时，这里跟着加。这一条和 `PanelPreviewView`
-  // 里 `liveAnchors` 收哪几种锚点是配对的——那边多收一种，这边就得跟着多读一种，
-  // 不然标记一个都不会出现（栏关着的时候列表根本没读）。
-  const MARK_VIEWS: ReadonlySet<string> = new Set(['markdown', 'pages'])
+  // 哪几档画标记：markdown 画在正文上（`PreviewMarkdown`），转成 PDF 的文档画在页上
+  // （`PreviewPages`）。别的读法有了标记时，这里跟着加。这一条和 `PanelPreviewView` 里
+  // `liveAnchors` 收哪几种锚点是配对的——那边多收一种，这边就得跟着多读一种，不然标记
+  // 一个都不会出现（栏关着的时候列表根本没读）。
+  //
+  // 幻灯片要单独排掉：它也是 `view === 'pages'`，但页上画不出标记（评的是整页）——
+  // 圈进来就是每打开一份 pptx 都白打一次评论接口。
   const drawsMarks = computed(() => {
     const view = state.documentType.value?.view
-    return commentable.value !== null && view !== undefined && MARK_VIEWS.has(view)
+    if (commentable.value === null) return false
+    if (view === 'markdown') return true
+    return view === 'pages' && !SLIDE_SUFFIXES.has(state.documentSuffix.value)
   })
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,

@@ -36,6 +36,7 @@ import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { SLIDE_SUFFIXES } from '@/lib/fileKind'
 
 // The history pane only loads once someone opens it: most previews never do, and
 // every panel that shows a preview would otherwise carry it. Same reason, and the
@@ -224,7 +225,7 @@ defineExpose({ snapshot, clearMark })
     </div>
     <div v-else class="doc__body">
       <PreviewSlides
-        v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
+        v-if="SLIDE_SUFFIXES.has(documentSuffix)"
         :data="docBytes"
         :pending="docLoading"
         :error="docError"

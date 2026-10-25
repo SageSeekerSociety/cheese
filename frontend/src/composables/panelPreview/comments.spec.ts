@@ -90,6 +90,19 @@ it('不画标记的读法：评论栏关着就不读，打开才读', async () =
   await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
 })
 
+it('幻灯片：页上画不出标记，栏关着就别读——那一次请求换不来任何看得见的东西', async () => {
+  // 幻灯片也是 `view === 'pages'`（转成 PDF 按页看），但页视图那一档不画评论标记
+  // （它上面评的是整页，不是页上的一点）。按 `view` 判就会把每一份 pptx 都圈进来，
+  // 每打开一次白打一次评论接口。
+  const bundle = setup('output/汇报.pptx')
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+
+  // 栏打开时照读：那一栏里该有的评论还在。
+  bundle.toggle()
+  await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+})
+
 it('资料库原件不是这个房间的文件：哪一档都不读', async () => {
   setup('library/说明.md')
   await Promise.resolve()
