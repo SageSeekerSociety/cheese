@@ -965,9 +965,7 @@ def test_a_stage_missed_with_nothing_handed_in_reads_failed_to_its_claim(
     assert mine["stages"] == ["MISSED", "NOT_SUBMITTED"]
 
 
-def test_the_publisher_hears_who_a_stage_change_fails_or_reopens(
-    api_client, board
-):
+def test_the_publisher_hears_who_a_stage_change_fails_or_reopens(api_client, board):
     """Before saving, the publisher asks what the stages they are about to save
     would do: moving an empty stage's due date into the past fails the claim,
     moving it back takes the claim out of failed. The answer names the
