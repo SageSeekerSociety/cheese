@@ -66,6 +66,7 @@ class DefaultTeammate(Protocol):
         *,
         display_name: str | None = None,
         type_name: str | None = None,
+        pack_prompt: str | None = None,
     ) -> None: ...
 
 
@@ -276,6 +277,10 @@ class AcceptedTerms:
 
     default_role: str | None
     compute_credits: float
+    #: The 资源包's prompt, appended to the default teammate's persona until the
+    #: contract migration after b7d4e1a9c2f3 moves it into the guidance (that
+    #: migration's PR removes it).
+    pack_prompt: str | None = None
 
 
 class TaskTerms(Protocol):

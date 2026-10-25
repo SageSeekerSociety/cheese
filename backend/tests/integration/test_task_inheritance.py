@@ -470,3 +470,76 @@ def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
     data = _get(client, task_id=task_id, token=token)
 
     assert "privatePrompt" not in data["teaching"]
+
+
+def _default_teammate_body(client: TestClient, task_id: int, handle: str) -> str:
+    """Build a project from ``task_id`` for an approved participant and read
+    its default teammate's persona."""
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms
+    from app.domain.task.models import TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    seed_user(client, handle)
+    holder: dict = {}
+
+    async def _build() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None
+            now = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=user.id,
+                    approved=0,
+                    is_team=False,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.flush()
+            project = await ProjectService(
+                session,
+                default_teammate=default_teammate,
+                task_terms=TaskTerms(session),
+            ).create(
+                owner_handle=handle,
+                name="题目包项目",
+                forge_kind="github_app",
+                external_task_id=task_id,
+            )
+            await session.flush()
+            instance = await session.get(
+                AgentInstance, project.default_agent_instance_id
+            )
+            assert instance is not None
+            holder["body"] = instance.configuration.get("body") or ""
+            await session.commit()
+
+    asyncio.run(_build())
+    return holder["body"]
+
+
+def test_a_project_built_from_a_task_whose_pack_has_a_prompt_gets_it(
+    client: TestClient,
+):
+    """Until the contract migration moves a 资源包's prompt into the 题目's
+    guidance, a project built from the 题目 gets it at the end of its default
+    teammate's persona, with a preset and without one."""
+    with_preset = seed_task_with_protocol(
+        client,
+        resource_pack={"prompt": "先写测试再写实现"},
+        default_role="academic-research",
+    )
+    bare = seed_task_with_protocol(client, resource_pack={"prompt": "先写测试再写实现"})
+
+    assert _default_teammate_body(client, with_preset, "pack-prompt-preset").endswith(
+        "\n\n先写测试再写实现"
+    )
+    assert (
+        _default_teammate_body(client, bare, "pack-prompt-bare") == "先写测试再写实现"
+    )

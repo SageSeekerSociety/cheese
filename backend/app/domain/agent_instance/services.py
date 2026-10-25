@@ -479,6 +479,13 @@ class AgentInstanceService:
             )
         await self._session.refresh(instance)
 
+    async def append_to_persona(self, instance: AgentInstance, text: str) -> None:
+        """Add a paragraph to the end of this teammate's persona (``body``):
+        the 资源包's prompt, at project creation (``adapters.default_teammate``)."""
+        config = AgentConfiguration.model_validate(instance.configuration or {})
+        config.body = "\n\n".join(part for part in (config.body, text) if part)
+        await self.configure(instance, config)
+
     async def _validate_model(
         self,
         project_id: uuid.UUID,

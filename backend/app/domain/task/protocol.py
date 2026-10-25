@@ -275,6 +275,14 @@ class Protocol:
             return 0.0
         return float(value) if value > 0 else 0.0
 
+    @property
+    def pack_prompt(self) -> str | None:
+        """The prompt a 资源包 still carries (``resource_pack["prompt"]``), which
+        project creation appends to the default teammate's persona. Read until
+        the contract migration after b7d4e1a9c2f3 moves it into the guidance's
+        requirements; that migration's PR removes this."""
+        return _text(self.resource_pack.get("prompt"))
+
     def mentor_required_for(self, topic_title: str) -> bool:
         """Does a condition demand a mentor accept a topic with this title?
 

@@ -91,4 +91,5 @@ class TaskTerms:
         return AcceptedTerms(
             default_role=protocol.default_role,
             compute_credits=protocol.compute_credits,
+            pack_prompt=protocol.pack_prompt,
         )

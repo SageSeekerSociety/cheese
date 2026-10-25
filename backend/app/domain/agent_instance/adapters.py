@@ -95,6 +95,7 @@ async def default_teammate(
     *,
     display_name: str | None = None,
     type_name: str | None = None,
+    pack_prompt: str | None = None,
 ) -> None:
     """`app.domain.project.ports.DefaultTeammate`：这个项目的默认 AI 队友。
 
@@ -104,9 +105,14 @@ async def default_teammate(
     ``root_topic_id`` 才坐得下席位。"""
     agents = AgentInstanceService(session)
     teammate = await agents.materialize_default(project, display_name=display_name)
-    if teammate.type_name is None and type_name:
-        await agents.set_type(teammate, type_name)
-        await session.flush()
+    if teammate.type_name is None:
+        if type_name:
+            await agents.set_type(teammate, type_name)
+            await session.flush()
+        if pack_prompt:
+            # The 资源包's prompt, until the contract migration after
+            # b7d4e1a9c2f3 moves it into the 题目's guidance.
+            await agents.append_to_persona(teammate, pack_prompt)
 
 
 async def project_team(
