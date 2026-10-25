@@ -740,10 +740,9 @@ def fuse_is_mountable(platform_machine):
     root through a bind, and FUSE refuses a second reader without it.
 
     The library itself is not checked here: it is handed over as a path
-    (`transcript_view_env`) once cheesehost places it, and a machine without it
-    fails into the view's own silent exit. Nothing places it yet — that wiring
-    lands with the toolchain pin, when the release exists (`toolchain.py`, and
-    `3f0f67dd5` for why the two go together).
+    (`transcript_view_env`) from the copy cheesehost places (`devenv.Ensure`
+    places `fuse-runtime`, pinned in `agent/toolchain.py`), and a machine
+    without it fails into the view's own silent exit.
 
     The `user_allow_other` line is written as root where `platform_machine`
     says the platform owns the machine. That line used to be installed by
@@ -832,11 +831,9 @@ def placed_libfuse():
     the directory is per machine and cheesehost places the one for the machine
     it runs on, so its own name is the whole lookup.
 
-    The lookup is written for that placement and nothing has placed it yet:
-    `devenv.Ensure` places `bubblewrap` and `host-tools` only, and the
-    `fuse-runtime` line lands with the toolchain pin, when the release exists
-    (`3f0f67dd5`). Until then this answers None on every machine, which is the
-    same path as a machine that has no FUSE at all."""
+    `devenv.Ensure` places it beside those two, from the release
+    `agent/toolchain.py` pins; a machine that could not fetch it answers None
+    here, which is the same path as a machine that has no FUSE at all."""
     root = execution_root(Path.home()) / "runtime"
     candidate = root / "fuse-runtime" / "libfuse.so.2"
     return candidate if candidate.exists() else None

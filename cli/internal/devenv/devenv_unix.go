@@ -107,6 +107,11 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if runtime.GOOS == "linux" {
 		place("bubblewrap", filepath.Join(root, "bubblewrap"))
 		place("host-tools", "")
+		// A shared library, not a program: nothing is put on PATH. A room's
+		// executor points `fusepy` at `runtime/fuse-runtime/libfuse.so.2` by
+		// path (`bootstrap.placed_libfuse`), and a machine that cannot get it
+		// simply has no transcript view — the room runs as it did before.
+		place("fuse-runtime", "")
 	}
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))
