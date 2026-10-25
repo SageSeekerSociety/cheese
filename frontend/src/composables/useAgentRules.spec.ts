@@ -47,7 +47,7 @@ describe('useAgentRules', () => {
         rule('gave-up', { state: 'done' }),
       ])
     )
-    const rules = useAgentRules(ref(false))
+    const rules = useAgentRules(ref('c'), ref(false))
     expect(rules.now('waiting')).toBeNull()
     await settle()
 
@@ -61,7 +61,7 @@ describe('useAgentRules', () => {
   it('a rule cancelled here says cancelled, not merely gone', async () => {
     vi.mocked(getAssistantRoutines).mockResolvedValue(listed([rule('w')]))
     vi.mocked(setAssistantRoutine).mockResolvedValue(listed([]))
-    const rules = useAgentRules(ref(false))
+    const rules = useAgentRules(ref('c'), ref(false))
     await settle()
 
     expect(await rules.act('w', 'cancel')).toBe(true)
@@ -71,7 +71,7 @@ describe('useAgentRules', () => {
   it('reads again once an answer ends, which may have made one', async () => {
     vi.mocked(getAssistantRoutines).mockResolvedValueOnce(listed([]))
     const busy = ref(true)
-    const rules = useAgentRules(busy)
+    const rules = useAgentRules(ref('c'), busy)
     await settle()
     vi.mocked(getAssistantRoutines).mockResolvedValueOnce(listed([rule('new')]))
 

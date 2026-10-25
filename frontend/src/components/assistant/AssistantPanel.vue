@@ -337,6 +337,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
+import { runLine } from '@/lib/agentRules'
 import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
@@ -352,8 +353,8 @@ export interface PanelTopic {
 export interface PanelMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
-  /** 平台开始一次运行的那一句：哪条例行事务。 */
-  shown?: { routine?: string }
+  /** 平台开始一次运行的那一句：哪条自动化、发生了什么。 */
+  shown?: AssistantShown
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
@@ -367,8 +368,9 @@ export interface PanelMessage {
   changes?: PanelChange[]
   results?: PanelResult[]
   proposals?: PanelProposal[]
-  /** 芝士交给人的文件。 */
+  /** 芝士交给人的文件、建或改的自动化。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
 }
@@ -516,11 +518,6 @@ function followLink(event: MouseEvent) {
 
 const { t } = useI18n()
 
-/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
-function runLine(shown?: AssistantShown): string {
-  if (shown?.task) return t(`tasks.assistant.run.${shown.event ?? 'filed'}`, { task: shown.task })
-  return t(`tasks.assistant.run.${shown?.wait ? 'wait' : 'routine'}`, { title: shown?.wait ?? shown?.routine ?? '' })
-}
 const markdown = new MarkdownRenderer()
 
 /** 正在答的这一轮，按发生的顺序。最后做的几步都已回来、还没开始写下一段话时，末尾是

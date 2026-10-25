@@ -133,7 +133,7 @@ watch(
 )
 
 // 芝士建的自动化：回答里那张卡片的状态和取消、暂停、恢复。
-const rules = useAgentRules(agentThread.busy)
+const rules = useAgentRules(agentThread.current, agentThread.busy)
 provide(agentRulesKey, rules)
 
 // 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
