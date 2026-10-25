@@ -62,7 +62,7 @@ from app.domain.space.services import SpaceService
 from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.services import TaskService, ensure_task_readable
-from app.domain.task.stages import stage_lines
+from app.domain.task.stages import list_stages, stage_lines, stages_to_api
 from app.domain.task.submission_state import stage_change_effect
 from app.domain.user.services import timezones_by_ids
 
@@ -570,14 +570,12 @@ async def agent_write(
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
-    # What saving these stages would do to the 题目's takers, told on the
-    # change card and to 芝士 before anything is saved, as the edit page does.
-    # None: this write says nothing about it (no stages written, or the writer
-    # may no longer change the 题目); [] clears what an earlier write said.
+    # What saving the draft's stages as they now stand would do to the 题目's
+    # takers, whatever field this write changed: told on the change card and to
+    # 芝士 before anything is saved, as the edit page does. None: not a change
+    # to a published 题目, or the writer may no longer change it.
     stage_effect = (
-        await _stage_effect(db, row, user_id)
-        if row.task_id is not None and "stages" in written.changed
-        else None
+        await _stage_effect(db, row, user_id) if row.task_id is not None else None
     )
     if removed:
         # Never silently: the person reads on the change card what went with
@@ -648,16 +646,20 @@ async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
     """What saving the draft's stages onto its 题目 would do to the claims, as
     sentences (``stage_change_effect``, the edit page's own check): the save's
     refusal when it would refuse them; empty when nobody would cross the
-    failed line. None for someone who may not change the 题目 now — a draft
-    outlives its writer's rights, and the counts are the 题目's, like its
-    private guidance (``_editable_task``)."""
+    failed line, or when the draft's stages are the 题目's own. None for
+    someone who may not change the 题目 now — a draft outlives its writer's
+    rights, and the counts are the 题目's, like its private guidance
+    (``_editable_task``)."""
     task = await TaskService.of(db).get_task(row.task_id)
     if task is None or not await may_teach_task(session=db, task=task, user_id=user_id):
         return None
+    stages = drafts.published_form(row).get("stages") or []
+    if _stage_rows(stages) == _stage_rows(
+        stages_to_api(await list_stages(db, task.id))
+    ):
+        return []
     try:
-        effect = await stage_change_effect(
-            db, row.task_id, stage_lines(drafts.published_form(row).get("stages") or [])
-        )
+        effect = await stage_change_effect(db, row.task_id, stage_lines(stages))
     except BadRequestError as refused:
         # Every refusal of a stage change is a platform sentence (``say``).
         if not isinstance(refused.message, NoticeText):
@@ -669,6 +671,20 @@ async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
     if effect.reopening:
         said.append(say("stageEffectReopening", n=effect.reopening))
     return said
+
+
+def _stage_rows(stages: list) -> list[tuple]:
+    """Stages as the save compares them: id, name, what it asks for, due."""
+    return [
+        (
+            s.get("id") or None,
+            str(s.get("name") or "").strip(),
+            str(s.get("description") or "").strip(),
+            s.get("dueAt"),
+        )
+        for s in stages
+        if isinstance(s, dict)
+    ]
 
 
 async def _own_files(db, given, user_id: int) -> list[dict]:

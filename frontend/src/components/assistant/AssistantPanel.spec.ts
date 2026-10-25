@@ -346,7 +346,11 @@ describe('AssistantPanel: what a question carries', () => {
 
 describe('AssistantPanel: what saving the stages of a draft would do', () => {
   const WARNING = '1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过'
-  const write = (id: number, stageEffect: AssistantEdit['stageEffect']): AssistantEdit => ({
+  const write = (
+    id: number,
+    stageEffect: AssistantEdit['stageEffect'],
+    changed: AssistantEdit['changed'] = { stages: { before: [], after: [] } }
+  ): AssistantEdit => ({
     id,
     kind: 'draft',
     title: '',
@@ -356,14 +360,14 @@ describe('AssistantPanel: what saving the stages of a draft would do', () => {
     created: false,
     version: id,
     name: '实验一',
-    changed: { stages: { before: [], after: [] } },
+    changed,
     kept: [],
     notes: [],
     stageEffect,
     undone: [],
   })
-  const answer = (at: string, edits: AssistantEdit[]): AssistantMessage[] => [
-    { role: 'user', text: '改一下阶段截止', at },
+  const answer = (at: string, edits: AssistantEdit[], asked = '改一下阶段截止'): AssistantMessage[] => [
+    { role: 'user', text: asked, at },
     { role: 'assistant', text: '改好了', at, edits },
   ]
   const terms = { categories: [], topics: [] }
@@ -377,5 +381,19 @@ describe('AssistantPanel: what saving the stages of a draft would do', () => {
     const view = mount({ messages: panelMessages([...moved, ...restored], terms) })
 
     expect(view.container.textContent).not.toContain(WARNING)
+  })
+
+  it('a warning that still holds goes with the latest answer that touched the draft, whatever it changed', () => {
+    const failing: AssistantEdit['stageEffect'] = [{ key: 'stageEffectFailing', params: { n: 1 } }]
+    const moved = answer('2026-10-01T08:00:00Z', [write(1, failing)])
+    const renamed = answer(
+      '2026-10-01T08:05:00Z',
+      [write(2, failing, { name: { before: '实验一', after: '实验一（修订）' } })],
+      '把题目改个名'
+    )
+    const text = mount({ messages: panelMessages([...moved, ...renamed], terms) }).container.textContent ?? ''
+
+    expect(text.split(WARNING).length - 1).toBe(1)
+    expect(text.indexOf(WARNING)).toBeGreaterThan(text.indexOf('把题目改个名'))
   })
 })

@@ -1125,3 +1125,46 @@ def test_cheese_hears_no_counts_for_someone_who_may_no_longer_change_the_task(
 
     assert again.status_code == 200, again.text
     assert "stageEffect" not in again.json()["data"]
+
+
+def test_cheese_hears_the_drafts_stage_effect_on_a_write_that_changes_something_else(
+    api_client, board
+):
+    """The effect describes the draft as it stands: after 芝士 moved a stage's
+    due date into the past, renaming the task in the same draft still tells
+    that saving it would fail one participant; once the stages are the task's
+    own again, a write says nothing would."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    need, impl = _read(api_client, board, task_id)["stages"]
+    teacher = _as_cheese(board["teacher"])
+
+    moved = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "task": task_id,
+            "stages": [{**_as_written(need), "due": "2020-01-01"}, _as_written(impl)],
+        },
+        headers=teacher,
+    )
+    assert moved.status_code == 200, moved.text
+    draft = moved.json()["data"]["draft"]
+
+    renamed = api_client.post(
+        "/task-drafts/agent/write",
+        json={"draft": draft, "name": "改过名字的实验"},
+        headers=teacher,
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["changed"] == ["name"]
+    assert renamed.json()["data"]["stageEffect"] == (
+        "1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过"
+    )
+
+    restored = api_client.post(
+        "/task-drafts/agent/write",
+        json={"draft": draft, "stages": [_as_written(need), _as_written(impl)]},
+        headers=teacher,
+    )
+    assert restored.status_code == 200, restored.text
+    assert "stageEffect" not in restored.json()["data"]

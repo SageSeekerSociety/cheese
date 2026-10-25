@@ -326,10 +326,10 @@ function merged(
       rows.set(row.key, row)
     }
   const last = views[views.length - 1]
-  // 存下阶段的影响是草稿的事，不是哪一条回答的：只有这份草稿最新说的那一次（不管在哪一条
-  // 回答里）写在它的那张卡上；更早的卡不再写，说「没人受影响」就清掉。
+  // 存下阶段的影响是草稿的事，不是哪一条回答的：每次写入都说草稿那一刻的影响，所以只看这份
+  // 草稿最新的那一次写入（不管在哪一条回答里），写在它的那张卡上，更早的卡不再写。
   const latest = effectOf(last.draft)
-  const effect = latest && edits.includes(latest) ? latest.stageEffect ?? [] : []
+  const effect = latest && edits.includes(latest) ? latest.stageEffect : []
   return {
     ...last,
     created: views.some((v) => v.created),
@@ -346,10 +346,10 @@ function merged(
   }
 }
 
-/** 每份草稿最新说过「存下阶段的影响」的那一次写入，按写入的先后。 */
+/** 每份草稿最新的那一次写入，按写入的先后：它说的就是草稿现在存下去的影响。 */
 function latestEffect(edits: AssistantEdit[]): Map<number, AssistantEdit> {
   const latest = new Map<number, AssistantEdit>()
-  for (const edit of edits) if (Array.isArray(edit.stageEffect)) latest.set(edit.draft, edit)
+  for (const edit of edits) if (edit.kind === 'draft') latest.set(edit.draft, edit)
   return latest
 }
 

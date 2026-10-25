@@ -74,8 +74,10 @@ describe('writesView', () => {
       version: id,
       name: `草稿${draft}`,
       changed: Object.fromEntries(Object.entries(changed).map(([k, v]) => [k, { before: null, after: v }])),
+      kind: 'draft',
       kept: [],
       notes: [],
+      stageEffect: [],
       undone: [],
       ...more,
     }) as AssistantEdit
