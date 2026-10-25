@@ -135,6 +135,28 @@ class RoomFileListOut(Page[RoomFileOut]):
     truncated: bool
 
 
+class RoomFileRevisionOut(BaseModel):
+    """一次保存留下的那一版：地址、第几版、版本号、大小、谁从哪条路存的。
+
+    `room_files.revision_out` 那一份的形状——保存、恢复、编辑器回调都回它。版本是内容
+    的哈希前 16 位，和读文件时拿到的是同一个 id（`domain/textfile.content_version`）。
+    """
+
+    id: str
+    path: str
+    seq: int
+    version: str
+    size: int
+    author: str
+    author_kind: str
+    #: 这一版从哪个门进来的：取值见 ``room_files.SOURCES``。
+    source: str
+    note: str | None
+    #: 在线编辑器（OnlyOffice）那次会话的钥匙；走别条路的保存是空的。
+    editor_key: str | None
+    created_at: str
+
+
 @router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
 async def list_files(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -424,6 +446,77 @@ async def open_in_editor(
             "config": config,
         }
     )
+
+
+@router.post(
+    "/topics/{topic_id}/files/text",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoomFileRevisionOut),
+)
+async def write_text_file(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Save an edit to a room file that is text.
+
+    The counterpart of `write_file` on the workspace side, for the room's own
+    files rather than a task's worktree. The preview panel edits a markdown
+    file where it is shown, and what it saves has to land as a new version of
+    the file everyone reads — not as a copy somewhere else.
+
+    `version` is the one the caller read (the room-file read hands back
+    `content_version`, the same id this route compares against). It is required,
+    not optional: a save that skipped the read has nothing to compare against and
+    would overwrite whoever saved in between — the one thing this route exists to
+    prevent. The same rule the workspace side enforces (`taskFileReadBeforeSave`).
+    """
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    path = _room_path(str(body.get("path") or ""))
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise ValidationError(say("contentRequired"))
+    expected = str(body.get("version") or "")
+    if not expected:
+        raise ValidationError(say("taskFileReadBeforeSave"))
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, path
+    ):
+        raise NotFoundError(say("roomFileNotFound"))
+    # 这是「文本」那条路：一份二进制（docx、表格、图片）也能有这个地址，把 UTF-8 写进
+    # 去就把它毁了（旧版还在历史里，但文件本身没了）。读的人拿到的 `binary` 为真，
+    # 那也正是「这一份不是文本」；这里照同一条读法问一次，不靠面板那一层只给 markdown
+    # 开按钮。同一次读也把版本带回来——比的就是读它的人手上那一版。
+    #
+    # 判 `binary`，不是判 `content` 是不是 null：大过 `MAX_TEXT_BYTES` 的文本（1 MB）
+    # 正文也不交出来（`too_large`），但它是文本、写得回去——`save_room_file` 收得下
+    # 它。`binary` 和 `too_large` 在 `domain/textfile.py` 里是分开的两件事。
+    shown = await asyncio.to_thread(
+        library.read_room_text_file, place.project_id, place.room_id, path
+    )
+    if shown.get("binary"):
+        raise UnprocessableEntityError(say("roomFileNotText"))
+    version = shown.get("version")
+    if version is None:
+        raise NotFoundError(say("roomFileNotFound"))
+    if expected != version:
+        raise ConflictError(
+            say("roomFileMovedOn"), data={"version": version, "path": path}
+        )
+    made = await room_files.save_room_file(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=path,
+        data=content.encode("utf-8"),
+        author=actor.handle,
+        author_kind=author_kind(actor),
+        source="editor",
+        base_version=version,
+        note=str(body.get("note") or "") or None,
+        warm_preview=office.prewarm,
+        file_store=library,
+    )
+    await db.commit()
+    return ok(room_files.revision_out(made))
 
 
 @router.get("/office-editor/files/{link}")

@@ -31,6 +31,7 @@ import { usePanelPreviewEditing } from './panelPreview/editing'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { usePanelPreviewTextEdit } from './panelPreview/textEdit'
 import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
@@ -158,6 +159,13 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onOpenFile: options.onOpenFile,
     refreshDocument: doc.refreshDocument,
   })
+  // 在预览格里直接改一份 markdown：存回那一份房间文件本身（Office 那几种走 OnlyOffice，
+  // 文本这一条不经过它）。
+  const textEdit = usePanelPreviewTextEdit({
+    props,
+    state,
+    refreshDocument: doc.refreshDocument,
+  })
 
   /**
    * 标注合成图要进房间：上传是取数这一层的事。
@@ -214,6 +222,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     showHistory: edits.showHistory,
     editor: edits.editor,
     fileHistory: edits.fileHistory,
+    // 在预览格里直接改一份 markdown（存回房间文件本身）
+    textEdit,
     // 动作
     load,
     downloadArtifact,
