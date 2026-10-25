@@ -245,7 +245,7 @@ covers:
 
 - **谁放进来**：他在面板里附的文件（发布、改题目页上的除外，那是题目材料，仍走附件表），和芝士用 `cheese_library(action=give)` 交出来的文件。他也能在团队的「资料库」页直接上传。
 - **芝士怎么用**：`cheese_read library` 列出全部，`library/<名字>` 读文字；`cheese_library(action=take)` 把一份放进电脑。芝士的凭据只进 `/assistant/agent/library`、`/files/slot`、`/files/part`、`/files/handed`、`/files/link` 这五条（`api.auth.DELEGATED_ROUTES`），团队资料库的页面接口（`/teams/{id}/library`）它进不来。
-- **上限**：每个团队的资料库共 `team_library_bytes`（1 GB），被替换下来的旧版本也算；单个文件最大：存在服务器本地盘上时和附件相同（100 MB），比项目资料库的 10 MB 宽；存进文件桶时是 `files_bucket_file_max_bytes`。满了在领上传地址时就拒（`libraryFull`）。
+- **上限**：每个团队的资料库共 `records.capacity()`：设了 `team_library_bytes` 就是它；没设时按新文件存在哪，本地盘 1 GB，文件桶和 `files_bucket_file_max_bytes` 相同（20 GB，空的资料库放得下一份最大的文件）。被替换下来的旧版本也算；单个文件最大：存在服务器本地盘上时和附件相同（100 MB），比项目资料库的 10 MB 宽；存进文件桶时是 `files_bucket_file_max_bytes`。放不下时在领上传地址时就拒（`libraryFull`），报错说出这份文件多大、还剩多少、一共多少。
 - **卡片**：`handed` 事件和这次回答的其他部分一起存进 `assistant_messages.parts.handed`，面板重新打开时照样画出文件卡片。
 
 ## 打转 {#loops}

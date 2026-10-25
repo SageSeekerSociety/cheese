@@ -14,12 +14,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
+from app.domain.project.models import Project
 from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
@@ -52,6 +53,48 @@ def deadline_from(task: Task, approved_at: datetime) -> datetime | None:
     if days >= _MS_PER_DAY:
         days = round(days / _MS_PER_DAY)
     return approved_at + timedelta(days=days or _DAYS_WHEN_UNSET)
+
+
+def started_at():
+    """When the claim (the ``TaskMembership`` row of the enclosing query)
+    started: the moment its project was created, the project of the claim's
+    team for this task (a person's claim: their personal team's). NULL while
+    it has none — still waiting for approval, or approved and not started —
+    so how long a claim has gone without moving counts from here, never from
+    when it was applied for."""
+    return (
+        select(func.min(Project.created_at))
+        .join(Team, Team.id == Project.team_id)
+        .where(
+            Project.external_task_id == TaskMembership.task_id,
+            or_(
+                and_(
+                    TaskMembership.is_team.is_(True),
+                    Project.team_id == TaskMembership.member_id,
+                ),
+                and_(
+                    TaskMembership.is_team.is_(False),
+                    Team.personal_owner_user_id == TaskMembership.member_id,
+                ),
+            ),
+        )
+        .correlate(TaskMembership)
+        .scalar_subquery()
+    )
+
+
+async def started_at_of(
+    session: AsyncSession, membership_ids: Sequence[int]
+) -> dict[int, datetime]:
+    """``started_at`` for each of these claims that has started."""
+    if not membership_ids:
+        return {}
+    rows = await session.execute(
+        select(TaskMembership.id, started_at()).where(
+            TaskMembership.id.in_(membership_ids)
+        )
+    )
+    return {int(mid): at for mid, at in rows if at is not None}
 
 
 async def follow_the_task_deadline(

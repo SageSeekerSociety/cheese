@@ -13,7 +13,7 @@
   "libraryFileNoTaskBranch": "资料库里的文件不属于某个任务分支",
   "libraryFileNotFound": "资料库里没有这份文件",
   "libraryFileTooLargeToOpen": "这份文件太大（超过 {mb} MB），不能在这里打开，请下载后查看",
-  "libraryFull": "资料库已满（上限 {mb} MB），删除部分文件后重试",
+  "libraryFull": "无法放进资料库：这份文件 {size}，资料库还剩 {free}（共 {total}）。删除部分文件后重试",
   "libraryKindUnknown": "没有「{kind}」这种文件类型",
   "libraryMoveIntoItself": "不能把文件夹挪进它自己里面",
   "libraryNameTaken": "资料库里已经有《{name}》了",

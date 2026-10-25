@@ -1,8 +1,10 @@
 {
   "spaceTaskChanged": "「{task}」{changes}",
+  "spaceTaskChangedName": "改名为「{name}」",
   "spaceTaskChangedRequirements": "修改了提交内容或评分要点",
   "spaceTaskChangedStageDue": "阶段「{stage}」的截止时间改为 {due}（{zone}）",
   "spaceTaskChangedStageDueCleared": "阶段「{stage}」不再设截止时间",
+  "spaceTaskChangedStageName": "阶段「{stage}」改名为「{name}」",
   "spaceTaskChangedStagesAdded": "新增了阶段{stages}",
   "spaceTaskChangedStagesRemoved": "去掉了阶段{stages}",
   "spaceTaskClaimApproved": "「{task}」的申请已通过",

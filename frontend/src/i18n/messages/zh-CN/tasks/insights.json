@@ -13,7 +13,7 @@
   "progressTitle": "大家走到哪一步了",
   "solo": "单人",
   "stalled": "开始做后一直没动",
-  "stalledHint": "申请已满 5 天，还是「进行中」",
+  "stalledHint": "开始做已满 5 天，还没有提交",
   "status": {
     "inProgress": "进行中",
     "passed": "已通过",

@@ -294,7 +294,7 @@ async def get_participants(
 
 
 async def get_people(service, *, space_id: int) -> dict:
-    """逐人一行，外加「领了没动」的逐条名单 —— 都只看这块板上未删除的题。
+    """逐人一行，外加「开始做了没动」的逐条名单 —— 都只看这块板上未删除的题。
 
     两处口径，页面上也照说一遍：
 
@@ -302,8 +302,9 @@ async def get_people(service, *, space_id: int) -> dict:
       （``task_membership.completion_status`` 为 ``SUCCESS``，由
       ``submission_state`` 在每次提交与评审之后推出来）＝通过；有 live 提交但还
       没全部通过＝已交。
-    - **领了没动**逐条给：领取时间早于 14 天、而且一版 live 提交都没有。14
-      天与 alerts 那一格的 ``STALLED_TASK_DAYS`` 同一个数，不是另定一个。
+    - **开始做了没动**逐条给：开始做（项目建好，``claims.started_at``）早于
+      14 天、而且一版 live 提交都没有；还没开始做的不算。14 天与 alerts 那一格
+      的 ``STALLED_TASK_DAYS`` 同一个数，不是另定一个。
 
     团队报名按**队**算一行（``is_team`` 那半就是队号），和它在领取表里的
     粒度一致：一条领取是队领的，就没有「队里哪个人领的」这回事。
@@ -342,7 +343,7 @@ async def get_people(service, *, space_id: int) -> dict:
             "userId": int(row.member_id),
             "name": names[(bool(row.is_team), int(row.member_id))],
             "isTeam": bool(row.is_team),
-            "claimedAt": service._to_timestamp_ms(row.created_at),
+            "startedAt": service._to_timestamp_ms(row.started_at),
         }
         for row in stalled_rows
     ]

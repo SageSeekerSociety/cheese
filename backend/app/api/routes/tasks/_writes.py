@@ -362,14 +362,16 @@ async def update_task(
         await package.remove_starter(db, task)
         changes[package.STARTER_CHANGE] = package.REMOVED
     await package.record(db, task, by=user_id, changes=changes)
-    # What a taker is told about is what asks something new of them: the form,
-    # the rubric's lines, a stage added or removed, a stage's due date. A
-    # renamed or reordered stage, or the rubric shown or hidden (the editor
-    # sends that on every save), is a new version of the package and no news.
+    # What a taker is told about is what asks something new of them or changes
+    # what they would look for: the 题目's name, the form, the rubric's lines, a
+    # stage renamed, added or removed, a stage's due date. A reorder alone, or
+    # the rubric shown or hidden (the editor sends that on every save), is a
+    # new version of the package and no news.
     if task.approved == 0:
         await task_notices.task_changed(
             db,
             task=task,
+            old_name=package_before[package.DESCRIPTION][0],
             requirements=(
                 package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
                 or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]
