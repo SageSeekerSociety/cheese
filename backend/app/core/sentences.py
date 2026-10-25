@@ -265,6 +265,16 @@ def listing(items: Iterable[object], *, quoted: bool = False) -> NoticeList:
     return NoticeList(items, quoted)
 
 
+def size_text(n: int) -> str:
+    """A size limit as a sentence says it: in the largest of GB, MB and KB it
+    reaches, without trailing zeros — ``20 GB``, ``200 MB``, ``1.5 GB``. The
+    units are binary (1 GB = 1024³ bytes), as every limit here is set."""
+    for unit, scale in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if n >= scale:
+            return f"{round(n / scale, 1):g} {unit}"
+    return f"{n} B"
+
+
 class NoticeText(str):
     """A platform sentence: the Chinese text, plus the key that renders it."""
 
