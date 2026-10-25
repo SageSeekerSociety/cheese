@@ -571,7 +571,12 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
-    await referrals.on_accepted(self._session, by)
+    if by:
+        await referrals.on_accepted(self._session, by)
+    else:
+        reviewers = await self._repo.reviewer_handles(card.id)
+        if len(reviewers) == 1:
+            await referrals.on_accepted(self._session, reviewers[0])
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (

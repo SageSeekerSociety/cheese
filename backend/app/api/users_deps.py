@@ -80,6 +80,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.auth import SudoPurpose, create_access_token, verify_sudo_ticket
+from app.core import origins
 from app.core.client_address import resolved_client_address
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import (
@@ -296,10 +297,7 @@ def _require_same_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if origin is None:
         return
-    trusted = {
-        _origin_of(settings.frontend_url),
-        *map(_origin_of, settings.cors_origins),
-    }
+    trusted = {*origins.all_origins(), *map(_origin_of, settings.cors_origins)}
     same_host = urlsplit(origin).netloc == request.headers.get("host")
     if not same_host and _origin_of(origin) not in trusted:
         raise ForbiddenError("Cross-site request refused")
