@@ -29,7 +29,10 @@
     "spacePrompt": "Space requirements also in effect",
     "systemPrompt": "Additional requirements",
     "systemPromptPlaceholder": "For example: help read test output, don't hand over complete code",
-    "taskPrompt": "Requirements for this task"
+    "taskPrompt": "Requirements for this task",
+    "skills": "Skills",
+    "skillsHint": "Every AI teammate in a project built from this task carries these skills on every turn",
+    "skillsLoadFailed": "Could not load the skill list; the skills already chosen are kept"
   },
   "mode": {
     "example": "Explain with examples",

@@ -38,6 +38,7 @@ EMPTY_TEACHING = {
     "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
+    "skills": [],
 }
 
 
@@ -365,10 +366,11 @@ def test_the_other_teaching_fields_are_untouched(
     )
     assert resp.status_code == 200, resp.text
 
-    # 回复带上空的两格：`learningGoals` 与（板主看得见的）`privatePrompt`。
+    # 回复带上空的几格：`learningGoals`、`skills` 与（板主看得见的）`privatePrompt`。
     assert _teaching_of(api_client, board, board["token"]) == {
         **teaching,
         "learningGoals": [],
+        "skills": [],
         "privatePrompt": None,
     }
 

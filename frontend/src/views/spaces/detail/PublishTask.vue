@@ -22,6 +22,7 @@ import { storeToRefs } from 'pinia'
 import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -29,13 +30,12 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
-import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
-import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
+import { isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
@@ -51,6 +51,7 @@ const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
 // 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
 const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
@@ -103,6 +104,9 @@ const terms = () => ({
   topics: classificationTopics.value.map((topic) => ({ id: topic.id, name: topic.name })),
   domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
+  materials: materials.value.map(({ id, name }) => ({ id, name })),
+  teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  teaching: teaching.value,
 })
 
 // --- 草稿 ------------------------------------------------------------------------
@@ -131,9 +135,12 @@ const initialData = ref<Partial<TaskFormSubmitData>>({})
 const formKey = ref(0)
 const publishedHere = ref(false)
 
-/** 不在表单里、但也存进草稿的几样：附件、AI 指导。 */
+/** 不在表单里、但也存进草稿的几样：附件、AI 指导、默认队友。 */
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
+/** 这道题指定的默认队友（#944）：`''` = 不指定（继承项目集 / 空间）。新题没有自己的可清，
+ *  所以草稿里存的是预设名或 `null`。 */
+const defaultRole = ref('')
 const uploads = useAttachmentUploads({
   upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
 })
@@ -142,12 +149,14 @@ function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
   teaching.value = { ...(fields.teaching ?? {}) }
   teachingOwn.value = !!fields.teachingOwn
+  defaultRole.value = fields.defaultRole ?? ''
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
     teachingOwn: teachingOwn.value,
+    defaultRole: defaultRole.value || null,
     attachmentIds: files.map((f) => f.id),
     attachmentFiles: files,
   })
@@ -211,6 +220,7 @@ function useTemplate(index: number) {
 watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
   deep: true,
 })
+watch(defaultRole, (role) => draft.changed({ defaultRole: role || null }))
 watch(
   () => uploads.files.value,
   (files) =>
@@ -235,11 +245,12 @@ watch(view, (v) =>
   )
 )
 
-/** 草稿里不在表单上的几格（AI 指导、附件），芝士写到它们时由页面自己填。 */
+/** 草稿里不在表单上的几格（AI 指导、默认队友、附件），芝士写到它们时由页面自己填。 */
 function pageApply(fields: TaskDraftFields): TaskDraftFields {
   const shown: TaskDraftFields = {}
   if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
   if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+  if ('defaultRole' in fields) defaultRole.value = fields.defaultRole ?? ''
   if ('attachmentFiles' in fields) {
     const files = fields.attachmentFiles ?? []
     uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
@@ -423,10 +434,6 @@ async function publishAll() {
   else view.value?.check()
 }
 
-/** 这道题指定的默认队友（#944）。新建题没有原始值，留空 = 不指定（继承项目集 / 空间）。 */
-const defaultRole = ref('')
-const defaultRoleSubmit = computed(() => defaultRolePayload(defaultRole.value, null))
-
 // --- 发布 --------------------------------------------------------------------------
 
 const publishing = ref(false)
@@ -457,15 +464,11 @@ async function publish(form: TaskFormSubmitData) {
         descriptionMarkdown: view.value?.form.values().descriptionMarkdown,
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
+        defaultRole: defaultRole.value || null,
         attachmentIds: uploads.ids.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
-    if (defaultRoleSubmit.value !== undefined) {
-      // 「默认队友」不在草稿字段里（`TASK_DRAFT_FIELDS` 没有它），发布之后按题目补写
-      // 一次。`undefined` = 这一格选的是「继承」，不发这个键。
-      await TaskBoardApi.update(task.id, { defaultRole: defaultRoleSubmit.value })
-    }
     const { approved } = task
     draft.gone()
     toast.success(
@@ -536,6 +539,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :publishing="publishing"
     :agent-types="agentTypes"
     :agent-types-failed="agentTypesFailed"
+    :skill-catalog="skillCatalog"
+    :skill-catalog-failed="skillCatalogFailed"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"
