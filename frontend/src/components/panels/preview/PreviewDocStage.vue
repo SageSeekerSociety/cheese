@@ -75,6 +75,8 @@ const props = defineProps<{
   }[]
   /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
   pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
+  /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
+  sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
   /** 现在打开的那一条：它那颗标记画得显眼些。 */
   activeAnchor?: string | null
 }>()
@@ -246,7 +248,15 @@ defineExpose({ snapshot, clearMark })
         @mark="emit('anchor', $event)"
         @dropped="emit('dropped')"
       />
-      <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="emit('cell', $event)" />
+      <PreviewSheet
+        v-else
+        :data="docBytes"
+        :kind="documentType.sheet ?? 'workbook'"
+        :marks="sheetAnchors"
+        :active-mark="activeAnchor"
+        @cell="emit('cell', $event)"
+        @mark="emit('anchor', $event)"
+      />
 
       <RevisionList :revs="props.revs" :path="documentSuffix === 'docx' ? previewFile.path : null" />
     </div>

@@ -56,9 +56,9 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   // 而那正是标记要替他省掉的一步。
   //
   // 哪几档画标记：markdown 画在正文上（`PreviewMarkdown`），转成 PDF 的文档画在页上
-  // （`PreviewPages`）。别的读法有了标记时，这里跟着加。这一条和 `PanelPreviewView` 里
-  // `liveAnchors` 收哪几种锚点是配对的——那边多收一种，这边就得跟着多读一种，不然标记
-  // 一个都不会出现（栏关着的时候列表根本没读）。
+  // （`PreviewPages`），表格画在格子上（`PreviewSheet`）。别的读法有了标记时，这里跟着加。
+  // 这一条和 `PanelPreviewView` 里 `liveAnchors` 收哪几种锚点是配对的——那边多收一种，
+  // 这边就得跟着多读一种，不然标记一个都不会出现（栏关着的时候列表根本没读）。
   //
   // 幻灯片要单独排掉：它也是 `view === 'pages'`，但页上画不出标记（评的是整页）——
   // 圈进来就是每打开一份 pptx 都白打一次评论接口。
@@ -66,6 +66,7 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     const view = state.documentType.value?.view
     if (commentable.value === null) return false
     if (view === 'markdown') return true
+    if (view === 'sheet') return true
     // 读成网页时画的是沙箱帧，标记画不上去（`PreviewDocStage` 那一支挂的是 `PreviewPage`）。
     if (deps.docPage()) return false
     return view === 'pages' && !SLIDE_SUFFIXES.has(state.documentSuffix.value)

@@ -19,9 +19,16 @@ const vuetify = createVuetify({ components, directives })
 
 afterEach(cleanup)
 
-function mount(bytes: ArrayBuffer | Uint8Array) {
+function mount(
+  bytes: ArrayBuffer | Uint8Array,
+  marks: { id: string; sheet: string; address: string }[] = [],
+  activeMark: string | null = null
+) {
   const data = bytes instanceof Uint8Array ? (bytes.buffer as ArrayBuffer) : bytes
-  return render(PreviewSheet, { props: { data, kind: 'csv' as const }, global: { plugins: [vuetify] } })
+  return render(PreviewSheet, {
+    props: { data, kind: 'csv' as const, marks, activeMark },
+    global: { plugins: [vuetify] },
+  })
 }
 
 function utf8(text: string): Uint8Array {
@@ -121,4 +128,68 @@ it('只有一张表的时候不画工作表标签', async () => {
 
   await waitFor(() => expect(grid(container).length).toBe(2))
   expect(container.querySelector('.ps__tabs')).toBeNull()
+})
+
+/** 一格上的评论标记：按地址找那一格里那颗点。 */
+function markAt(container: Element, address: string): Element | null {
+  const td = Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+  const cell = td[gridIndex(container, address)]
+  return cell?.querySelector('.ps__cmt') ?? null
+}
+
+/** 地址（`B2`）换成那一格在 `td` 列表里的序号。 */
+function gridIndex(container: Element, address: string): number {
+  const match = /^([A-Z]+)(\d+)$/.exec(address)
+  if (!match) return -1
+  let col = 0
+  for (const ch of match[1]) col = col * 26 + (ch.charCodeAt(0) - 64)
+  const row = Number(match[2]) - 1
+  const width = container.querySelectorAll('tbody tr:first-child td').length
+  if (row < 0 || col < 1) return -1
+  return row * width + (col - 1)
+}
+
+it('评过的那一格上画一颗标记，别的格子不画', async () => {
+  // 地址是表格里唯一指得回的东西，所以标记就落在那一格上。
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(markAt(container, 'B2')).toBeTruthy()
+  expect(markAt(container, 'A2')).toBeNull()
+})
+
+it('地址在这一版里落不到任何一格上（表短了）就不画，不猜它挪到哪去了', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B99' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(container.querySelectorAll('.ps__cmt')).toHaveLength(0)
+})
+
+it('点一颗标记，说的是被点的那一条', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'), [
+    { id: 'c1', sheet: '', address: 'A1' },
+    { id: 'c2', sheet: '', address: 'B2' },
+  ])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  await fireEvent.click(markAt(container, 'B2')!)
+  expect(emitted().mark).toEqual([['c2']])
+})
+
+it('点标记不开那一格的选中框，也不当成选了一格', async () => {
+  // 标记长在格子里面，而格子自己被点了就是「指着这一格」。不挡住的话，点评论会
+  // 顺手把这一格选上。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }])
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  await fireEvent.click(markAt(container, 'B2')!)
+  expect(emitted().cell).toBeUndefined()
+  expect(container.querySelector('.ps__cell--on')).toBeNull()
+})
+
+it('正打开的那一条画得显眼些', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n'), [{ id: 'c1', sheet: '', address: 'B2' }], 'c1')
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(markAt(container, 'B2')!.classList.contains('is-active')).toBe(true)
 })
