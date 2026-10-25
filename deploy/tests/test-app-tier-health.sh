@@ -977,43 +977,31 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
 test_ghcr_login_retries_dropped_connections() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/login-retry.XXXXXX")"
-  docker_log="$run_dir/docker.log"
   token='ghs_fake_login_token_4f1d'
   # Five resets in a row, as on dev deploy run 40138894358, then ghcr answers.
   if ! PATH="$FAKE_BIN:$PATH" \
-    APP_TIER_SCENARIO=healthy \
-    APP_TIER_MAIN_SHA=testsha \
-    APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_GHCR_TOKEN="$token" \
     APP_TIER_LOGIN_FAIL_COUNT=5 \
     APP_TIER_LOGIN_COUNTER="$run_dir/login.count" \
     APP_TIER_LOGIN_SECRET_SEEN="$run_dir/login.secret" \
-    DEPLOY_GHCR_USERNAME=owner \
-    DEPLOY_GHCR_TOKEN="$token" \
+    GHCR_USERNAME=owner \
+    GHCR_TOKEN="$token" \
     DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
-    DEPLOY_HEALTH_ATTEMPTS=1 \
-    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
-    "$ROOT/deploy/deploy-docker.sh" testsha \
-      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    "$ROOT/deploy/ghcr-login.sh" > "$run_dir/out" 2>&1; then
     cat "$run_dir/out" >&2
     rm -rf "$run_dir"
-    fail "deploy gave up on a ghcr login that would have succeeded within the budget"
+    fail "the ghcr login gave up on a registry that answered within the budget"
   fi
 
-  attempts="$(grep -c '^login ghcr.io' "$docker_log" || true)"
-  [ "$attempts" = 6 ] || fail "expected 6 login attempts, saw $attempts"
+  # docker got the token on stdin on every attempt, and it shows up nowhere in
+  # what the login printed.
+  attempts="$(grep -cxF "$token" "$run_dir/login.secret" || true)"
+  [ "$attempts" = 6 ] || fail "expected the token on stdin for 6 login attempts, saw $attempts"
   grep -q 'ghcr login: succeeded on attempt 6' "$run_dir/out" || \
     fail "the login that finally worked was not reported"
-  last_login="$(grep -n '^login ghcr.io' "$docker_log" | tail -n 1 | cut -d: -f1)"
-  first_pull="$(grep -n 'pull backend frontend$' "$docker_log" | head -n 1 | cut -d: -f1)"
-  [ "$last_login" -lt "$first_pull" ] || fail "the images were pulled before the login succeeded"
-  # docker got the token every time, and only through stdin: it is in neither
-  # the deploy's output nor any docker command line.
-  [ "$(grep -cxF "$token" "$run_dir/login.secret" || true)" = 6 ] || \
-    fail "docker login did not receive the token on stdin on every attempt"
-  if grep -qF "$token" "$run_dir/out" "$docker_log"; then
-    fail "the ghcr token appeared in the deploy output or on a docker command line"
+  if grep -qF "$token" "$run_dir/out"; then
+    fail "the ghcr token appeared in the login's output"
   fi
   rm -rf "$run_dir"
   echo "PASS: a ghcr login that hits dropped connections is retried within the budget, token on stdin only"
@@ -1022,33 +1010,57 @@ test_ghcr_login_retries_dropped_connections() {
 test_ghcr_login_refused_is_not_retried() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/login-refused.XXXXXX")"
+  # The budget is short so that, were the refusal retried, the case would fail
+  # in seconds rather than spin for ten minutes.
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_GHCR_TOKEN=the-token-ghcr-accepts \
+    APP_TIER_LOGIN_SECRET_SEEN="$run_dir/login.secret" \
+    GHCR_USERNAME=owner \
+    GHCR_TOKEN=a-token-ghcr-refuses \
+    DEPLOY_PULL_BUDGET_SECONDS=5 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/ghcr-login.sh" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "the ghcr login succeeded although ghcr refused its credential"
+  fi
+
+  attempts="$(wc -l < "$run_dir/login.secret" | tr -d ' ')"
+  [ "$attempts" = 1 ] || fail "a refused credential was tried $attempts times, expected once"
+  grep -q 'ghcr login was refused by the registry' "$run_dir/out" || \
+    fail "the failure did not say the registry refused the credential"
+  rm -rf "$run_dir"
+  echo "PASS: a ghcr login refused for its credential fails at once"
+}
+
+test_pull_refused_is_not_retried() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-refused.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_GHCR_TOKEN=the-token-ghcr-accepts \
-    DEPLOY_GHCR_USERNAME=owner \
-    DEPLOY_GHCR_TOKEN=a-token-ghcr-refuses \
-    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
+    APP_TIER_PULL_FAIL_COUNT=99 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    APP_TIER_PULL_FAIL_MESSAGE='Error response from daemon: Head "https://ghcr.io/v2/x/manifests/testsha": denied: denied' \
+    DEPLOY_PULL_BUDGET_SECONDS=5 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
     "$ROOT/deploy/deploy-docker.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
     rm -rf "$run_dir"
-    fail "deploy succeeded although ghcr refused its credential"
+    fail "deploy succeeded although ghcr refused the pull"
   fi
 
-  attempts="$(grep -c '^login ghcr.io' "$docker_log" || true)"
-  [ "$attempts" = 1 ] || fail "a refused credential was tried $attempts times, expected once"
-  if grep -q 'pull backend frontend$' "$docker_log"; then
-    fail "deploy pulled images after ghcr refused its credential"
-  fi
-  grep -q 'ghcr login was refused by the registry' "$run_dir/out" || \
-    fail "the failure did not say the registry refused the credential"
+  attempts="$(cat "$run_dir/pull.count")"
+  [ "$attempts" = 1 ] || fail "a refused pull was tried $attempts times, expected once"
+  grep -q 'image pull was refused by the registry' "$run_dir/out" || \
+    fail "the failure did not say the registry refused the pull"
   rm -rf "$run_dir"
-  echo "PASS: a ghcr login refused for its credential fails the deploy at once"
+  echo "PASS: a pull the registry refuses fails the deploy at once"
 }
 
 test_failed_deploy_reclaims_disk() {
@@ -2487,6 +2499,7 @@ case "$CASE" in
   pull-exhausted) test_exhausted_pull_retries_still_fail_the_deploy ;;
   login-retry) test_ghcr_login_retries_dropped_connections ;;
   login-refused) test_ghcr_login_refused_is_not_retried ;;
+  pull-refused) test_pull_refused_is_not_retried ;;
   failed-reclaim) test_failed_deploy_reclaims_disk ;;
   disk-watermark) test_deploy_logs_disk_watermarks ;;
   operator) test_operator_rejects_stale_frontend ;;
@@ -2566,6 +2579,7 @@ case "$CASE" in
     test_exhausted_pull_retries_still_fail_the_deploy
     test_ghcr_login_retries_dropped_connections
     test_ghcr_login_refused_is_not_retried
+    test_pull_refused_is_not_retried
     test_failed_deploy_reclaims_disk
     test_deploy_logs_disk_watermarks
     test_operator_rejects_stale_frontend

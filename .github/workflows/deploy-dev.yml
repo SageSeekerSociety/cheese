@@ -255,10 +255,10 @@ jobs:
           fi
           rm -f "$(git rev-parse --git-dir)/info/sparse-checkout"
 
-      # The candidate may predate this guard. Read policy from the workflow's
-      # default-branch commit before checking out that candidate's deploy code.
+      # The candidate may predate this guard and the ghcr login below. Read
+      # policy and log in from the workflow's default-branch commit before
+      # checking out that candidate's deploy code.
       - name: Check out automatic deployment policy
-        if: github.event_name == 'workflow_run' || inputs.rebuilt != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -305,6 +305,19 @@ jobs:
           else
             python3 deploy/check-auto-deploy.py "$CANDIDATE_SHA"
           fi
+
+      # Authenticate for the pull rather than trusting the box's stored login:
+      # the images are private, and a deploy must not fail because some other
+      # job's cleanup removed a credential. Retried within a time budget, as
+      # the pulls are (deploy/ghcr-login.sh). Run from this workflow's commit,
+      # so a release or rollback of an older commit is logged in too; the
+      # credential stays stored for the steps after it.
+      - name: Log in to ghcr
+        if: steps.release.outputs.skip != 'true'
+        env:
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash deploy/ghcr-login.sh
 
       - name: Check out the built commit (for the deploy scripts + compose)
         if: steps.release.outputs.skip != 'true'
@@ -479,10 +492,6 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
-          # The script logs in to ghcr with this before its first pull, retried
-          # the way its pulls are (deploy-docker.sh, ghcr_login).
-          DEPLOY_GHCR_USERNAME: ${{ github.repository_owner }}
-          DEPLOY_GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Release the verified metering image

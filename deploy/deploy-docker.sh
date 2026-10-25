@@ -30,13 +30,9 @@
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
 #                      existing images.
-#   DEPLOY_GHCR_USERNAME / DEPLOY_GHCR_TOKEN  when the token is set, the deploy
-#                      logs in to ghcr.io with it (on stdin) before the first
-#                      pull, retried like a pull; unset, it uses the box's
-#                      stored login
-#   DEPLOY_PULL_BUDGET_SECONDS   how long the ghcr login and the pulls keep being
-#                                retried, counted from the first of them
-#                                                                   (default 600)
+#   DEPLOY_PULL_BUDGET_SECONDS   how long the pulls keep being retried, counted
+#                                from the first pull (default 600; see
+#                                registry-retry.sh)
 #   DEPLOY_PULL_BACKOFF_CAP_SECONDS  the longest wait between attempts (default 30)
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
 #                      prune, see retain_ci_service_images() below (defaults
@@ -64,29 +60,6 @@ HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 # "owner never becomes healthy" path without waiting the real minute.
 OWNER_HEALTH_SECONDS="${DEPLOY_OWNER_HEALTH_SECONDS:-60}"
 APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
-# The pulls are retried until 600s after the first one started, waiting 5s,
-# 10s, 20s and then 30s between attempts. A pull dies here for transient reasons
-# far more often than for real ones. The dev box reaches ghcr through a link
-# that resets connections in bursts lasting minutes (2026-10-24: six dev deploy
-# attempts gave up on the old three attempts 37-57s after their first pull, each
-# on `read: connection reset by peer`), and containerd sometimes fails to commit
-# a downloaded layer because its ingest file vanished mid-pull (Deploy run #174,
-# 2026-08-09) — a fresh pull opens a NEW ingest record, so a retry clears that
-# too. The 30s cap means a pull resumes at most half a minute after a burst
-# ends. The budget is shared by every pull of one deploy and sized against the
-# tighter of the two jobs that run this script: prod's 30-minute limit
-# (deploy-prod.yml; dev's is 180). No prod release has run this version yet; on
-# dev it took 4-7.5 minutes in the 22 successful runs of 2026-10-24
-# (UTC, every pull included) after about a minute of earlier steps, and the one
-# prod release of its first version took 10 minutes, so 10 minutes of retrying
-# plus a last attempt still ends in this script's own error and its reclaim,
-# not in the runner killing the job. An image that does not exist at all is
-# not what this waits out: both workflows refuse a release
-# whose image build did not succeed before this script runs
-# (deploy/check-auto-deploy.py), so the full budget is spent only on a manual
-# release of a commit that has no images, holding the box's runner 10 minutes.
-PULL_BUDGET_SECONDS="${DEPLOY_PULL_BUDGET_SECONDS:-600}"
-PULL_BACKOFF_CAP_SECONDS="${DEPLOY_PULL_BACKOFF_CAP_SECONDS:-30}"
 # This box's only runner also serves test.yml/e2e.yml, whose `services:`
 # postgres/redis images are pulled straight by Docker for the job and belong
 # to no container once it ends — `docker image prune -af` below reclaims them
@@ -846,12 +819,21 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   _slot_args=(-f "$SLOTS_OVERLAY")
 fi
 
-case "$PULL_BUDGET_SECONDS" in
-  ''|*[!0-9]*) fail "DEPLOY_PULL_BUDGET_SECONDS must be a whole number of seconds (got: '$PULL_BUDGET_SECONDS')" ;;
-esac
-case "$PULL_BACKOFF_CAP_SECONDS" in
-  ''|*[!0-9]*) fail "DEPLOY_PULL_BACKOFF_CAP_SECONDS must be a whole number of seconds (got: '$PULL_BACKOFF_CAP_SECONDS')" ;;
-esac
+# The pull budget, its backoff and retry_pull, shared with ghcr-login.sh.
+. "$HERE/registry-retry.sh"
+
+# What retry_pull does before retrying a pull that failed on a full disk.
+# Idempotent and safe on a live box: prune only removes what nothing
+# references. Deliberately NOT touching containerd's ingest area, stopping
+# dockerd, or killing containers — a failed retry is recoverable, a wedged
+# box is not.
+reclaim_before_pull_retry() {
+  if [ "$APP_IMAGE_SOURCE" = registry ]; then
+    reclaim_docker_disk "before pull retry" true
+  else
+    reclaim_docker_disk "before pull retry" false
+  fi
+}
 
 # Disk watermark around every pull and every reclaim. Triaging the 2026-08-09
 # pull failures from CI was impossible because the deploy log carried no disk
@@ -961,87 +943,6 @@ on_exit() {
     fi
   fi
   exit "$rc"
-}
-
-# Wait after the Nth failed attempt: 5s doubling each time, capped.
-pull_backoff_delay() {
-  local attempt="$1" delay=5 i=1
-  while [ "$i" -lt "$attempt" ] && [ "$delay" -lt "$PULL_BACKOFF_CAP_SECONDS" ]; do
-    delay=$((delay * 2))
-    i=$((i + 1))
-  done
-  [ "$delay" -le "$PULL_BACKOFF_CAP_SECONDS" ] || delay="$PULL_BACKOFF_CAP_SECONDS"
-  printf '%s' "$delay"
-}
-
-# Set by the first retry_pull of the deploy: every pull after it shares the
-# budget that is left.
-PULL_STARTED=""
-
-# retry_pull <description> <command…>
-#
-# Keeps `set -euo pipefail` semantics intact: failures are captured explicitly
-# rather than swallowed, and once the budget is spent this still calls fail(), so
-# the deploy exits non-zero exactly as it did before. The budget decides only
-# whether another attempt starts; an attempt already running is not cut short.
-# The docker output of each attempt streams to the deploy log as it happens
-# (the progress lines are what made the #174 stall diagnosable) and is also kept
-# for the attempt, to tell a full disk from everything else.
-#
-# Only a full disk reclaims before the next attempt. `docker image prune -af`
-# deletes every image no container uses yet, which includes this release's
-# images pulled moments before. Dev deploy run 40108853373 (attempt 5,
-# 2026-10-24) pulled backend and frontend, pruned them when the collab pull was
-# reset, and then died pulling backend again for `dc run`. After a dropped
-# connection that prune only throws away progress; ENOSPC, which docker reports
-# as "no space left on device", is the one failure that freeing space cures.
-#
-# A registry that refuses the credential ("unauthorized", "denied") fails at
-# once: the same token is refused again on every later attempt, and waiting out
-# the budget would only delay the deploy's error by ten minutes.
-retry_pull() {
-  local what="$1"
-  shift
-  local attempt=1 rc delay elapsed out errors=""
-  [ -n "$PULL_STARTED" ] || PULL_STARTED="$SECONDS"
-  out="$(mktemp)"
-  while :; do
-    rc=0
-    "$@" 2>&1 | tee "$out" || rc=$?
-    elapsed=$((SECONDS - PULL_STARTED))
-    if [ "$rc" -eq 0 ]; then
-      [ "$attempt" -eq 1 ] \
-        || log "$what: succeeded on attempt $attempt, ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget"
-      rm -f "$out"
-      return 0
-    fi
-    errors="${errors:+$errors; }attempt $attempt exited $rc"
-    if grep -qiE 'unauthorized|denied' "$out"; then
-      rm -f "$out"
-      fail "$what was refused by the registry on attempt $attempt (exit $rc); not retrying a rejected credential — see the docker output above"
-    fi
-    log_disk "$what failed, attempt $attempt"
-    delay="$(pull_backoff_delay "$attempt")"
-    [ $((elapsed + delay)) -lt "$PULL_BUDGET_SECONDS" ] || break
-    if grep -qi 'no space left on device' "$out"; then
-      log "$what: attempt $attempt failed (exit $rc) on a full disk, ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget; reclaiming disk, retrying in ${delay}s"
-      # Idempotent and safe on a live box: prune only removes what nothing
-      # references. Deliberately NOT touching containerd's ingest area, stopping
-      # dockerd, or killing containers — a failed retry is recoverable, a wedged
-      # box is not.
-      if [ "$APP_IMAGE_SOURCE" = registry ]; then
-        reclaim_docker_disk "before pull retry" true
-      else
-        reclaim_docker_disk "before pull retry" false
-      fi
-    else
-      log "$what: attempt $attempt failed (exit $rc), ${elapsed}s into the pulls' ${PULL_BUDGET_SECONDS}s budget; retrying in ${delay}s"
-    fi
-    sleep "$delay"
-    attempt=$((attempt + 1))
-  done
-  rm -f "$out"
-  fail "$what failed after $attempt attempts in ${elapsed}s, the pulls' ${PULL_BUDGET_SECONDS}s budget spent ($errors); see each attempt's docker output above for the underlying error"
 }
 
 # Capture the exact currently-running images so rollback also works when an
@@ -1237,21 +1138,6 @@ trap 'on_exit 130' INT
 trap 'on_exit 143' TERM
 
 log_disk "before pull"
-
-# The deploy authenticates for its pulls instead of trusting the box's stored
-# login: the images are private, and a credential some other job's cleanup
-# removed must not fail the deploy. It goes through retry_pull because the
-# login meets the same resetting link the pulls do: dev deploy run 40138894358
-# (2026-10-24) died on its single login attempt with `read: connection reset by
-# peer`. The token reaches docker on stdin only, never on a command line.
-ghcr_login() {
-  printf '%s' "$DEPLOY_GHCR_TOKEN" \
-    | docker login ghcr.io --username "$DEPLOY_GHCR_USERNAME" --password-stdin
-}
-if [ -n "${DEPLOY_GHCR_TOKEN:-}" ]; then
-  [ -n "${DEPLOY_GHCR_USERNAME:-}" ] || fail "DEPLOY_GHCR_USERNAME is required with DEPLOY_GHCR_TOKEN"
-  retry_pull "ghcr login" ghcr_login
-fi
 
 COLLAB_EXPECTED=false
 case "$APP_IMAGE_SOURCE" in
