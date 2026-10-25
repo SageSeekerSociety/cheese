@@ -43,7 +43,7 @@ beforeEach(() => {
 afterEach(() => apps.splice(0).forEach((app) => app.unmount()))
 
 /** 一份摆进预览格里的文件，和它那个评论包。 */
-function setup(path: string) {
+function setup(path: string, docPage = () => false) {
   const state = createPreviewState()
   state.previewFile.value = {
     path,
@@ -61,6 +61,7 @@ function setup(path: string) {
           props: { topicId: 'room', projectId: 'project', members: [] } as never,
           state,
           people: { names: ref({}), avatars: ref({}) } as never,
+          docPage,
         })
         return () => null
       },
@@ -101,6 +102,17 @@ it('幻灯片：页上画不出标记，栏关着就别读——那一次请求�
   // 栏打开时照读：那一栏里该有的评论还在。
   bundle.toggle()
   await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+})
+
+it('这一份读成了网页：页上画不出标记（它在沙箱帧里），栏关着就别读', async () => {
+  const bundle = setup('output/报价.docx', () => true)
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+
+  // 切回分页那一档，标记又要画了：这时候该读。
+  const paged = setup('output/报价.docx', () => false)
+  await vi.waitFor(() => expect(paged.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
 })
 
 it('资料库原件不是这个房间的文件：哪一档都不读', async () => {

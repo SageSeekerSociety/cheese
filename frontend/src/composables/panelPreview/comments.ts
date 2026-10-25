@@ -22,6 +22,9 @@ export interface CommentsDeps {
   state: PreviewState
   /** 名册那一包（`useDocPeople`）：卡上的名字和头像从它来，和文档那一栏同一处。 */
   people: DocPeopleBundle
+  /** 屏幕上这一份是不是读成了网页（`docPage`）。网页那一档画不出标记（它在沙箱帧里），
+   *  所以栏关着时不必为它读评论串。 */
+  docPage: () => boolean
 }
 
 /** 一份文件上的评论串，和写一条新的那条路。 */
@@ -63,6 +66,8 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     const view = state.documentType.value?.view
     if (commentable.value === null) return false
     if (view === 'markdown') return true
+    // 读成网页时画的是沙箱帧，标记画不上去（`PreviewDocStage` 那一支挂的是 `PreviewPage`）。
+    if (deps.docPage()) return false
     return view === 'pages' && !SLIDE_SUFFIXES.has(state.documentSuffix.value)
   })
   const threads = useFileThreads(
