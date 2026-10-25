@@ -25,6 +25,7 @@ import { usePreviewPick } from './usePreviewPick'
 import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
+import { firstCodePoints } from '@/lib/codePoints'
 
 interface LocatorDeps {
   /** 指了一处，交给房间的对话。 */
@@ -87,7 +88,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function onPageContext(payload: SlidePageContext) {
     if (!pageLocator.canUse(payload.context)) return
     const page = t('work.room.preview.page', { page: payload.page })
-    openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
+    openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : firstCodePoints(payload.text, 200), page)
     quoted.page.value = { ...payload, context: { ...payload.context } }
   }
 
@@ -118,7 +119,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const quote = payload.text.replace(/\s+/g, ' ').trim()
     if (quote.length < 2) return
     const page = t('work.room.preview.page', { page: payload.page })
-    openLocator(page, quote.slice(0, 200), page)
+    openLocator(page, firstCodePoints(quote, 200), page)
   }
 
   function onCell(payload: { address: string; value: string; sheet: string }) {
@@ -135,7 +136,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     // 一片全是空格子时摊平的结果是几个制表符和换行，看着不是空的却什么也没有：按空白判，
     // 和 `MessageQuote` 那条同一条。判的是整片的内容，不是截出来那 200 字——开头一片空格、
     // 右下角有内容的表不能被说成空的。截预览按码点，和表格那边怎么截同一条。
-    const preview = Array.from(payload.text).slice(0, 200).join('')
+    const preview = firstCodePoints(payload.text, 200)
     openLocator(where, payload.text.trim() ? preview : t('work.room.preview.emptyCell'), where)
     quoted.sheetRange(payload)
   }
@@ -145,7 +146,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const where = payload.heading
       ? t('work.room.preview.mdHeading', { heading: payload.heading })
       : t('work.room.preview.mdTop')
-    openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+    openLocator(where, firstCodePoints(payload.text, 200), where, {
+      prefix: payload.prefix,
+      suffix: payload.suffix,
+    })
     quoted.range(payload)
   }
 

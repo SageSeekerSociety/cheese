@@ -9,6 +9,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { takeCodePoints } from '@/lib/codePoints'
 
 const props = withDefaults(
   defineProps<{
@@ -448,23 +449,16 @@ function endDrag() {
   //
   // 一边接一边数，够了就停：上限不能等整片拼完再截。格子里存的是整格（只有画出来时才
   // 截短），一本几十万格的表按整片拼出来就是几百 MB，为一个跟着消息走的摘要不值当。
-  // 数的是码点：一个 emoji 在下标上占两格，按码点算既对得上「两千字」这个说法，也不会
-  // 把它劈成半个。只扫到够为止，不把整格先摊成一个数组 —— 那又要把这一格整个摸一遍。
+  // 数的是码点（`lib/codePoints.ts`，和指针那几处同一条），一个 emoji 在下标上占两格，
+  // 按码点算既对得上「两千字」这个说法，也不会把它劈成半个。
   const parts: string[] = []
   let used = 0
   /** 再接一段；接得下整段就接整段，接不下只接开头那一点。够长了答 false。 */
   function append(piece: string): boolean {
-    const room = RANGE_TEXT_CHARS - used
-    if (room <= 0) return false
-    let cut = 0
-    let points = 0
-    while (cut < piece.length && points < room) {
-      cut += piece.codePointAt(cut)! > 0xffff ? 2 : 1
-      points += 1
-    }
-    parts.push(cut >= piece.length ? piece : piece.slice(0, cut))
-    used += points
-    return cut >= piece.length
+    const taken = takeCodePoints(piece, RANGE_TEXT_CHARS - used)
+    parts.push(taken.text)
+    used += taken.points
+    return taken.complete
   }
   outer: for (let row = range.row1; row <= range.row2; row += 1) {
     if (row > range.row1 && !append('\n')) break
