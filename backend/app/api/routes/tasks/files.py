@@ -10,10 +10,9 @@
 三条判据）。
 """
 
-import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -174,20 +173,26 @@ async def download_task_file(
     task_id: TaskId,
     name: str,
     request: Request,
-    version: uuid.UUID | None = None,
+    version: Annotated[int | None, Query(ge=1)] = None,
     preview_pdf: bool = False,
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> Response:
     """一份材料的字节。先过题目详情那三道闸，再看是不是出题人、空间管理员或参与者（申请通过的人）。
 
-    `version`：历史版本页上那一版里这份文件的 id，取它那时的字节；不给就是现在这一份。
-    `preview_pdf`：Office 文档转成 PDF，给题目页上的预览。"""
+    `version`：第几版，取那一版手上的这份文件当时的字节——只认那一版记下的文件；不给
+    就是现在这一份。`preview_pdf`：Office 文档转成 PDF，给题目页上的预览。"""
     task = await _require_task(db, task_id)
     await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     await package.refuse_unless_downloader(db, task, auth_user.user_id)
+    name = _name(name)
+    row_id = (
+        (await package.version_file(db, task.id, version, name)).id
+        if version is not None
+        else None
+    )
     return await library_file_response(
-        db, package.shelf(task.id), _name(name), version, preview_pdf, request
+        db, package.shelf(task.id), name, row_id, preview_pdf, request
     )
 
 
@@ -198,11 +203,10 @@ class TaskVersionAuthorOut(BaseModel):
 
 
 class TaskVersionFileOut(BaseModel):
-    """一版里的一份文件。``id`` 是下载那一版要带的 ``version``；这份材料后来整份
-    删掉了的，``id`` 和 ``size`` 是 null，只剩名字。"""
+    """一版里的一份文件，按 ``/files/raw?name=&version=<第几版>`` 取。这份材料后来
+    整份删掉了的，``size`` 是 null，只剩名字，取不到。"""
 
     name: str
-    id: str | None
     size: int | None
 
 
@@ -268,7 +272,6 @@ async def list_task_versions(
                     else [
                         {
                             "name": held.name,
-                            "id": str(held.row.id) if held.row else None,
                             "size": held.row.bytes if held.row else None,
                         }
                         for held in v.files

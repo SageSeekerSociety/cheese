@@ -32,8 +32,9 @@
   "timezoneUnknown": "不认识的时区：{name}",
   "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑",
   "assistantRoutineOnceAt": "运行时间要在现在之后的一年内，写成 2026-10-23T08:00 这样",
-  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due 或 invite",
-  "assistantRoutineAlreadyRan": "这条只运行一次的例行事务已经运行过了。要再运行，改一个新的时间",
-  "assistantRoutineLimit": "例行事务最多 {max} 条，删掉不用的再新建",
-  "assistantRoutineInRun": "例行事务运行时不能新建或修改例行事务"
+  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due、invite、filed 或 decided",
+  "assistantRoutineAlreadyRan": "这条只做一次的自动化已经运行过了。要再运行，改一个新的时间",
+  "assistantRoutineLimit": "只做一次的和反复做的自动化各最多 {max} 条，删掉不用的再新建",
+  "assistantRoutineInRun": "自动化运行时不能新建或修改自动化",
+  "assistantRoutineWhichTask": "要给出是哪个任务（task），或用 mine 表示用户提的任务"
 }

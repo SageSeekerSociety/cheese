@@ -302,9 +302,9 @@ export const TASK_VERSIONS: TaskVersionData[] = [
     author: { id: 1, username: 'teacher', nickname: '王老师' },
     changes: { files: { replaced: ['数据.csv'], removed: ['草稿.txt'] } },
     files: [
-      { name: '实验指导书.pdf', id: 'v3-guide', size: 2_400_000 },
-      { name: '数据.csv', id: 'v3-data', size: 48_000 },
-      { name: '题目说明.md', id: 'v3-brief', size: 1_200 },
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 48_000 },
+      { name: '题目说明.md', size: 1_200 },
     ],
   },
   {
@@ -313,10 +313,10 @@ export const TASK_VERSIONS: TaskVersionData[] = [
     author: { id: 1, username: 'teacher', nickname: '王老师' },
     changes: { description: true, files: { added: ['数据.csv', '草稿.txt'] } },
     files: [
-      { name: '实验指导书.pdf', id: 'v2-guide', size: 2_400_000 },
-      { name: '数据.csv', id: 'v2-data', size: 40_000 },
-      { name: '草稿.txt', id: null, size: null },
-      { name: '题目说明.md', id: 'v2-brief', size: 1_100 },
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 40_000 },
+      { name: '草稿.txt', size: null },
+      { name: '题目说明.md', size: 1_100 },
     ],
   },
   {

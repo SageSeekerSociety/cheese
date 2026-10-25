@@ -1,7 +1,7 @@
 """A 题目's version records which files it held
 
 Revision ID: 2b398ee3e416
-Revises: a7d3e5c91f20
+Revises: e5a17c93d2b4
 Create Date: 2026-10-25
 
 #4767 §一: a task's history page lists every version with the files it held,
@@ -23,7 +23,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "2b398ee3e416"
-down_revision: str | Sequence[str] | None = "a7d3e5c91f20"
+down_revision: str | Sequence[str] | None = "e5a17c93d2b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

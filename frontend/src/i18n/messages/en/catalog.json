@@ -1709,7 +1709,7 @@
     }
   },
   "settingsAssistantView": {
-    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), automations (one list: when, what, its state; repeating ones can be viewed, paused, resumed and deleted, a waiting one-off cancelled, and a one-off leaves the list once it has run), and recent actions (done or asked, with the reason when asked).",
     "s1": {
       "name": "With routines",
       "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
@@ -1747,6 +1747,21 @@
     "s3": {
       "name": "Someone who has not started the task",
       "note": "Sees every version and file name, with no download button and a note that files download once they start."
+    }
+  },
+  "agentRules": {
+    "about": "When Cheese makes or changes an automation, the answer carries a card: when, in bold; what it does; and a line with its state and the one thing to do (cancel a wait, pause one that is on, resume a paused one). When a one-off fires, the platform says what happened in the same conversation and Cheese carries on.",
+    "s1": {
+      "name": "Just made",
+      "note": "Waiting once for a task to go to review: the card says Waiting, with Cancel. Nothing over the input."
+    },
+    "s2": {
+      "name": "After it happened",
+      "note": "The card says Started; the platform line says the task went to review, and Cheese answers below."
+    },
+    "s3": {
+      "name": "Card states",
+      "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
     }
   }
 }

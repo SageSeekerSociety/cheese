@@ -163,7 +163,7 @@ async def preview_file(
     what 芝士 writes once it has read something the project was given.
     """
     place = await place_or_404(db, topic_id)
-    actor = await _actor_in_place(resolver, place)
+    await _actor_in_place(resolver, place)
     if path:
         return ok(
             await library_records.read_attachment_text(
@@ -172,7 +172,7 @@ async def preview_file(
                 place.room_id,
                 clean_artifact_path(path),
                 with_task=await may_read_path(
-                    db, place.project_id, actor, clean_artifact_path(path)
+                    db, place.project_id, clean_artifact_path(path)
                 ),
             )
         )

@@ -6,8 +6,8 @@ import { computed } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { t } from '@/i18n'
+import { fmtBytes } from '@/lib/changesTree'
 import { PREVIEW_MAX_MB, tooLargeToPreview } from '@/lib/fileKind'
-import { fmtFileSize } from '@/lib/usageFormat'
 
 const props = defineProps<{
   /** 打开的那一份；null 是没打开。 */
@@ -32,7 +32,7 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
     <section v-if="file" class="tfp" data-testid="task-file-preview">
       <header class="tfp__head">
         <h2 class="tfp__name t-title" data-user-content>{{ file.name }}</h2>
-        <span class="tfp__size t-meta-read t-num">{{ fmtFileSize(file.size) }}</span>
+        <span class="tfp__size t-meta-read t-num">{{ fmtBytes(file.size) }}</span>
         <BaseButton
           kind="primary"
           size="sm"

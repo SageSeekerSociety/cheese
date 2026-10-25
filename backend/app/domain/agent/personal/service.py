@@ -405,13 +405,14 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
     whether it failed, each draft write, each publish, each file it handed the
-    person. Kept with the answer, so the conversation shows them again."""
+    person, each rule it made. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
     handed: list[dict] = []
+    rules: list[dict] = []
     branches: list[dict] = []
     reasoning: dict | None = None
 
@@ -462,11 +463,13 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             proposed.append(data)
         elif event == "handed":
             handed.append(data)
+        elif event == "rule":
+            rules.append(data)
         elif event == "subagents":
             branches = list(data.get("branches") or [])
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed or handed):
+    if not (steps or edits or published or proposed or handed or rules):
         return None
     return {
         "steps": steps,
@@ -474,6 +477,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
         "published": published,
         **({"proposals": proposed} if proposed else {}),
         **({"handed": handed} if handed else {}),
+        **({"rules": rules} if rules else {}),
         **({"subagents": branches} if branches else {}),
     }
 

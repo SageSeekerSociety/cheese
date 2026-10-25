@@ -7,6 +7,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import TaskFilePreview from '../TaskFilePreview.vue'
 
 import i18n, { setLocale } from '@/i18n'
+// 资料库那一页写文件大小用的那一个（`LibraryFileDetail.vue`）。
+import { fmtBytes } from '@/lib/changesTree'
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -54,6 +56,11 @@ describe('题目页上点开的一份材料', () => {
     expect(read).not.toHaveBeenCalled()
     await fireEvent.click(screen.getByRole('button', { name: '下载' }))
     expect(emitted('download')).toEqual([[]])
+  })
+
+  it('文件大小和资料库里写得一样', async () => {
+    mount({ name: '数据集.csv', size: 350 * 1024 * 1024 })
+    await waitFor(() => expect(screen.getByText(fmtBytes(350 * 1024 * 1024))).toBeTruthy())
   })
 
   it('关上就报关闭', async () => {

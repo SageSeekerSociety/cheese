@@ -36,10 +36,10 @@ export function useTaskVersions() {
   }
 
   async function download(taskId: number, version: number, file: TaskVersionFileData) {
-    if (!file.id) return
+    if (file.size === null) return
     downloading.value = { version, name: file.name }
     try {
-      await downloadFile(taskFileRawUrl(taskId, file.name, file.id), file.name)
+      await downloadFile(taskFileRawUrl(taskId, file.name, version), file.name)
     } finally {
       downloading.value = null
     }

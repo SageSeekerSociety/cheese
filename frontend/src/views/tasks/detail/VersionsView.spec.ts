@@ -24,8 +24,8 @@ const VERSIONS: TaskVersionData[] = [
     author,
     changes: { files: { replaced: ['数据.csv'] } },
     files: [
-      { name: '数据.csv', id: 'row-3', size: 2048 },
-      { name: '草稿.txt', id: null, size: null },
+      { name: '数据.csv', size: 2048 },
+      { name: '草稿.txt', size: null },
     ],
   },
   {
@@ -33,7 +33,7 @@ const VERSIONS: TaskVersionData[] = [
     at: Date.UTC(2026, 9, 19, 2, 0),
     author,
     changes: { description: true, starter: 'added' },
-    files: [{ name: '数据.csv', id: 'row-2', size: 1024 }],
+    files: [{ name: '数据.csv', size: 1024 }],
   },
   { number: 1, at: Date.UTC(2026, 9, 18, 2, 0), author: null, changes: { published: true }, files: null },
 ]
@@ -63,7 +63,7 @@ it('下载取的是那一版的那一份', async () => {
   const view = mount()
   const second = items(view)[1]
   await fireEvent.click(within(second).getByRole('button', { name: '下载' }))
-  expect(view.emitted('download')).toEqual([[2, { name: '数据.csv', id: 'row-2', size: 1024 }]])
+  expect(view.emitted('download')).toEqual([[2, { name: '数据.csv', size: 1024 }]])
 })
 
 it('后来删掉的材料只剩名字，没有下载；没记下文件的版本照实说', () => {

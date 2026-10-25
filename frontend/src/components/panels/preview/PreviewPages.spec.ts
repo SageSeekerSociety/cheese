@@ -269,6 +269,136 @@ describe('分页文档的阅读视图', () => {
     expect(emitted().quote![0]).toEqual([{ text: '第一页', page: 1 }])
     selection.removeAllRanges()
   })
+
+  it('有已核过的身份时，选中一段发的是结构化引用，不是那句拼话', async () => {
+    // 这一条原本是这句话的反面：分页文档选段只发一句不带版本的纯文本，而幻灯片同一
+    // 件事发的是带身份、带两侧文字的 `slide-page`。两边本是一回事，受话人拿不到版本
+    // 就回不到读者指的那一版。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const layer = document.createElement('div')
+    layer.className = 'pv-text'
+    // 真的文字层由 pdf.js 立出来；假的这条自己摆一层，好让选区落进它里面，两侧文字
+    // 也才量得到（`contextAround` 量的是它给的根）。
+    const node = document.createTextNode('前文重试三次后文')
+    layer.appendChild(node)
+    host.appendChild(layer)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 2)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [
+      { text: string; page: number; scope: string; context: typeof context; prefix: string; suffix: string },
+    ]
+    expect(payload.text).toBe('重试三次')
+    expect(payload.page).toBe(2)
+    expect(payload.scope).toBe('selection')
+    // 带的是这一份已验证的身份：受话人据此回到读者当时看的那一版。
+    expect(payload.context).toEqual(context)
+    // 两侧文字：同一句话在这一页往往不止一处，前后文才是能分辨它说的是哪一处的东西。
+    expect(payload.prefix).toBe('前文')
+    expect(payload.suffix).toBe('后文')
+    // 老那条出口没被用上——用了就会同时发两种引用。
+    expect(ui.emitted('quote')).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('还没核过身份时，仍旧发那句不带版本的拼话', async () => {
+    // 没有身份不是「不发」——读者那一下指的确实是一处；拼话至少把选中的原文交出去，
+    // 只是指不回哪一版。这条守着别为了结构化把这条老路掐掉。
+    const ui = await opened({ data: new ArrayBuffer(8) })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const node = document.createTextNode('第一页正文')
+    host.appendChild(node)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 3)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    await waitFor(() => expect(ui.emitted('quote')).toHaveLength(1))
+    expect(ui.emitted('quote')![0]).toEqual([{ text: '第一页', page: 1 }])
+    expect(ui.emitted('page-context')).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('选区跨了两页时，不拿起点那一页的后文当两侧文字', async () => {
+    // 拖过页脚的选区起在这一页、结在下一页。只核起点的话 `contextAround` 会把结尾挪
+    // 到起点那儿，`suffix` 量出来是空串——交出去的是「这是第 1 页的一段」，那段话
+    // 其实跨到了第 2 页。量不出来就不带两侧文字，别给一段错的。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const first = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const second = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const makeLayer = (parent: HTMLElement, body: string) => {
+      const layer = document.createElement('div')
+      layer.className = 'pv-text'
+      const node = document.createTextNode(body)
+      layer.appendChild(node)
+      parent.appendChild(layer)
+      return node
+    }
+    const head = makeLayer(first, '跨页开头')
+    const tail = makeLayer(second, '跨页结尾')
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(head, 0)
+    range.setEnd(tail, tail.length)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(first)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; page: number; prefix?: string; suffix?: string }]
+    expect(payload.page).toBe(1)
+    // 两样都不出现：没量准的东西不许冒充「这一页的上下文」。
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('选区落在这一页的错误提示上时，不把它当成正文量两侧', async () => {
+    // 页框里除了文字层，还有画不出来的那一页的说明和评论标记。拿页框当量两侧的根，
+    // 就会把那段说明当正文、把它的前后当上下文——交出去的引用说的是文件里的原文，
+    // 而那段字是界面自己的话。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const pageBox = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const notice = document.createElement('div')
+    notice.className = 'pv-error'
+    const node = document.createTextNode('这一页无法显示：页流损坏')
+    notice.appendChild(node)
+    pageBox.appendChild(notice)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(pageBox)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; prefix?: string; suffix?: string }]
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
+    selection.removeAllRanges()
+  })
 })
 
 describe('在页面上指一点', () => {

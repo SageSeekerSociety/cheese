@@ -16,15 +16,15 @@ class Shelf:
     project_id: uuid.UUID | None = None
     team_id: int | None = None
     task_id: int | None = None
-    #: 一个项目的资料库，读的这个人看不看得到 `题目/`（`mount`）：那是题目的材料，
-    #: 归题目自己的下载判据管，项目里的人不一定都看得到。由读的人那一侧判好了交进来；
-    #: 不说就是看不到。写不看它：`题目/` 底下谁都写不进去。
+    #: 一个项目的资料库里有没有 `题目/`（`mount`）：那是题目的材料，跟着项目来自的
+    #: 那一份申请走，申请还在、已经通过才有。由读的那一侧判好了交进来；不说就是没有。
+    #: 写不看它：`题目/` 底下谁都写不进去。
     with_task: bool = False
 
     @classmethod
     def of_project(cls, project_id: uuid.UUID, *, with_task: bool) -> "Shelf":
         """``with_task`` has no default on purpose: whoever reads a project's
-        library decides whether this reader sees `题目/` (in a request,
+        library decides whether it shows `题目/` (in a request,
         `app.api.project_library.shelf_for`), so a reader that forgot to cannot
         build one."""
         return cls(project_id=project_id, with_task=with_task)

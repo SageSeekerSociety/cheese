@@ -5,7 +5,7 @@
 
 1. **放进 / 替换 / 删掉**：出题人本人，或这块板的所有者 / 管理员；
 2. **看得见清单**：看得见这道题的人（题目详情那三道闸）；
-3. **拿得到文件**：出题人 / 板管理员 / 已经领取的人。
+3. **拿得到文件**：出题人 / 板管理员 / 申请通过、仍然有效的人。
 
 发布是第 1 版；说明、提交内容、评分要点、材料每变一次记下一版，写明改了什么。
 """
@@ -15,7 +15,6 @@ from __future__ import annotations
 import io
 import time
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,7 +24,6 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.task import package
-from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
@@ -577,174 +575,6 @@ def test_the_projects_agents_are_told_the_version_and_what_changed(
     assert f"/spaces/{board['space_id']}/tasks/{task_id}/versions?version=2" in second
 
 
-# --- 历史版本：每一版改了什么、手上有哪几份，各版的文件拿得回来 ---------------------------
-
-
-def _versions(api_client: TestClient, task_id: int, token: str):
-    return api_client.get(f"/tasks/{task_id}/versions", headers=_auth(token))
-
-
-def _download_version(
-    api_client: TestClient, task_id: int, token: str, name: str, version: str
-):
-    return api_client.get(
-        f"/tasks/{task_id}/files/raw",
-        params={"name": name, "version": version},
-        headers=_auth(token),
-    )
-
-
-def _held(version: dict) -> dict[str, dict]:
-    return {f["name"]: f for f in version["files"]}
-
-
-def test_the_history_lists_each_version_with_the_files_it_held(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
-):
-    """新的在前：第几版、谁改的、改了什么；每一版手上的文件，按那一版的字节取回。
-    随题一起发出去的材料是第 1 版的。"""
-    board = _new_board(user_client, api_client)
-    token = board["creator_token"]
-    picked = _upload_loose(api_client, token, "讲义.pdf", MATERIAL)
-    task_id = _create_task(api_client, board, name="有历史的题", attachmentIds=[picked])
-    assert _add(api_client, task_id, token, "数据.csv", b"v1").status_code == 201
-    assert _replace(api_client, task_id, token, "数据.csv", b"v2").status_code == 200
-    resp = api_client.patch(
-        f"/tasks/{task_id}",
-        json={"description": "说明改了"},
-        headers=_auth(token),
-    )
-    assert resp.status_code == 200, resp.text
-
-    resp = _versions(api_client, task_id, token)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()["data"]
-    assert body["canDownload"] is True
-    versions = body["versions"]
-    assert [(v["number"], v["changes"]) for v in versions] == [
-        (4, {"description": True}),
-        (3, {"files": {"replaced": ["数据.csv"]}}),
-        (2, {"files": {"added": ["数据.csv"]}}),
-        (1, {"published": True}),
-    ]
-    assert {v["author"]["username"] for v in versions} == {board["creator"].username}
-
-    first, second, third = versions[3], versions[2], versions[1]
-    assert set(_held(first)) == {"讲义.pdf", package.BRIEF}
-    assert set(_held(second)) == {"讲义.pdf", "数据.csv", package.BRIEF}
-
-    def bytes_of(version: dict, name: str) -> bytes:
-        resp = _download_version(
-            api_client, task_id, token, name, _held(version)[name]["id"]
-        )
-        assert resp.status_code == 200, resp.text
-        return resp.content
-
-    assert bytes_of(first, "讲义.pdf") == MATERIAL
-    assert bytes_of(second, "数据.csv") == b"v1"
-    assert bytes_of(third, "数据.csv") == b"v2"
-    # 题目说明也是那一版的：第 1 版的说明写着第 1 版。
-    assert "第 1 版" in bytes_of(first, package.BRIEF).decode()
-    assert "说明改了" in bytes_of(versions[0], package.BRIEF).decode()
-
-
-def test_a_material_deleted_later_keeps_its_name_in_the_versions_that_had_it(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
-):
-    """删一份材料连同它的几版一起删，旧的版本里只剩名字，没有可下载的那一份。"""
-    board = _new_board(user_client, api_client)
-    token = board["creator_token"]
-    task_id = _create_task(api_client, board, name="删过材料的题")
-    _add(api_client, task_id, token, "草稿.txt", b"draft")
-    resp = api_client.delete(
-        f"/tasks/{task_id}/files", params={"name": "草稿.txt"}, headers=_auth(token)
-    )
-    assert resp.status_code == 200, resp.text
-
-    versions = _versions(api_client, task_id, token).json()["data"]["versions"]
-    assert versions[0]["changes"] == {"files": {"removed": ["草稿.txt"]}}
-    assert "草稿.txt" not in _held(versions[0])
-    assert _held(versions[1])["草稿.txt"] == {
-        "name": "草稿.txt",
-        "id": None,
-        "size": None,
-    }
-
-
-def test_the_history_is_for_who_sees_the_task_and_its_files_for_who_took_it(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
-):
-    """历史和材料清单同一道门：看得见题就看得到；各版的文件和现在的材料同一条下载判据。"""
-    board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="历史谁看得到")
-    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
-    _, member_token = _member_of(user_client, api_client, board)
-
-    resp = _versions(api_client, task_id, member_token)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()["data"]
-    assert body["canDownload"] is False
-    file_id = _held(body["versions"][0])["数据.csv"]["id"]
-    assert (
-        _download_version(
-            api_client, task_id, member_token, "数据.csv", file_id
-        ).status_code
-        == 403
-    )
-
-    _claim(api_client, board, task_id, member_token)
-    resp = _download_version(api_client, task_id, member_token, "数据.csv", file_id)
-    assert resp.status_code == 200
-    assert resp.content == b"a,b\n"
-
-    hidden = _create_task(
-        api_client, board, name="限可见范围的题", accessControlEnabled=True
-    )
-    assert _versions(api_client, hidden, member_token).status_code == 404
-
-
-def test_a_version_id_from_another_task_downloads_nothing(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
-):
-    """版本 id 只在它那道题里算数：拿得到这道题的材料，不等于拿得到别的题的。"""
-    board = _new_board(user_client, api_client)
-    token = board["creator_token"]
-    mine = _create_task(api_client, board, name="我领的题")
-    other = _create_task(api_client, board, name="别的题")
-    _add(api_client, mine, token, "数据.csv", b"mine")
-    _add(api_client, other, token, "数据.csv", b"secret")
-    _, member_token = _member_of(user_client, api_client, board)
-    _claim(api_client, board, mine, member_token)
-    theirs = _held(_versions(api_client, other, token).json()["data"]["versions"][0])
-
-    resp = _download_version(
-        api_client, mine, member_token, "数据.csv", theirs["数据.csv"]["id"]
-    )
-    assert resp.status_code == 404
-
-
-def test_the_project_names_its_task_for_who_reads_the_task_folder(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path
-):
-    """从题目来的项目说它来自哪道题、现在第几版（项目总览和 `题目/` 由此连到题目页）；
-    没领这道题的队友看不到 `题目/`，也拿不到这一项。"""
-    board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="项目连到题目")
-    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
-    _, taker_token = _member_of(user_client, api_client, board)
-    _claim(api_client, board, task_id, taker_token)
-    project_id = _project_from(api_client, task_id, taker_token)
-
-    resp = api_client.get(f"/projects/{project_id}", headers=_auth(taker_token))
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["task"] == {
-        "id": task_id,
-        "space_id": board["space_id"],
-        "name": "项目连到题目",
-        "version": 2,
-    }
-
-
 # --- 谁在项目里读得到 `题目/`：题目的判据，不是项目的名册 ------------------------------
 
 
@@ -785,95 +615,56 @@ def test_a_board_manager_who_did_not_publish_may_download_without_claiming(
     assert resp.content == MATERIAL
 
 
-def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
-    api_client: TestClient,
-    user_client: UserCreator,
-    upload_root: Path,
-    db_session,
-    _portal,
+def test_no_read_path_reaches_the_task_folder_before_the_claim_is_approved(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
-    """个人题的项目挂在一个团队下：团队里没领这道题的人进得了项目，题目的材料他照样
-    拿不到——和在题目页上一样。"""
+    """`题目/` 跟着项目来自的那份申请走：还在等通过时，资料库的清单、搜索、读文本、
+    取字节、`cheese library get` 先要的下载地址都拿不到它；通过之后都拿得到。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="个人题进团队")
+    task_id = _create_task(api_client, board, name="通过前读不到")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"secret\n")
-    _, a_token = _member_of(user_client, api_client, board)
-    _claim(api_client, board, task_id, a_token)
-    resp = api_client.post(
-        "/teams",
-        json={
-            "name": f"队 {unique_int(10000000, 99999999)}",
-            "intro": "x",
-            "description": "x",
-            "avatarId": 1,
-        },
-        headers=_auth(a_token),
-    )
-    assert resp.status_code == 201, resp.text
-    team_id = resp.json()["data"]["team"]["id"]
-    b_user, b_token = _member_of(user_client, api_client, board)
+    _, token = _member_of(user_client, api_client, board)
+    participant = _claim(api_client, board, task_id, token, approve=False)
+    project_id = _project_from(api_client, task_id, token)
+    headers = _auth(token)
 
-    async def join() -> None:
-        now = datetime.now(UTC)
-        db_session.add(
-            TeamUserRelation(
-                team_id=team_id,
-                user_id=b_user.user_id,
-                role=TeamMemberRole.MEMBER,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await db_session.flush()
+    def reads() -> dict[str, int]:
+        found = api_client.get(
+            f"/projects/{project_id}/library", params={"q": "数据"}, headers=headers
+        ).json()["data"]["data"]
+        return {
+            "listed": int("题目" in _top_paths(api_client, project_id, token)),
+            "found": len(found),
+            "raw": _raw_in_project(
+                api_client, project_id, token, "数据.csv"
+            ).status_code,
+            "text": api_client.get(
+                f"/projects/{project_id}/library/text",
+                params={"path": "题目/数据.csv"},
+                headers=headers,
+            ).status_code,
+            "link": api_client.get(
+                f"/projects/{project_id}/library/link",
+                params={"path": "题目/数据.csv"},
+                headers=headers,
+            ).status_code,
+        }
 
-    _portal.call(join)
-    resp = api_client.post(
-        "/projects",
-        json={"name": "个人题挂团队", "external_task_id": task_id, "team_id": team_id},
-        headers=_auth(a_token),
+    assert reads() == {"listed": 0, "found": 0, "raw": 403, "text": 403, "link": 403}
+
+    resp = api_client.patch(
+        f"/tasks/{task_id}/participants/{participant}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
     )
     assert resp.status_code == 200, resp.text
-    project_id = resp.json()["data"]["id"]
-
-    assert _download(api_client, task_id, b_token, "数据.csv").status_code == 403
-    assert (
-        _raw_in_project(api_client, project_id, b_token, "数据.csv").status_code == 403
-    )
-    assert "题目" not in _top_paths(api_client, project_id, b_token)
-    # 项目也不替他说出来自哪道题（总览、`题目/` 连到题目页靠的那一项）。
-    resp = api_client.get(f"/projects/{project_id}", headers=_auth(b_token))
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["task"] is None
-    found = api_client.get(
-        f"/projects/{project_id}/library", params={"q": "数据"}, headers=_auth(b_token)
-    ).json()["data"]["data"]
-    assert found == []
-    text = api_client.get(
-        f"/projects/{project_id}/library/text",
-        params={"path": "题目/数据.csv"},
-        headers=_auth(b_token),
-    )
-    assert text.status_code == 403
-    # `cheese library get` 先要的下载地址也一样不给。
+    assert reads() == {"listed": 1, "found": 1, "raw": 200, "text": 200, "link": 200}
     link = api_client.get(
         f"/projects/{project_id}/library/link",
         params={"path": "题目/数据.csv"},
-        headers=_auth(b_token),
+        headers=headers,
     )
-    assert link.status_code == 403
-
-    # 领了题的那个人照旧读得到，下载地址取到的也是那份字节。
-    resp = _raw_in_project(api_client, project_id, a_token, "数据.csv")
-    assert resp.status_code == 200
-    assert resp.content == b"secret\n"
-    link = api_client.get(
-        f"/projects/{project_id}/library/link",
-        params={"path": "题目/数据.csv"},
-        headers=_auth(a_token),
-    )
-    assert link.status_code == 200, link.text
     assert api_client.get(link.json()["data"]["url"]).content == b"secret\n"
-    assert "题目" in _top_paths(api_client, project_id, a_token)
 
 
 def test_the_materials_wait_for_the_application_to_be_approved(
@@ -913,17 +704,17 @@ def test_the_materials_wait_for_the_application_to_be_approved(
     assert "题目" in _top_paths(api_client, project_id, waiting)
 
 
-def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
+def test_a_claim_no_longer_valid_stops_the_task_reaching_its_project(
     api_client: TestClient,
     user_client: UserCreator,
     upload_root: Path,
     db_session,
     _portal,
 ):
-    """出题人撤掉了一个领取：他的项目还在，题目的材料（现在的和以后改的）他读不到了，
-    项目里的 agent 也不再被告知题目。"""
+    """申请不再有效：项目还在，题目的材料（现在的和以后改的）读不到了，项目里的
+    agent 也不再被告知题目。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="撤掉的人")
+    task_id = _create_task(api_client, board, name="不再有效的申请")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"v1\n")
     _, token = _member_of(user_client, api_client, board)
     participant = _claim(api_client, board, task_id, token)

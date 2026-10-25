@@ -14,7 +14,7 @@
       <span v-else class="ta__name">{{ file.name }}</span>
       <span v-if="file.size === null" class="ta__meta ta__gone">{{ t('tasks.versions.removed') }}</span>
       <template v-else>
-        <span class="ta__meta t-num">{{ fmtFileSize(file.size) }}</span>
+        <span class="ta__meta t-num">{{ fmtBytes(file.size) }}</span>
         <!-- 看得见清单不等于拿得到文件。这一行由服务端的 canDownload 决定，
              前端不拿自己的角色去猜 —— 判据只有一份。 -->
         <BaseButton
@@ -37,7 +37,7 @@
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import { fmtFileSize } from '@/lib/usageFormat'
+import { fmtBytes } from '@/lib/changesTree'
 
 /** 一道题的材料清单。清单和能不能下载都由外面给，这里只画和报「要下载 / 打开哪一个」。
  *  `size` 是 null 的一份已经删掉了（历史版本里那一版有过它），只剩名字。 */

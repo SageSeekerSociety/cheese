@@ -74,6 +74,7 @@
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
               :files="m.handed ?? []"
+              :rules="m.rules ?? []"
               @download-file="(file) => emit('downloadFile', file)"
             >
               <template #text="{ text }">
@@ -131,6 +132,7 @@
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
             :files="m.handed ?? []"
+            :rules="m.rules ?? []"
             :sending="sendingProposal"
             @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
             @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -165,6 +167,7 @@
           :results="results"
           :proposals="proposals"
           :files="handed"
+          :rules="rules"
           :sending="sendingProposal"
           @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
           @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -311,7 +314,7 @@ import type { VoiceHeard } from '@/composables/useVoiceInput'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
-import type { AssistantCited, AssistantHanded } from '@/stores/agentThread'
+import type { AssistantCited, AssistantHanded, AssistantRule, AssistantShown } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -334,6 +337,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
+import { runLine } from '@/lib/agentRules'
 import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
@@ -349,8 +353,8 @@ export interface PanelTopic {
 export interface PanelMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
-  /** 平台开始一次运行的那一句：哪条例行事务。 */
-  shown?: { routine?: string }
+  /** 平台开始一次运行的那一句：哪条自动化、发生了什么。 */
+  shown?: AssistantShown
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
@@ -364,8 +368,9 @@ export interface PanelMessage {
   changes?: PanelChange[]
   results?: PanelResult[]
   proposals?: PanelProposal[]
-  /** 芝士交给人的文件。 */
+  /** 芝士交给人的文件、建或改的自动化。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
 }
@@ -433,6 +438,7 @@ const props = withDefaults(
     /** 用 @ 挑过的东西，输入框里的标签照它写名字。 */
     cited?: NonNullable<RefNames['cited']>
     searchProblems?: (query: string) => Promise<Citable[]>
+    rules?: AssistantRule[]
   }>(),
   {
     earlier: () => [],
@@ -466,6 +472,7 @@ const props = withDefaults(
     project: null,
     cited: () => ({}),
     searchProblems: undefined,
+    rules: () => [],
   }
 )
 
@@ -511,10 +518,6 @@ function followLink(event: MouseEvent) {
 
 const { t } = useI18n()
 
-/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
-function runLine(shown?: { routine?: string }): string {
-  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
-}
 const markdown = new MarkdownRenderer()
 
 /** 正在答的这一轮，按发生的顺序。最后做的几步都已回来、还没开始写下一段话时，末尾是

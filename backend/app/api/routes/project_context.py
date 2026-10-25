@@ -188,7 +188,7 @@ async def search_project_context(
     q = _query(q)
     groups = _only(only)
     readable, skipped, actor = await _readable_rooms(db, resolver, project_id, topic)
-    shelf = await shelf_for(db, project_id, actor)
+    shelf = await shelf_for(db, project_id)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
     hits = (
@@ -640,7 +640,7 @@ async def agent_search(
         readable, _, reader = await _readable_rooms(
             db, resolver.for_reading(), project.id, None
         )
-        shelf = await shelf_for(db, project.id, reader)
+        shelf = await shelf_for(db, project.id)
         hits = await search_everything(
             db, project.id, q, terms, readable, AGENT_HITS, shelf
         )

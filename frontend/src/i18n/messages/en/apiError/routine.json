@@ -32,8 +32,9 @@
   "timezoneUnknown": "Unknown time zone: {name}",
   "routineResumeNeedsTrigger": "Give it a trigger first — only then does it know when to run",
   "assistantRoutineOnceAt": "The run time must be within the next year, written like 2026-10-23T08:00",
-  "assistantRoutineTrigger": "The trigger must be schedule, mention, review, due or invite",
-  "assistantRoutineAlreadyRan": "This one-off routine has already run. Give it a new time to run it again.",
-  "assistantRoutineLimit": "You can keep at most {max} routines. Delete one you no longer use first.",
-  "assistantRoutineInRun": "A routine cannot create or change routines while it runs"
+  "assistantRoutineTrigger": "The trigger must be schedule, mention, review, due, invite, filed or decided",
+  "assistantRoutineAlreadyRan": "This one-off automation has already run. Give it a new time to run it again.",
+  "assistantRoutineLimit": "You can keep at most {max} one-off automations and as many repeating ones. Delete one you no longer use first.",
+  "assistantRoutineInRun": "An automation cannot create or change automations while it runs",
+  "assistantRoutineWhichTask": "Name the task (task), or use mine for the tasks the person asked for"
 }

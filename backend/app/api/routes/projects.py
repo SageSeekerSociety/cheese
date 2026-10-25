@@ -21,7 +21,6 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.project_library import may_read_task_files
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import incomplete_tasks, project_task_rows
@@ -93,7 +92,7 @@ from app.domain.shell_catalog import Shell, ShellOut
 from app.domain.task import package
 from app.domain.task.adapters import TaskTerms
 from app.domain.task.claims import deadline_for_project, stages_for_project
-from app.domain.task.services import claim_backs_project
+from app.domain.task.services import refuse_unless_project_follows_claim
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
@@ -209,17 +208,14 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
 async def _require_claim(
     db: DbSession, who: Actor, task_id: int, team_id: int | None
 ) -> None:
-    """用一道题建项目的，得先领了这道题。
-
-    个人题看建项目的这个人有没有领，团队题看项目要挂的那个团队有没有领。等批的申请
-    也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
-    """
+    """用一道题建项目的，得先申请了这道题，而且项目建在那份申请的团队下：个人申请的
+    建在自己名下，团队申请的建在那个团队下。等批的申请也算（申请那一刻就给它开了
+    项目）；被拒绝或退出的不算。"""
     if who.user_id is None:
         raise AuthenticationRequiredError(say("challengeProjectSignIn"))
-    if not await claim_backs_project(
+    await refuse_unless_project_follows_claim(
         db, task_id=task_id, user_id=who.user_id, team_id=team_id
-    ):
-        raise ForbiddenError(say("challengeProjectClaimFirst"))
+    )
 
 
 @router.get("/resource-limits")
@@ -246,7 +242,8 @@ async def create_project(
     # 「这个团队在不在」，是「你是不是这个团队的人」。
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
-    # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
+    # 申请了这道题才能用它新建项目，而且只能建在那份申请的团队下：项目带着题目的
+    # 访问权和资源包，不能凭一个题号拿到，也不能挂到申请之外的团队去。
     if body.external_task_id is not None:
         await _require_claim(db, who, body.external_task_id, body.team_id)
     project = await ProjectService(
@@ -440,13 +437,10 @@ async def get_project(
         if push is not None
         else None
     )
-    # The 题目 itself, for a reader who sees its `题目/` folder: where its page
-    # and its version history are, and which version it is at now.
-    found = (
-        await package.of_project(db, project_id)
-        if await may_read_task_files(db, project_id, actor)
-        else None
-    )
+    # The 题目 itself while the project's `题目/` folder is shown — that follows
+    # the claim the project came from, the same for everyone in it: where its
+    # page and its version history are, and which version it is at now.
+    found = await package.shown_task(db, project_id)
     payload["task"] = (
         {
             "id": found[0].id,

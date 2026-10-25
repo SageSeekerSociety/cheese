@@ -17,11 +17,10 @@ export type TaskFileListData = {
   canDownload: boolean
 }
 
-/** 历史版本里一版手上的一份文件。`id` 是取那一版字节要带的版本号；这份材料后来整份
- *  删掉了的，`id` 和 `size` 是 null，只剩名字。 */
+/** 历史版本里一版手上的一份文件，按版本号和名字取。这份材料后来整份删掉了的，
+ *  `size` 是 null，只剩名字。 */
 export interface TaskVersionFileData {
   name: string
-  id: string | null
   size: number | null
 }
 

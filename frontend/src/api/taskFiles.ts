@@ -60,12 +60,12 @@ export function removeTaskStarter(taskId: number): Promise<{ removed: boolean }>
   return axiosRequest({ url: `/tasks/${taskId}/starter`, method: 'DELETE' }, true)
 }
 
-/** 一份材料的字节；`version` 是历史版本里那一版的这份文件（`TaskVersionFileData.id`），
+/** 一份材料的字节；`version` 是第几版，取那一版手上的这份文件（只认那一版记下的），
  *  不给就是现在这一份。门在服务端：带的是这次请求自己的 Authorization。`downloadFile`
  *  补在末尾的 `download=true` 这里没有对应的参数，后端不看它。 */
-export function taskFileRawUrl(taskId: number, name: string, version?: string): string {
+export function taskFileRawUrl(taskId: number, name: string, version?: number): string {
   const url = `${BASE}${base(taskId)}/raw?name=${encodeURIComponent(name)}`
-  return version ? `${url}&version=${encodeURIComponent(version)}` : url
+  return version ? `${url}&version=${version}` : url
 }
 
 /** 一份材料现在的字节，给题目页上的预览；Office 文档由服务端转成 PDF 再给。 */

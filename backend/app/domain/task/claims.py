@@ -13,6 +13,8 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.errors import ForbiddenError
+from app.core.sentences import say
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.task.stages import list_stages
@@ -56,6 +58,17 @@ def own_claim(
     (approval time plus the task's 提交期限) and movable by the publisher
     afterwards. Every place that says "your deadline" reads it from here.
     """
+    live = _live_claims(task, user_membership, team_memberships)
+    approved = [m for m in live if m.approved == 0]
+    return (approved or live or [None])[0]
+
+
+def _live_claims(
+    task: Task,
+    user_membership: TaskMembership | None,
+    team_memberships: Sequence[TaskMembership],
+) -> list[TaskMembership]:
+    """The person's claims of the kind this task takes, rejected ones left out."""
     candidates = (
         [user_membership]
         if task.submitter_type == 0 and user_membership is not None
@@ -63,9 +76,7 @@ def own_claim(
         if task.submitter_type == 1
         else []
     )
-    live = [m for m in candidates if m.approved != 1]
-    approved = [m for m in live if m.approved == 0]
-    return (approved or live or [None])[0]
+    return [m for m in candidates if m.approved != 1]
 
 
 async def claim_of(
@@ -80,6 +91,44 @@ async def claim_of(
     )
 
 
+async def refuse_unless_project_follows_claim(
+    session: AsyncSession, *, task: Task, user_id: int, team_id: int | None
+) -> None:
+    """A project made from a task belongs to the team of the claim it comes
+    from: a person's claim puts it in their own name (their personal team, which
+    is also where a project with no team goes), a team's claim in that team.
+    Without a live claim there is no project to make; any other team is refused
+    by name, so the person knows where to make it."""
+    repo = TaskMembershipRepository(session=session)
+    live = _live_claims(
+        task,
+        await repo.get_user_membership(task_id=task.id, user_id=user_id),
+        await repo.list_team_memberships_for_user(task_id=task.id, user_id=user_id),
+    )
+    if not live:
+        raise ForbiddenError(say("challengeProjectClaimFirst"))
+    team = (await session.get(Team, team_id)) if team_id is not None else None
+    if any(
+        claim.member_id == team_id
+        if claim.is_team
+        else team_id is None
+        or (team is not None and team.personal_owner_user_id == user_id)
+        for claim in live
+    ):
+        return
+    # Named after the claim the person stands on: approved before pending.
+    claim = min(live, key=lambda m: m.approved != 0)
+    if claim.is_team:
+        claimant = await session.get(Team, claim.member_id)
+        raise ForbiddenError(
+            say(
+                "challengeProjectInClaimTeam",
+                team=claimant.name if claimant is not None else "",
+            )
+        )
+    raise ForbiddenError(say("challengeProjectInOwnName"))
+
+
 @dataclass(frozen=True)
 class ProjectDeadline:
     """When the project a claim opened has to hand in by."""
@@ -90,7 +139,7 @@ class ProjectDeadline:
     mine: bool
 
 
-async def _project_claim(
+async def project_claim(
     session: AsyncSession, *, task: Task, team_id: int | None
 ) -> TaskMembership | None:
     """The claim a project was opened for: a team claim is the project's
@@ -123,13 +172,13 @@ async def deadline_for_project(
     session: AsyncSession, *, task_id: int, team_id: int | None
 ) -> ProjectDeadline | None:
     """The overall deadline of the claim a project was opened for (see
-    ``_project_claim``), or the challenge's closing time while the claim has
+    ``project_claim``), or the challenge's closing time while the claim has
     none. A staged task's stages carry their own due dates
     (``stages_for_project``); this stays the deadline of the whole."""
     task = await session.get(Task, task_id)
     if task is None:
         return None
-    claim = await _project_claim(session, task=task, team_id=team_id)
+    claim = await project_claim(session, task=task, team_id=team_id)
     if claim is not None and claim.approved == 0 and claim.deadline is not None:
         return ProjectDeadline(at=claim.deadline, mine=True)
     if task.deadline is not None:
@@ -161,7 +210,7 @@ async def stages_for_project(
     stages = await list_stages(session, task.id)
     if not stages:
         return []
-    claim = await _project_claim(session, task=task, team_id=team_id)
+    claim = await project_claim(session, task=task, team_id=team_id)
     states = (
         await stage_states_of(session, claim)
         if claim is not None and claim.approved == 0
