@@ -249,7 +249,7 @@ def unpack(source: BinaryIO, destination: Path) -> int:
     return len(entries)
 
 
-def _git(work: Path, *args: str, env: dict) -> None:
+def _git(work: Path, *args: str, env: dict) -> str:
     result = subprocess.run(
         ["git", "-C", str(work), *args],
         capture_output=True,
@@ -262,6 +262,7 @@ def _git(work: Path, *args: str, env: dict) -> None:
         # stderr 可能带着仓库地址；只进日志，不进回给人的错误。
         log.warning("starter git %s failed: %s", args[0], result.stderr.strip())
         raise GatewayUnavailableError(say("forgejoStarterPushFailed"))
+    return result.stdout
 
 
 def _git_env() -> dict:
@@ -291,6 +292,11 @@ def push(starter: Starter, url: str, username: str, password: str) -> None:
     with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
         work = Path(temporary) / "work"
         work.mkdir()
+        # The repository itself says whether `main` is there already (an
+        # earlier attempt pushed and lost its answer); the forge's API learns
+        # of a push only some time after it.
+        if _git(work, "ls-remote", url, "refs/heads/main", env=env).strip():
+            return
         with starter.archive.open("rb") as source:
             unpack(source, work)
         _git(work, "init", "-q", "--initial-branch=main", env=env)

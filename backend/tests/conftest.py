@@ -1300,15 +1300,15 @@ def stub_project_forge(monkeypatch, tmp_path):
         return binding
 
     async def push_starter(project_id, session, starter):
-        # The real push (unpack, commit, push) into the local repository; an
-        # empty one only, as the forge's own `empty` answer decides for real.
-        repo = git_store.path(project_id)
-        if git_store.run(
-            ["git", "rev-parse", "--verify", "-q", "main"], repo
-        ).returncode:
-            await asyncio.to_thread(
-                starter_code.push, starter, str(repo), username="test", password="test"
-            )
+        # The real push (unpack, commit, push, and leaving a repository that
+        # already has `main` alone) into the local repository.
+        await asyncio.to_thread(
+            starter_code.push,
+            starter,
+            str(git_store.path(project_id)),
+            username="test",
+            password="test",
+        )
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)

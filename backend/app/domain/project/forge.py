@@ -80,29 +80,16 @@ async def push_starter(
     project_id: uuid.UUID, session: AsyncSession, starter: Starter
 ) -> None:
     """Push ``starter`` as the first commit on ``main`` of the project's empty
-    Forgejo repository. A repository that is no longer empty already has it (an
-    earlier attempt pushed and then lost its answer), and is left alone."""
+    Forgejo repository. One whose ``main`` exists already has it (an earlier
+    attempt pushed and then lost its answer), and is left alone
+    (`starter.push`)."""
     binding = await binding_for_project(project_id, session)
     if binding is None or binding.kind != "forgejo" or not binding.account_password:
         raise GatewayUnavailableError(say("forgeNoRepository"))
     username = binding.repo.split("/", 1)[0]
     password = forge_password(binding)
-    endpoint = f"{binding.api_url.rstrip('/')}/repos/{binding.repo}"
     # No connection of ours stays open while the forge works on a large push.
     await release_read_session(session)
-    try:
-        async with forge_client(timeout=30, auth=(username, password)) as client:
-            response = await client.get(endpoint)
-    except httpx.TimeoutException as exc:
-        raise ForgeUnreachableError(say("forgeServiceTimeout")) from exc
-    except httpx.RequestError as exc:
-        raise ForgeUnreachableError(say("forgeServiceUnreachable")) from exc
-    if response.status_code != 200:
-        raise GatewayUnavailableError(
-            say("forgeReadFailed", status=response.status_code)
-        )
-    if not response.json().get("empty"):
-        return
     git_url = (
         binding.api_url.removesuffix("/api/v1").rstrip("/") + f"/{binding.repo}.git"
     )
