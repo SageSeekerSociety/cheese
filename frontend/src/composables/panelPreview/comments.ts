@@ -36,7 +36,8 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     if (path.startsWith('library/') || path.startsWith('uploads/')) return null
     return { topicId: props.topicId, path, version: file.version }
   })
-  // 这一栏开着没有：关着就不去问接口——预览每一格打开都多打一次，不值。
+  // 这一栏开着没有。关着的时候不问接口——预览每一格打开都多打一次，不值。
+  // 例外是画标记的那一档，见下面 `drawsMarks`：那一档的数据栏关着也得有。
   const open = ref(false)
   function toggle() {
     open.value = !open.value
@@ -46,10 +47,15 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   watch(commentable, (current) => {
     if (!current) open.value = false
   })
+  // 正文上要画标记的那一档：这一份的线程列表在栏关着时也得读。标记是从线程列表算出来的，
+  // 等读者自己去点开那一栏才读，「哪儿有人评过」这件事就要他先想到去开栏才看得见——
+  // 而那正是标记要替他省掉的一步。今天只有 markdown 这一种读法画标记（`PreviewMarkdown`），
+  // 别的读法有了标记时，这里跟着放宽。
+  const drawsMarks = computed(() => commentable.value !== null && state.documentType.value?.view === 'markdown')
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,
     () => commentable.value?.path ?? null,
-    () => open.value
+    () => open.value || drawsMarks.value
   )
 
   /** 写一条新的：说的是什么、指着哪一处。 */

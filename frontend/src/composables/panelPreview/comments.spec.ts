@@ -1,0 +1,97 @@
+/**
+ * 这一包什么时候去读一份文件上的评论串。
+ *
+ * 判据只有一个：**正文上要画标记的那些文件，栏关着也得读**。标记是从线程列表算出来的
+ * （`PanelPreviewView` 的 `threadAnchors` → `PreviewMarkdown`），等读者自己去点开评论栏
+ * 才读，就等于「哪儿有人评过」要他先想到去开栏才看得见，而那正是标记要替他省掉的一步。
+ *
+ * 反过来，不画标记的读法（docx、表格、图片……）仍然等栏打开再读：预览每一格打开都多打
+ * 一次接口，不值。
+ */
+import { createApp, defineComponent, ref } from 'vue'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import { usePanelPreviewComments } from './comments'
+import { createPreviewState } from './previewState'
+
+const api = vi.hoisted(() => ({ listFileThreads: vi.fn(), postFileThread: vi.fn() }))
+vi.mock('../../api/fileThreads', () => api)
+
+const THREAD = {
+  comment: {
+    id: 'c1',
+    author: 'li',
+    content: '这句话的用时要不要一起写进去？',
+    anchor_quote: null,
+    anchor: null,
+    created_at: '',
+  },
+  revision: 1,
+  state: 'open',
+  replies: [],
+}
+
+const apps: ReturnType<typeof createApp>[] = []
+
+beforeEach(() => {
+  localStorage.clear()
+  localStorage.setItem('user', JSON.stringify({ id: 'human', username: 'human' }))
+  vi.resetAllMocks()
+  api.listFileThreads.mockResolvedValue({ data: [THREAD] })
+})
+
+afterEach(() => apps.splice(0).forEach((app) => app.unmount()))
+
+/** 一份摆进预览格里的文件，和它那个评论包。 */
+function setup(path: string) {
+  const state = createPreviewState()
+  state.previewFile.value = {
+    path,
+    content: '# 配置\n\n失败以后重试 3 次。\n',
+    version: 'v1',
+    bytes: 20,
+    binary: false,
+    too_large: false,
+  } as never
+  let bundle!: ReturnType<typeof usePanelPreviewComments>
+  const app = createApp(
+    defineComponent({
+      setup() {
+        bundle = usePanelPreviewComments({
+          props: { topicId: 'room', projectId: 'project', members: [] } as never,
+          state,
+          people: { names: ref({}), avatars: ref({}) } as never,
+        })
+        return () => null
+      },
+    })
+  )
+  app.mount(document.createElement('div'))
+  apps.push(app)
+  return bundle
+}
+
+it('markdown：评论栏还关着，也把这一份的评论读回来——正文上的标记要从它来', async () => {
+  const bundle = setup('output/说明.md')
+
+  await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
+  expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/说明.md')
+})
+
+it('不画标记的读法：评论栏关着就不读，打开才读', async () => {
+  // 一张 docx 的预览打开一次就多打一次评论接口，换不来任何看得见的东西——那一档的
+  // 正文不是我们能往上画字的正文（它是页）。
+  const bundle = setup('output/报价.docx')
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+
+  bundle.toggle()
+  await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+})
+
+it('资料库原件不是这个房间的文件：哪一档都不读', async () => {
+  setup('library/说明.md')
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+})

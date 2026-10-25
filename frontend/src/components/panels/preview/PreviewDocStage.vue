@@ -67,6 +67,13 @@ const props = defineProps<{
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
   showHistory: boolean
+  /** 这一份文件上已有的评论指着的那几处（Markdown 里画成标记）。 */
+  anchors?: readonly {
+    id: string
+    quote: { text: string; heading: string | null; prefix: string; suffix: string }
+  }[]
+  /** 现在打开的那一条：它那颗标记画得显眼些。 */
+  activeAnchor?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -85,6 +92,8 @@ const emit = defineEmits<{
   'page-context': [payload: SlidePageContext]
   cell: [payload: { address: string; value: string; sheet: string }]
   'markdown-quote': [payload: MarkdownQuote]
+  /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
+  anchor: [id: string]
   /** 页上钉了一处 / 那个钉不该再留了。 */
   pin: [payload: PagePin]
   dropped: []
@@ -190,7 +199,10 @@ defineExpose({ snapshot, clearMark })
     <PreviewMarkdown
       v-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
+      :anchors="anchors"
+      :active-id="activeAnchor"
       @quote="emit('markdown-quote', $event)"
+      @anchor="emit('anchor', $event)"
     />
 
     <div v-else-if="docLoading && !docShown" class="doc__state">
