@@ -50,7 +50,7 @@ function fakeBrowser({ waiting, takesOver = true }: { waiting: boolean; takesOve
 
 const blank = { template: '<div />' }
 
-async function start() {
+async function start(path = '/a') {
   vi.resetModules()
   const { registerPwa } = await import('./pwa')
   const router = createRouter({
@@ -58,10 +58,12 @@ async function start() {
     routes: [
       { path: '/a', component: blank },
       { path: '/b', component: blank },
+      // 门口那几页（首页、分享的文档……）：App.vue 不给它们套外框，那里没有提示条。
+      { path: '/landing', component: blank, meta: { publicLanding: true } },
     ],
   })
   registerPwa(router)
-  await router.push('/a')
+  await router.push(path)
   return router
 }
 
@@ -322,10 +324,11 @@ describe('修了严重问题的那一版', () => {
   }
 
   /** 开着这一页过了一个小时：例行的「有没有新版本」查过一次。 */
-  async function anHourLater() {
+  async function anHourLater(path = '/a') {
     vi.useFakeTimers()
-    await start()
+    const router = await start(path)
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    return router
   }
 
   let reload: ReturnType<typeof vi.fn>
@@ -345,6 +348,19 @@ describe('修了严重问题的那一版', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(messages).toEqual([{ type: 'SKIP_WAITING' }])
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  // 门口那几页没有提示条，在那儿弹的提示谁也看不见；人走进应用时得补上，不能就此没了。
+  it('例行检查时停在门口那几页：走进应用时提示刷新', async () => {
+    pageBuilt('/assets/main-old.js', 3)
+    serverNow('/assets/main-new.js', 4)
+    fakeBrowser({ waiting: false })
+    const router = await anHourLater('/landing')
+    expect(notices).toEqual([])
+
+    await router.push('/a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(notices).toHaveLength(1)
   })
 
   it('这一页就是修复所在的那一版，或者更新：不提示', async () => {

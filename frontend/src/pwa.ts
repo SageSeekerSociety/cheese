@@ -100,14 +100,14 @@ let lastCheckAt = 0
 const CHECK_INTERVAL_MS = 60 * 60 * 1000
 const VISIBILITY_THROTTLE_MS = 10 * 60 * 1000
 
-function checkForUpdate() {
+function checkForUpdate(router: Router) {
   const now = Date.now()
   if (now - lastCheckAt < VISIBILITY_THROTTLE_MS) return
   lastCheckAt = now
   void swRegistration?.update().catch(() => {
     // 断网、或者服务器刚重启，都会走到这里；下一次再看机会。
   })
-  void promptIfBelowMinBuild()
+  void promptIfBelowMinBuild(router)
 }
 
 /** index.html 里 `<meta name="cx-min-build">` 的值：只增不减的整数，见 index.html。 */
@@ -131,8 +131,12 @@ let minBuildPrompted = false
  * 拿这一页自己 HTML 里的数和服务器现在的 index.html 里的数比：两边都是构建时从同一行
  * 写进去的，修复所在的那一版和它之后的每一版都带着调高后的数，所以只有落在修复之前的
  * 页面会小于它。问不到服务器、或者哪一边没有这个数，都不提示。
+ *
+ * 门口那几页（`meta.publicLanding`，App.vue 不给它们套外框）没有挂提示条，在那儿弹出的
+ * 提示谁也看不见，事后挂上的提示条也不会补出来。所以停在那几页时不算提示过：留到下一次
+ * 例行检查，或者人从门口走进应用的那一下（见 `registerPwa`）。
  */
-async function promptIfBelowMinBuild() {
+async function promptIfBelowMinBuild(router: Router) {
   if (minBuildPrompted) return
   const own = minBuildOf(document)
   if (own === undefined) return
@@ -140,6 +144,7 @@ async function promptIfBelowMinBuild() {
   if (html === undefined) return
   const required = minBuildOf(inert(html))
   if (required === undefined || own >= required || minBuildPrompted) return
+  if (router.currentRoute.value.meta.publicLanding) return
   minBuildPrompted = true
   toast.warning(t('global.requiredUpdate.message'), {
     // 不刷新，这一页就一直带着那个严重问题；提示留到人点为止。
@@ -236,9 +241,13 @@ export function registerPwa(router: Router): void {
   })
   // 不挂在 worker 注册成功上：没有 service worker 的浏览器（一些应用的内置浏览器）
   // 也要能收到「修了严重问题，刷新」的提示。
-  window.setInterval(checkForUpdate, CHECK_INTERVAL_MS)
+  window.setInterval(() => checkForUpdate(router), CHECK_INTERVAL_MS)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') checkForUpdate()
+    if (document.visibilityState === 'visible') checkForUpdate(router)
+  })
+  // 从门口走进应用：在门口时没能弹出的提示，这时补上。
+  router.afterEach((to, from) => {
+    if (from.meta.publicLanding && !to.meta.publicLanding) void promptIfBelowMinBuild(router)
   })
   // 首次导航（`from` 没有匹配的路由）本来就是整页加载出来的；只换 hash 或 query
   // 的跳转不算离开这一页。
