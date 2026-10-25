@@ -136,8 +136,10 @@ def test_a_font_is_the_same_file_on_every_platform():
 
 # The connector's own runtime on Windows, which no other machine is sent.
 WINDOWS_RUNTIME = {"python", "git"}
-# What a Linux connector places for its rooms and for itself (`devenv`).
-LINUX_RUNTIME = {"bubblewrap", "host-tools", "tmux", "git"}
+# What a Linux connector places for its rooms and for itself (`devenv`). The
+# fuse runtime is a shared library rather than a program, but it is placed the
+# same way and has the same Linux-only scope.
+LINUX_RUNTIME = {"bubblewrap", "host-tools", "tmux", "git", "fuse-runtime"}
 
 
 def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
