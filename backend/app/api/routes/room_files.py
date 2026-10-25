@@ -438,26 +438,36 @@ async def write_text_file(
     the file everyone reads — not as a copy somewhere else.
 
     `version` is the one the caller read (the room-file read hands back
-    `content_version`, the same id this route compares against). When the file
-    moved on since, somebody else saved in between; writing would drop their
-    work without anyone seeing it, so it is a conflict and never an overwrite.
+    `content_version`, the same id this route compares against). It is required,
+    not optional: a save that skipped the read has nothing to compare against and
+    would overwrite whoever saved in between — the one thing this route exists to
+    prevent. The same rule the workspace side enforces (`taskFileReadBeforeSave`).
     """
     place, actor = await _in_room(db, resolver, topic_id, writes=True)
     path = _room_path(str(body.get("path") or ""))
     content = body.get("content")
     if not isinstance(content, str):
         raise ValidationError(say("contentRequired"))
-    version = await asyncio.to_thread(
-        room_files.current_version,
-        place.project_id,
-        place.room_id,
-        path,
-        file_store=library,
+    expected = str(body.get("version") or "")
+    if not expected:
+        raise ValidationError(say("taskFileReadBeforeSave"))
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, path
+    ):
+        raise NotFoundError(say("roomFileNotFound"))
+    # 这是「文本」那条路：一份二进制（docx、表格、图片）也能有这个地址，把 UTF-8 写进
+    # 去就把它毁了（旧版还在历史里，但文件本身没了）。读的人拿到的 `content` 是 null，
+    # 那也正是「这一份不是文本」；这里照同一条读法问一次，不靠面板那一层只给 markdown
+    # 开按钮。同一次读也把版本带回来——比的就是读它的人手上那一版。
+    shown = await asyncio.to_thread(
+        library.read_room_text_file, place.project_id, place.room_id, path
     )
+    if shown.get("content") is None:
+        raise UnprocessableEntityError(say("roomFileNotText"))
+    version = shown.get("version")
     if version is None:
         raise NotFoundError(say("roomFileNotFound"))
-    expected = body.get("version") or None
-    if expected is not None and expected != version:
+    if expected != version:
         raise ConflictError(
             say("roomFileMovedOn"), data={"version": version, "path": path}
         )

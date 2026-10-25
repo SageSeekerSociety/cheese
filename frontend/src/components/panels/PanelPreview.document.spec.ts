@@ -75,6 +75,17 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
+// 预览格里那份 markdown 的编辑器身上挂着 Monaco，不该装进这一只面板的用例里。这一只
+// 要的是另一件事：**这一格真的把那一包递了下去**（`PanelPreview` 摊 props 时漏掉它，
+// 「编辑」按钮就永远不出现，而组件自己的单测看不见——它直接挂的是 `PanelPreviewView`）。
+vi.mock('./preview/PreviewMarkdownEdit.vue', () => ({
+  default: {
+    name: 'PreviewMarkdownEdit',
+    props: ['edit'],
+    template: '<div data-testid="markdown-edit" :data-path="edit.pinnedPath.value" />',
+  },
+}))
+
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
 // 那个约定：改完、恢复完，面板按新版本重取这一页。两者的手势各按自己那一半的接口
 // 做：历史那一边叫取数那一包（`fileHistory.restore`，和真组件一样），编辑器那一边
@@ -143,6 +154,33 @@ beforeEach(() => {
   restoreRoomFileRevision.mockResolvedValue({ id: 'r1' })
 })
 afterEach(cleanup)
+
+/** 一份能直接改的 markdown，摆在预览格里。 */
+function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n') {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content,
+    version: 'v1',
+    bytes: content.length,
+    binary: false,
+    too_large: false,
+  })
+}
+
+it('offers edit on a markdown file, and hands the panel its editing session', async () => {
+  // 这一条盯的是「这一格真的把编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
+  // `text-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
+  editableMarkdown()
+  mount()
+
+  const button = await screen.findByTestId('edit-file')
+  await fireEvent.click(button)
+
+  // 点下去是就地打开编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await screen.findByTestId('markdown-edit')
+  expect(editor.getAttribute('data-path')).toBe('output/说明.md')
+})
 
 it('shows a Word report rather than offering it as a download', async () => {
   mount()

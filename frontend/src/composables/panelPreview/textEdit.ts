@@ -7,9 +7,9 @@ import type { ComputedRef, Ref } from 'vue'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import { ApiError } from '@/api'
+import { ApiError, readPreviewFile } from '@/api'
 import { writeRoomTextFile } from '@/api/roomFiles'
 import { t } from '@/i18n'
 
@@ -27,10 +27,14 @@ export interface PanelPreviewTextEdit {
   error: Ref<string>
   saving: Ref<boolean>
   conflicted: Ref<boolean>
+  /** 这一次编辑钉住的是哪一份；没开着时是空串（用于标题）。 */
+  pinnedPath: Ref<string>
   canEdit: ComputedRef<boolean>
   begin: () => void
   cancel: () => void
   save: () => Promise<boolean>
+  /** 冲突之后读一遍最新的，把编辑器换成文件现在的样子（读者现在的改动会被换掉）。 */
+  reload: () => Promise<void>
   /** 编辑器里打了一个字：草稿跟着换（画的组件通过它，不直接改递下去的 prop）。 */
   setDraft: (value: string) => void
 }
@@ -46,17 +50,25 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
   const saving = ref(false)
   /** 别人先改过：存不下，得让读者先看看最新的。 */
   const conflicted = ref(false)
+  /** 这一次编辑钉住的那一份：路径和「打开时读到的那一版」。
+   *
+   *  两个都必须在打开时就钉住，不能到存的时候再去问屏幕上摆的是哪一份：编辑器开着的
+   *  这段时间里，面板会照旧重读这一份（轮询、收工、读者按了刷新），`previewFile`
+   *  说不动就被换成别人的新版。照那时候的版本去存，服务端一比「对得上」，打进去的字
+   *  就盖掉了别人的改动——正是这一条路要挡的事。钉住之后，别人先改过的还会是 409。 */
+  const pinned = ref<{ path: string; version: string; content: string } | null>(null)
+  const pinnedPath = computed(() => pinned.value?.path ?? '')
 
   /** 这一份能不能在预览里直接改：是文本、是这个房间的文件、正文读得出来。
    *
-   *  判据挑得很明白：`content` 不是 null（二进制/太大的读不出版本就写不回去），
-   *  不是资料库原件或消息附件（那两样不是这个房间的文件，写进去别人读到的会是同名
-   *  的另一份——后端也拒），并且已经有不为空的版本（文件在，且读的时候它的版本
-   *  拿得到）。 */
+   *  判据挑得很明白：`content` 不是 null（二进制/太大的读不出正文也写不回去；空文件的
+   * 正文是空串，也是「读得出」），不是资料库原件或消息附件（那两样不是这个房间的文件，
+   * 写进去别人读到的会是同名的另一份——后端也拒），并且已经有不为空的版本（文件在，
+   * 且读的时候它的版本拿得到）。 */
   const canEdit = computed(() => {
     const file = state.previewFile.value
     if (!file || !props.topicId) return false
-    if (!file.content) return false
+    if (file.content === null) return false
     if (!file.version) return false
     if (file.binary || file.too_large) return false
     const path = file.path
@@ -66,25 +78,36 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
 
   function begin() {
     const file = state.previewFile.value
-    if (!canEdit.value || !file) return
-    draft.value = file.content ?? ''
+    if (!canEdit.value || !file || file.content === null || !file.version) return
+    pinned.value = { path: file.path, version: file.version, content: file.content }
+    draft.value = file.content
     error.value = ''
     conflicted.value = false
   }
 
   function cancel() {
+    pinned.value = null
     draft.value = null
     error.value = ''
     conflicted.value = false
   }
 
+  // 屏幕上那份文件换掉了（读者切到了别的文件、芝士换了当前预览）：编辑器里打的是
+  // 上一份的字，再留在屏幕上就是「这一格写着文件 B，改的却是文件 A」。收起来。
+  watch(
+    () => state.previewFile.value?.path ?? '',
+    (path) => {
+      if (pinned.value && path !== pinned.value.path) cancel()
+    }
+  )
+
   /** 存下去。答 true 表示存住了；false 是没存成（原因在 `error`/`conflicted`）。 */
   async function save(): Promise<boolean> {
-    const file = state.previewFile.value
+    const target = pinned.value
     const tid = props.topicId
-    if (!file || !tid || draft.value === null || saving.value) return false
-    // 没改就别写一版：内容一样，白留一版历史。
-    if (draft.value === file.content) {
+    if (!target || !tid || draft.value === null || saving.value) return false
+    // 没改就别写一版：内容一样，白留一版历史（比的是打开时那一版）。
+    if (draft.value === target.content) {
       cancel()
       return true
     }
@@ -92,17 +115,20 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     error.value = ''
     conflicted.value = false
     try {
-      const saved = await writeRoomTextFile(tid, file.path, draft.value, file.version)
+      const saved = await writeRoomTextFile(tid, target.path, draft.value, target.version)
       // 存下去了：立刻反映到预览台上，别让人以为没生效。正文和版本一起换成刚存下的
       // ——只换正文、留着旧版本，评论标记那几处会按一个早已过期的版本去比。
-      file.content = draft.value
-      if (saved.version) file.version = saved.version
-      draft.value = null
+      const file = state.previewFile.value
+      if (file && file.path === target.path) {
+        file.content = draft.value
+        if (saved.version) file.version = saved.version
+      }
+      cancel()
       refreshDocument()
       return true
     } catch (e) {
-      // 别人在那之后存过：这一版不写，让读者选（刷新看最新的再改）。编辑里的字留着——
-      // 读者多半想改一改再存，丢掉等于白打。
+      // 别人在那之后存过：这一版不写，让读者先看看最新的。编辑里的字留着——
+      // 读者可以先把它们拷走，再按「载入最新的」换成文件现在的样子。
       if (e instanceof ApiError && e.status === 409) {
         conflicted.value = true
       } else {
@@ -114,9 +140,38 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     }
   }
 
+  /** 冲突之后：读一遍文件现在的样子，把它换成编辑器里的正文，版本跟到最新。
+   *
+   *  这是一次明说的替换（提示条上就是这两个字），读者按下去就是认了现在这些改动不要了；
+   *  不按就还留着，再存一次仍是 409，不会有人被悄悄盖掉。 */
+  async function reload(): Promise<void> {
+    const target = pinned.value
+    const tid = props.topicId
+    if (!target || !tid) return
+    error.value = ''
+    try {
+      const latest = await readPreviewFile(tid, target.path)
+      if (!pinned.value || pinned.value.path !== target.path) return
+      if (latest.content === null || !latest.version) {
+        error.value = t('work.room.preview.saveFileFailed')
+        return
+      }
+      pinned.value = { path: target.path, version: latest.version, content: latest.content }
+      draft.value = latest.content
+      conflicted.value = false
+      const file = state.previewFile.value
+      if (file && file.path === target.path) {
+        file.content = latest.content
+        file.version = latest.version
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : t('work.room.preview.saveFileFailed')
+    }
+  }
+
   function setDraft(value: string) {
     draft.value = value
   }
 
-  return { draft, error, saving, conflicted, canEdit, begin, cancel, save, setDraft }
+  return { draft, error, saving, conflicted, pinnedPath, canEdit, begin, cancel, save, reload, setDraft }
 }

@@ -168,7 +168,7 @@ defineExpose({ snapshot, clearMark })
       <span class="doc__type t-meta">{{ documentType.label }}</span>
       <v-spacer />
       <BaseButton
-        v-if="canEdit && previewFile"
+        v-if="canEdit"
         kind="secondary"
         size="sm"
         prepend-icon="mdi-pencil-outline"
@@ -219,7 +219,6 @@ defineExpose({ snapshot, clearMark })
     <PreviewMarkdownEdit
       v-if="documentType.view === 'markdown' && textEdit?.draft.value != null"
       :edit="textEdit"
-      :path="previewFile.path"
       @saved="emit('close-text-edit')"
       @cancel="emit('close-text-edit')"
       @draft="textEdit?.setDraft($event)"

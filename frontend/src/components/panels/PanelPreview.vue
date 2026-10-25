@@ -93,6 +93,7 @@ const {
   docPageHtml,
   revs,
   comments,
+  textEdit,
   editing,
   showHistory,
   editor,
@@ -172,6 +173,7 @@ function refresh() {
     :doc-page-html="docPageHtml"
     :comments="comments"
     :revs="revs"
+    :text-edit="textEdit"
     :editing="editing"
     :show-history="showHistory"
     :editor="editor"

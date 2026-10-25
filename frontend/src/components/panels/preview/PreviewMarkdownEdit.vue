@@ -7,6 +7,8 @@
 // 一个编辑器和一个冲突/失败的提示。
 import type { PanelPreviewTextEdit } from '../../../composables/panelPreview/textEdit'
 
+import { useDisplay } from 'vuetify'
+
 import CodeEditor from '../../CodeEditor.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -15,8 +17,6 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 这一份文件的编辑会话（`composables/panelPreview/textEdit.ts` 那一包）。 */
   edit: PanelPreviewTextEdit
-  /** 正在改哪一份（标题用）。 */
-  path: string
 }>()
 
 const emit = defineEmits<{
@@ -27,16 +27,20 @@ const emit = defineEmits<{
   (e: 'draft', value: string): void
 }>()
 
+// 手机上不给编辑：软键盘配 Monaco 不是一件值得存下去的事，只读着看比开了没法用强
+// （和「改动」那一格同一条，那里也是 `:readonly="!mdAndUp"`）。
+const { mdAndUp } = useDisplay()
+
 async function save() {
   if (await props.edit.save()) emit('saved')
 }
 </script>
 
 <template>
-  <div class="md-edit">
+  <div class="md-edit" data-testid="markdown-edit">
     <div class="md-edit__bar">
       <v-icon size="16" class="md-edit__icon">mdi-pencil-outline</v-icon>
-      <span class="md-edit__name">{{ path }}</span>
+      <span class="md-edit__name">{{ edit.pinnedPath.value }}</span>
       <v-spacer />
       <BaseButton
         kind="secondary"
@@ -51,17 +55,23 @@ async function save() {
         {{ edit.saving.value ? t('work.room.preview.saving') : t('work.room.preview.save') }}
       </BaseButton>
     </div>
-    <!-- 别人先改过：这一版不写，说清该怎么做，别让人对着一个存不下去的按钮点。 -->
+    <!-- 别人先改过：这一版不写。让读者当场就能拿到最新的——底下那个「载入最新的」读一
+         遍文件、把编辑器换成现在的样子（他也可能想先去别处把打的字拷走，所以不自动换）。 -->
     <v-alert v-if="edit.conflicted.value" type="warning" density="compact" class="mx-3 mb-2">
-      {{ t('work.room.preview.saveConflict') }}
+      <div class="md-edit__alert">
+        <span>{{ t('work.room.preview.saveConflict') }}</span>
+        <BaseButton kind="secondary" size="sm" data-testid="text-edit-reload" @click="edit.reload()">
+          {{ t('work.room.preview.loadLatest') }}
+        </BaseButton>
+      </div>
     </v-alert>
     <v-alert v-else-if="edit.error.value" type="error" density="compact" class="mx-3 mb-2">
       {{ edit.error.value }}
     </v-alert>
-    <!-- 手机上不给编辑：软键盘配 Monaco 不是一件值得存下去的事（和「改动」那一格同一条）。 -->
     <CodeEditor
       :model-value="edit.draft.value ?? ''"
-      :filename="path"
+      :filename="edit.pinnedPath.value"
+      :readonly="!mdAndUp"
       class="md-edit__editor"
       @update:model-value="emit('draft', $event)"
       @save="save"
@@ -93,6 +103,12 @@ async function save() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.md-edit__alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .md-edit__editor {
   flex: 1 1 auto;

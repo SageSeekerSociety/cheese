@@ -4,6 +4,8 @@
 - 改了存下去，读到的是新内容，旧的那一版仍然取得回来。
 - 打开之后别人先存过，再存我这版要报冲突，不能把对方盖掉。
 - 资料库原件不是这个房间的文件，改不了（写进去别人读到的会是同名的一份房间文件）。
+- 只带内容、不带你读的那一版，等于没读就写：不接收（那份文件在不在都先问过）。
+- 一份二进制也能有这个地址：把文本写进去会把它毁了，所以照文本那一条判据拒。
 """
 
 import base64
@@ -93,5 +95,29 @@ def test_a_save_based_on_an_old_version_does_not_overwrite_the_newer_one(client)
 
 def test_a_library_original_is_not_this_rooms_file_and_cannot_be_edited(client):
     project, room = _room(client)
-    r = _write_text(client, room, "改一下", None, path="library/某个原件.md")
+    # 带上版本，测的才是「这个地址不是这个房间的文件」，不是前面那条「没读就写」。
+    r = _write_text(client, room, "改一下", "whatever", path="library/某个原件.md")
     assert r.status_code in (400, 422), r.text
+
+
+def test_a_save_that_did_not_read_the_file_is_refused(client):
+    project, room = _room(client)
+    before = "# 一\n".encode()
+    assert _put(client, project, room, before).status_code == 200
+
+    blind = _write_text(client, room, "# 我把整份重写了\n")
+
+    assert blind.status_code == 422, blind.text
+    # 拒了就是拒了：文件没动。
+    assert _read(client, room) == before
+
+
+def test_text_is_not_written_over_a_binary_file(client):
+    project, room = _room(client)
+    deck = b"PK\x03\x04\x00\x00\x00\x00binary bytes, not utf-8 \xff\xfe"
+    assert _put(client, project, room, deck, path="deck.pptx").status_code == 200
+
+    r = _write_text(client, room, "改成文字", content_version(deck), path="deck.pptx")
+
+    assert r.status_code == 422, r.text
+    assert _read(client, room, path="deck.pptx") == deck
