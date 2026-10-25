@@ -136,9 +136,12 @@ class TestTaskIntegration:
             ]
             earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
             assert [g["credits_total"] for g in earmarks] == [100]
-        # Repeating the application must not create a second workspace.
+        # Repeating the application answers with the claim held and its
+        # workspace; it never creates a second one.
         response = api_client.post(endpoint, json=payload, headers=student_headers)
-        assert response.status_code == 400, response.text
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["participant"]["id"] == membership_id
+        assert response.json()["data"]["project"]["id"] == project["id"]
         response = api_client.get(
             f"/projects?team_id={project['team_id']}", headers=student_headers
         )
@@ -1553,7 +1556,7 @@ class TestParticipantManagement:
         participants = update_resp.json()["data"]["participants"]
         assert len(participants) >= 1
 
-    def test_duplicate_participant_fails(
+    def test_joining_again_answers_with_the_claim_held(
         self, api_client: TestClient, participant_setup: dict
     ) -> None:
         participant1 = participant_setup["participant1"]
@@ -1571,8 +1574,10 @@ class TestParticipantManagement:
             json={},
             headers={"Authorization": f"Bearer {participant1.token}"},
         )
-        assert join_resp2.status_code == 400, (
-            f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        assert join_resp2.status_code == 200, join_resp2.text
+        assert (
+            join_resp2.json()["data"]["participant"]["id"]
+            == join_resp1.json()["data"]["participant"]["id"]
         )
 
 
@@ -2847,14 +2852,14 @@ class TestTeamParticipant:
             f"Add team participant failed: {add_resp.text}"
         )
 
-    def test_add_team_again_fails(
+    def test_adding_the_team_again_answers_with_its_claim(
         self, api_client: TestClient, team_participant_setup: dict
     ) -> None:
         creator = team_participant_setup["creator"]
         team_id = team_participant_setup["team_id"]
         task_id = team_participant_setup["task_id"]
 
-        api_client.post(
+        first = api_client.post(
             f"/tasks/{task_id}/participants",
             params={"member": team_id},
             json={},
@@ -2867,8 +2872,10 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert add_again_resp.status_code == 400, (
-            f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        assert add_again_resp.status_code == 200, add_again_resp.text
+        assert (
+            add_again_resp.json()["data"]["participant"]["id"]
+            == first.json()["data"]["participant"]["id"]
         )
 
     def test_list_team_participants(

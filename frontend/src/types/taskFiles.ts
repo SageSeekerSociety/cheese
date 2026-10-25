@@ -9,6 +9,8 @@ export interface TaskFileData {
 
 export type TaskFileListData = {
   files: TaskFileData[]
+  /** 起始代码：领题后作为代码仓库第一个提交的那份 .zip；没有是 null。不在 `files` 里。 */
+  starter: TaskFileData | null
   /** 能不能下载由服务端说，不从清单在不在推。 */
   canDownload: boolean
 }

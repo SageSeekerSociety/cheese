@@ -57,7 +57,7 @@ from app.domain.membership.services import (
     OwnershipService,
 )
 from app.domain.onboarding.start import start_steps
-from app.domain.project.forge import follow_github_rename
+from app.domain.project.forge import follow_github_rename, starter_push
 from app.domain.project.github_app import (
     github_app_read_token_for_project,
     parse_github_repo,
@@ -429,6 +429,15 @@ async def get_project(
             else []
         )
     ]
+    # The 题目's starter code this repository begins with (#4767): which
+    # version, whether it has landed yet (`pending` / `done` / `failed`), and
+    # the sentence a failed push is told with. Null without starter code.
+    push = await starter_push(project_id, db)
+    payload["starter"] = (
+        {"revision": push.revision, "state": push.state, "error": push.error}
+        if push is not None
+        else None
+    )
     _with_standing(
         payload,
         await standing(db, project_id, actor.handle) if actor.authenticated else None,

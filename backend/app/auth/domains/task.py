@@ -40,7 +40,9 @@ async def get_task_roles(
         TaskMembership.is_team.is_(False),
         TaskMembership.deleted_at.is_(None),
     )
-    membership_result = await db.execute(membership_stmt)
+    # One row answers it, and there can be several (a rejected application
+    # beside its reapplication, or a duplicate claim).
+    membership_result = await db.execute(membership_stmt.limit(1))
     if membership_result.scalar_one_or_none() is not None:
         roles.add(Role.PARTICIPANT)
 

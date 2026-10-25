@@ -44,7 +44,8 @@ from app.domain.user.models import User, UserProfile
 #: page's own and never reach ``POST /tasks`` (``PAGE_ONLY``):
 #: ``descriptionMarkdown`` (the description as Markdown, which is what 芝士
 #: reads and edits), ``teachingOwn`` (whether the 题目 has its own AI 队友辅导)
-#: and ``attachmentFiles`` (the names the page lists beside ``attachmentIds``).
+#: ``attachmentFiles`` (the names the page lists beside ``attachmentIds``) and
+#: ``starterFile`` (the name and size beside ``starterAttachmentId``).
 FORM_FIELDS = frozenset(
     {
         "name",
@@ -71,6 +72,9 @@ FORM_FIELDS = frozenset(
         "stages",
         "attachmentIds",
         "attachmentFiles",
+        "starterAttachmentId",
+        "starterFile",
+        "removeStarter",
         "teaching",
         "teachingOwn",
         "defaultRole",
@@ -78,7 +82,9 @@ FORM_FIELDS = frozenset(
 )
 #: The page's own fields, left out of what is published: the files' names the
 #: page lists beside ``attachmentIds`` are one of them.
-PAGE_ONLY = frozenset({"descriptionMarkdown", "teachingOwn", "attachmentFiles"})
+PAGE_ONLY = frozenset(
+    {"descriptionMarkdown", "teachingOwn", "attachmentFiles", "starterFile"}
+)
 
 #: The longest a draft's whole form may be, as JSON.
 MAX_FORM_BYTES = 200_000
@@ -111,6 +117,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "mentors": ("mentors",),
     "access": ("accessControlEnabled", "accessDomainGroupIds"),
     "attachments": ("attachmentIds", "attachmentFiles"),
+    "starter": ("starterAttachmentId", "starterFile", "removeStarter"),
     "ai_teammate": ("defaultRole",),
     # The guidance's fields all land in the one ``teaching``; the first of them
     # stands for it where a change is said by field (``_draft_parts``).
@@ -491,13 +498,16 @@ def from_agent(
     current: dict,
     files: list[dict] | None = None,
     removed: list[str] | None = None,
+    starter: dict | None = None,
 ) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
     have, a deadline it cannot read. ``files`` are the attachments it named
     (``attachments``), already found to be the person's: id, name and size.
     ``removed`` collects the names of the items and rubric lines that left
-    with a stage this write removed."""
+    with a stage this write removed; ``starter`` is the file it named as
+    starter code (``starter``), found the same way, or None when it asked for
+    none."""
     out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
@@ -594,6 +604,12 @@ def from_agent(
         given = list(files or [])
         out["attachmentIds"] = [f["id"] for f in given]
         out["attachmentFiles"] = given
+    if "starter" in args:
+        out["starterAttachmentId"] = starter["id"] if starter else None
+        out["starterFile"] = starter
+        # No file named is "no starter code": on a published 题目, saving the
+        # changes removes the one it has.
+        out["removeStarter"] = starter is None
     if "ai_teammate" in args:
         out["defaultRole"] = _teammate(args["ai_teammate"], current)
     if any(key in args for key in _TEACHING_KEYS):
@@ -1137,6 +1153,12 @@ def _view(
             f"{f.get('name')}（files/{f.get('id')}）"
             for f in fields.get("attachmentFiles") or []
             if isinstance(f, dict)
+        ),
+        "starter: "
+        + (
+            f"{starter_file.get('name')}（files/{starter_file.get('id')}）"
+            if isinstance(starter_file := fields.get("starterFile"), dict)
+            else ("（不要起始代码）" if fields.get("removeStarter") else "")
         ),
         "ai_teammate: "
         + (
