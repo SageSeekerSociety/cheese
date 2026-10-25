@@ -40,6 +40,8 @@ export interface TaskDraftFields {
   attachmentFiles?: { id: number; name: string; size: number }[]
   teaching?: SpaceTeaching
   teachingOwn?: boolean
+  /** 这道题的默认队友（预设名）；`''` = 清掉这道题自己的，`null` = 不动。 */
+  defaultRole?: string | null
 }
 
 export type TaskDraftField = keyof TaskDraftFields
@@ -94,6 +96,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'attachmentFiles',
   'teaching',
   'teachingOwn',
+  'defaultRole',
 ]
 
 /** 只留下草稿收的那几个字段。 */

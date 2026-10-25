@@ -29,7 +29,10 @@
     "spacePrompt": "同时生效的空间要求",
     "systemPrompt": "补充要求",
     "systemPromptPlaceholder": "例如：可协助解读评测输出，不提供完整代码",
-    "taskPrompt": "本题补充要求"
+    "taskPrompt": "本题补充要求",
+    "skills": "技能",
+    "skillsHint": "从本题建出的项目里，每个 AI 队友每一轮都带上这些技能",
+    "skillsLoadFailed": "无法读取技能清单，已选的技能不受影响"
   },
   "mode": {
     "example": "讲解与示例",
