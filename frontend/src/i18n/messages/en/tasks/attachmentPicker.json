@@ -9,5 +9,6 @@
   "title": "Attachments",
   "uploadFailed": "Couldn't upload \"{name}\": {error}",
   "uploading": "Uploading…",
-  "uploadingPercent": "Uploading {percent}%"
+  "uploadingPercent": "Uploading {percent}%",
+  "processing": "Processing…"
 }

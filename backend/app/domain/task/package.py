@@ -467,6 +467,20 @@ async def file_counts(session: AsyncSession, task_ids: list[int]) -> dict[int, i
     return {int(task_id): int(count) for task_id, count in rows}
 
 
+async def refuse_unless_own_uploads(
+    uploads: AttachmentService, attachment_ids: Sequence[int], by: int
+) -> None:
+    """这几份附件都在、都是 ``by`` 自己传的；不是就拒。发布时拷进题目之前查它，草稿存下
+    一份起始代码之前也查它：别人的附件不进这个人的草稿。"""
+    ids = list(dict.fromkeys(attachment_ids))
+    found = {a.id: a for a in await uploads.get_many(ids)}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise BadRequestError(say("draftFileNotYours"), data={"attachmentIds": missing})
+    if any(not uploads.is_uploader(found[i], by) for i in ids):
+        raise ForbiddenError(say("draftFileNotYours"))
+
+
 async def _own_uploads(
     uploads: AttachmentService, attachment_ids: Sequence[int], by: int
 ) -> list[tuple[bytes, str]]:
@@ -475,12 +489,7 @@ async def _own_uploads(
     只认他自己传的：附件 id 是可猜的连续整数，不认的话，谁都能把别人交作业附的
     文件拷进自己的题目、借这块板公开出去。"""
     ids = list(dict.fromkeys(attachment_ids))
-    found = {a.id: a for a in await uploads.get_many(ids)}
-    missing = [i for i in ids if i not in found]
-    if missing:
-        raise BadRequestError(say("draftFileNotYours"), data={"attachmentIds": missing})
-    if any(not uploads.is_uploader(found[i], by) for i in ids):
-        raise ForbiddenError(say("draftFileNotYours"))
+    await refuse_unless_own_uploads(uploads, ids, by)
     out: list[tuple[bytes, str]] = []
     for attachment_id in ids:
         content, filename, _ = await uploads.download(attachment_id)
@@ -681,6 +690,23 @@ async def set_starter_upload(
     """发题页、芝士写的修改里带的起始代码：这个人自己先传成附件的那一份。"""
     [(content, _)] = await _own_uploads(uploads, [attachment_id], by)
     return await set_starter(session, task, by=by, data=content)
+
+
+async def upload_starter(
+    uploads: AttachmentService, *, by: int, file: BinaryIO, filename: str
+) -> int:
+    """发题页上刚选的起始代码：先查能不能作为起始代码（和放进题目时同一个检查），
+    合格才存成这个人的一份附件、交回它的 id；不合格当场说为什么，什么都不存。"""
+    await asyncio.to_thread(starter_archive.check, file)
+    file.seek(0)
+    attachment = await uploads.upload(
+        file=file,
+        filename=filename,
+        content_type="application/zip",
+        uploader_id=by,
+        attachment_type="file",
+    )
+    return attachment.id
 
 
 async def remove_starter(session: AsyncSession, task: Task) -> None:

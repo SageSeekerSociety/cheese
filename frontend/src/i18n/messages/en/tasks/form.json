@@ -149,7 +149,8 @@
     "nameRequired": "Every stage needs a name",
     "add": "Add stage",
     "removeTitle": "Delete stage {n}?",
-    "removeConfirm": "Delete"
+    "removeConfirm": "Delete",
+    "removeBody": "This takes effect when you click Save changes"
   },
   "brief": "Brief",
   "parts": {

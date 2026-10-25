@@ -8,7 +8,11 @@
   "unsaved": "Unsaved changes",
   "stageEffect": {
     "title": "Save these stage changes?",
-    "failing": "Participants with a stage past its due date and nothing handed in: {n}. Saving marks them as failed",
-    "reopening": "Participants going from failed back to in progress: {n}"
+    "failing": "{stages} past due: {who} handed nothing in and will be marked failed when you save",
+    "reopening": "{who} will go from failed back to in progress",
+    "stage": "“{name}”",
+    "whoMore": "{names} and others, {n} in all",
+    "joiner": ", ",
+    "failingNoStage": "{who} will have a stage past its due date with nothing handed in, and will be marked failed when you save"
   }
 }

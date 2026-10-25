@@ -16,7 +16,7 @@
 //
 // 它不是场景，按 `frontend_grade.py` 的口径是 A 级：只吃 props、只往上发事件。拆出来的
 // 那几件都各自在预览站里有位置（`views/demo/catalogTaskForm.ts`）。
-import type { DomainGroup, SpaceCategory, TaskDraftFields, TaskFormSubmitData, Topic } from '@/types'
+import type { DomainGroup, SpaceCategory, TaskDraftFields, TaskFormSubmitData, TaskStage, Topic } from '@/types'
 
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -52,6 +52,8 @@ const props = withDefaults(
     defaultMentor?: string
     /** 芝士正在写的那一格（它的字段名）：收起的「更多设置」里的就展开。 */
     agentWriting?: string | null
+    /** 改题页：删掉一个阶段之后能不能存，不能就是服务端那句拒绝（`TaskFormStages`）。 */
+    stageRemovalRefusal?: (stages: TaskStage[]) => Promise<string | null>
   }>(),
   {
     initialData: null,
@@ -63,6 +65,7 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     agentWriting: null,
+    stageRemovalRefusal: undefined,
   }
 )
 
@@ -197,6 +200,8 @@ defineExpose({
         v-model:submission-schema="submissionSchema"
         v-model:rubric="rubric"
         :missing-name="stageMissingName"
+        :editing="isEditing"
+        :removal-refusal="stageRemovalRefusal"
       />
 
       <TaskFormGrading

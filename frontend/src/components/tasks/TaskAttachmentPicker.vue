@@ -18,7 +18,7 @@ defineProps<{
   files: PickedAttachment[]
   /** 正在上传：「添加文件」先按住，免得同一份传两遍。 */
   uploading: boolean
-  /** 正在传的那一份传到了百分之几；`null` / 不给 = 报不出来，只写「上传中」。 */
+  /** 正在传的那一份传到了百分之几；`null` / 不给 = 报不出来，只写「上传中」。传满了平台还在收，写「处理中」。 */
   percent?: number | null
   /** 单份文件的上限；`null` = 没问到，不写这句话。 */
   maxFileBytes: number | null
@@ -114,9 +114,11 @@ function onReplacement(event: Event) {
         {{
           !uploading
             ? t('tasks.attachmentPicker.add')
-            : percent != null
-              ? t('tasks.attachmentPicker.uploadingPercent', { percent })
-              : t('tasks.attachmentPicker.uploading')
+            : percent == null
+              ? t('tasks.attachmentPicker.uploading')
+              : percent >= 100
+                ? t('tasks.attachmentPicker.processing')
+                : t('tasks.attachmentPicker.uploadingPercent', { percent })
         }}
       </button>
     </div>

@@ -10,6 +10,11 @@ export interface StageChangeEffect {
   failing: number
   /** 现在是未通过、存了之后不再是的领取数。 */
   reopening: number
+  /** 这两种各是谁（个人的昵称、团队的队名）。 */
+  failingNames: string[]
+  reopeningNames: string[]
+  /** 让前一种人判为未通过的那几个阶段的名字。 */
+  failingStages: string[]
 }
 
 export function useStageChangeCheck(ask: (stages: TaskStage[]) => Promise<StageChangeEffect>) {

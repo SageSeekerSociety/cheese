@@ -141,8 +141,9 @@ _TEACHING_KEYS = (
     "ai_skills",
 )
 
-# i18n-data: the default teammate 芝士 names when the 题目 says none of its own.
-INHERIT_TEAMMATE = "沿用上层设置"
+# i18n-data: what 芝士 writes for the default teammate or the way of helping
+# when the 题目 keeps the level above's.
+INHERIT = "沿用上层设置"
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
 FORMS = {"个人": "USER", "团队": "TEAM"}
@@ -161,7 +162,7 @@ AI_MODES = {
     "讲解与示例": "example",
     "先明确需求再实现": "spec",
     "不加限制": "free",
-    "沿用空间设置": None,
+    INHERIT: None,
 }
 
 _WHEN = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
@@ -705,11 +706,11 @@ def teammates() -> dict[str, str]:
 
 def _teammate(given, current: dict) -> str | None:
     """The default teammate 芝士 named, as ``defaultRole``: a preset by its
-    title or type name; ``INHERIT_TEAMMATE`` (or blank) leaves the level above
+    title or type name; ``INHERIT`` (or blank) leaves the level above
     in force — ``""`` clears the 题目's own where the draft has one, ``None``
     writes nothing where it has none."""
     word = str(given or "").strip()
-    if not word or word == INHERIT_TEAMMATE:
+    if not word or word == INHERIT:
         return None if current.get("defaultRole") is None else ""
     presets = teammates()
     if word in presets:
@@ -717,7 +718,7 @@ def _teammate(given, current: dict) -> str | None:
     if word in presets.values():
         return word
     raise BadRequestError(
-        say("draftTeammateChoice", names="、".join([*presets, INHERIT_TEAMMATE]))
+        say("draftTeammateChoice", names="、".join([*presets, INHERIT]))
     )
 
 
@@ -1176,9 +1177,9 @@ def _view(
                 str(fields.get("defaultRole")), str(fields.get("defaultRole"))
             )
             if fields.get("defaultRole")
-            else INHERIT_TEAMMATE
+            else INHERIT
         ),
-        "ai_mode: " + modes.get(teaching.get("mode"), "沿用空间设置"),
+        "ai_mode: " + modes.get(teaching.get("mode"), INHERIT),
         "ai_guidance: " + str(teaching.get("systemPrompt") or "（无）"),
         *(
             ["ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）")]
@@ -1221,7 +1222,7 @@ def _view(
         f"这个空间的模板：{_templates(space)}",
         f"可以当导师的人：{_people_said(space)}",
         f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
-        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT_TEAMMATE])}",
+        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT])}",
         f"这个空间资料库里可以给 AI 队友读的资料：{_names(space.materials)}",
         f"可以给项目里每个 AI 队友带上的技能：{'、'.join(skill_catalog()) or '（无）'}",
         close_tag,

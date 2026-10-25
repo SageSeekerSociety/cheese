@@ -71,7 +71,7 @@ const AI_MODES: Record<string, TeachingMode | null> = {
   讲解与示例: 'example',
   先明确需求再实现: 'spec',
   不加限制: 'free',
-  沿用空间设置: null,
+  沿用上层设置: null,
 }
 
 /** 只认写完整的日期：流到一半的「2026-11-0」先不填。 */

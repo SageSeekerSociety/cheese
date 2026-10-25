@@ -134,6 +134,11 @@ class StageChangeIn(BaseModel):
 class StageChangeEffectOut(BaseModel):
     failing: int
     reopening: int
+    #: Who those are, by name (a team's claim by the team's name), in claim order.
+    failingNames: list[str]
+    reopeningNames: list[str]
+    #: The stages, by name, that would be past due with nothing handed in.
+    failingStages: list[str]
 
 
 @router.post(
@@ -150,8 +155,9 @@ async def get_stage_change_effect(
     db=Depends(get_db),
 ) -> dict:
     """How many claims saving ``stages`` would turn failed (``failing``) and
-    how many it would take out of failed again (``reopening``), so the
-    publisher can be told before saving. Nothing is written. Only whoever may
+    how many it would take out of failed again (``reopening``), who they are
+    and which stages they would miss, so the publisher can be told before
+    saving. Nothing is written. Only whoever may
     change the task asks."""
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -159,7 +165,15 @@ async def get_stage_change_effect(
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError(say("draftTaskNotYours"))
     effect = await stage_change_effect(db, task.id, stage_lines(body.stages))
-    return ok({"failing": effect.failing, "reopening": effect.reopening})
+    return ok(
+        {
+            "failing": effect.failing,
+            "reopening": effect.reopening,
+            "failingNames": list(effect.failing_names),
+            "reopeningNames": list(effect.reopening_names),
+            "failingStages": list(effect.failing_stages),
+        }
+    )
 
 
 @router.get(

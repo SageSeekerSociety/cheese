@@ -5,7 +5,7 @@
 // —— 那边看不到这一格，存的时候原样带着（`buildTeaching`）。
 //
 // 方式是四选一，每种下面一句说明它让 AI 队友怎么做。题目那一层（`inherit`）多一个
-// 「沿用空间设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
+// 「沿用上层设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
 // 写题目的要求时看得到它已经说了什么。
 import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { TeachingDraft } from '@/lib/teaching'
@@ -65,7 +65,7 @@ watch(
   { deep: true, flush: 'sync' }
 )
 
-/** 方式那一组：题目那一层前面多一个「沿用空间设置」（值是 null）。 */
+/** 方式那一组：题目那一层前面多一个「沿用上层设置」（值是 null）。 */
 const modes = computed<{ value: TeachingMode | null; label: string; hint: string }[]>(() => [
   ...(props.inherit
     ? [
@@ -187,6 +187,13 @@ const labelId = `teaching-mode-${useId()}`
       <template #item="{ item, props: itemProps }">
         <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle || undefined" />
       </template>
+      <!-- A chosen skill keeps its description beside the id: `docx` alone does not say what it does. -->
+      <template #chip="{ item, props: chipProps }">
+        <v-chip v-bind="chipProps" class="teaching-fields__skill" :title="item.raw.subtitle || undefined">
+          <span class="teaching-fields__skill-name">{{ item.raw.title }}</span>
+          <span v-if="item.raw.subtitle" class="teaching-fields__skill-hint">{{ item.raw.subtitle }}</span>
+        </v-chip>
+      </template>
     </v-autocomplete>
 
     <details v-if="inherit && spacePrompt" class="teaching-fields__space" data-testid="teaching-space-prompt">
@@ -255,6 +262,23 @@ const labelId = `teaching-mode-${useId()}`
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.teaching-fields__skill {
+  max-width: 100%;
+}
+
+.teaching-fields__skill-name {
+  flex: none;
+}
+
+.teaching-fields__skill-hint {
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .teaching-fields__space {

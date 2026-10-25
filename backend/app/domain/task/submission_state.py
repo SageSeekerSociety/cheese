@@ -56,6 +56,8 @@ from app.domain.task.stages import (
     planned_stage_change,
     stage_count,
 )
+from app.domain.team.models import Team
+from app.domain.user.models import User, UserProfile
 
 #: 这条轴的五个取值。别处只 import，不要再写一遍字面量。
 COMPLETION_STATUS_NOT_SUBMITTED = "NOT_SUBMITTED"
@@ -358,11 +360,53 @@ def _derived(
 
 @dataclass(frozen=True)
 class StageChangeEffect:
-    """一次改阶段会让多少条领取跨过「未通过」那条线：``failing`` 现在不是、改完会是
-    ``FAILED``；``reopening`` 现在是、改完不再是。"""
+    """一次改阶段会让哪些领取跨过「未通过」那条线：``failing`` 现在不是、改完会是
+    ``FAILED``；``reopening`` 现在是、改完不再是。各自按领取的先后列出参与者的名字
+    （个人的昵称，团队的队名）；``failing_stages`` 是让前一种人判为未通过的那几个阶段
+    （改完之后过了截止、还没交），按阶段的顺序。"""
 
-    failing: int
-    reopening: int
+    failing_names: tuple[str, ...] = ()
+    reopening_names: tuple[str, ...] = ()
+    failing_stages: tuple[str, ...] = ()
+
+    @property
+    def failing(self) -> int:
+        return len(self.failing_names)
+
+    @property
+    def reopening(self) -> int:
+        return len(self.reopening_names)
+
+
+async def _claimant_names(
+    session: AsyncSession, claims: Sequence[TaskMembership]
+) -> dict[int, str]:
+    """每条领取的参与者叫什么：个人的昵称（没有就用户名），团队的队名。"""
+    people = [c.member_id for c in claims if not c.is_team]
+    teams = [c.member_id for c in claims if c.is_team]
+    users = (
+        {
+            user_id: nickname or username
+            for user_id, username, nickname in await session.execute(
+                select(User.id, User.username, UserProfile.nickname)
+                .outerjoin(UserProfile, UserProfile.user_id == User.id)
+                .where(User.id.in_(people))
+            )
+        }
+        if people
+        else {}
+    )
+    team_names = (
+        {
+            row.id: row.name
+            for row in await session.scalars(select(Team).where(Team.id.in_(teams)))
+        }
+        if teams
+        else {}
+    )
+    return {
+        c.id: (team_names if c.is_team else users).get(c.member_id, "") for c in claims
+    }
 
 
 async def stage_change_effect(
@@ -397,20 +441,34 @@ async def stage_change_effect(
         .all()
     )
     handed_in = await handed_in_for(session, [claim.id for claim in claims])
-    failing = reopening = 0
-    for claim in claims:
+    failing: list[TaskMembership] = []
+    reopening: list[TaskMembership] = []
+    missed: set[int] = set()
+    for claim in sorted(claims, key=lambda c: c.id):
         rows = [
             HandedIn(stage=moved[row.stage], version=row.version, verdict=row.verdict)
             for row in handed_in.get(claim.id, [])
             if row.stage in moved
         ]
-        after = _derived(claim, stage_states(rows, count), dues, moment)
+        states = stage_states(rows, count)
+        after = _derived(claim, states, dues, moment)
         was_failed = claim.completion_status == COMPLETION_STATUS_FAILED
         if after == COMPLETION_STATUS_FAILED and not was_failed:
-            failing += 1
+            failing.append(claim)
+            missed.update(
+                index
+                for index, (state, due) in enumerate(zip(states, dues, strict=False))
+                if past_deadline(due, moment)
+                and state in (STAGE_NOT_SUBMITTED, STAGE_REJECTED)
+            )
         elif was_failed and after != COMPLETION_STATUS_FAILED:
-            reopening += 1
-    return StageChangeEffect(failing=failing, reopening=reopening)
+            reopening.append(claim)
+    names = await _claimant_names(session, [*failing, *reopening])
+    return StageChangeEffect(
+        failing_names=tuple(names[c.id] for c in failing),
+        reopening_names=tuple(names[c.id] for c in reopening),
+        failing_stages=tuple(change.lines[i].name for i in sorted(missed)),
+    )
 
 
 async def refresh_completion_status(
