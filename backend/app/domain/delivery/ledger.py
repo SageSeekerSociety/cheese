@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
+from app.domain import happenings
 from app.domain.addressing import Addressed
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery_events import (
@@ -143,6 +144,12 @@ class Ledger:
         ).scalar_one_or_none()
         if row_id is None:
             return None
+        await happenings.happened(
+            self._session,
+            happenings.NOTIFIED,
+            user_id=receiver_id,
+            payload={"type": event.type.value, "payload": event.payload},
+        )
         return Pending(row_id, receiver_id, event.type, event.payload, key)
 
     async def send(

@@ -58,7 +58,12 @@ from app.domain.room_task.awaiting import WaitingItem
 from app.domain.routine import personal as routine_personal
 from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
-from app.domain.user.services import search_accounts, timezones_by_ids, user_by_handle
+from app.domain.user.services import (
+    names_by_handles,
+    search_accounts,
+    timezones_by_ids,
+    user_by_handle,
+)
 
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
 
@@ -1126,6 +1131,18 @@ class RoutineIn(BaseModel):
     at: str = ""
     #: An event routine's project, by its short name: only what happens there.
     project: str = ""
+    #: Fire on the first thing only, and run in this conversation.
+    once: bool = False
+    #: ``mention``: only these people, by handle or name.
+    people: list[str] | None = None
+    #: ``mention``: only in this channel or task, by its ref.
+    where: str = ""
+    #: ``filed`` / ``decided``: this task, by its ref.
+    task: str = ""
+    #: ``filed`` / ``decided``: any task the person asked for.
+    mine: bool = False
+    #: ``decided``: only ``accepted`` or only ``rejected``.
+    outcome: str = ""
 
 
 def _routine_line(row, tz: str | None) -> str:
@@ -1138,6 +1155,8 @@ def _routine_line(row, tz: str | None) -> str:
         if row.next_run_at and row.state == "active"
         else ""
     )
+    if routine_personal.once(row) and row.trigger != "schedule":
+        nxt += "，等到一次就结束"
     return (
         f"- 「{row.title}」{state}：{routine_personal.describe(row)}{nxt}；"
         f"要做的事：{row.note or row.title}（编号 {row.id}）"
@@ -1160,13 +1179,34 @@ async def _routine_spec(db, access, body: RoutineIn) -> tuple[str, dict]:
             if v not in ("", None)
         }
         return trigger, spec
-    if not body.project:
-        return trigger, {}
-    project = await address.project_by_ref(db, body.project)
-    if project is None:
-        raise NotFoundError.for_resource("project", body.project)
-    await access.project(project.id)
-    return trigger, {"project": str(project.id), "projectName": project.name}
+    spec: dict = {
+        "once": body.once,
+        "mine": body.mine,
+        "outcome": body.outcome,
+    }
+    if body.project:
+        project = await address.project_by_ref(db, body.project)
+        if project is None:
+            raise NotFoundError.for_resource("project", body.project)
+        await access.project(project.id)
+        spec |= {"project": str(project.id), "projectName": project.name}
+    if body.people:
+        handles = [(await _named(db, who.lstrip("@")))[0] for who in body.people]
+        names = await names_by_handles(db, handles)
+        spec |= {"from": handles, "fromNames": [names.get(h, h) for h in handles]}
+    if body.where:
+        _, place, _ = await _place(db, access, body.where)
+        spec |= (
+            {"place": {"kind": "task", "id": str(place.task.id)}}
+            if place.task is not None
+            else {"place": {"kind": "topic", "id": str(place.room.id)}}
+        ) | {"placeName": where_of(place)}
+    if body.task:
+        _, place, _ = await _place(db, access, body.task)
+        if place.task is None:
+            raise BadRequestError(say("assistantRefUnknown", ref=body.task))
+        spec |= {"task": str(place.task.id), "taskTitle": place.task.title}
+    return trigger, spec
 
 
 @router.post("/routine", include_in_schema=False)
@@ -1226,7 +1266,7 @@ async def agent_routine(
     else:
         trigger, spec = (
             await _routine_spec(db, ProjectPages(db, resolver), body)
-            if body.trigger or body.freq or body.project
+            if body.trigger or body.freq or body.project or body.task
             else (None, None)
         )
         await routine_personal.change(

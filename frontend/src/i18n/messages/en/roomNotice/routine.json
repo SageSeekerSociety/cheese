@@ -34,5 +34,7 @@
   "assistantRoutineAsked": "Routine “{routine}” has {count} actions waiting for you to confirm",
   "assistantRoutineFailed": "Routine “{routine}” could not finish",
   "assistantRoutinesNoCredits": "You are out of credits, so your routines are paused",
-  "assistantRoutinesAway": "You have not signed in for {days} days, so your routines are paused"
+  "assistantRoutinesAway": "You have not signed in for {days} days, so your routines are paused",
+  "assistantWaitFailed": "“{routine}” could not finish",
+  "assistantWaitGivenUp": "Stopped waiting for “{routine}”: it did not happen within {days} days"
 }
