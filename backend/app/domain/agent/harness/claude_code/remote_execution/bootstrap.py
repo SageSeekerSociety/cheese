@@ -1561,6 +1561,15 @@ def configure_idle(payload):
                         argv, env=env, **options
                     )
                 else:
+                    # A whole machine (a VM that is the session's own, or one
+                    # its owner gave over) has no sandbox to bind the platform
+                    # socket into, and needs it all the same: its model calls
+                    # take no token either.
+                    platform = Path(runtime["platform_socket_directory"](state))
+                    runpy.run_path(str(release / "remote-execution/confinement.py"))[
+                        "own_directory"
+                    ](platform)
+                    env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                     process = subprocess.Popen(
                         argv, start_new_session=True, env=env, **options
                     )
