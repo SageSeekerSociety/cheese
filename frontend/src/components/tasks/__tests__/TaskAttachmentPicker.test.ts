@@ -145,4 +145,12 @@ describe('题目带的材料', () => {
     expect(ids()).toEqual(['数据(2).csv'])
     view.unmount()
   })
+
+  it('只有图标的「替换」按钮，鼠标停上去写着它替换哪一份', async () => {
+    const { view, input } = mount<string>({ upload: vi.fn().mockResolvedValue('数据.csv'), replace: vi.fn() })
+    await fireEvent.change(input, { target: { files: [pdf('数据.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByTitle('替换 数据.csv')).toBeTruthy())
+    view.unmount()
+  })
 })

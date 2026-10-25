@@ -80,4 +80,13 @@ describe('题目的起始代码', () => {
     await fireEvent.click(view.getByRole('button', { name: '移除起始代码' }))
     await waitFor(() => expect(current()).toBeNull())
   })
+
+  it('只有图标的「替换」「移除」两颗按钮，鼠标停上去写着各自做什么', async () => {
+    const upload = vi.fn(async (file: File) => ({ id: 1, name: file.name, size: file.size }))
+    const { view, input } = mount({ upload })
+    await fireEvent.change(input, { target: { files: [zip()] } })
+
+    await waitFor(() => expect(view.getByTitle('替换起始代码')).toBeTruthy())
+    expect(view.getByTitle('移除起始代码')).toBeTruthy()
+  })
 })

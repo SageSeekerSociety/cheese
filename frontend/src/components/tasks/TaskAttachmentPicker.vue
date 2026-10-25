@@ -74,6 +74,7 @@ function onReplacement(event: Event) {
             icon="mdi-file-replace-outline"
             size="sm"
             :disabled="uploading"
+            :title="t('tasks.attachmentPicker.replace', { name: file.name })"
             :aria-label="t('tasks.attachmentPicker.replace', { name: file.name })"
             @click="pickReplacement(file.id)"
           />

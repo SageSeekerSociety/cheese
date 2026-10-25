@@ -46,6 +46,7 @@ function onPicked(event: Event) {
           icon="mdi-file-replace-outline"
           size="sm"
           :disabled="uploading"
+          :title="t('tasks.starterPicker.replace')"
           :aria-label="t('tasks.starterPicker.replace')"
           @click="input?.click()"
         />
@@ -53,6 +54,7 @@ function onPicked(event: Event) {
           icon="mdi-close"
           size="sm"
           :disabled="uploading"
+          :title="t('tasks.starterPicker.remove')"
           :aria-label="t('tasks.starterPicker.remove')"
           @click="emit('remove')"
         />
