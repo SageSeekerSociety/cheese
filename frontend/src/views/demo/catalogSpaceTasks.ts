@@ -336,7 +336,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     id: 'teaching-fields',
     title: 'TeachingFields',
     about:
-      '「AI 队友辅导」那几格，空间设置和发题页、改题页共用。题目那一层多一张「沿用空间设置」，底下折着空间那一份要求。',
+      '「AI 队友辅导」那几格，空间设置和发题页、改题页共用。题目那一层多一张「沿用上层设置」，底下折着空间那一份要求。',
     file: 'src/components/common/TeachingFields.vue',
     component: TeachingFields,
     needs: UI_T,

@@ -5,7 +5,7 @@
   "classify": "Category and tags",
   "completion": "Time to complete",
   "completionPrefix": "Within",
-  "completionSuffix": "days, counted from the day they start",
+  "completionSuffix": "days, counted from the day the application is approved",
   "content": "Content",
   "defaultDeadline": "Default completion deadline",
   "description": "Description",
@@ -27,10 +27,13 @@
     "summaryRealName": "Real name required",
     "title": "More settings"
   },
+  "dueOn": "Deadline",
   "name": "Name",
   "namePlaceholder": "e.g. Reproduce an image classification baseline",
   "noCategories": "No categories",
   "noTopics": "No tags",
+  "opensNow": "Open now",
+  "opensOn": "Opens on",
   "participantLimit": "Participant limit",
   "participantType": "Participant type",
   "participation": "Participation",
@@ -57,6 +60,13 @@
     "verificationTitle": "Identity verification"
   },
   "rank": "Difficulty",
+  "start": {
+    "apply": "Apply first",
+    "applyHint": "Starts once the publisher approves the application; the time limit counts from that day",
+    "direct": "Start directly",
+    "directHint": "Clicking “Start this task” starts it; everyone hands in by the deadline",
+    "label": "How it starts"
+  },
   "registration": "Registration",
   "registrationEnd": "End date",
   "registrationStart": "Start date",
@@ -68,10 +78,13 @@
   "teamLimit": "Team limit",
   "teamLocking": {
     "free": "Allowed",
-    "freeHint": "Members can still be added or removed after approval",
+    "freeHint": "Members can still be added or removed after the application is approved",
+    "freeHintStart": "Members can still be added or removed after the team starts",
     "label": "Team changes",
-    "locked": "Locked on approval",
-    "lockedHint": "The roster at approval is final"
+    "locked": "Locked once the application is approved",
+    "lockedHint": "The roster at approval is final",
+    "lockedHintStart": "The roster when the team starts is final",
+    "lockedStart": "Locked once the team starts"
   },
   "teamLockingPolicyLockOnApproval": "Locked on approval",
   "teamSize": "Team size",
@@ -83,6 +96,7 @@
   "validation": {
     "categoryRequired": "Choose a category",
     "completionRequired": "Time to complete is missing",
+    "dueRequired": "Deadline is missing",
     "nameRequired": "Name is missing",
     "rankRequired": "Choose a difficulty",
     "submitterTypeRequired": "Choose who takes it",
@@ -91,7 +105,7 @@
   "mentor": {
     "require": "Add mentors to participants' projects",
     "label": "Mentors",
-    "hint": "Applicants agree to them before applying. Mentors see the project's public channels, documents and files"
+    "hint": "Students agree to them before applying or starting. Mentors see the project's public channels, documents and files"
   },
   "grading": {
     "title": "Submission and grading",
@@ -135,7 +149,8 @@
     "nameRequired": "Every stage needs a name",
     "add": "Add stage",
     "removeTitle": "Delete stage {n}?",
-    "removeConfirm": "Delete"
+    "removeConfirm": "Delete",
+    "removeBody": "This takes effect when you click Save changes"
   },
   "brief": "Brief",
   "parts": {

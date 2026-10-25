@@ -26,6 +26,8 @@ Build every decision for the end state: nothing here is yet too expensive to rep
 
 Finish a decided change completely: no expiry note, compatibility path, deprecation marker, dual-write, flag keeping the old branch reachable, or doc section about the old way, unless keeping one is itself the decision. People use the platform now, so a compatibility path may stay when the pull request states it as a design decision: whose data or workflow it protects, what carrying it costs, and the change that removes it. While the platform is young, a path that brings more debt than the disruption it spares is not kept; the data is migrated and the people affected are told instead. Every kept path is more to unwind and a place the next reader mistakes for something in use. Adopting a replacement means deleting what it replaced, and the change is finished only when the code that chooses changes — check there, not in the menu, the contract or the doc.
 
+A change a page built against the old API cannot talk to — an operation removed; a request field removed, renamed, narrowed or newly required; a response field removed, renamed, or now possibly missing or of a type it never had; an enum value removed — raises the number in `backend/api-generation` in the same pull request, and the `api` job of Required CI fails one that does not. The backend then refuses pages still open on the old frontend and they ask to be refreshed, so changing both halves together needs no compatibility path for those pages.
+
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
 
 ## Prefer a mature library to a hand-rolled copy

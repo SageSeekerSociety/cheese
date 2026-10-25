@@ -41,6 +41,7 @@ def _make_task(**overrides):
         "deadline": None,
         "registration_start_at": None,
         "default_deadline": 30,
+        "start_mode": "APPLY",
         "resubmittable": False,
         "editable": True,
         "rank": None,

@@ -1,6 +1,11 @@
 import type { Material, Space, SpaceCategory, SpaceTeaching, Team, TeamSummary, Topic, User } from '.'
 
 export type TaskSubmitterType = 'USER' | 'TEAM'
+
+/** 怎么开始做：`DIRECT` 点「开始做这道题」就开始，所有人都按题目的截止时间交；
+ *  `APPLY` 先申请，出题人通过后才开始，限时（`defaultDeadline` 天）从通过那天算起。
+ *  从题目来的项目都在开始的那一刻建出来。 */
+export type TaskStartMode = 'DIRECT' | 'APPLY'
 export type TaskSubmissionEntryType = 'TEXT' | 'FILE'
 export type TaskTeamMembershipLockPolicy = 'NO_LOCK' | 'LOCK_ON_APPROVAL'
 export type EligibilityRejectReasonCode =
@@ -109,6 +114,7 @@ export interface Task {
   deadline: number | null
   participantLimit: number
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   description: string
@@ -151,6 +157,9 @@ export interface Task {
   topics?: Topic[]
   userDeadline?: number
   participationEligibility?: ParticipationEligibility
+  /** 我（或我的团队）从这道题来的那个项目：题目页的「继续做」打开它。详情接口才带；
+   *  还没开始（申请在等通过、被拒了、没申请）是 null。 */
+  myProject?: { id: string; name: string } | null
   /** 这道题挂着几份材料。列表接口一并给（只增不改的那个数，不带文件本体）。 */
   attachmentCount?: number
   /** 我这条领取的档位。`null`/缺省 = 我没领这道题。随 `queryJoined` 一族回来。 */
@@ -238,6 +247,8 @@ export interface TaskMembership {
   /** 这条报名背后的团队。查不到队（已解散 / 老数据）或按人领取时没有这个字段。 */
   team?: { id: number; name: string }
   teamMembers?: TaskTeamParticipantMemberSummary[]
+  /** 开始做的时刻：这条报名的项目建好的那一下（列表接口给的）。还没开始做是 null。 */
+  startedAt?: number | null
 }
 
 export type TaskFormSubmitData = {
@@ -247,6 +258,7 @@ export type TaskFormSubmitData = {
   registrationStartAt?: number | null
   deadline: number | null
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   intro: string

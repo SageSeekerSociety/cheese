@@ -28,7 +28,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
-import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
@@ -98,21 +97,14 @@ function nameOf(id: number): string {
   return m?.member?.name ?? ''
 }
 
-/** 批准时顺手给这个人定截止：从这天起 N 天（题目的「限时」），没设就 7 天。
- *  发题表单存的是天数，老数据里存的是毫秒，两种都换成天。 */
+/** 批准：这个人的截止时间由服务端在通过的那一刻定（申请制从这天起 N 天，直接开始的题
+ *  是题目的截止日期），项目也在这时建出来。 */
 async function approve(id: number) {
   const task = props.taskData
   if (!task) return
   busyId.value = id
-  const raw = task.defaultDeadline ?? 0
-  const days = raw >= 86_400_000 ? Math.round(raw / 86_400_000) : raw
   try {
-    await TaskBoardApi.updateParticipant(task.id, id, {
-      approved: 'APPROVED',
-      deadline: dayjs()
-        .add(days || 7, 'day')
-        .valueOf(),
-    })
+    await TaskBoardApi.updateParticipant(task.id, id, { approved: 'APPROVED' })
     toast.success(t('tasks.roster.approved', { name: nameOf(id) }))
     events.emit('participation-changed')
   } catch (e) {

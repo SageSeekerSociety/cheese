@@ -216,9 +216,11 @@ const deadlineText = computed(() => {
   return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.dueIn', { n: state.days })
 })
 
-/** 领取之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
- *  1209600000），两种都换成天；0 或没有就不画这一行。 */
+/** 申请通过之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
+ *  1209600000），两种都换成天；0 或没有就不画这一行。直接开始的题所有人按截止日期交，
+ *  没有这一行。 */
 const defaultDeadline = computed(() => {
+  if (props.task.startMode === 'DIRECT') return 0
   const raw = props.task.defaultDeadline ?? 0
   return raw >= DAY_MS ? Math.round(raw / DAY_MS) : raw
 })

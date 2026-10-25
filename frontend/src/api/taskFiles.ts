@@ -68,9 +68,15 @@ export function taskFileRawUrl(taskId: number, name: string, version?: number): 
   return version ? `${url}&version=${version}` : url
 }
 
-/** 一份材料现在的字节，给题目页上的预览；Office 文档由服务端转成 PDF 再给。 */
-export async function taskFileBytes(taskId: number, name: string, asPdf = false): Promise<ArrayBuffer> {
-  const response = await fetch(taskFileRawUrl(taskId, name) + (asPdf ? '&preview_pdf=true' : ''), {
+/** 一份材料的字节，给题目页上的预览；`version` 是第几版（不给就是现在这一份）。Office
+ *  文档由服务端转成 PDF 再给。 */
+export async function taskFileBytes(
+  taskId: number,
+  name: string,
+  asPdf = false,
+  version?: number
+): Promise<ArrayBuffer> {
+  const response = await fetch(taskFileRawUrl(taskId, name, version) + (asPdf ? '&preview_pdf=true' : ''), {
     headers: authHeaders(),
   })
   if (response.ok) return response.arrayBuffer()

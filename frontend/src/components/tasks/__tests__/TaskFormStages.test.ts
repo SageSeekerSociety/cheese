@@ -30,7 +30,7 @@ beforeAll(() => {
 
 beforeEach(() => setLocale('zh-CN'))
 
-function mount() {
+function mount(removalRefusal?: (stages: TaskStage[]) => Promise<string | null>) {
   const stages = ref<TaskStage[]>([
     { id: 'need', name: '需求分析', description: '', dueAt: null },
     { id: 'impl', name: '实现', description: '', dueAt: null },
@@ -47,6 +47,8 @@ function mount() {
           'onUpdate:submissionSchema': (next: TaskSubmissionSchemaEntry[]) => (items.value = next),
           rubric: rubric.value,
           'onUpdate:rubric': (next: TaskRubricLine[]) => (rubric.value = next),
+          editing: !!removalRefusal,
+          removalRefusal,
         })
       ),
   })
@@ -70,5 +72,20 @@ describe('阶段那一节', () => {
     await waitFor(() => expect(dialogButton('删除')).toBeTruthy())
     await fireEvent.click(dialogButton('删除'))
     await waitFor(() => expect(names()).toEqual(['实现']))
+  })
+
+  it('有人交过的阶段：点删除就说不能删，不弹确认、不删', async () => {
+    const { names } = mount(async (rest) =>
+      rest.some((stage) => stage.id === 'need') ? null : '阶段「需求分析」已经有人提交，不能删除'
+    )
+
+    await fireEvent.click(screen.getByRole('button', { name: '删除第 1 个阶段' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('阶段「需求分析」已经有人提交，不能删除')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(names()).toEqual(['需求分析', '实现'])
+
+    await fireEvent.click(screen.getByRole('button', { name: '删除第 2 个阶段' }))
+    await waitFor(() => expect(screen.getByRole('alertdialog', { name: '删除第 2 个阶段？' })).toBeTruthy())
   })
 })

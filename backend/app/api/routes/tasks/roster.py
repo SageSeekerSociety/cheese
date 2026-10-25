@@ -17,6 +17,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _build_participant_user_info,
     _membership_to_api_model,
+    _ms,
     _task_to_api_model,
 )
 from app.api.write_access import ROUTE_DECIDES
@@ -29,6 +30,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.task.claims import started_at_of
 from app.domain.task.repositories import (
     TaskRepository,
 )
@@ -143,6 +145,9 @@ async def get_task_participants(
         # 直接回它会让所有没挑过头像的人共用同一张脸。
         avatar_map = await profile_repo.chosen_avatar_ids(user_ids)
 
+    # 开始做的时刻（项目建好的那一下）：「数据」页签数谁开始做了却没动，从这里起算，
+    # 不从申请那一下。还没开始做的是 null。
+    started = await started_at_of(db, [m.id for m in memberships])
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
@@ -152,14 +157,14 @@ async def get_task_participants(
             team_map=team_map,
             avatar_map=avatar_map,
         )
-        participants.append(
-            _membership_to_api_model(
-                m,
-                participant_info=participant_info,
-                # 同上那一批 team_map，不另查一次。
-                team=team_map.get(m.member_id) if m.is_team else None,
-            )
+        model = _membership_to_api_model(
+            m,
+            participant_info=participant_info,
+            # 同上那一批 team_map，不另查一次。
+            team=team_map.get(m.member_id) if m.is_team else None,
         )
+        model["startedAt"] = _ms(started.get(m.id))
+        participants.append(model)
 
     return ok({"participants": participants})
 

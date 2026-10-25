@@ -245,7 +245,8 @@ services `backend` and `backend-b` on `BACKEND_PORT` and `BACKEND_PORT_NEXT`;
 with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 `frontend-b` on loopback `FRONTEND_SLOT_PORT` (18088) and `FRONTEND_PORT_NEXT`.
 The deploy starts the idle slot of each on the new image, waits for its health
-check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
+check, smoke-tests both (below), rewrites `backend.conf` and `frontend.conf`
+and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs, if its image
 content changed: collab, browser-render and office-render are named by digest,
@@ -273,6 +274,27 @@ compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
 network name (`backend`, dialled by `device-connection` and the office editor;
 `frontend`, by the backend's docs index).
+
+The smoke test (`smoke_release` in `deploy/deploy-docker.sh`, which runs
+`deploy/release-smoke.py` in the release's backend image) uses the new slots on
+their loopback ports the way a person does, before app-router sends them
+anything: the sign-in route refuses a wrong password, `/users/me` names the
+deploy's own account, that account's own task opens through
+`/topics/{task}/task` (a project and task it creates the first time), the inbox
+WebSocket every signed-in page holds sends its first frame, sign-out answers,
+and the new frontend serves `index.html` and the hashed script it
+names. Each check prints one `smoke <check> ok|FAILED` line into the deploy
+log. Any failure removes the new slots and stops the release with app-router
+untouched, so a release that is ready but cannot be used never takes traffic.
+
+The account is the one at `deploy-smoke@placeholder.internal`, an address the
+platform never mails, with a random handle and no password: the release opens
+its session inside its own image rather than signing in, because sign-in
+failures are counted per handle and handles are readable by any signed-in user,
+so a password sign-in would let anyone hold releases back. Nothing about it is
+stored on the box. A rollback does not smoke-test the release it returns to,
+and a box without app-router slots (prod, etrip) skips the test and logs that
+it did.
 
 The containers therefore alternate between `cheese-backend-1` and
 `cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
@@ -353,10 +375,12 @@ box** (label `cheese-dev`), gated on `build.yml`'s images, then
 
 ### Rolling dev back to a named commit
 
-The deploy's own rollback covers one case: the health check fails, and
-`deploy/deploy-docker.sh` restores the previous images. A release that is
-healthy but wrong is rolled back by nothing — it keeps serving until someone
-releases a commit they name:
+The deploy refuses a release whose new slots fail the smoke test before it
+takes traffic (see [the runtime section](#the-runtime-docker-deploy-by-sha)),
+and its own rollback covers a failed health check after the switch, where
+`deploy/deploy-docker.sh` restores the previous images. A release that passes
+both but is wrong in a way they do not exercise is rolled back by nothing — it
+keeps serving until someone releases a commit they name:
 
 ```bash
 gh workflow run deploy-dev.yml --ref main -f ref=<full sha>
@@ -476,7 +500,10 @@ The required gate compares executed JUnit node IDs with an independently
 collected full-suite manifest. Every required case must run once, with no skips.
 Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
 for each partition. Layer floors apply before partitioning. The existing Kotlin
-exclusion and opt-in live Forgejo evaluations remain outside the required set.
+exclusion remains outside the required set. The live Forgejo tests
+(`tests/forgejo`) are not in it either: they need a real forge, so `e2e.yml`'s
+`forgejo live` job runs them after merge against the pinned container
+`tests/forgejo/start.sh` starts.
 
 Reproduce a partition from `backend/` with the same test services and pinned
 tools as `test.yml`. Use a fresh output directory for each run:

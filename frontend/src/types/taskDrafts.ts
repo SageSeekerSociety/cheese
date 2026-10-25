@@ -4,6 +4,7 @@ import type { SpaceTeaching } from './spaces'
 import type {
   TaskRubricLine,
   TaskStage,
+  TaskStartMode,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -21,6 +22,7 @@ export interface TaskDraftFields {
   deadline?: number | null
   registrationStartAt?: number | null
   defaultDeadline?: number
+  startMode?: TaskStartMode
   participantLimit?: number | null
   minTeamSize?: number
   maxTeamSize?: number
@@ -84,6 +86,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'deadline',
   'registrationStartAt',
   'defaultDeadline',
+  'startMode',
   'participantLimit',
   'minTeamSize',
   'maxTeamSize',

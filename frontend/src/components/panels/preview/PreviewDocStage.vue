@@ -102,6 +102,8 @@ const emit = defineEmits<{
   quote: [payload: { text: string; page: number }]
   'page-context': [payload: SlidePageContext]
   cell: [payload: { address: string; value: string; sheet: string }]
+  /** 读者在表格里拖过一片：两个角的地址，加上这片格子里摊平的内容。 */
+  'sheet-range': [payload: { sheet: string; start: string; end: string; text: string }]
   'markdown-quote': [payload: MarkdownQuote]
   /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
   anchor: [id: string]
@@ -287,6 +289,7 @@ defineExpose({ snapshot, clearMark })
         :marks="sheetAnchors"
         :active-mark="activeAnchor"
         @cell="emit('cell', $event)"
+        @range="emit('sheet-range', $event)"
         @mark="emit('anchor', $event)"
       />
 

@@ -14,7 +14,7 @@ from tests.support.living_doc import overview_of
 
 class TestTaskIntegration:
     @pytest.mark.parametrize("as_team", [False, True])
-    def test_registration_opens_shared_workspace(
+    def test_approval_opens_the_shared_workspace(
         self,
         api_client: TestClient,
         task_setup: dict,
@@ -83,15 +83,25 @@ class TestTaskIntegration:
         payload = {"teamId": team_id} if as_team else {}
         response = api_client.post(endpoint, json=payload, headers=student_headers)
         assert response.status_code == 200, response.text
-        project = response.json()["data"]["project"]
+        # An application waits for the publisher with no workspace yet.
+        assert response.json()["data"]["project"] is None
         membership_id = response.json()["data"]["participant"]["id"]
+        # Approval opens the workspace and releases the pack once; approving
+        # again cannot mint it again.
+        for _ in range(2):
+            response = api_client.patch(
+                f"/tasks/{task_id}/participants/{membership_id}",
+                headers=admin,
+                json={"approved": "APPROVED"},
+            )
+            assert response.status_code == 200, response.text
+        response = api_client.post(endpoint, json=payload, headers=student_headers)
+        assert response.status_code == 200, response.text
+        project = response.json()["data"]["project"]
         credits_url = f"/projects/{project['id']}/credits"
-        assert (
-            api_client.get(credits_url, headers=student_headers).json()["data"][
-                "grants"
-            ]
-            == []
-        )
+        credits = api_client.get(credits_url, headers=student_headers).json()["data"]
+        earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
+        assert [g["credits_total"] for g in earmarks] == [100]
         assert project["team_id"] is not None
         if as_team:
             assert project["team_id"] == team_id
@@ -123,19 +133,6 @@ class TestTaskIntegration:
             assert response.status_code == 200, response.text
             response = api_client.get(f"/documents/{document}", headers=student_headers)
             assert response.json()["data"]["content"] == "我们补充了实地观察"
-        # Approval releases the pack once; repeated approval cannot mint it again.
-        for _ in range(2):
-            response = api_client.patch(
-                f"/tasks/{task_id}/participants/{membership_id}",
-                headers=admin,
-                json={"approved": "APPROVED"},
-            )
-            assert response.status_code == 200, response.text
-            credits = api_client.get(credits_url, headers=student_headers).json()[
-                "data"
-            ]
-            earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
-            assert [g["credits_total"] for g in earmarks] == [100]
         # Repeating the application answers with the claim held and its
         # workspace; it never creates a second one.
         response = api_client.post(endpoint, json=payload, headers=student_headers)

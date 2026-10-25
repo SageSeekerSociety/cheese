@@ -126,11 +126,7 @@ export namespace TaskBoardApi {
     }>({ url: '/tasks', method: 'GET', params: finalParams }, true)
   }
 
-  export const addParticipant = (
-    taskId: number,
-    member: number,
-    data: AddTaskParticipantRequestData = { deadline: null }
-  ) =>
+  export const addParticipant = (taskId: number, member: number, data: AddTaskParticipantRequestData = {}) =>
     axiosRequest<{ task: Task }>(
       { url: `/tasks/${taskId}/participants`, method: 'POST', params: { member }, data },
       true
@@ -139,7 +135,8 @@ export namespace TaskBoardApi {
   export const join = (taskId: number, data: AddTaskParticipantRequestData, teamId?: number) =>
     axiosRequest<{
       participant: TaskMembership
-      project: { id: string; name: string; root_topic_id: string; team_id: number }
+      /** 开始了才有：直接开始的题当场建出来；申请制的题申请还在等通过时是 null。 */
+      project: { id: string; name: string; root_topic_id: string; team_id: number } | null
     }>(
       {
         url: `/tasks/${taskId}/participations/${teamId === undefined ? 'user' : 'team'}`,
@@ -215,12 +212,15 @@ export namespace TaskBoardApi {
   export const progress = (taskId: number) =>
     axiosRequest<TaskProgress>({ url: `/tasks/${taskId}/progress`, method: 'GET' }, true)
 
-  /** 把题目的阶段存成 `stages` 会让几条领取被判未通过、几条从未通过回来（只算不写）。 */
+  /** 把题目的阶段存成 `stages` 会让哪些领取被判未通过、哪些从未通过回来，因为哪几个阶段（只算不写）。 */
   export const stageEffect = (taskId: number, stages: TaskStage[]) =>
-    axiosRequest<{ failing: number; reopening: number }>(
-      { url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } },
-      true
-    )
+    axiosRequest<{
+      failing: number
+      reopening: number
+      failingNames: string[]
+      reopeningNames: string[]
+      failingStages: string[]
+    }>({ url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } }, true)
 
   export const updateSubmission = (
     taskId: number,

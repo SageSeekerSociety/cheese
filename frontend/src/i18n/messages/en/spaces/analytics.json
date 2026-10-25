@@ -23,7 +23,7 @@
       "label": "Challenges to review"
     },
     "stalledTasks": {
-      "hint": "Claimed, but nothing submitted in 14 days",
+      "hint": "Started, but nothing new submitted in 14 days",
       "label": "Stalled challenges"
     }
   },

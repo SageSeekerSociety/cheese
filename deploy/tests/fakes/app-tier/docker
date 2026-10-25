@@ -40,6 +40,34 @@ if [[ " $* " == *" python - "* ]]; then
     printf 'migration-touches ok\n'
     exit 0
   fi
+  # deploy/release-smoke.py: `provision` opens the smoke account's session and
+  # prints it, `check` uses the new slots with it. APP_TIER_SMOKE_FAIL=<check>
+  # makes that check fail. The check records the session it was handed through
+  # the environment.
+  if [[ "$script" == *'def check_backend('* ]]; then
+    if [[ " $* " == *" provision "* ]]; then
+      if [ "${APP_TIER_SMOKE_FAIL:-}" = provision ]; then
+        printf 'smoke provision FAILED fake failure\n'
+        exit 1
+      fi
+      printf 'smoke provision ok fake\n'
+      printf 'smoke-session 42 fake-access-token-7f3a fake-refresh-token-9c1e\n'
+      exit 0
+    fi
+    [ -z "${APP_TIER_DOCKER_LOG:-}" ] || printf 'smoke-session-seen %s %s %s\n' \
+      "${DEPLOY_SMOKE_USER_ID:-missing}" "${DEPLOY_SMOKE_TOKEN:-missing}" "${DEPLOY_SMOKE_REFRESH:-missing}" \
+      >> "$APP_TIER_DOCKER_LOG"
+    checks="frontend-index frontend-asset login me task websocket logout"
+    [[ " $* " == *" --frontend "* ]] || checks="${checks#frontend-index frontend-asset }"
+    for check in $checks; do
+      if [ "${APP_TIER_SMOKE_FAIL:-}" = "$check" ]; then
+        printf 'smoke %s FAILED fake failure\n' "$check"
+        exit 1
+      fi
+      printf 'smoke %s ok fake\n' "$check"
+    done
+    exit 0
+  fi
   # deploy/code-digest.py: the code a running relay runs (`exec`) and the code
   # the release's image would run (`compose … run`).
   if [[ "$script" == *code-digest* ]]; then

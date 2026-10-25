@@ -412,7 +412,11 @@ function read(file: LibraryFile) {
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
         <p v-if="uploadProgress" role="status" class="t-body c-muted">
-          {{ t('work.library.uploadProgress', uploadProgress) }}
+          {{
+            uploadProgress.percent >= 100
+              ? t('work.library.uploadProcessing', uploadProgress)
+              : t('work.library.uploadProgress', uploadProgress)
+          }}
         </p>
 
         <div v-if="anything" class="library__tools">

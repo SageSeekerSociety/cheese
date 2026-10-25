@@ -35,6 +35,7 @@ const LABEL_KEYS: Record<string, string> = {
   real_name: 'tasks.form.more.realName',
   registration_start: 'tasks.form.registrationStart',
   team_locking: 'tasks.form.teamLocking.label',
+  start_mode: 'tasks.form.start.label',
   mentors: 'tasks.form.mentor.label',
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
@@ -75,6 +76,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
       return t('tasks.assistant.changes.days', { n: Number(value) })
     case 'team_locking':
       return value === 'LOCK_ON_APPROVAL' ? t('tasks.form.teamLocking.locked') : t('tasks.form.teamLocking.free')
+    case 'start_mode':
+      return value === 'DIRECT' ? t('tasks.form.start.direct') : t('tasks.form.start.apply')
     case 'mentors':
       return (value as string[]).length
         ? (value as string[]).map((h) => terms.mentors?.find((p) => p.handle === h)?.name ?? h).join('、')

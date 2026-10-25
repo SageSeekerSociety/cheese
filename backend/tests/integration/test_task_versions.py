@@ -36,6 +36,7 @@ from tests.integration.test_task_files import (
     upload_root,  # noqa: F401  (fixture)
 )
 from tests.integration.test_task_materials_follow_the_claim import (
+    _back_to_waiting,
     _claim_as_team,
     _decide,
     _join,
@@ -248,7 +249,8 @@ def test_the_project_task_field_follows_the_claim_the_project_came_from(
     _portal,
 ):
     """一个人在两个都申请了的团队里：通过了的那个团队的项目说它来自哪道题；还在等批
-    的那个团队的项目不说——对他、对那个团队的别人都一样，他别处的申请不算。"""
+    的那个团队的项目（早先的版本在申请时建的）不说——对他、对那个团队的别人都一样，
+    他别处的申请不算。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="两个团队", submitterType="TEAM")
     _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
@@ -256,11 +258,14 @@ def test_the_project_task_field_follows_the_claim_the_project_came_from(
     _, other_token = _member_of(user_client, api_client, board)
     approved_team, _ = _team(api_client, both_token)
     waiting_team, _ = _team(api_client, other_token)
-    approved_claim, approved_project = _claim_as_team(
-        api_client, task_id, approved_team, both_token
-    )
-    _, waiting_project = _claim_as_team(api_client, task_id, waiting_team, other_token)
+    approved_claim, _ = _claim_as_team(api_client, task_id, approved_team, both_token)
+    waiting_claim, _ = _claim_as_team(api_client, task_id, waiting_team, other_token)
     _decide(api_client, board, task_id, approved_claim, "APPROVED")
+    _decide(api_client, board, task_id, waiting_claim, "APPROVED")
+    _, approved_project = _claim_as_team(api_client, task_id, approved_team, both_token)
+    _, waiting_project = _claim_as_team(api_client, task_id, waiting_team, other_token)
+    # The waiting team's project is one an earlier release opened on application.
+    _back_to_waiting(db_session, _portal, waiting_claim)
     _join(db_session, _portal, waiting_team, both)
 
     assert _project_task(api_client, approved_project, both_token)["id"] == task_id

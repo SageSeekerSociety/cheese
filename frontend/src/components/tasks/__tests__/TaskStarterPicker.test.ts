@@ -1,7 +1,8 @@
 import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as components from 'vuetify/components'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ toastError: vi.fn() }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: mocks.toastError } }))
@@ -12,26 +13,52 @@ import TaskStarterPicker from '../TaskStarterPicker.vue'
 
 import i18n, { setLocale } from '@/i18n'
 
+// 确认框是一个 VOverlay，而 happy-dom 没有 visualViewport：不补这几样，弹窗挂不上去。
+beforeAll(() => {
+  if (!('ResizeObserver' in globalThis)) {
+    ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+  if (!globalThis.visualViewport) {
+    Object.defineProperty(globalThis, 'visualViewport', {
+      configurable: true,
+      value: { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
+    })
+  }
+})
+
+/** 确认框里的那颗按钮（行上那颗「移除」也写着同一个字）。 */
+const dialogButton = (label: string) =>
+  within(screen.getByRole('alertdialog'))
+    .getAllByRole('button')
+    .find((b) => b.textContent?.trim() === label) as HTMLElement
+
 const zip = (name = 'lab1.zip', bytes = 4096) => new File([new Uint8Array(bytes)], name, { type: 'application/zip' })
 
 /** 页面那样用：上传与「现在是哪一份」在 composable 里，这一格只画。 */
-function mount(target: StarterTarget<number>) {
+function mount(target: StarterTarget<number>, confirmRemove = false) {
   let current: () => number | null = () => null
   const Page = defineComponent({
     setup() {
       const starter = useStarterUpload<number>(target)
       current = () => starter.file.value?.id ?? null
       return () =>
-        h(TaskStarterPicker, {
-          file: starter.file.value,
-          uploading: starter.uploading.value,
-          percent: starter.percent.value,
-          onPick: starter.pick,
-          onRemove: starter.remove,
-        })
+        h(components.VApp, null, () =>
+          h(TaskStarterPicker, {
+            file: starter.file.value,
+            uploading: starter.uploading.value,
+            percent: starter.percent.value,
+            confirmRemove,
+            onPick: starter.pick,
+            onRemove: starter.remove,
+          })
+        )
     },
   })
-  const view = render(Page, { global: { plugins: [createVuetify(), i18n] } })
+  const view = render(Page, { global: { plugins: [createVuetify({ components }), i18n] } })
   const input = view.getByTestId('starter-input') as HTMLInputElement
   return { view, input, current: () => current() }
 }
@@ -95,12 +122,54 @@ describe('题目的起始代码', () => {
     await waitFor(() => expect(view.getByRole('button', { name: /上传中 50%/ })).toBeTruthy())
   })
 
-  it('只有图标的「替换」「移除」两颗按钮，鼠标停上去写着各自做什么', async () => {
+  it('「替换」「移除」两颗按钮写着字，不用把鼠标停上去猜', async () => {
     const upload = vi.fn(async (file: File) => ({ id: 1, name: file.name, size: file.size }))
     const { view, input } = mount({ upload })
     await fireEvent.change(input, { target: { files: [zip()] } })
 
-    await waitFor(() => expect(view.getByTitle('替换起始代码')).toBeTruthy())
-    expect(view.getByTitle('移除起始代码')).toBeTruthy()
+    await waitFor(() => expect(view.getByRole('button', { name: '替换起始代码' }).textContent?.trim()).toBe('替换'))
+    expect(view.getByRole('button', { name: '移除起始代码' }).textContent?.trim()).toBe('移除')
+  })
+
+  it('改题页移除起始代码先问一句：取消就还在，答「移除」才移除', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const upload = vi.fn(async (file: File) => ({ id: 7, name: file.name, size: file.size }))
+    const { view, input, current } = mount({ upload, remove }, true)
+    await fireEvent.change(input, { target: { files: [zip()] } })
+    await waitFor(() => expect(current()).toBe(7))
+
+    await fireEvent.click(view.getByRole('button', { name: '移除起始代码' }))
+    await waitFor(() => expect(screen.getByRole('alertdialog', { name: '移除起始代码？' })).toBeTruthy())
+    await fireEvent.click(dialogButton('取消'))
+    expect(remove).not.toHaveBeenCalled()
+    expect(current()).toBe(7)
+
+    await fireEvent.click(view.getByRole('button', { name: '移除起始代码' }))
+    await waitFor(() => expect(dialogButton('移除')).toBeTruthy())
+    await fireEvent.click(dialogButton('移除'))
+    await waitFor(() => expect(current()).toBeNull())
+  })
+
+  it('页面给了上限：说明里写着多大收得下，更大的去改题页传', () => {
+    const view = render(TaskStarterPicker, {
+      props: { file: null, uploading: false, maxBytes: 100 * 1024 * 1024 },
+      global: { plugins: [createVuetify({ components }), i18n] },
+    })
+    expect(view.container.textContent).toContain('不超过 100 MB')
+    expect(view.container.textContent).toContain('改题页')
+  })
+
+  it('字节传完了平台还在收：写「处理中」，不停在「上传中 100%」', async () => {
+    const upload = vi.fn(
+      (file: File, progress: (sent: number, total: number) => void) =>
+        new Promise<{ id: number; name: string; size: number }>(() => {
+          progress(file.size, file.size)
+        })
+    )
+    const { view, input } = mount({ upload })
+    await fireEvent.change(input, { target: { files: [zip()] } })
+
+    await waitFor(() => expect(view.getByRole('button', { name: /处理中/ })).toBeTruthy())
+    expect(view.queryByRole('button', { name: /100%/ })).toBeNull()
   })
 })

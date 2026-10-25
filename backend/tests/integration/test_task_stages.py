@@ -875,8 +875,29 @@ DUE = int(datetime(2030, 11, 15, 15, 59, tzinfo=UTC).timestamp() * 1000)
 LATE_DEADLINE = int(datetime(2031, 1, 1, tzinfo=UTC).timestamp() * 1000)
 
 
-def test_renaming_or_reordering_stages_tells_takers_nothing(api_client, board):
-    """A new name or order asks nothing new of whoever took the 题目."""
+def test_reordering_stages_alone_tells_takers_nothing(api_client, board):
+    """A new order asks nothing new of whoever took the 题目."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    task = _read(api_client, board, task_id)
+    first, second = task["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "stages": [second, first],
+            "submissionSchema": task["submissionSchema"],
+            "rubric": task["rubric"],
+        },
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _changes_heard(api_client, board["student"]) == []
+
+
+def test_a_renamed_stage_is_told_with_its_old_and_new_name(api_client, board):
+    """Takers look for a stage by its name, so a new one reaches them, saying
+    which stage it was and what it is called now; moved in the same save, it is
+    still the one notice."""
     task_id = _publish(api_client, board)
     _claim(api_client, board, task_id)
     task = _read(api_client, board, task_id)
@@ -891,7 +912,25 @@ def test_renaming_or_reordering_stages_tells_takers_nothing(api_client, board):
         headers=_headers(board["teacher"]),
     )
     assert resp.status_code == 200, resp.text
-    assert _changes_heard(api_client, board["student"]) == []
+    assert _changes_heard(api_client, board["student"]) == [
+        f"「{task['name']}」阶段「实现」改名为「编码实现」"
+    ]
+
+
+def test_a_renamed_task_is_told_by_the_name_its_takers_knew(api_client, board):
+    """The notice names the 题目 as its takers knew it and says its new name."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    old_name = _read(api_client, board, task_id)["name"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"name": "B 树的插入与删除"},
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _changes_heard(api_client, board["student"]) == [
+        f"「{old_name}」改名为「B 树的插入与删除」"
+    ]
 
 
 def test_a_moved_stage_due_date_is_told_on_the_readers_clock(api_client, board):
@@ -965,13 +1004,12 @@ def test_a_stage_missed_with_nothing_handed_in_reads_failed_to_its_claim(
     assert mine["stages"] == ["MISSED", "NOT_SUBMITTED"]
 
 
-def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
-    api_client, board
-):
+def test_the_publisher_hears_who_a_stage_change_fails_or_reopens(api_client, board):
     """Before saving, the publisher asks what the stages they are about to save
     would do: moving an empty stage's due date into the past fails the claim,
-    moving it back takes the claim out of failed. Asking writes nothing, and
-    only whoever may change the task may ask."""
+    moving it back takes the claim out of failed. The answer names the
+    participants and the stage they would miss, not only how many. Asking
+    writes nothing, and only whoever may change the task may ask."""
     task_id = _publish(api_client, board)
     membership_id = _claim(api_client, board, task_id)
     stages = _read(api_client, board, task_id)["stages"]
@@ -984,11 +1022,19 @@ def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
             headers=_headers(user),
         )
 
+    student = board["student"].nickname
     asked = effect(overdue)
     assert asked.status_code == 200, asked.text
-    assert asked.json()["data"] == {"failing": 1, "reopening": 0}
+    assert asked.json()["data"] == {
+        "failing": 1,
+        "reopening": 0,
+        "failingNames": [student],
+        "reopeningNames": [],
+        "failingStages": ["需求分析"],
+    }
     assert _completion(api_client, board, task_id, membership_id) == "NOT_SUBMITTED"
-    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 0}
+    unchanged = effect(stages).json()["data"]
+    assert (unchanged["failing"], unchanged["reopening"]) == (0, 0)
 
     saved = api_client.patch(
         f"/tasks/{task_id}",
@@ -997,7 +1043,9 @@ def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
     )
     assert saved.status_code == 200, saved.text
     assert _completion(api_client, board, task_id, membership_id) == "FAILED"
-    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 1}
+    back = effect(stages).json()["data"]
+    assert (back["failing"], back["reopening"]) == (0, 1)
+    assert back["reopeningNames"] == [student]
 
     assert effect(stages, board["student"]).status_code == 403
 

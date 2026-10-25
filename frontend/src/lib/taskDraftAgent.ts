@@ -37,6 +37,7 @@ export const AGENT_FIELDS: Record<string, TaskDraftField[]> = {
   participant_limit: ['participantLimit'],
   mentors: ['mentors'],
   registration_start: ['registrationStartAt'],
+  start_mode: ['startMode'],
   deadline: ['deadline'],
   days_to_submit: ['defaultDeadline'],
   category: ['categoryId'],
@@ -64,12 +65,13 @@ const LOCKING: Record<string, 'NO_LOCK' | 'LOCK_ON_APPROVAL'> = {
   允许变更: 'NO_LOCK',
   报名通过后锁定: 'LOCK_ON_APPROVAL',
 }
+const START_MODES: Record<string, 'DIRECT' | 'APPLY'> = { 直接开始: 'DIRECT', 申请制: 'APPLY' }
 const AI_MODES: Record<string, TeachingMode | null> = {
   引导为主: 'guide',
   讲解与示例: 'example',
   先明确需求再实现: 'spec',
   不加限制: 'free',
-  沿用空间设置: null,
+  沿用上层设置: null,
 }
 
 /** 只认写完整的日期：流到一半的「2026-11-0」先不填。 */
@@ -181,6 +183,8 @@ export function previewOf(args: unknown, terms: DraftTerms, markdown = ''): Prev
   }
   const locking = text(given.team_locking)
   if (locking && locking in LOCKING) fields.teamLockingPolicy = LOCKING[locking]
+  const start = text(given.start_mode)
+  if (start && start in START_MODES) fields.startMode = START_MODES[start]
   if (Array.isArray(given.mentors)) {
     const people = terms.mentors ?? []
     fields.mentors = given.mentors

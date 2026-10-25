@@ -35,8 +35,8 @@ from app.domain.space.repositories import (
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
-from app.domain.task import package
-from app.domain.task.inputs import map_approve_type
+from app.domain.task import claims, package
+from app.domain.task.inputs import START_DIRECT, map_approve_type, map_start_mode
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -153,6 +153,7 @@ async def update_task(
         task.require_real_name = payload.require_real_name
 
     # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
+    deadline_before = task.deadline
     if payload.deadline is not None:
         try:
             task.deadline = datetime.fromtimestamp(
@@ -183,6 +184,11 @@ async def update_task(
     # 默认截止天数 / 排名
     if payload.default_deadline is not None:
         task.default_deadline = payload.default_deadline
+    if payload.start_mode is not None:
+        task.start_mode = map_start_mode(payload.start_mode)
+    # Everyone on a task started directly hands in by its deadline.
+    if task.start_mode == START_DIRECT and task.deadline is None:
+        raise BadRequestError(say("taskDirectNeedsDeadline"))
 
     if payload.rank is not None:
         task.rank = payload.rank
@@ -323,6 +329,7 @@ async def update_task(
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
+    await claims.follow_the_task_deadline(db, task=task, before=deadline_before)
     package_after = await _package_parts(service, task)
     # A stage added, dropped, moved or given another due date changes what every
     # claim derives to; re-derive them in this same transaction.
@@ -355,14 +362,16 @@ async def update_task(
         await package.remove_starter(db, task)
         changes[package.STARTER_CHANGE] = package.REMOVED
     await package.record(db, task, by=user_id, changes=changes)
-    # What a taker is told about is what asks something new of them: the form,
-    # the rubric's lines, a stage added or removed, a stage's due date. A
-    # renamed or reordered stage, or the rubric shown or hidden (the editor
-    # sends that on every save), is a new version of the package and no news.
+    # What a taker is told about is what asks something new of them or changes
+    # what they would look for: the 题目's name, the form, the rubric's lines, a
+    # stage renamed, added or removed, a stage's due date. A reorder alone, or
+    # the rubric shown or hidden (the editor sends that on every save), is a
+    # new version of the package and no news.
     if task.approved == 0:
         await task_notices.task_changed(
             db,
             task=task,
+            old_name=package_before[package.DESCRIPTION][0],
             requirements=(
                 package_before[package.SUBMISSION] != package_after[package.SUBMISSION]
                 or package_before[package.RUBRIC][0] != package_after[package.RUBRIC][0]

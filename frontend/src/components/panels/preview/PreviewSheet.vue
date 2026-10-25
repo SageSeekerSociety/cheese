@@ -6,9 +6,10 @@
 // 芝士用 openpyxl 打开的也是 B7，两边说的是同一个格子。换成 PDF 就只剩一段文字，
 // 要靠找。
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { takeCodePoints } from '@/lib/codePoints'
 
 const props = withDefaults(
   defineProps<{
@@ -29,6 +30,11 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** 读者点了一个格子，带上它的地址和当前的值。 */
   (e: 'cell', payload: { address: string; value: string; sheet: string }): void
+  /** 读者拖过一片格子：两个角的 A1 地址，加上这片格子里摊平的内容。
+   *
+   *  和单格一样，地址是文件本身给得出来的坐标；受话人拿两个角就回到了那一片。
+   *  `start` 是左上、`end` 是右下。 */
+  (e: 'range', payload: { sheet: string; start: string; end: string; text: string }): void
   /** 读者点了某一格上的评论标记：把那一串评论打开。 */
   (e: 'mark', id: string): void
 }>()
@@ -53,12 +59,45 @@ const loading = ref(false)
 const failure = ref('')
 const selected = ref<string>('')
 
+/** 拖着选一片格子时两个角的坐标（行、列都是 0 起的下标）；没在拖就是 null。
+ *
+ *  表格里指一片和指一格是同一个手势的两种长度：按下、松开在同一格上是「这一格」，
+ *  拖过别的格子就是「这一片」。`end` 跟着经过的格子走，所以从右下往左上拖也对——
+ *  发出去之前两个角会摆回左上、右下。 */
+const dragStart = ref<{ row: number; col: number } | null>(null)
+const dragEnd = ref<{ row: number; col: number } | null>(null)
+/** 鼠标还按着没有。松开之后两个角要留着（读者得看见自己选了哪一片），但那一瞬间
+ *  手势就已经结束了：再跟着指针走，画的就不是刚才发出去的那一片了。 */
+const dragging = ref(false)
+
+/** 此刻高亮的那一片：拖的时候跟着手走，拖完了留着，让读者看见自己选了哪儿。 */
+const markedRange = computed(() => {
+  const start = dragStart.value
+  const end = dragEnd.value
+  if (!start || !end) return null
+  const row1 = Math.min(start.row, end.row)
+  const row2 = Math.max(start.row, end.row)
+  const col1 = Math.min(start.col, end.col)
+  const col2 = Math.max(start.col, end.col)
+  if (row1 === row2 && col1 === col2) return null
+  return { row1, row2, col1, col2 }
+})
+
+function inRange(row: number, col: number): boolean {
+  const range = markedRange.value
+  if (!range) return false
+  return row >= range.row1 && row <= range.row2 && col >= range.col1 && col <= range.col2
+}
+
 /** 画出来的上限。一张几十万行的 CSV 整份铺进 DOM 会把面板拖死，而人要找的那几格
  *  总在开头。超出的部分不是丢了，是没画出来 —— 所以下面那条提示必须说清「只显示了
  *  前 N 行 M 列」，并且文件条上照旧有「下载原文件」这条路。 */
 const MAX_ROWS = 500
 const MAX_COLS = 64
 const MAX_CELL = 300
+/** 一片格子摊平之后跟着消息走的那份内容的上限。一片几千行的表不该把消息撑爆；
+ *  超出时截断，地址本身照旧指得回整片。 */
+const RANGE_TEXT_CHARS = 2000
 /** 解析之前先切字节的上限：一份 200 MB 的 CSV 光解码成字符串就先占掉几百 MB。 */
 const MAX_BYTES = 1 << 20
 
@@ -259,6 +298,10 @@ async function open(data: ArrayBuffer) {
   failure.value = ''
   sheets.value = []
   selected.value = ''
+  // 换了一份文件，上一份上圈的那一片不该跟着过来：坐标在另一张表里另有意义。
+  dragging.value = false
+  dragStart.value = null
+  dragEnd.value = null
   sourceText.value = ''
   endClipped.value = false
   // 换一份文件就回到表格：上一个是 csv、这个不是，留在原文视图会看见一片空白，
@@ -351,12 +394,88 @@ function choose(rowIndex: number, colIndex: number) {
   if (!sheet) return
   const address = addressAt(rowIndex, colIndex)
   selected.value = address
+  dragStart.value = null
+  dragEnd.value = null
   emit('cell', {
     address,
     value: sheet.rows[rowIndex]?.[colIndex] ?? '',
     sheet: sheet.name,
   })
 }
+
+/** 换一张工作表：上一张表上圈的那一片、点的那一格都不带过去，`B2:D4` 在另一张表里
+ *  是另外几格。 */
+function switchSheet(index: number) {
+  activeIndex.value = index
+  selected.value = ''
+  dragging.value = false
+  dragStart.value = null
+  dragEnd.value = null
+}
+
+/** 按下：这一片从这一格起。 */
+function startDrag(rowIndex: number, colIndex: number) {
+  dragging.value = true
+  dragStart.value = { row: rowIndex, col: colIndex }
+  dragEnd.value = { row: rowIndex, col: colIndex }
+}
+
+/** 经过一格：正按着的时候这一片的另一个角跟着走。松开之后路过别的格子不改它——
+ *  那一片已经说出去了，改的是屏幕上的画，对不上刚才发的那一份。 */
+function extendDrag(rowIndex: number, colIndex: number) {
+  if (!dragging.value) return
+  dragEnd.value = { row: rowIndex, col: colIndex }
+}
+
+/** 松开：真拖过别的格子才发这一片；按在同一点上是单击，交给 `choose`。
+ *
+ *  挂在 `window` 上而不是格子上：拖到最后一行、最后一列时，手很可能是在表外面松开
+ *  的 —— 只挂在格子上，那一下就白拖了。`window` 上这个也会收到表内的松开（冒泡），
+ *  所以格子上不必再挂一个。 */
+function endDrag() {
+  if (!dragging.value) return
+  dragging.value = false
+  const range = markedRange.value
+  const sheet = active.value
+  if (!range || !sheet) {
+    dragStart.value = null
+    dragEnd.value = null
+    return
+  }
+  const start = addressAt(range.row1, range.col1)
+  const end = addressAt(range.row2, range.col2)
+  // 摊平这一片的内容：一行一行地接，行与行之间用换行、格与格之间用制表符——和从表格
+  // 里复制出来的那一份一样，受话人一眼看得见里面是什么。
+  //
+  // 一边接一边数，够了就停：上限不能等整片拼完再截。格子里存的是整格（只有画出来时才
+  // 截短），一本几十万格的表按整片拼出来就是几百 MB，为一个跟着消息走的摘要不值当。
+  // 数的是码点（`lib/codePoints.ts`，和指针那几处同一条），一个 emoji 在下标上占两格，
+  // 按码点算既对得上「两千字」这个说法，也不会把它劈成半个。
+  const parts: string[] = []
+  let used = 0
+  /** 再接一段；接得下整段就接整段，接不下只接开头那一点。够长了答 false。 */
+  function append(piece: string): boolean {
+    const taken = takeCodePoints(piece, RANGE_TEXT_CHARS - used)
+    parts.push(taken.text)
+    used += taken.points
+    return taken.complete
+  }
+  outer: for (let row = range.row1; row <= range.row2; row += 1) {
+    if (row > range.row1 && !append('\n')) break
+    for (let col = range.col1; col <= range.col2; col += 1) {
+      if (col > range.col1 && !append('\t')) break outer
+      if (!append(sheet.rows[row]?.[col] ?? '')) break outer
+    }
+  }
+  emit('range', { sheet: sheet.name, start, end, text: parts.join('') })
+  selected.value = ''
+  // 两个角留着：松手之后读者还得看得见自己刚选的是哪一片，和单击留下的那个框一样。
+  // 下一次按下、或者点某一格（`choose`）时才换掉。
+}
+
+// 松开的那一下可能在表外面：挂在 `window` 上才收得到。挂一次、卸组件时摘掉。
+onMounted(() => window.addEventListener('mouseup', endDrag))
+onBeforeUnmount(() => window.removeEventListener('mouseup', endDrag))
 
 watch(
   [() => props.data, () => props.kind],
@@ -402,11 +521,14 @@ watch(
           <tbody>
             <tr v-for="(row, r) in active.rows" :key="r">
               <th class="ps__row">{{ r + 1 }}</th>
+              <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- 拖过一片是鼠标手势（按下、经过、松开）。键盘上没有对应的一步，和页上点一处、圈一块同一条。 -->
               <td
                 v-for="c in active.width"
                 :key="c"
                 class="ps__cell"
-                :class="{ 'ps__cell--on': selected === addressAt(r, c - 1) }"
+                :class="{ 'ps__cell--on': selected === addressAt(r, c - 1), 'ps__cell--in': inRange(r, c - 1) }"
+                @mousedown="startDrag(r, c - 1)"
+                @mouseenter="extendDrag(r, c - 1)"
                 @click="choose(r, c - 1)"
               >
                 <span class="ps__text">{{ cellText(row[c - 1] ?? '') }}</span>
@@ -443,7 +565,7 @@ watch(
           type="button"
           class="ps__tab"
           :class="{ 'ps__tab--on': i === activeIndex }"
-          @click="activeIndex = i"
+          @click="switchSheet(i)"
         >
           {{ sheet.name }}
         </button>
@@ -583,6 +705,11 @@ watch(
    这也正好是电子表格本来的样子——一个粗边框，不是一块底色。 */
 .ps__cell--on {
   box-shadow: inset 0 0 0 2px var(--ink);
+}
+/* 拖过的那一片：底色铺满，四边各描一道，让读者看见自己选了哪儿。 */
+.ps__cell--in {
+  background: var(--selection-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 /* 有人在那一格上评过：右上角一颗琥珀的小点，点得到（评论栏靠它打开）。和页上那几颗
    同一种形状，只是挂在格子的角上——表格里一格的坐标本来就是一个地址，没有「页内比例」

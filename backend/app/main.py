@@ -38,6 +38,7 @@ from app.api.deps import (
 )
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
+from app.core.api_generation import OutdatedClientGuard
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
@@ -682,6 +683,10 @@ app.add_middleware(RequestLimits)
 
 # Inside CORS for the same reason: a closed account's refusal must be readable.
 app.add_middleware(ClosedAccountGuard)
+
+# Inside CORS for the same reason: an open page built for an older API must be
+# able to read that it is out of date (app/core/api_generation.py).
+app.add_middleware(OutdatedClientGuard)
 
 app.add_middleware(
     CORSMiddleware,

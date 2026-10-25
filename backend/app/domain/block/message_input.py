@@ -73,6 +73,29 @@ class SheetCellQuoteIn(BaseModel):
     value: str
 
 
+class SheetRangeQuoteIn(BaseModel):
+    """A rectangle of cells in a spreadsheet, corners addressed the way the file does.
+
+    `start` and `end` are the A1 forms of the two corners (top-left, bottom-right),
+    so the recipient can name and return to the rectangle without a conversion;
+    the range in `A1:C3` form is what spreadsheets themselves print, and it is also
+    what `quote` reads back. `text` is the region's contents flattened row by row —
+    enough for the recipient to see what is in it without opening the file.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["sheet-range"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    sheet: str
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    text: str
+
+
 class TextRangeQuoteIn(BaseModel):
     """A passage picked out of rendered document text.
 
@@ -189,6 +212,7 @@ QuotedContextIn = Annotated[
     SlidePageQuoteIn
     | PagePinQuoteIn
     | SheetCellQuoteIn
+    | SheetRangeQuoteIn
     | TextRangeQuoteIn
     | WebElementQuoteIn
     | WebTextQuoteIn

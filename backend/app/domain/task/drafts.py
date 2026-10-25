@@ -56,6 +56,7 @@ FORM_FIELDS = frozenset(
         "deadline",
         "registrationStartAt",
         "defaultDeadline",
+        "startMode",
         "participantLimit",
         "minTeamSize",
         "maxTeamSize",
@@ -107,6 +108,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "team_max": ("maxTeamSize",),
     "difficulty": ("rank",),
     "participant_limit": ("participantLimit",),
+    "start_mode": ("startMode",),
     "deadline": ("deadline",),
     "days_to_submit": ("defaultDeadline",),
     "category": ("categoryId",),
@@ -139,8 +141,9 @@ _TEACHING_KEYS = (
     "ai_skills",
 )
 
-# i18n-data: the default teammate 芝士 names when the 题目 says none of its own.
-INHERIT_TEAMMATE = "沿用上层设置"
+# i18n-data: what 芝士 writes for the default teammate or the way of helping
+# when the 题目 keeps the level above's.
+INHERIT = "沿用上层设置"
 
 # i18n-data: what 芝士 writes and reads, matched against its words.
 FORMS = {"个人": "USER", "团队": "TEAM"}
@@ -150,6 +153,8 @@ DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 KINDS = {"文件": "FILE", "文字": "TEXT"}
 # i18n-data: whether a team's members may change once it is approved.
 LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
+# i18n-data: how a claim of the 题目 starts, as the form names the two ways.
+START_MODES = {"直接开始": "DIRECT", "申请制": "APPLY"}
 # i18n-data: how the AI teammate helps, as the form names the four ways; the
 # fifth keeps the space's.
 AI_MODES = {
@@ -157,7 +162,7 @@ AI_MODES = {
     "讲解与示例": "example",
     "先明确需求再实现": "spec",
     "不加限制": "free",
-    "沿用空间设置": None,
+    INHERIT: None,
 }
 
 _WHEN = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
@@ -534,6 +539,10 @@ def from_agent(
         out["participantLimit"] = (
             None if limit in (None, 0, "") else _count(limit, "participant_limit")
         )
+    if "start_mode" in args:
+        if args["start_mode"] not in START_MODES:
+            raise BadRequestError(say("taskStartModeInvalid"))
+        out["startMode"] = START_MODES[args["start_mode"]]
     if "deadline" in args:
         out["deadline"] = _deadline(args["deadline"], space.zone)
     if "days_to_submit" in args:
@@ -697,11 +706,11 @@ def teammates() -> dict[str, str]:
 
 def _teammate(given, current: dict) -> str | None:
     """The default teammate 芝士 named, as ``defaultRole``: a preset by its
-    title or type name; ``INHERIT_TEAMMATE`` (or blank) leaves the level above
+    title or type name; ``INHERIT`` (or blank) leaves the level above
     in force — ``""`` clears the 题目's own where the draft has one, ``None``
     writes nothing where it has none."""
     word = str(given or "").strip()
-    if not word or word == INHERIT_TEAMMATE:
+    if not word or word == INHERIT:
         return None if current.get("defaultRole") is None else ""
     presets = teammates()
     if word in presets:
@@ -709,7 +718,7 @@ def _teammate(given, current: dict) -> str | None:
     if word in presets.values():
         return word
     raise BadRequestError(
-        say("draftTeammateChoice", names="、".join([*presets, INHERIT_TEAMMATE]))
+        say("draftTeammateChoice", names="、".join([*presets, INHERIT]))
     )
 
 
@@ -1093,6 +1102,7 @@ def _view(
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
     lockings = {v: k for k, v in LOCKING.items()}
+    starts = {v: k for k, v in START_MODES.items()}
     modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
     material_by_id = {v: k for k, v in space.materials.items()}
@@ -1133,6 +1143,7 @@ def _view(
             f"{space.mentors.get(h, h)}（{h}）" for h in fields.get("mentors") or []
         ),
         f"registration_start: {when(fields.get('registrationStartAt'))}",
+        f"start_mode: {starts.get(str(fields.get('startMode')), '申请制')}",
         f"deadline: {when(fields.get('deadline'))}",
         f"days_to_submit: {fields.get('defaultDeadline') or ''}",
         f"category: {by_id.get(int(fields.get('categoryId') or 0), '')}",
@@ -1166,9 +1177,9 @@ def _view(
                 str(fields.get("defaultRole")), str(fields.get("defaultRole"))
             )
             if fields.get("defaultRole")
-            else INHERIT_TEAMMATE
+            else INHERIT
         ),
-        "ai_mode: " + modes.get(teaching.get("mode"), "沿用空间设置"),
+        "ai_mode: " + modes.get(teaching.get("mode"), INHERIT),
         "ai_guidance: " + str(teaching.get("systemPrompt") or "（无）"),
         *(
             ["ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）")]
@@ -1211,7 +1222,7 @@ def _view(
         f"这个空间的模板：{_templates(space)}",
         f"可以当导师的人：{_people_said(space)}",
         f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
-        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT_TEAMMATE])}",
+        f"可以选的默认队友：{'、'.join([*teammates(), INHERIT])}",
         f"这个空间资料库里可以给 AI 队友读的资料：{_names(space.materials)}",
         f"可以给项目里每个 AI 队友带上的技能：{'、'.join(skill_catalog()) or '（无）'}",
         close_tag,
@@ -1336,6 +1347,7 @@ def task_form(task: dict) -> dict:
         "submitterType": task.get("submitterType"),
         "rank": task.get("rank"),
         "defaultDeadline": task.get("defaultDeadline"),
+        "startMode": task.get("startMode"),
         "registrationStartAt": task.get("registrationStartAt"),
         "deadline": task.get("deadline"),
         "description": task.get("description") or "",

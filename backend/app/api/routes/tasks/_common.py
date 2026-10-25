@@ -21,15 +21,20 @@ from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
+from app.core.sentences import say
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
 from app.domain.task.inputs import (
+    APPROVE_DISAPPROVED,
+    START_APPLY,
+    START_DIRECT,
+    map_start_mode,
     map_submitter_type,
 )
-from app.domain.task.mentors import require_consent, set_mentors
+from app.domain.task.mentors import mentors_of, require_consent, set_mentors
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -54,6 +59,9 @@ class CreateTaskRequest(BaseModel):
     space: int
     participant_limit: int | None = Field(default=None, alias="participantLimit")
     default_deadline: int = Field(default=30, alias="defaultDeadline")
+    # How a claim starts: ``DIRECT`` (straight away, by ``deadline``) or
+    # ``APPLY`` (on approval, ``defaultDeadline`` days from then).
+    start_mode: str = Field(default="APPLY", alias="startMode")
     deadline: int | None = None
     registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
     require_real_name: bool = Field(default=False, alias="requireRealName")
@@ -97,7 +105,6 @@ class TaskParticipantRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -111,7 +118,6 @@ class JoinTaskAsTeamRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     team_id: int = Field(..., alias="teamId", gt=0)
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -152,6 +158,7 @@ class PatchTaskRequest(BaseModel):
         default=None, alias="hasParticipantLimit"
     )
     default_deadline: int | None = Field(default=None, alias="defaultDeadline")
+    start_mode: str | None = Field(default=None, alias="startMode")
     rank: int | None = None
     has_rank: bool | None = Field(default=None, alias="hasRank")
     approved: str | None = None
@@ -229,6 +236,7 @@ async def _create_task_entity(
         space_id = payload.space
         participant_limit = payload.participant_limit
         default_deadline = payload.default_deadline
+        start_mode = map_start_mode(payload.start_mode)
         deadline_ms = payload.deadline
         registration_start_ms = payload.registration_start_at
         require_real_name = payload.require_real_name
@@ -287,6 +295,7 @@ async def _create_task_entity(
             default_deadline = int(default_deadline_raw)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+        start_mode = map_start_mode(str(payload.get("startMode") or START_APPLY))
 
         deadline_ms = payload.get("deadline")
         registration_start_ms = payload.get("registrationStartAt")
@@ -376,6 +385,8 @@ async def _create_task_entity(
             deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    if start_mode == START_DIRECT and deadline_dt is None:
+        raise BadRequestError(say("taskDirectNeedsDeadline"))
 
     registration_start_dt: datetime | None = None
     if registration_start_ms is not None:
@@ -436,6 +447,7 @@ async def _create_task_entity(
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
         access_control_enabled=access_control_enabled,
+        start_mode=start_mode,
     )
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
@@ -485,5 +497,20 @@ async def set_task_mentors(
     await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
 
 
-async def require_mentor_consent(db, *, task, agreed: bool) -> None:
+async def mentors_agreed(
+    db, membership_service, *, task, member_id: int, is_team: bool, agreed: bool
+) -> list[str]:
+    """The task's mentors this claim agrees to, recorded on a new claim and
+    seated in the project it opens (``TaskMembership.agreed_mentors``).
+
+    A task with mentors is claimed only by someone who agreed to them
+    (``require_consent``). Asking again for a claim already held records
+    nothing and asks for nothing: what it agreed to was recorded when it was
+    made."""
+    held = await membership_service.get_membership_by_task_and_member(
+        task_id=task.id, member_id=member_id, is_team=is_team
+    )
+    if held is not None and held.approved != APPROVE_DISAPPROVED:
+        return []
     await require_consent(db, task=task, agreed=agreed)
+    return await mentors_of(db, task.id)

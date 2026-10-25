@@ -174,6 +174,7 @@ class TaskService:
         max_team_size: int | None,
         team_locking_policy: str,
         access_control_enabled: bool = False,
+        start_mode: str = "APPLY",
     ) -> Task:
         return await self._repo.create_task(
             name=name,
@@ -195,6 +196,7 @@ class TaskService:
             max_team_size=max_team_size,
             team_locking_policy=team_locking_policy,
             access_control_enabled=access_control_enabled,
+            start_mode=start_mode,
         )
 
     async def replace_topic_relations(
