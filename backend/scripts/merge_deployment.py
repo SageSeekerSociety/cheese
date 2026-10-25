@@ -15,7 +15,9 @@ What comes over, for each kind in ``KINDS`` (parents before children):
 
 - A source row whose primary key is here with the same identity (its
   ``created_at``, or the columns its kind names) is the same row: both
-  deployments have it from the history they share. It changes only if the
+  deployments have it from the history they share. So is a row an earlier
+  batch already brought, under the key it got then, so the same export under
+  another batch name brings nothing twice. It changes only if the
   manifest lists it as changed on the source since then. Then the source wins
   for the columns the source deployment itself had (``--source-columns``: a
   column a migration added on the way here holds this deployment's value), except
@@ -23,14 +25,16 @@ What comes over, for each kind in ``KINDS`` (parents before children):
   it, this side last, so it stays, and the report names it.
 - Any other source row is new. If a row here already is that thing by its
   natural key (an account by email, an OAuth link by provider id, a passkey by
-  credential, a profile by its user), the source row becomes that row and
-  nothing is written. Otherwise it is inserted, keeping its id when the id is
+  credential, a profile by its user, a membership by who and what it joins),
+  the source row becomes that row and nothing is written. Otherwise it is inserted, keeping its id when the id is
   free here and taking the next one from this deployment's sequence when it is
   not. Every column that names a row of a kind here — a foreign key or not,
   polymorphic or inside JSON — is rewritten to the id that row has here.
 - An account whose email is under a domain the manifest lists is not brought,
   and neither is any row that names one.
-- A new account whose username is taken here gets ``_<its id>`` appended.
+- A new account whose username is taken here, by a person or as a team's
+  handle, gets ``_<its id>`` appended; a new team whose handle is taken gets
+  ``team-<its id>``.
 
 Rows this deployment derives are not copied: a team that is someone's personal
 team (this deployment makes one on first use), and a task's versions and its
@@ -46,7 +50,9 @@ not imported again. ``revert`` takes one batch back: it deletes the rows the
 batch inserted, puts back the columns it changed, removes the files it created
 and moves each sequence it advanced back if nothing has used it since. It
 refuses, changing nothing, while any of those rows differs from what the batch
-wrote. ``--dry-run`` does all of it inside a transaction that is rolled back,
+wrote, or while a row made since names a row it inserted (through a foreign
+key, or a reference column of a merged kind). A sequence goes back no lower
+than the highest id still in its table. ``--dry-run`` does all of it inside a transaction that is rolled back,
 copies no file, and prints the same report.
 
 Every step is logged as a timestamped line on stdout; the wrapper keeps the log.
@@ -105,8 +111,9 @@ class Kind:
     refs: dict[str, str] = field(default_factory=dict)
     #: A column whose kind another column says: (column, says, {value: table}).
     poly: tuple[str, str, dict[Any, str]] | None = None
-    #: Ids inside a JSON column: (column, key) -> table.
-    json_refs: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: Ids inside a JSON column: (column, key, key, ...) -> table. What the
+    #: path ends at is an id or a list of ids.
+    json_refs: dict[tuple[str, ...], str] = field(default_factory=dict)
     #: What makes a row with the same primary key the same row.
     identity: tuple[str, ...] = ("created_at",)
     #: Columns that already say which row here a new source row is (live rows).
@@ -160,20 +167,34 @@ KINDS: list[Kind] = [
     Kind(
         "user_following_relationship",
         refs={"followee_id": USER, "follower_id": USER},
+        natural=("followee_id", "follower_id"),
     ),
     Kind("tag", refs={"created_by_id": USER}),
     Kind(
         "space",
         refs={"avatar_id": "avatar", "default_category_id": "space_categories"},
+        json_refs={("teaching", "material_ids"): "material"},
     ),
-    Kind("space_categories", refs={"space_id": "space"}),
-    Kind("space_admin_relation", refs={"space_id": "space", "user_id": USER}),
+    Kind(
+        "space_categories",
+        refs={"space_id": "space"},
+        json_refs={("teaching", "material_ids"): "material"},
+    ),
+    Kind(
+        "space_admin_relation",
+        refs={"space_id": "space", "user_id": USER},
+        natural=("space_id", "user_id"),
+    ),
     Kind("space_announcement", refs={"space_id": "space", "author_id": USER}),
     Kind(
         "space_classification_tag_relation", refs={"space_id": "space", "tag_id": "tag"}
     ),
     Kind("team", refs={"avatar_id": "avatar", "personal_owner_user_id": USER}),
-    Kind("team_user_relation", refs={"team_id": "team", "user_id": USER}),
+    Kind(
+        "team_user_relation",
+        refs={"team_id": "team", "user_id": USER},
+        natural=("team_id", "user_id"),
+    ),
     Kind(
         "team_membership_application",
         refs={
@@ -192,6 +213,7 @@ KINDS: list[Kind] = [
             "team_id": "team",
             "reviewed_by": USER,
         },
+        json_refs={("protocol_override", "teaching", "material_ids"): "material"},
     ),
     Kind(
         "user_real_name_access_logs",
@@ -206,6 +228,7 @@ KINDS: list[Kind] = [
         "task_membership",
         refs={"task_id": "task"},
         poly=("member_id", "is_team", {True: "team", False: USER}),
+        natural=("task_id", "member_id", "is_team"),
     ),
     Kind(
         "task_submission",
@@ -221,6 +244,7 @@ KINDS: list[Kind] = [
     Kind(
         "task_submission_review",
         refs={"submission_id": "task_submission", "reviewer_id": USER},
+        natural=("submission_id", "reviewer_id"),
     ),
 ]
 
@@ -317,6 +341,10 @@ class Plan:
     )  # table, key, changes, source
     report: dict[str, Any] = field(default_factory=lambda: defaultdict(Counter))
     notes: list[str] = field(default_factory=list)
+    #: Rows earlier batches brought: table -> source key (JSON) -> key here.
+    earlier: dict[str, dict[str, Row]] = field(default_factory=dict)
+    #: Every live username and team handle here, lower-cased.
+    handles: set[str] = field(default_factory=set)
 
 
 def _key(table: Table, row: Row) -> Any:
@@ -339,7 +367,7 @@ class Allocator:
         self._next = 0
         self.moved: dict[str, dict[str, Any]] = {}
 
-    async def _remember(self, sequence: str) -> None:
+    async def _remember(self, sequence: str, table: Table) -> None:
         if sequence not in self.moved:
             before = (
                 await self._session.execute(
@@ -348,13 +376,16 @@ class Allocator:
             ).one()
             self.moved[sequence] = {
                 "before": [before.last_value, before.is_called],
+                # Whose ids it hands out: a revert never moves it below them.
+                "table": table.name,
+                "column": table.pk[0],
             }
 
     async def track(self, table: Table) -> None:
         """Record where ``table``'s sequence is before code of this
         deployment draws ids from it on the batch's behalf."""
         if table.sequence is not None and not self._dry:
-            await self._remember(table.sequence)
+            await self._remember(table.sequence, table)
 
     async def keep_above(self, table: Table, kept: Iterable[int]) -> None:
         top = max(kept, default=None)
@@ -366,7 +397,7 @@ class Allocator:
             )
         )
         if top > current:
-            await self._remember(table.sequence)
+            await self._remember(table.sequence, table)
             await self._session.execute(
                 text("SELECT setval(:s, :v)"), {"s": table.sequence, "v": top}
             )
@@ -377,7 +408,7 @@ class Allocator:
         if self._dry:
             self._next -= 1
             return self._next
-        await self._remember(table.sequence)
+        await self._remember(table.sequence, table)
         return int(
             await self._session.scalar(
                 text("SELECT nextval(:s)"), {"s": table.sequence}
@@ -442,16 +473,33 @@ def _translate(
             return out, f"{column} names {target} {value}, which is not brought"
         if value in plan.ids[target]:
             out[column] = plan.ids[target][value]
-    for (column, key), target in ({} if forward else kind.json_refs).items():
-        document = out.get(column)
-        if not isinstance(document, dict) or document.get(key) is None:
-            continue
-        value = document[key]
-        if value in plan.skipped[target]:
-            return out, f"{column}.{key} names {target} {value}, which is not brought"
-        if value in plan.ids[target]:
-            out[column] = {**document, key: plan.ids[target][value]}
+    for (column, *path), target in ({} if forward else kind.json_refs).items():
+        document, refused = _translate_json(plan, out.get(column), path, target)
+        if refused:
+            return (
+                out,
+                f"{column}.{'.'.join(path)} names {target} {refused}, which is not brought",
+            )
+        out[column] = document
     return out, None
+
+
+def _translate_json(
+    plan: Plan, document: Any, path: list[str], target: str
+) -> tuple[Any, Any]:
+    """``document`` with the id or ids at ``path`` rewritten; or the id that is
+    not brought. A path that is not there leaves the document as it is."""
+    if not path:
+        values = document if isinstance(document, list) else [document]
+        for value in values:
+            if value in plan.skipped[target]:
+                return document, value
+        mapped = [plan.ids[target].get(v, v) for v in values]
+        return (mapped if isinstance(document, list) else mapped[0]), None
+    if not isinstance(document, dict) or document.get(path[0]) is None:
+        return document, None
+    inner, refused = _translate_json(plan, document[path[0]], path[1:], target)
+    return {**document, path[0]: inner}, refused
 
 
 def _reseal(kind: Kind, source: Row, row: Row) -> Row:
@@ -529,8 +577,8 @@ async def plan_kind(
     live = [r for r in here if r.get("deleted_at") is None]
     natural = {_natural(kind, r): r for r in live if _natural(kind, r) is not None}
     emails = {_lower(r["email"]): r for r in live} if kind.table == USER else {}
-    usernames = {_lower(r["username"]) for r in live} if kind.table == USER else set()
     changed = options.changed.get(kind.table, set())
+    earlier = plan.earlier.get(kind.table, {})
     native = options.native.get(kind.table) if options.native is not None else None
 
     pending: list[tuple[Row, Row]] = []  # (translated row, source row) needing an id
@@ -542,18 +590,28 @@ async def plan_kind(
             and source_row.get("personal_owner_user_id") is not None
         ):
             refused = refused or "a personal team: this deployment makes its own"
+        # A row an earlier batch brought is that row here, under the key it got.
+        prior = earlier.get(json.dumps(_key_dict(table, source_row), sort_keys=True))
+        key = _key(table, prior) if prior is not None else _key(table, row)
+        same = by_key.get(key)
+        if same is not None and (
+            prior is not None or all(same.get(c) == row.get(c) for c in kind.identity)
+        ):
+            plan.ids[kind.table][source_key] = key
+            if refused:
+                # Already here: it stays as it is, and what names it still can.
+                counts["here already; not changed (names a row not brought)"] += 1
+                continue
+            for c in table.pk:
+                row[c] = same[c]
+            await _plan_shared(
+                plan, kind, table, row, same, source_row, changed, native, counts
+            )
+            continue
         if refused:
             plan.skipped[kind.table][source_key] = refused
             counts["skipped"] += 1
             log(f"skip {kind.table} {source_key}: {refused}")
-            continue
-        key = _key(table, row)
-        same = by_key.get(key)
-        if same is not None and all(same.get(c) == row.get(c) for c in kind.identity):
-            plan.ids[kind.table][source_key] = key
-            await _plan_shared(
-                plan, kind, table, row, same, source_row, changed, native, counts
-            )
             continue
         # A new row.
         if kind.table == USER:
@@ -608,8 +666,9 @@ async def plan_kind(
         taken.add(key)
         plan.ids[kind.table][source_key] = key
         if kind.table == USER and row.get("deleted_at") is None:
+            # One handle names one person or one team (``handle_is_taken``).
             name = _lower(row["username"])
-            if name in usernames:
+            if name in plan.handles:
                 renamed = f"{row['username']}_{key}"
                 plan.report["renamed_accounts"].append(
                     [source_key, row["username"], renamed]
@@ -618,10 +677,9 @@ async def plan_kind(
                     f"user {source_key}: username {row['username']!r} is taken here, now {renamed!r}"
                 )
                 row["username"] = renamed
-            usernames.add(_lower(row["username"]))
+            plan.handles.add(_lower(row["username"]))
         if kind.table == "team" and row.get("handle"):
-            handles = {_lower(r.get("handle")) for r in here if r.get("handle")}
-            if _lower(row["handle"]) in handles:
+            if _lower(row["handle"]) in plan.handles:
                 renamed = f"team-{key}"
                 plan.report["renamed_teams"].append(
                     [source_key, row["handle"], renamed]
@@ -630,6 +688,7 @@ async def plan_kind(
                     f"team {source_key}: handle {row['handle']!r} is taken here, now {renamed!r}"
                 )
                 row["handle"] = renamed
+            plan.handles.add(_lower(row["handle"]))
             if row.get("join_token") and row["join_token"] in {
                 r.get("join_token") for r in here
             }:
@@ -993,6 +1052,27 @@ async def run_import(
             plan.report["renamed_teams"] = []
             plan.report["conflicts"] = []
             plan.report["file_conflicts"] = []
+            for table_name, source_key, target_key in await session.execute(
+                text(
+                    "SELECT r.table_name, r.source_key, r.target_key"
+                    " FROM deployment_merge_rows r JOIN deployment_merge_batches b"
+                    " USING (batch) WHERE b.state = 'imported' AND r.previous IS NULL"
+                    " AND r.source_key IS NOT NULL"
+                )
+            ):
+                plan.earlier.setdefault(table_name, {})[
+                    json.dumps(source_key, sort_keys=True)
+                ] = target_key
+            plan.handles = {
+                h
+                for (h,) in await session.execute(
+                    text(
+                        'SELECT lower(username) FROM "user" WHERE deleted_at IS NULL'
+                        " UNION SELECT lower(handle) FROM team"
+                        " WHERE handle IS NOT NULL AND deleted_at IS NULL"
+                    )
+                )
+            }
             alloc = Allocator(session, dry)
             tables = {k.table: await describe(session, k.table) for k in KINDS}
             for derived in DERIVED:
@@ -1018,13 +1098,20 @@ async def run_import(
                 {"b": batch},
             )
             journal = Journal(session, batch)
+            # Every file and blob the batch writes from here on, so that an
+            # import that does not commit takes them away again.
+            written_files = journal.files
             # Forward references (a space naming a category that comes later)
             # are known now that every kind has its ids.
             kinds = {k.table: k for k in KINDS}
             new_tasks = []
             for table_name, row, source_row in plan.inserts:
                 kind = kinds[table_name]
-                row, _ = _translate(plan, kind, row, forward=True)
+                row, refused = _translate(plan, kind, row, forward=True)
+                if refused:
+                    raise Refused(
+                        f"{table_name} {_key_dict(tables[table_name], source_row)}: {refused}"
+                    )
                 row = _reseal(kind, source_row, row)
                 table = tables[table_name]
                 written = await write_insert(session, table, row)
@@ -1039,6 +1126,22 @@ async def run_import(
                     new_tasks.append(row["id"])
             for table_name, key, changes, source_row in plan.updates:
                 table = tables[table_name]
+                forward, refused = _translate(
+                    plan,
+                    kinds[table_name],
+                    {
+                        **changes,
+                        **{
+                            c: source_row[c]
+                            for c, t in kinds[table_name].refs.items()
+                            if c in changes and ORDER[t] >= ORDER[table_name]
+                        },
+                    },
+                    forward=True,
+                )
+                if refused:
+                    raise Refused(f"{table_name} {key}: {refused}")
+                changes = {c: forward[c] for c in changes}
                 previous, written = await write_update(session, table, key, changes)
                 await journal.row(
                     table_name, key, _key_dict(table, source_row), previous, written
@@ -1074,10 +1177,7 @@ async def run_import(
                 log("dry run: rolled back; no file copied")
                 return report
             report["sequences"] = await alloc.finish()
-            try:
-                await copy_files(journal, copies, uploads_root)
-            finally:
-                written_files = list(journal.files)
+            await copy_files(journal, copies, uploads_root)
             await session.execute(
                 text(
                     "UPDATE deployment_merge_batches SET sequences = CAST(:s AS jsonb),"
@@ -1110,6 +1210,64 @@ def _final(plan: Plan) -> dict[str, Any]:
 
 
 # --- revert -------------------------------------------------------------------
+
+
+async def _referrers(
+    session: AsyncSession, tables: dict[str, Table], inserted: dict[str, set[str]]
+) -> list[str]:
+    """Rows that name a row the batch inserted and are not the batch's own:
+    through a foreign key, or through a reference column of a merged kind."""
+    # (child table, column, parent table, condition on the child row)
+    links: set[tuple[str, str, str, str]] = set()
+    for r in await session.execute(
+        text(
+            "SELECT c.conrelid::regclass::text, a.attname, c.confrelid::regclass::text"
+            " FROM pg_constraint c JOIN pg_attribute a"
+            " ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]"
+            " WHERE c.contype = 'f' AND array_length(c.conkey, 1) = 1"
+            " AND c.connamespace = 'public'::regnamespace"
+        )
+    ):
+        links.add((r[0].strip('"'), r[1], r[2].strip('"'), "true"))
+    for kind in KINDS:
+        links |= {(kind.table, c, t, "true") for c, t in kind.refs.items()}
+        if kind.poly:
+            column, says, targets = kind.poly
+            for value, t in targets.items():
+                literal = (
+                    str(value).lower() if isinstance(value, bool) else f"'{value}'"
+                )
+                links.add((kind.table, column, t, f"{_q(says)} = {literal}"))
+    found = []
+    for child, column, parent, condition in sorted(links):
+        keys = inserted.get(parent)
+        if not keys or parent not in tables or len(tables[parent].pk) != 1:
+            continue
+        pk = tables[parent].pk[0]
+        child_table = tables.get(child) or await describe(session, child)
+        tables[child] = child_table
+        if not child_table.pk:
+            continue
+        kind_of = await session.scalar(
+            text(
+                "SELECT format_type(atttypid, atttypmod) FROM pg_attribute"
+                " WHERE attrelid = to_regclass(:t) AND attname = :c"
+            ),
+            {"t": f"public.{_q(child)}", "c": column},
+        )
+        columns = ", ".join(_q(c) for c in child_table.pk)
+        rows = await session.execute(
+            text(
+                f"SELECT to_jsonb(x) FROM (SELECT {columns} FROM {_q(child)}"
+                f" WHERE {_q(column)} = ANY(CAST(CAST(:ids AS text) AS {kind_of}[])) AND {condition}) x"
+            ),
+            {"ids": "{" + ",".join(str(json.loads(k)[pk]) for k in keys) + "}"},
+        )
+        mine = inserted.get(child, set())
+        for (key,) in rows:
+            if json.dumps(key, sort_keys=True) not in mine:
+                found.append(f"{child} {key} ({column} -> {parent})")
+    return found
 
 
 async def run_revert(*, batch: str, dry: bool) -> dict[str, Any]:
@@ -1153,6 +1311,17 @@ async def run_revert(*, batch: str, dry: bool) -> dict[str, Any]:
             now = await _read(session, table, r.target_key)
             if now != r.written:
                 drifted.append(f"{r.table_name} {r.target_key}")
+        inserted: dict[str, set[str]] = defaultdict(set)
+        for r in rows:
+            if r.previous is None:
+                inserted[r.table_name].add(json.dumps(r.target_key, sort_keys=True))
+        named = await _referrers(session, tables, inserted)
+        if named:
+            raise Refused(
+                "rows made here since the import name rows it brought, so taking the"
+                f" batch back would leave them pointing at nothing: {named[:20]}"
+                f"{' …' if len(named) > 20 else ''}"
+            )
         if drifted:
             raise Refused(
                 "changed here since the import, so taking the batch back would lose"
@@ -1179,7 +1348,20 @@ async def run_revert(*, batch: str, dry: bool) -> dict[str, Any]:
                     text(f"SELECT last_value, is_called FROM {sequence}")
                 )
             ).one()
-            if [now.last_value, now.is_called] == entry["after"]:
+            # Ids this deployment drew while the import ran are in the table
+            # now; the sequence goes back no further than the highest id there.
+            top = await session.scalar(
+                text(f"SELECT max({_q(entry['column'])}) FROM {_q(entry['table'])}")
+            )
+            if [now.last_value, now.is_called] != entry["after"]:
+                sequences[sequence] = "used since the import; left where it is"
+            elif top is not None and top > entry["before"][0]:
+                if not dry:
+                    await session.execute(
+                        text("SELECT setval(:s, :v, true)"), {"s": sequence, "v": top}
+                    )
+                sequences[sequence] = f"moved back to {top}, the highest id still there"
+            else:
                 if not dry:
                     await session.execute(
                         text("SELECT setval(:s, :v, :c)"),
@@ -1190,8 +1372,6 @@ async def run_revert(*, batch: str, dry: bool) -> dict[str, Any]:
                         },
                     )
                 sequences[sequence] = "moved back"
-            else:
-                sequences[sequence] = "used since the import; left where it is"
             log(f"sequence {sequence}: {sequences[sequence]}")
         await session.execute(
             text("DELETE FROM deployment_merge_rows WHERE batch = :b"), {"b": batch}
@@ -1234,7 +1414,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="action", required=True)
     imp = sub.add_parser("import")
     imp.add_argument("--batch", required=True)
-    imp.add_argument("--source-url", required=True)
+    # Or MERGE_SOURCE_URL, which keeps the scratch password off the command line.
+    imp.add_argument("--source-url", default=os.environ.get("MERGE_SOURCE_URL"))
     imp.add_argument("--source-uploads", type=Path)
     imp.add_argument("--manifest", type=Path)
     imp.add_argument("--source-columns", type=Path)
@@ -1243,6 +1424,8 @@ def main(argv: list[str] | None = None) -> int:
     rev.add_argument("--batch", required=True)
     rev.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    if args.action == "import" and not args.source_url:
+        parser.error("--source-url (or MERGE_SOURCE_URL) is required")
     try:
         if args.action == "import":
             native = _load_json(args.source_columns)

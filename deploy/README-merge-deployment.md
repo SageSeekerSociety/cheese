@@ -30,13 +30,19 @@ about the other deployment goes into the repository.
 2. Dispatch `action: import` with the same batch and directory. It waits for an
    approval, takes a verified backup (`deploy/db-backup.sh`), and lands the
    batch in one transaction. Dispatching it again for a batch that is in does
-   nothing.
+   nothing, and the same export under another batch name brings nothing the
+   first batch already brought.
 3. To take it back: `revert-dry-run`, then `revert`, naming the batch. A revert
    refuses, changing nothing, while any row the batch wrote has changed since,
-   because taking it back would lose that change.
+   or while a row made since points at a row it brought, because taking it back
+   would lose that change or leave that row pointing at nothing. Once people
+   have used what a batch brought, the way back is the backup taken before it.
+
+The job's own log in Actions shows counts only. The row-by-row log names
+accounts and files of both deployments, so it stays on the box.
 
 Each run's log is `~/backups/merge-deployment-<batch>-<action>-<time>.log` on
-the box; the journal of a batch is in `deployment_merge_batches`,
+the box (mode 600); the journal of a batch is in `deployment_merge_batches`,
 `deployment_merge_rows` and `deployment_merge_files`.
 
 ## What it does not do

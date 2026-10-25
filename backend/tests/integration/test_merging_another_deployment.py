@@ -97,6 +97,17 @@ async def _member(conn, mid, task, user, created):
     )
 
 
+async def _material(conn, mid, uploader, created):
+    await conn.execute(
+        "INSERT INTO material (id, type, url, name, uploader_id, created_at,"
+        " download_count, meta) VALUES ($1, 'file', $2, 'notes', $3, $4, 0, '{}')",
+        mid,
+        f"/uploads/materials/{mid}-{uploader}.pdf",
+        uploader,
+        created,
+    )
+
+
 @pytest.fixture
 async def deployments(db_factory, monkeypatch, tmp_path):
     """This deployment (the test's database) and a source that shares its
@@ -116,13 +127,23 @@ async def deployments(db_factory, monkeypatch, tmp_path):
 
     for conn in (src, tgt):
         await _space(conn)
-        # Both have alice, bob and frank from before they ran apart.
+        # Both have alice, bob, frank and task 9 from before they ran apart.
         await _user(conn, 1, "alice", "alice@example.com", FORK)
         await _user(conn, 2, "bob", "bob@example.com", FORK)
         await _user(conn, 6, "frank", "frank@example.com", FORK)
+        await _task(conn, 9, 1, FORK)
     # Since then, here: carol registered (taking id 3), bob renamed himself
     # later than anything the source did to him, frank changed his password.
     await _user(tgt, 3, "carol", "carol@example.com", AFTER)
+    # ... alice joined task 9 here too, a team took the handle "dave", and
+    # material 7 was uploaded.
+    await _member(tgt, 30, 9, 1, AFTER)
+    await tgt.execute(
+        "INSERT INTO team (id, name, intro, description, avatar_id, created_at,"
+        " updated_at, handle) VALUES (900, 'd', '', '', 0, $1, $1, 'dave')",
+        AFTER,
+    )
+    await _material(tgt, 7, 1, AFTER)
     await tgt.execute(
         'UPDATE "user" SET username = $1, updated_at = $2::timestamptz WHERE id = 2',
         "bobby",
@@ -158,7 +179,14 @@ async def deployments(db_factory, monkeypatch, tmp_path):
         ],
         AFTER,
     )
+    await _material(src, 7, 3, DAVE)
     await _task(src, 10, 3, AFTER)
+    # The task hands its AI teammate the material dave uploaded.
+    await src.execute(
+        "UPDATE task SET protocol_override = $1::json WHERE id = 10",
+        json.dumps({"teaching": {"material_ids": [7]}}),
+    )
+    await _member(src, 23, 9, 1, DAVE)
     await _member(src, 20, 10, 3, AFTER)
     await _member(src, 21, 10, 4, AFTER)
     await _member(src, 22, 10, 5, AFTER)
@@ -227,8 +255,12 @@ async def test_the_sources_people_and_work_arrive_under_this_deployments_ids(
     await _import(source_uploads)
 
     users = {r["username"]: r for r in await tgt.fetch('SELECT * FROM "user"')}
-    # dave's id 3 is carol's here: he arrives under another one.
-    dave = users["dave"]["id"]
+    # dave's id 3 is carol's here: he arrives under another one, and as a
+    # team here already answers to "dave", under another name too.
+    dave = await tgt.fetchval(
+        "SELECT id FROM \"user\" WHERE email = 'dave@example.com'"
+    )
+    assert users[f"dave_{dave}"]["id"] == dave
     assert dave != 3 and users["carol"]["id"] == 3
     # erin is carol (same address): no second account.
     assert "erin" not in users
@@ -262,6 +294,20 @@ async def test_the_sources_people_and_work_arrive_under_this_deployments_ids(
     assert users["alice"]["hashed_password"] == "alice-source"
     assert users["bobby"]["hashed_password"] == "h0"
     assert users["frank"]["hashed_password"] == "frank-here"
+    # alice is on task 9 once, though both sides added her.
+    assert (
+        await tgt.fetchval(
+            "SELECT count(*) FROM task_membership WHERE task_id = 9 AND member_id = 1"
+        )
+        == 1
+    )
+    # The task's teaching names dave's material under its id here.
+    material = await tgt.fetchval(
+        "SELECT id FROM material WHERE uploader_id = $1", dave
+    )
+    assert material != 7
+    override = json.loads(task["protocol_override"])
+    assert override["teaching"]["material_ids"] == [material]
     # The new task has its first version, as a task published here has.
     assert (
         await tgt.fetchval(
@@ -296,7 +342,9 @@ async def test_a_batch_comes_in_once_and_its_revert_leaves_the_database_as_it_wa
 async def test_a_revert_refuses_while_a_merged_row_has_changed_since(deployments):
     src, tgt, here_uploads, source_uploads = deployments
     await _import(source_uploads)
-    await tgt.execute("UPDATE \"user\" SET username = 'dave2' WHERE username = 'dave'")
+    await tgt.execute(
+        "UPDATE \"user\" SET username = 'dave2' WHERE email = 'dave@example.com'"
+    )
 
     with pytest.raises(Refused):
         await run_revert(batch="b1", dry=False)
@@ -315,3 +363,25 @@ async def test_a_dry_run_writes_nothing(deployments):
     assert _files(here_uploads) == before_files
     assert await tgt.fetchval("SELECT count(*) FROM deployment_merge_batches") == 0
     assert json.dumps(report, default=str)
+
+
+async def test_the_same_export_under_another_batch_name_brings_nothing_new(deployments):
+    src, tgt, here_uploads, source_uploads = deployments
+    await _import(source_uploads, batch="b1")
+    after = await _snapshot(tgt)
+
+    await _import(source_uploads, batch="b2")
+
+    assert await _snapshot(tgt) == after
+
+
+async def test_a_revert_refuses_while_rows_made_since_name_what_it_brought(deployments):
+    src, tgt, here_uploads, source_uploads = deployments
+    await _import(source_uploads)
+    # frank joins the task that came with the batch.
+    await _member(tgt, 99, 10, 6, LATER)
+
+    with pytest.raises(Refused):
+        await run_revert(batch="b1", dry=False)
+
+    assert await tgt.fetchval("SELECT count(*) FROM task WHERE id = 10") == 1
