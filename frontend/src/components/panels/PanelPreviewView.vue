@@ -282,6 +282,19 @@ const pageAnchors = computed(() =>
     return [{ id, page, x, y }]
   })
 )
+/** 表格上指着的那几格：工作表名 + A1 地址（`sheet-cell`）。
+ *
+ *  地址是文件本身给得出来的坐标，不像页码要过一次转换；所以这一档只判形状，地址在
+ *  这一版里落不到任何一格上时由表格自己决定不画（表短了、那一格没画出来）。
+ *  这一版照样按**屏幕上那份字节**算（`slideContext`），理由和页上那几颗同一条。 */
+const sheetAnchors = computed(() =>
+  liveAnchors('sheet-cell', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const sheet = anchor.sheet
+    const address = anchor.address
+    if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
+    return [{ id, sheet, address }]
+  })
+)
 /** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
 function openAnchor(id: string) {
   focusedThread.value = id
@@ -411,6 +424,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :show-history="showHistory"
       :anchors="threadAnchors"
       :page-anchors="pageAnchors"
+      :sheet-anchors="sheetAnchors"
       :active-anchor="focusedThread"
       @anchor="openAnchor"
       @open-editor="emit('open-editor', $event)"

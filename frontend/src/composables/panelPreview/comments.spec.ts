@@ -80,15 +80,14 @@ it('markdown：评论栏还关着，也把这一份的评论读回来——正�
   expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/说明.md')
 })
 
-it('不画标记的读法：评论栏关着就不读，打开才读', async () => {
-  // 一张表格的预览打开一次就多打一次评论接口，换不来任何看得见的东西——那一档还
-  // 没有标记（单元格里的评论要画成什么，是另一件事）。
+it('表格：评论栏还关着，也把这一份的评论读回来——格子上的标记要从它来', async () => {
+  // 和 markdown、分页那两档同一条理由：格子上那几颗评论标记是从线程列表算出来的。
+  // CSV 没有工作表名，指一格用的就是 `B7` 这种地址。
   const bundle = setup('output/报价.csv')
-  await Promise.resolve()
-  expect(api.listFileThreads).not.toHaveBeenCalled()
 
-  bundle.toggle()
   await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
+  expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/报价.csv')
 })
 
 it('幻灯片：页上画不出标记，栏关着就别读——那一次请求换不来任何看得见的东西', async () => {
@@ -130,4 +129,18 @@ it('分页文档：评论栏还关着，也把这一份的评论读回来——�
   await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
   expect(bundle.open.value).toBe(false)
   expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/报价.pdf')
+})
+
+it('表格读成了网页：格子上画不出来（那一支挂的是网页），栏关着就别读', async () => {
+  // `.xlsx` 有网页这一种读法（`PAGE_FORMATS` 认它）。切过去之后上屏的是网页那一支，
+  // 表格查看器根本不在——先按「表格画得出标记」放行的写法会让每打开一份这样的表
+  // 白打一次评论接口。
+  const bundle = setup('output/预算.xlsx', () => true)
+  await Promise.resolve()
+  expect(api.listFileThreads).not.toHaveBeenCalled()
+
+  // 切回表格那一档，该读。
+  const sheet = setup('output/预算.xlsx', () => false)
+  await vi.waitFor(() => expect(sheet.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
 })
