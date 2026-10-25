@@ -598,6 +598,11 @@ async def plan_kind(
             prior is not None or all(same.get(c) == row.get(c) for c in kind.identity)
         ):
             plan.ids[kind.table][source_key] = key
+            if prior is not None:
+                # An earlier batch inserted it as it saw fit (a new id, a new
+                # name); what it holds here is that batch's to answer for.
+                counts["brought by an earlier batch"] += 1
+                continue
             if refused:
                 # Already here: it stays as it is, and what names it still can.
                 counts["here already; not changed (names a row not brought)"] += 1

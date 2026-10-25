@@ -241,7 +241,8 @@ async def deployments(db_factory, monkeypatch, tmp_path):
 
 
 MANIFEST = {
-    "changed": {"user": [1, 2], "user_profile": [1]},
+    # Rows written on the source since: shared ones, and dave, who is new there.
+    "changed": {"user": [1, 2, 3], "user_profile": [1]},
     "skip_account_email_domains": [AGENTS],
 }
 
