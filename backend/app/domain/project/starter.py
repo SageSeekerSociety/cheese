@@ -50,6 +50,8 @@ _PATH_BYTES = 4096
 #: git 自己存东西的那一层。压缩整个仓库文件夹时会带进来，跳过；大小写不论，
 #: 不区分大小写的盘上 `.GIT` 就是 `.git`。
 _GIT_DIR = ".git"
+#: git 不收一条路径时，在 stderr 里说的那一行的开头（`update-index`）。
+_GIT_REFUSED = "Ignoring path "
 #: 空文件的 blob：只为让 git 判一遍路径，不写任何内容。
 _EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 #: 解开后不到这么大时不看压缩比：几个高度重复的小文件压得很小是正常的。
@@ -195,10 +197,9 @@ def _refuse_unless_git_accepts(paths: list[str]) -> None:
             check=False,
         )
     for line in result.stderr.splitlines():
-        if line.startswith("Ignoring path "):
-            raise _refuse(
-                "starterNameInvalid", path=line.removeprefix("Ignoring path ")
-            )
+        if line.startswith(_GIT_REFUSED):
+            refused = line.removeprefix(_GIT_REFUSED)
+            raise _refuse("starterNameInvalid", path=refused)
     if result.returncode:
         log.warning("starter path check failed: %s", result.stderr.strip())
         raise GatewayUnavailableError(say("forgejoStarterPushFailed"))

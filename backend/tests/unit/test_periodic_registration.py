@@ -156,6 +156,7 @@ def _world():
             "task.deadline_scheduler.sweep_expired_deadlines",
             "sessions",
         ),
+        ("starter code pushes", "task.starter_jobs.push_due", "sessions"),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )
@@ -499,6 +500,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("assistant memory tidy", 3600),
         ("feishu authorization renewal", 3600),
         ("task deadline sweep", 116),
+        ("starter code pushes", 10),
         ("memory dream", 117),
         ("platform model roles refresh", 121),
         ("model spend cap alert", 122),
