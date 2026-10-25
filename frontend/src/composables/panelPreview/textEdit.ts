@@ -183,6 +183,9 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     try {
       const latest = await readPreviewFile(target.room, target.path)
       if (pinned.value !== target) return
+      // 读的时候读者按了「保存」：那一次写还认着现在这一份，换成新钉住的一份它就会
+      // 被认成「不是我这一程」而丢下结果，`saving` 也就没人放下了。等它写完再说。
+      if (saving.value) return
       if (latest.content === null || !latest.version) {
         // 读到了，但这一份现在交不出正文（成了二进制、或者大得读不动）。这是一次
         // 读取的问题，不是保存——说的也得是那一句。

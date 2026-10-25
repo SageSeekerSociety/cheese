@@ -252,6 +252,48 @@ it('编辑期间换了房间：会话收起来，存的是上一个房间里那�
   expect(api.writeRoomTextFile).not.toHaveBeenCalled()
 })
 
+it('「载入最新的」读到一半时读者按了保存：这一次载入让路，不让「正在保存…」卡住', async () => {
+  // 载入进来时把 `pinned` 换成新的一份，正在飞的那次写就会被认成「不是我这一程」，
+  // 它也就不会放下 `saving`——编辑器从此停在「正在保存…」，存和取消都灰着。
+  const { bundle } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  let releaseRead!: (v: unknown) => void
+  api.readPreviewFile.mockReturnValue(
+    new Promise((resolve) => {
+      releaseRead = resolve
+    })
+  )
+  let releaseWrite!: (v: { path: string; version: string; seq: number }) => void
+  api.writeRoomTextFile.mockReturnValue(
+    new Promise((resolve) => {
+      releaseWrite = resolve
+    })
+  )
+
+  const reloading = bundle.reload()
+  const saving = bundle.save()
+
+  releaseRead({
+    path: 'notes/记录.md',
+    content: '# 别人写的\n',
+    version: 'v9',
+    bytes: 15,
+    binary: false,
+    too_large: false,
+  })
+  await reloading
+
+  // 载入让了路：钉住的还是原来那一份，读者打的字也还在。
+  expect(bundle.pinnedPath.value).toBe('notes/记录.md')
+  expect(bundle.draft.value).toBe('# 我改的\n')
+
+  releaseWrite({ path: 'notes/记录.md', version: 'v2', seq: 2 })
+  expect(await saving).toBe(true)
+  expect(bundle.saving.value).toBe(false)
+})
+
 it('已经开着的时候又按一次「编辑」：还是那一稿，打的字不丢，也不发第二次写', async () => {
   // 编辑器开着时「编辑」那个按钮还在，再点一下会走到这里。重新钉一遍会把读者打的字
   // 换回文件里的正文、把 `saving` 清掉，于是第二个「保存」带着同一个旧版本也发得出去。
