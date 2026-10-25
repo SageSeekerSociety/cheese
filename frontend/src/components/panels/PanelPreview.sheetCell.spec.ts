@@ -77,6 +77,14 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
             },
             'range-blank-start'
           ),
+          // 一长串 emoji：截到 200 字时正好会切在代理对中间。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'A1', text: '😀'.repeat(300) }),
+            },
+            'range-emoji'
+          ),
           h('button', { 'data-testid': 'open-mark', onClick: () => emit('mark', props.marks?.[0]?.id ?? '') }, 'mark'),
         ])
     },
@@ -230,6 +238,17 @@ it('一片全是空格子时说「空」，不说几个看不见的制表符', a
 
   expect(ui.getByText('A1:B1')).toBeTruthy()
   expect(ui.getByText('（空）')).toBeTruthy()
+})
+
+it('框里那截预览也按码点切，不把一个 emoji 劈成半个', async () => {
+  // 框里显示的是这片内容的开头 200 字。按 UTF-16 下标切会切在代理对中间，屏幕上
+  // 那半个字符渲染成一个问号。
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-emoji'))
+
+  const shown = ui.container.querySelector('.locator__quote')?.textContent ?? ''
+  expect([...shown]).toHaveLength(200)
+  expect(shown).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
 })
 
 it('开头一片空格、内容在后面的一片不算空', async () => {
