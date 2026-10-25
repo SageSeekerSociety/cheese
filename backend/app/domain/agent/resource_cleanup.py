@@ -1283,6 +1283,15 @@ def stop_transcript_view(home: Path) -> None:
         held = json.loads(record.read_text())
     except (OSError, ValueError):
         return
+    # The file is under the room's own home, which a sandboxed room can write in
+    # full, and `json.loads` accepts any JSON: `[]`, `5` and `"x"` all parse.
+    # `.get` on those raises `AttributeError`, and a non-list `mounts` raises
+    # `TypeError` in the loop below — either of which aborts the rest of the
+    # teardown, since this is now the first step of both `stop_executor` and the
+    # `remove` action. A record of the wrong shape is a record this room wrote
+    # wrongly: there is nothing here to undo, and saying so is the whole answer.
+    if not isinstance(held, dict):
+        return
     pid = held.get("pid")
     if isinstance(pid, int) and _is_this_rooms_view(pid, home):
         try:
@@ -1295,7 +1304,12 @@ def stop_transcript_view(home: Path) -> None:
                     break
                 time.sleep(0.1)
     left = []
-    for where in held.get("mounts") or ():
+    # Same reason: a `mounts` that is not a list is not a list of paths to
+    # release. Read as empty rather than iterated into a `TypeError`.
+    mounts = held.get("mounts")
+    if not isinstance(mounts, (list, tuple)):
+        mounts = ()
+    for where in mounts:
         for argv in (
             ["fusermount", "-u", str(where)],
             ["fusermount", "-uz", str(where)],
