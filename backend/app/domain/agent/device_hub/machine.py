@@ -112,23 +112,26 @@ async def on_frame(hub: pkg.DeviceHub, device_id: str, msg: device_link.LinkMsg)
         stream.parser.receive_data(b"")
     else:
         return
-    request = _complete(stream, device_id)
-    if request is _MALFORMED:
+    try:
+        request = _complete(stream, device_id)
+    except _Malformed:
         await _refuse(device, msg.id, 400, "not an HTTP/1.1 request")
-    elif request is not None:
+        return
+    if request is not None:
         stream.task = asyncio.create_task(_answer(device, msg.id, request))
 
 
-_MALFORMED = object()
+class _Malformed(Exception):
+    """What the sandbox sent is not one HTTP/1.1 request."""
 
 
-def _complete(stream: MachineStream, device_id: str):
+def _complete(stream: MachineStream, device_id: str) -> MachineRequest | None:
     """The request once all of it is in; None while more is to come."""
     while True:
         try:
             event = stream.parser.next_event()
-        except h11.RemoteProtocolError:
-            return _MALFORMED
+        except h11.RemoteProtocolError as exc:
+            raise _Malformed from exc
         if event is h11.NEED_DATA:
             return None
         if isinstance(event, h11.Request):
@@ -152,7 +155,7 @@ def _complete(stream: MachineStream, device_id: str):
                 bytes(stream.body),
             )
         else:  # the sandbox hung up before its request was whole
-            return _MALFORMED
+            raise _Malformed
 
 
 async def _answer(device: HubDevice, stream_id: str, request: MachineRequest) -> None:

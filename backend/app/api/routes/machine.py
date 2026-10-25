@@ -37,12 +37,12 @@ async def machine_caller(
         or not given
         or not secrets.compare_digest(given, expected.encode())
     ):
-        raise AuthenticationRequiredError("machine requests come from the device link")
+        raise AuthenticationRequiredError()
     if not device or not state:
-        raise AuthenticationRequiredError("no device or state named")
+        raise AuthenticationRequiredError()
     caller = await caller_of(db, device, state)
     if caller is None:
-        raise ForbiddenError("no session holds this sandbox now")
+        raise ForbiddenError()
     return caller
 
 

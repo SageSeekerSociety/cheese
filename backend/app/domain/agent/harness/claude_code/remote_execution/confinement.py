@@ -147,6 +147,7 @@ def own_directory(path):
     path.mkdir(exist_ok=True, mode=0o700)
     made = path.lstat()
     if not stat.S_ISDIR(made.st_mode) or made.st_uid != os.getuid():
+        # i18n-exempt: an install failure the connector logs, never said in a room
         raise RuntimeError(f"{path} is not this user's own directory")
     path.chmod(0o700)
     return path
