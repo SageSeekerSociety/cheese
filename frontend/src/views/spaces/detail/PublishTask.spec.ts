@@ -576,7 +576,7 @@ describe('发题页：发一道', () => {
     expect(sent().teachingOwn).toBe(true)
   })
 
-  it('一格没填：沿用空间设置，不带这一项', async () => {
+  it('一格没填：沿用上层设置，不带这一项', async () => {
     await boardAs(MEMBER)
     const view = await mount()
     await fillRequired(view)

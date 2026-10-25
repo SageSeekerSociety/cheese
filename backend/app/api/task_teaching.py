@@ -119,7 +119,7 @@ def apply_task_default_role(task: Task, role: str | None) -> None:
 
     `None` is "this field was not written" — nothing changes. `""` clears the
     题目's own, so the level above (the 项目集's default) is in force again: the
-    page's 「继承」 and 芝士's 沿用上层设置 both mean that. There is no "no
+    page's and 芝士's 沿用上层设置 both mean that. There is no "no
     teammate" value: a 题目 either names a preset or inherits.
     """
     if role is None:
