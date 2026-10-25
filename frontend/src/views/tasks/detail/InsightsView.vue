@@ -40,8 +40,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ retry: [] }>()
 
-/** 没领到 / 没权限的人看到的是一句说明，不是一张空表（真接口也会对无权的人 403）。 */
-const claimedRoster = computed(() => props.roster.filter((r) => r.approved !== 'DISAPPROVED'))
+/** 参与者是申请通过了的人：还在等批准的不算在做，被拒的更不算。 */
+const claimedRoster = computed(() => props.roster.filter((r) => r.approved === 'APPROVED'))
 
 function statusOf(participantId: number): ClaimStatus {
   if (!props.reviewByParticipant.has(participantId)) return 'IN_PROGRESS'

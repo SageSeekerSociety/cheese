@@ -120,7 +120,10 @@ export interface Task {
   /** 阶段；不分阶段是空的。详情与改题的响应才带。 */
   stages?: TaskStage[]
   participants: {
+    /** 没删的申请份数，等批准的和被拒的都算。 */
     total: number
+    /** 申请通过的份数：页面上的「参与人数」，名额满没满也按它。 */
+    approved: number
     examples: TaskParticipantSummary[]
   }
   submittable: boolean

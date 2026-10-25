@@ -47,7 +47,7 @@
       "added": "{name} 在项目设置中添加"
     },
     "task": {
-      "claims": "{n} 份领取待批准",
+      "claims": "{n} 份申请待通过",
       "reviews": "{n} 份提交待评审",
       "and": "，"
     }

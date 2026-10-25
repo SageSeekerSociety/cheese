@@ -250,8 +250,9 @@ async def record(
 # 三条判据，各自一句话（和题目附件时一样）：
 #
 # - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`may_teach_task`）。
-# - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要领。
-# - 谁能下载：出题人 / 板管理员 / 已经领取的人。领取者拿不到材料就没法做题。
+# - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要申请。
+# - 谁能下载：出题人 / 板管理员 / 参与者（申请通过的人）。等批的、被拒的、退出的
+#   都不能：材料是给开始做这道题的人的。
 
 
 async def refuse_unless_teacher(
@@ -264,7 +265,7 @@ async def refuse_unless_teacher(
 async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
     if await may_teach_task(session, task=task, user_id=user_id):
         return True
-    return await TaskVisibilityService(session=session).is_participant(
+    return await TaskVisibilityService(session=session).is_approved_participant(
         task_id=task.id, user_id=user_id
     )
 

@@ -18,7 +18,8 @@ export function taskState(
   if (task.approved === 'DISAPPROVED') return { key: 'rejected', tone: 'danger' }
   if (deadlineState(task.deadline, now)?.passed) return { key: 'closed', tone: 'muted' }
   if (task.registrationStartAt != null && task.registrationStartAt > now) return { key: 'notStarted', tone: 'muted' }
-  if (task.participantLimit > 0 && task.participants.total >= task.participantLimit)
+  // 名额只被通过了的申请占，和服务端通过时数的是同一个数。
+  if (task.participantLimit > 0 && task.participants.approved >= task.participantLimit)
     return { key: 'full', tone: 'muted' }
   return { key: 'open', tone: 'ok' }
 }

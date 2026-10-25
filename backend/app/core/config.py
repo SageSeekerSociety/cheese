@@ -1104,9 +1104,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
 
-    enforce_task_participant_limit_check: bool = Field(
-        default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
-    )
     rank_check_enforced: bool = Field(
         default=False, alias="APPLICATION_RANK_CHECK_ENFORCED"
     )
