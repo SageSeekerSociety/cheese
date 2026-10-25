@@ -125,7 +125,7 @@ parts:
 ## 接下来 {#next}
 
 :::cards
-- [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge)：新建空间、发布题目、批准领取、评审作业。
+- [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge)：新建空间、发布题目、批准申请、评审作业。
 - [空间 · AI 队友辅导](/spaces#teaching)：空间和题目的设置怎么一起生效。
 - [空间 · 资料库](/spaces#space-library)：上传、可见范围和移除。
 :::

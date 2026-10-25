@@ -43,6 +43,6 @@ order: 0
 :::cards
 - [快速开始](/quickstart#quickstart)：创建第一个项目，让芝士完成一件小事。
 - [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写清要求、跟进任务、采纳或退回结果。
-- [完成一道题目](/solve-a-challenge#solve-a-challenge)：老师发布了题目时，从领取到提交。
-- [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge)：老师发布题目、批准领取、评审提交。
+- [完成一道题目](/solve-a-challenge#solve-a-challenge)：老师发布了题目时，从申请到提交。
+- [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge)：老师发布题目、批准申请、评审提交。
 :::

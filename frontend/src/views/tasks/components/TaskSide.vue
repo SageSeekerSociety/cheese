@@ -223,9 +223,9 @@ const defaultDeadline = computed(() => {
   return raw >= DAY_MS ? Math.round(raw / DAY_MS) : raw
 })
 
-/** 领取人数是接口给的 `participants.total`；`participantLimit` 的 0 是「不限」。 */
+/** 参与人数是接口给的 `participants.approved`（还在等批准的不算）；`participantLimit` 的 0 是「不限」。 */
 const claimedText = computed(() => {
-  const n = props.task.participants.total
+  const n = props.task.participants.approved
   const limit = props.task.participantLimit
   const teams = props.task.submitterType === 'TEAM'
   if (limit > 0) return t(teams ? 'tasks.side.claimedTeamsOf' : 'tasks.side.claimedPeopleOf', { n, limit })

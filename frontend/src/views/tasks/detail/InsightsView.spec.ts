@@ -122,7 +122,7 @@ describe('单题看板的「小队构成」', () => {
 
     expect(view.getByText('这道题的数据加载失败')).toBeTruthy()
     expect(view.getByText('服务端打盹了')).toBeTruthy()
-    expect(view.queryByText('领取人数')).toBeNull()
+    expect(view.queryByText('参与人数')).toBeNull()
     expect(panel('小队构成')).toBeUndefined()
 
     await fireEvent.click(view.getByText('重试'))
