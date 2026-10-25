@@ -204,7 +204,7 @@ async def _snapshot(conn: asyncpg.Connection) -> dict[str, list[str]]:
             f'SELECT to_jsonb(x)::text AS r FROM "{t}" x ORDER BY 1'
         )
         out[t] = [r["r"] for r in rows]
-    for seq in ("task_seq", "task_membership_seq"):
+    for seq in ("task_seq", "task_membership_seq", "task_package_revisions_id_seq"):
         out[seq] = [
             str(tuple(await conn.fetchrow(f"SELECT last_value, is_called FROM {seq}")))
         ]

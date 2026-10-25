@@ -350,6 +350,12 @@ class Allocator:
                 "before": [before.last_value, before.is_called],
             }
 
+    async def track(self, table: Table) -> None:
+        """Record where ``table``'s sequence is before code of this
+        deployment draws ids from it on the batch's behalf."""
+        if table.sequence is not None and not self._dry:
+            await self._remember(table.sequence)
+
     async def keep_above(self, table: Table, kept: Iterable[int]) -> None:
         top = max(kept, default=None)
         if top is None or table.sequence is None or self._dry:
@@ -1039,6 +1045,7 @@ async def run_import(
                 )
             plan.report["derived"] = {"task versions recorded": len(new_tasks)}
             if not dry:
+                await alloc.track(tables["task_package_revisions"])
                 for task_id in new_tasks:
                     await record_task_versions(session, journal, tables, task_id)
                     log(f"task {task_id}: version 1 recorded")
