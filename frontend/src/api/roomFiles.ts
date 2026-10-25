@@ -381,3 +381,19 @@ export function newFromTemplate(
     body: JSON.stringify({ template, path }),
   })
 }
+
+/** 把一份文本房间文件的新内容存回去。
+ *
+ *  `version` 是读它时那份内容给的版本；这份文件在那之后被别人改过，后端答 409（带上
+ *  现在那一版），而不是把这版直接盖上去——别人的改动不能无声地没了。 */
+export function writeRoomTextFile(
+  topicId: string,
+  path: string,
+  content: string,
+  version: string | null
+): Promise<{ path: string; version: string; seq: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files/text`, {
+    method: 'POST',
+    body: JSON.stringify({ path, content, version }),
+  })
+}
