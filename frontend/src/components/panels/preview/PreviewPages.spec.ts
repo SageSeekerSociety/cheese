@@ -109,7 +109,15 @@ const context = {
   version: 'v7',
 }
 
-function mount(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+/** 挂这一格。`marks` / `activeMark` 是这一份上已有的评论指着的几处（见 `PreviewPages` 的 props）。 */
+type PagesProps = {
+  data: ArrayBuffer | null
+  context?: typeof context
+  marks?: readonly { id: string; page: number; x: number; y: number }[]
+  activeMark?: string | null
+}
+
+function mount(props: PagesProps = { data: new ArrayBuffer(8) }) {
   return render(PreviewPages, {
     props,
     global: {
@@ -124,7 +132,7 @@ function mount(props: { data: ArrayBuffer | null; context?: typeof context } = {
 }
 
 /** 打开一份能画出来的文档：pdf.js 是假的，解析得自己放行，然后等两页都画出来。 */
-async function opened(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+async function opened(props: PagesProps = { data: new ArrayBuffer(8) }) {
   const ui = mount(props)
   await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
   pdf.resolveDoc?.(DOCUMENT)
@@ -395,6 +403,10 @@ describe('页上已有的评论标记', () => {
     expect(onOne.style.left).toBe('25%')
     expect(onOne.style.top).toBe('50%')
     expect(onTwo.style.left).toBe('75%')
+    // 各在各的页上：左边那一页只有 c1，右边只有 c2。筛错了（比如每页都把前面的也画上）
+    // 时，读者会在第 1 页上看到第 2 页的那一颗，指着完全不同的地方。
+    expect(ui.container.querySelectorAll('[data-page="1"] [data-comment-mark]')).toHaveLength(1)
+    expect(ui.container.querySelectorAll('[data-page="2"] [data-comment-mark]')).toHaveLength(1)
   })
 
   it('这一版里没有的那一页上不画：页数少了，那个页码落不到任何一页', async () => {

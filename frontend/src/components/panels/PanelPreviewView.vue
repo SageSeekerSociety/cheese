@@ -232,21 +232,28 @@ const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? 
 // 而且只画**这一版**上记的那几处：评论记的是哪一版 + 哪一处，换了一版那一段话可能已经
 // 挪走或改过，照旧位置画会指到别的东西上。找不回来的（正文改了）就不画——比画错强。
 const focusedThread = ref<string | null>(null)
-/** 这份文件上还没解决、且记在**这一版**上的那几条，各自的锚点原样交回去。
+/** 这份文件上还没解决、且记在**某一版**上的那几条，各自的锚点原样交回去。
  *
  *  什么样的锚点画得出来是每一档自己的事（正文按文字找、页按页码和比例找），这里只管
- *  两条共用的判据：没解决、这一版。分两处各写一遍的话，改了一处就会漂。 */
-function liveAnchors(kind: string): { id: string; anchor: Record<string, unknown> }[] {
+ *  两条共用的判据：没解决、是这一种、记在要画的那一版上。分几处各写一遍的话，改了一处
+ *  就会漂。
+ *
+ *  `version` 是**屏幕上那一份**的版本，不是「文件现在这一版」：页上的字节可能还是上一版
+ *  的（新的一版还在路上，或者它转不出来了，旧的那份就那样留着）。照文件元数据放行的话，
+ *  新一版记下的页码和比例会画在旧一版的页上，指到完全不同的地方。`null` 表示连屏幕上是
+ *  哪一版都说不清——那就不画。 */
+function liveAnchors(kind: string, version: string | null): { id: string; anchor: Record<string, unknown> }[] {
+  if (!version) return []
   return (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
     if (thread.state !== 'open') return []
     const anchor = thread.comment.anchor as Record<string, unknown> | null | undefined
     if (!anchor || anchor.kind !== kind) return []
-    if (!anchor.version || anchor.version !== commentTarget.value?.version) return []
+    if (!anchor.version || anchor.version !== version) return []
     return [{ id: thread.comment.id, anchor }]
   })
 }
 const threadAnchors = computed(() =>
-  liveAnchors('text-range').flatMap(({ id, anchor }) => {
+  liveAnchors('text-range', commentTarget.value?.version ?? null).flatMap(({ id, anchor }) => {
     const text = anchor.text
     if (typeof text !== 'string' || !text) return []
     return [
@@ -262,9 +269,12 @@ const threadAnchors = computed(() =>
     ]
   })
 )
-/** 分页文档上一页里指着的那几处：第几页 + 页内比例（`page-pin`）。 */
+/** 分页文档上一页里指着的那几处：第几页 + 页内比例（`page-pin`）。
+ *
+ *  这一版按**屏幕上那份字节**算（`slideContext` 只在字节与文件版本核过、且没在加载、
+ *  没出错时才给得出），和「在页上指一处」那条路用的是同一道判据。 */
 const pageAnchors = computed(() =>
-  liveAnchors('page-pin').flatMap(({ id, anchor }) => {
+  liveAnchors('page-pin', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
     const page = anchor.page
     const x = anchor.x
     const y = anchor.y

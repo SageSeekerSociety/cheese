@@ -423,8 +423,9 @@ onBeforeUnmount(() => {
       class="pv__page"
     >
       <div :ref="(el) => setHost(slot, el)" class="pv__canvas" />
-      <!-- 有人在页上评过的那几处。画在页里，不画在容器上：页是按比例定位的，滚动和
-           宽度变化都跟着它走。评论栏靠点它才打开，所以这一层接得上指针。 -->
+      <!-- Comment marks: one per thread whose page-pin lands on this page. Drawn inside
+           the page box, not on the container, so they follow the page as it is scaled
+           and scrolled. They take the pointer, because clicking one opens the rail. -->
       <button
         v-for="mark in marksByPage.get(slot.number) ?? []"
         :key="mark.id"
@@ -437,7 +438,7 @@ onBeforeUnmount(() => {
         :title="t('work.room.comments.commentHere')"
         @click.stop="emit('mark', mark.id)"
       />
-      <!-- 指过的那一点。 -->
+      <!-- The spot the reader just pointed at. -->
       <span
         v-if="marked && marked.page === slot.number"
         class="pv__pin"

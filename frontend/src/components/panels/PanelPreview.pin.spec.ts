@@ -40,7 +40,10 @@ vi.mock('./preview/PreviewPages.vue', () => ({
       activeMark: { type: String as PropType<string | null>, default: null },
     },
     emits: ['quote', 'pin', 'dropped', 'mark'],
-    setup(props: { context: { version: string }; marks: readonly { id?: string }[] }, { emit, expose }) {
+    setup(
+      props: { context: { version: string }; marks: readonly { id?: string }[]; activeMark?: string | null },
+      { emit, expose }
+    ) {
       page.drop = () => emit('dropped')
       expose({
         snapshot: async () => (page.blob ? { blob: page.blob, width: 1200, height: 1600 } : null),
@@ -162,9 +165,9 @@ function mount(submitQuestion?: SubmitPreviewQuestion, uploadAnnotation?: Upload
 /** 挂整格，评论那一包按给的那一份来（`mount` 给的是默认那份，没有评论）。
  *
  *  这一格带着评论栏，它用到了 Vuetify，所以这里要接上（`mount` 那条路没有评论栏）。 */
-function mountWithComments(comments: ReturnType<typeof commentsWith>) {
+function mountWithComments(comments: ReturnType<typeof commentsWith>, over: Record<string, unknown> = {}) {
   return render(PanelPreviewView, {
-    props: { ...props, comments: comments as never },
+    props: { ...props, comments: comments as never, ...over },
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: {
@@ -328,11 +331,34 @@ it('只把这版上没解决的页钉交给页面查看器，别的锚点和别�
   expect(marksOn(ui)[0]).toEqual({ id: 'c1', page: 3, x: 0.42, y: 0.17 })
 })
 
+it('屏上还是上一版的字节时不画：新一版记下的位置摆在旧一版的页上会指到别处', async () => {
+  // 换了一版时文件元数据先变，页上的字节还在路上（或者它转不出来，旧的那份就那样留着）。
+  // 照文件那一版放行的话，新一版记下的「第 3 页 42%」会画在旧一版的第 3 页上——那是完全
+  // 不同的地方。`slideContext` 只在屏幕上那份字节核过时给得出，所以它不给就不画。
+  const comments = commentsWith([PAGE_PIN])
+  const ui = mountWithComments(comments, { slideContext: undefined })
+  await Promise.resolve()
+  expect(marksOn(ui)).toEqual([])
+})
+
 it('已解决的评论不交给页面查看器：那一条说完了，不该还压在页上', async () => {
   const comments = commentsWith([PAGE_PIN], () => 'resolved')
   const ui = mountWithComments(comments)
   await Promise.resolve()
   expect(marksOn(ui)).toEqual([])
+})
+
+it('正在看的那一条，一直传到页视图那一层', async () => {
+  // 面板 → 文档档 → 页视图这条线：少接一环，「正在看的那条画得重些」就永远不会
+  // 发生，而页视图那一层自己的用例测不出这个（它只喂 prop）。
+  const comments = commentsWith([PAGE_PIN, { ...PAGE_PIN, page: 1, x: 0.1, y: 0.1 }])
+  const ui = mountWithComments(comments)
+  await waitFor(() => expect(marksOn(ui)).toHaveLength(2))
+
+  await fireEvent.click(ui.getByTestId('open-mark'))
+
+  const el = ui.container.querySelector('[data-testid="marks"]') as HTMLElement
+  await waitFor(() => expect(el.dataset.active).toBe('c1'))
 })
 
 it('点了页上某一处标记，把评论栏开在那一条上', async () => {
@@ -346,4 +372,7 @@ it('点了页上某一处标记，把评论栏开在那一条上', async () => {
   await fireEvent.click(ui.getByTestId('open-mark'))
 
   await waitFor(() => expect(comments.open.value).toBe(true))
+  // 开的是**被点的**那一条，不是笼统地把栏打开：一屏好几条评论时，只开栏读者还得自己找。
+  const active = ui.container.querySelector('[data-testid="marks"]') as HTMLElement
+  await waitFor(() => expect(active.dataset.active).toBe('c1'))
 })

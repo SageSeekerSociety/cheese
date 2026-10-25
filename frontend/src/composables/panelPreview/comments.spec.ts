@@ -80,9 +80,9 @@ it('markdown：评论栏还关着，也把这一份的评论读回来——正�
 })
 
 it('不画标记的读法：评论栏关着就不读，打开才读', async () => {
-  // 一张 docx 的预览打开一次就多打一次评论接口，换不来任何看得见的东西——那一档的
-  // 正文不是我们能往上画字的正文（它是页）。
-  const bundle = setup('output/报价.docx')
+  // 一张表格的预览打开一次就多打一次评论接口，换不来任何看得见的东西——那一档还
+  // 没有标记（单元格里的评论要画成什么，是另一件事）。
+  const bundle = setup('output/报价.csv')
   await Promise.resolve()
   expect(api.listFileThreads).not.toHaveBeenCalled()
 
@@ -94,4 +94,15 @@ it('资料库原件不是这个房间的文件：哪一档都不读', async () =
   setup('library/说明.md')
   await Promise.resolve()
   expect(api.listFileThreads).not.toHaveBeenCalled()
+})
+
+it('分页文档：评论栏还关着，也把这一份的评论读回来——页上的标记要从它来', async () => {
+  // 和 markdown 同一条理由：页上那几颗评论标记是从线程列表算出来的。只读 markdown
+  // 那一档的话，PDF / 转成 PDF 的 Office 上就一个标记都不会出现，而这一档恰恰是
+  // 页钉锚点所在的地方。
+  const bundle = setup('output/报价.pdf')
+
+  await vi.waitFor(() => expect(bundle.threads.state.threads).toHaveLength(1))
+  expect(bundle.open.value).toBe(false)
+  expect(api.listFileThreads).toHaveBeenCalledWith('room', 'output/报价.pdf')
 })

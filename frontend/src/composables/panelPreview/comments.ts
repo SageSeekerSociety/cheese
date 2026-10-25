@@ -47,11 +47,19 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   watch(commentable, (current) => {
     if (!current) open.value = false
   })
-  // 正文上要画标记的那一档：这一份的线程列表在栏关着时也得读。标记是从线程列表算出来的，
+  // 要画标记的那几档：这一份的线程列表在栏关着时也得读。标记是从线程列表算出来的，
   // 等读者自己去点开那一栏才读，「哪儿有人评过」这件事就要他先想到去开栏才看得见——
-  // 而那正是标记要替他省掉的一步。今天只有 markdown 这一种读法画标记（`PreviewMarkdown`），
-  // 别的读法有了标记时，这里跟着放宽。
-  const drawsMarks = computed(() => commentable.value !== null && state.documentType.value?.view === 'markdown')
+  // 而那正是标记要替他省掉的一步。
+  //
+  // 哪些读法画标记：markdown 画在正文上（`PreviewMarkdown`），分页文档画在页上
+  // （`PreviewPages`）。别的读法有了标记时，这里跟着加。这一条和 `PanelPreviewView`
+  // 里 `liveAnchors` 收哪几种锚点是配对的——那边多收一种，这边就得跟着多读一种，
+  // 不然标记一个都不会出现（栏关着的时候列表根本没读）。
+  const MARK_VIEWS: ReadonlySet<string> = new Set(['markdown', 'pages'])
+  const drawsMarks = computed(() => {
+    const view = state.documentType.value?.view
+    return commentable.value !== null && view !== undefined && MARK_VIEWS.has(view)
+  })
   const threads = useFileThreads(
     () => commentable.value?.topicId ?? null,
     () => commentable.value?.path ?? null,
