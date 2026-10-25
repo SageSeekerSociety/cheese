@@ -724,6 +724,7 @@ class RemoteClient:
         payload = json.loads(answer["value"]["stdout"])
         data = payload.get("data")
         if not isinstance(data, dict):
+            # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
             raise RuntimeError("The platform answered nothing about the transcript")
         return data
 

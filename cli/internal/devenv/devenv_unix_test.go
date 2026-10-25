@@ -54,8 +54,11 @@ func toolchainServerCounting(t *testing.T, body []byte, claimed string, asked *a
 	served := map[string][]byte{
 		"bubblewrap": pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
 		"host-tools": pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
-		"tmux":       pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
-		"git":        pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
+		"fuse-runtime": pythonArchive(t, map[string]string{
+			"fuse-2.9.9-cheese.1/libfuse.so.2": "not really a library",
+		}),
+		"tmux": pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
+		"git":  pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
 	}
 	var counts sync.Map
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

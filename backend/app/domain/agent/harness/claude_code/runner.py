@@ -350,7 +350,12 @@ def transcript_chunk(config_dir: Path, session_id: str, offset: int, size: int) 
     if path is None:
         return {"missing": True}
     if size == 0:
-        return {"size": path.stat().st_size, "offset": offset, "data": "", "path": str(path)}
+        return {
+            "size": path.stat().st_size,
+            "offset": offset,
+            "data": "",
+            "path": str(path),
+        }
     with path.open("rb") as source:
         source.seek(offset)
         data = source.read(size)
@@ -1907,9 +1912,7 @@ class Runner(runner.Runner[Journal]):
                 self.config_dir,
                 self.session_id,
                 int(params["offset"]),
-                int(params["size"])
-                if "size" in params
-                else TRANSCRIPT_CHUNK_BYTES,
+                int(params["size"]) if "size" in params else TRANSCRIPT_CHUNK_BYTES,
             )
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.

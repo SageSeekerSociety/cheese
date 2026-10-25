@@ -26,6 +26,7 @@ Started by `bootstrap`, one per executor (`configure_idle`), stdlib and the
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -40,6 +41,12 @@ ASK_EVERY_S = 15.0
 MOUNT_S = 10.0
 #: What the view serves, as a name under the directory it is mounted at.
 VIEW_FILE = "transcript.jsonl"
+#: Where a helper records what it is holding: its own pid and every mount it
+#: made. Written beside it in the room's platform directory, read by the
+#: teardown (`resource_cleanup.stop_transcript_view`), which has to release the
+#: view before the room's home can be removed and end a helper the executor
+#: never knew about.
+RECORD = "transcript-view.json"
 
 
 def _run(command, *, timeout=30.0):
@@ -53,15 +60,65 @@ def _run(command, *, timeout=30.0):
     return result.returncode == 0
 
 
+def _read_mountinfo():
+    """The kernel's list of what is mounted, or None where there is no /proc."""
+    try:
+        return Path("/proc/self/mountinfo").read_text()
+    except OSError:
+        return None
+
+
+def _mounted(path):
+    """Whether anything is mounted at `path` — live or dead.
+
+    Not `os.path.ismount`, which is wrong exactly where it matters. A mount
+    whose server died still occupies the path, and every stat on it fails; the
+    failure is EIO (`Input/output error`) — the kernel's "Transport endpoint is
+    not connected" never reaches it — and `ismount` swallows whatever it is and
+    answers "nothing is mounted". This helper would then try to mount over a
+    path that cannot take one, and report the room given the file when it was
+    not. The kernel's own list says what is true of both.
+    """
+    listed = _read_mountinfo()
+    if listed is None:
+        # No /proc (macOS, Windows): nothing here can leave a dead mount, so
+        # the ordinary answer is the right one.
+        return os.path.ismount(path)
+    real = os.path.realpath(path)
+    for line in listed.splitlines():
+        fields = line.split()
+        if len(fields) > 4 and fields[4] == real:
+            return True
+    return False
+
+
 def _live(path):
     """Whether the view at `path` answers. A mount whose server is gone still
-    occupies the path and refuses everything with ENOTCONN, so `ismount` alone
-    would read it as done and never mount the working one over it."""
+    occupies the path and refuses every stat, so `_mounted` alone would read it
+    as done and never mount the working one over it."""
     try:
         os.stat(path)
     except OSError:
         return False
     return True
+
+
+def _record(record, mounts):
+    """Write down what this helper is holding, so the teardown can undo it.
+
+    Written through a temporary beside it: the teardown reads this to find the
+    mounts, and a half-written file would release none of them.
+    """
+    if not record:
+        return
+    try:
+        temporary = Path(str(record) + ".next")
+        temporary.write_text(
+            json.dumps({"pid": os.getpid(), "mounts": [str(m) for m in mounts]})
+        )
+        temporary.replace(record)
+    except OSError:
+        pass
 
 
 def _remount(view_file, path):
@@ -77,7 +134,7 @@ def _remount(view_file, path):
     owner mounted. A path whose chain cannot be made is left alone and
     reported, never retried into a loop.
     """
-    if os.path.ismount(path):
+    if _mounted(path):
         if _live(path):
             return True
         # A mount whose server died still occupies the path and cannot be
@@ -169,30 +226,40 @@ def main(view_dir, *, ask_every_s=ASK_EVERY_S):
         return 0
 
     view_file = Path(view_dir) / VIEW_FILE
-    mounted = None
+    record = Path(view_dir).with_name(RECORD)
+    mounted = []
     while True:
         try:
             path = client.transcript_path()
         except Exception as error:  # the session has not written one yet
             print(f"transcript path not known yet: {error!r}", flush=True)
             path = None
-        if path and path != mounted and _remount(view_file, path):
-            mounted = path
+        if path and path not in mounted and _remount(view_file, path):
+            mounted.append(path)
+            _record(record, mounted)
             print(f"transcript readable at {path}", flush=True)
         time.sleep(ask_every_s)
 
 
-def release(view_dir):
-    """Unmount the view, so a helper starting over can mount its own."""
-    _run(["fusermount", "-u", str(view_dir)], timeout=10.0)
-    _run(["fusermount", "-uz", str(view_dir)], timeout=10.0)
+def release(view_dir, mounted=()):
+    """Unmount the view and everything bound from it, so a helper starting over
+    can mount its own and the room's home can be removed."""
+    for path in (*mounted, view_dir):
+        _run(["fusermount", "-u", str(path)], timeout=10.0)
+        _run(["fusermount", "-uz", str(path)], timeout=10.0)
 
 
 if __name__ == "__main__":
     view = sys.argv[1]
 
     def stop(*_):
-        release(view)
+        record = Path(view).with_name(RECORD)
+        try:
+            held = json.loads(record.read_text()).get("mounts") or ()
+        except (OSError, ValueError):
+            held = ()
+        release(view, held)
+        record.unlink(missing_ok=True)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, stop)

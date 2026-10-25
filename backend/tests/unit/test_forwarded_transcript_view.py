@@ -83,6 +83,32 @@ def test_what_is_kept_is_bounded_however_long_the_transcript_is():
     assert len(view.blocks) == forwarded_transcript.TRANSCRIPT_BLOCKS_KEPT
 
 
+def test_a_full_last_block_is_last_on_a_hit_as_well_as_on_the_fetch():
+    """A transcript whose size is a whole number of blocks ends in a full one.
+
+    The fetch says `eof`; re-deriving "last" from the block's length says the
+    opposite, and the reader walks past the end of the file asking the relay
+    for an offset there. Kept with the block, both agree.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import (
+        forwarded_transcript,
+    )
+
+    size = forwarded_transcript.TRANSCRIPT_BLOCK_BYTES
+    whole = b"x" * size
+
+    def call(params):
+        return {
+            "data": base64.b64encode(whole).decode(),
+            "size": size,
+            "eof": True,
+        }
+
+    view = TranscriptView(call)
+    assert view._block(0) == (whole, True)
+    assert view._block(0) == (whole, True)
+
+
 def test_the_file_reports_the_whole_size_reads_do_not_change_it():
     view = _view()
 

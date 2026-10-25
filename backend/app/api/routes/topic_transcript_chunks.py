@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.api.deps import get_session_host
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.core.db import release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -60,22 +61,32 @@ async def session_transcript(
     """
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
+        # i18n-exempt: the caller is the executor, not a person's screen
         raise AuthenticationRequiredError("A credential for this room is required")
     session_claim = claims.get("session")
     try:
         session_id = uuid.UUID(str(session_claim))
     except (TypeError, ValueError):
+        # i18n-exempt: the caller is the executor, not a person's screen
         raise AuthenticationRequiredError("An execution session is required") from None
     owned = await owner_reads.session_execution(db, session_id)
     if owned is None:
         raise NotFoundError.for_resource("session", str(session_id))
     if owned.conversation_id != topic_id:
+        # i18n-exempt: the caller is the executor, not a person's screen
         raise ForbiddenError("This credential works another conversation")
     location = owned.runtime_location or {}
     device_id = location.get("device_id")
     state = (location.get("runtime") or {}).get("state")
     if not device_id or not state:
         raise NotFoundError.for_resource("session", str(session_id))
+    # The reader is a burst: one `grep` over a long transcript is hundreds of
+    # these, and each one can wait up to a minute on the session host. Holding
+    # the request's connection across that pins one pool slot per read and the
+    # session's own row (`owner_reads.session_execution`), which a lease change
+    # then waits on. The location is read; the connection is not needed for the
+    # relay (`execution.py` releases before the same boundary).
+    await release_read_session(db)
     answer = await host.hub.call_executor(
         device_id,
         state,

@@ -66,6 +66,12 @@ BUBBLEWRAP_REVISION = "0.13.0-cheese.2"
 #: xfs_quota) whatever the system has, and tmux and git where the system's are
 #: missing or too old.
 HOST_TOOLS_REVISION = "2"
+#: The libfuse 2 a Linux connector places (`cli/internal/devenv`), built by
+#: `scripts/build-fuse-runtime.sh`: the shared library `fusepy` loads by path
+#: (`FUSE_LIBRARY_PATH`, `bootstrap.transcript_view_env`) so a room's executor
+#: can mount its transcript view. A shared library, not a static program like
+#: bwrap — see the recipe for why that means a glibc baseline.
+FUSE_RUNTIME_REVISION = "2.9.9-cheese.1"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -98,6 +104,10 @@ _BWRAP_BASE = (
 _HOST_TOOLS_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"host-tools-v{HOST_TOOLS_REVISION}"
+)
+_FUSE_RUNTIME_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"fuse-runtime-v{FUSE_RUNTIME_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -133,6 +143,20 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         f"{_BWRAP_BASE}-linux-arm64.tar.gz",
         "7ece0e2e82695237cc404212dc630ce229525d178a1188cd8b30cb49fa387ecf",
         104979,
+        ".tar.gz",
+    ),
+    # scripts/build-fuse-runtime.sh; digests and sizes of release
+    # fuse-runtime-v2.9.9-cheese.1, checked against the built archives.
+    ("fuse-runtime", "linux-x64"): Artifact(
+        f"{_FUSE_RUNTIME_BASE}/fuse-{FUSE_RUNTIME_REVISION}-linux-x64.tar.gz",
+        "690de64d5183e8086bfd17a59f13f3450d8e472488eb3eb494f1acb2dc3b8ec0",
+        94975,
+        ".tar.gz",
+    ),
+    ("fuse-runtime", "linux-arm64"): Artifact(
+        f"{_FUSE_RUNTIME_BASE}/fuse-{FUSE_RUNTIME_REVISION}-linux-arm64.tar.gz",
+        "PENDING_ARM64",
+        0,
         ".tar.gz",
     ),
     # scripts/build-host-tools.sh; digests and sizes of release host-tools-v2,

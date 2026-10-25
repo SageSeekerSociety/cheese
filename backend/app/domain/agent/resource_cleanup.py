@@ -11,6 +11,7 @@ import json
 import os
 import runpy
 import shutil
+import signal
 import stat
 import struct
 import subprocess
@@ -1221,6 +1222,73 @@ def stop_sandboxed_executor(home: Path) -> None:
             )
     finally:
         os.close(descriptor)
+
+
+def mounted_at(path) -> bool:
+    """Whether anything is mounted at ``path``, live or dead.
+
+    `os.path.ismount` answers False for a mount whose server has died — every
+    stat on it fails and it swallows the error — and that is the one case this
+    is asked about: such a mount still occupies the path and refuses a second
+    one. The kernel's own list answers for both (`transcript_view._mounted` is
+    the same rule on the executor side).
+    """
+    real = os.path.realpath(str(path))
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError:
+        return os.path.ismount(real)
+    for line in lines:
+        fields = line.split()
+        if len(fields) > 4 and fields[4] == real:
+            return True
+    return False
+
+
+def stop_transcript_view(home: Path) -> None:
+    """Undo a room's transcript view: its helper, then every mount it made.
+
+    The helper runs on the executor but outside the room's sandbox
+    (`bootstrap.start_transcript_view`), so nothing else here reaches it: it is
+    not a sandbox process for `stop_executor` to end, and its pid is not in a
+    pid file the room wrote. What it binds at the build's path is a view kept
+    under the room's own home, and a mount left there is a home that cannot be
+    removed at all: `remove_tree` stops at the mountpoint with the filesystem's
+    error, in the middle of a delete that has already taken part of the room.
+
+    The helper goes first. A dead mount is what an unreleased one becomes, and
+    a dead FUSE mount can refuse the unmount too — so the process that made it
+    is given a chance to take it down itself (`transcript_view`'s SIGTERM
+    handler), and what it wrote is read rather than walked for: the bind can be
+    at a path this process cannot even list.
+    """
+    record = platform_dir(home) / "transcript-view.json"
+    try:
+        held = json.loads(record.read_text())
+    except (OSError, ValueError):
+        return
+    pid = held.get("pid")
+    if isinstance(pid, int):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        else:
+            for _ in range(30):
+                if not PROC.is_dir() or not Path(PROC / str(pid)).exists():
+                    break
+                time.sleep(0.1)
+    for where in held.get("mounts") or ():
+        for argv in (
+            ["fusermount", "-u", str(where)],
+            ["fusermount", "-uz", str(where)],
+            ["sudo", "-n", "fusermount", "-u", str(where)],
+            ["sudo", "-n", "fusermount", "-uz", str(where)],
+        ):
+            if not mounted_at(where):
+                break
+            run_command(argv)
+    record.unlink(missing_ok=True)
 
 
 def stop_executor(home: Path, resource: str) -> None:

@@ -44,9 +44,6 @@ TRANSCRIPT_BLOCK_BYTES = 1024 * 1024
 #: cache that has to be kept warm for correctness: a dropped block is read
 #: again.
 TRANSCRIPT_BLOCKS_KEPT = 64
-#: How many bytes a refused write is told it may not have. Unused by the
-#: kernel; kept named so the refusal reads like every other EROFS here.
-_FORBIDDEN = 1
 
 
 def _entry(kind, *, size=0):
@@ -77,16 +74,14 @@ class TranscriptView:
     def __init__(self, call):
         self.call = call
         self.known_size = None
-        #: Block start offset -> its bytes, oldest first. Bounded by
+        #: Block start offset -> ``(bytes, last)``, oldest first. Bounded by
         #: `TRANSCRIPT_BLOCKS_KEPT`, so a view's memory does not grow with the
-        #: transcript — see `_block` for why it is here at all.
+        #: transcript — see `_block` for why it is here at all. `last` is kept
+        #: with the block rather than re-derived from its length: a transcript
+        #: whose size is a whole number of blocks ends in a full one, and
+        #: re-deriving would make a hit disagree with the fetch that filled it.
         self.blocks = {}
         self.lock = threading.Lock()
-
-    def _invalidate(self):
-        self.known_size = None
-        with self.lock:
-            self.blocks.clear()
 
     def _stat_size(self):
         if self.known_size is None:
@@ -112,19 +107,20 @@ class TranscriptView:
         block at once would otherwise each ask for it.
         """
         with self.lock:
-            block = self.blocks.get(start)
-            if block is not None:
-                return block, len(block) < TRANSCRIPT_BLOCK_BYTES
+            kept = self.blocks.get(start)
+            if kept is not None:
+                return kept
         answer = self.call({"offset": start, "size": TRANSCRIPT_BLOCK_BYTES})
         if answer.get("missing"):
             raise OSError(errno.ENOENT, TRANSCRIPT_NAME)
         block = base64.b64decode(answer["data"])
+        last = bool(answer.get("eof")) or len(block) < TRANSCRIPT_BLOCK_BYTES
         self.known_size = int(answer["size"])
         with self.lock:
-            self.blocks[start] = block
+            self.blocks[start] = (block, last)
             while len(self.blocks) > TRANSCRIPT_BLOCKS_KEPT:
                 del self.blocks[next(iter(self.blocks))]
-        return block, bool(answer.get("eof")) or len(block) < TRANSCRIPT_BLOCK_BYTES
+        return block, last
 
     def _check(self, path):
         name = self._name(path)

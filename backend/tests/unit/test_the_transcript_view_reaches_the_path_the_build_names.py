@@ -38,7 +38,7 @@ def test_a_view_that_is_not_mounted_yet_is_mounted_at_the_named_path(
     path = tmp_path / "host" / "projects" / "slug" / "id.jsonl"
     calls = _Calls()
     monkeypatch.setattr(transcript_view, "_run", calls)
-    monkeypatch.setattr(transcript_view.os.path, "ismount", lambda _p: False)
+    monkeypatch.setattr(transcript_view, "_mounted", lambda _p: False)
 
     assert transcript_view._remount(view, str(path)) is True
 
@@ -59,7 +59,7 @@ def test_a_path_whose_chain_cannot_be_made_is_reported_not_retried(
     path = tmp_path / "host" / "projects" / "slug" / "id.jsonl"
     calls = _Calls(made=False)
     monkeypatch.setattr(transcript_view, "_run", calls)
-    monkeypatch.setattr(transcript_view.os.path, "ismount", lambda _p: False)
+    monkeypatch.setattr(transcript_view, "_mounted", lambda _p: False)
 
     assert transcript_view._remount(tmp_path / "view", str(path)) is False
     assert not [c for c in calls.commands if "mount" in c]
@@ -70,14 +70,14 @@ def test_a_live_mount_at_the_path_is_left_alone(monkeypatch, tmp_path):
     path.write_bytes(b"there")
     calls = _Calls()
     monkeypatch.setattr(transcript_view, "_run", calls)
-    monkeypatch.setattr(transcript_view.os.path, "ismount", lambda _p: True)
+    monkeypatch.setattr(transcript_view, "_mounted", lambda _p: True)
 
     assert transcript_view._remount(tmp_path / "view", str(path)) is True
     assert calls.commands == []
 
 
 def test_a_mount_whose_server_died_is_not_read_as_done(monkeypatch, tmp_path):
-    """ENOTCONN reads as not mounted, so a helper starting over can mount.
+    """A dead mount reads as not mounted, so a helper starting over can mount.
 
     The path stays occupied by the dead mount and cannot be mounted over until
     it is released, so the release happens first.
@@ -88,7 +88,7 @@ def test_a_mount_whose_server_died_is_not_read_as_done(monkeypatch, tmp_path):
     path.write_bytes(b"old")
     calls = _Calls()
     monkeypatch.setattr(transcript_view, "_run", calls)
-    monkeypatch.setattr(transcript_view.os.path, "ismount", lambda _p: True)
+    monkeypatch.setattr(transcript_view, "_mounted", lambda _p: True)
 
     # Only this module's own call: patching `os.stat` itself would reach
     # pytest's own machinery, which asks it `follow_symlinks=`.
@@ -99,3 +99,30 @@ def test_a_mount_whose_server_died_is_not_read_as_done(monkeypatch, tmp_path):
     released = [c for c in calls.commands if "fusermount" in c]
     assert released and "-uz" in released[0]
     assert [c for c in calls.commands if "mount" in c]
+
+
+def test_a_dead_mount_is_seen_as_a_mount(monkeypatch, tmp_path):
+    """`ismount` answers False for exactly the mount that has to be released.
+
+    Every stat on a dead FUSE mount fails and `ismount` swallows that and says
+    nothing is mounted — so a helper starting over mounts onto a path that
+    cannot take one and reports the room given the file when it was not. The
+    kernel's own list says both are mounted.
+    """
+    path = tmp_path / "id.jsonl"
+    path.touch()
+    monkeypatch.setattr(
+        transcript_view,
+        "_read_mountinfo",
+        lambda: f"36 1 0:33 / {path} rw - fuse.cheese cheese ro\n",
+    )
+
+    assert transcript_view._mounted(path) is True
+
+
+def test_a_path_nothing_is_mounted_at_is_not_a_mount(monkeypatch, tmp_path):
+    path = tmp_path / "id.jsonl"
+    path.touch()
+    monkeypatch.setattr(transcript_view, "_read_mountinfo", lambda: "")
+
+    assert transcript_view._mounted(path) is False
