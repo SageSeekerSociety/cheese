@@ -111,6 +111,7 @@ const {
   deadlineProps,
   defaultDeadline,
   defaultDeadlineProps,
+  startMode,
   topics,
   minTeamSize,
   minTeamSizeProps,
@@ -231,6 +232,7 @@ defineExpose({
         v-model:mentors="mentors"
         :mentor-options="mentorOptions"
         :is-editing="isEditing"
+        :starts-directly="startMode === 'DIRECT'"
         :submitter-type-control="submitterTypeProps"
         :rank-control="rankProps"
         :participant-limit-control="participantLimitProps"
@@ -242,6 +244,7 @@ defineExpose({
         v-model:registration-start-at="registrationStartAt"
         v-model:deadline="deadline"
         v-model:default-deadline="defaultDeadline"
+        v-model:start-mode="startMode"
         :registration-start-at-control="registrationStartAtProps"
         :deadline-control="deadlineProps"
         :default-deadline-control="defaultDeadlineProps"

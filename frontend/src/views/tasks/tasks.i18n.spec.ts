@@ -179,7 +179,7 @@ describe('task pages in English', () => {
       global: { plugins: plugins() },
     })
     expect(document.body.textContent).toContain('Real name required')
-    expect(document.body.textContent).toContain('Locked on approval')
+    expect(document.body.textContent).toContain('Locked once the application is approved')
     expect(cjkIn(pageText())).toEqual([])
   })
 

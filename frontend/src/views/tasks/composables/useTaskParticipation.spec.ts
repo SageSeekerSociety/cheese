@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTaskParticipation } from './useTaskParticipation'
 
 import { ApiError } from '@/api/http'
+import i18n from '@/i18n'
 
 const mocks = vi.hoisted(() => ({
   join: vi.fn(),
@@ -59,6 +60,19 @@ describe('registration enters its workspace', () => {
     expect(mocks.join).toHaveBeenCalledWith(7, expect.any(Object))
     expect(mocks.push).toHaveBeenCalledWith('/projects/shared-project')
   })
+
+  it.each([['USER'], ['TEAM']] as const)(
+    'an application to a %s task that waits for approval stays on the task and says it was sent',
+    async (submitterType) => {
+      // 申请制: the project opens on approval, so the claim answers with none.
+      mocks.join.mockResolvedValueOnce({ participant: { id: 3 }, project: null })
+      const flow = setup(submitterType)
+      if (submitterType === 'TEAM') mocks.handlers['select-team'](42)
+      await flow.handleVerifyInfoSubmit({})
+      expect(mocks.push).not.toHaveBeenCalled()
+      expect(toasts.success).toHaveBeenCalledWith(i18n.global.t('tasks.participation.applied'))
+    }
+  )
 
   it('stays on the task when registration fails', async () => {
     mocks.join.mockRejectedValueOnce(new Error('Registration closed'))

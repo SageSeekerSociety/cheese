@@ -1,9 +1,12 @@
 {
   "claim": {
     "claim": "申请做这道题",
+    "continue": "继续做",
     "notApproved": "审核通过后才能申请",
+    "notApprovedStart": "审核通过后才能开始",
     "pending": "已申请，等待通过",
-    "rejected": "申请未通过"
+    "rejected": "申请未通过",
+    "start": "开始做这道题"
   },
   "dateFormat": "M月D日",
   "delete": "删除",
@@ -16,6 +19,7 @@
     "full": "人数已满",
     "notStarted": "未开始",
     "open": "可申请",
+    "openToStart": "可开始",
     "pending": "待审核",
     "rejected": "未通过审核"
   },

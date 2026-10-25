@@ -15,6 +15,7 @@ from app.api.routes.tasks._common import (
     PatchTaskRequest,
 )
 from app.api.routes.tasks._writes import update_task
+from app.api.task_claims import open_claim_project, project_of_claim
 from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
@@ -39,17 +40,14 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.agent_instance.adapters import default_teammate
-from app.domain.living_doc.overview import seed_overview
-from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
+    APPROVE_APPROVED,
     map_approve_type_to_int,
 )
 from app.domain.task.services import (
@@ -62,7 +60,6 @@ from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
-from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
@@ -255,6 +252,7 @@ async def get_task(
     submittable_as_team: list[dict] = []
     user_deadline_ms: int | None = None
     participation_eligibility: dict | None = None
+    my_project: dict | None = None
 
     if auth_user.user_id > 0:
         user_membership = await membership_service.get_user_membership(
@@ -299,6 +297,12 @@ async def get_task(
         claim = own_claim(task, user_membership, team_memberships)
         if claim is not None and claim.deadline is not None:
             user_deadline_ms = int(claim.deadline.timestamp() * 1000)
+        # 继续做: the project the person's claim (or their team's) already has.
+        project = await project_of_claim(
+            db, task=task, membership=claim, user_id=auth_user.user_id
+        )
+        if project is not None:
+            my_project = {"id": str(project.id), "name": project.name}
 
         if queryJoinability:
             participation_eligibility = (
@@ -338,6 +342,7 @@ async def get_task(
             "submittableAsTeam": submittable_as_team,
             "userDeadline": user_deadline_ms,
             "participationEligibility": participation_eligibility,
+            "myProject": my_project,
         }
     )
 
@@ -731,13 +736,12 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    await ProjectService(
-        db,
-        default_teammate=default_teammate,
-        compute_credits=ComputeCredits(db),
-        overview=seed_overview,
-        task_terms=TaskTerms(db),
-    ).activate_participation(task=as_brief(task), claim=as_claim(membership))
+    # An approved claim has its project, opened now or found again, as on
+    # ``PATCH /tasks/{id}/participants/{participantId}``.
+    if membership.approved == APPROVE_APPROVED:
+        await open_claim_project(
+            db, task=task, membership=membership, acting_user_id=auth_user.user_id
+        )
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

@@ -122,8 +122,8 @@ def _create_task(
 
 
 def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> str:
-    """``user`` 领了这道题：题目过审、人进了这门课，再领题（同意题目点名的导师）。
-    返回领题开出的那个项目。"""
+    """``user`` 领了这道题：题目过审、人进了这门课，再申请（同意题目点名的导师），
+    出题人通过。返回申请通过时开出的那个项目。"""
     approved = api_client.patch(
         f"/tasks/{task_id}",
         json={"approved": "APPROVED"},
@@ -142,7 +142,19 @@ def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) 
         headers=_auth(token),
     )
     assert claimed.status_code in (200, 201), claimed.text
-    return claimed.json()["data"]["project"]["id"]
+    approved = api_client.patch(
+        f"/tasks/{task_id}/participants/{claimed.json()['data']['participant']['id']}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert approved.status_code == 200, approved.text
+    again = api_client.post(
+        f"/tasks/{task_id}/participations/user",
+        json={"agreeMentors": True},
+        headers=_auth(token),
+    )
+    assert again.status_code == 200, again.text
+    return again.json()["data"]["project"]["id"]
 
 
 # --- 1. 导师读得到成员项目里的对话，单是管理员读不到 ---------------------------

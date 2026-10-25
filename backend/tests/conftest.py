@@ -2747,15 +2747,15 @@ def seed_claim(
     *,
     handle: str | None = None,
     team_id: int | None = None,
-    approved: int = 2,
+    approved: int = 0,
 ) -> None:
     """A claim on ``task_id``: by ``handle`` for an individual task, by
-    ``team_id`` for a team one. Pending (``approved=2``) unless told otherwise;
-    ``ApproveType.APPROVED == 0``.
+    ``team_id`` for a team one. Approved (``ApproveType.APPROVED == 0``) unless
+    told otherwise; ``approved=2`` is one still waiting for the publisher.
 
-    A project can only be built from a task someone has claimed, so every test
-    that makes one from a task claims it first — through the DB, because the
-    claim itself is not what those tests are about.
+    A project can only be built from a task with an approved claim, so every
+    test that makes one from a task claims it first — through the DB, because
+    the claim itself is not what those tests are about.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime

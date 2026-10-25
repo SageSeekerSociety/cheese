@@ -67,7 +67,7 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
       path: '/tasks/42/participants',
       args: [42, 7],
       query: [['member', '7']],
-      body: { deadline: null },
+      body: {},
     },
   },
   {
@@ -76,8 +76,8 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     test: {
       method: 'POST',
       path: '/tasks/42/participations/user',
-      args: [42, { deadline: null }],
-      body: { deadline: null },
+      args: [42, { agreeMentors: true }],
+      body: { agreeMentors: true },
     },
   },
   {
@@ -86,8 +86,8 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
     test: {
       method: 'POST',
       path: '/tasks/42/participations/team',
-      args: [42, { deadline: null }, 5],
-      body: { deadline: null, teamId: 5 },
+      args: [42, { agreeMentors: true }, 5],
+      body: { agreeMentors: true, teamId: 5 },
     },
   },
   { label: 'inheritance', name: 'inheritance', test: { method: 'GET', path: '/tasks/42/inheritance', args: [42] } },

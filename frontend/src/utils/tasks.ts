@@ -2,16 +2,17 @@ import type { Task } from '@/types'
 
 import dayjs from 'dayjs'
 
-export type TaskStateKey = 'pending' | 'rejected' | 'closed' | 'notStarted' | 'full' | 'open'
+export type TaskStateKey = 'pending' | 'rejected' | 'closed' | 'notStarted' | 'full' | 'open' | 'openToStart'
 
 /**
  * 一道题此刻对所有人是什么状态（和我领没领无关）。题目页标题旁那一枚、列表每一行右边那一行
  * 都读它，文案在 `tasks.page.state.<key>`。
  *
- * `participantLimit` 的 0 是「不限」，不是「一个人都不许」。
+ * `participantLimit` 的 0 是「不限」，不是「一个人都不许」。开放着的题按开始方式说：
+ * 申请制「可申请」，直接开始「可开始」。
  */
 export function taskState(
-  task: Pick<Task, 'approved' | 'deadline' | 'registrationStartAt' | 'participantLimit' | 'participants'>,
+  task: Pick<Task, 'approved' | 'deadline' | 'registrationStartAt' | 'participantLimit' | 'participants' | 'startMode'>,
   now = Date.now()
 ): { key: TaskStateKey; tone: 'ok' | 'muted' | 'danger' } {
   if (task.approved === 'NONE') return { key: 'pending', tone: 'muted' }
@@ -21,7 +22,7 @@ export function taskState(
   // 名额只被通过了的申请占，和服务端通过时数的是同一个数。
   if (task.participantLimit > 0 && task.participants.approved >= task.participantLimit)
     return { key: 'full', tone: 'muted' }
-  return { key: 'open', tone: 'ok' }
+  return { key: task.startMode === 'DIRECT' ? 'openToStart' : 'open', tone: 'ok' }
 }
 
 /**

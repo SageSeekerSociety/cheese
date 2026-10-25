@@ -26,7 +26,7 @@
   "once": "仅可提交一次",
   "overdue": "已过期 {n} 天",
   "period": "限时",
-  "periodValue": "{n} 天，从开始做那天算起",
+  "periodValue": "{n} 天，从申请通过那天算起",
   "progress": "我的进度",
   "projectsFailed": "项目列表加载失败",
   "rank": "难度",

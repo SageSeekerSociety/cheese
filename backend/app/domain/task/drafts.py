@@ -56,6 +56,7 @@ FORM_FIELDS = frozenset(
         "deadline",
         "registrationStartAt",
         "defaultDeadline",
+        "startMode",
         "participantLimit",
         "minTeamSize",
         "maxTeamSize",
@@ -107,6 +108,7 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "team_max": ("maxTeamSize",),
     "difficulty": ("rank",),
     "participant_limit": ("participantLimit",),
+    "start_mode": ("startMode",),
     "deadline": ("deadline",),
     "days_to_submit": ("defaultDeadline",),
     "category": ("categoryId",),
@@ -150,6 +152,8 @@ DIFFICULTIES = {"初级": 1, "中级": 2, "高级": 3}
 KINDS = {"文件": "FILE", "文字": "TEXT"}
 # i18n-data: whether a team's members may change once it is approved.
 LOCKING = {"允许变更": "NO_LOCK", "报名通过后锁定": "LOCK_ON_APPROVAL"}
+# i18n-data: how a claim of the 题目 starts, as the form names the two ways.
+START_MODES = {"直接开始": "DIRECT", "申请制": "APPLY"}
 # i18n-data: how the AI teammate helps, as the form names the four ways; the
 # fifth keeps the space's.
 AI_MODES = {
@@ -534,6 +538,10 @@ def from_agent(
         out["participantLimit"] = (
             None if limit in (None, 0, "") else _count(limit, "participant_limit")
         )
+    if "start_mode" in args:
+        if args["start_mode"] not in START_MODES:
+            raise BadRequestError(say("taskStartModeInvalid"))
+        out["startMode"] = START_MODES[args["start_mode"]]
     if "deadline" in args:
         out["deadline"] = _deadline(args["deadline"], space.zone)
     if "days_to_submit" in args:
@@ -1093,6 +1101,7 @@ def _view(
     levels = {v: k for k, v in DIFFICULTIES.items()}
     kinds = {v: k for k, v in KINDS.items()}
     lockings = {v: k for k, v in LOCKING.items()}
+    starts = {v: k for k, v in START_MODES.items()}
     modes = {v: k for k, v in AI_MODES.items() if v}
     group_by_id = {v: k for k, v in space.domain_groups.items()}
     material_by_id = {v: k for k, v in space.materials.items()}
@@ -1133,6 +1142,7 @@ def _view(
             f"{space.mentors.get(h, h)}（{h}）" for h in fields.get("mentors") or []
         ),
         f"registration_start: {when(fields.get('registrationStartAt'))}",
+        f"start_mode: {starts.get(str(fields.get('startMode')), '申请制')}",
         f"deadline: {when(fields.get('deadline'))}",
         f"days_to_submit: {fields.get('defaultDeadline') or ''}",
         f"category: {by_id.get(int(fields.get('categoryId') or 0), '')}",
@@ -1336,6 +1346,7 @@ def task_form(task: dict) -> dict:
         "submitterType": task.get("submitterType"),
         "rank": task.get("rank"),
         "defaultDeadline": task.get("defaultDeadline"),
+        "startMode": task.get("startMode"),
         "registrationStartAt": task.get("registrationStartAt"),
         "deadline": task.get("deadline"),
         "description": task.get("description") or "",

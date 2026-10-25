@@ -32,6 +32,11 @@ describe('题目此刻的状态', () => {
     expect(taskState(task(overrides), NOW).key).toBe(key)
   })
 
+  it('开放着的题按开始方式说：直接开始「可开始」，申请制「可申请」', () => {
+    expect(taskState(task({ startMode: 'DIRECT' }), NOW).key).toBe('openToStart')
+    expect(taskState(task({ startMode: 'APPLY' }), NOW).key).toBe('open')
+  })
+
   it('人数上限 0 是不限，不是满员', () => {
     expect(
       taskState(task({ participantLimit: 0, participants: { total: 50, approved: 50, examples: [] } }), NOW).key

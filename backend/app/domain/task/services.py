@@ -29,7 +29,11 @@ from app.domain.space.repositories import (
 )
 from app.domain.task import claims, package
 from app.domain.task.claims import members_claiming_through_another_team
-from app.domain.task.inputs import APPROVE_DISAPPROVED, APPROVE_NONE
+from app.domain.task.inputs import (
+    APPROVE_APPROVED,
+    APPROVE_DISAPPROVED,
+    APPROVE_NONE,
+)
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -164,15 +168,22 @@ class TaskMembershipService:
         task: Task,
         member_id: int,
         is_team: bool,
-        deadline: datetime | None,
         email: str | None,
         phone: str | None,
         apply_reason: str | None,
         personal_advantage: str | None,
         remark: str | None,
+        mentors: Sequence[str] = (),
     ) -> TaskMembership:
-        """领这道题：新的一份申请总是等出题人通过（``approved`` 2）。名额、实名都在
-        通过时看（``update_membership``），这里只看团队那两条。
+        """领这道题。申请制的题（``START_APPLY``），新的一份申请等出题人通过
+        （``approved`` 2），名额、实名都在通过时看（``update_membership``），这里
+        只看团队那两条。直接开始的题（``START_DIRECT``），这一份当场就是通过的：
+        通过时看的那几条（``_check_approvable``，名额照样先锁题目那一行）在这里看，
+        截止时间是题目自己的（``claims.deadline_from``）。领题的人不定自己的截止
+        时间：申请制的在通过时定，个人的截止只由出题人在参与者名单上改。
+
+        ``mentors`` 是领题的人这一刻看到并同意了的导师：项目打开时（直接开始当场，
+        申请制通过时）加入的就是这几位，之后才加到题目上的人不算。
 
         领一道自己（或自己的团队）已经领着的题不是错：答的就是那一份（等着通过
         的、已经通过的都算），调用方接着打开它的项目。被拒的那一份不算领着，可以
@@ -215,19 +226,24 @@ class TaskMembershipService:
             if team is not None and team.personal_owner_user_id is not None:
                 raise BadRequestError("A team task is claimed by a team, not a person.")
 
+        direct = claims.starts_now(task)
+        if direct:
+            await self._check_approvable(task, member_id=member_id, is_team=is_team)
+
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
             member_id=member_id,
-            approved=APPROVE_NONE,
+            approved=APPROVE_APPROVED if direct else APPROVE_NONE,
             is_team=is_team,
             email=email or "",
             phone=phone or "",
             completion_status=COMPLETION_STATUS_NOT_SUBMITTED,
             created_at=now,
             updated_at=now,
-            deadline=deadline,
+            deadline=claims.deadline_from(task, now) if direct else None,
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
+            agreed_mentors=list(mentors),
         )
         return await self._repo.save(membership)
 
@@ -249,9 +265,8 @@ class TaskMembershipService:
         """Update membership approval/deadline and basic contact fields.
 
         该方法实现 Kotlin `updateTaskMembership` 的一个精简子集：
-        - 审批通过时检查人数上限；
-        - TEAM 任务在审批时校验队伍人数是否满足 min/maxTeamSize；
-        - USER 任务在审批时（若 requireRealName）检查当前成员是否有实名记录；
+        - 审批通过时看 ``_check_approvable`` 那几条（名额、队伍人数、实名）；
+        - 审批通过而没给截止时间时，截止时间按题目定（``claims.deadline_from``）；
         - 不实现加密实名快照与事件广播，仅更新核心字段。
         """
 
@@ -261,38 +276,16 @@ class TaskMembershipService:
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
-            # 名额只被通过了的申请占：申请随时可以交，通过时才看还有没有名额。
-            # participant_limit 的 0 是「不限」。
-            if task.participant_limit:
-                await self._repo.hold_places(task.id)  # type: ignore[arg-type]
-                approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
-                if approved_count >= task.participant_limit:
-                    raise TaskParticipantsReachedLimitError(
-                        task.id, task.participant_limit
-                    )  # type: ignore[arg-type]
-
-            # TEAM 任务时，检查队伍规模是否在 min/maxTeamSize 范围内。
-            if membership.is_team:
-                team_size = await self._repo.count_team_members(membership.member_id)
-                if task.min_team_size is not None and team_size < task.min_team_size:
-                    raise TeamSizeNotEnoughError(task.min_team_size, team_size)
-                if task.max_team_size is not None and team_size > task.max_team_size:
-                    raise TeamSizeTooLargeError(task.max_team_size, team_size)
-                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
-            else:
-                # USER 任务 + requireRealName：检查该用户是否有实名。
-                if task.require_real_name and self._realname_repo is not None:
-                    has_identity = await self._realname_repo.has_identity(
-                        membership.member_id
-                    )
-                    if not has_identity:
-                        raise BadRequestError(
-                            "Cannot approve: user is missing required real name information."
-                        )
+            await self._check_approvable(
+                task, member_id=membership.member_id, is_team=membership.is_team
+            )
+            if deadline is None:
+                deadline = claims.deadline_from(task, datetime.now(UTC))
 
         # 应用字段更新
         if approved is not None:
             membership.approved = approved
+        deadline_moved = deadline is not None and deadline != membership.deadline
         if deadline is not None:
             membership.deadline = deadline
         if email is not None:
@@ -303,7 +296,43 @@ class TaskMembershipService:
         _ = reject_reason
 
         membership.updated_at = datetime.now(UTC)
-        return await self._repo.save(membership)
+        saved = await self._repo.save(membership)
+        # 截止时间挪了，这份领取的完成状态跟着重推：清扫按旧截止判了失败的，延到以后
+        # 又是没交；提前到已经过去的，没交的就读作失败。
+        if deadline_moved:
+            await refresh_completion_status(self._repo._session, saved)
+        return saved
+
+    async def _check_approvable(
+        self, task: Task, *, member_id: int, is_team: bool
+    ) -> None:
+        """What a claim has to meet the moment it is approved, whether the
+        publisher approves it or it starts approved (a task started directly).
+
+        - 名额只被通过了的申请占：通过时才看还有没有名额，participant_limit 的 0 是
+          「不限」。数名额和写下这一份通过要是一步，所以先锁题目那一行
+          （``hold_places``，到提交为止）。
+        - TEAM 任务：队伍人数在 min/maxTeamSize 之内。
+        - USER 任务 + requireRealName：这个人有实名记录。
+        """
+        if task.participant_limit:
+            await self._repo.hold_places(task.id)  # type: ignore[arg-type]
+            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
+            if approved_count >= task.participant_limit:
+                raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
+
+        if is_team:
+            team_size = await self._repo.count_team_members(member_id)
+            if task.min_team_size is not None and team_size < task.min_team_size:
+                raise TeamSizeNotEnoughError(task.min_team_size, team_size)
+            if task.max_team_size is not None and team_size > task.max_team_size:
+                raise TeamSizeTooLargeError(task.max_team_size, team_size)
+            # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
+        elif task.require_real_name and self._realname_repo is not None:
+            if not await self._realname_repo.has_identity(member_id):
+                raise BadRequestError(
+                    "Cannot approve: user is missing required real name information."
+                )
 
     async def _rank_reasons(
         self,

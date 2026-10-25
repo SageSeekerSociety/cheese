@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 「参与」那一节：个人还是团队、难度、人数上限；团队题再加每队几人、报名通过后还能
-// 不能换人。
+// 「参与」那一节：个人还是团队、难度、人数上限；团队题再加每队几人、开始之后还能
+// 不能换人（直接开始的题是开始做这道题后，申请制的题是申请通过后）。
 //
 // 它只画：值都是 props 进来的，改一次往上报一次。
 import type { TaskTeamMembershipLockPolicy } from '@/types'
@@ -21,6 +21,8 @@ const props = defineProps<{
   mentorOptions?: { title: string; value: string }[]
   /** 改题时参与方式不能再换（领取记录按它分了人和队）。 */
   isEditing: boolean
+  /** 直接开始的题：队伍从开始做的那一刻起算，不是申请通过时。 */
+  startsDirectly?: boolean
   submitterTypeControl: FieldControl
   rankControl: FieldControl
   participantLimitControl: FieldControl
@@ -71,14 +73,25 @@ const rankValue = computed({
   },
 })
 
-const lockOptions = computed(() => [
-  { value: 'NO_LOCK', label: t('tasks.form.teamLocking.free'), hint: t('tasks.form.teamLocking.freeHint') },
-  {
-    value: 'LOCK_ON_APPROVAL',
-    label: t('tasks.form.teamLocking.locked'),
-    hint: t('tasks.form.teamLocking.lockedHint'),
-  },
-])
+const lockOptions = computed(() =>
+  props.startsDirectly
+    ? [
+        { value: 'NO_LOCK', label: t('tasks.form.teamLocking.free'), hint: t('tasks.form.teamLocking.freeHintStart') },
+        {
+          value: 'LOCK_ON_APPROVAL',
+          label: t('tasks.form.teamLocking.lockedStart'),
+          hint: t('tasks.form.teamLocking.lockedHintStart'),
+        },
+      ]
+    : [
+        { value: 'NO_LOCK', label: t('tasks.form.teamLocking.free'), hint: t('tasks.form.teamLocking.freeHint') },
+        {
+          value: 'LOCK_ON_APPROVAL',
+          label: t('tasks.form.teamLocking.locked'),
+          hint: t('tasks.form.teamLocking.lockedHint'),
+        },
+      ]
+)
 
 const isTeam = computed(() => submitterType.value === 'TEAM')
 const limitLabel = computed(() => (isTeam.value ? t('tasks.form.teamLimit') : t('tasks.form.participantLimit')))
