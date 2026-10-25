@@ -47,9 +47,22 @@ fi
 # whose line is `apk add`, the base here is a bare Debian image and has no
 # compiler, `make`, `binutils` or even `curl` — so the recipe installs what it
 # runs, rather than leaving it to the caller to have done.
+#
+# The network options are `.github/scripts/ensure-apt.sh`'s, carried inline:
+# that helper runs `sudo apt-get "$@"` and cannot be used from inside this
+# image, but the reason it has them applies here too — apt's own network waits
+# are unbounded, and a stalled mirror otherwise holds the job to its own
+# timeout with nothing in the log. `Error-Mode=any` makes `update` report a
+# failed index rather than exiting 0 on one, so a mirror that answered nothing
+# usable fails here instead of at a `configure` run that cannot say why. This
+# script is `sh`, so the flags are a split string rather than the helper's
+# array.
+apt_net="-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 -o APT::Update::Error-Mode=any"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq build-essential curl ca-certificates xz-utils >/dev/null
+# shellcheck disable=SC2086 # separate -o flags: the split is the point
+apt-get $apt_net update -qq
+# shellcheck disable=SC2086
+apt-get $apt_net install -y -qq build-essential curl ca-certificates xz-utils >/dev/null
 
 work=$(mktemp -d)
 cd "$work"
