@@ -684,6 +684,11 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
     )
     sudo apt-get "${fuse_apt_options[@]}" update -qq
     sudo apt-get "${fuse_apt_options[@]}" install -y -qq fuse libfuse2
+    # A transcript view is mounted by the session's own user and read by the
+    # sandbox's account through root's bind (`transcript_view.py`); without
+    # this line FUSE answers both EACCES.
+    grep -qxF user_allow_other /etc/fuse.conf \
+      || echo user_allow_other | sudo tee -a /etc/fuse.conf >/dev/null
   )
 fi
 

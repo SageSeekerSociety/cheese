@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import base64
 import errno
+import json
 import os
 import stat
 import sys
+from pathlib import Path
 
 #: The one file this view serves, as its mountpoint sees it.
 TRANSCRIPT_NAME = "transcript.jsonl"
@@ -183,14 +185,11 @@ def mount(target_path, mountpoint):
     the model's read lands here.
     """
 
+    # deferred-import: deferred: bare name, shipped beside this file
+    from client import RemoteClient
+
     # deferred-import: fusepy needs libfuse, which is not installed everywhere
     from fuse import FUSE, Operations
-
-    import json
-    from pathlib import Path
-
-    # deferred-import: deferred: bare name
-    from client import RemoteClient
 
     target_path = Path(target_path)
     client = RemoteClient(json.loads(target_path.read_text()))

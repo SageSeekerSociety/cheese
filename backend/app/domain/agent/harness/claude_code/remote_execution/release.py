@@ -313,6 +313,11 @@ def sources():
             "runtime_calls.py",
             "context_service.py",
             "forwarded_fs.py",
+            # The other direction: this machine's view of the session host's
+            # transcript, and the helper that binds it where the build names
+            # it (`bootstrap` starts that one).
+            "forwarded_transcript.py",
+            "transcript_view.py",
             "release.py",
         )
     }

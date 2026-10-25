@@ -701,29 +701,46 @@ class RemoteClient:
             else os.environ.get("CHEESE_TOKEN", "")
         )
 
-    def transcript_chunk(self, params):
-        """One chunk of this session's transcript, from the platform.
+    def _transcript(self, query):
+        """This session's transcript, as the platform answers for ``query``.
 
         The transcript itself is on the session host, which this machine does
-        not reach; the platform relays the read to the session's runner and
-        hands back the bytes (`topic_transcript_chunks`). ``params`` is an
-        offset and a size — never a path — so only this session's own file is
-        reachable through it.
+        not reach; the platform relays the question to the session's runner
+        and hands back what it says (`topic_transcript_chunks`). Nothing the
+        caller writes names a path: which file is meant is this session's
+        own, decided by the credential and the room it names.
         """
         topic = os.environ.get("CHEESE_TOPIC")
         if not topic:
             raise RuntimeError(  # i18n-exempt: launch invariant, never shown
                 "This session cannot read its transcript: it names no room"
             )
-        query = f"offset={int(params['offset'])}&size={int(params['size'])}"
         answer = self.platform_request(
-            {"method": "GET", "path": f"/topics/{topic}/session-transcript?{query}"}
+            {
+                "method": "GET",
+                "path": f"/topics/{topic}/session-transcript?{query}",
+            }
         )
         payload = json.loads(answer["value"]["stdout"])
-        chunk = payload.get("data")
-        if not isinstance(chunk, dict):
-            raise RuntimeError("The platform answered no transcript chunk")
-        return chunk
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("The platform answered nothing about the transcript")
+        return data
+
+    def transcript_chunk(self, params):
+        """One chunk of this session's transcript: an offset and a size."""
+        query = f"offset={int(params['offset'])}&size={int(params['size'])}"
+        return self._transcript(query)
+
+    def transcript_path(self):
+        """Where the session host spells this session's transcript, or None.
+
+        The path is the session host's, and the build names it in what it
+        tells the model after a compaction. This machine mounts its read-only
+        view at exactly that path (`bootstrap.py` `mount_transcript`), so the
+        name resolves where the model's tools run.
+        """
+        return self._transcript("path=1").get("path")
 
     def platform_request(self, args):
         method = args.get("method", "GET").upper()

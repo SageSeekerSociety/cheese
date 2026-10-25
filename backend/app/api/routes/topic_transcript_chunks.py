@@ -43,6 +43,7 @@ async def session_transcript(
     host: Host,
     offset: int = Query(0, ge=0),
     size: int = Query(384 * 1024, ge=1, le=4 * 1024 * 1024),
+    path: bool = Query(False),
 ) -> dict:
     """One chunk of the calling session's own transcript, or that it is not
     there yet.
@@ -52,6 +53,10 @@ async def session_transcript(
     transcript is read on the session host, where the session's runner answers
     `transcript_chunk` — this route is only the relay, because the executor
     and the session host do not reach each other directly.
+
+    ``path=true`` asks where the file is instead of for its bytes: the answer
+    carries the session host's own spelling of the path, which is the name the
+    executor mounts its read-only view at.
     """
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
@@ -75,7 +80,7 @@ async def session_transcript(
         device_id,
         state,
         "transcript_chunk",
-        {"offset": offset, "size": size},
+        {"offset": 0 if path else offset, "size": 0 if path else size},
         timeout=60,
     )
     return ok(answer)

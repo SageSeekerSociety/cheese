@@ -707,6 +707,39 @@ def platform_file(platform_dir, name):
         os.close(directory)
 
 
+#: Where `transcript_view.py` mounts this session's transcript, before it is
+#: bound at the path the build names. Beside the room's own platform directory,
+#: so the mount belongs to this room and the teardown can find it.
+TRANSCRIPT_VIEW = "transcript-view"
+
+
+def start_transcript_view(home, release, config, output):
+    """Serve this session's transcript out here, and bind it where the build
+    names it (`transcript_view`). Started before the sandbox, and never waited
+    for: a machine without FUSE, or a session whose transcript is not written
+    yet, keeps the transcript at the path it always was — unreachable — and
+    the room runs exactly as it did.
+
+    Out here rather than inside, because a bubblewrap sandbox has no
+    `/dev/fuse` of its own: the view is this side's, and the sandbox reads it
+    through the machine's own read-only `/home`. It is given the room's scoped
+    environment, which is what names the room and carries the credential the
+    relay is asked with — the same environment the room's tools get."""
+    view = home / PLATFORM_DIR / TRANSCRIPT_VIEW
+    script = release / "remote-execution/transcript_view.py"
+    if not script.exists() or shutil.which("fusermount") is None:
+        return
+    with platform_file(home / PLATFORM_DIR, "transcript-view.log") as log:
+        subprocess.Popen(
+            [sys.executable, str(script), str(view)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            env={**os.environ, **config["env"]},
+            start_new_session=True,
+        )
+
+
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
@@ -1382,6 +1415,11 @@ def configure_idle(payload):
                 public = Path(runtime["socket_path"](state))
                 public.unlink(missing_ok=True)
                 public.symlink_to(directory / "executor.sock")
+                # The session's transcript, readable at the path the build
+                # names after a compaction. Started before the sandbox so the
+                # mount is in place by the time a session reads it, and out
+                # here because the sandbox has no `/dev/fuse` of its own.
+                start_transcript_view(home, release, config, output)
                 started = time.monotonic()
                 process, network = start_sandbox(
                     argv,
