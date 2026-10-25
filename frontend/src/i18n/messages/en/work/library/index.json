@@ -36,6 +36,8 @@
   "newFolderConfirm": "Create",
   "noMatch": "No matching files",
   "previewError": "Could not preview this file",
+  "readonly": "Read-only",
+  "readonlyDrop": "{folder}/ holds the task's materials. It's read-only, so files can't be added there",
   "references": "Referenced by {n} messages",
   "replace": "Replace with new version",
   "replaceBody": "Replace it with {file}. Messages that reference this file will read the new one; the old one is kept",

@@ -333,6 +333,24 @@ describe('资料库的文件夹', () => {
     await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledWith('p1', expect.any(File), '合同'))
   })
 
+  it('题目的材料那个文件夹标着只读；拖文件进去不上传，说清为什么', async () => {
+    library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
+    const { container, router } = await open()
+    const taskRow = screen.getByText('题目').closest('.library-row') as HTMLElement
+    expect(taskRow.textContent).toContain('只读')
+
+    await router.push('/projects/p1/library?dir=题目')
+    await waitFor(() => expect(rowNames(container)).toEqual(['数据.csv']))
+    const area = container.querySelector('.library') as HTMLElement
+    await fireEvent.drop(area, { dataTransfer: { files: [new File(['a'], 'a.txt')] } })
+
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      expect.stringContaining('只能读，不能放进文件')
+    )
+    expect(uploadLibraryFile).not.toHaveBeenCalled()
+  })
+
   it('移动或重命名把新的完整名字交给服务端，再重新列一遍', async () => {
     const { baseElement } = await open('/projects/p1/library?dir=合同')
     await fireEvent.click(await menuItem(baseElement, '附件.pdf', '移动或重命名'))

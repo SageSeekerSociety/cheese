@@ -36,6 +36,8 @@
   "newFolderConfirm": "新建",
   "noMatch": "暂无匹配的资料",
   "previewError": "无法预览这份文件",
+  "readonly": "只读",
+  "readonlyDrop": "{folder}/ 里是题目的材料，只能读，不能放进文件",
   "references": "被 {n} 条消息引用",
   "replace": "替换为新版本",
   "replaceBody": "换成 {file}。引用这份文件的消息将读到新的一份，旧的一份会保留",
