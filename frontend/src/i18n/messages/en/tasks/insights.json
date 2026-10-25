@@ -13,7 +13,7 @@
   "progressTitle": "Where everyone is",
   "solo": "Individual",
   "stalled": "No activity since starting",
-  "stalledHint": "Applied more than 5 days ago and still \"In progress\"",
+  "stalledHint": "Started more than 5 days ago, nothing submitted yet",
   "status": {
     "inProgress": "In progress",
     "passed": "Passed",

@@ -20,7 +20,6 @@ from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -603,7 +602,7 @@ async def team_library_room(
     """占了多少、一共能放多少：资料库页上的用量。"""
     await _team_member(team_id, db, resolver)
     used = await library_records.used(db, _team_shelf(team_id))
-    return ok({"used": used, "total": settings.team_library_bytes})
+    return ok({"used": used, "total": library_records.capacity()})
 
 
 @teams.get("/{team_id}/library/file", **typed_response(LibraryFileOut))

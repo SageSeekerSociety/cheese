@@ -1,8 +1,10 @@
 {
   "spaceTaskChanged": "“{task}” changed: {changes}",
+  "spaceTaskChangedName": "renamed to “{name}”",
   "spaceTaskChangedRequirements": "what to submit or how it is scored",
   "spaceTaskChangedStageDue": "stage “{stage}” now due {due} ({zone})",
   "spaceTaskChangedStageDueCleared": "stage “{stage}” no longer has a due date",
+  "spaceTaskChangedStageName": "stage “{stage}” renamed to “{name}”",
   "spaceTaskChangedStagesAdded": "stage {stages} added",
   "spaceTaskChangedStagesRemoved": "stage {stages} removed",
   "spaceTaskClaimApproved": "Your application to “{task}” was approved",

@@ -13,7 +13,7 @@
   "libraryFileNoTaskBranch": "Library files don't belong to a task branch",
   "libraryFileNotFound": "This file isn't in the library",
   "libraryFileTooLargeToOpen": "This file is larger than {mb} MB and can't be opened here. Download it instead",
-  "libraryFull": "The library is full ({mb} MB). Delete some files and try again",
+  "libraryFull": "Can't add this file to the library: it is {size}, and the library has {free} left of {total}. Delete some files and try again",
   "libraryKindUnknown": "There is no file type called \"{kind}\"",
   "libraryMoveIntoItself": "A folder can't be moved into itself",
   "libraryNameTaken": "The library already has “{name}”",
