@@ -78,10 +78,11 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
 
   function begin() {
     const file = state.previewFile.value
-    if (!canEdit.value || !file || file.content === null || !file.version) return
+    const room = props.topicId
+    if (!room || !canEdit.value || !file || file.content === null || !file.version) return
     // 房间也钉住：`save()` 用的是这一份自己的房间，不是此刻 `props.topicId` 说的那个。
     // 一次换房间如果新房间的文件碰巧同名同内容，只用路径认不出来，字就写到另一个房里了。
-    pinned.value = { room: props.topicId!, path: file.path, version: file.version, content: file.content }
+    pinned.value = { room, path: file.path, version: file.version, content: file.content }
     draft.value = file.content
     error.value = ''
     conflicted.value = false
