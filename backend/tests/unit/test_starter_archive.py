@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.errors import UnprocessableEntityError
 from app.domain.project import starter
 
 WHEN = datetime(2026, 10, 1, tzinfo=UTC)
@@ -163,3 +164,17 @@ def test_the_starter_holds_exactly_what_git_add_would_commit(tmp_path: Path, cas
     built = set(_tree(tmp_path / "built", buffer.getvalue()))
 
     assert built == _git_add_all(tmp_path, {**files, "zz-top.txt": b"z"})
+
+
+def test_an_archive_whose_gitignore_excludes_every_file_says_so():
+    """A zip that does hold files, all of them excluded by its own .gitignore,
+    is refused for that reason, not as an archive with no files in it."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(".gitignore", b"*\n")
+        archive.writestr("main.py", b"print(1)")
+
+    with pytest.raises(UnprocessableEntityError) as refused:
+        starter.check(io.BytesIO(buffer.getvalue()))
+
+    assert refused.value.message.key == "starterAllIgnored"
