@@ -232,6 +232,7 @@ defineExpose({
         v-model:mentors="mentors"
         :mentor-options="mentorOptions"
         :is-editing="isEditing"
+        :starts-directly="startMode === 'DIRECT'"
         :submitter-type-control="submitterTypeProps"
         :rank-control="rankProps"
         :participant-limit-control="participantLimitProps"

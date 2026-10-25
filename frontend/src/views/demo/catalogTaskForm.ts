@@ -166,7 +166,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           minTeamSize: 3,
           maxTeamSize: 5,
         }),
-        expect: '报名通过后锁定',
+        expect: '申请通过后锁定',
       },
       {
         name: '有导师',

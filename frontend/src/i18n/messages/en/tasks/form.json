@@ -78,10 +78,13 @@
   "teamLimit": "Team limit",
   "teamLocking": {
     "free": "Allowed",
-    "freeHint": "Members can still be added or removed after approval",
+    "freeHint": "Members can still be added or removed after the application is approved",
+    "freeHintStart": "Members can still be added or removed after the team starts",
     "label": "Team changes",
-    "locked": "Locked on approval",
-    "lockedHint": "The roster at approval is final"
+    "locked": "Locked once the application is approved",
+    "lockedHint": "The roster at approval is final",
+    "lockedHintStart": "The roster when the team starts is final",
+    "lockedStart": "Locked once the team starts"
   },
   "teamLockingPolicyLockOnApproval": "Locked on approval",
   "teamSize": "Team size",

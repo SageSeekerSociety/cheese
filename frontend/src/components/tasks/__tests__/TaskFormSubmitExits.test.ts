@@ -369,4 +369,16 @@ describe('发题表单：直接开始的题', () => {
     await waitFor(() => expect(view.container.textContent).toContain('tasks.form.validation.dueRequired'))
     expect(view.emitted().submit).toBeFalsy()
   })
+
+  it.each([
+    ['直接开始', 'DIRECT', ['free', 'freeHintStart', 'lockedStart', 'lockedHintStart']],
+    ['申请制', 'APPLY', ['free', 'freeHint', 'locked', 'lockedHint']],
+  ])('%s的团队题：队伍成员变更说的是从哪一刻起', async (_, startMode, said) => {
+    const view = mountForm({ initialData: { ...FILLED, submitterType: 'TEAM', startMode } })
+
+    const choices = Array.from(view.container.querySelectorAll('.tf-choices .v-radio'))
+      .map((r) => r.textContent ?? '')
+      .join(' ')
+    expect(choices.match(/tasks\.form\.teamLocking\.\w+/g)).toEqual(said.map((k) => `tasks.form.teamLocking.${k}`))
+  })
 })

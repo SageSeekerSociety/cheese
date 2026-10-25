@@ -78,10 +78,13 @@
   "teamLimit": "队伍数上限",
   "teamLocking": {
     "free": "允许变更",
-    "freeHint": "报名通过后仍可增减成员",
+    "freeHint": "申请通过后仍可增减成员",
+    "freeHintStart": "开始做这道题后仍可增减成员",
     "label": "队伍成员变更",
-    "locked": "报名通过后锁定",
-    "lockedHint": "以报名通过时的名单为准"
+    "locked": "申请通过后锁定",
+    "lockedHint": "以申请通过时的名单为准",
+    "lockedHintStart": "以开始做这道题时的名单为准",
+    "lockedStart": "开始做这道题后锁定"
   },
   "teamLockingPolicyLockOnApproval": "报名通过后锁定",
   "teamSize": "每队人数",
