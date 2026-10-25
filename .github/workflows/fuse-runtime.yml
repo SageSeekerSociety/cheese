@@ -1,19 +1,20 @@
 name: fuse-runtime
 
-# The libfuse 2 runtime cheesehost places on a Linux machine
-# (`scripts/build-fuse-runtime.sh`). A pull request that changes the recipe
-# builds it and proves a room's executor can load it and mount through it, so
-# the recipe is known to work before it merges; publishing the release that
-# `agent/toolchain.py` pins is a manual dispatch from main, because a release
-# is what machines download.
+# The libfuse 2 runtime cheesehost will place on a Linux machine
+# (`scripts/build-fuse-runtime.sh`), for a room's executor to load by path
+# (`bootstrap.placed_libfuse`). A pull request that changes the recipe builds
+# it and mounts a view through it on both architectures, so the recipe is known
+# to work before it merges; publishing the release is a manual dispatch from
+# main, because a release is what machines download — and the pin in
+# `agent/toolchain.py` follows the release, the way `#4592` did it for the host
+# tools. Until that release exists no machine has a placed library, which is
+# the same silent no-view path as a machine without FUSE.
 on:
   pull_request:
     paths:
       - scripts/build-fuse-runtime.sh
       - .github/workflows/fuse-runtime.yml
       - .github/scripts/fuse-view-smoke.py
-      # The release the check job places is the one pinned there.
-      - backend/app/domain/agent/toolchain.py
   workflow_dispatch: {}
 
 permissions:
@@ -25,7 +26,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The build happens inside this image and not on the runner, which the
@@ -34,6 +35,13 @@ jobs:
       # Debian 12 is glibc 2.34, the oldest the source was verified to build
       # against, so one artifact serves Ubuntu 22.04, RHEL 9 and everything
       # after them.
+      #
+      # Only x64 was built while this recipe was written; aarch64 fails in
+      # upstream 2.9.9's own header before this recipe is reached — its
+      # `fuse_kernel.h` takes `uint64_t` from `<sys/types.h>`, which supplies
+      # it on x86_64 and does not on aarch64, so the first use is a conflicting
+      # redefinition. This job is where that has to be settled, with a patch to
+      # the header, before a release carrying an arm64 artifact is cut.
       - name: Build on the baseline distribution
         run: |
           docker run --rm -v "$PWD:/work" -w /work \
@@ -61,46 +69,12 @@ jobs:
         run: |
           sudo apt-get -qq update
           sudo apt-get -qq install -y fuse python3-pip
-          pip install --quiet "$(grep -m1 '^fusepy' backend/requirements.txt 2>/dev/null || echo fusepy)"
+          pip install --quiet "$(sed -n 's/.*"\(fusepy[^"]*\)".*/\1/p' backend/pyproject.toml | head -1)"
           python3 .github/scripts/fuse-view-smoke.py "$LIBRARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuse-runtime-${{ matrix.runner }}
           path: dist/
-
-  # What a machine does once the release is published: cheesehost places the
-  # pinned artifact under the platform's runtime and the executor's bootstrap
-  # finds it by path. Against the release rather than the build, because the
-  # release is what every machine gets.
-  check:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Place the released runtime as cheesehost does
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          revision=$(sed -n 's/^FUSE_RUNTIME_REVISION = "\(.*\)"$/\1/p' \
-            backend/app/domain/agent/toolchain.py)
-          gh release download "fuse-runtime-v$revision" -p "*-linux-x64.tar.gz" -D "$RUNNER_TEMP"
-          mkdir -p ~/.cheese/runtime/fuse
-          tar -xzf "$RUNNER_TEMP"/fuse-*-linux-x64.tar.gz \
-            -C ~/.cheese/runtime/fuse --strip-components=1
-      # The executor's own answer, read out of the code that ships: by
-      # architecture first, because a copy built for another one will not load.
-      - name: The executor finds it, and may load it
-        run: |
-          found=$(python3 -c "
-          import runpy
-          module = runpy.run_path(
-              'backend/app/domain/agent/harness/claude_code/remote_execution/bootstrap.py'
-          )
-          print(module['placed_libfuse']() or '')
-          ")
-          [ -e "$found" ] || { echo "::error::the executor did not find the placed libfuse: '$found'"; exit 1; }
-          python3 -c "import ctypes, sys; ctypes.CDLL(sys.argv[1])" "$found"
-          echo "the executor found and loaded $found"
 
   release:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
