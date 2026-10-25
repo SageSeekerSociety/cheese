@@ -407,6 +407,7 @@ onBeforeUnmount(() => void draft.flush())
             :file="starter.file.value"
             :uploading="starter.uploading.value"
             :percent="starter.percent.value"
+            confirm-remove
             @pick="starter.pick"
             @remove="starter.remove"
           />

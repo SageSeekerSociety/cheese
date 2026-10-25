@@ -683,6 +683,15 @@ async def set_starter_upload(
     return await set_starter(session, task, by=by, data=content)
 
 
+async def check_starter_upload(
+    uploads: AttachmentService, *, by: int, attachment_id: int
+) -> None:
+    """发题页上刚选的起始代码：这个人自己先传成附件的那一份，选完就查能不能作为起始
+    代码（和放进题目时同一个检查），不合格当场说为什么，不等到发布。"""
+    [(content, _)] = await _own_uploads(uploads, [attachment_id], by)
+    await asyncio.to_thread(starter_archive.check, io.BytesIO(content))
+
+
 async def remove_starter(session: AsyncSession, task: Task) -> None:
     """不要起始代码了（连同换下来的几版），不另记一版（调用方把它算进自己那一版）。
     之后领题的人拿到的是平台初始化的仓库。"""

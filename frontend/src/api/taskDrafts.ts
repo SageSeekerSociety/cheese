@@ -26,6 +26,10 @@ export namespace TaskDraftsApi {
 
   export const remove = (id: number) => request<Record<string, never>>(`/task-drafts/${id}`, { method: 'DELETE' })
 
+  /** 发布页上刚传成附件的起始代码：能不能作为起始代码，不能时服务端说为什么。 */
+  export const checkStarter = (attachmentId: number) =>
+    request<Record<string, never>>('/task-drafts/starter-check', json('POST', { attachmentId }))
+
   /** 发布：新题目发出去，或把修改保存到已发布的题目上。草稿随之删除。 */
   export const publish = (id: number) =>
     request<{ task: Task; draftId: number }>(`/task-drafts/${id}/publish`, { method: 'POST' })

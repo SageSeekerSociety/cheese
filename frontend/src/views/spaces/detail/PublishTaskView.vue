@@ -54,10 +54,13 @@ const props = withDefaults(
     templates: { index: number; name: string; description: string }[]
     attachments: PickedAttachment<number>[]
     uploading: boolean
+    /** 正在传的那一份材料传到了百分之几；`null` = 没在传。 */
+    uploadPercent?: number | null
     maxFileBytes: number | null
-    /** 起始代码：选好的那一份 .zip，和它是否正在上传。 */
+    /** 起始代码：选好的那一份 .zip，它是否正在上传、传到了百分之几。 */
     starter?: { name: string; size: number } | null
     starterUploading?: boolean
+    starterPercent?: number | null
     materials: SpaceMaterial[]
     materialsState: SpaceMaterialsState
     libraryTo: string
@@ -93,8 +96,10 @@ const props = withDefaults(
   }>(),
   {
     selectedCategoryId: undefined,
+    uploadPercent: null,
     starter: null,
     starterUploading: false,
+    starterPercent: null,
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
@@ -316,6 +321,7 @@ defineExpose({
                 <TaskAttachmentPicker
                   :files="attachments"
                   :uploading="uploading"
+                  :percent="uploadPercent"
                   :max-file-bytes="maxFileBytes"
                   @add="emit('add-attachments', $event)"
                   @remove="emit('remove-attachment', Number($event))"
@@ -323,6 +329,7 @@ defineExpose({
                 <TaskStarterPicker
                   :file="starter"
                   :uploading="starterUploading"
+                  :percent="starterPercent"
                   @pick="emit('pick-starter', $event)"
                   @remove="emit('remove-starter')"
                 />

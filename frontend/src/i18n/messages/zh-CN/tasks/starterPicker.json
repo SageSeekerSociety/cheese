@@ -7,5 +7,10 @@
   "uploading": "上传中…",
   "uploadingPercent": "上传中 {percent}%",
   "uploadFailed": "起始代码上传失败：{error}",
-  "removeFailed": "起始代码移除失败：{error}"
+  "removeFailed": "起始代码移除失败：{error}",
+  "replaceShort": "替换",
+  "removeShort": "移除",
+  "processing": "处理中…",
+  "removeTitle": "移除起始代码？",
+  "removeBody": "移除当场生效，题目记一个新版本。之后开始做的人，代码仓库里不再有起始代码；已经开始的不受影响。"
 }

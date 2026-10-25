@@ -396,6 +396,36 @@ def test_a_bad_archive_picked_on_the_publish_page_publishes_nothing(
     assert resp.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
 
 
+def test_the_publish_page_hears_a_bad_archive_is_refused_before_it_publishes(
+    api_client: TestClient, user_client: UserCreator
+):
+    """发题页上选完压缩包就查：不合格的当场说原因（和放进题目时同一句），合格的不拦；
+    别人传的附件不替他读。"""
+    board = new_board(user_client, api_client)
+    token = board["creator_token"]
+    bad = _upload_loose(api_client, token, "lab.zip", _TRAVERSAL)
+    good = _upload_loose(api_client, token, "lab.zip", _lab())
+
+    refused = api_client.post(
+        "/task-drafts/starter-check", json={"attachmentId": bad}, headers=_auth(token)
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+
+    accepted = api_client.post(
+        "/task-drafts/starter-check", json={"attachmentId": good}, headers=_auth(token)
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    _, stranger = _member_of(user_client, api_client, board)
+    other = api_client.post(
+        "/task-drafts/starter-check",
+        json={"attachmentId": good},
+        headers=_auth(stranger),
+    )
+    assert other.status_code == 403, other.text
+
+
 # --- 上传时收下的，领题时一定放得进仓库 ---------------------------------------------
 
 

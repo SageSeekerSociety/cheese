@@ -31,6 +31,7 @@ const readDraft = vi.fn()
 const saveDraft = vi.fn()
 const publishDraft = vi.fn()
 const removeDraft = vi.fn()
+const checkStarter = vi.fn()
 const updateTask = vi.fn()
 
 const spaceDetail = vi.fn()
@@ -100,6 +101,7 @@ vi.mock('@/api/taskDrafts', () => ({
     save: (...a: unknown[]) => saveDraft(...a),
     publish: (...a: unknown[]) => publishDraft(...a),
     remove: (...a: unknown[]) => removeDraft(...a),
+    checkStarter: (...a: unknown[]) => checkStarter(...a),
   },
 }))
 
@@ -356,6 +358,7 @@ beforeEach(() => {
   saveDraft.mockImplementation(async () => ({ version: 2, updatedAt: '2026-10-20T08:01:00Z' }))
   publishDraft.mockImplementation(async () => ({ task: { id: 501, approved: false }, draftId: 61 }))
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
+  checkStarter.mockImplementation(async () => ({}))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
   listPlatformSkills.mockReset().mockResolvedValue({ data: [], total: 0 })
@@ -530,6 +533,60 @@ describe('发题页：发一道', () => {
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('SpacesDetailTasksList'))
     expect(view.router.currentRoute.value.query.filter).toBe('publishing')
+  })
+
+  it('材料上传时写着传到了百分之几', async () => {
+    uploadAttachment.mockImplementation(
+      (_data: unknown, onProgress?: (event: { loaded: number; total?: number }) => void) =>
+        new Promise(() => onProgress?.({ loaded: 40, total: 100 }))
+    )
+    await boardAs(MEMBER)
+    const view = await mount()
+    const input = view.getByTestId('attachment-input') as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: [pdfFile()], configurable: true })
+    await fireEvent.change(input)
+
+    await waitFor(() => expect(view.getByRole('button', { name: /上传中 40%/ })).toBeTruthy())
+  })
+
+  it('选了起始代码当场就查：不合格的发布前说出原因、不留下，发出去不带它', async () => {
+    checkStarter.mockRejectedValue(new Error('压缩包里的 lab/../../evil.txt 指向压缩包以外的位置'))
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    const input = view.getByTestId('starter-input') as HTMLInputElement
+    Object.defineProperty(input, 'files', {
+      value: [new File([new Uint8Array(64)], 'lab.zip', { type: 'application/zip' })],
+      configurable: true,
+    })
+    await fireEvent.change(input)
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('起始代码上传失败：压缩包里的 lab/../../evil.txt 指向压缩包以外的位置')
+    )
+    expect(publishDraft).not.toHaveBeenCalled()
+    expect(view.queryByTestId('starter-file')).toBeNull()
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    expect(sent().starterAttachmentId ?? null).toBeNull()
+  })
+
+  it('选了合格的起始代码：发出去带着它', async () => {
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+    const input = view.getByTestId('starter-input') as HTMLInputElement
+    Object.defineProperty(input, 'files', {
+      value: [new File([new Uint8Array(64)], 'lab.zip', { type: 'application/zip' })],
+      configurable: true,
+    })
+    await fireEvent.change(input)
+    await waitFor(() => expect(view.getByTestId('starter-file').textContent).toContain('lab.zip'))
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+    expect(sent().starterAttachmentId).toBe(41)
   })
 
   it('本题写了补充要求、选了方式：整份带上', async () => {

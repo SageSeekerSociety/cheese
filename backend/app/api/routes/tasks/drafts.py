@@ -262,6 +262,34 @@ async def start_draft(
     return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
+class StarterCheckIn(BaseModel):
+    #: The .zip the person uploaded (``POST /attachments``) to be the starter.
+    attachment_id: int = Field(alias="attachmentId")
+
+
+class StarterCheckedOut(BaseModel):
+    """Nothing: the archive can be a 题目's starter code."""
+
+
+@router.post(
+    "/starter-check",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(StarterCheckedOut),
+)
+async def check_starter(
+    body: StarterCheckIn, resolver: ActorResolverDep, db=Depends(get_db)
+) -> dict:
+    """The publish page checks the starter code the moment it is chosen, with
+    the check the 题目 runs when the archive is put in: a bad one is refused
+    here, with the reason, rather than after the 题目 is published. Only the
+    person's own upload is read."""
+    user_id = await _person(resolver)
+    await package.check_starter_upload(
+        _attachment_service(db), by=user_id, attachment_id=body.attachment_id
+    )
+    return ok({})
+
+
 @router.get("/{draftId:int}", **typed_response(TaskDraftOut))
 async def read_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],

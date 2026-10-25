@@ -7,5 +7,10 @@
   "uploading": "Uploading…",
   "uploadingPercent": "Uploading {percent}%",
   "uploadFailed": "Couldn't upload the starter code: {error}",
-  "removeFailed": "Couldn't remove the starter code: {error}"
+  "removeFailed": "Couldn't remove the starter code: {error}",
+  "replaceShort": "Replace",
+  "removeShort": "Remove",
+  "processing": "Processing…",
+  "removeTitle": "Remove the starter code?",
+  "removeBody": "This takes effect now and records a new version of the task. People who start after this get no starter code in their repository; those who already started keep theirs."
 }
