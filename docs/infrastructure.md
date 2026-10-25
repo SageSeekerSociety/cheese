@@ -476,7 +476,10 @@ The required gate compares executed JUnit node IDs with an independently
 collected full-suite manifest. Every required case must run once, with no skips.
 Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
 for each partition. Layer floors apply before partitioning. The existing Kotlin
-exclusion and opt-in live Forgejo evaluations remain outside the required set.
+exclusion remains outside the required set. The live Forgejo tests
+(`tests/forgejo`) are not in it either: they need a real forge, so `e2e.yml`'s
+`forgejo live` job runs them after merge against the pinned container
+`tests/forgejo/start.sh` starts.
 
 Reproduce a partition from `backend/` with the same test services and pinned
 tools as `test.yml`. Use a fresh output directory for each run:

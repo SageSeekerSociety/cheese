@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,7 +25,6 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
 from app.domain.agent.room_events import _known_commits, _turn_changeset
-from app.domain.agent_instance.adapters import project_team
 from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
@@ -39,7 +39,6 @@ from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
 from app.domain.review.models import AcceptCard
-from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
@@ -47,6 +46,7 @@ from tests.support.review_ports import (
     pumping,
     record_task_instruction,
     settle_card,
+    task_teammate,
 )
 
 pytestmark = [
@@ -216,6 +216,16 @@ async def test_native_tools_through_platform_transport(
         listener.close()
 
 
+async def _indexed_branch_head(project_id, session, branch):
+    """The branch's head once Forgejo lists it. Forgejo indexes the branches of
+    a git push after the push returns, so its branch API answers 404 for a
+    moment while git already holds the ref."""
+    async with asyncio.timeout(10):
+        while (head := await branch_head(project_id, session, branch)) is None:
+            await asyncio.sleep(0.2)
+    return head
+
+
 async def test_legacy_repository_migration_preserves_all_refs(
     db_factory, monkeypatch, tmp_path
 ):
@@ -290,10 +300,12 @@ async def test_legacy_repository_migration_preserves_all_refs(
     assert (task_worktree / "new.txt").read_bytes() == b"untracked\x00bytes"
     async with db_factory() as session:
         assert (
-            await branch_head(project.id, session, "main") == before["refs/heads/main"]
+            await _indexed_branch_head(project.id, session, "main")
+            == before["refs/heads/main"]
         )
         assert (
-            await branch_head(project.id, session, "task") == before["refs/heads/task"]
+            await _indexed_branch_head(project.id, session, "task")
+            == before["refs/heads/task"]
         )
         snapshot = await snapshots.latest(session, task.id)
         data = await snapshots.download(snapshot)
@@ -433,7 +445,11 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
 
 
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):
-    """Requires host.docker.internal:33087 to reach this test's loopback relay."""
+    """Forgejo, in its container, delivers to this test's relay on the host at
+    host.docker.internal:33087. The relay listens on FORGEJO_TEST_RELAY_HOST:
+    loopback by default, which Colima and Docker Desktop forward to; on Linux
+    the container reaches the host through the Docker bridge, so CI listens on
+    every address."""
     from app import forge_events_app as relay
     from app.domain.review import events, pr_poll
 
@@ -456,7 +472,12 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         "ws://127.0.0.1:33087/forge/events/test/connect",
     )
     server = uvicorn.Server(
-        uvicorn.Config(relay.app, host="127.0.0.1", port=33087, log_level="warning")
+        uvicorn.Config(
+            relay.app,
+            host=os.environ.get("FORGEJO_TEST_RELAY_HOST", "127.0.0.1"),
+            port=33087,
+            log_level="warning",
+        )
     )
     serving = asyncio.create_task(server.serve())
     consumer = None
@@ -477,6 +498,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
                 dispatch_pending=pumping(chat),
+                task_teammate=task_teammate,
             )
         )
         async with asyncio.timeout(10):
@@ -507,12 +529,12 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(20):
             while not changed.await_count:
                 await asyncio.sleep(0.05)
-        changed.assert_awaited_with(
-            chat,
-            announce=announce,
-            kind="forgejo",
-            repo=binding.repo,
-            project_id=str(project.id),
+        # The delivery names the repository that moved and its project.
+        delivery = changed.await_args.kwargs
+        assert (delivery["kind"], delivery["repo"], delivery["project_id"]) == (
+            "forgejo",
+            binding.repo,
+            str(project.id),
         )
     finally:
         if consumer is not None:
@@ -605,7 +627,7 @@ def _push_with_cli(binding, token, root, author):
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path, owner_credit
 ):
-    from app.api.routes.accept import _pr_checks_payload
+    from app.api.routes.accept import _accept_service, _pr_checks_payload
     from app.domain.review import services as review_services
     from app.domain.site.services import (
         publication_source,
@@ -643,7 +665,14 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         session.add(task)
         await session.commit()
-        scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(room.id))
+        # The task's own session opens it: a credential minted in the task's
+        # conversation, naming the agent that works it. Each run names its own
+        # agent, since Forgejo gives one email to one account only.
+        scoped = mint_scoped_token(
+            project_id=str(project.id),
+            topic_id=str(task.id),
+            agent_handle=f"report-agent-{uuid.uuid4().hex[:8]}",
+        )
         metadata = await open_task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == ["requester <requester@zhishi.local>"]
         project.settings = {"commit_credit": "owner" if owner_credit else "agent"}
@@ -678,7 +707,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         draft = await publisher.open_pr(
             head="task/report",
             base="main",
-            title="WIP: Report",
+            title="Write report",
             body="Report",
             draft=True,
         )
@@ -730,6 +759,9 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                 pr_repo=binding.repo,
                 pr_url=draft["url"],
                 rebase_count=2,
+                reviewer_handle="reviewer",
+                # The line the merge lands: the PR's own title.
+                change_subject="Write report",
             )
             session.add(card)
             await session.commit()
@@ -743,14 +775,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).push_fix(task.id)
+            refreshed = await _accept_service(session).push_fix(task.id)
             assert refreshed["pushed"] is True
+            # The checks read closed its session, so the card is read again.
+            card = await session.get(AcceptCard, card.id)
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).push_fix(task.id)
+            again = await _accept_service(session).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
@@ -769,14 +799,17 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).accept(card_id=card.id, decided_by="reviewer", head_sha=latest)
+            accepted = await _accept_service(session).accept(
+                card_id=card.id, decided_by="reviewer", head_sha=latest
+            )
             await session.commit()
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha
             delivered = await session.get(Task, task.id)
-            assert delivered.status == TaskStatus.closed
+            # Its last step landed: the task stays open while its agent
+            # writes the summary, and is on its way to closing.
+            assert delivered.status == TaskStatus.open
+            assert delivered.closing_since is not None
             assert delivered.accepted_by == "reviewer"
             assert delivered.delivered_head == latest
             assert (await session.get(Topic, room.id)).status.value == "active"
