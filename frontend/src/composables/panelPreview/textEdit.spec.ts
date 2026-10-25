@@ -163,6 +163,12 @@ it('别人先改过：这一版不写，报冲突，编辑里的字留着', asyn
   expect(refreshDocument).not.toHaveBeenCalled()
   // 打过的字还在，读者能先拷走。
   expect(bundle.draft.value).toBe('# 我改的\n')
+
+  // 再点一次保存还是同一版（钉住的没有动），所以还是 409：不读一遍最新的就出不去，
+  // 这正是提示条上那个按钮要做的事。
+  expect(await bundle.save()).toBe(false)
+  expect(api.writeRoomTextFile).toHaveBeenLastCalledWith('room', 'notes/记录.md', '# 我改的\n', 'v1')
+  expect(api.writeRoomTextFile).toHaveBeenCalledTimes(2)
 })
 
 it('报冲突之后「载入最新的」：正文和版本都换成文件现在那一版', async () => {
