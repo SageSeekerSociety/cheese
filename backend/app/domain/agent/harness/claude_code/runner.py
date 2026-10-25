@@ -34,6 +34,7 @@ Standard library only: this module travels in the runner archive.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -320,6 +321,51 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
         if path.is_file() and path.stat().st_size:
             return path
     return None
+
+
+#: How many bytes one read of a transcript hands back. The executor's own view
+#: of this file pulls it in pieces of this size (`forwarded_transcript`), and a
+#: piece has to fit the JSON line it travels in.
+TRANSCRIPT_CHUNK_BYTES = 384 * 1024
+
+
+def transcript_chunk(config_dir: Path, session_id: str, offset: int, size: int) -> dict:
+    """One piece of this session's transcript, or that it is not there.
+
+    This is what an executor asks its session for through the platform
+    (`topic_transcript_chunks` route → here), so a file this session holds can
+    be read on the machine its tools run on. The path is not the caller's to
+    name: the piece is looked up by this session's own id under the config dir
+    the runner was launched with, so nothing outside this session's transcript
+    can be reached through it. A transcript that is not there yet is
+    ``{"missing": True}`` rather than an error — a session asked for its
+    transcript before Claude Code has written one is a real state, not a
+    failure.
+
+    ``size`` may be 0, which is how the executor asks where this file is
+    without pulling any of it: the answer then carries ``path``, this host's
+    own spelling of it, which is the name the build puts in front of the model
+    after a compaction and the name the executor mounts its view at.
+    """
+    path = transcript(config_dir, session_id)
+    if path is None:
+        return {"missing": True}
+    if size == 0:
+        return {
+            "size": path.stat().st_size,
+            "offset": offset,
+            "data": "",
+            "path": str(path),
+        }
+    with path.open("rb") as source:
+        source.seek(offset)
+        data = source.read(size)
+    return {
+        "size": path.stat().st_size,
+        "offset": offset,
+        "data": base64.b64encode(data).decode(),
+        "eof": offset + len(data) >= path.stat().st_size,
+    }
 
 
 #: 上一次对账写下去的那一版（路径 → 指纹），**和那棵树放在同一个目录里**。
@@ -1845,6 +1891,24 @@ class Runner(runner.Runner[Journal]):
             # `last_work` once it has ended.
             work = self.work or self.last_work
             return {"work_id": work} if work else {}
+        if method == "transcript_chunk":
+            # The session's own file, asked for by the machine its tools run on
+            # (`topic_transcript_chunks`). Read-only, and only this session's own
+            # transcript: the caller names an offset and a size, never a path.
+            # A size of 0 asks only where the file is, which is the answer the
+            # executor mounts its view by. Before the epoch check below, because
+            # it is the executor asking through the platform, not the platform's
+            # registration. A session asked before its agent has started has no
+            # config dir yet, which is the same answer as a transcript not yet
+            # written.
+            if self.config_dir is None or self.session_id is None:
+                return {"missing": True}
+            return transcript_chunk(
+                self.config_dir,
+                self.session_id,
+                int(params["offset"]),
+                int(params["size"]) if "size" in params else TRANSCRIPT_CHUNK_BYTES,
+            )
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.
         self.outbox.check(params.get("epoch"))

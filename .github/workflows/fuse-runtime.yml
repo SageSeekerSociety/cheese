@@ -1,0 +1,127 @@
+name: fuse-runtime
+
+# The libfuse 2 runtime cheesehost will place on a Linux machine
+# (`scripts/build-fuse-runtime.sh`), for a room's executor to load by path
+# (`bootstrap.placed_libfuse`). A pull request that changes the recipe builds
+# it and mounts a view through it on both architectures, so the recipe is known
+# to work before it merges; publishing the release is a manual dispatch from
+# main, because a release is what machines download — and the pin in
+# `agent/toolchain.py` follows the release, the way `#4592` did it for the host
+# tools. Until that release exists no machine has a placed library, which is
+# the same silent no-view path as a machine without FUSE.
+on:
+  pull_request:
+    paths:
+      - scripts/build-fuse-runtime.sh
+      - .github/workflows/fuse-runtime.yml
+      - .github/scripts/fuse-view-smoke.py
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+      # The arm leg is expected to fail until the header patch lands (see the
+      # note on the build step). On by default, `fail-fast` would cancel the
+      # still-running x64 leg with it, so nothing would upload and the job
+      # could never go green — which is the opposite of what it is here for.
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The build happens inside this image and not on the runner, which the
+      # recipe checks for itself: glibc symbols are versioned and a library
+      # built on a newer one is refused by every older machine's loader.
+      # Debian 12 is glibc 2.34, the oldest the source was verified to build
+      # against, so one artifact serves Ubuntu 22.04, RHEL 9 and everything
+      # after them.
+      #
+      # Both architectures build, now that the recipe applies its one header
+      # patch (`scripts/patches/fuse-kernel-undef-types.patch`): upstream's
+      # `fuse_kernel.h` leaks five type macros, and on aarch64 a later system
+      # header redefines one of them. The comment on the patch in the recipe
+      # has the whole chain.
+      - name: Build on the baseline distribution
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            debian:bookworm@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 \
+            sh scripts/build-fuse-runtime.sh dist
+      - name: Unpack
+        run: |
+          mkdir "$RUNNER_TEMP/placed"
+          tar -xzf dist/fuse-*.tar.gz -C "$RUNNER_TEMP/placed" --strip-components=1
+          cat "$RUNNER_TEMP/placed/NOTICE"
+          ls "$RUNNER_TEMP/placed/licenses"
+          echo "LIBRARY=$RUNNER_TEMP/placed/libfuse.so.2" >> "$GITHUB_ENV"
+      - name: The library loads on the runner too, alone as it ships
+        # The shipped file is alone beside its license, so a library that needs
+        # something else next to it fails here rather than on a machine.
+        run: |
+          ldd "$LIBRARY"
+          python3 -c "import ctypes, sys; ctypes.CDLL(sys.argv[1])" "$LIBRARY"
+      # What a room's executor does with it: `fusepy` loads this file by path
+      # (`FUSE_LIBRARY_PATH`, `bootstrap.transcript_view_env`) and mounts a
+      # read-only view through it. `fusermount` comes from the distribution on
+      # purpose — the library falls back to `execvp("fusermount")` — and the
+      # package holds no setuid binary of its own.
+      - name: A read-only view mounted through the built library
+        run: |
+          # `fuse` for `fusermount` and `/dev/fuse`; a venv for `fusepy`,
+          # because ubuntu-24.04's system python3 refuses `pip install`
+          # (PEP 668) and every other workflow here that needs a package makes
+          # one the same way. The script is run *by that venv's* interpreter so
+          # the copy it loads is the copy it just installed.
+          #
+          # The version comes from `backend/uv.lock`, not written here: the
+          # point of this job is that the copy the smoke test loads is the copy
+          # a room's executor ships (`release.sources` takes `fuse.py` out of
+          # the installed `fusepy`), and a number written here would drift from
+          # the lock with nothing to say so.
+          #
+          # What this does not do is *follow* a lock bump: `backend/uv.lock` is
+          # not in this workflow's `paths:`, so a lock-only pull request does
+          # not build both architectures for it. The version is current at
+          # every run and a bump is exercised at the next one — the recipe
+          # changing is what brings it back. Adding the lock to `paths:` is how
+          # to close that gap.
+          fusepy="$(awk '/^name = "fusepy"$/{found=1; next}
+                         found && /^version = /{gsub(/[",]/,""); print $3; exit}' \
+                       backend/uv.lock)"
+          [ -n "$fusepy" ] || { echo "no fusepy in backend/uv.lock"; exit 1; }
+          "$GITHUB_WORKSPACE/.github/scripts/ensure-apt.sh" fuse
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "fusepy==$fusepy"
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/fuse-view-smoke.py "$LIBRARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuse-runtime-${{ matrix.runner }}
+          path: dist/
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          recipe=scripts/build-fuse-runtime.sh
+          revision=$(sed -n 's/^revision="\(.*\)"$/\1/p' "$recipe")
+          version=$(sed -n 's/^version=//p' "$recipe")
+          gh release create "fuse-runtime-v$revision" dist/* --target "$GITHUB_SHA" \
+            --title "fuse runtime $revision" \
+            --notes "libfuse $version, built by \`$recipe\` against glibc on the baseline distribution it names, for cheesehost to place on Linux machines. One shared library per platform; a machine's own \`fusermount\` is used. The source is upstream's, checked against the SHA-256 in the recipe; its license text and the archive's \`NOTICE\` are inside."
