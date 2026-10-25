@@ -96,7 +96,8 @@ EVENTS = (*NOTIFIED_BY, *IN_A_TASK)
 #: A decision a ``decided`` rule may wait for alone.
 OUTCOMES = {"accepted": "采纳", "rejected": "退回"}
 
-#: The most routines a person keeps, running or paused.
+#: The most rules a person keeps that repeat, running or paused; and the
+#: most that fire once.
 MAX_ROUTINES = 20
 #: The most runs one event routine starts in an hour; past it, the rest of the
 #: hour's events are skipped.
@@ -268,13 +269,6 @@ async def create(
 ) -> AssistantRoutine:
     """A new rule, made in the conversation the person asked for it in; the
     caller commits."""
-    count = await session.scalar(
-        select(func.count()).where(
-            AssistantRoutine.user_id == user_id, AssistantRoutine.state != "done"
-        )
-    )
-    if (count or 0) >= MAX_ROUTINES:
-        raise ValidationError(say("assistantRoutineLimit", max=MAX_ROUTINES))
     tz = (await timezones_by_ids(session, [user_id])).get(user_id) or DEFAULT_TIMEZONE
     now = _now()
     row = AssistantRoutine(
@@ -290,6 +284,11 @@ async def create(
         conversation_id=conversation_id,
     )
     row.next_run_at = _first_run(row, now)
+    # Rules that fire once and rules that repeat are kept apart, each up to
+    # ``MAX_ROUTINES``: waiting for one thing takes no repeating rule's place.
+    kept = [r for r in await mine(session, user_id) if r.state != "done"]
+    if sum(once(r) == once(row) for r in kept) >= MAX_ROUTINES:
+        raise ValidationError(say("assistantRoutineLimit", max=MAX_ROUTINES))
     session.add(row)
     await session.flush()
     return row

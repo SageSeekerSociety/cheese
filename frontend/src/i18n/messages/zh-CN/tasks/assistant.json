@@ -177,5 +177,10 @@
       "problem": "题目"
     },
     "label": "引用"
+  },
+  "waits": {
+    "label": "正在等的事",
+    "cancel": "取消",
+    "cancelFailed": "取消失败"
   }
 }

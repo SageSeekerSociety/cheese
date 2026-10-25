@@ -66,6 +66,8 @@ const ROUTINE = {
   state: 'active',
   paused: '',
   nextRunAt: new Date(Date.now() + 3600_000).toISOString(),
+  once: false,
+  conversationId: null,
   lastRun: { status: 'done', at: new Date().toISOString(), asked: 2, conversationId: 'c1' },
   weekCredits: 3.2,
 }

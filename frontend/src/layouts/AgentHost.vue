@@ -69,6 +69,7 @@ import { toast } from 'vuetify-sonner'
 
 import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
+import { useAgentWaits } from '@/composables/useAgentWaits'
 
 import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
@@ -203,6 +204,9 @@ function openTask(id: number) {
   if (spaceId) void router.push({ name: 'TasksDetail', params: { spaceId, taskId: id } })
 }
 
+// 这段对话里芝士正在等的事，列在输入框上方，可以取消。
+const waiting = useAgentWaits(agentThread.current, agentThread.busy)
+
 const panelProps = computed(() => {
   const context = agentContext.value ?? {}
   const view = agentView.value
@@ -245,6 +249,7 @@ const panelProps = computed(() => {
       Object.values(agentPicked.value).map((item) => [item.id, { kind: item.kind, title: item.title }])
     ),
     searchProblems: citing.searchProblems,
+    waits: waiting.waits.value,
   }
 })
 
@@ -286,6 +291,8 @@ const panelEvents = {
   citeOpen: () => void citing.load(),
   cite: (item: Citable) => pickForAgent(item),
   openLink: (path: string) => void router.push(path),
+  cancelWait: (id: string) =>
+    void waiting.cancel(id).then((done) => done || toast.error(t('tasks.assistant.waits.cancelFailed'))),
 }
 </script>
 

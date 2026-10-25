@@ -219,6 +219,7 @@
           </button>
         </div>
       </Transition>
+      <AssistantWaits v-if="waits.length" :waits="waits" @cancel="(id: string) => emit('cancelWait', id)" />
       <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
       <div class="ap__box">
         <CiteMenu
@@ -307,6 +308,7 @@
 // 个人芝士在一个地方的面板（#2285）：这里的几段对话、当前这段的内容、输入框。题目页、
 // 发布页、改题页用的都是它；芝士每一轮做的事（调的工具、写进草稿的改动、发布的结果）
 // 由 `AssistantTurn` 画。只拿 props、只发事件：说话、换对话、撤销、交文件都由外面那一层去做。
+import type { AgentWait } from '@/composables/useAgentWaits'
 import type { VoiceHeard } from '@/composables/useVoiceInput'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
@@ -325,6 +327,7 @@ import { useComposerVoice } from '@/composables/useComposerVoice'
 import AssistantAsked from './AssistantAsked.vue'
 import AssistantContextRow from './AssistantContextRow.vue'
 import AssistantTurn from './AssistantTurn.vue'
+import AssistantWaits from './AssistantWaits.vue'
 import CiteMenu from './CiteMenu.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -433,6 +436,7 @@ const props = withDefaults(
     /** 用 @ 挑过的东西，输入框里的标签照它写名字。 */
     cited?: NonNullable<RefNames['cited']>
     searchProblems?: (query: string) => Promise<Citable[]>
+    waits?: AgentWait[]
   }>(),
   {
     earlier: () => [],
@@ -466,6 +470,7 @@ const props = withDefaults(
     project: null,
     cited: () => ({}),
     searchProblems: undefined,
+    waits: () => [],
   }
 )
 
@@ -496,6 +501,7 @@ const emit = defineEmits<{
   /** 打开了 @ 菜单：去读能引用的东西。 */
   citeOpen: []
   cite: [item: Citable]
+  cancelWait: [id: string]
 }>()
 
 /** 回答里指向站内页面的链接不整页刷新，交给外面换页；外链和带修饰键的点击照浏览器的来。 */

@@ -1660,6 +1660,10 @@
     "s15": {
       "name": "Citing with {'@'}",
       "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
+    },
+    "s16": {
+      "name": "Waiting for something",
+      "note": "Asked to act once something happens: a row over the input says what Cheese will do and what it waits for, with Cancel beside it. When it happens Cheese carries on in this conversation and the row goes."
     }
   },
   "myDraftsView": {

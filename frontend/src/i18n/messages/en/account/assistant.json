@@ -34,6 +34,11 @@
     "clearTitle": "Clear all memories?",
     "clearBody": "Cheese forgets these {n}. This cannot be undone."
   },
+  "waits": {
+    "title": "Waiting for",
+    "givenUp": "Stopped waiting",
+    "cancel": "Cancel"
+  },
   "routines": {
     "title": "Routines",
     "desc": "Cheese runs these on a schedule or when something happens, and notifies you of the result. To create or change one, tell Cheese in the panel.",

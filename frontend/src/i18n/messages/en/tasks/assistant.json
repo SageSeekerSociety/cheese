@@ -177,5 +177,10 @@
       "problem": "Problems"
     },
     "label": "Cite"
+  },
+  "waits": {
+    "label": "Waiting for",
+    "cancel": "Cancel",
+    "cancelFailed": "Could not cancel"
   }
 }

@@ -4,7 +4,8 @@
  *
  * 五块，自上而下：需要确认（几类勾选，和自己添加的条目），无需确认（自己添加的条目），
  * 记忆（芝士记得的关于你的事：开关、逐条改和删、全部清除），
- * 例行事务（芝士自己定时或在某件事发生时做的事：何时运行、最近一次怎样、暂停恢复删除），
+ * 正在等的事（只做一次、在建它的那段对话里做的：等什么、查看对话、取消；没有就不画），
+ * 例行事务（芝士自己定时或在某件事发生时反复做的事：何时运行、最近一次怎样、暂停恢复删除），
  * 最近的操作（做了的、请人确认过的，请人确认的写原因）。
  */
 import type {
@@ -84,8 +85,12 @@ function confirmClear() {
 
 /** 要删除的那条例行事务：先确认。 */
 const deleting = ref<AssistantRoutine | null>(null)
-// A one-off that has run no longer counts toward the limit.
-const counted = computed(() => props.routines.filter((r) => r.state !== 'done').length)
+// Rules that fire once are waits, listed and counted apart from the ones that repeat.
+const repeating = computed(() => props.routines.filter((r) => !r.once))
+const waiting = computed(() => props.routines.filter((r) => r.once))
+// One that is done no longer counts toward the limit.
+const counted = computed(() => repeating.value.filter((r) => r.state !== 'done').length)
+const waitCount = computed(() => waiting.value.filter((r) => r.state !== 'done').length)
 
 function confirmDelete() {
   if (deleting.value) emit('routine', deleting.value.id, 'delete')
@@ -102,6 +107,7 @@ function when(at: string): string {
 }
 
 function state(r: AssistantRoutine): string {
+  if (r.state === 'done' && r.once && !r.lastRun) return t('account.assistant.waits.givenUp')
   if (r.state === 'done') return t('account.assistant.routines.ran')
   if (r.state === 'paused') return t(`account.assistant.routines.paused.${r.paused || 'person'}`)
   return r.nextRunAt ? t('account.assistant.routines.next', { time: when(r.nextRunAt) }) : ''
@@ -264,17 +270,59 @@ function last(r: AssistantRoutine): string {
         </div>
       </section>
 
+      <section v-if="waiting.length" class="settings-card">
+        <h2 class="settings-card__title ast__title-row">
+          <span>{{ t('account.assistant.waits.title') }}</span>
+          <span class="ast__count t-num">{{
+            t('account.assistant.routines.count', { n: waitCount, max: routineLimit })
+          }}</span>
+        </h2>
+        <ul class="ast__recent">
+          <li v-for="r in waiting" :key="r.id" class="ast__routine">
+            <div class="ast__body">
+              <p class="ast__summary">{{ r.title }}</p>
+              <p class="ast__reason">{{ r.when }}</p>
+              <p v-if="state(r) && r.state !== 'active'" class="ast__meta">
+                <span :class="{ ast__paused: r.state === 'paused' }">{{ state(r) }}</span>
+              </p>
+            </div>
+            <div class="ast__actions">
+              <BaseButton
+                v-if="r.conversationId"
+                kind="ghost"
+                size="sm"
+                @click="emit('openConversation', r.conversationId ?? '')"
+              >
+                {{ t('account.assistant.routines.view') }}
+              </BaseButton>
+              <BaseButton
+                v-if="r.state === 'paused'"
+                kind="ghost"
+                size="sm"
+                :disabled="saving"
+                @click="emit('routine', r.id, 'resume')"
+              >
+                {{ t('account.assistant.routines.resume') }}
+              </BaseButton>
+              <BaseButton kind="ghost" size="sm" :disabled="saving" @click="emit('routine', r.id, 'delete')">
+                {{ r.state === 'done' ? t('account.assistant.routines.delete') : t('account.assistant.waits.cancel') }}
+              </BaseButton>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <section class="settings-card">
         <h2 class="settings-card__title ast__title-row">
           <span>{{ t('account.assistant.routines.title') }}</span>
-          <span v-if="routines.length" class="ast__count t-num">{{
+          <span v-if="repeating.length" class="ast__count t-num">{{
             t('account.assistant.routines.count', { n: counted, max: routineLimit })
           }}</span>
         </h2>
         <p class="settings-card__desc">{{ t('account.assistant.routines.desc') }}</p>
-        <p v-if="!routines.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
+        <p v-if="!repeating.length" class="ast__none">{{ t('account.assistant.routines.empty') }}</p>
         <ul v-else class="ast__recent">
-          <li v-for="r in routines" :key="r.id" class="ast__routine">
+          <li v-for="r in repeating" :key="r.id" class="ast__routine">
             <div class="ast__body">
               <p class="ast__summary">{{ r.title }}</p>
               <p class="ast__reason">{{ r.when }}</p>
