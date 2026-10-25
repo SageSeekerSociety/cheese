@@ -92,9 +92,11 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     error.value = ''
     conflicted.value = false
     try {
-      await writeRoomTextFile(tid, file.path, draft.value, file.version)
-      // 存下去了：立刻反映到预览台上，别让人以为没生效。正文和版本都换成刚存下的。
+      const saved = await writeRoomTextFile(tid, file.path, draft.value, file.version)
+      // 存下去了：立刻反映到预览台上，别让人以为没生效。正文和版本一起换成刚存下的
+      // ——只换正文、留着旧版本，评论标记那几处会按一个早已过期的版本去比。
       file.content = draft.value
+      if (saved.version) file.version = saved.version
       draft.value = null
       refreshDocument()
       return true

@@ -54,7 +54,7 @@ function setup(path: string, over: Record<string, unknown> = {}) {
   )
   app.mount(document.createElement('div'))
   apps.push(app)
-  return { bundle, refreshDocument }
+  return { bundle, refreshDocument, state }
 }
 
 it('markdown 房间文件：能改，存下去带的是读到的那个版本', async () => {
@@ -70,6 +70,18 @@ it('markdown 房间文件：能改，存下去带的是读到的那个版本', a
   expect(refreshDocument).toHaveBeenCalled()
   // 存完编辑收起来。
   expect(bundle.draft.value).toBeNull()
+})
+
+it('存下去之后这一份的正文和版本一起换成刚存下那版', async () => {
+  // 只换正文、留着旧版本，评论标记那几处会按一个早已过期的版本去比：正文是新写的，
+  // 版本还停在读它时那一版。
+  const { bundle, state } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 新的\n')
+
+  expect(await bundle.save()).toBe(true)
+  expect(state.previewFile.value?.content).toBe('# 新的\n')
+  expect(state.previewFile.value?.version).toBe('v2')
 })
 
 it('二进制 / 太大的文件不能改：读不出版本，也就写不回去', async () => {
