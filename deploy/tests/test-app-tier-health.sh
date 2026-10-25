@@ -977,9 +977,11 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
 test_ghcr_login_retries_dropped_connections() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/login-retry.XXXXXX")"
+  docker_log="$run_dir/docker.log"
   token='ghs_fake_login_token_4f1d'
   # Five resets in a row, as on dev deploy run 40138894358, then ghcr answers.
   if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_GHCR_TOKEN="$token" \
     APP_TIER_LOGIN_FAIL_COUNT=5 \
     APP_TIER_LOGIN_COUNTER="$run_dir/login.count" \
@@ -994,14 +996,14 @@ test_ghcr_login_retries_dropped_connections() {
     fail "the ghcr login gave up on a registry that answered within the budget"
   fi
 
-  # docker got the token on stdin on every attempt, and it shows up nowhere in
-  # what the login printed.
+  # docker got the token on stdin on every attempt, and it shows up neither in
+  # what the login printed nor on any docker command line.
   attempts="$(grep -cxF "$token" "$run_dir/login.secret" || true)"
   [ "$attempts" = 6 ] || fail "expected the token on stdin for 6 login attempts, saw $attempts"
   grep -q 'ghcr login: succeeded on attempt 6' "$run_dir/out" || \
     fail "the login that finally worked was not reported"
-  if grep -qF "$token" "$run_dir/out"; then
-    fail "the ghcr token appeared in the login's output"
+  if grep -qF "$token" "$run_dir/out" "$docker_log"; then
+    fail "the ghcr token appeared in the login's output or on a docker command line"
   fi
   rm -rf "$run_dir"
   echo "PASS: a ghcr login that hits dropped connections is retried within the budget, token on stdin only"
@@ -1025,7 +1027,8 @@ test_ghcr_login_refused_is_not_retried() {
     fail "the ghcr login succeeded although ghcr refused its credential"
   fi
 
-  attempts="$(wc -l < "$run_dir/login.secret" | tr -d ' ')"
+  attempts=0
+  [ ! -f "$run_dir/login.secret" ] || attempts="$(wc -l < "$run_dir/login.secret" | tr -d ' ')"
   [ "$attempts" = 1 ] || fail "a refused credential was tried $attempts times, expected once"
   grep -q 'ghcr login was refused by the registry' "$run_dir/out" || \
     fail "the failure did not say the registry refused the credential"
