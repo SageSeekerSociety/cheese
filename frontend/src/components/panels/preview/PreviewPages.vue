@@ -296,22 +296,27 @@ function onSelect() {
   const host = (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest('[data-page]')
   if (!host) return
   const page = Number((host as HTMLElement).dataset.page)
+  // 两侧文字量的是这一页的文字层，而且要求**两头**都落在里面。只核一头是不够的：
+  // 拖过页脚的选区起在这一页的文字层、结在下一页的，`contextAround` 把结尾挪到起点
+  // 之后 `suffix` 就成了空串——交出去的是「这是第 2 页的一段」，而那段话其实跨到了
+  // 第 3 页。幻灯片那边也是两头都核（`sheet.contains(start) && sheet.contains(end)`）。
+  //
+  // 量不到就**不带**两侧文字：它们在锚点里本来就是可选的（`SlidePageContext.prefix`
+  // 是 undefined 时序列化连键都不出现），比量出一段错的、或者拿页框当根把这一页的
+  // 错误提示和评论按钮当成正文量进去要好。
+  const startEl = node.nodeType === 1 ? (node as Element) : node.parentElement
+  const textLayer = startEl?.closest<HTMLElement>('.pv-text') ?? null
+  const inOneLayer = !!textLayer && textLayer.contains(range.endContainer)
   // 有身份就走幻灯片那条结构化出口：同一个锚点、同一份版本，两侧文字帮受话人分辨同
   // 一句话在这一页的哪一处。没有身份（这一份还没核过）才退回那句不带版本的拼话——
   // 它指不回哪一版，但也不撒谎。
-  //
-  // 两侧文字量的是这一页的文字层（`contextAround` 要求选区落在它给的根里）；选区不
-  // 在文字层里（选到的是画布那层）就退到页框本身，量出来的两侧是空的，锚点照样成立。
-  const textRoot =
-    (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest<HTMLElement>('.pv-text') ??
-    (host as HTMLElement)
   if (canQuote.value && props.context) {
     emit('page-context', {
       text,
       page,
       scope: 'selection',
       context: { ...props.context },
-      ...contextAround(textRoot, range),
+      ...(inOneLayer && textLayer ? contextAround(textLayer, range) : {}),
     })
     return
   }

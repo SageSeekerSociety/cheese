@@ -333,6 +333,72 @@ describe('分页文档的阅读视图', () => {
     expect(ui.emitted('page-context')).toBeUndefined()
     selection.removeAllRanges()
   })
+
+  it('选区跨了两页时，不拿起点那一页的后文当两侧文字', async () => {
+    // 拖过页脚的选区起在这一页、结在下一页。只核起点的话 `contextAround` 会把结尾挪
+    // 到起点那儿，`suffix` 量出来是空串——交出去的是「这是第 1 页的一段」，那段话
+    // 其实跨到了第 2 页。量不出来就不带两侧文字，别给一段错的。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const first = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const second = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const makeLayer = (parent: HTMLElement, body: string) => {
+      const layer = document.createElement('div')
+      layer.className = 'pv-text'
+      const node = document.createTextNode(body)
+      layer.appendChild(node)
+      parent.appendChild(layer)
+      return node
+    }
+    const head = makeLayer(first, '跨页开头')
+    const tail = makeLayer(second, '跨页结尾')
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(head, 0)
+    range.setEnd(tail, tail.length)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(first)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; page: number; prefix?: string; suffix?: string }]
+    expect(payload.page).toBe(1)
+    // 两样都不出现：没量准的东西不许冒充「这一页的上下文」。
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('选区落在这一页的错误提示上时，不把它当成正文量两侧', async () => {
+    // 页框里除了文字层，还有画不出来的那一页的说明和评论标记。拿页框当量两侧的根，
+    // 就会把那段说明当正文、把它的前后当上下文——交出去的引用说的是文件里的原文，
+    // 而那段字是界面自己的话。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const pageBox = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const notice = document.createElement('div')
+    notice.className = 'pv-error'
+    const node = document.createTextNode('这一页无法显示：页流损坏')
+    notice.appendChild(node)
+    pageBox.appendChild(notice)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(pageBox)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; prefix?: string; suffix?: string }]
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
+    selection.removeAllRanges()
+  })
 })
 
 describe('在页面上指一点', () => {
