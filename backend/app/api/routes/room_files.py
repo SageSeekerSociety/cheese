@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
 from app.api.doc_access import require_role
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
@@ -40,7 +41,6 @@ from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
 from app.domain.library import records as library_records
 from app.domain.library import service as library
-from app.domain.library.shelf import Shelf
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
@@ -179,11 +179,12 @@ async def room_file_raw(
     topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> Response:
     """The file as it is now, with its version — what `cheese pull` reads."""
-    place, _ = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
     name = library.library_name(clean)
     if name is not None:
-        data = await library_records.read(db, Shelf.of_project(place.project_id), name)
+        shelf = await shelf_for(db, place.project_id, actor)
+        data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, clean
@@ -267,7 +268,8 @@ async def copy_into_room(
         raise ValidationError(say("unsupportedFileType"))
     name = library.library_name(source)
     if name is not None:
-        data = await library_records.read(db, Shelf.of_project(place.project_id), name)
+        shelf = await shelf_for(db, place.project_id, actor)
+        data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, source

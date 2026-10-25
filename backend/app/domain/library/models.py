@@ -4,8 +4,9 @@
 字节：「替换为新版本」把旧的那一行标成被取代，再为新字节记一行——所以同一个名字
 可以有几行，`superseded_at` 为空的那一行是现在这一份。
 
-资料库属于一个项目，或者一个团队（`shelf.Shelf`）：一个人自己的资料库，是他名下那个只有
-他一人的团队的。一行只属于其中一个。
+资料库属于一个项目、一个团队，或者一道题目（`shelf.Shelf`）：一个人自己的资料库，是他
+名下那个只有他一人的团队的；题目的资料库装出题人给的材料，从这道题派生的项目在自己资料库
+的 `题目/` 下读到它（`mount`）。一行只属于其中一个。
 
 名字里的 `/` 就是文件夹：没有文件夹表，一个文件夹在它里面还有文件时存在。名字和
 字节的位置（`location` + `blob_key`，见 `blobs`）是分开的两件事，所以改名、挪进
@@ -50,8 +51,17 @@ class LibraryFileRecord(UuidPk, Base):
             unique=True,
             postgresql_where=text("superseded_at IS NULL AND team_id IS NOT NULL"),
         ),
+        # 题目的资料库也一样。
+        Index(
+            "uq_library_files_task_current",
+            "task_id",
+            "name",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL AND task_id IS NOT NULL"),
+        ),
         CheckConstraint(
-            "num_nonnulls(project_id, team_id) = 1", name="ck_library_files_one_shelf"
+            "num_nonnulls(project_id, team_id, task_id) = 1",
+            name="ck_library_files_one_shelf",
         ),
     )
 
@@ -63,6 +73,13 @@ class LibraryFileRecord(UuidPk, Base):
     team_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("team.id", ondelete="CASCADE", name="fk_library_files_team_id_team"),
+        index=True,
+        nullable=True,
+    )
+    #: 属于哪道题目的资料库；项目、团队的资料库是空的。
+    task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_library_files_task_id_task"),
         index=True,
         nullable=True,
     )

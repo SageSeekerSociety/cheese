@@ -1328,17 +1328,36 @@ class FileSlotIn(BaseModel):
 async def agent_file_slot(
     body: FileSlotIn, resolver: ActorResolverDep, db: DbSession
 ) -> dict:
-    """cheese_library(action=give) 的第一步：一个放 ``size`` 个字节进用户资料库的地址。放不下
-    （总量、单个文件的上限）就在这里说。"""
+    """cheese_library(action=give) 的第一步：一次放 ``size`` 个字节进用户资料库的
+    上传，和它怎么切成段。放不下（总量、单个文件的上限）就在这里说。"""
     _, shelf = await _my_library(resolver, db)
     name = library_service.clean_upload_name(body.name)
     await library_records.refuse_past_room(db, shelf, body.size)
-    slot = await library_records.upload_slot(shelf, name, body.size)
-    return ok({**slot, "url": _reachable(slot["url"])})
+    return ok(await library_records.upload_slot(shelf, name, body.size))
+
+
+class FilePartIn(BaseModel):
+    upload: str
+    part: int = Field(ge=1)
+    md5: str
+
+
+@router.post("/files/part", include_in_schema=False)
+async def agent_file_part(
+    body: FilePartIn, resolver: ActorResolverDep, db: DbSession
+) -> dict:
+    """cheese_library(action=give) 的第二步：一段的地址，电脑把这一段原样 PUT 过去，带上给的
+    请求头；字节的 MD5 对不上的存储不收。"""
+    _, shelf = await _my_library(resolver, db)
+    part = await library_records.upload_part(shelf, body.upload, body.part, body.md5)
+    return ok({**part, "url": _reachable(part["url"])})
 
 
 class FileHandedIn(BaseModel):
     upload: str
+    #: 整份的 SHA-256，和每一段（按顺序）的 MD5，十六进制。
+    sha256: str
+    parts: list[str]
     name: str = Field(min_length=1, max_length=512)
 
 
@@ -1349,7 +1368,7 @@ async def agent_file_handed(
     """cheese_library(action=give) 的最后一步：传上来的那一份登记进用户的资料库，回答里出现
     一张文件卡片。撞名不覆盖，拿下一个 ``(n)``。"""
     me, shelf = await _my_library(resolver, db)
-    upload = await library_records.received(shelf, body.upload)
+    upload = library_records.received(shelf, body.upload, body.sha256, body.parts)
     name = await library_records.add(
         db,
         shelf,

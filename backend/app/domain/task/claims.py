@@ -15,6 +15,8 @@ from sqlalchemy.orm import aliased
 
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
+from app.domain.task.stages import list_stages
+from app.domain.task.submission_state import STAGE_NOT_SUBMITTED, stage_states_of
 from app.domain.team.models import Team, TeamUserRelation
 
 
@@ -88,17 +90,13 @@ class ProjectDeadline:
     mine: bool
 
 
-async def deadline_for_project(
-    session: AsyncSession, *, task_id: int, team_id: int | None
-) -> ProjectDeadline | None:
-    """The deadline of the claim a project was opened for: a team claim is the
-    project's team's, an individual one is the claim of the person whose
-    personal team holds the project (``ProjectService.for_participation``).
-    Approved before pending, never rejected — the same order as ``own_claim``.
-    """
-    task = await session.get(Task, task_id)
-    if task is None:
-        return None
+async def _project_claim(
+    session: AsyncSession, *, task: Task, team_id: int | None
+) -> TaskMembership | None:
+    """The claim a project was opened for: a team claim is the project's
+    team's, an individual one is the claim of the person whose personal team
+    holds the project (``ProjectService.for_participation``). Approved before
+    pending, never rejected — the same order as ``own_claim``."""
     owner = (await session.get(Team, team_id)) if team_id is not None else None
     person = owner.personal_owner_user_id if owner is not None else None
     whose = [
@@ -111,16 +109,71 @@ async def deadline_for_project(
     claims = (
         await session.execute(
             select(TaskMembership).where(
-                TaskMembership.task_id == task_id,
+                TaskMembership.task_id == task.id,
                 TaskMembership.deleted_at.is_(None),
                 TaskMembership.approved != 1,
                 or_(*whose),
             )
         )
     ).scalars()
-    claim = min(claims, key=lambda m: m.approved != 0, default=None)
+    return min(claims, key=lambda m: m.approved != 0, default=None)
+
+
+async def deadline_for_project(
+    session: AsyncSession, *, task_id: int, team_id: int | None
+) -> ProjectDeadline | None:
+    """The overall deadline of the claim a project was opened for (see
+    ``_project_claim``), or the challenge's closing time while the claim has
+    none. A staged task's stages carry their own due dates
+    (``stages_for_project``); this stays the deadline of the whole."""
+    task = await session.get(Task, task_id)
+    if task is None:
+        return None
+    claim = await _project_claim(session, task=task, team_id=team_id)
     if claim is not None and claim.approved == 0 and claim.deadline is not None:
         return ProjectDeadline(at=claim.deadline, mine=True)
     if task.deadline is not None:
         return ProjectDeadline(at=task.deadline, mine=False)
     return None
+
+
+@dataclass(frozen=True)
+class StageProgress:
+    """One stage of the task a project was opened for, and where the project's
+    claim stands on it (``submission_state`` STAGE_*)."""
+
+    index: int
+    name: str
+    description: str
+    due_at: datetime | None
+    status: str
+
+
+async def stages_for_project(
+    session: AsyncSession, *, task_id: int, team_id: int | None
+) -> list[StageProgress]:
+    """The stages of the task a project was opened for, each with the
+    project's claim's status on it; empty for a task without stages. Without
+    an approved claim yet, every stage reads not handed in."""
+    task = await session.get(Task, task_id)
+    if task is None:
+        return []
+    stages = await list_stages(session, task.id)
+    if not stages:
+        return []
+    claim = await _project_claim(session, task=task, team_id=team_id)
+    states = (
+        await stage_states_of(session, claim)
+        if claim is not None and claim.approved == 0
+        else [STAGE_NOT_SUBMITTED] * len(stages)
+    )
+    return [
+        StageProgress(
+            index=stage.index,
+            name=stage.name,
+            description=stage.description,
+            due_at=stage.due_at,
+            status=state,
+        )
+        for stage, state in zip(stages, states, strict=False)
+    ]

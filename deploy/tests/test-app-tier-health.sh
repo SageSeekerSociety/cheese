@@ -872,13 +872,14 @@ test_pull_retries_transient_failure() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/pull-retry.XXXXXX")"
   docker_log="$run_dir/docker.log"
+  # Five dropped connections in a row: a burst, well inside the budget.
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_PULL_FAIL_COUNT=2 \
+    APP_TIER_PULL_FAIL_COUNT=5 \
     APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
-    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
@@ -886,21 +887,52 @@ test_pull_retries_transient_failure() {
       "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
     cat "$run_dir/out" >&2
     rm -rf "$run_dir"
-    fail "deploy gave up on a pull that would have succeeded on retry"
+    fail "deploy gave up on a pull that would have succeeded within the budget"
   fi
 
   attempts="$(grep -c 'pull backend frontend$' "$docker_log" || true)"
-  [ "$attempts" = 3 ] || fail "expected 3 pull attempts, saw $attempts"
-  grep -q 'image pull: succeeded on attempt 3/3' "$run_dir/out" || \
+  [ "$attempts" = 6 ] || fail "expected 6 pull attempts, saw $attempts"
+  grep -q 'image pull: succeeded on attempt 6' "$run_dir/out" || \
     fail "the retry that finally worked was not reported"
 
-  # The reclaim between attempts must actually precede the retry, not trail it.
+  # A dropped connection is no reason to free space: pruning between attempts
+  # would delete whatever an earlier attempt had already finished pulling.
+  first_prune="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
+  last_pull="$(grep -n 'pull backend frontend$' "$docker_log" | tail -n 1 | cut -d: -f1)"
+  [ -z "$first_prune" ] || [ "$first_prune" -gt "$last_pull" ] || \
+    fail "a pull that failed on the network pruned images before the retry"
+  rm -rf "$run_dir"
+  echo "PASS: a burst of failed pulls is retried within the budget, keeping what was pulled"
+}
+
+test_pull_on_a_full_disk_reclaims_before_the_retry() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-disk-full.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PULL_FAIL_COUNT=2 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    APP_TIER_PULL_FAIL_MESSAGE='failed to register layer: write /var/lib/docker/overlay2/x/diff/y: no space left on device' \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    cat "$run_dir/out" >&2
+    rm -rf "$run_dir"
+    fail "deploy gave up on a pull that a reclaim would have let through"
+  fi
+
   first_prune="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
   last_pull="$(grep -n 'pull backend frontend$' "$docker_log" | tail -n 1 | cut -d: -f1)"
   [ -n "$first_prune" ] && [ "$first_prune" -lt "$last_pull" ] || \
-    fail "no disk reclaim happened between the failed pull and the retry"
+    fail "a pull that failed on a full disk was retried without a reclaim in between"
   rm -rf "$run_dir"
-  echo "PASS: a transient pull failure is retried with a reclaim in between"
+  echo "PASS: a pull that failed on a full disk reclaims before the retry"
 }
 
 test_exhausted_pull_retries_still_fail_the_deploy() {
@@ -913,7 +945,8 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
     APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_PULL_FAIL_COUNT=99 \
     APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
-    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_PULL_BUDGET_SECONDS=3 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
@@ -923,17 +956,22 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
     fail "deploy reported success after every pull attempt failed"
   fi
 
-  grep -q 'image pull failed after 3 attempts' "$run_dir/out" || \
-    fail "the failure did not name how many attempts were spent"
-  grep -q 'attempt 1 exited 1; attempt 2 exited 1; attempt 3 exited 1' \
-    "$run_dir/out" || fail "the failure did not report each attempt's outcome"
+  attempts="$(grep -c 'pull backend frontend$' "$docker_log" || true)"
+  [ "$attempts" -gt 1 ] || fail "the pull was not retried before the budget ran out ($attempts attempt)"
+  summary="$(grep -o 'image pull failed after [0-9]* attempts in [0-9]*s, the pulls. 3s budget spent' "$run_dir/out" || true)"
+  [ -n "$summary" ] || fail "the failure did not name the attempts, the time spent and the budget"
+  reported="$(printf '%s\n' "$summary" | sed 's/.*after \([0-9]*\) attempts in \([0-9]*\)s.*/\1 \2/')"
+  [ "${reported% *}" = "$attempts" ] || fail "the failure reported ${reported% *} attempts, the log shows $attempts"
+  [ "${reported#* }" -le 3 ] || fail "the pulls went on for ${reported#* }s, past the 3s budget"
+  grep -q 'attempt 1 exited 1; attempt 2 exited 1' "$run_dir/out" || \
+    fail "the failure did not report each attempt's outcome"
   if grep -F 'run --rm backend' "$docker_log" >/dev/null; then
     fail "deploy proceeded to migration after the pull was given up on"
   fi
   grep -F 'image prune -af' "$docker_log" >/dev/null || \
     fail "the abandoned deploy left its pulled layers on disk"
   rm -rf "$run_dir"
-  echo "PASS: exhausted pull retries still abort the deploy, and still reclaim"
+  echo "PASS: pulls stop when the budget is spent, still abort the deploy, and still reclaim"
 }
 
 test_failed_deploy_reclaims_disk() {
@@ -2368,6 +2406,7 @@ case "$CASE" in
   ownership-rollback) test_rollback_hands_the_mounts_back ;;
   ownership-rollback-noop) test_rollback_leaves_an_already_migrated_box_alone ;;
   pull-retry) test_pull_retries_transient_failure ;;
+  pull-disk-full) test_pull_on_a_full_disk_reclaims_before_the_retry ;;
   pull-exhausted) test_exhausted_pull_retries_still_fail_the_deploy ;;
   failed-reclaim) test_failed_deploy_reclaims_disk ;;
   disk-watermark) test_deploy_logs_disk_watermarks ;;
@@ -2444,6 +2483,7 @@ case "$CASE" in
     test_rollback_hands_the_mounts_back
     test_rollback_leaves_an_already_migrated_box_alone
     test_pull_retries_transient_failure
+    test_pull_on_a_full_disk_reclaims_before_the_retry
     test_exhausted_pull_retries_still_fail_the_deploy
     test_failed_deploy_reclaims_disk
     test_deploy_logs_disk_watermarks

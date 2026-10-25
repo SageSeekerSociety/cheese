@@ -81,7 +81,9 @@ def _make_submission(**overrides):
         "id": 200,
         "membership_id": 50,
         "version": 1,
+        "stage": 0,
         "submitter_id": 42,
+        "package_revision": None,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -579,6 +581,8 @@ class TestTaskSubmissionService:
             membership_id=50,
             submitter_id=42,
             version=1,
+            stage=0,
+            package_revision=None,
         )
         entry_repo.create_entries.assert_awaited_once()
 
@@ -633,6 +637,8 @@ class TestTaskSubmissionService:
             membership_id=50,
             submitter_id=42,
             version=3,
+            stage=0,
+            package_revision=None,
         )
 
     @pytest.mark.anyio

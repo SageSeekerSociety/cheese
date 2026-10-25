@@ -12,13 +12,12 @@
 这些 id 一起带上，`attach` 在同一个事务里给它们写上 `feedback_id`。为什么不是
 「先建报告、再补传」：那会在两步之间留一道缝 —— 报告已经发出去了、截图没传上去，
 别人先看到一条没有证据的报告，作者还得回去补。代价是用户中途放弃会留下一个没人
-引用的对象，发题目那条路也是这个代价（`TaskAttachmentService.attach_uploaded` 的
-说明）。
+引用的对象，发题目那条路也是这个代价（`package.add_uploads`）。
 
 **挂的时候要问「这是你传的吗」。** 附件 id 会经过浏览器，而把它挂到自己的报告上
 是让别人看见一张别人的截图的便宜办法；`feedback_id is None` 那一档又意味着「还没
 有任何一条报告替它做可见性判断」。所以 `attach` 三件事一起判：id 存在、是本人的、
-还没挂到别处（`TaskAttachmentService.ensure_attachable` 是同一组判据的先例）。
+还没挂到别处。
 """
 
 from __future__ import annotations
