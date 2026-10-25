@@ -1240,9 +1240,21 @@ def mounted_at(path) -> bool:
         return os.path.ismount(real)
     for line in lines:
         fields = line.split()
-        if len(fields) > 4 and fields[4] == real:
+        if len(fields) > 4 and _mount_point(fields[4]) == real:
             return True
     return False
+
+
+#: A mount point with a space, tab, newline or backslash arrives octal-escaped
+#: (`\040` and the like), and the bind this is asked about can be any path the
+#: session host named. `transcript_view` reads the same field the same way.
+_MOUNT_ESCAPES = {"\\040": " ", "\\011": "\t", "\\012": "\n", "\\134": "\\"}
+
+
+def _mount_point(field: str) -> str:
+    for escaped, plain in _MOUNT_ESCAPES.items():
+        field = field.replace(escaped, plain)
+    return field
 
 
 def stop_transcript_view(home: Path) -> None:
@@ -1268,7 +1280,7 @@ def stop_transcript_view(home: Path) -> None:
     except (OSError, ValueError):
         return
     pid = held.get("pid")
-    if isinstance(pid, int):
+    if isinstance(pid, int) and _is_this_rooms_view(pid, home):
         try:
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
@@ -1278,6 +1290,7 @@ def stop_transcript_view(home: Path) -> None:
                 if not PROC.is_dir() or not Path(PROC / str(pid)).exists():
                     break
                 time.sleep(0.1)
+    left = []
     for where in held.get("mounts") or ():
         for argv in (
             ["fusermount", "-u", str(where)],
@@ -1288,10 +1301,45 @@ def stop_transcript_view(home: Path) -> None:
             if not mounted_at(where):
                 break
             run_command(argv)
+        if mounted_at(where):
+            left.append(where)
+    if left:
+        # Nothing could release them. The record stays so a later attempt —
+        # the one a failed `remove_tree` leads to — finds them again; deleting
+        # it here would leave the mounts nameless for good.
+        held["mounts"] = left
+        record.write_text(json.dumps(held))
+        return
     record.unlink(missing_ok=True)
 
 
+def _is_this_rooms_view(pid: int, home: Path) -> bool:
+    """Whether `pid` is this room's transcript-view helper.
+
+    The record is under the room's own home, which a sandboxed room can write
+    all of, so its pid is a claim and not a fact: signalling it unverified
+    would let a room end another room's process — they run under the same
+    account — or a stale pid the kernel has since reused. The command line is
+    what says otherwise, the way `stop_windows_helper` and `request_exit` read
+    it for the helpers they end: this helper is the one running the release's
+    `transcript_view.py` with this room's view directory as its argument.
+    """
+    view = str(platform_dir(home) / "transcript-view")
+    try:
+        argv = Path(PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return any(arg.endswith(b"transcript_view.py") for arg in argv) and (
+        view.encode() in argv
+    )
+
+
 def stop_executor(home: Path, resource: str) -> None:
+    # First, because what it releases is inside the home every later step
+    # walks and, at the end, deletes: a mount left at the view's own directory
+    # stops `remove_tree` with the filesystem's error, partway through a room
+    # that is already half gone.
+    stop_transcript_view(home)
     sandboxed = sandbox_release(home) is not None
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
@@ -1431,6 +1479,12 @@ def main() -> None:
     elif action == "remove":
         # The caller recorded this generation before granting deletion permission.
         # A reopened room uses another UUID, even on the same physical device.
+        #
+        # The view goes first, and for its own reason: `prepare` normally
+        # stopped it already, but a room deleted without one still has the
+        # helper and its mount, and both are inside what is about to be
+        # walked and removed.
+        stop_transcript_view(home)
         check_no_writers([home, work])
         # A room from before rooms had an executor sends its files to the
         # bucket first, unless they were sent already (`KEPT_ALREADY`).

@@ -10,7 +10,14 @@ by path mounts, serves bytes, and refuses a write.
     python3 .github/scripts/fuse-view-smoke.py <path to libfuse.so.2>
 
 Run by `.github/workflows/fuse-runtime.yml`; needs the distribution's own
-`fusermount` and `fusepy` installed on the machine it runs on.
+`fusermount` on the machine it runs on and `fusepy` importable by the
+interpreter running this.
+
+Not mounted `allow_other`, unlike the executor's own view (`transcript_view`):
+the file is read back by the very process that mounted it, and `allow_other`
+is refused unless `/etc/fuse.conf` carries `user_allow_other` — which the
+executor writes as root and a CI runner does not, so asking for it would make
+this fail on a perfectly good library.
 """
 
 import os
@@ -29,15 +36,16 @@ def fusepy_directory():
 
     `release.sources` reads it out of the installed distribution, so that is
     where the smoke test takes it from too: a test that used a different copy
-    would prove the wrong file loads."""
-    try:
-        from importlib.metadata import distribution
-    except ImportError:
-        return ""
-    try:
-        return os.path.dirname(str(distribution("fusepy").locate_file("fuse.py")))
-    except Exception:
-        return ""
+    would prove the wrong file loads. Not finding it is a failure and not an
+    empty path — `sys.path.insert(0, "")` is the process's own directory, so
+    the server would quietly load whatever `fuse.py` sat in the cwd."""
+    from importlib.metadata import distribution
+
+    located = distribution("fusepy").locate_file("fuse.py")
+    directory = os.path.dirname(str(located))
+    if not os.path.isfile(located):
+        raise SystemExit(f"fusepy is not where it says it is: {located}")
+    return directory
 
 
 def main(library):
@@ -84,7 +92,7 @@ def main(library):
                         return 0
 
                 FUSE(Ops({source!r}), {view!r}, foreground=True, ro=True,
-                     allow_other=True, direct_io=True)
+                     direct_io=True)
                 """
             )
         )

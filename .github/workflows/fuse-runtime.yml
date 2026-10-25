@@ -25,6 +25,11 @@ jobs:
     strategy:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+      # The arm leg is expected to fail until the header patch lands (see the
+      # note on the build step). On by default, `fail-fast` would cancel the
+      # still-running x64 leg with it, so nothing would upload and the job
+      # could never go green — which is the opposite of what it is here for.
+      fail-fast: false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
@@ -67,10 +72,15 @@ jobs:
       # package holds no setuid binary of its own.
       - name: A read-only view mounted through the built library
         run: |
-          sudo apt-get -qq update
-          sudo apt-get -qq install -y fuse python3-pip
-          pip install --quiet "$(sed -n 's/.*"\(fusepy[^"]*\)".*/\1/p' backend/pyproject.toml | head -1)"
-          python3 .github/scripts/fuse-view-smoke.py "$LIBRARY"
+          # `fuse` for `fusermount` and `/dev/fuse`; a venv for `fusepy`,
+          # because ubuntu-24.04's system python3 refuses `pip install`
+          # (PEP 668) and every other workflow here that needs a package makes
+          # one the same way. The script is run *by that venv's* interpreter so
+          # the copy it loads is the copy it just installed.
+          "$GITHUB_WORKSPACE/.github/scripts/ensure-apt.sh" fuse
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet fusepy==3.0.1
+          "$RUNNER_TEMP/venv/bin/python" .github/scripts/fuse-view-smoke.py "$LIBRARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuse-runtime-${{ matrix.runner }}

@@ -725,7 +725,7 @@ def start_transcript_view(home, release, config, platform_machine):
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=log,
-            env={**os.environ, **config["env"], **transcript_view_env(home)},
+            env={**os.environ, **config["env"], **transcript_view_env()},
             start_new_session=True,
         )
 
@@ -781,7 +781,12 @@ def _grant_user_allow_other():
     machine that does not give this process root answers with an error rather
     than a password prompt, and the room keeps running without the view. The
     line is appended only when it is absent, read back through `sh` so there is
-    no window in which two rooms both decide to add it."""
+    no window in which two rooms both decide to add it.
+
+    `subprocess.SubprocessError` is caught with the rest: `sudo` runs with a
+    `timeout`, and a root call that hangs raises `TimeoutExpired` — not an
+    `OSError` — out of a step that runs on every room start and must never be
+    what fails one. The view is optional; the room is not."""
     try:
         sudo(
             [
@@ -792,12 +797,12 @@ def _grant_user_allow_other():
             ],
             "allowing the transcript view to be read",
         )
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, subprocess.SubprocessError):
         return False
     return _user_allow_other()
 
 
-def transcript_view_env(home):
+def transcript_view_env():
     """What the view needs in its environment to find FUSE on this machine.
 
     `fusepy` looks for `libfuse` through `find_library`, which asks the loader

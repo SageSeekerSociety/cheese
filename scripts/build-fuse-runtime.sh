@@ -42,6 +42,15 @@ if [ "$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)" != "$baseline_codenam
   exit 1
 fi
 
+# The toolchain, from the baseline distribution's own packages. Unlike
+# `build-bubblewrap.sh` and `build-host-tools.sh`, whose image is Alpine and
+# whose line is `apk add`, the base here is a bare Debian image and has no
+# compiler, `make`, `binutils` or even `curl` — so the recipe installs what it
+# runs, rather than leaving it to the caller to have done.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq build-essential curl ca-certificates xz-utils >/dev/null
+
 work=$(mktemp -d)
 cd "$work"
 curl -fsSL --retry 5 --retry-all-errors -o source.tar.gz "$source_url"

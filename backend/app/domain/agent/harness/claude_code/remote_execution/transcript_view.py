@@ -87,9 +87,21 @@ def _mounted(path):
     real = os.path.realpath(path)
     for line in listed.splitlines():
         fields = line.split()
-        if len(fields) > 4 and fields[4] == real:
+        if len(fields) > 4 and _unescaped(fields[4]) == real:
             return True
     return False
+
+
+#: How the kernel writes a space, tab, newline and backslash in a mount
+#: point: octal, three digits. A path the session host named can contain a
+#: space, so the field is read back rather than compared as written.
+_MOUNT_ESCAPES = {"\\040": " ", "\\011": "\t", "\\012": "\n", "\\134": "\\"}
+
+
+def _unescaped(field):
+    for escaped, plain in _MOUNT_ESCAPES.items():
+        field = field.replace(escaped, plain)
+    return field
 
 
 def _live(path):
@@ -227,7 +239,14 @@ def main(view_dir, *, ask_every_s=ASK_EVERY_S):
 
     view_file = Path(view_dir) / VIEW_FILE
     record = Path(view_dir).with_name(RECORD)
-    mounted = []
+    # The view's own directory is a mount from the moment the server came up,
+    # and it lives inside the room's home. Written down with nothing else, it
+    # is what a teardown can still release when this helper never bound a
+    # transcript at all — a room torn down before its first turn, or a machine
+    # that refused the bind. Without it the teardown finds the process and its
+    # mount nowhere, and the mount stays over a home that cannot be removed.
+    mounted = [str(view_dir)]
+    _record(record, mounted)
     while True:
         try:
             path = client.transcript_path()
