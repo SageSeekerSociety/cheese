@@ -77,8 +77,9 @@ export interface TaskStage {
   dueAt: number | null
 }
 
-/** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。 */
-export type TaskStageStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'PASSED' | 'REJECTED'
+/** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。`MISSED`
+ *  只出现在一条领取自己的状态里：过了截止、一版也没交，这条领取因它未通过。 */
+export type TaskStageStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'PASSED' | 'REJECTED' | 'MISSED'
 
 /** `GET /tasks/{id}/progress`：每个阶段上的进度。不分阶段的题算一个阶段。 */
 export interface TaskProgress {
@@ -86,7 +87,7 @@ export interface TaskProgress {
   /** 我那条获批的领取在每个阶段上的状态；没领到是 `null`。 */
   mine: { participantId: number; stages: TaskStageStatus[] } | null
   /** 批改的人才有：每个阶段上各状态的人数。 */
-  distribution: Record<TaskStageStatus, number>[] | null
+  distribution: Partial<Record<TaskStageStatus, number>>[] | null
 }
 
 /** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。

@@ -947,3 +947,55 @@ def test_several_changes_in_one_save_are_one_notice(api_client, board):
     [heard] = _changes_heard(api_client, board["student"])
     assert "修改了提交内容或评分要点" in heard
     assert "新增了阶段「答辩」" in heard
+
+
+def test_a_stage_missed_with_nothing_handed_in_reads_failed_to_its_claim(
+    api_client, board
+):
+    """需求分析 was due yesterday and nothing was handed in for it, so the claim
+    has failed for it: the student reads that stage as failed, not as not yet
+    handed in, while the stage still open reads not handed in."""
+    task_id = _publish(
+        api_client, board, stages=[{**STAGES[0], "dueAt": _ms(-1)}, STAGES[1]]
+    )
+    _claim(api_client, board, task_id)
+
+    mine = _progress(api_client, board["student"], task_id)["mine"]
+    assert mine["stages"] == ["MISSED", "NOT_SUBMITTED"]
+
+
+def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
+    api_client, board
+):
+    """Before saving, the publisher asks what the stages they are about to save
+    would do: moving an empty stage's due date into the past fails the claim,
+    moving it back takes the claim out of failed. Asking writes nothing, and
+    only whoever may change the task may ask."""
+    task_id = _publish(api_client, board)
+    membership_id = _claim(api_client, board, task_id)
+    stages = _read(api_client, board, task_id)["stages"]
+    overdue = [{**stages[0], "dueAt": _ms(-1)}, stages[1]]
+
+    def effect(proposed, user=board["teacher"]):
+        return api_client.post(
+            f"/tasks/{task_id}/stages/effect",
+            json={"stages": proposed},
+            headers=_headers(user),
+        )
+
+    asked = effect(overdue)
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["data"] == {"failing": 1, "reopening": 0}
+    assert _completion(api_client, board, task_id, membership_id) == "NOT_SUBMITTED"
+    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 0}
+
+    saved = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"stages": overdue},
+        headers=_headers(board["teacher"]),
+    )
+    assert saved.status_code == 200, saved.text
+    assert _completion(api_client, board, task_id, membership_id) == "FAILED"
+    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 1}
+
+    assert effect(stages, board["student"]).status_code == 403

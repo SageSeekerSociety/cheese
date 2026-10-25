@@ -35,6 +35,14 @@ describe('阶段时间轴', () => {
     expect(steps[1].textContent).toContain('待批改')
   })
 
+  it('过了截止、一版没交而未通过的阶段写「未通过」，不写「未提交」', () => {
+    const steps = mount({ statuses: ['MISSED', 'NOT_SUBMITTED'] }).getAllByRole('listitem')
+
+    expect(steps[0].textContent).toContain('未通过')
+    expect(steps[0].textContent).not.toContain('未提交')
+    expect(steps[1].textContent).toContain('未提交')
+  })
+
   it('出题人看到每个阶段上各状态的人数', () => {
     const counts = [
       { NOT_SUBMITTED: 1, PENDING_REVIEW: 2, PASSED: 3, REJECTED: 0 },

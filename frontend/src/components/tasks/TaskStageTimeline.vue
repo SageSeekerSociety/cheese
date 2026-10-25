@@ -17,7 +17,7 @@ const props = withDefaults(
   defineProps<{
     stages: TaskStage[]
     statuses?: TaskStageStatus[] | null
-    counts?: Record<TaskStageStatus, number>[] | null
+    counts?: Partial<Record<TaskStageStatus, number>>[] | null
     selectable?: boolean
     current?: number | null
   }>(),
