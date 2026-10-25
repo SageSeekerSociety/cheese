@@ -32,8 +32,8 @@ describe('previewOf', () => {
       submitterType: 'TEAM',
       categoryId: 3,
       topics: [9],
-      submissionSchema: [{ prompt: 'csim.c', type: 'FILE' }],
-      rubric: [{ item: '正确性', points: 60, criteria: '' }],
+      submissionSchema: [{ prompt: 'csim.c', type: 'FILE', stage: null }],
+      rubric: [{ item: '正确性', points: 60, criteria: '', stage: null }],
       participantLimit: null,
     })
     expect(shown.writing).toBe('participant_limit')

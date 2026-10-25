@@ -104,7 +104,7 @@ async def save_preferences(
     return ok(to_dict(pref))
 
 
-# A person's own 芝士 sets these for them (`cheese_settings_set`): one setting
+# A person's own 芝士 sets these for them (`cheese_settings`): one setting
 # at a time, by the name it knows it by, kept as a change the person can undo
 # from the panel (`assistant.changes`).
 
@@ -199,7 +199,7 @@ async def agent_set_preference(
     resolver: ActorResolverDep,
     questions: Annotated[Consumptions, Depends(get_consumptions)],
 ) -> dict:
-    """cheese_settings_set: one of the person's notification settings,
+    """cheese_settings: one of the person's notification settings,
     changed for them and kept as a change they can undo."""
     user_id, claims = await _delegated_person(resolver)
     if body.key not in AGENT_SETTINGS:

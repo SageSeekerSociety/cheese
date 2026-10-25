@@ -15,7 +15,14 @@
             </template>
           </AdaptiveMenu>
         </div>
-        <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+        <!-- A staged task is graded stage by stage, so it says where each stage stands. -->
+        <ol v-if="stageRows.length" class="ts__stages" data-testid="my-stages">
+          <li v-for="row in stageRows" :key="row.index">
+            <span class="ts__stage-name" data-user-content>{{ row.name }}</span>
+            <span class="ts__status" :class="`ts__status--${row.tone}`">{{ row.label }}</span>
+          </li>
+        </ol>
+        <p v-else class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
         <p v-if="myDeadlineText" class="ts__deadline t-meta-read" data-testid="my-deadline">{{ myDeadlineText }}</p>
 
         <template v-if="identity.approved === 'APPROVED'">
@@ -94,7 +101,7 @@
 <script setup lang="ts">
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { Task, TaskSubmissionReview } from '@/types'
+import type { Task, TaskProgress, TaskSubmissionReview } from '@/types'
 import type { TaskParticipationIdentity } from '@/types/taskBoard'
 
 import { computed, ref, watch } from 'vue'
@@ -112,6 +119,7 @@ import TaskInheritance from './TaskInheritance.vue'
 import { listProjectsForTask } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { STAGE_TONE } from '@/lib/taskStages'
 
 const props = defineProps<{
   task: Task
@@ -119,6 +127,8 @@ const props = defineProps<{
   identity: TaskParticipationIdentity | null
   /** 我最新那一版提交；还没交是 null。 */
   latest: { version: number; review?: TaskSubmissionReview } | null
+  /** 每个阶段上的进度；读不到是 null。 */
+  progress?: TaskProgress | null
 }>()
 
 const emit = defineEmits<{ leave: [] }>()
@@ -146,6 +156,22 @@ const status = computed(() => {
   return latest.review.detail.accepted
     ? { label: t('tasks.side.versionPassed', { n }), tone: 'ok' }
     : { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
+})
+
+/** 分了阶段的题：我在每个阶段上走到哪一步。不分阶段、或还没领到，是空的。 */
+const stageRows = computed(() => {
+  const stages = props.task.stages ?? []
+  const mine = props.progress?.mine?.stages
+  if (!stages.length || !mine) return []
+  return stages.map((stage, index) => {
+    const state = mine[index] ?? 'NOT_SUBMITTED'
+    return {
+      index,
+      name: t('tasks.stages.numbered', { n: index + 1, name: stage.name }),
+      label: t(`tasks.stages.status.${state}`),
+      tone: STAGE_TONE[state],
+    }
+  })
 })
 
 /** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。读的是这一栏画着的
@@ -197,9 +223,9 @@ const defaultDeadline = computed(() => {
   return raw >= DAY_MS ? Math.round(raw / DAY_MS) : raw
 })
 
-/** 领取人数是接口给的 `participants.total`；`participantLimit` 的 0 是「不限」。 */
+/** 参与人数是接口给的 `participants.approved`（还在等批准的不算）；`participantLimit` 的 0 是「不限」。 */
 const claimedText = computed(() => {
-  const n = props.task.participants.total
+  const n = props.task.participants.approved
   const limit = props.task.participantLimit
   const teams = props.task.submitterType === 'TEAM'
   if (limit > 0) return t(teams ? 'tasks.side.claimedTeamsOf' : 'tasks.side.claimedPeopleOf', { n, limit })
@@ -288,6 +314,30 @@ watch(
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+.ts__stages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts__stages li {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.ts__stage-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .ts__status--muted {

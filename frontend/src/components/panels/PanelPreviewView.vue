@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -167,11 +167,106 @@ async function postFileComment(payload: { content: string; quote: string | null;
   await props.comments?.post(payload)
   clearLocator()
 }
+
+/** 指认条上的「评论」出口：这句话挂成这一处的评论，不走对话。
+ *
+ *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
+const commentError = ref('')
+/** 读者动了几次指认（换一处、取消、换文件）。发评论回来时拿它比一比：中途动过就说明
+ *  他已经不在这一处了，别再替他打开评论栏。 */
+const pickGeneration = ref(0)
+// 换了一处指认就把上一次那句话撤掉：它说的是上一处，留着会让读者以为新指的这处也失败了。
+// 撤掉指认的路不止一条（条上的取消、面板上的 Escape、换一份文件、选另一段），只在取消
+// 那条路上清是清不干净的——挂在指认本身变了这里，几条路一起覆盖。
+watch(locator, () => {
+  commentError.value = ''
+  pickGeneration.value += 1
+})
+/** 这条出口正发着：发一条要等一会儿，这期间再点一次会挂出两条一样的评论。
+ *
+ *  指认条那个 `busy` 只反映页上钉一处那条路（`pageLocator.sending`），评论这条路
+ *  它照不到，所以在自己这里挡一道。 */
+const commenting = ref(false)
+async function commentHere() {
+  const body = locatorNote.value.trim()
+  if (!body || !props.comments || commenting.value) return
+  // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
+  const target = commentPick.value
+  const pick = target?.quote ?? null
+  // 发之前记一笔：发回来时这个数变了，就说明读者中途取消或换了一处。
+  // 这条出口自己收尾（不走 `postFileComment`，那个函数发完就清掉指认，会把这一笔也搅进去）。
+  const before = pickGeneration.value
+  commentError.value = ''
+  commenting.value = true
+  try {
+    await props.comments.post({ content: body, quote: pick, anchor: target?.anchor ?? null })
+  } catch (cause) {
+    // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
+    // 中途换过那一处就不写了：这句话说的是上一处，落在新的这一处下面会让人以为它也失败了。
+    if (pickGeneration.value === before) {
+      commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    }
+    return
+  } finally {
+    commenting.value = false
+  }
+  // 发的时候读者已经按了取消（指着的那一处没了）或换成了另一处：这条评论已经挂上去了，
+  // 但别再把评论栏打开——他刚刚明确表示不想留在这一处，弹出来的那一栏会盖住他正在做的事。
+  if (pickGeneration.value === before) {
+    clearLocator()
+    if (!props.comments.open.value) props.comments.toggle()
+  }
+}
 // 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
 // `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
 // 样子，所以 `nameOf`/`avatarOf` 在这一栏是必填的 prop，不接就编译不过。
 const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
 const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
+
+// ---- 把已有的评论画在文件上 ----
+//
+// 只画没解决的那几种，和概览文档一致（那边 `openThreads` 也是只看 open 的）：一条已经
+// 说完的评论还压在正文上，读者会以为它还等着人回。
+//
+// 只画正文里真能找回位置的那一种（`text-range`），而且只画**这一版**上记的：评论记的
+// 是哪一版 + 哪一处，换了一版那段话可能已经挪走或改过，照旧位置画会指到另一句话上。
+// 找不回来的（正文改了）就不画——比画错强。
+const focusedThread = ref<string | null>(null)
+const threadAnchors = computed(() =>
+  (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
+    if (thread.state !== 'open') return []
+    const anchor = thread.comment.anchor as
+      | {
+          kind?: string
+          version?: string
+          text?: string
+          heading?: string | null
+          prefix?: string
+          suffix?: string
+        }
+      | null
+      | undefined
+    if (!anchor || anchor.kind !== 'text-range' || !anchor.text) return []
+    if (!anchor.version || anchor.version !== commentTarget.value?.version) return []
+    return [
+      {
+        id: thread.comment.id,
+        quote: {
+          text: anchor.text,
+          heading: anchor.heading ?? null,
+          prefix: anchor.prefix ?? '',
+          suffix: anchor.suffix ?? '',
+        },
+      },
+    ]
+  })
+)
+/** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
+function openAnchor(id: string) {
+  focusedThread.value = id
+  if (!props.comments?.open.value) props.comments?.toggle()
+}
 
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
@@ -294,6 +389,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :revs="revs"
       :file-history="fileHistory"
       :show-history="showHistory"
+      :anchors="threadAnchors"
+      :active-anchor="focusedThread"
+      @anchor="openAnchor"
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
@@ -341,9 +439,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
-    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。 -->
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。图上圈着一块、标注条开着时
+         先收起来：矮的面板里它正落在标注条上，会盖住「取消」。 -->
     <BaseButton
-      v-if="commentTarget"
+      v-if="commentTarget && !imageRegion.target.value"
       class="panel-preview__comments-toggle"
       kind="secondary"
       size="sm"
@@ -363,6 +462,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :thread-state="props.comments!.threads.state"
       :thread-actions="props.comments!.threads.actions"
       :pick="commentPick"
+      :focus-id="focusedThread"
       :writable="true"
       :post="postFileComment"
       :name-of="commentNameOf"
@@ -370,13 +470,17 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :agent-name="agentName"
       @clear-pick="clearLocator"
       @close="props.comments?.toggle()"
+      @update:open-id="focusedThread = $event"
     />
 
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :busy="pageLocator.sending.value"
+      :busy="pageLocator.sending.value || commenting"
+      :can-comment="!!commentTarget"
+      :comment-error="commentError"
       @send="sendLocator"
+      @comment="commentHere"
       @cancel="clearLocator"
     />
 

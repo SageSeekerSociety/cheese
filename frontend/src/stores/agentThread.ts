@@ -68,9 +68,22 @@ interface StoredParts {
   shown?: AssistantShown
   /** 芝士交给人的文件。 */
   handed?: AssistantHanded[]
+  /** 问题是在哪一页问的（那一页的名字）。 */
+  page?: string
+  /** 问题带着的、人在页面上选中的那段字。 */
+  selection?: string
+  /** 问题里 `<#id>` 引用的东西。 */
+  cited?: AssistantCited[]
 }
 
-/** 芝士交给人的一份文件（`cheese_file_give`）：存在他自己的资料库里——他名下那个团队
+/** 问题里引用的一样东西：`<#id>` 里的 id、种类和名字。 */
+export interface AssistantCited {
+  id: string
+  kind: 'channel' | 'task' | 'thread' | 'doc' | 'file' | 'problem'
+  title: string
+}
+
+/** 芝士交给人的一份文件（`cheese_library(action=give)`）：存在他自己的资料库里——他名下那个团队
  *  （`team`）的，叫 `path`。 */
 export interface AssistantHanded {
   team: number
@@ -160,6 +173,16 @@ export interface AssistantMessage {
   silent?: boolean
   /** 这一轮派出的分身。 */
   subagents?: AssistantSubagent[]
+  /** 人问的：在哪一页问的、带着选中的哪段字、引用了什么。 */
+  askedOn?: string
+  selection?: string
+  cited?: AssistantCited[]
+}
+
+/** 问一句时除了问题本身还交什么：请求里多带的几样，和这一句在面板上怎么写。 */
+export interface AssistantAsking {
+  body: Record<string, unknown>
+  shown: Pick<AssistantMessage, 'askedOn' | 'selection' | 'cited'>
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
@@ -174,7 +197,7 @@ export interface Unheard {
 }
 
 export interface AssistantPage {
-  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project'
+  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project' | 'library'
   id: number | string
 }
 
@@ -203,6 +226,8 @@ export interface AssistantOptions {
   /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
   prepare?: () => Promise<void>
   on?: AssistantHooks
+  /** 这一句还带什么（不带页面、选中的字、引用），每问一句读一次。 */
+  asking?: (question: string) => AssistantAsking
 }
 
 export function createAssistant(opts: AssistantOptions = {}) {
@@ -220,7 +245,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
   const streaming = ref<string | null>(null)
-  /** 芝士此刻在用的工具名（`cheese_docs_search` 之类），面板把它说成人话。 */
+  /** 芝士此刻在用的工具名（`cheese_help` 之类），面板把它说成人话。 */
   const tool = ref<string | null>(null)
   /** 这一轮正在做的几步。 */
   const steps = ref<AssistantStep[]>([])
@@ -422,10 +447,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     creditRefused.value = false
     streaming.value = ''
     const at = new Date().toISOString()
+    const asking = opts.asking?.(text)
     if (!kept)
       messages.value = [
         ...messages.value,
-        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
+        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
       ]
     // 面板只留服务端存下的东西：被拒的问题不留那一句。
     let asked = false
@@ -443,6 +469,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
               question: text,
               ...(page ? { page } : {}),
               ...(files.length ? { files } : {}),
+              ...asking?.body,
               ...(kept ? { kept: true } : {}),
             },
             onEvent,
@@ -483,9 +510,23 @@ export function createAssistant(opts: AssistantOptions = {}) {
     parts: StoredParts
   ): Pick<
     AssistantMessage,
-    'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed' | 'silent' | 'subagents'
+    | 'steps'
+    | 'edits'
+    | 'published'
+    | 'proposals'
+    | 'files'
+    | 'shown'
+    | 'handed'
+    | 'silent'
+    | 'subagents'
+    | 'askedOn'
+    | 'selection'
+    | 'cited'
   > {
     return {
+      ...(parts.page ? { askedOn: parts.page } : {}),
+      ...(parts.selection ? { selection: parts.selection } : {}),
+      ...(parts.cited?.length ? { cited: parts.cited } : {}),
       ...(parts.subagents?.length ? { subagents: parts.subagents } : {}),
       ...(parts.files?.length ? { files: parts.files } : {}),
       ...(parts.silent ? { silent: true } : {}),
@@ -757,14 +798,24 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if (!words && !files.length) return
     if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
+    const asking = opts.asking?.(words)
+    // 插进去的话没换页面：只写它带的字和引用，不写「在哪问的」。
+    const shown = {
+      ...(asking?.shown.selection ? { selection: asking.shown.selection } : {}),
+      ...(asking?.shown.cited ? { cited: asking.shown.cited } : {}),
+    }
     messages.value = [
       ...messages.value,
-      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
+      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
     ]
     try {
       await request(`/assistant/conversations/${id}/say`, {
         method: 'POST',
-        body: JSON.stringify({ text: words, files }),
+        body: JSON.stringify({
+          text: words,
+          files,
+          ...(asking?.body.selection ? { selection: asking.body.selection } : {}),
+        }),
       })
     } catch {
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))

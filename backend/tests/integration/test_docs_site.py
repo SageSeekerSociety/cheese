@@ -362,6 +362,18 @@ def test_an_expired_grant_is_refused(client, docs_host, monkeypatch):
     assert _post_grant(client, grant).status_code == 401
 
 
+def test_a_grant_counts_from_every_origin_the_platform_is_served_under(
+    client, docs_host, monkeypatch
+):
+    monkeypatch.setattr(settings, "frontend_aliases", ["https://alias.example"])
+    person = sign_in(client, "docs-alias")
+
+    resp = _post_grant(client, _grant(client, person), origin="https://alias.example")
+
+    assert resp.status_code == 303, resp.text
+    assert access.cookie_name() in resp.headers["set-cookie"]
+
+
 def test_a_grant_counts_only_from_the_platform_and_only_on_the_docs_host(
     client, docs_host
 ):

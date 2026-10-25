@@ -109,7 +109,7 @@ it('点一格发出去时带的是带文件身份的 sheet-cell 引用', async (
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount(submit as unknown as SubmitPreviewQuestion)
   await fireEvent.click(ui.getByText('cell'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这个数字按季度摊')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这个数字按季度摊')
   await fireEvent.click(ui.getByText('发送'))
 
   const request = submit.mock.calls[0]?.[0]
@@ -135,7 +135,7 @@ it('CSV 没有工作表名，引用里 sheet 是空串，地址就是它自己',
     documentType: { view: 'sheet', label: 'spreadsheet', icon: 'mdi-file-delimited-outline', sheet: 'csv' },
   })
   await fireEvent.click(ui.getByText('cell'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这一行重复了')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这一行重复了')
   await fireEvent.click(ui.getByText('发送'))
 
   expect(submit.mock.calls[0]?.[0].quotedContext).toMatchObject({
@@ -150,7 +150,7 @@ it('拿不到文件身份时退回拼一句话那条老路', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount(submit as unknown as SubmitPreviewQuestion, { docIdentity: null })
   await fireEvent.click(ui.getByText('cell'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这个数字按季度摊')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这个数字按季度摊')
   await fireEvent.click(ui.getByText('发送'))
 
   expect(submit).not.toHaveBeenCalled()
@@ -163,7 +163,7 @@ it('提问出口不收（房间里没有芝士）时，这句话照旧作为一�
   const submit = vi.fn().mockReturnValue(false)
   const ui = mount(submit as unknown as SubmitPreviewQuestion)
   await fireEvent.click(ui.getByText('cell'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这个数字按季度摊')
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这个数字按季度摊')
   await fireEvent.click(ui.getByText('发送'))
 
   expect(submit).toHaveBeenCalledTimes(1)

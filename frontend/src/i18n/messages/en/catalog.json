@@ -357,6 +357,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
@@ -392,10 +396,14 @@
     }
   },
   "previewPanelLocator": {
-    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+    },
+    "s2": {
+      "name": "This file takes no comments",
+      "note": "A library original or a message attachment takes no comments, so only 'send' is offered."
     }
   },
   "previewPanelPickToggle": {
@@ -573,7 +581,7 @@
     "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
     "s1": {
       "name": "Claimed and submitted",
-      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+      "note": "Default cell: four KPIs (participants / submitted / pass rate / idle since starting), a participation trend, how far they got, squad makeup."
     },
     "s2": {
       "name": "Read failure, not drawn as 0",
@@ -589,18 +597,18 @@
     }
   },
   "rosterView": {
-    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "about": "Task detail 'Participants' tab: handling applications, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
     "s1": {
       "name": "Roster loaded",
       "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
     },
     "s2": {
       "name": "Roster still loading",
-      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No participants' first."
     },
     "s3": {
       "name": "Not for you",
-      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see participants."
     },
     "s4": {
       "name": "Failed this time",
@@ -608,7 +616,7 @@
     },
     "s5": {
       "name": "No one has claimed",
-      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No participants'."
     }
   },
   "views404": {
@@ -1644,6 +1652,18 @@
     "s12": {
       "name": "Work done, nothing written",
       "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
+    },
+    "s13": {
+      "name": "With the page, a selection and citations",
+      "note": "The row in the box: the page Cheese reads and the text selected this time, the same chips as attachments. The last question's cited document and task are chips, with one line each under it: the selection, and the page it was asked on."
+    },
+    "s14": {
+      "name": "Page left out",
+      "note": "The page's × clicked: the name is struck through and × becomes +, which brings it back; the next page is included again."
+    },
+    "s15": {
+      "name": "Citing with {'@'}",
+      "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
     }
   },
   "myDraftsView": {
@@ -1697,6 +1717,21 @@
     "s2": {
       "name": "Nothing set yet",
       "note": "No entries of your own, so “No confirmation needed” says None; no routines."
+    }
+  },
+  "citeMenu": {
+    "about": "The menu {'@'} opens in Cheese's box: pick a task, channel, document, library file or problem to cite as a chip. Each row says on the right which project and channel it is in.",
+    "s1": {
+      "name": "Just typed {'@'}",
+      "note": "Recent places first, then the four kinds in this project; click one to list that kind."
+    },
+    "s2": {
+      "name": "Typed a few letters",
+      "note": "Grouped by kind, at most 4 each, the project in view first; the matched letters in bold."
+    },
+    "s3": {
+      "name": "Five already cited",
+      "note": "A question cites at most 5 things; typing {'@'} again only says so."
     }
   }
 }

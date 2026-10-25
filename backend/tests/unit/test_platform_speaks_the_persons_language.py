@@ -31,7 +31,9 @@ from app.domain.agent.harness.prompt import (
 TOOL_NAMES = {
     "chat_send",
     "todo_write",
-    "cheese_task_state",
+    "cheese_task",
+    "action",
+    "state",
     "completed",
     "in_progress",
     "pending",
@@ -88,5 +90,5 @@ def test_a_person_reading_english_is_spoken_to_in_english() -> None:
     assert "chat_send" in contract
     assert "chat_send" in reminder
     assert "todo_write" in checklist
-    assert "cheese_task_state" in blocked
+    assert "cheese_task(action=state)" in blocked
     assert _chinese_characters(contract + reminder + checklist + blocked) == []

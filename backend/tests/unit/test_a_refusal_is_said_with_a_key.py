@@ -249,7 +249,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/agent_control.py": 5,
     "app/api/routes/answers.py": 8,
     "app/api/routes/assistant.py": 1,
-    "app/api/routes/attachments.py": 4,
+    "app/api/routes/attachments.py": 3,
     "app/api/routes/avatars.py": 5,
     "app/api/routes/backend_log.py": 2,
     "app/api/routes/blocks.py": 3,
@@ -341,7 +341,7 @@ _BASELINE: dict[str, int] = {
     # 2026-10: the checkout sweep left `room_task/checkouts.py` for
     # `agent/checkout_sweep.py`, carrying its one English sentence.
     "app/domain/agent/checkout_sweep.py": 1,
-    "app/domain/agent/cli_worker.py": 6,
+    "app/domain/agent/cli_worker.py": 2,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
     # 2026-10: device_hub.py 按职责拆分，五句话跟着抛它的函数走——四句到 sessions、
@@ -494,9 +494,8 @@ _BASELINE: dict[str, int] = {
     "app/domain/space/review_service.py": 7,
     "app/domain/space/services.py": 59,
     "app/domain/task/access.py": 1,
-    "app/domain/task/attachment_service.py": 10,
     "app/domain/task/inputs.py": 2,
-    "app/domain/task/services.py": 17,
+    "app/domain/task/services.py": 15,
     "app/domain/team/membership_services.py": 15,
     "app/domain/team/recruitment_services.py": 6,
     "app/domain/team/repositories.py": 1,

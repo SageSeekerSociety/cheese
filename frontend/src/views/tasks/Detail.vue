@@ -25,11 +25,18 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { agentDocked, agentOpen, toggleAgent, useAgentContext, useAgentSurface } from '@/stores/agent'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
-import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
+import {
+  useTaskData,
+  useTaskManagement,
+  useTaskParticipation,
+  useTaskProgress,
+  useTeamParticipation,
+} from '@/views/tasks/composables'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -60,6 +67,8 @@ const {
   loadJoinedTeams,
 } = useTeamParticipation(taskDataModule)
 const { confirmDeleteTask } = useTaskManagement(taskDataModule)
+// 每个阶段上的进度：说明、我的提交、数据几个页签和右栏都读这一份。
+const { progress, load: loadProgress } = useTaskProgress()
 
 const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 
@@ -71,6 +80,7 @@ const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 const { mdAndUp } = useDisplay()
 useAgentContext(() => ({
   page: { kind: 'task', id: taskId.value },
+  label: taskData.value?.name ? t('tasks.assistant.page.problem', { name: taskData.value.name }) : undefined,
   intro: t('tasks.assistant.reads'),
   greeting: t('tasks.assistant.greeting'),
   starters: (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)),
@@ -125,7 +135,8 @@ const myClaimRejected = computed(
 
 /** `participantLimit` 的 0 是「不限」，不是「一个人都不许」。 */
 const limit = computed(() => ((taskData.value?.participantLimit ?? 0) > 0 ? taskData.value!.participantLimit : null))
-const claimCount = computed(() => taskData.value?.participants.total ?? 0)
+/** 参与者：申请通过的人。「参与者」页签上的数和名额满没满都按它；还在等批准的在页签里另成「申请中」一格。 */
+const participantCount = computed(() => taskData.value?.participants.approved ?? 0)
 const deadlinePassed = computed(() => {
   const at = taskData.value?.deadline
   return at != null && at < Date.now()
@@ -134,7 +145,7 @@ const notStarted = computed(() => {
   const at = taskData.value?.registrationStartAt
   return at != null && at > Date.now()
 })
-const full = computed(() => limit.value !== null && claimCount.value >= limit.value)
+const full = computed(() => limit.value !== null && participantCount.value >= limit.value)
 
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
@@ -222,7 +233,7 @@ const tabs = computed(() => {
       key: 'roster',
       label: t('tasks.page.tabs.roster'),
       to: { name: routeNames.participants, params: params.value },
-      count: claimCount.value,
+      count: participantCount.value,
     })
     list.push({
       key: 'data',
@@ -247,6 +258,9 @@ const showSide = computed(() => route.name !== routeNames.participants && route.
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 const reviewing = ref<{ id: number; name: string } | null>(null)
+/** 分了阶段的题，每个阶段单独批改：对话框里先选批哪个阶段。 */
+const reviewStage = ref(0)
+const stages = computed(() => taskData.value?.stages ?? [])
 
 function closeReview() {
   reviewing.value = null
@@ -265,12 +279,14 @@ async function load() {
   setDynamicTitle(task.name, 'TaskShell')
   if (task.submitterType === 'TEAM') loadJoinedTeams()
   if (myIdentity.value) loadMine()
+  loadProgress(task.id)
 }
 
 /** 有人的领取或提交变了：页头的主操作和右栏的进度都从我那一份报名和它最新一版来，两样一起重读。
  *  不转圈：页签内容（比如刚批完的领取者表）留在原地。 */
 async function reloadMine() {
   await loadTaskData({ quiet: true })
+  if (taskData.value) loadProgress(taskData.value.id)
   if (myIdentity.value) await loadMine()
   else myLatest.value = null
 }
@@ -289,6 +305,7 @@ onMounted(() => {
   })
   events.on('leave-team', (teamId) => leaveTaskWithTeam(teamId))
   events.on('review-participant', (who) => {
+    reviewStage.value = 0
     reviewing.value = who
   })
   // 批了领取、判了一版、交上一版：页头、右栏的进度和页签上的版本号都跟着重读。
@@ -407,6 +424,7 @@ onMounted(() => {
             :participation-info="participationInfo"
             :is-creator="isTaskCreator"
             :is-admin="isSpaceAdmin"
+            :progress="progress"
           />
         </router-view>
       </div>
@@ -416,23 +434,34 @@ onMounted(() => {
         :task="taskData"
         :identity="myIdentity"
         :latest="myLatest"
+        :progress="progress"
         @leave="events.emit('leave-clicked')"
       />
     </div>
   </div>
 
   <v-dialog :model-value="reviewing !== null" max-width="860" scrollable @update:model-value="closeReview">
-    <TaskSubmissionHistory
-      v-if="reviewing && taskData"
-      :task-id="taskData.id"
-      :participant-id="reviewing.id"
-      :reviewable="true"
-      :is-dialog="true"
-      :outlined="true"
-      :highlight-latest="true"
-      :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
-      @changed="events.emit('participation-changed')"
-    />
+    <div v-if="reviewing && taskData" class="td__review">
+      <TaskStageTimeline
+        v-if="stages.length"
+        class="td__review-stages"
+        :stages="stages"
+        selectable
+        :current="reviewStage"
+        @select="reviewStage = $event"
+      />
+      <TaskSubmissionHistory
+        :task-id="taskData.id"
+        :participant-id="reviewing.id"
+        :stage="stages[reviewStage]?.id ?? null"
+        :reviewable="true"
+        :is-dialog="true"
+        :outlined="true"
+        :highlight-latest="true"
+        :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
+        @changed="events.emit('participation-changed')"
+      />
+    </div>
   </v-dialog>
 
   <!-- 领取/退队/实名那几张对话框：老机器，事件总线上接了它。 -->
@@ -448,6 +477,19 @@ onMounted(() => {
 
 <style scoped lang="scss">
 @use '../../styles/breakpoints.scss' as bp;
+
+.td__review {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.td__review-stages {
+  padding: 16px 16px 0;
+}
 
 .td__crumb {
   display: flex;

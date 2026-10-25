@@ -257,7 +257,7 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(
-        "采纳或退回用 cheese_review_decide；要看具体改了哪些文件，到任务页的「改动」。"
+        "采纳或退回用 cheese_card(action=decide)；要看具体改了哪些文件，到任务页的「改动」。"
     )
     return _paged("\n".join(lines), refs.review(project.slug, found.number), page)
 

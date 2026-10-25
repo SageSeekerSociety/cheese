@@ -90,7 +90,7 @@ SCRATCH_REFUSED = (
     "这个会话在支线里，改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器"
     "不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这由会话所在"
     "的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；有人要做这件事时，"
-    "用 cheese_task 把支线转为任务。"
+    "用 cheese_task(action=open) 把支线转为任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -506,7 +506,7 @@ class PlatformHost:
         #: reports is known to be that run's (`presentation.task_presentation`).
         self.run = run
         #: Ask this session's harness to compact its context, for the one
-        #: tool that does (`cheese_compact`); a session with none refuses.
+        #: tool that does (`cheese_session(action=compact)`); a session with none refuses.
         self.compact = compact
 
     def request(self, plan):

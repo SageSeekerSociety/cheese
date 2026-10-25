@@ -38,7 +38,7 @@ describe('stepView', () => {
       stepView({ call: name, name, args: JSON.stringify(args), state: 'done' })
     expect(step('cheese_read', { ref: 'ml-course/channels/3' }).arg).toBe('')
     expect(step('cheese_inbox_respond', { ref: 'alerts/9029', choice: '采纳' }).arg).toBe('')
-    expect(step('cheese_message_send', { where: 'ml-course/tasks/12', text: '好' }).arg).toBe('')
+    expect(step('chat_send', { where: 'ml-course/tasks/12', content: '好' }).arg).toBe('')
     expect(step('cheese_read', { ref: 'library/报告/实验 3.pdf' }).arg).toBe('实验 3.pdf')
     expect(step('cheese_file_to_computer', { ref: 'library/squares.csv' }).arg).toBe('squares.csv')
     expect(step('cheese_find', { query: '缓存实验' }).arg).toBe('缓存实验')

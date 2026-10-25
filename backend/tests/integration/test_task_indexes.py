@@ -320,11 +320,14 @@ async def test_the_deadline_sweep_reads_only_the_rows_it_can_fail(db_factory):
             failed = await check_and_fail_expired_deadlines(session)
         assert failed == seeded["sweepable"]
 
+        # The pass over claims past their own deadline; the other pass looks
+        # for claims on a task with a stage already due.
         sweeps = [
             (sql, params)
             for sql, params in seen
             if sql.lstrip().upper().startswith("SELECT")
             and "FROM task_membership" in sql
+            and "task_membership.deadline <" in sql
         ]
         # One page per round, so several rounds of the same statement.
         assert sweeps, "the sweep ran no query"

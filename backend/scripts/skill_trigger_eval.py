@@ -76,7 +76,7 @@ CASES = [
     (
         "first-living-doc",
         "platform",
-        "本话题已经有了实质进展，但实况文档还是空的。\n请现在先 `cheese_doc_get`，再用 `cheese_doc_set` 建第一版，按系统提示词里「当前话题的实况文档」一节写。",
+        "本话题已经有了实质进展，但实况文档还是空的。\n请现在先 `cheese_doc(action=get)`，再用 `cheese_doc(action=set)` 建第一版，按系统提示词里「当前话题的实况文档」一节写。",
         "docs",
         True,
     ),
@@ -143,19 +143,27 @@ CASES = [
 #: platform: before the merge the living document had its own skill.
 EXPECT = {"docs": {"cheese-docs", "cheese-writing"}}
 
-WRITES = {"cheese_doc_set", "cheese_doc_edit", "Write", "Edit"}
-#: What a tool answers in a case. Reading tools answer with something plain so
-#: the model can go on gathering before it writes; a tool not listed here gets
-#: "done". `cheese_doc_get` answers with the room's document.
+
+#: A call by its key: `<tool>.<action>` for one of an object's verbs
+#: (`cheese_doc.set`), the tool's name otherwise.
+def _key(name: str, given: object) -> str:
+    action = given.get("action") if isinstance(given, dict) else None
+    return f"{name}.{action}" if isinstance(action, str) and action else name
+
+
+WRITES = {"cheese_doc.set", "cheese_doc.edit", "Write", "Edit"}
+#: What a call answers in a case, by key. Reading tools answer with something
+#: plain so the model can go on gathering before it writes; a call not listed
+#: here gets "done". `cheese_doc.get` answers with the room's document.
 CHAT = "[zhangheng]: 登录页改版提交了，手机上看一下\n[linzhixing]: 错误提示改成红色了吗\n[cheese]: 改了，和设计稿一致\n[zhangheng]: 按钮要不要换主色，我倾向换"
 ANSWERS = {
     "chat_send": "已发送。",
     "todo_write": "清单已更新。",
-    "cheese_chat_list": CHAT,
-    "cheese_chat_search": CHAT,
-    "cheese_status": "本话题没有待处理的验收卡，运行正常。",
-    "cheese_library_ls": "资料库是空的。",
-    "cheese_members": "张衡（owner，handle: zhangheng）\n林知行（member，handle: linzhixing）",
+    "cheese_chat.list": CHAT,
+    "cheese_chat.search": CHAT,
+    "cheese_session.status": "本话题没有待处理的验收卡，运行正常。",
+    "cheese_library.list": "资料库是空的。",
+    "cheese_room.members": "张衡（owner，handle: zhangheng）\n林知行（member，handle: linzhixing）",
     "Bash": "（命令没有输出）",
     "Read": "文件不存在。",
 }
@@ -381,7 +389,9 @@ def run_case(model: str, case: dict) -> dict:
         blocks = step(model, case, messages)
         calls = [b for b in blocks if b["type"] == "tool_use"]
         actions += [{"tool": c["name"], "input": c["input"]} for c in calls]
-        if not calls or any(c["name"] in WRITES or c["name"] == "Skill" for c in calls):
+        if not calls or any(
+            _key(c["name"], c["input"]) in WRITES or c["name"] == "Skill" for c in calls
+        ):
             break
         messages.append({"role": "assistant", "content": blocks})
         messages.append(
@@ -392,8 +402,8 @@ def run_case(model: str, case: dict) -> dict:
                         "type": "tool_result",
                         "tool_use_id": c["id"],
                         "content": (case["doc"] or "本话题还没有实况文档。")
-                        if c["name"] == "cheese_doc_get"
-                        else ANSWERS.get(c["name"], "已完成。"),
+                        if _key(c["name"], c["input"]) == "cheese_doc.get"
+                        else ANSWERS.get(_key(c["name"], c["input"]), "已完成。"),
                     }
                     for c in calls
                 ],
@@ -437,14 +447,14 @@ def verdict(row: dict) -> str:
             action["input"].get("file_path", "")
         ):
             loaded.append(str(action["input"]["file_path"]).split("/")[-2])
-        if action["tool"] in WRITES:
+        if _key(action["tool"], action["input"]) in WRITES:
             break
     if row["expect"] is None:
         watched = set().union(*EXPECT.values())
         return "extra" if set(loaded) & watched else "pass"
     if set(loaded) & EXPECT[row["expect"]]:
         return "pass"
-    wrote = any(action["tool"] in WRITES for action in row["actions"])
+    wrote = any(_key(a["tool"], a["input"]) in WRITES for a in row["actions"])
     # Ran out of steps still looking around: it never reached the point where a
     # skill would be loaded, so this run says nothing either way.
     return "miss" if wrote or loaded else "undecided"

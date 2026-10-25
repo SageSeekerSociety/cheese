@@ -902,7 +902,7 @@ const searchIndex = (list) => JSON.stringify(list.flatMap((p) => p.chunks.map((c
 const publicPages = Object.values(pages).filter((p) => p.section !== 'dev')
 write('search.json', searchIndex(publicPages))
 write('dev/search.json', searchIndex(devList))
-// What 问芝士 and the agents' cheese_docs_search read (backend: app/domain/docs_site/
+// What 问芝士 and the agents' cheese_help read (backend: app/domain/docs_site/
 // retrieval.py), whole sections. Public pages in one file, developer pages in another
 // behind the dev/ gate: 问芝士's answers are shown to anyone signed in, and only
 // agents in the platform's own project may search developer pages.

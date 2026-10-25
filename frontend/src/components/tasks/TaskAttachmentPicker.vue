@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // 发题 / 改题时这道题带的材料：已经挂上的那几份，加一个「添加文件」。
 //
-// 它只画、只报：选了哪些文件（`add`）、要去掉哪一份（`remove`）。传到哪里、什么时候
-// 传由页面决定 —— 发题时先传成游离的附件、建题那条请求再带上它们的 id；改题时直接传到
-// 这道题上。上限是接口报的那个数（`GET /attachments/limits`），也由页面问来给它。
+// 它只画、只报：选了哪些文件（`add`）、要去掉哪一份（`remove`）、要把哪一份换成新的一版
+// （`replace`，`replaceable` 时才有）。传到哪里、什么时候传由页面决定 —— 发题时先传成
+// 游离的附件、建题那条请求再带上它们的 id；改题时直接放进这道题的资料库。上限是接口报的
+// 那个数（`GET /attachments/limits`），也由页面问来给它。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
 
 import { ref } from 'vue'
@@ -19,22 +20,41 @@ defineProps<{
   uploading: boolean
   /** 单份文件的上限；`null` = 没问到，不写这句话。 */
   maxFileBytes: number | null
+  /** 每一行能不能换成新的一版（改题时，旧的一版留作历史）。 */
+  replaceable?: boolean
 }>()
 
 const emit = defineEmits<{
   add: [files: File[]]
-  remove: [id: number]
+  remove: [id: number | string]
+  replace: [id: number | string, file: File]
 }>()
 
 const { t } = useI18n()
 
 const input = ref<HTMLInputElement | null>(null)
+const replacement = ref<HTMLInputElement | null>(null)
+/** 正在为哪一份挑新的一版。 */
+const replacing = ref<number | string | null>(null)
 
 function onPicked(event: Event) {
   const target = event.target as HTMLInputElement
   const files = Array.from(target.files ?? [])
   target.value = ''
   if (files.length) emit('add', files)
+}
+
+function pickReplacement(id: number | string) {
+  replacing.value = id
+  replacement.value?.click()
+}
+
+function onReplacement(event: Event) {
+  const target = event.target as HTMLInputElement
+  const [file] = Array.from(target.files ?? [])
+  target.value = ''
+  if (file && replacing.value !== null) emit('replace', replacing.value, file)
+  replacing.value = null
 }
 </script>
 
@@ -50,6 +70,14 @@ function onPicked(event: Event) {
           <span class="tap__name">{{ file.name }}</span>
           <span class="tap__size t-num">{{ fmtFileSize(file.size) }}</span>
           <BaseButton
+            v-if="replaceable"
+            icon="mdi-file-replace-outline"
+            size="sm"
+            :disabled="uploading"
+            :aria-label="t('tasks.attachmentPicker.replace', { name: file.name })"
+            @click="pickReplacement(file.id)"
+          />
+          <BaseButton
             icon="mdi-close"
             size="sm"
             :disabled="uploading"
@@ -58,6 +86,15 @@ function onPicked(event: Event) {
           />
         </li>
       </ul>
+      <input
+        v-if="replaceable"
+        ref="replacement"
+        type="file"
+        hidden
+        data-testid="attachment-replacement"
+        :aria-label="t('tasks.attachmentPicker.replaceWith')"
+        @change="onReplacement"
+      />
       <input
         ref="input"
         type="file"

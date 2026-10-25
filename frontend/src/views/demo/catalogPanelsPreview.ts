@@ -60,6 +60,11 @@ const UI: CatalogNeed[] = ['vuetify', 'i18n']
 const T: CatalogNeed[] = ['i18n']
 
 const MARKDOWN_SAMPLE = ['# 一份说明', '', '这一页把 Markdown 按文档的读法读出来。'].join('\n')
+/** 这一份文件上的两条评论指着的那两处（形状就是评论存下的那一样）。 */
+const MARKDOWN_ANCHORS = [
+  { id: 'c1', quote: { text: '按文档的读法', heading: '一份说明', prefix: '这一页把 Markdown ', suffix: '读出来' } },
+  { id: 'c2', quote: { text: 'Markdown', heading: '一份说明', prefix: '这一页把 ', suffix: ' 按文档' } },
+]
 
 export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
   {
@@ -308,6 +313,21 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         props: { source: MARKDOWN_SAMPLE },
         expect: '这一页把 Markdown 按文档的读法读出来',
       },
+      {
+        get name() {
+          return t('catalog.previewPanelMarkdown.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelMarkdown.s2.note')
+        },
+        // 一份有人评过的文件：那两处画着标记，画重一点的是正在看的那一条。
+        // 标记不是文字（是巢在那几个字外面的 `<mark>`），所以这一格看的是形状，不是某一句话：
+        // 两处都在，且 c2 那一处是重的。只挑重的那一颗的话，「一条评论都没画、只把在看的那条
+        // 画出来」也满足它——而那正是这一格要展示的东西少了一半。
+        props: { source: MARKDOWN_SAMPLE, anchors: MARKDOWN_ANCHORS, activeId: 'c2' },
+        expectSelector:
+          'mark.file-comment-mark.is-active[data-file-comment="c2"] + mark.file-comment-mark:not(.is-active)[data-file-comment="c1"]',
+      },
     ],
   },
   {
@@ -425,8 +445,27 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelLocator.s1.note')
         },
-        props: { target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' }, note: '' },
-        expect: '网页 · 第 2 屏',
+        props: {
+          target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
+          note: '这一处按不到',
+          canComment: true,
+        },
+        expect: '评论',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelLocator.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelLocator.s2.note')
+        },
+        // 挂不了评论的那一份（资料库原件、消息附件）只该露出「发送」这一条。
+        props: {
+          target: { label: 'library/报告.pdf', quote: '第 2 页' },
+          note: '这一处的数字不对',
+          canComment: false,
+        },
+        expect: '发送',
       },
     ],
   },

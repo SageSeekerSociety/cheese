@@ -98,6 +98,7 @@ DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.assistant_agent.agent_library": False,
     "app.api.routes.assistant_agent.agent_file_link": False,
     "app.api.routes.assistant_agent.agent_file_slot": True,
+    "app.api.routes.assistant_agent.agent_file_part": True,
     "app.api.routes.assistant_agent.agent_file_handed": True,
 }
 

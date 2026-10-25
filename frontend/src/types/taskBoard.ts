@@ -4,6 +4,7 @@ import type {
   SpaceTeaching,
   Task,
   TaskRubricLine,
+  TaskStage,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -48,7 +49,7 @@ export type PostTaskRequestData = {
   endedAt?: number | null
   hasEndedAt?: boolean
   /** 随题一起发出去的材料。文件先经 `AttachmentsApi`（`POST /attachments`）传上来拿到
-   *  id，建题时一次挂上——见 `TaskAttachmentPicker` 里对这条顺序的说明。 */
+   *  id，建题时拷进题目资料库：题目建好之前还没有资料库可放。 */
   attachmentIds?: number[]
   /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。整份替换；不带它 = 没说，
    *  让空间的默认生效。 */
@@ -58,14 +59,10 @@ export type PostTaskRequestData = {
   defaultRole?: string
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
 }
 
-export type { TaskAttachmentData, TaskAttachmentListResponseData } from '@/types/taskAttachments'
-import type { TaskAttachmentData } from '@/types/taskAttachments'
-
-export type UploadTaskAttachmentResponseData = {
-  attachment: TaskAttachmentData
-}
+export type { TaskFileData, TaskFileListData } from '@/types/taskFiles'
 
 export type PatchTaskRequestData = {
   name?: string
@@ -89,6 +86,8 @@ export type PatchTaskRequestData = {
   /** 评分要点：整份替换；省掉它 = 不动。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 阶段：整份替换；省掉它 = 不动。 */
+  stages?: TaskStage[]
   endedAt?: number | null
   hasEndedAt?: boolean
 }

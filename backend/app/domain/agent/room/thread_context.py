@@ -35,7 +35,7 @@ async def thread_context(
             f"那条消息代表例行任务「{run.get('title', '')}」的一次执行，"
             "执行完交回的结果会写进那条消息。",
             "你现在做的就是这次执行：可以保存它要的结果文件。要看代码，用 "
-            "`cheese checkout` 取一份主干代码；要改代码的事用 `cheese_task` "
+            "`cheese checkout` 取一份主干代码；要改代码的事用 `cheese_task(action=open)` "
             "创建成任务。"
             if routine_run
             else "这次执行已经跑过了，现在是有人在这里追问。这里的人 @ 你，你才回答。"
@@ -43,7 +43,7 @@ async def thread_context(
             "查资料、PR 和 issue；但不推送、不交付、不摆预览。能不能跑命令和"
             "测试、临时改文件，看这台机器归不归你独占：归你独占时都能；和别的"
             "会话或机器主人共用时只能读文件，跑命令会被拒（那不是故障，重试"
-            "结果一样）。要改的事用 `cheese_task` 创建成任务。",
+            "结果一样）。要改的事用 `cheese_task(action=open)` 创建成任务。",
         ]
         parts = [*opening]
     else:
@@ -53,8 +53,8 @@ async def thread_context(
             "查资料、PR 和 issue；但不推送、不交付、不摆预览。能不能跑命令和"
             "测试、临时改文件，看这台机器归不归你独占：归你独占时都能；和别的"
             "会话或机器主人共用时只能读文件，跑命令会被拒（那不是故障，重试"
-            "结果一样）。要改的事用 `cheese_task` 创建成任务。别处定过的事不记得时，用 "
-            "`cheese_chat_search` 加 `channel` 搜整个频道。",
+            "结果一样）。要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
+            "`cheese_chat(action=search)` 加 `channel` 搜整个频道。",
             "",
             "支线挂在主线的这条消息下面：",
             line(root),

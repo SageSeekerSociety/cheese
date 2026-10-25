@@ -98,7 +98,7 @@ describe('participant submission', () => {
     expect(mocks.getParticipants).not.toHaveBeenCalled()
     await fireEvent.update(view.getByRole('textbox', { name: '成果说明' }), '共同完成的计划')
     await fireEvent.submit(view.container.querySelector('form')!)
-    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(12, 99, [{ text: '共同完成的计划' }]))
+    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(12, 99, [{ text: '共同完成的计划' }], null))
     expect(mocks.push).toHaveBeenCalledWith({ name: 'TasksSubmissions', params: { spaceId: 4, taskId: 12 } })
     view.unmount()
   })
@@ -133,6 +133,72 @@ describe('participant submission', () => {
     await waitFor(() => expect(view.getByText('已达到提交次数上限')).toBeTruthy())
     expect(mocks.listSubmissions).toHaveBeenCalledWith(13, 5, expect.objectContaining({ pageSize: 1 }))
     expect(view.queryByRole('textbox', { name: '成果说明' })).toBeNull()
+    view.unmount()
+  })
+})
+
+describe('a task split into stages', () => {
+  const staged = (stages: Task['stages']) =>
+    render(Submit, {
+      props: {
+        taskData: {
+          id: 21,
+          space: { id: 4 },
+          submittable: true,
+          resubmittable: true,
+          stages,
+          submissionSchema: [
+            { type: 'TEXT', prompt: '需求文档', stage: 'need' },
+            { type: 'TEXT', prompt: '代码说明', stage: 'impl' },
+          ],
+        } as Task,
+        participationInfo: {
+          hasParticipation: true,
+          identities: [{ id: 8, type: 'USER', memberId: 3, canSubmit: true, approved: 'APPROVED', deadline: null }],
+        },
+        progress: {
+          stages: stages ?? [],
+          mine: { participantId: 8, stages: ['PASSED', 'NOT_SUBMITTED'] },
+          distribution: null,
+        },
+      },
+      global: { plugins: [createVuetify(), i18n], stubs: { VDialog: true, CountdownTimer: true } },
+    })
+
+  it('opens on the first stage not yet passed, and hands in that stage with its own items', async () => {
+    const view = staged([
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: null },
+    ])
+
+    expect(view.queryByRole('textbox', { name: '需求文档' })).toBeNull()
+    await fireEvent.update(view.getByRole('textbox', { name: '代码说明' }), '写完了')
+    await fireEvent.submit(view.container.querySelector('form')!)
+    await waitFor(() => expect(mocks.createSubmission).toHaveBeenCalledWith(21, 8, [{ text: '写完了' }], 'impl'))
+    view.unmount()
+  })
+
+  it('switches to another stage when it is picked on the timeline', async () => {
+    const view = staged([
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: null },
+    ])
+
+    await fireEvent.click(view.getByRole('button', { name: /需求分析/ }))
+    expect(view.getByRole('textbox', { name: '需求文档' })).toBeTruthy()
+    expect(view.queryByRole('textbox', { name: '代码说明' })).toBeNull()
+    view.unmount()
+  })
+
+  it('takes nothing for a stage past its due date', async () => {
+    const view = staged([
+      { id: 'need', name: '需求分析', description: '', dueAt: null },
+      { id: 'impl', name: '实现', description: '', dueAt: Date.now() - 86400000 },
+    ])
+
+    await fireEvent.click(view.getByRole('button', { name: /实现/ }))
+    expect(view.container.textContent).toContain('阶段「实现」已过截止时间，不能再提交')
+    expect(view.queryByRole('textbox', { name: '代码说明' })).toBeNull()
     view.unmount()
   })
 })

@@ -31,7 +31,7 @@ covers:
 | `.room-file-history/<project>/<room>/` | 一个房间 | 内容 sha256，房间路径够不着 |
 | `.artifacts/<project>/<card>/` | 一次交付 | 文件名，卡分目录 |
 
-资料库和另外三个不一样：它不是一个目录，是一张表。列出来的是表里的行，字节在每一行自己说的地方：`location` 是哪一种存储（`app/core/blob_store.py`：`local` 是 `workspace_root` 下，`bucket` 是文件桶），`blob_key` 是里面的键，新写的字节在 `.library-blobs/<project>/<记录 id>`。名字和字节的位置分开，所以改名、挪进文件夹只改名字。新字节写到 `FILES_STORE` 指定的存储；改这个配置不搬任何东西，已经存下的照旧按自己那一行的 `location` 读（#2114）。
+资料库和另外三个不一样：它不是一个目录，是一张表。列出来的是表里的行，字节在每一行自己说的地方：`location` 是哪一种存储（`app/core/blob_store.py`：`local` 是 `workspace_root` 下，`bucket` 是文件桶），`blob_key` 是里面的键，新写的字节在 `.library-blobs/<project>/<随机编号>`（传上来的那一份，编号在领上传凭据时就定下，字节从落地起就在这把键下）。名字和字节的位置分开，所以改名、挪进文件夹只改名字。新字节写到 `FILES_STORE` 指定的存储；改这个配置不搬任何东西，已经存下的照旧按自己那一行的 `location` 读（#2114）。
 
 房间文件这几个根的 `_safe_path` 只有包含关系这一条检查——和仓库那侧的同名检查不是一条规则，那边还要挡 `.git`，因为那边的根是一棵 git 树，这两个根里没有 git。房间文件里 `library/` 这个前缀被留着：`write_room_file` 见到它以「`library/` 留给资料库」拒掉，否则读的人会拿到房间那份、以为看的是资料库里的原件。
 
@@ -51,7 +51,19 @@ covers:
 
 `library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。两条放进来的路都经过 `records.add`：从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
 
-资料库页上传的字节不经过后端。页面先领一个地址（`POST /projects/{id}/library/uploads`，带名字和大小，超过上限的不给），把文件原样 PUT 过去，再拿领到的凭据 `upload` 来登记（`POST …/library` 放进新的一份，`PUT …/library?path=` 换成新版本）。地址只收领的时候说的那么多字节：文件桶是签进了 `Content-Length` 的预签名地址，本地存储是后端自己的 `PUT /files/incoming/<凭据>`（`routes/file_uploads.py`）。字节先落在 `.incoming/` 下，登记时后端自己量大小、算 sha256（`records.received`），对得上才挪到这一行的键下；凭据封着项目 id，别的项目登记不了。领了地址却没登记的那一份留在 `.incoming/`，文件桶上由这个前缀的生命周期规则过期。
+资料库页上传的字节不经过后端，多大的文件都按段传（`blob_store` 的分段上传；文件桶上就是 S3 的 multipart upload）。页面先领一次上传的凭据（`POST /projects/{id}/library/uploads`，带名字和大小，超过上限的不给），回答里有每段多长（`part_bytes`，64 MiB 起，段数不超过 10,000）、一共几段。页面一段一段读文件，每段算出 MD5，同一遍里算整份的 SHA-256，按段领地址（`POST …/library/uploads/part`，带段号和这段的 MD5），把这一段连同回答里的请求头原样 PUT 过去；几段同时在路上，一段碰上网络错误或 5xx 重发这一段。全部传完，拿凭据、整份的 SHA-256 和每段的 MD5 来登记（`POST …/library` 放进新的一份，`PUT …/library?path=` 换成新版本）。
+
+每段的地址只收那一段那么多字节、只收那个 MD5：文件桶是签进了 `Content-Length` 和 `Content-MD5` 的预签名地址——字节不是那个 MD5 的，桶答 400 BadDigest；不带这个头、或长度不对，签名对不上，答 403——本地存储是后端自己的 `PUT /files/incoming/<凭据>`（`routes/file_uploads.py`），收的时候边写边算。登记时（`records._put` → `finish_upload`）后端列出存储收下的段，核对每一段都到了、大小对得上、ETag 就是说好的那个 MD5（一段的 ETag 就是它的 MD5），再按这些 MD5 让存储拼起来——拼的时候报的 ETag 和它收下的对不上，桶答 InvalidPart，后端说成 422 `uploadIncomplete`。所以后端不把字节读回来算哈希。整份的 SHA-256 是上传的一方算的：存储对每段只认 MD5，对拼起来的整份给不出 SHA-256。
+
+**每段的校验用 `Content-MD5`，不用 SHA-256 的段校验。** R2 对带 `x-amz-checksum-sha256` 的 UploadPart 一律答 501 NotImplemented（「Header 'x-amz-checksum-sha256' … not implemented」），字节对不对都一样；这个头又签进了地址，去掉它就是 403 SignatureDoesNotMatch——用它，文件桶上每一次上传都传不进去。R2 对 `CreateMultipartUpload` 的 `ChecksumAlgorithm=SHA256` 答成功但不记，对 `CompleteMultipartUpload` 里报错的 `ChecksumSHA256` 也照收不误。`Content-MD5` 是 R2、S3 和 MinIO 都在 UploadPart 上真的会查的那一个（2026-10 对 R2 实测：对的 200、错的 400 BadDigest、缺的 403）。测试里的 moto 不查 `Content-MD5`，但拼的时候查 ETag，所以「错的字节拼不成文件」在 moto 上也看得见（`tests/unit/test_blob_store.py`）。拼出来的对象就在这一行的键下，不再挪动，所以几 GB 的文件也不需要复制。凭据封着资料库，别的资料库登记不了；一次上传只能登记一次。
+
+领了凭据却没登记的那次上传不产生对象：文件桶上只有它的几段，由桶的生命周期规则丢掉（R2 默认在发起七天后丢掉没拼完的上传）；本地存储上它们留在 `.incoming/<上传编号>/`。拼不起来（缺段、段的大小或哈希不对）的那次，登记时当场放掉。
+
+文件桶的 CORS 要放行浏览器 PUT 时带的 `Content-MD5` 请求头。
+
+一份文件存进文件桶时最大 `files_bucket_file_max_bytes`（默认 20 GB）；题目的材料也是这一条：几 GB 的数据集要能做成题目材料。存在服务器本地盘上的照旧按原来的上限（项目的按房间文件的 10 MB，视频 200 MB；团队的和题目的按附件的 100 MB）。几 GB 的文件不整份读进内存：超过 `records.READ_WHOLE_MAX_BYTES`（200 MB）的，读成文本时只回「太大」，预览、按名字读字节都拒（`libraryFileTooLargeToOpen`）；下载按段从存储直接给，项目导出一段一段写进压缩包，恢复旧版是存储里的复制（超过 5 GiB 的按段复制）。
+
+芝士取一份资料（`cheese library get`）先要一个下载地址（`GET /projects/{id}/library/link`，`records.download_url`），再用 `curl` 从那里直接取：文件桶给预签名地址，字节不经过平台；本地存储给后端自己的 `/files/outgoing/<凭据>`。取到一半断了，再要一个地址接着取，取完、大小对上才落到目标路径。
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 
@@ -90,7 +102,7 @@ covers:
 
 `reuse` 只认 id 不认名字，因为名字写错不报错：`报告` 和 `结题报告` 都是合法名字，按名字认一次手滑就是清单上多一项；id 错了要么解析不出来、要么不在这份清单上，两种都是当场报错，报错里连清单现有什么、各自的 id 一起给出来（读这句话的是一个下一轮就要重递的 agent）。`claim` 的名字已经在清单上就报错——它挡不住「《报告》其实就是《结题报告》」（那要人看），但挡得住「明明是同一项却又声明了一次新的」。`for_repository` 认的是 `delivers_repository` 这一位，不是名字：人随时会改名，按名字找的话改完名的下一次合并就再长出一行。
 
-每项带一句 `about`：说清它是什么、给谁的。约束全部来自它唯一的用途，所以是可检验的：这句话在第 1 版和第 20 版都得成立；换到另一项头上也说得通就是白写；说「是什么、给谁」不说「做了什么」。前三条机器判不了，写在递卡工具（`cheese_accept_request`）的说明和 cheese 技能里；机器判得了的两条在 `clean_about` 里当场挡：太长（`ABOUT_MAX = 80`），以及和本次改动的标题一模一样（那正是清单长成一份改动列表的那条老路，按归一化后比，免得一个尾随空格绕过去）。名字也有对应的一条：`clean_name` 会摘掉整个名字外面那一对括号（`《结题报告》`），但只在里面不再出现同一对符号时才摘。
+每项带一句 `about`：说清它是什么、给谁的。约束全部来自它唯一的用途，所以是可检验的：这句话在第 1 版和第 20 版都得成立；换到另一项头上也说得通就是白写；说「是什么、给谁」不说「做了什么」。前三条机器判不了，写在递卡工具（`cheese_card(action=request)`）的说明和 cheese 技能里；机器判得了的两条在 `clean_about` 里当场挡：太长（`ABOUT_MAX = 80`），以及和本次改动的标题一模一样（那正是清单长成一份改动列表的那条老路，按归一化后比，免得一个尾随空格绕过去）。名字也有对应的一条：`clean_name` 会摘掉整个名字外面那一对括号（`《结题报告》`），但只在里面不再出现同一对符号时才摘。
 
 **长**：往后每次交付沿用同一项，一版就是第 N 张点名它的采纳了的卡。版号不在任何一张表上——按采纳时间排开数下来就是它（`versions`），所以撤回一次采纳，它后面那几版的号自己往前挪。计数器不行：漏加一次、漏减一次都不报错，只会让清单上的版号和真交出去过的东西悄悄对不上。
 

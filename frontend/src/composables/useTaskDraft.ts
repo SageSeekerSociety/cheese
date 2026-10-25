@@ -190,7 +190,7 @@ export function useTaskDraft(options: DraftOptions) {
 
   let lastApplied = ''
 
-  /** 一次 `cheese_problem_write` 的参数写到了这里：能确定的几格先填上。 */
+  /** 一次 `cheese_problem(action=write)` 的参数写到了这里：能确定的几格先填上。 */
   async function preview(args: unknown, terms: DraftTerms, held: string | null = null) {
     if (!form || !args || typeof args !== 'object' || !aimsHere(args as Record<string, unknown>)) return
     const shown = previewOf(args, terms, typeof saved.descriptionMarkdown === 'string' ? saved.descriptionMarkdown : '')

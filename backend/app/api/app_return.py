@@ -14,7 +14,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 
-from app.core.config import settings
+from app.core import origins
 
 # Set by the web app while it runs in the desktop app (frontend/src/lib/desktopApp.ts).
 APP_HEADER = "X-Cheese-App"
@@ -24,7 +24,7 @@ def started_in_app(request: Request) -> bool:
     return request.headers.get(APP_HEADER) == "1"
 
 
-def back_in_app(response: RedirectResponse) -> RedirectResponse:
+def back_in_app(request: Request, response: RedirectResponse) -> RedirectResponse:
     """The same landing, shown in the app rather than in this browser."""
     parts = urlsplit(response.headers["location"])
     page = parts.path or "/"
@@ -32,5 +32,5 @@ def back_in_app(response: RedirectResponse) -> RedirectResponse:
         page += f"?{parts.query}"
     if parts.fragment:
         page += f"#{parts.fragment}"
-    to_app = f"{settings.frontend_url}/account/to-app?{urlencode({'path': page})}"
+    to_app = f"{origins.of_request(request)}/account/to-app?{urlencode({'path': page})}"
     return RedirectResponse(to_app, status_code=302)
