@@ -192,3 +192,12 @@ export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
   return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
 }
+
+/** 预览最多读多大的一份：和后端整份读字节的上限（`app/domain/library/records.py` 的
+ *  `READ_WHOLE_MAX_BYTES`）是同一个数。超过的服务端不转 PDF，浏览器也不该整份取回，
+ *  所以不去读，直接说只能下载。资料库和题目页的预览都按它。 */
+export const PREVIEW_MAX_MB = 200
+
+export function tooLargeToPreview(bytes: number): boolean {
+  return bytes > PREVIEW_MAX_MB * 1024 * 1024
+}

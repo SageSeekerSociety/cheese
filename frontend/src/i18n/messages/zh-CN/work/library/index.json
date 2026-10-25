@@ -66,5 +66,8 @@
   "versionsEmpty": "暂无版本记录",
   "versionsFailed": "版本列表加载失败",
   "versionsLoading": "正在读取版本",
-  "versionsTitle": "「{name}」的版本"
+  "versionsTitle": "「{name}」的版本",
+  "taskFolderFrom": "来自题目「{name}」，当前第 {version} 版",
+  "taskFolderFromUnversioned": "来自题目「{name}」",
+  "taskFolderOpen": "打开题目"
 }

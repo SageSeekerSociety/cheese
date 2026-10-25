@@ -54,6 +54,9 @@ export interface Project {
   /** 代码仓库从题目第几版的起始代码开始、放好了没有（只在单个项目那一行里有）；
    *  没有起始代码是 null。`error` 是没放成的原因（`{ key, params }`）。 */
   starter?: { revision: number; state: 'pending' | 'done' | 'failed'; error: unknown } | null
+  /** 项目来自的那道题：在哪个空间、叫什么、现在第几版（只在单个项目那一行里有）。
+   *  看的人看不到这道题的 `题目/` 时是 null。 */
+  task?: { id: number; space_id: number; name: string; version: number | null } | null
 }
 
 export interface ProjectSite {
