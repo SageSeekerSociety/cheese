@@ -16,7 +16,7 @@ from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
 from app.domain.machine.session_work import session_author
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
         if _names(lease["state"], state):
-            project = await ProjectRepository(db).get(project_id)
+            project = await ProjectService(db).get(project_id)
             if project is None:
                 return None
             return MachineCaller(
