@@ -186,11 +186,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
     # A team's own library (a person's is their personal team's): how much it
-    # holds in all, the versions a file was replaced from included. As large as
-    # the largest one file the files bucket takes (`files_bucket_file_max_bytes`),
-    # so a file that size fits in an empty library. One value for every team:
-    # no team has a capacity of its own.
-    team_library_bytes: int = 20 * 1024**3
+    # holds in all, the versions a file was replaced from included. Unset, it
+    # follows where new files are kept (`library.records.capacity`): 1 GB on
+    # this server's disk, 20 GB in the files bucket. Set, it is the total for
+    # every team whatever the store. No team has a capacity of its own.
+    team_library_bytes: int | None = None
     # A task's starter code (`app/domain/project/starter.py`): how many files
     # and how many bytes it may unpack to, and how many times larger than the
     # zip itself it may unpack (past 64 MiB); more is refused as a zip bomb.

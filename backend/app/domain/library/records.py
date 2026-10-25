@@ -186,15 +186,33 @@ async def used(session: AsyncSession, shelf: Shelf) -> int:
     )
 
 
+#: A team library's total when its files go to this server's disk: the disk
+#: is the app server's own, shared by every team.
+LOCAL_TEAM_LIBRARY_BYTES = 1024**3
+
+
+def capacity() -> int:
+    """How much a team's library holds in all: ``settings.team_library_bytes``
+    when set; otherwise by where new files are kept — 1 GB on this server's
+    disk, and in the files bucket as much as its largest one file
+    (`files_bucket_file_max_bytes`, 20 GB), so a file that size fits in an
+    empty library."""
+    if settings.team_library_bytes is not None:
+        return settings.team_library_bytes
+    if settings.files_store == blob_store.BUCKET:
+        return settings.files_bucket_file_max_bytes
+    return LOCAL_TEAM_LIBRARY_BYTES
+
+
 async def refuse_past_room(
     session: AsyncSession, shelf: Shelf, adding: int, *, counted: bool = False
 ) -> None:
-    """团队的资料库放不下这么多就不放（`settings.team_library_bytes`）。项目的资料库
+    """团队的资料库放不下这么多就不放（`capacity`）。项目的资料库
     没有总量上限。``counted``：这份文件已经记进资料库了（落地前最后再查一次时），
     剩多少按没有它的时候算。拒绝时说出这份多大、还剩多少、一共多少。"""
     if shelf.team_id is None:
         return
-    total = settings.team_library_bytes
+    total = capacity()
     held = await used(session, shelf) - (adding if counted else 0)
     if held + adding > total:
         raise UnprocessableEntityError(
