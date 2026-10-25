@@ -291,7 +291,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/task_inheritance.py": 1,
     "app/api/routes/tasks/_common.py": 10,
     "app/api/routes/tasks/lifecycle.py": 19,
-    "app/api/routes/tasks/participation.py": 23,
+    "app/api/routes/tasks/participation.py": 20,
     "app/api/routes/tasks/roster.py": 12,
     "app/api/routes/tasks/submissions.py": 12,
     "app/api/routes/teams.py": 8,

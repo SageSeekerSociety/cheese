@@ -126,11 +126,7 @@ export namespace TaskBoardApi {
     }>({ url: '/tasks', method: 'GET', params: finalParams }, true)
   }
 
-  export const addParticipant = (
-    taskId: number,
-    member: number,
-    data: AddTaskParticipantRequestData = { deadline: null }
-  ) =>
+  export const addParticipant = (taskId: number, member: number, data: AddTaskParticipantRequestData = {}) =>
     axiosRequest<{ task: Task }>(
       { url: `/tasks/${taskId}/participants`, method: 'POST', params: { member }, data },
       true

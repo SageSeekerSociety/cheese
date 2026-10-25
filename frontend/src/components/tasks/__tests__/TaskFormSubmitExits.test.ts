@@ -356,3 +356,17 @@ describe('发题表单：两个阶段一个一个删掉', () => {
     expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: null }])
   })
 })
+
+describe('发题表单：直接开始的题', () => {
+  it('截止日期写成提交截止、必填；空着发布就拦下，说缺截止日期', async () => {
+    // Editing a task that has no deadline yet (a new one starts with one filled in).
+    const view = mountForm({ isEditing: true, initialData: { ...FILLED, startMode: 'DIRECT', deadline: null } })
+
+    expect(view.container.textContent).toContain('tasks.form.dueOn')
+    expect(view.container.textContent).not.toContain('tasks.form.registration')
+    await trySubmit(view)
+
+    await waitFor(() => expect(view.container.textContent).toContain('tasks.form.validation.dueRequired'))
+    expect(view.emitted().submit).toBeFalsy()
+  })
+})

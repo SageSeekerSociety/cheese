@@ -22,6 +22,7 @@ const getParticipants = vi.fn()
 const createSubmission = vi.fn()
 const updateParticipant = vi.fn()
 const postSubmissionReview = vi.fn()
+const join = vi.fn()
 const getSubmissionQueue = vi.fn()
 
 vi.mock('@/api/taskBoard', () => ({
@@ -32,6 +33,7 @@ vi.mock('@/api/taskBoard', () => ({
     createSubmission: (...a: unknown[]) => createSubmission(...a),
     updateParticipant: (...a: unknown[]) => updateParticipant(...a),
     postSubmissionReview: (...a: unknown[]) => postSubmissionReview(...a),
+    join: (...a: unknown[]) => join(...a),
   },
 }))
 vi.mock('@/api/spaces', () => ({
@@ -107,6 +109,9 @@ const BASE_TASK = {
   createdAt: Date.now() - 3 * DAY,
   space: { id: SPACE_ID, name: '数据结构空间', admins: [] },
 }
+
+/** 申请通过时建好的那个项目。 */
+const MY_PROJECT = { id: 'p-7', name: '红黑树' }
 
 const APPROVED_ME = { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED' }] }
 
@@ -281,8 +286,20 @@ describe('题目详情', () => {
     expect(claimButton(container)).toBeNull()
   })
 
-  it('批过之后：主操作是「提交作业」', async () => {
-    const { container } = await mount({ joined: true, submittable: true }, APPROVED_ME)
+  it('批过了却还没有项目（上次没建成）：入口是「开始做这道题」，点了进到它打开的项目', async () => {
+    join.mockResolvedValue({ participant: { id: 11 }, project: { id: 'p-9', name: '红黑树' } })
+    const { container, router } = await mount({ joined: true, submittable: true, myProject: null }, APPROVED_ME)
+
+    const btn = claimButton(container)!
+    expect(btn.disabled).toBe(false)
+    expect(btn.textContent).toContain(t('tasks.page.claim.start'))
+    await fireEvent.click(btn)
+
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p-9'))
+  })
+
+  it('批过之后：有「提交作业」', async () => {
+    const { container } = await mount({ joined: true, submittable: true, myProject: MY_PROJECT }, APPROVED_ME)
 
     await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
     expect(claimButton(container)).toBeNull()
@@ -295,7 +312,7 @@ describe('题目详情', () => {
   })
 
   it('领了之后：没有领取按钮，主操作是去交作业，多出「我的提交」', async () => {
-    const { container } = await mount({}, APPROVED_ME)
+    const { container } = await mount({ myProject: MY_PROJECT }, APPROVED_ME)
 
     expect(claimButton(container)).toBeNull()
     await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
@@ -382,7 +399,13 @@ describe('题目详情', () => {
     // 批准之后再问，接口说的就是批过的那一份。
     taskDetail.mockImplementation(async () =>
       payload(
-        { joined: true, submittable: approved === 'APPROVED', participants: { total: 1, approved: 1, examples: [] } },
+        {
+          joined: true,
+          submittable: approved === 'APPROVED',
+          // 批准时项目就建好了。
+          myProject: approved === 'APPROVED' ? MY_PROJECT : null,
+          participants: { total: 1, approved: 1, examples: [] },
+        },
         { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
       )
     )

@@ -55,6 +55,7 @@
   "taskFilesForTakers": "只有出题人、空间管理员和在做这道题的人能下载题目的材料",
   "taskPlacesFull": "这道题的 {limit} 个名额已满",
   "taskLockingPolicyInvalid": "队伍成员变更的设置无效",
+  "taskDirectNeedsDeadline": "直接开始的题要设截止日期，所有人在这天之前提交",
   "taskStartModeInvalid": "开始方式只能是直接开始或申请制",
   "taskOpeningNotFailed": "AI 队友接手这个任务时没有失败，不用重试",
   "taskOwnSessionCloses": "只有任务的负责人、协作者，或者在这个任务对话里工作的 AI 队友，可以关闭它",

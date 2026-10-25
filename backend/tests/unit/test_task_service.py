@@ -12,6 +12,7 @@ from app.core.domain_errors import (
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.task import services as task_services
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
@@ -214,7 +215,6 @@ class TestTaskMembershipService:
             task=task,
             member_id=42,
             is_team=False,
-            deadline=None,
             email="a@b.com",
             phone="555",
             apply_reason=None,
@@ -241,7 +241,6 @@ class TestTaskMembershipService:
             task=task,
             member_id=42,
             is_team=False,
-            deadline=None,
             email=None,
             phone=None,
             apply_reason=None,
@@ -338,7 +337,10 @@ class TestTaskMembershipService:
             )
 
     @pytest.mark.anyio
-    async def test_update_membership_happy_path(self):
+    async def test_update_membership_happy_path(self, monkeypatch):
+        # Re-deriving the claim's completion reads its submissions; this fake
+        # repository has none to read.
+        monkeypatch.setattr(task_services, "refresh_completion_status", AsyncMock())
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 0
         repo.save.side_effect = lambda m: m
@@ -1051,8 +1053,11 @@ class TestTaskMembershipServiceAdditional:
         repo.get_by_id.assert_awaited_once_with(50)
 
     @pytest.mark.anyio
-    async def test_update_membership_sets_deadline_and_phone(self):
+    async def test_update_membership_sets_deadline_and_phone(self, monkeypatch):
         """update_membership applies deadline and phone when provided."""
+        # Re-deriving the claim's completion reads its submissions; this fake
+        # repository has none to read.
+        monkeypatch.setattr(task_services, "refresh_completion_status", AsyncMock())
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 0
         repo.save.side_effect = lambda m: m

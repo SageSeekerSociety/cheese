@@ -19,6 +19,7 @@
     "full": "人数已满",
     "notStarted": "未开始",
     "open": "可申请",
+    "openToStart": "可开始",
     "pending": "待审核",
     "rejected": "未通过审核"
   },

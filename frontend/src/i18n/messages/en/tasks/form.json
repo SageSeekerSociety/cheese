@@ -27,10 +27,13 @@
     "summaryRealName": "Real name required",
     "title": "More settings"
   },
+  "dueOn": "Deadline",
   "name": "Name",
   "namePlaceholder": "e.g. Reproduce an image classification baseline",
   "noCategories": "No categories",
   "noTopics": "No tags",
+  "opensNow": "Open now",
+  "opensOn": "Opens on",
   "participantLimit": "Participant limit",
   "participantType": "Participant type",
   "participation": "Participation",
@@ -90,6 +93,7 @@
   "validation": {
     "categoryRequired": "Choose a category",
     "completionRequired": "Time to complete is missing",
+    "dueRequired": "Deadline is missing",
     "nameRequired": "Name is missing",
     "rankRequired": "Choose a difficulty",
     "submitterTypeRequired": "Choose who takes it",
@@ -98,7 +102,7 @@
   "mentor": {
     "require": "Add mentors to participants' projects",
     "label": "Mentors",
-    "hint": "Applicants agree to them before applying. Mentors see the project's public channels, documents and files"
+    "hint": "Students agree to them before applying or starting. Mentors see the project's public channels, documents and files"
   },
   "grading": {
     "title": "Submission and grading",

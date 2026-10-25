@@ -54,7 +54,7 @@ const taskDataModule = useTaskData()
 const { taskId, taskData, loading, error, isTaskCreator, isSpaceAdmin, participationInfo, loadTaskData } =
   taskDataModule
 
-const { onJoinTaskClicked, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
+const { onJoinTaskClicked, openApprovedClaim, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
   useTaskParticipation(taskDataModule)
 const {
   availableTeams,
@@ -152,6 +152,8 @@ const startsDirectly = computed(() => taskData.value?.startMode === 'DIRECT')
 /** 我（或我的团队）从这道题来的项目：有它，主操作就是「继续做」，打开它。 */
 const myProject = computed(() => taskData.value?.myProject ?? null)
 const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.value.id}` : ''))
+/** 通过了却还没有项目（建仓库那一步上次没成）：入口仍是「开始做这道题」，点了打开它。 */
+const approvedWithoutProject = computed(() => joined.value && !myProject.value)
 
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
@@ -164,6 +166,7 @@ const taskState = computed(() => {
 const claim = computed(() => {
   const task = taskData.value
   if (!task) return null
+  if (approvedWithoutProject.value) return { label: t('tasks.page.claim.start'), disabled: false }
   if (myClaimPending.value) return { label: t('tasks.page.claim.pending'), disabled: true }
   if (myClaimRejected.value) return { label: t('tasks.page.claim.rejected'), disabled: true }
   if (task.approved !== 'APPROVED')
@@ -181,6 +184,11 @@ const claim = computed(() => {
  *  （实名确认、团队选择都在里面）。 */
 function onClaim() {
   if (claim.value?.disabled) return
+  const approved = myIdentity.value
+  if (approvedWithoutProject.value && approved?.approved === 'APPROVED') {
+    void openApprovedClaim({ type: approved.type, memberId: approved.memberId })
+    return
+  }
   events.emit('join-clicked')
 }
 
@@ -387,15 +395,7 @@ onMounted(() => {
           {{ t('tasks.page.claim.continue') }}
         </BaseButton>
         <BaseButton
-          v-if="submitAction"
-          :kind="myProject ? 'secondary' : 'primary'"
-          prepend-icon="mdi-plus"
-          :to="{ name: routeNames.submit, params }"
-        >
-          {{ submitAction }}
-        </BaseButton>
-        <BaseButton
-          v-else-if="!joined && !myProject && claim"
+          v-if="!myProject && claim && (!joined || approvedWithoutProject)"
           class="td__claim"
           data-testid="task-claim"
           :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
@@ -403,6 +403,14 @@ onMounted(() => {
           @click="onClaim"
         >
           {{ claim.label }}
+        </BaseButton>
+        <BaseButton
+          v-if="submitAction"
+          :kind="myProject || approvedWithoutProject ? 'secondary' : 'primary'"
+          prepend-icon="mdi-plus"
+          :to="{ name: routeNames.submit, params }"
+        >
+          {{ submitAction }}
         </BaseButton>
       </div>
     </header>

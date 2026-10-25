@@ -19,6 +19,7 @@
     "full": "Full",
     "notStarted": "Not started",
     "open": "Open",
+    "openToStart": "Open to start",
     "pending": "Pending review",
     "rejected": "Not approved"
   },

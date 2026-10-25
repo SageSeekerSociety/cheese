@@ -82,7 +82,6 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       const result = await TaskBoardApi.join(
         taskData.value.id,
         {
-          deadline: null,
           email: contactInfo.email,
           phone: contactInfo.phone,
           applyReason: contactInfo.applyReason,
@@ -116,7 +115,6 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       }
 
       const result = await TaskBoardApi.join(taskData.value.id, {
-        deadline: null,
         email: contactInfo?.email,
         phone: contactInfo?.phone,
         applyReason: contactInfo?.applyReason,
@@ -132,6 +130,19 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       void errorHandler.handle(error as Error, {
         defaultMessage: t(direct() ? 'tasks.participation.startFailed' : 'tasks.participation.claimFailed'),
       })
+    }
+  }
+
+  /** 已经通过、却还没有项目的那份领取（上次建仓库没成）：再领一次就打开它。
+   *  它当初同意过的都已记下，这里不再问联系方式，也不再问导师。 */
+  const openApprovedClaim = async (claim: { type: 'USER' | 'TEAM'; memberId: number }) => {
+    if (!taskData.value) return
+    try {
+      const result = await TaskBoardApi.join(taskData.value.id, {}, claim.type === 'TEAM' ? claim.memberId : undefined)
+      await loadTaskData()
+      await opened(result.project)
+    } catch (error) {
+      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.startFailed') })
     }
   }
 
@@ -203,6 +214,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
   return {
     onJoinTaskClicked,
+    openApprovedClaim,
     handleVerifyInfoSubmit,
     confirmLeaveTask,
     leaveTaskWithTeam,

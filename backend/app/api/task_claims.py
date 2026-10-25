@@ -15,7 +15,6 @@ from app.domain.membership.services import seat_mentors
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.task.adapters import TaskTerms, as_brief, as_claim
-from app.domain.task.mentors import mentors_of
 from app.domain.task.models import Task, TaskMembership
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
@@ -67,8 +66,10 @@ async def open_claim_project(
         await team_service(db).ensure_personal_team(owner.id)
     await db.commit()
     projects = _projects(db)
+    # The mentors the claimant agreed to when the claim was made, not the
+    # task's list now: someone added to the task since has no consent here.
     project = await projects.for_participation(
-        task=as_brief(task, mentors=tuple(await mentors_of(db, task.id))),
+        task=as_brief(task, mentors=tuple(membership.agreed_mentors or ())),
         claim=as_claim(membership),
         owner_handle=owner.username,
     )

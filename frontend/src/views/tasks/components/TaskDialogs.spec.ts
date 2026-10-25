@@ -44,6 +44,11 @@ async function open(task: Record<string, unknown>) {
   await waitFor(() => expect(document.body.textContent).toContain(t('tasks.verifyForm.saveLocal')))
 }
 
+function lockBox(): string {
+  // The lock card and its tooltip are drawn into the page with everything else.
+  return document.body.textContent ?? ''
+}
+
 describe('参与确认', () => {
   beforeAll(() => setLocale('zh-CN'))
   afterEach(() => cleanup())
@@ -68,5 +73,23 @@ describe('参与确认', () => {
     const sentence = (key: string) => i18n.global.t(key, { policy }).split(policy).pop()!
     expect(text).toContain(sentence(said))
     expect(text).not.toContain(sentence(notSaid))
+  })
+
+  it.each([
+    ['直接开始', 'DIRECT', '开始做这道题之后，蔡老师会作为导师加入你的项目'],
+    ['申请制', 'APPLY', '申请通过之后，蔡老师会作为导师加入你的项目'],
+  ])('%s的题：导师从什么时候起加入，说的是那一刻', async (_, startMode, said) => {
+    await open({ startMode, submitterType: 'USER', mentors: [{ handle: 'cai', nickname: '蔡老师' }] })
+
+    expect(document.body.textContent).toContain(said)
+  })
+
+  it('申请制的团队题设了锁定：锁定的说明从头到尾都说「申请通过」', async () => {
+    await open({ startMode: 'APPLY', submitterType: 'TEAM', teamLockingPolicy: 'LOCK_ON_APPROVAL' })
+
+    const text = lockBox()
+    expect(text).toContain('申请通过后')
+    expect(text).not.toContain('审核通过')
+    expect(text).not.toContain('报名')
   })
 })

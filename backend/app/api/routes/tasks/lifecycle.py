@@ -726,7 +726,6 @@ async def patch_task_membership_by_member(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
-    approved_before = membership.approved
     await membership_service.update_membership(
         membership=membership,
         task=task,
@@ -737,9 +736,9 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    # Approved now: the claim's project opens, as on ``PATCH
-    # /tasks/{id}/participants/{participantId}``.
-    if membership.approved == APPROVE_APPROVED != approved_before:
+    # An approved claim has its project, opened now or found again, as on
+    # ``PATCH /tasks/{id}/participants/{participantId}``.
+    if membership.approved == APPROVE_APPROVED:
         await open_claim_project(
             db, task=task, membership=membership, acting_user_id=auth_user.user_id
         )

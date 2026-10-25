@@ -36,7 +36,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task import claims, package
-from app.domain.task.inputs import map_approve_type, map_start_mode
+from app.domain.task.inputs import START_DIRECT, map_approve_type, map_start_mode
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -186,6 +186,9 @@ async def update_task(
         task.default_deadline = payload.default_deadline
     if payload.start_mode is not None:
         task.start_mode = map_start_mode(payload.start_mode)
+    # Everyone on a task started directly hands in by its deadline.
+    if task.start_mode == START_DIRECT and task.deadline is None:
+        raise BadRequestError(say("taskDirectNeedsDeadline"))
 
     if payload.rank is not None:
         task.rank = payload.rank

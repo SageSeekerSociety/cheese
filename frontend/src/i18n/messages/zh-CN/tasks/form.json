@@ -27,10 +27,13 @@
     "summaryRealName": "需实名",
     "title": "更多设置"
   },
+  "dueOn": "截止日期",
   "name": "名称",
   "namePlaceholder": "例如：图像分类基线复现",
   "noCategories": "暂无分类",
   "noTopics": "暂无标签",
+  "opensNow": "立即开放",
+  "opensOn": "开放日期",
   "participantLimit": "人数上限",
   "participantType": "参与者类型",
   "participation": "参与",
@@ -90,6 +93,7 @@
   "validation": {
     "categoryRequired": "未选择分类",
     "completionRequired": "未填写完成期限",
+    "dueRequired": "未填写截止日期",
     "nameRequired": "未填写名称",
     "rankRequired": "未选择难度",
     "submitterTypeRequired": "未选择参与方式",
@@ -98,7 +102,7 @@
   "mentor": {
     "require": "把导师加入参与者的项目",
     "label": "导师",
-    "hint": "申请时要先同意导师加入。导师能看到项目里的公开频道、文档和文件"
+    "hint": "学生同意导师加入后才能申请或开始做。导师能看到项目里的公开频道、文档和文件"
   },
   "grading": {
     "title": "提交与评分",

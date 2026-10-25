@@ -24,9 +24,12 @@ import pytest
 from sqlalchemy import func, select
 
 from app.common.auth import verify_access_token
+from app.domain.project import forge
 from app.domain.project.models import Project
+from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import TaskMembership
 from app.domain.team.models import Team
+from app.domain.user.models import User
 from tests.conftest import seed_user
 from tests.integration.test_claiming_twice import (
     _on_board,
@@ -38,6 +41,7 @@ from tests.integration.test_starter_claims_at_once import _board
 from tests.integration.test_task_files import (
     _auth,
     _create_task,
+    _post_task,
     upload_root,  # noqa: F401
 )
 
@@ -360,3 +364,234 @@ def test_a_waiting_claim_keeps_the_project_an_earlier_release_opened(
     # Approved again, it opens the project it already has.
     assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
     assert [pid for pid, _ in _projects_of(client, task_id)] == [opened]
+
+
+# --- what a claim agrees to, who sets its deadline, and never a dead end ----------
+
+
+def _handle(client, token: str) -> str:
+    user_id = verify_access_token(token).user_id
+
+    async def read() -> str:
+        async with client.test_factory() as session:
+            return (await session.get(User, user_id)).username
+
+    return client.portal.call(read)
+
+
+def _reads_project(client, project_id: str, token: str) -> int:
+    return client.get(f"/projects/{project_id}", headers=_auth(token)).status_code
+
+
+def test_a_mentor_added_after_the_application_is_not_seated_by_the_approval(
+    client, monkeypatch
+):
+    """The project's mentors are the ones the student agreed to when applying;
+    someone the publisher adds to the task afterwards is not seated without the
+    student's consent."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    teacher = _handle(client, board["creator_token"])
+    later = _create_task(client, board, name="后来才加导师")
+    agreed = _create_task(client, board, name="申请时就有导师", mentors=[teacher])
+    student = _student(client, board)
+
+    late_claim = _data(_start(client, later, student))["participant"]["id"]
+    _data(
+        client.patch(
+            f"/tasks/{later}",
+            json={"mentors": [teacher]},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+    agreed_claim = _data(
+        client.post(
+            f"/tasks/{agreed}/participations/user",
+            json={"agreeMentors": True},
+            headers=_auth(student),
+        )
+    )["participant"]["id"]
+    for task_id, claim in ((later, late_claim), (agreed, agreed_claim)):
+        assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
+
+    (late_project, _), *_ = _projects_of(client, later)
+    (agreed_project, _), *_ = _projects_of(client, agreed)
+    assert _reads_project(client, late_project, board["creator_token"]) == 403
+    assert _reads_project(client, agreed_project, board["creator_token"]) == 200
+
+
+@pytest.mark.parametrize("route", ["participations/user", "participants"])
+def test_a_starter_does_not_pick_their_own_deadline(client, monkeypatch, route):
+    """On a task started directly the deadline is the task's; only the
+    publisher sets anyone's own, on the roster."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    closes = _closes()
+    task_id = _create_task(
+        client, board, name="自己定截止", startMode="DIRECT", deadline=closes
+    )
+    student = _student(client, board)
+
+    started = client.post(
+        f"/tasks/{task_id}/{route}",
+        json={"deadline": closes + 100 * DAY_MS},
+        headers=_auth(student),
+    )
+
+    assert started.status_code == 200, started.text
+    assert _page(client, task_id, student)["userDeadline"] == closes
+
+
+def _forge_down(monkeypatch):
+    """The forge stops answering; returns how to bring it back."""
+    real = forge.prepare_repository
+
+    async def unreachable(*args, **kwargs):
+        raise forge.ForgeUnreachableError("forge down")
+
+    monkeypatch.setattr(forge, "prepare_repository", unreachable)
+    return lambda: monkeypatch.setattr(forge, "prepare_repository", real)
+
+
+@pytest.mark.parametrize("by_member", [False, True])
+def test_an_approval_whose_project_failed_opens_it_when_approved_again(
+    client, monkeypatch, by_member
+):
+    """The forge fails after the approval is committed: approving again (a
+    retry, or the other approval route) opens the project rather than answering
+    success with none."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(client, board, name="仓库没建成")
+    student = _student(client, board)
+    claim = _data(_start(client, task_id, student))["participant"]
+    back = _forge_down(monkeypatch)
+    failed = _decide(client, board, task_id, claim["id"], "APPROVED")
+    assert failed.status_code == 503, failed.text
+    assert _projects_of(client, task_id) == []
+    back()
+
+    again = (
+        client.patch(
+            f"/tasks/{task_id}/participants",
+            params={"member": claim["memberId"]},
+            json={"approved": "APPROVED"},
+            headers=_auth(board["creator_token"]),
+        )
+        if by_member
+        else _decide(client, board, task_id, claim["id"], "APPROVED")
+    )
+
+    assert again.status_code == 200, again.text
+    (opened, _), *_ = _projects_of(client, task_id)
+    assert _page(client, task_id, student)["myProject"]["id"] == opened
+
+
+def test_an_approved_claim_without_a_project_gets_it_when_the_claimant_comes_back(
+    client, monkeypatch
+):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(client, board, name="有导师，自己回来开项目")
+    _data(
+        client.patch(
+            f"/tasks/{task_id}",
+            json={"mentors": [_handle(client, board["creator_token"])]},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+    student = _student(client, board)
+    claim = _data(
+        client.post(
+            f"/tasks/{task_id}/participations/user",
+            json={"agreeMentors": True},
+            headers=_auth(student),
+        )
+    )["participant"]["id"]
+    back = _forge_down(monkeypatch)
+    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 503
+    back()
+
+    # Coming back asks for nothing it already agreed to.
+    opened = _data(_start(client, task_id, student))["project"]
+
+    assert opened is not None
+    assert _page(client, task_id, student)["myProject"]["id"] == opened["id"]
+
+
+def _status(client, task_id: int) -> str:
+    async def read() -> str:
+        async with client.test_factory() as session:
+            return await session.scalar(
+                select(TaskMembership.completion_status).where(
+                    TaskMembership.task_id == task_id
+                )
+            )
+
+    return client.portal.call(read)
+
+
+def _sweep(client) -> None:
+    async def run() -> None:
+        async with client.test_factory() as session:
+            await check_and_fail_expired_deadlines(session)
+
+    client.portal.call(run)
+
+
+def test_moving_a_deadline_later_reopens_a_claim_the_sweep_failed(client, monkeypatch):
+    """A claim's completion is derived again whenever its deadline moves: by
+    the task's deadline on a task started directly, or by the publisher's
+    own deadline for one claim."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(
+        client, board, name="延期", startMode="DIRECT", deadline=_closes()
+    )
+    student = _student(client, board)
+    claim = _data(_start(client, task_id, student))["participant"]["id"]
+
+    def move_task(at: int) -> None:
+        _data(
+            client.patch(
+                f"/tasks/{task_id}",
+                json={"deadline": at},
+                headers=_auth(board["creator_token"]),
+            )
+        )
+
+    move_task(int(time.time() * 1000) - DAY_MS)
+    _sweep(client)
+    assert _status(client, task_id) == "FAILED"
+    move_task(_closes())
+    assert _status(client, task_id) == "NOT_SUBMITTED"
+
+    move_task(int(time.time() * 1000) - DAY_MS)
+    _sweep(client)
+    assert _status(client, task_id) == "FAILED"
+    _data(
+        client.patch(
+            f"/tasks/{task_id}/participants/{claim}",
+            json={"deadline": _closes()},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+    assert _status(client, task_id) == "NOT_SUBMITTED"
+
+
+def test_a_task_started_directly_needs_a_deadline(client, monkeypatch):
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+
+    made = _post_task(client, board, name="没有截止", startMode="DIRECT", deadline=None)
+    assert made.status_code == 400, made.text
+    assert made.json()["error"]["i18n"]["key"] == "taskDirectNeedsDeadline"
+
+    applied = _create_task(client, board, name="申请制没有截止", deadline=None)
+    switched = client.patch(
+        f"/tasks/{applied}",
+        json={"startMode": "DIRECT"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert switched.status_code == 400, switched.text
+    assert switched.json()["error"]["i18n"]["key"] == "taskDirectNeedsDeadline"

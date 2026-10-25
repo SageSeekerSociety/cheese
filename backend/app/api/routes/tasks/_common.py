@@ -21,17 +21,20 @@ from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
+from app.core.sentences import say
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
 from app.domain.task.inputs import (
+    APPROVE_DISAPPROVED,
     START_APPLY,
+    START_DIRECT,
     map_start_mode,
     map_submitter_type,
 )
-from app.domain.task.mentors import require_consent, set_mentors
+from app.domain.task.mentors import mentors_of, require_consent, set_mentors
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -102,7 +105,6 @@ class TaskParticipantRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -116,7 +118,6 @@ class JoinTaskAsTeamRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     team_id: int = Field(..., alias="teamId", gt=0)
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -384,6 +385,8 @@ async def _create_task_entity(
             deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    if start_mode == START_DIRECT and deadline_dt is None:
+        raise BadRequestError(say("taskDirectNeedsDeadline"))
 
     registration_start_dt: datetime | None = None
     if registration_start_ms is not None:
@@ -494,5 +497,20 @@ async def set_task_mentors(
     await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
 
 
-async def require_mentor_consent(db, *, task, agreed: bool) -> None:
+async def mentors_agreed(
+    db, membership_service, *, task, member_id: int, is_team: bool, agreed: bool
+) -> list[str]:
+    """The task's mentors this claim agrees to, recorded on a new claim and
+    seated in the project it opens (``TaskMembership.agreed_mentors``).
+
+    A task with mentors is claimed only by someone who agreed to them
+    (``require_consent``). Asking again for a claim already held records
+    nothing and asks for nothing: what it agreed to was recorded when it was
+    made."""
+    held = await membership_service.get_membership_by_task_and_member(
+        task_id=task.id, member_id=member_id, is_team=is_team
+    )
+    if held is not None and held.approved != APPROVE_DISAPPROVED:
+        return []
     await require_consent(db, task=task, agreed=agreed)
+    return await mentors_of(db, task.id)

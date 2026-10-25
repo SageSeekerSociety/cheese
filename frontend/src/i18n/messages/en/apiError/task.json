@@ -55,6 +55,7 @@
   "taskFilesForTakers": "Only the publisher, a space admin or someone working on this task can download its materials",
   "taskPlacesFull": "All {limit} places on this task are taken",
   "taskLockingPolicyInvalid": "The team membership setting is not valid",
+  "taskDirectNeedsDeadline": "A task that starts directly needs a deadline; everyone hands in by it",
   "taskStartModeInvalid": "How a task starts is either start directly or apply first",
   "taskOpeningNotFailed": "The AI teammate didn't fail when it took on this task; there is nothing to retry",
   "taskOwnSessionCloses": "Only the task's owner, its collaborators, or the AI teammate working in the task's conversation can close it",

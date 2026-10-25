@@ -168,18 +168,22 @@ class TaskMembershipService:
         task: Task,
         member_id: int,
         is_team: bool,
-        deadline: datetime | None,
         email: str | None,
         phone: str | None,
         apply_reason: str | None,
         personal_advantage: str | None,
         remark: str | None,
+        mentors: Sequence[str] = (),
     ) -> TaskMembership:
         """领这道题。申请制的题（``START_APPLY``），新的一份申请等出题人通过
         （``approved`` 2），名额、实名都在通过时看（``update_membership``），这里
         只看团队那两条。直接开始的题（``START_DIRECT``），这一份当场就是通过的：
         通过时看的那几条（``_check_approvable``，名额照样先锁题目那一行）在这里看，
-        截止时间是题目自己的（``claims.deadline_from``）。
+        截止时间是题目自己的（``claims.deadline_from``）。领题的人不定自己的截止
+        时间：申请制的在通过时定，个人的截止只由出题人在参与者名单上改。
+
+        ``mentors`` 是领题的人这一刻看到并同意了的导师：项目打开时（直接开始当场，
+        申请制通过时）加入的就是这几位，之后才加到题目上的人不算。
 
         领一道自己（或自己的团队）已经领着的题不是错：答的就是那一份（等着通过
         的、已经通过的都算），调用方接着打开它的项目。被拒的那一份不算领着，可以
@@ -225,8 +229,6 @@ class TaskMembershipService:
         direct = claims.starts_now(task)
         if direct:
             await self._check_approvable(task, member_id=member_id, is_team=is_team)
-            if deadline is None:
-                deadline = claims.deadline_from(task, now)
 
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
@@ -238,9 +240,10 @@ class TaskMembershipService:
             completion_status=COMPLETION_STATUS_NOT_SUBMITTED,
             created_at=now,
             updated_at=now,
-            deadline=deadline,
+            deadline=claims.deadline_from(task, now) if direct else None,
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
+            agreed_mentors=list(mentors),
         )
         return await self._repo.save(membership)
 
@@ -282,6 +285,7 @@ class TaskMembershipService:
         # 应用字段更新
         if approved is not None:
             membership.approved = approved
+        deadline_moved = deadline is not None and deadline != membership.deadline
         if deadline is not None:
             membership.deadline = deadline
         if email is not None:
@@ -292,7 +296,12 @@ class TaskMembershipService:
         _ = reject_reason
 
         membership.updated_at = datetime.now(UTC)
-        return await self._repo.save(membership)
+        saved = await self._repo.save(membership)
+        # 截止时间挪了，这份领取的完成状态跟着重推：清扫按旧截止判了失败的，延到以后
+        # 又是没交；提前到已经过去的，没交的就读作失败。
+        if deadline_moved:
+            await refresh_completion_status(self._repo._session, saved)
+        return saved
 
     async def _check_approvable(
         self, task: Task, *, member_id: int, is_team: bool

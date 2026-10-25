@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -24,7 +24,11 @@ from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.task.stages import list_stages
-from app.domain.task.submission_state import STAGE_NOT_SUBMITTED, stage_states_of
+from app.domain.task.submission_state import (
+    STAGE_NOT_SUBMITTED,
+    refresh_completion_status,
+    stage_states_of,
+)
 from app.domain.team.models import Team, TeamUserRelation
 
 #: Days a claim of a task applied for has when the task names none.
@@ -55,20 +59,25 @@ async def follow_the_task_deadline(
 ) -> None:
     """On a task started directly everyone hands in by the task's deadline, so
     when it moves, the approved claims still holding the old one move with it.
-    A claim whose deadline the publisher moved on its own keeps that one."""
+    A claim whose deadline the publisher moved on its own keeps that one.
+    Each claim that moved is derived again (``refresh_completion_status``): a
+    claim the sweep failed at the old deadline is open again at a later one,
+    and one past the new deadline with nothing in hand reads failed."""
     if not starts_now(task) or task.deadline == before:
         return
-    await session.execute(
-        update(TaskMembership)
-        .where(
-            TaskMembership.task_id == task.id,
-            TaskMembership.deleted_at.is_(None),
-            TaskMembership.approved == APPROVE_APPROVED,
-            TaskMembership.deadline.is_not_distinct_from(before),
+    moving = (
+        await session.scalars(
+            select(TaskMembership).where(
+                TaskMembership.task_id == task.id,
+                TaskMembership.deleted_at.is_(None),
+                TaskMembership.approved == APPROVE_APPROVED,
+                TaskMembership.deadline.is_not_distinct_from(before),
+            )
         )
-        .values(deadline=task.deadline)
-        .execution_options(synchronize_session=False)
-    )
+    ).all()
+    for claim in moving:
+        claim.deadline = task.deadline
+        await refresh_completion_status(session, claim)
 
 
 async def members_claiming_through_another_team(

@@ -61,7 +61,42 @@ const isAllowedDates = (date: unknown) => {
       </v-radio-group>
     </BaseField>
 
-    <div class="tf-grid">
+    <!-- 直接开始的题：开放的那一天可空，截止日期必填，是所有人交作业的期限，不写成报名的截止。 -->
+    <div v-if="startMode === 'DIRECT'" class="tf-grid">
+      <BaseField :label="t('tasks.form.opensOn')" :error="errorOf(registrationStartAtControl)">
+        <VDateInput
+          v-model="registrationStartAt"
+          data-agent-field="registration_start"
+          :placeholder="t('tasks.form.opensNow')"
+          :aria-label="t('tasks.form.opensOn')"
+          :allowed-dates="isAllowedDates"
+          :error="Boolean(errorOf(registrationStartAtControl))"
+          prepend-icon=""
+          variant="outlined"
+          density="comfortable"
+          clearable
+          hide-details
+        />
+      </BaseField>
+      <BaseField data-agent-field="deadline" :label="t('tasks.form.dueOn')" required :error="errorOf(deadlineControl)">
+        <template #default="{ id }">
+          <VDateInput
+            :id="id"
+            v-model="deadline"
+            :aria-label="t('tasks.form.dueOn')"
+            :allowed-dates="isAllowedDates"
+            :error="Boolean(errorOf(deadlineControl))"
+            prepend-icon=""
+            variant="outlined"
+            density="comfortable"
+            clearable
+            hide-details
+          />
+        </template>
+      </BaseField>
+    </div>
+
+    <div v-else class="tf-grid">
       <BaseField
         data-agent-field="deadline"
         :label="t('tasks.form.registration')"
@@ -98,7 +133,6 @@ const isAllowedDates = (date: unknown) => {
       </BaseField>
 
       <BaseField
-        v-if="startMode !== 'DIRECT'"
         data-agent-field="days_to_submit"
         :label="t('tasks.form.completion')"
         required

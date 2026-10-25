@@ -145,6 +145,11 @@ export function useTaskForm(
           message: t('tasks.form.validation.teamSizeOrder'),
           path: ['maxTeamSize'],
         })
+        // 直接开始的题所有人按截止日期交，没有截止日期就没有期限。
+        .refine((arg) => arg.startMode !== 'DIRECT' || arg.deadline != null, {
+          message: t('tasks.form.validation.dueRequired'),
+          path: ['deadline'],
+        })
     )
   )
 

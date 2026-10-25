@@ -3,7 +3,8 @@
 // 怎么移出。学生勾了同意才能领。
 import { useI18n } from 'vue-i18n'
 
-defineProps<{ names: string }>()
+/** `startsDirectly`：直接开始的题开始做就有项目，申请制的题要等申请通过。 */
+defineProps<{ names: string; startsDirectly?: boolean }>()
 
 const { t } = useI18n()
 </script>
@@ -12,7 +13,11 @@ const { t } = useI18n()
   <section class="mentor-notice">
     <div class="mentor-notice__head">
       <v-icon size="18" class="mentor-notice__icon">mdi-account-tie-outline</v-icon>
-      <span class="mentor-notice__title">{{ t('tasks.verifyDialog.mentor.title', { names }) }}</span>
+      <span class="mentor-notice__title">{{
+        startsDirectly
+          ? t('tasks.verifyDialog.mentor.titleStart', { names })
+          : t('tasks.verifyDialog.mentor.title', { names })
+      }}</span>
     </div>
     <ul class="mentor-notice__list">
       <li>{{ t('tasks.verifyDialog.mentor.sees') }}</li>

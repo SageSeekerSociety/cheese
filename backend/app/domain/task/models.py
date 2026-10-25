@@ -198,6 +198,11 @@ class TaskMembership(Base):
     pitch: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    # The task's mentors (handles) the claimant saw and agreed to when they
+    # applied or started (#3830): the ones seated in the project the claim
+    # opens. Someone added to the task afterwards is not, without new consent.
+    # NULL on claims made before it was recorded, which seat nobody.
+    agreed_mentors: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     completion_status: Mapped[str] = mapped_column(
         "completion_status", String(50), nullable=False, default="NOT_SUBMITTED"

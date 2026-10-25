@@ -14,7 +14,7 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
-    require_mentor_consent,
+    mentors_agreed,
 )
 from app.api.task_claims import open_claim_project
 from app.api.task_deps import (
@@ -168,10 +168,6 @@ async def create_task_participant(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    if member == auth_user.user_id:
-        # Someone claiming for themselves agrees to the mentors; a teacher
-        # enrolling a student is one of the people running the course.
-        await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -191,14 +187,17 @@ async def create_task_participant(
                     f"(requires rank {task.rank - rank_jump}+)"
                 )
 
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
     is_team = task.submitter_type == 1
+    # Someone claiming for themselves agrees to the mentors; a teacher
+    # enrolling a student is one of the people running the course.
+    mentors = await mentors_agreed(
+        db,
+        membership_service,
+        task=task,
+        member_id=member,
+        is_team=is_team,
+        agreed=payload.agree_mentors or member != auth_user.user_id,
+    )
     if is_team and not await team_service(db).is_team_member(member, auth_user.user_id):
         # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
         # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
@@ -210,12 +209,12 @@ async def create_task_participant(
         task=task,
         member_id=member,
         is_team=is_team,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
+        mentors=mentors,
     )
 
     return await _participation_response(db, task, membership, auth_user)
@@ -254,25 +253,25 @@ async def join_task_as_user(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
-
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    mentors = await mentors_agreed(
+        db,
+        membership_service,
+        task=task,
+        member_id=auth_user.user_id,
+        is_team=False,
+        agreed=payload.agree_mentors,
+    )
 
     membership = await membership_service.create_membership(
         task=task,
         member_id=auth_user.user_id,
         is_team=False,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
+        mentors=mentors,
     )
     response = await _participation_response(db, task, membership, auth_user)
     # Commit before answering (the claim, and the project it opened). ``get_db``
@@ -319,25 +318,25 @@ async def join_task_as_team(
 
     # 可见性检查：禁止"看不到但能加入"
     await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
-
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    mentors = await mentors_agreed(
+        db,
+        membership_service,
+        task=task,
+        member_id=payload.team_id,
+        is_team=True,
+        agreed=payload.agree_mentors,
+    )
 
     membership = await membership_service.create_membership(
         task=task,
         member_id=payload.team_id,
         is_team=True,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
+        mentors=mentors,
     )
     # Committed before answering, as in ``join_task_as_user``: the publisher
     # lists the pending claims on the next request.
@@ -395,13 +394,6 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    # Approved now: the claim's project opens, under the claim's team. The
-    # approval (and the place it took) is committed before the repository is
-    # made.
-    if updated.approved == APPROVE_APPROVED != approved_before:
-        await open_claim_project(
-            db, task=task, membership=updated, acting_user_id=auth_user.user_id
-        )
     # The claimer hears the decision, and a moved deadline on a claim already
     # approved (one being approved now gets its deadline with the decision).
     now = datetime.now(UTC)
@@ -417,6 +409,15 @@ async def patch_task_participant(
     elif updated.approved == 0 and updated.deadline != deadline_before:
         await task_notices.personal_deadline_changed(
             db, task=task, membership=updated, by=auth_user.user_id, at=now
+        )
+    # An approved claim has its project, under the claim's team: opened now,
+    # or found again. Every approved PATCH asks, so one whose repository could
+    # not be made last time (the forge unreachable after the approval was
+    # committed) gets it when the publisher tries again. The approval, its
+    # notice and the place it took are committed before the repository is made.
+    if updated.approved == APPROVE_APPROVED:
+        await open_claim_project(
+            db, task=task, membership=updated, acting_user_id=auth_user.user_id
         )
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and

@@ -155,7 +155,12 @@
 
     <!-- The task's mentors join the project the claim opens (#3830): said before
          confirming, which is the claimer's agreement. -->
-    <TaskMentorNotice v-if="taskData?.mentors?.length" :names="mentorNames" class="mb-4" />
+    <TaskMentorNotice
+      v-if="taskData?.mentors?.length"
+      :names="mentorNames"
+      :starts-directly="startsDirectly"
+      class="mb-4"
+    />
 
     <!-- Before confirming, lay out what will be inherited (#944): the resource
          pack, the composed guidance (and which layer it came from), and the
