@@ -42,7 +42,7 @@
     "NONE": "Pending",
     "NOT_STARTED": "Nothing submitted",
     "NOT_SUBMITTED": "Not submitted",
-    "NO_PARTICIPANTS": "No claims",
+    "NO_PARTICIPANTS": "No participants",
     "PARTIAL_SUCCESS": "Some passed",
     "PENDING_REVIEW": "Awaiting review",
     "REJECTED_RESUBMITTABLE": "Returned, can resubmit",

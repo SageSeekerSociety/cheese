@@ -3,8 +3,8 @@
 上限只有一个来源 —— ``settings.attachment_max_bytes``。两处读它：
 
 - ``AttachmentService.upload``：字节进表之前判一次，多一个字节就 422（通用上传
-  ``POST /attachments``、题目材料 ``POST /tasks/{id}/attachments``、PDF 发布都从
-  这里过，所以一条判据把两条路由都覆盖了）；
+  ``POST /attachments``、PDF 发布都从这里过）；题目资料库领上传地址时判的也是这个数
+  （``records.ceiling``），所以题目材料 ``POST /tasks/{id}/files/uploads`` 同一条线；
 - ``GET /attachments/limits``：上传之前把同一个数告诉前端（发题页那张附件卡上写的
   就是它）。
 
@@ -30,6 +30,7 @@ from tests.integration.conftest import (
     create_approved_space,
     unique_int,
 )
+from tests.integration.test_task_files import _add
 
 # 比默认值小得多，好把「正好等于上限」与「多一个字节」都真发一遍。
 CEILING = 4096
@@ -37,7 +38,7 @@ CEILING = 4096
 
 @pytest.fixture
 def upload_root(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """把本地存储落到 tmp_path（与 ``test_task_attachments.py`` 同一只 fixture：
+    """把本地存储落到 tmp_path（与 ``test_task_files.py`` 同一只 fixture：
     ``get_storage_backend()`` 是模块级单例，第一次调用就把 base_path 定死）。"""
     monkeypatch.setattr(settings, "storage_local_path", str(tmp_path))
     storage_module._storage_backend = None
@@ -69,12 +70,8 @@ def _loose_upload(
 
 
 def _task_upload(client: TestClient, task_id: int, token: str, *, size: int, name: str):
-    """直接把一份材料挂到题上。"""
-    return client.post(
-        f"/tasks/{task_id}/attachments",
-        headers=_auth(token),
-        files={"file": (name, io.BytesIO(b"x" * size), "application/octet-stream")},
-    )
+    """直接把一份材料放进题目资料库。"""
+    return _add(client, task_id, token, name, b"x" * size)
 
 
 def _board(user_client: UserCreator, api_client: TestClient) -> dict:
@@ -171,9 +168,9 @@ def test_a_task_material_over_the_ceiling_is_refused_and_leaves_nothing_behind(
     over = _task_upload(api_client, task_id, token, size=CEILING + 1, name="太大的.bin")
     assert over.status_code == 422, over.text
 
-    listed = api_client.get(f"/tasks/{task_id}/attachments", headers=_auth(token))
+    listed = api_client.get(f"/tasks/{task_id}/files", headers=_auth(token))
     assert listed.status_code == 200, listed.text
-    assert [a["name"] for a in listed.json()["data"]["attachments"]] == ["收下的.bin"]
+    assert [f["name"] for f in listed.json()["data"]["files"]] == ["收下的.bin"]
 
 
 def test_the_ceiling_is_behind_the_same_door_as_the_upload(api_client: TestClient):

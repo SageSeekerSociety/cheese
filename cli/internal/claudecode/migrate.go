@@ -39,7 +39,7 @@ func MigrateLogins(ownerRoot string) ([]string, error) {
 	if errors.Is(firstErr, os.ErrNotExist) && errors.Is(moreErr, os.ErrNotExist) {
 		return nil, nil
 	}
-	unlock, err := lockMigration(filepath.Join(shared, ".claude-logins-migration.lock"))
+	unlock, err := lockFile(filepath.Join(shared, ".claude-logins-migration.lock"))
 	if err != nil {
 		return nil, fmt.Errorf("claude: lock login migration: %w", err)
 	}

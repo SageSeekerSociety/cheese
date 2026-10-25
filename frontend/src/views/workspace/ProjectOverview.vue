@@ -3,8 +3,9 @@
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
-import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
+import type { ChallengeDeadline, ChallengeStages } from '@/views/workspace/ProjectOverviewView.vue'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -26,6 +27,7 @@ import { agentNames, memberName } from '@/lib/agentNames'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
+import { TASK_FOLDER } from '@/lib/taskRevision'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
@@ -73,6 +75,21 @@ const challengeDeadline = computed<ChallengeDeadline | null>(() => {
   // 还没有就是题目的截止。
   const d = project.data.value?.challenge_deadline as { at: string; mine: boolean } | null | undefined
   return d ? { at: Date.parse(d.at), mine: d.mine } : null
+})
+// 题目分了阶段：每个阶段的截止和这个项目在上面的状态，同样在那一行里（`challenge_stages`）。
+const challengeStages = computed<ChallengeStages | null>(() => {
+  const rows = project.data.value?.challenge_stages as
+    | { name: string; description: string; due_at: string | null; status: TaskStageStatus }[]
+    | undefined
+  if (!rows?.length) return null
+  return {
+    stages: rows.map((r) => ({
+      name: r.name,
+      description: r.description,
+      dueAt: r.due_at ? Date.parse(r.due_at) : null,
+    })),
+    statuses: rows.map((r) => r.status),
+  }
 })
 // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(
@@ -138,6 +155,9 @@ function pressTask(task: { taskId: string; roomId: string }) {
 function openArtifact(artifactId: string) {
   void router.push({ name: 'project-artifact', params: { projectId: props.projectId, artifactId } })
 }
+function openTaskFolder() {
+  void router.push({ name: 'project-library', params: { projectId: props.projectId }, query: { dir: TASK_FOLDER } })
+}
 // 起草项目目标：材料先放进资料库（以后的人和 AI 队友都从那里读），再跳到项目目标那篇
 // 文档，由那里的 AI 队友接着写（`lib/overviewDraft`）。
 const drafting = ref(false)
@@ -175,6 +195,7 @@ function allTasks() {
     :project-name="projectName"
     :overview-text="overviewText"
     :challenge-deadline="challengeDeadline"
+    :challenge-stages="challengeStages"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
@@ -194,6 +215,7 @@ function allTasks() {
     @open-task="openTask"
     @press-task="pressTask"
     @open-artifact="openArtifact"
+    @open-task-folder="openTaskFolder"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"
   />

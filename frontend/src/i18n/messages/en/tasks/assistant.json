@@ -14,6 +14,7 @@
     "start": "Where should I start?"
   },
   "stopped": "Stopped",
+  "silent": "Cheese gave no answer",
   "today": "Today",
   "steps": {
     "folded": "{first} and {n} steps",
@@ -24,7 +25,12 @@
     "failed": "Call failed"
   },
   "changes": {
-    "memory": {"title": "Memory", "saved": "Remembered", "changed": "Updated", "forgotten": "Forgotten"},
+    "memory": {
+      "title": "Memory",
+      "saved": "Remembered",
+      "changed": "Updated",
+      "forgotten": "Forgotten"
+    },
     "title": "Form changes",
     "created": "New draft",
     "untitled": "Untitled task",
@@ -83,6 +89,20 @@
   },
   "newTopic": "New topic",
   "olderTopics": "Earlier topics",
+  "olderMessages": "Earlier messages",
+  "subagent": {
+    "running": "Working",
+    "done": "Done",
+    "failed": "Failed",
+    "stopped": "Stopped"
+  },
+  "checklist": {
+    "pending": "To do",
+    "inProgress": "In progress",
+    "completed": "Done",
+    "folded": "{done} of {total} done",
+    "label": "Checklist"
+  },
   "dock": "Pin to the right",
   "undock": "Unpin",
   "anywhere": {
@@ -122,5 +142,40 @@
   },
   "run": {
     "routine": "Routine “{title}” started"
+  },
+  "page": {
+    "channel": "Channel “{name}”",
+    "task": "Task “{name}”",
+    "thread": "Thread “{name}”",
+    "doc": "“{name}”",
+    "project": "Project “{name}”",
+    "problem": "Problem “{name}”",
+    "publish": "Publishing a problem",
+    "library": "My library",
+    "teamLibrary": "{name}'s library"
+  },
+  "context": {
+    "removeSelection": "Remove selected text",
+    "askSelection": "Ask Cheese",
+    "leavePage": "Leave this page out",
+    "includePage": "Include this page"
+  },
+  "cite": {
+    "recent": "Recent",
+    "inProject": "In {name}",
+    "everywhere": "Your projects",
+    "empty": "No matches",
+    "back": "Back",
+    "button": "Cite ({'@'})",
+    "tooMany": "Cite at most {most} things",
+    "loading": "Loading",
+    "kinds": {
+      "task": "Tasks",
+      "channel": "Channels",
+      "doc": "Documents",
+      "file": "Library files",
+      "problem": "Problems"
+    },
+    "label": "Cite"
   }
 }

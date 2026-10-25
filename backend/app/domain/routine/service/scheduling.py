@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.library import listing as library_listing
+from app.domain.library.shelf import Shelf
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.routine import schedule
@@ -123,7 +124,10 @@ async def _events_for(
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
         for name, when in await library_listing.added_since(
-            session, routine.project_id, since
+            # 「资料库新增」说的是项目自己放进来的；题目的材料不算。
+            session,
+            Shelf.of_project(routine.project_id, with_task=False),
+            since,
         ):
             found.append(
                 (

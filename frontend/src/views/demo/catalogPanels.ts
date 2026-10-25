@@ -252,8 +252,26 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       {
         name: '一张图',
         note: '图片没有文本差异可看，也不该拿去按文本编辑：直接把原图摆出来。',
-        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, openIsImage: true },
+        // 取数那一层交来的是带 Authorization 取回的 object URL；这里用一张内嵌的小图代替。
+        props: {
+          ...CHANGES_CONTENT_PROPS,
+          effectiveView: 'edit' as const,
+          openIsImage: true,
+          openImageSrc:
+            'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2264%22 height=%2264%22%3E%3Crect width=%2264%22 height=%2264%22 fill=%22%23f59e0b%22/%3E%3C/svg%3E',
+        },
         expectSelector: '.file-image-view img',
+      },
+      {
+        name: '一张取不到的图',
+        note: '图片要带登录取字节；取不到时说清楚、给下载原文件，而不是留一块空白。',
+        props: {
+          ...CHANGES_CONTENT_PROPS,
+          effectiveView: 'edit' as const,
+          openIsImage: true,
+          openImageError: '图片加载失败（HTTP 404）',
+        },
+        expect: '无法显示这个文件',
       },
       {
         name: '二进制文件',

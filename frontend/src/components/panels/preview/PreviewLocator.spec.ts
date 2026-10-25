@@ -18,6 +18,43 @@ beforeEach(() => setLocale('zh-CN'))
 
 afterEach(cleanup)
 
+it('指出一处以后有两个出口：挂成评论，或者发进对话', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '这里数字不对', canComment: true },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const buttons = [...ui.container.querySelectorAll('button')]
+  // 两条出口各点一次：同一条输入框、同一句话，去处由按钮决定。
+  const commentBtn = buttons.find((b) => b.textContent?.trim() === '评论')
+  const askBtn = buttons.find((b) => b.textContent?.trim() === '发送')
+  expect(commentBtn).toBeTruthy()
+  expect(askBtn).toBeTruthy()
+  commentBtn!.click()
+  askBtn!.click()
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toHaveLength(1)
+})
+
+it('这一份文件挂不了评论时，只留「发送」一条出口', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'library/a.pdf', quote: '第一段' }, note: '这里', canComment: false },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const labels = [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim())
+  expect(labels).toContain('发送')
+  expect(labels).not.toContain('评论')
+})
+
 it('弹出时不去抢正文那边的焦点', async () => {
   // 按钮原样落成 <button>：这条读的是焦点，Vuetify 的按钮和图标在这一条里没有用。
   const ui = render(PreviewLocator, {

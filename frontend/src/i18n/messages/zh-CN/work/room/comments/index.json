@@ -1,6 +1,8 @@
 {
   "cancel": "取消",
+  "close": "关闭评论",
   "comment": "评论",
+  "commentHere": "评论这一处",
   "editing": "{agent}正在修改文档…",
   "emptyOpen": "暂无评论",
   "emptyResolved": "暂无已解决的评论",

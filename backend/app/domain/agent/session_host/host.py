@@ -362,6 +362,9 @@ class SessionHost:
     ) -> None:
         return await speaking.steer(self, ref, prompt, work_id=work_id)
 
+    async def act_as(self, ref: SessionRef, acting: str) -> None:
+        return await speaking.act_as(self, ref, acting)
+
     def answers(self, ref: SessionRef) -> bool | None:
         return speaking.answers(self, ref)
 
@@ -625,7 +628,15 @@ class SessionHost:
             running.answering = heard.get("alive") is not False
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                            branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 if (seat := running.seat) is not None:
@@ -742,7 +753,15 @@ class SessionHost:
             heard = subscription.heard
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                            branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 # The runner answered. It may have had nothing to answer with:

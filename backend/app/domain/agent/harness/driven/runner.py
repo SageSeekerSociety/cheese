@@ -160,21 +160,23 @@ def socket_path(state: Path) -> str:
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
-#: The platform tools that read the room's own messages: let through, and no answer.
+#: The platform tools that read the room's own messages: let through, and no
+#: answer. Each is one verb of `cheese_chat`, by its key (`<tool>.<action>`):
+#: editing a message of one's own is in the same tool and answers nobody.
 REPLY_READS = (
-    "cheese_chat_list",
-    "cheese_chat_get",
-    "cheese_chat_search",
-    "cheese_chat_replies",
+    "cheese_chat.list",
+    "cheese_chat.get",
+    "cheese_chat.search",
+    "cheese_chat.replies",
 )
 REPLY_OWED = (
     "A person in this conversation has sent a message you have not answered yet. "
     "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
     "what you will do next — and if they asked you to stop, stop. If you have "
-    "not seen what they wrote, read the conversation with cheese_chat_list (or "
-    "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
-    "tool is refused until you have replied."
+    "not seen what they wrote, read the conversation with cheese_chat "
+    "(action=list, or get / search / replies); every other tool is refused "
+    "until you have replied."
 )
 
 
@@ -266,6 +268,15 @@ class Runner(Generic[J]):  # noqa: UP046
         # mark changes with every change of it, and from one runner to the next.
         self.live_blocks: list[dict] = []
         self.live_work: str | None = None
+        #: The calls of the work under way that came back, for a harness that
+        #: says so (``Writing.returned``).
+        self.live_returned: list[str] = []
+        #: The branches of a person's 芝士 that the work under way started or
+        #: moved, as they stand (``Writing.branches``).
+        self.live_branches: list[dict] = []
+        #: The calls of the work under way as they were made, by id
+        #: (``Writing.made``).
+        self.live_made: dict[str, dict] = {}
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
@@ -524,6 +535,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 "work_id": self.live_work,
                 # As they stand now: the harness goes on changing them in place.
                 "blocks": [dict(block) for block in self.live_blocks],
+                "returned": list(self.live_returned),
+                "branches": [dict(branch) for branch in self.live_branches],
+                "made": [dict(made) for made in self.live_made.values()],
             }
         return answer
 

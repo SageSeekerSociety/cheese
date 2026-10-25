@@ -2,7 +2,7 @@ import type { AssistantEdit } from '@/stores/agentThread'
 
 import { describe, expect, it } from 'vitest'
 
-import { stepError, stepView } from './assistantView'
+import { checklistOf, interleave, type PanelStep, stepError, stepView, withSubagents } from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { t } from '@/i18n'
@@ -31,6 +31,35 @@ describe('stepView', () => {
       arg: 'python3 stats.py --all',
     })
     expect(step('write', { path: 'report.md', content: '……' }).arg).toBe('report.md')
+  })
+
+  it('指代东西的编号不写出来，资料库里的文件写文件名', () => {
+    const step = (name: string, args: object) =>
+      stepView({ call: name, name, args: JSON.stringify(args), state: 'done' })
+    expect(step('cheese_read', { ref: 'ml-course/channels/3' }).arg).toBe('')
+    expect(step('cheese_inbox_respond', { ref: 'alerts/9029', choice: '采纳' }).arg).toBe('')
+    expect(step('chat_send', { where: 'ml-course/tasks/12', content: '好' }).arg).toBe('')
+    expect(step('cheese_read', { ref: 'library/报告/实验 3.pdf' }).arg).toBe('实验 3.pdf')
+    expect(step('cheese_file_to_computer', { ref: 'library/squares.csv' }).arg).toBe('squares.csv')
+    expect(step('cheese_find', { query: '缓存实验' }).arg).toBe('缓存实验')
+  })
+
+  it('读回来的东西有名字时写名字，分身读的也一样', () => {
+    const read = { call: 'c1', name: 'cheese_read', args: '{"ref": "ml/tasks/12"}', state: 'done' as const }
+    expect(stepView({ ...read, shown: '任务「报名说明」' }).arg).toBe('任务「报名说明」')
+    const [sent] = withSubagents(
+      [stepView({ call: 's1', name: 'cheese_subagent_start', args: '{}', state: 'done' })],
+      [
+        {
+          id: 'branch-1',
+          call: 's1',
+          description: '读频道',
+          status: 'done',
+          steps: [{ name: 'cheese_read', args: '{"ref": "ml/channels/3"}', shown: '频道「综合」' }],
+        },
+      ]
+    )
+    expect(sent.subagent?.steps.map((s) => s.arg)).toEqual(['频道「综合」'])
   })
 })
 
@@ -175,5 +204,77 @@ describe('writesView', () => {
         true,
       ],
     ])
+  })
+})
+
+describe('interleave', () => {
+  const step = (key: string, at?: number): PanelStep => ({ key, verb: '读取', arg: '', state: 'done', at })
+  const shape = (text: string, steps: PanelStep[]) =>
+    interleave(text, steps).map((p) => (p.kind === 'text' ? p.text : p.steps.map((s) => s.key).join('+')))
+
+  it('places each step after the words written before it, and steps in a row together', () => {
+    const text = '我先查一下。\n\n有两件事。\n\n都处理好了。'
+    expect(shape(text, [step('a', 6), step('b', 6), step('c', 13)])).toEqual([
+      '我先查一下。',
+      'a+b',
+      '有两件事。',
+      'c',
+      '都处理好了。',
+    ])
+  })
+
+  it('puts steps that kept no place before the words, as answers did before', () => {
+    expect(shape('好了。', [step('a'), step('b')])).toEqual(['a+b', '好了。'])
+  })
+
+  it('shows steps alone when nothing was written', () => {
+    expect(shape('', [step('a', 0)])).toEqual(['a'])
+  })
+})
+
+describe('进度清单', () => {
+  const todo = (call: string, todos: unknown, state: 'run' | 'done' = 'done') =>
+    stepView({ call, name: 'cheese_todo', args: JSON.stringify({ todos }), state, at: 0 })
+
+  it('is drawn from the last list written, and writing it is not a step of its own', () => {
+    const first = todo('t1', [{ content: '读评分标准', status: 'in_progress' }])
+    const read = stepView({ call: 'r1', name: 'cheese_read', args: '{"ref":"library/a.pdf"}', state: 'done', at: 0 })
+    const second = todo('t2', [
+      { content: '读评分标准', status: 'completed' },
+      { content: '打分', status: 'in_progress' },
+    ])
+
+    expect(checklistOf([first, read, second])).toEqual([
+      { content: '读评分标准', status: 'completed' },
+      { content: '打分', status: 'in_progress' },
+    ])
+    expect(interleave('', [first, read, second]).flatMap((p) => (p.kind === 'steps' ? p.steps : []))).toEqual([read])
+  })
+
+  it('keeps the last whole list while the next one is still being written', () => {
+    const whole = todo('t1', [{ content: '读评分标准', status: 'in_progress' }])
+    const half = stepView({ call: 't2', name: 'cheese_todo', args: '{"todos":[{"content":"读', state: 'run' })
+
+    expect(checklistOf([whole, half])).toEqual([{ content: '读评分标准', status: 'in_progress' }])
+  })
+})
+
+describe('分身', () => {
+  it('turns with its subagent: spinning while it works, done when it reports back', () => {
+    const start = stepView({ call: 'c1', name: 'cheese_subagent_start', args: '{"description":"打分"}', state: 'done' })
+    const sub = (status: 'running' | 'done') => ({
+      id: 'branch-1',
+      call: 'c1',
+      description: '打分',
+      status,
+      steps: [{ name: 'cheese_read', args: '{"ref":"library/a.pdf"}' }],
+    })
+
+    const [working] = withSubagents([start], [sub('running')])
+    const [back] = withSubagents([start], [sub('done')])
+
+    expect(working).toMatchObject({ arg: '打分', state: 'run', subagent: { status: 'running' } })
+    expect(back.state).toBe('done')
+    expect(back.subagent?.steps.map((s) => s.arg)).toEqual(['a.pdf'])
   })
 })

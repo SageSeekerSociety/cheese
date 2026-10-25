@@ -346,6 +346,13 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
+
+/* 只有放映（整层铺满窗口）那一档才要：这时工具栏第一颗按钮落在窗口左上角，桌面版
+   macOS 里要让开三颗窗口按钮（style.css 的 --window-buttons-inset，别处恒为 0）。
+   嵌在工作面板里的时候它在页面中间，不写这一条。 */
+.slides--presenting .slides__toolbar {
+  padding-left: max(8px, var(--window-buttons-inset));
+}
 .slides__title {
   min-width: 0;
   overflow: hidden;

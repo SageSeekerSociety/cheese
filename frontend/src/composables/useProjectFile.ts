@@ -20,7 +20,9 @@ import {
 } from '../api'
 import { splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
-import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, needsDocumentView, suffixOf } from '../lib/fileKind'
+
+import { useRawImage } from './useRawImage'
 
 import { t } from '@/i18n'
 
@@ -45,7 +47,9 @@ export function useProjectFile(opts: {
   /** 这一份读自频道自己的文件，不是项目当前版本。 */
   const inRoom = ref(false)
 
-  const isImage = computed(() => IMAGE_EXT.has(suffixOf(opts.path())))
+  // 频道那一份的字节端点只把 png/jpg/gif/webp 当图片发（其余只给下载），所以读自频道
+  // 的 .bmp/.ico/.avif 不画成图：画出来是一张裂图，当二进制给「下载原文件」才拿得到。
+  const isImage = computed(() => (inRoom.value ? IMAGE_SUFFIXES : IMAGE_EXT).has(suffixOf(opts.path())))
   const isDocument = computed(() => needsDocumentView(opts.path()))
   const documentType = computed(() => DOCUMENT_TYPES[suffixOf(opts.path())] ?? null)
   // 读自频道的那一份，图片和「下载原文件」也要从频道取：项目里没有它。
@@ -55,6 +59,10 @@ export function useProjectFile(opts: {
     if (inRoom.value && channel) return attachmentRawUrl(channel, opts.path())
     return pid ? workspaceFileRawUrl(pid, opts.path(), channel ?? undefined, null, 'committed') : ''
   })
+  // 读完、知道是项目的还是频道的那一份之后才取：`rawUrl` 要等 `inRoom` 定下来。
+  const image = useRawImage(() =>
+    isImage.value && !loading.value && !missing.value && !error.value ? rawUrl.value : ''
+  )
   const doc = useDocumentBytes({
     topicId: () => opts.channelId(),
     path: () => opts.path(),
@@ -161,6 +169,8 @@ export function useProjectFile(opts: {
     isDocument,
     documentType,
     rawUrl,
+    imageSrc: image.src,
+    imageError: image.error,
     docBytes: doc.bytes,
     docLoading: doc.loading,
     docError: doc.error,

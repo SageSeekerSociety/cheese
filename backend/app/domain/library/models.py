@@ -4,6 +4,10 @@
 字节：「替换为新版本」把旧的那一行标成被取代，再为新字节记一行——所以同一个名字
 可以有几行，`superseded_at` 为空的那一行是现在这一份。
 
+资料库属于一个项目、一个团队，或者一道题目（`shelf.Shelf`）：一个人自己的资料库，是他
+名下那个只有他一人的团队的；题目的资料库装出题人给的材料，从这道题派生的项目在自己资料库
+的 `题目/` 下读到它（`mount`）。一行只属于其中一个。
+
 名字里的 `/` 就是文件夹：没有文件夹表，一个文件夹在它里面还有文件时存在。名字和
 字节的位置（`location` + `blob_key`，见 `blobs`）是分开的两件事，所以改名、挪进
 文件夹只改 `name`。
@@ -12,7 +16,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -30,10 +42,46 @@ class LibraryFileRecord(UuidPk, Base):
             unique=True,
             postgresql_where=text("superseded_at IS NULL"),
         ),
+        # 团队的资料库也一样。项目的那一条管不到它：那里的 project_id 是空的，
+        # 空值在唯一索引里两两不同。
+        Index(
+            "uq_library_files_team_current",
+            "team_id",
+            "name",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL AND team_id IS NOT NULL"),
+        ),
+        # 题目的资料库也一样。
+        Index(
+            "uq_library_files_task_current",
+            "task_id",
+            "name",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL AND task_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "num_nonnulls(project_id, team_id, task_id) = 1",
+            name="ck_library_files_one_shelf",
+        ),
     )
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    #: 属于哪个项目的资料库；团队的资料库是空的。
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    #: 属于哪个团队的资料库；项目的资料库是空的。
+    team_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("team.id", ondelete="CASCADE", name="fk_library_files_team_id_team"),
+        index=True,
+        nullable=True,
+    )
+    #: 属于哪道题目的资料库；项目、团队的资料库是空的。
+    task_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("task.id", ondelete="CASCADE", name="fk_library_files_task_id_task"),
+        index=True,
+        nullable=True,
     )
     #: 资料库里的名字，也就是它的地址（`library/<name>`）；`/` 分出文件夹。
     name: Mapped[str] = mapped_column(String(512))

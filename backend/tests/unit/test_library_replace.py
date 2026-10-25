@@ -25,6 +25,7 @@ from app.core import blob_store
 from app.core.errors import ConflictError
 from app.domain.library import records
 from app.domain.library.models import LibraryFileRecord
+from app.domain.library.shelf import Shelf
 
 
 @pytest.fixture
@@ -107,7 +108,11 @@ async def test_a_replace_takes_the_name_lock_before_it_reads(project):
     session = _Recorder(current=_current_row(project, "预算.xlsx"))
 
     await records.replace(
-        session, project_id=project, name="预算.xlsx", data=b"v2", by="user-1"
+        session,
+        shelf=Shelf.of_project(project, with_task=False),
+        name="预算.xlsx",
+        data=b"v2",
+        by="user-1",
     )
 
     first, params = session.calls[0]
@@ -123,7 +128,11 @@ async def test_a_lost_race_comes_back_as_a_conflict_not_a_crash(project):
 
     with pytest.raises(ConflictError) as refused:
         await records.replace(
-            session, project_id=project, name="预算.xlsx", data=b"v2", by="user-1"
+            session,
+            shelf=Shelf.of_project(project, with_task=False),
+            name="预算.xlsx",
+            data=b"v2",
+            by="user-1",
         )
 
     assert refused.value.status_code == 409

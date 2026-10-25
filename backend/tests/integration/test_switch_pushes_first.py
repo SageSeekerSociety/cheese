@@ -268,7 +268,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     client, monkeypatch
 ):
     """Nothing is refused over work that could not be pushed, so the agent
-    switches on its own (`cheese_environment`) and never has to find a person
+    switches on its own (`cheese_session(action=environment)`) and never has to find a person
     to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
@@ -356,7 +356,7 @@ class _IdleMachine:
             )
         return running() if method == "ping" else self.push
 
-    async def exec(self, device_id, argv, *, stdin, timeout):
+    async def exec(self, device_id, argv, *, stdin, timeout, **_):
         self.installs.append((device_id, stdin))
         if self.install_exit:
             return {"exit": self.install_exit, "stderr": "no python3"}

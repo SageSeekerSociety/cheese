@@ -872,13 +872,14 @@ test_pull_retries_transient_failure() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/pull-retry.XXXXXX")"
   docker_log="$run_dir/docker.log"
+  # Five dropped connections in a row: a burst, well inside the budget.
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_PULL_FAIL_COUNT=2 \
+    APP_TIER_PULL_FAIL_COUNT=5 \
     APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
-    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
@@ -886,21 +887,52 @@ test_pull_retries_transient_failure() {
       "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
     cat "$run_dir/out" >&2
     rm -rf "$run_dir"
-    fail "deploy gave up on a pull that would have succeeded on retry"
+    fail "deploy gave up on a pull that would have succeeded within the budget"
   fi
 
   attempts="$(grep -c 'pull backend frontend$' "$docker_log" || true)"
-  [ "$attempts" = 3 ] || fail "expected 3 pull attempts, saw $attempts"
-  grep -q 'image pull: succeeded on attempt 3/3' "$run_dir/out" || \
+  [ "$attempts" = 6 ] || fail "expected 6 pull attempts, saw $attempts"
+  grep -q 'image pull: succeeded on attempt 6' "$run_dir/out" || \
     fail "the retry that finally worked was not reported"
 
-  # The reclaim between attempts must actually precede the retry, not trail it.
+  # A dropped connection is no reason to free space: pruning between attempts
+  # would delete whatever an earlier attempt had already finished pulling.
+  first_prune="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
+  last_pull="$(grep -n 'pull backend frontend$' "$docker_log" | tail -n 1 | cut -d: -f1)"
+  [ -z "$first_prune" ] || [ "$first_prune" -gt "$last_pull" ] || \
+    fail "a pull that failed on the network pruned images before the retry"
+  rm -rf "$run_dir"
+  echo "PASS: a burst of failed pulls is retried within the budget, keeping what was pulled"
+}
+
+test_pull_on_a_full_disk_reclaims_before_the_retry() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-disk-full.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PULL_FAIL_COUNT=2 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    APP_TIER_PULL_FAIL_MESSAGE='failed to register layer: write /var/lib/docker/overlay2/x/diff/y: no space left on device' \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    cat "$run_dir/out" >&2
+    rm -rf "$run_dir"
+    fail "deploy gave up on a pull that a reclaim would have let through"
+  fi
+
   first_prune="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
   last_pull="$(grep -n 'pull backend frontend$' "$docker_log" | tail -n 1 | cut -d: -f1)"
   [ -n "$first_prune" ] && [ "$first_prune" -lt "$last_pull" ] || \
-    fail "no disk reclaim happened between the failed pull and the retry"
+    fail "a pull that failed on a full disk was retried without a reclaim in between"
   rm -rf "$run_dir"
-  echo "PASS: a transient pull failure is retried with a reclaim in between"
+  echo "PASS: a pull that failed on a full disk reclaims before the retry"
 }
 
 test_exhausted_pull_retries_still_fail_the_deploy() {
@@ -913,7 +945,8 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
     APP_TIER_DOCKER_LOG="$docker_log" \
     APP_TIER_PULL_FAIL_COUNT=99 \
     APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
-    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_PULL_BUDGET_SECONDS=3 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
     DEPLOY_HEALTH_ATTEMPTS=1 \
     DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
     HOME="$run_dir" \
@@ -923,17 +956,114 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
     fail "deploy reported success after every pull attempt failed"
   fi
 
-  grep -q 'image pull failed after 3 attempts' "$run_dir/out" || \
-    fail "the failure did not name how many attempts were spent"
-  grep -q 'attempt 1 exited 1; attempt 2 exited 1; attempt 3 exited 1' \
-    "$run_dir/out" || fail "the failure did not report each attempt's outcome"
+  attempts="$(grep -c 'pull backend frontend$' "$docker_log" || true)"
+  [ "$attempts" -gt 1 ] || fail "the pull was not retried before the budget ran out ($attempts attempt)"
+  summary="$(grep -o 'image pull failed after [0-9]* attempts in [0-9]*s, the pulls. 3s budget spent' "$run_dir/out" || true)"
+  [ -n "$summary" ] || fail "the failure did not name the attempts, the time spent and the budget"
+  reported="$(printf '%s\n' "$summary" | sed 's/.*after \([0-9]*\) attempts in \([0-9]*\)s.*/\1 \2/')"
+  [ "${reported% *}" = "$attempts" ] || fail "the failure reported ${reported% *} attempts, the log shows $attempts"
+  [ "${reported#* }" -le 3 ] || fail "the pulls went on for ${reported#* }s, past the 3s budget"
+  grep -q 'attempt 1 exited 1; attempt 2 exited 1' "$run_dir/out" || \
+    fail "the failure did not report each attempt's outcome"
   if grep -F 'run --rm backend' "$docker_log" >/dev/null; then
     fail "deploy proceeded to migration after the pull was given up on"
   fi
   grep -F 'image prune -af' "$docker_log" >/dev/null || \
     fail "the abandoned deploy left its pulled layers on disk"
   rm -rf "$run_dir"
-  echo "PASS: exhausted pull retries still abort the deploy, and still reclaim"
+  echo "PASS: pulls stop when the budget is spent, still abort the deploy, and still reclaim"
+}
+
+test_ghcr_login_retries_dropped_connections() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/login-retry.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  token='ghs_fake_login_token_4f1d'
+  # Five resets in a row, as on dev deploy run 40138894358, then ghcr answers.
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_GHCR_TOKEN="$token" \
+    APP_TIER_LOGIN_FAIL_COUNT=5 \
+    APP_TIER_LOGIN_COUNTER="$run_dir/login.count" \
+    APP_TIER_LOGIN_SECRET_SEEN="$run_dir/login.secret" \
+    GHCR_USERNAME=owner \
+    GHCR_TOKEN="$token" \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/ghcr-login.sh" > "$run_dir/out" 2>&1; then
+    cat "$run_dir/out" >&2
+    rm -rf "$run_dir"
+    fail "the ghcr login gave up on a registry that answered within the budget"
+  fi
+
+  # docker got the token on stdin on every attempt, and it shows up neither in
+  # what the login printed nor on any docker command line.
+  attempts="$(grep -cxF "$token" "$run_dir/login.secret" || true)"
+  [ "$attempts" = 6 ] || fail "expected the token on stdin for 6 login attempts, saw $attempts"
+  grep -q 'ghcr login: succeeded on attempt 6' "$run_dir/out" || \
+    fail "the login that finally worked was not reported"
+  if grep -qF "$token" "$run_dir/out" "$docker_log"; then
+    fail "the ghcr token appeared in the login's output or on a docker command line"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: a ghcr login that hits dropped connections is retried within the budget, token on stdin only"
+}
+
+test_ghcr_login_refused_is_not_retried() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/login-refused.XXXXXX")"
+  # The budget is short so that, were the refusal retried, the case would fail
+  # in seconds rather than spin for ten minutes.
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_GHCR_TOKEN=the-token-ghcr-accepts \
+    APP_TIER_LOGIN_SECRET_SEEN="$run_dir/login.secret" \
+    GHCR_USERNAME=owner \
+    GHCR_TOKEN=a-token-ghcr-refuses \
+    DEPLOY_PULL_BUDGET_SECONDS=5 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/ghcr-login.sh" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "the ghcr login succeeded although ghcr refused its credential"
+  fi
+
+  attempts=0
+  [ ! -f "$run_dir/login.secret" ] || attempts="$(wc -l < "$run_dir/login.secret" | tr -d ' ')"
+  [ "$attempts" = 1 ] || fail "a refused credential was tried $attempts times, expected once"
+  grep -q 'ghcr login was refused by the registry' "$run_dir/out" || \
+    fail "the failure did not say the registry refused the credential"
+  rm -rf "$run_dir"
+  echo "PASS: a ghcr login refused for its credential fails at once"
+}
+
+test_pull_refused_is_not_retried() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-refused.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PULL_FAIL_COUNT=99 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    APP_TIER_PULL_FAIL_MESSAGE='Error response from daemon: Head "https://ghcr.io/v2/x/manifests/testsha": denied: denied' \
+    DEPLOY_PULL_BUDGET_SECONDS=5 \
+    DEPLOY_PULL_BACKOFF_CAP_SECONDS=1 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded although ghcr refused the pull"
+  fi
+
+  attempts="$(cat "$run_dir/pull.count")"
+  [ "$attempts" = 1 ] || fail "a refused pull was tried $attempts times, expected once"
+  grep -q 'image pull was refused by the registry' "$run_dir/out" || \
+    fail "the failure did not say the registry refused the pull"
+  rm -rf "$run_dir"
+  echo "PASS: a pull the registry refuses fails the deploy at once"
 }
 
 test_failed_deploy_reclaims_disk() {
@@ -2368,7 +2498,11 @@ case "$CASE" in
   ownership-rollback) test_rollback_hands_the_mounts_back ;;
   ownership-rollback-noop) test_rollback_leaves_an_already_migrated_box_alone ;;
   pull-retry) test_pull_retries_transient_failure ;;
+  pull-disk-full) test_pull_on_a_full_disk_reclaims_before_the_retry ;;
   pull-exhausted) test_exhausted_pull_retries_still_fail_the_deploy ;;
+  login-retry) test_ghcr_login_retries_dropped_connections ;;
+  login-refused) test_ghcr_login_refused_is_not_retried ;;
+  pull-refused) test_pull_refused_is_not_retried ;;
   failed-reclaim) test_failed_deploy_reclaims_disk ;;
   disk-watermark) test_deploy_logs_disk_watermarks ;;
   operator) test_operator_rejects_stale_frontend ;;
@@ -2444,7 +2578,11 @@ case "$CASE" in
     test_rollback_hands_the_mounts_back
     test_rollback_leaves_an_already_migrated_box_alone
     test_pull_retries_transient_failure
+    test_pull_on_a_full_disk_reclaims_before_the_retry
     test_exhausted_pull_retries_still_fail_the_deploy
+    test_ghcr_login_retries_dropped_connections
+    test_ghcr_login_refused_is_not_retried
+    test_pull_refused_is_not_retried
     test_failed_deploy_reclaims_disk
     test_deploy_logs_disk_watermarks
     test_operator_rejects_stale_frontend

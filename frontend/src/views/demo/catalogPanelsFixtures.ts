@@ -118,7 +118,8 @@ export const CHANGES_CONTENT_PROPS = {
   effectiveView: CHANGES.effectiveView,
   openDiffLines: CHANGES.openDiffLines,
   openIsImage: CHANGES.openIsImage,
-  openRawUrl: CHANGES.openRawUrl,
+  openImageSrc: CHANGES.openImageSrc,
+  openImageError: CHANGES.openImageError,
   fileBinary: CHANGES.fileBinary,
   fileTooLarge: CHANGES.fileTooLarge,
   fileBytes: CHANGES.fileBytes,
@@ -188,7 +189,7 @@ export function fileTreeRows(collapsed: string[] = []) {
   return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, collapsedDirs: new Set(collapsed) })
 }
 
-/** `ProjectFileView` 的那十九样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
+/** `ProjectFileView` 的那二十样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
 export function projectFileProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     path: 'docs/week-1.md',
@@ -205,7 +206,8 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
     isImage: false,
     isDocument: false,
     documentType: null,
-    rawUrl: `/api/projects/${DEMO_PROJECT}/file/raw?path=docs/week-1.md`,
+    imageSrc: '',
+    imageError: '',
     docBytes: null,
     docLoading: false,
     docError: '',
@@ -273,7 +275,8 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     openIsDocument: computed(() => v.openIsDocument),
     openDocumentType: computed(() => v.openDocumentType),
     revisionPath: computed(() => v.revisionPath),
-    openRawUrl: computed(() => v.openRawUrl),
+    openImageSrc: computed(() => v.openImageSrc),
+    openImageError: computed(() => v.openImageError),
     collapsedDirs: ref(v.collapsedDirs),
     revealTick: ref(v.revealTick),
     draftCount: computed(() => v.draftCount),
@@ -360,6 +363,18 @@ export function previewBundle(
     docPage: computed(() => false),
     canPage: computed(() => pageViewOf(identity?.path)),
     docPageHtml: ref(null),
+    // 这一格是 markdown 演示：评论那一包用真的文档评论动作，这里还没有评论。
+    comments: {
+      target: computed(() => null),
+      author: 'demo',
+      open: ref(false),
+      toggle: noop,
+      threads: docThreadsBundle(),
+      post: noopAsync,
+      // 名册那一包给的：演示里照 handle 显示，头像交给首字母。
+      nameOf: (handle: string) => handle,
+      avatarOf: () => '',
+    },
     revs: v.revs,
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
@@ -437,6 +452,8 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    imageData: view.imageSrc,
+    savePdf: refuseWrite,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
     undoAgentChanges: refuseWrite,
@@ -510,6 +527,7 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    arrived: reactive(new Set<string>()),
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {

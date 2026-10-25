@@ -47,7 +47,7 @@
       "added": "Added by {name} in project settings"
     },
     "task": {
-      "claims": "{n} claims to approve",
+      "claims": "{n} applications to approve",
       "reviews": "{n} submissions to review",
       "and": ", "
     }
@@ -80,7 +80,8 @@
     "disbandTeamDone": "Disbanded “{name}”",
     "disbandTeamFailed": "Couldn't disband the team",
     "disbandTeamTypeName": "Type the team name “{name}” to confirm",
-    "teamDocs": "Documents",
+    "teamLibrary": "Library",
+    "teamSettings": "Settings",
     "teamModels": "Models",
     "spaceReview": {
       "PENDING": "In review",

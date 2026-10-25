@@ -47,7 +47,7 @@
   "docOperationNoReceipt": "The document operation has no complete receipt, so it can't be applied again",
   "docReceiptNeedsWriter": "An operation receipt requires an authenticated writer",
   "docReceiptNotFound": "This document operation receipt doesn't exist",
-  "docReplaceHitsSuggestions": "The document still has {n} unhandled suggestion(s) left by someone; replacing the whole document would drop them. Have them handled first, or change it passage by passage with cheese_doc_edit.",
+  "docReplaceHitsSuggestions": "The document still has {n} unhandled suggestion(s) left by someone; replacing the whole document would drop them. Have them handled first, or change it passage by passage with cheese_doc(action=edit).",
   "docRestoreNeedsWriter": "Restoring the document requires an authenticated writer",
   "docVersionNotFound": "This document version doesn't exist",
   "docWriterGone": "The writer's account is no longer valid",
@@ -78,7 +78,7 @@
   "taskDocParticipantsOnly": "Only the task's owner and collaborators can change this task's document; say what you think in the channel",
   "attachmentOriginalReadOnly": "Files sent in a conversation can't be changed. You can create a new file based on one",
   "docAgentDraftNeedsBlankOverview": "Drafting is only for a project overview that is still empty",
-  "docWholeWriteNeedsBlank": "This document already has content: change it passage by passage (cheese_doc_edit), not as a whole",
+  "docWholeWriteNeedsBlank": "This document already has content: change it passage by passage (cheese_doc(action=edit)), not as a whole",
   "docTeamMembersOnly": "Only the team's members can open its documents",
   "docTeamNotForAgent": "AI teammates can't read this team document",
   "docTeamNoAgent": "AI teammates aren't available in team documents",
@@ -91,5 +91,6 @@
   "docShareNotAllowed": "A project's document takes the Share documents permission; a team's or a person's own, its creator or a team admin",
   "docShareGone": "This share link no longer works",
   "docShareAppElsewhere": "This mini app belongs to another document and is not shared with this one",
-  "docShareImageUnavailable": "This image is not shared with the document"
+  "docShareImageUnavailable": "This image is not shared with the document",
+  "commentAnchorOtherFile": "This anchor points at a different file"
 }

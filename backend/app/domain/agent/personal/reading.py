@@ -25,6 +25,7 @@ from app.core.errors import NotFoundError
 from app.domain.agent.personal import people
 from app.domain.assistant import refs
 from app.domain.assistant.refs import Ref
+from app.domain.block.authorship import speaker
 from app.domain.block.queries import messages_page
 from app.domain.living_doc.services import Documents
 from app.domain.notification.preferences import local_time
@@ -138,7 +139,8 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
         if len(text) > MESSAGE_CHARS:
             text = text[:MESSAGE_CHARS] + "……"
         lines.append(
-            f"[{_when(reader, block.created_at)}] {named.of(block.author)}：{text}"
+            f"[{_when(reader, block.created_at)}] "
+            f"{speaker(block, named.of(block.author))}：{text}"
         )
     shown_from = total - (page - 1) * MESSAGES - len(rows) + 1
     head = (
@@ -191,8 +193,8 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     card = (await latest_cards_by_task(reader.session, [task.id])).get(task.id)
     if card is not None:
         lines.append(
-            f"审阅卡：{_STATUS.get(card.status, card.status)}，审阅人 "
-            f"{'、'.join(card.reviewer_handles) or '未定'}；"
+            f"审阅：{_STATUS.get(card.status, card.status)}，由 "
+            f"{'、'.join(card.reviewer_handles) or '未定的人'} 审阅；"
             f"读：{refs.review(project.slug, found.number)}"
         )
     lines.append(await _messages(reader, place.conversation_id, page))
@@ -227,12 +229,12 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     place = await access.topic(found.id)
     latest = (await latest_cards_by_task(reader.session, [found.id])).get(found.id)
     if latest is None:
-        return f"任务「{place.task.title}」还没有审阅卡。"
+        return f"任务「{place.task.title}」还没有提交审阅。"
     card = await reader.session.get(AcceptCard, latest.id)
     assert card is not None
     lines = [
-        f"任务「{place.task.title}」的审阅卡（{refs.review(project.slug, found.number)}）",
-        f"状态：{_STATUS.get(card.status, str(card.status))}；审阅人：{card.reviewer_handle}",
+        f"任务「{place.task.title}」的审阅（{refs.review(project.slug, found.number)}）",
+        f"状态：{_STATUS.get(card.status, str(card.status))}；由 {card.reviewer_handle} 审阅",
     ]
     if card.decided_by:
         lines.append(f"由 {card.decided_by} 于 {_when(reader, card.decided_at)} 决定")
@@ -255,7 +257,7 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(
-        "采纳或退回用 cheese_review_decide；要看具体改了哪些文件，到任务页的「改动」。"
+        "采纳或退回用 cheese_card(action=decide)；要看具体改了哪些文件，到任务页的「改动」。"
     )
     return _paged("\n".join(lines), refs.review(project.slug, found.number), page)
 

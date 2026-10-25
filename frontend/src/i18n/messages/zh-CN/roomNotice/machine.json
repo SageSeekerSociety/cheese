@@ -20,5 +20,9 @@
   "cloudVmReady": "云端虚拟机已就绪",
   "cloudVmReplaced": "云端虚拟机准备失败，正在重新准备",
   "cloudVmReleasedIdle": "云端虚拟机 {minutes} 分钟没有活动，改动已推送到分支，虚拟机已释放。下一条消息会准备一台新的。",
-  "cloudHostGivenUp": "云端主机 {host} 已停用：{lost} 个运行中的环境随它丢失，{replaced} 个准备中的环境换到了别的主机"
+  "cloudHostGivenUp": "云端主机 {host} 已停用：{lost} 个运行中的环境随它丢失，{replaced} 个准备中的环境换到了别的主机",
+  "executorInstallDownloading": "正在为「{device}」安装 AI 队友的运行程序：已下载 {done} / {total} MB",
+  "executorInstallDone": "已在「{device}」上安装 AI 队友的运行程序",
+  "executorInstallStopped": "为「{device}」安装 AI 队友的运行程序未完成：已下载 {done} / {total} MB，AI 队友下次用这台电脑时接着下载",
+  "executorInstallFailed": "为「{device}」安装 AI 队友的运行程序失败"
 }

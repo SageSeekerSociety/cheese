@@ -1992,7 +1992,7 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
 def test_accept_merges_again_once_the_card_says_the_line_the_pr_shows(
     client, app_world
 ):
-    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_describe` 会
+    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_card(action=describe)` 会
     同时把 PR 标题改掉（`pr_publish.sync_pr_text`），两行又成同一个字符串，合并照
     常 —— 这道闸拦住的是「分家」，不是这一次合并本身。"""
     fake = app_world["fake"]

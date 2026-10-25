@@ -86,12 +86,23 @@ class TaskVisibilityService:
         return relation is not None
 
     async def is_participant(self, *, task_id: int, user_id: int) -> bool:
-        """这个人领没领这道题（个人报名，或所在小队报名）。
+        """这个人在这道题上有没有一份没删的申请（个人申请，或所在小队申请）——等批的、
+        被拒的都算。「看得见这道题」问的是这一条：申请过的人总看得见自己申请的题。"""
+        return await self._holds_claim(task_id=task_id, user_id=user_id)
 
-        公开的，因为「看得见」与「可以下载题目附件」问的是同一条主张：能下载的人
-        是出题人 / 板管理员 / 领取者 —— 前两条站在 ``app.auth.space_access`` 那边，
-        最后一条就是这里。同一条判据给两处用，就不该有两份写法。
+    async def is_approved_participant(self, *, task_id: int, user_id: int) -> bool:
+        """这个人是不是这道题的参与者：名下有一份**申请通过**的（个人或所在小队的）。
+
+        题目的材料、项目里的 `题目/` 和 agent 读到的那一段题目都只给参与者
+        （``task.package.may_download``）：还在等批的、被拒的、退出了的都拿不到。
         """
+        return await self._holds_claim(
+            task_id=task_id, user_id=user_id, approved_only=True
+        )
+
+    async def _holds_claim(
+        self, *, task_id: int, user_id: int, approved_only: bool = False
+    ) -> bool:
         stmt = select(TaskMembership.id).where(
             TaskMembership.task_id == task_id,
             TaskMembership.deleted_at.is_(None),
@@ -110,6 +121,8 @@ class TaskVisibilityService:
                 ),
             ),
         )
+        if approved_only:
+            stmt = stmt.where(TaskMembership.approved == 0)
         # One row is enough to answer, and there can be several: a person whose
         # team's claim was rejected may claim again through another team.
         result = await self._session.execute(stmt.limit(1))

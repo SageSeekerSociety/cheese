@@ -24,6 +24,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -72,6 +73,25 @@ READING_TOOLS = ("read", "ls", "find", "grep", "git")
 #: pi's own tools a session working on a machine of its own has beside its
 #: platform tools (`_start_without_hands`): a person's 芝士 in its sandbox.
 WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
+#: The extension's tools a person's 芝士 hands parts of its work to branches
+#: with (`platform.ts`).
+BRANCH_TOOLS = ("cheese_subagent_start", "cheese_subagent_send", "cheese_subagent_stop")
+
+
+#: How what a reading tool read opens: the thing by its name, then its
+#: reference in brackets (``personal/reading.py``) — 「任务「报名说明」（…）」.
+_NAMED = re.compile(r"^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)")
+
+
+def named(result: object) -> str | None:
+    """The name of what a call read, as what came back opens with it: shown
+    in place of the reference the call was given. None for anything else."""
+    content = result.get("content") if isinstance(result, dict) else None
+    for block in content if isinstance(content, list) else ():
+        if isinstance(block, dict) and block.get("type") == "text":
+            found = _NAMED.match(str(block.get("text") or "").lstrip())
+            return found.group(1) if found else None
+    return None
 
 
 def _said(text: str) -> dict:
@@ -133,7 +153,7 @@ class Runner(runner.Runner[Journal]):
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
@@ -181,6 +201,10 @@ class Runner(runner.Runner[Journal]):
         self.tools: dict = {}
         self.platform_token = ""
         self.children = Subagents(self)
+        # A person's 芝士's branches: which work each was last moved in, and
+        # how many times the session was spoken to mid-turn.
+        self.branch_work: dict[str, tuple[str | None, tuple]] = {}
+        self.steered = 0
         # The blocks of the assistant message pi is writing, by its content
         # index (``write``), and how many messages ended and how many of them
         # have had their entry pulled since: what is shown goes then (``refresh``).
@@ -204,6 +228,23 @@ class Runner(runner.Runner[Journal]):
         kind = event.get("type")
         if kind == "message_update":
             self.write(event.get("assistantMessageEvent") or {})
+        elif kind == "tool_execution_start" and not event.get("parentToolCallId"):
+            # Its arguments whole: what was shown of them as they were written
+            # may have stopped short when the message ended.
+            call = str(event.get("toolCallId") or "")
+            self.live_made[call] = {
+                "call": call,
+                "args": json.dumps(event.get("args") or {}, ensure_ascii=False),
+            }
+            self.shown()
+        elif kind == "tool_execution_end" and not event.get("parentToolCallId"):
+            # A call came back: a reader shows it ended now, not when the
+            # model next writes, which may be a long stretch of reasoning.
+            call = str(event.get("toolCallId") or "")
+            self.live_returned.append(call)
+            if shown := named(event.get("result")):
+                self.live_made.setdefault(call, {"call": call})["shown"] = shown
+            self.shown()
         elif kind == "message_start":
             if (event.get("message") or {}).get("role") == "assistant":
                 self.writing = {}
@@ -220,6 +261,8 @@ class Runner(runner.Runner[Journal]):
             self.messages_ended += 1
         if kind == "agent_start":
             self.working = True
+            self.live_returned = []
+            self.live_made = {}
         elif kind == "agent_settled":
             self.working = False
             # pi delivers a steered message before its next model call and
@@ -329,6 +372,23 @@ class Runner(runner.Runner[Journal]):
             return
         self.live_blocks = [self.writing[i] for i in sorted(self.writing)]
         self.shown()
+
+    def branches_now(self, branches: list[dict]) -> dict:
+        """The branches as the extension says they stand: shown with the work
+        under way when this work started or moved them, so an answer shows
+        its own branches and not ones an earlier answer left behind."""
+        owner = json.loads(self.journal.recall("owner") or "{}").get("work_id")
+        shown = []
+        for branch in branches:
+            mark = (branch.get("status"), len(branch.get("steps") or []))
+            known = self.branch_work.get(str(branch.get("id")))
+            if known is None or known[1] != mark:
+                self.branch_work[str(branch.get("id"))] = (owner, mark)
+            if self.branch_work[str(branch.get("id"))][0] == owner:
+                shown.append(branch)
+        self.live_branches = shown
+        self.shown()
+        return {}
 
     def _verdict(self, kind: str, **fields) -> None:
         self.verdicts.append({"type": kind, "id": f"cheese:{uuid.uuid4()}", **fields})
@@ -507,11 +567,21 @@ class Runner(runner.Runner[Journal]):
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
         reason = ""
+        # What a room that calls one of the CLI's commands as a tool is told
+        # instead of pi's own "not found": it runs them with its bash. A
+        # session without hands has no bash to send it to.
+        commands: dict[str, str] = {}
         if tools is None:
             try:
                 tools = catalog.tools()
             except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
+            try:
+                commands = {
+                    name: catalog.not_a_tool(name) for name in catalog.cli_commands()
+                }
+            except Exception:  # pi's own "not found" is said instead
+                commands = {}
         (home / "platform.json").write_text(
             json.dumps(
                 {
@@ -531,11 +601,16 @@ class Runner(runner.Runner[Journal]):
                     "workspace": self.workspace,
                     "jobs": "" if child or not hands else str(self.state / "bg"),
                     "subagents": hands and not child,
+                    # A person's 芝士's branches, run in its own process.
+                    "branches": not hands
+                    and not child
+                    and bool((self.tools or {}).get("branches")),
                     # `Monitor`, as `driven/monitor.py` defines it: the
                     # session's alone, as its background jobs are — what a
                     # monitor prints is told to the session, never a subagent.
                     "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
+                    "commands": commands,
                     "unavailable": reason,
                     # The project's MCP servers, each at the session's gateway
                     # (`open_servers`), for pi's own MCP client.
@@ -604,12 +679,8 @@ class Runner(runner.Runner[Journal]):
         """One platform tool call.
 
         A tool from the platform's table runs here against the backend, reaching
-        the machine only for what it needs from it. Anything else is a CLI
-        command, run on the machine as the CLI would have been typed there:
-        argparse is the authority twice over — it says what the arguments mean,
-        and ``catalog.argv`` re-parses what it built, so a call that could not
-        have been typed fails here rather than reaching the CLI as a malformed
-        command line.
+        the machine only for what it needs from it. The CLI's own commands are
+        no tools: the session runs them with its `bash`, as `cheese …`.
 
         A session with no hands, or one that only reads the machine, has
         neither: each of its tools is one request to the platform, under the
@@ -635,19 +706,26 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
-        code, output = await asyncio.to_thread(
-            self.machine.run, f"exec {command} </dev/null", cwd=cwd
-        )
-        return {
-            "status": code,
-            "stdout": output.decode("utf-8", "replace"),
-            "stderr": "",
-        }
+        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
-        if tool not in (self.tools.get("names") or []):
-            return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
+        # A session may be named only some of an object's verbs
+        # (`catalog.schemas_of`): one it was not named is refused with the
+        # ones it was, the way a call naming no verb is.
+        names = self.tools.get("names") or []
+        key = (
+            f"{tool}.{arguments.get('action')}" if isinstance(arguments, dict) else tool
+        )
+        if tool not in names and key not in names:
+            held = [
+                verb
+                for name, _, verb in (n.partition(".") for n in names)
+                if name == tool and verb
+            ]
+            said = (
+                catalog.ask_for_action(tool, held) if held else f"{tool}: no such tool"
+            )
+            return {"status": 1, "stdout": "", "stderr": said}
         if not self.platform_token:
             # Never the credential the session started with: that one is the
             # room's, and a tool acts for whoever asked.
@@ -658,7 +736,12 @@ class Runner(runner.Runner[Journal]):
             }
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
-            None,
+            # A person's 芝士 works on a computer of its own and moves files
+            # between it and their library (`cheese_library(action=give)`): the commands
+            # run there, the requests go out under the question's credential.
+            # One that only reads a room's machine (a document's 芝士) runs
+            # nothing on it.
+            self._invoke if self.tools.get("works") and self.machine else None,
             call_id,
             self.doc_versions,
             no_run,
@@ -669,7 +752,7 @@ class Runner(runner.Runner[Journal]):
         for name, value in _scope_of(self.platform_token).items():
             host.environ.setdefault(name, value)
         try:
-            text = catalog.run_platform_tool(tool, arguments, host)
+            text = catalog.run_platform_tool(tool, arguments, host, delegated=True)
         except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return _said(text)
@@ -975,7 +1058,8 @@ class Runner(runner.Runner[Journal]):
             if self.machine.reading
             else WORKING_TOOLS
         )
-        names = ",".join([*own, *(spec["name"] for spec in specs)])
+        branching = BRANCH_TOOLS if tools.get("branches") else ()
+        names = ",".join([*own, *(spec["name"] for spec in specs), *branching])
         flags = ["--system-prompt", str(prompt)]
         flags += ["--tools", names] if names else ["--no-tools"]
         home = self.write_extension(extension, "", tools=specs)
@@ -1117,7 +1201,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are
@@ -1191,7 +1275,19 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 owes_reply=bool(params.get("owes_reply")),
             )
+        if method == "branches":
+            return self.branches_now(params.get("branches") or [])
+        if method == "said_since":
+            # How many times the session was spoken to mid-turn: a branch's
+            # wait ends when it changes, so the person is heard first.
+            return {"count": self.steered}
+        if method == "acting":
+            # A long answer's credential, renewed: the calls from now on act
+            # with it, and nothing is said to the session.
+            self.platform_token = str(params.get("platform_token") or "")
+            return {}
         if method == "steer":
+            self.steered += 1
             return await self.send(
                 params["input_id"],
                 params["text"],

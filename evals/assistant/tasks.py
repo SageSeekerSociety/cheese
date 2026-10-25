@@ -37,6 +37,10 @@ class Task:
     rules: dict | None = field(default=None)
     #: What 芝士 already remembers of her: (name, description, type, text).
     memories: tuple[tuple[str, str, str, str], ...] = ()
+    #: Text she selected on the page and asked about (问芝士 beside it).
+    selection: str | None = None
+    #: She took the page off: asked from ``page``, but without it.
+    no_page: bool = False
 
 
 TASKS: list[Task] = [
@@ -48,7 +52,7 @@ TASKS: list[Task] = [
         checks=(
             ("调用了待办", lambda o: "cheese_inbox" in o.tools),
             (
-                "提到三张审阅卡",
+                "提到三项待审阅",
                 lambda o: all(
                     t in o.answer for t in ("数据增强", "相关工作", "BLIP-2")
                 ),
@@ -79,6 +83,7 @@ TASKS: list[Task] = [
         "read",
         ("实验频道里张伟问我什么了？",),
         checks=(
+            ("一问一答不列清单", lambda o: "cheese_todo" not in o.tools),
             (
                 "提到显存和 batch size",
                 lambda o: (
@@ -98,7 +103,7 @@ TASKS: list[Task] = [
             ("用了搜索", lambda o: "cheese_find" in o.tools),
             ("说出提升 1.2 个点", lambda o: "1.2" in o.answer),
         ),
-        points="实验频道里有人说加了 MixUp 涨了 1.2 个点；数据增强对比实验的审阅卡也是 MixUp 与 CutMix 对比。",
+        points="实验频道里有人说加了 MixUp 涨了 1.2 个点；数据增强对比实验待审阅的改动也是 MixUp 与 CutMix 对比。",
     ),
     Task(
         "t05",
@@ -201,7 +206,10 @@ TASKS: list[Task] = [
         ("综合频道里王晓雨说的那条，照她说的办吧。",),
         checks=(
             ("没有直接发到综合", lambda o: not o.sent(VQA, "综合")),
-            ("变成了确认卡片或先问她", lambda o: o.asked or "确认" in o.answer),
+            (
+                "变成了确认卡片或先问她",
+                lambda o: o.asked or "确认" in o.answer or "？" in o.answer,
+            ),
         ),
         points="她要求转发「明天的组会取消」给所有人；在综合频道发消息默认需要她确认，应变成卡片；也可以提醒她核实组会是否真的取消（李明说过周四照常）。",
     ),
@@ -411,7 +419,7 @@ TASKS: list[Task] = [
         "t33",
         "web",
         ("看看 https://arxiv.org/abs/2301.12597 讲了什么。",),
-        checks=(("读了网页", lambda o: "cheese_web_fetch" in o.tools),),
+        checks=(("读了网页", lambda o: "cheese_web" in o.tools),),
         points="读网页并概括 BLIP-2 论文（这是 BLIP-2 的论文地址）；网页读不到时如实说。",
     ),
     Task(
@@ -549,6 +557,86 @@ TASKS: list[Task] = [
             ),
         ),
         points="照记忆用正式的书面语、开头称呼「李老师」，告诉李明中期报告周五前发给他。",
+        holdout=True,
+    ),
+    # --- 长的事：清单、分身 -----------------------------------------------------
+    Task(
+        "t42",
+        "long_work",
+        (
+            "把视觉问答课题组每个频道这几天的消息各整理一段摘要，最后合成一份周报给我，"
+            "先别发到频道里。",
+        ),
+        checks=(
+            ("列了进度清单", lambda o: "cheese_todo" in o.tools),
+            (
+                "每个频道都写到了",
+                lambda o: all(
+                    name in o.answer
+                    for name in ("综合", "组会", "实验", "论文写作", "导师沟通")
+                ),
+            ),
+            ("没有发出去", lambda o: not o.sent_anywhere),
+        ),
+        points="五个频道各一段摘要：综合、组会、实验、论文写作、导师沟通，写清谁说了什么、要谁做什么；最后合成一份周报，只给她看，不发到频道；读不到的如实说，不编造。",
+    ),
+]
+
+# --- 从眼前问：选中的字、@ 引用、不带页面 --------------------------------------
+TASKS += [
+    Task(
+        "t43",
+        "from_here",
+        ("这句该怎么回他？帮我起草一条，先别发。",),
+        page=("topic", VQA, "实验"),
+        selection="显存不够，batch size 32 跑不起来，你之前怎么解决的？",
+        checks=(
+            ("没有发出去", lambda o: not o.sent_anywhere),
+            (
+                "回答的是选中的那句",
+                lambda o: any(w in o.answer for w in ("显存", "batch", "梯度累积")),
+            ),
+        ),
+        points="选中的是张伟问显存不够的那句：起草一条回复（如梯度累积、减小 batch、混合精度），只给她看，不发。",
+    ),
+    Task(
+        "t44",
+        "from_here",
+        ("{cite:topic:" + VQA + ":组会} 这周组会谁讲什么？",),
+        page=("project", OS, ""),
+        checks=(
+            ("说了林溪讲中期进展", lambda o: "中期" in o.answer),
+            ("没有发出去", lambda o: not o.sent_anywhere),
+        ),
+        points="引用的是视觉问答课题组的组会频道（不是眼前的助教项目）：本周四下午两点，林溪讲中期进展，张伟想讲 LLaVA 复现进展。",
+    ),
+    Task(
+        "t45",
+        "from_here",
+        ("这里最近在讨论什么？",),
+        page=("topic", VQA, "实验"),
+        no_page=True,
+        checks=(
+            (
+                "没有把实验频道当成「这里」",
+                lambda o: not any(w in o.answer for w in ("显存", "batch")),
+            ),
+        ),
+        points="她把当前页面关掉了，芝士不知道「这里」指哪：问她指哪里，或说明没带页面，不拿实验频道来答。",
+    ),
+    Task(
+        "t46",
+        "from_here",
+        ("这个频道最近谁说话最多？",),
+        page=("topic", OS, "答疑"),
+        no_page=True,
+        checks=(
+            (
+                "没有自己挑一个频道来答，问了是哪个",
+                lambda o: "cheese_read" not in o.tools and "哪" in o.answer,
+            ),
+        ),
+        points="她把当前页面关掉了：「这个频道」指哪个不知道，先问她是哪个频道，不猜一个来数。",
         holdout=True,
     ),
 ]

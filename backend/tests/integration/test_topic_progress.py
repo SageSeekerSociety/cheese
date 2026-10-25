@@ -174,7 +174,7 @@ def test_the_last_write_puts_the_result_under_the_list(client):
 
 
 def test_text_written_over_a_checklist_is_no_longer_one(client):
-    """The agent can still edit its checklist message by hand (`chat_edit`).
+    """The agent can still edit its checklist message by hand (`cheese_chat(action=edit)`).
     What it writes is its own words, shown as written, and the next
     `todo_write` starts a fresh list rather than overwrite them."""
     topic, headers = _room(client)

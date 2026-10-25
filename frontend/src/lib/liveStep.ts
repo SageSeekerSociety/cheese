@@ -15,7 +15,7 @@
 import type { LiveBlock } from '../types/live'
 
 import { partialStringField } from './partialJson'
-import { toolLabel } from './toolLabels'
+import { toolKey, toolLabel } from './toolLabels'
 
 type ToolBlock = Extract<LiveBlock, { type: 'tool' }>
 
@@ -51,22 +51,22 @@ const ARG_KEY: Record<string, string> = {
   ls: 'path',
   find: 'pattern',
   grep: 'pattern',
-  // 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。
+  // 平台工具表里的工具，和旧记录里 pi 房间曾当工具调的 CLI 命令。
   chat_send: 'content',
-  chat_edit: 'content',
-  cheese_chat_search: 'query',
-  cheese_doc_edit: 'reason',
-  cheese_task: 'title',
-  cheese_close_task: 'conclusion',
-  cheese_task_state: 'note',
-  cheese_fetch: 'url',
-  cheese_web_search: 'query',
+  'cheese_chat.edit': 'content',
+  'cheese_chat.search': 'query',
+  'cheese_doc.edit': 'reason',
+  'cheese_task.open': 'title',
+  'cheese_task.close': 'conclusion',
+  'cheese_task.state': 'note',
+  'cheese_web.fetch': 'url',
+  'cheese_web.search': 'query',
   cheese_decision: 'text',
-  cheese_title: 'text',
+  'cheese_room.rename': 'text',
   cheese_notify: 'title',
   cheese_ask: 'question',
-  cheese_accept_request: 'subject',
-  cheese_describe: 'subject',
+  'cheese_card.request': 'subject',
+  'cheese_card.describe': 'subject',
   cheese_milestone: 'title',
   cheese_serve: 'note',
   cheese_show: 'path',
@@ -114,8 +114,8 @@ export function liveStep(blocks: LiveBlock[]): LiveStep | null {
   const block = currentTool(blocks)
   if (!block) return null
   const name = (block.name as string).replace(MCP_PREFIX, '')
-  const verb = toolLabel(name)
-  const key = ARG_KEY[name]
+  const verb = toolLabel(name, block.arguments)
+  const key = ARG_KEY[toolKey(name, block.arguments)] ?? ARG_KEY[name]
   const raw = key ? partialStringField(block.arguments, key)?.text ?? '' : ''
   return { verb, arg: collapse(raw).slice(0, STEP_ARG_MAX) }
 }

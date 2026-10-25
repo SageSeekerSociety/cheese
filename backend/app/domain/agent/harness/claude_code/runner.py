@@ -49,6 +49,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import lifecycle, runner
 
@@ -944,20 +945,8 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.stuck = fired
-            print(
-                f"work {self.work} stuck ({fired}); interrupting it",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.helpers.append(asyncio.ensure_future(self._interrupt_stuck()))
+            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
         self._watching()
-
-    async def _interrupt_stuck(self) -> None:
-        # A control the session did not answer changes nothing it was doing;
-        # the clock looks again, and the work ends when the session does.
-        with contextlib.suppress(Exception):
-            await self.control({"subtype": "interrupt"})
 
     # --- stdout --------------------------------------------------------------
 
@@ -1093,6 +1082,11 @@ class Runner(runner.Runner[Journal]):
             delta, block = event.get("delta") or {}, self.live_blocks[-1]
             if delta.get("type") == "text_delta" and block["type"] == "text":
                 block["text"] += str(delta.get("text") or "")
+                # Writing is working, however long one message takes: the
+                # finished block below would be the only other stamp, and a
+                # single answer that streams for half an hour would leave the
+                # silence clock with nothing to go on.
+                self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
                 block["arguments"] += str(delta.get("partial_json") or "")
@@ -1834,6 +1828,7 @@ class Runner(runner.Runner[Journal]):
             self.watchdog.configure(
                 no_progress_s=float(clocks.get("no_progress_s") or 0),
                 unread_s=float(clocks.get("unread_s") or 0),
+                silent_s=float(clocks.get("silent_s") or 0),
             )
             self._watching()
             self.announce()

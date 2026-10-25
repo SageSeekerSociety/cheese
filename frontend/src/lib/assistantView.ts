@@ -1,11 +1,11 @@
 // 芝士一轮里做的事，在面板上画成什么：每一步（动词 + 一个参数），改动卡，结果。这里是
 // 不管写的是什么都一样的那一半——面板拿的形状，和每一步怎么说；写进题目草稿的改动卡、
 // 发布的结果怎么说在 `lib/draftChangeView.ts`。
-import type { AssistantProposal, AssistantStep } from '@/stores/agentThread'
+import type { AssistantProposal, AssistantStep, AssistantSubagent } from '@/stores/agentThread'
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
-import { toolLabel } from '@/lib/toolLabels'
+import { toolKey, toolLabel } from '@/lib/toolLabels'
 
 export interface PanelStep {
   key: string
@@ -15,6 +15,89 @@ export interface PanelStep {
   error?: string
   /** 推理的那一段，不是一次工具调用。 */
   thinking?: boolean
+  /** 它前面回答已经写了多少字：步骤排在这些字后面。旧的回答没有。 */
+  at?: number
+  /** 不在步骤里画出来的一步：写进度清单，清单另画在这一轮的最上面。 */
+  hidden?: boolean
+  /** 这一步写下的进度清单。 */
+  checklist?: ChecklistItem[]
+  /** 这一步派出的分身：做到哪了，做过的几步。 */
+  subagent?: { status: AssistantSubagent['status']; steps: PanelStep[] }
+}
+
+/** 把这一轮派出的分身挂到派它的那一步上：那一步跟着分身转圈、打勾，点开看它做过的几步。 */
+export function withSubagents(steps: PanelStep[], subagents: AssistantSubagent[] = []): PanelStep[] {
+  if (!subagents.length) return steps
+  const by = new Map(subagents.map((s) => [s.call, s]))
+  return steps.map((step) => {
+    const found = by.get(step.key)
+    if (!found) return step
+    return {
+      ...step,
+      state: found.status === 'running' ? 'run' : found.status === 'failed' ? 'failed' : 'done',
+      subagent: {
+        status: found.status,
+        steps: found.steps.map((done, i) =>
+          stepView({ call: `${found.id}-${i}`, name: done.name, args: done.args, state: 'done', shown: done.shown })
+        ),
+      },
+    }
+  })
+}
+
+/** 进度清单的一项：这一步做什么，做到哪了。 */
+export interface ChecklistItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+const CHECKLIST_STATES = new Set(['pending', 'in_progress', 'completed'])
+
+/** 一次写清单的调用写下的清单；参数还没写完、读不出来时没有。 */
+function checklistIn(args: string): ChecklistItem[] | undefined {
+  try {
+    const todos = (JSON.parse(args) as { todos?: unknown }).todos
+    if (!Array.isArray(todos)) return undefined
+    return todos
+      .filter(
+        (item): item is ChecklistItem =>
+          typeof item?.content === 'string' && CHECKLIST_STATES.has(item?.status as string)
+      )
+      .map((item) => ({ content: item.content, status: item.status }))
+  } catch {
+    return undefined
+  }
+}
+
+/** 这一轮最后写下的那份进度清单；没写过就没有。 */
+export function checklistOf(steps: PanelStep[]): ChecklistItem[] | null {
+  for (let i = steps.length - 1; i >= 0; i--) if (steps[i].checklist) return steps[i].checklist ?? null
+  return null
+}
+
+/** 一轮回答按发生的顺序排开：说的一段话，或接连做的几步。 */
+export type TurnPiece = { kind: 'text'; key: string; text: string } | { kind: 'steps'; key: string; steps: PanelStep[] }
+
+/** 把一轮回答的话和步骤按发生的顺序排开：每一步排在它之前写下的那些字后面，接连的几步
+ *  归成一组。没记位置的步骤（更早的回答）都排在话前面，和从前一样。 */
+export function interleave(text: string, steps: PanelStep[]): TurnPiece[] {
+  const pieces: TurnPiece[] = []
+  let from = 0
+  const say = (to: number) => {
+    const said = text.slice(from, to).trim()
+    if (said) pieces.push({ kind: 'text', key: `text-${from}`, text: said })
+    from = to
+  }
+  for (const step of steps) {
+    if (step.hidden) continue
+    const at = Math.min(Math.max(step.at ?? 0, from), text.length)
+    if (at > from) say(at)
+    const last = pieces[pieces.length - 1]
+    if (last?.kind === 'steps') last.steps.push(step)
+    else pieces.push({ kind: 'steps', key: `steps-${step.key}`, steps: [step] })
+  }
+  say(text.length)
+  return pieces
 }
 
 export interface PanelChangeRow {
@@ -96,28 +179,29 @@ export interface PanelResult {
 /** 每种工具这一行跟的那个参数。 */
 const STEP_ARG: Record<string, string> = {
   cheese_task_search: 'query',
-  cheese_problem_write: 'name',
+  'cheese_problem.write': 'name',
   cheese_file_read: 'pages',
-  cheese_docs_search: 'query',
-  cheese_docs_read: 'page',
-  cheese_chat_search: 'query',
+  'cheese_chat.search': 'query',
   cheese_project_search: 'query',
   cheese_task_draft: 'title',
   cheese_read: 'ref',
   cheese_find: 'query',
   cheese_help: 'query',
-  cheese_message_send: 'where',
-  cheese_task_open: 'title',
-  cheese_review_decide: 'ref',
-  cheese_inbox_respond: 'ref',
-  cheese_member_set: 'who',
-  cheese_channel_create: 'title',
-  cheese_web_fetch: 'url',
-  cheese_web_search: 'query',
-  cheese_settings_set: 'key',
+  chat_send: 'where',
+  'cheese_task.open': 'title',
+  'cheese_card.decide': 'ref',
+  'cheese_inbox.respond': 'ref',
+  'cheese_room.member': 'who',
+  'cheese_room.create': 'title',
+  'cheese_web.fetch': 'url',
+  'cheese_web.search': 'query',
   cheese_routine: 'title',
-  cheese_notify_me: 'text',
+  cheese_notify: 'text',
   cheese_memory: 'description',
+  cheese_subagent_start: 'description',
+  cheese_subagent_send: 'message',
+  'cheese_library.give': 'name',
+  'cheese_library.take': 'ref',
   // 这段对话自己那台电脑上的（pi 自己的工具）。
   bash: 'command',
   read: 'path',
@@ -126,6 +210,16 @@ const STEP_ARG: Record<string, string> = {
   ls: 'path',
   find: 'pattern',
   grep: 'pattern',
+}
+
+/** 这几个参数是芝士指代东西用的编号（`ml-course/channels/3`、`alerts/12`），人认不出，
+ * 不写在这一行上；资料库里的文件编号就是它的路径，写出文件名。 */
+const REF_ARGS = new Set(['ref', 'where'])
+
+function shownArg(key: string, value: string): string {
+  if (!REF_ARGS.has(key)) return value
+  const file = /^library\/(.+)$/.exec(value.trim())?.[1]
+  return file ? file.split('/').pop() ?? '' : ''
 }
 
 export function stepView(step: AssistantStep): PanelStep {
@@ -139,15 +233,27 @@ export function stepView(step: AssistantStep): PanelStep {
       arg: '',
       state: step.state,
       thinking: true,
+      ...(step.at === undefined ? {} : { at: step.at }),
     }
-  const key = STEP_ARG[step.name]
-  const arg = key ? partialStringField(step.args, key)?.text ?? '' : ''
+  if (step.name === 'cheese_todo')
+    return {
+      key: step.call,
+      verb: toolLabel(step.name),
+      arg: '',
+      state: step.state,
+      hidden: true,
+      checklist: checklistIn(step.args),
+    }
+  const key = STEP_ARG[toolKey(step.name, step.args)] ?? STEP_ARG[step.name]
+  // 读到的东西有名字时写名字，不写编号。
+  const arg = step.shown ?? (key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : '')
   return {
     key: step.call,
-    verb: toolLabel(step.name),
+    verb: toolLabel(step.name, step.args),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
     error: step.error === undefined ? undefined : stepError(step.error),
+    ...(step.at === undefined ? {} : { at: step.at }),
   }
 }
 

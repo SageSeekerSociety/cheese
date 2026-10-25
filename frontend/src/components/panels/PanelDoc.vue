@@ -195,8 +195,11 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
 </script>
 
 <template>
+  <!-- data-agent-select: a project document has its own 芝士 on a selection (the document box), so the person's
+       问芝士 does not show there; a team's document has none, and selecting text in it offers 问芝士 -->
   <PanelDocView
     ref="viewRef"
+    :data-agent-select="props.document?.projectId ? 'off' : 'on'"
     :topic="props.topic"
     :document="props.document ? { ...props.document, title } : null"
     :deleted="doc.deleted.value"
@@ -236,6 +239,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"
     :image-src="doc.imageSrc"
+    :image-data="doc.imageData"
+    :save-pdf="doc.savePdf"
     :canvas="doc.canvas"
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"

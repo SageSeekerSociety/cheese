@@ -1,0 +1,88 @@
+diff --git a/dist/exceljs.js b/dist/exceljs.js
+index ab2c9d6e576d8069d77d787b863dfe09c7659890..9704b357b45ce12f87b6ce87d96e475949446fe1 100644
+--- a/dist/exceljs.js
++++ b/dist/exceljs.js
+@@ -8134,6 +8134,16 @@ const XmlStream = require('../../../utils/xml-stream');
+ const BaseXform = require('../base-xform');
+ const TwoCellAnchorXform = require('./two-cell-anchor-xform');
+ const OneCellAnchorXform = require('./one-cell-anchor-xform');
++// Excel writes spreadsheetDrawing elements with the `xdr:` prefix, and every
++// name below is matched literally. openpyxl instead declares that namespace as
++// the default one, so its elements arrive named `wsDr`, `oneCellAnchor`, `from`
++// and so on. Such a part parsed to nothing, and the workbook-level reconcile
++// then read `.anchors` off the missing model and threw. The prefix is part of
++// how a document happens to be written, not of which element it is, so put the
++// conventional one back before matching.
++function xdrName(name) {
++  return name.indexOf(':') === -1 ? `xdr:${name}` : name;
++}
+ function getAnchorType(model) {
+   const range = typeof model.range === 'string' ? colCache.decode(model.range) : model.range;
+   return range.br ? 'xdr:twoCellAnchor' : 'xdr:oneCellAnchor';
+@@ -8168,6 +8178,7 @@ class DrawingXform extends BaseXform {
+     xmlStream.closeNode();
+   }
+   parseOpen(node) {
++    node.name = xdrName(node.name);
+     if (this.parser) {
+       this.parser.parseOpen(node);
+       return true;
+@@ -8194,6 +8205,7 @@ class DrawingXform extends BaseXform {
+     }
+   }
+   parseClose(name) {
++    name = xdrName(name);
+     if (this.parser) {
+       if (!this.parser.parseClose(name)) {
+         this.model.anchors.push(this.parser.model);
+diff --git a/lib/xlsx/xform/drawing/drawing-xform.js b/lib/xlsx/xform/drawing/drawing-xform.js
+index 6bc4c43d8a12d5c8a56c268d9ab068042f1d6358..2df98e85c099ba9ee59c689c7bb62093e7394b16 100644
+--- a/lib/xlsx/xform/drawing/drawing-xform.js
++++ b/lib/xlsx/xform/drawing/drawing-xform.js
+@@ -5,6 +5,17 @@ const BaseXform = require('../base-xform');
+ const TwoCellAnchorXform = require('./two-cell-anchor-xform');
+ const OneCellAnchorXform = require('./one-cell-anchor-xform');
+ 
++// Excel writes spreadsheetDrawing elements with the `xdr:` prefix, and every
++// name below is matched literally. openpyxl instead declares that namespace as
++// the default one, so its elements arrive named `wsDr`, `oneCellAnchor`, `from`
++// and so on. Such a part parsed to nothing, and the workbook-level reconcile
++// then read `.anchors` off the missing model and threw. The prefix is part of
++// how a document happens to be written, not of which element it is, so put the
++// conventional one back before matching.
++function xdrName(name) {
++  return name.indexOf(':') === -1 ? `xdr:${name}` : name;
++}
++
+ function getAnchorType(model) {
+   const range = typeof model.range === 'string' ? colCache.decode(model.range) : model.range;
+ 
+@@ -46,6 +57,7 @@ class DrawingXform extends BaseXform {
+   }
+ 
+   parseOpen(node) {
++    node.name = xdrName(node.name);
+     if (this.parser) {
+       this.parser.parseOpen(node);
+       return true;
+@@ -74,6 +86,7 @@ class DrawingXform extends BaseXform {
+   }
+ 
+   parseClose(name) {
++    name = xdrName(name);
+     if (this.parser) {
+       if (!this.parser.parseClose(name)) {
+         this.model.anchors.push(this.parser.model);
+diff --git a/package.json b/package.json
+index 7a70a5e13145a917b57806a6998b8d5e04f47acd..8a1c0a87b0140412517ab7a0fa871afdfbe22b6c 100644
+--- a/package.json
++++ b/package.json
+@@ -16,7 +16,7 @@
+     "node": ">=8.3.0"
+   },
+   "main": "./excel.js",
+-  "browser": "./dist/exceljs.min.js",
++  "browser": "./dist/exceljs.js",
+   "types": "./index.d.ts",
+   "files": [
+     "dist",

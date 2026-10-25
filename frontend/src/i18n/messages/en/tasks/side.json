@@ -1,6 +1,6 @@
 {
   "attempts": "Submissions",
-  "claimed": "Claimed",
+  "claimed": "Participants",
   "claimedPeople": "{n} people",
   "claimedPeopleOf": "{n} / {limit} people",
   "claimedTeams": "{n} teams",
@@ -25,8 +25,8 @@
   "noSubmission": "No submissions yet",
   "once": "One only",
   "overdue": "{n} days overdue",
-  "period": "Time to submit",
-  "periodValue": "{n} days after claiming",
+  "period": "Time limit",
+  "periodValue": "{n} days, counted from the day you start",
   "progress": "My progress",
   "projectsFailed": "Couldn't load projects",
   "rank": "Difficulty",

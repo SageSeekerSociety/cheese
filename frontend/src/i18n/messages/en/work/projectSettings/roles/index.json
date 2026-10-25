@@ -40,7 +40,7 @@
     "manage_channels": "Edit, archive and delete channels without being their admin, and join private channels",
     "speak": "Send messages and replies",
     "ask_agent": "Have {agent} answer questions, write documents and do work",
-    "tasks": "Hand work to {agent} as tasks and review what they return",
+    "tasks": "Hand work to {agent} as tasks, review what they return, and reopen closed tasks",
     "edit_content": "Create, edit and delete documents and files, and save them to the library",
     "share_documents": "Create and take back a document's read-only link, which people outside the project can read",
     "comment": "Comment on documents",

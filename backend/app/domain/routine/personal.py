@@ -17,7 +17,7 @@ kept ``KEPT_FOR``, and the tool does not wait on it. The gate reads only what
 the person said when the rule was made (``AssistantRoutine.words``).
 
 Each run ends with a notification to the person, unless 芝士 sent one itself
-(``cheese_notify_me``). A person runs one at a time; one waits while the
+(``cheese_notify``). A person runs one at a time; one waits while the
 person is asking in the same conversation. Out of credits, a person's
 routines pause until there are credits again; not signed in for
 ``AWAY_AFTER``, they pause until the person resumes them.
@@ -46,6 +46,7 @@ from app.domain.agent.session_host.answer import Answer
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import (
+    AssistantConversation,
     AssistantMessage,
     AssistantProposal,
     AssistantRoutine,
@@ -659,7 +660,7 @@ def _first_message(
             run.detail,
             "用户现在不在。照用户建这条例行事务时说的做，做完用几句话写结果，用和「要做的事」"
             "相同的语言写，不要换成别的语言。需要用户确认的操作会留给用户，不用等；平台会把"
-            "结果通知用户，有必须单独告诉用户的事才用 cheese_notify_me。",
+            "结果通知用户，有必须单独告诉用户的事才用 cheese_notify。",
             "</平台>",
             f"（现在是 {clock:%Y-%m-%d %H:%M}）",
         ]
@@ -896,7 +897,7 @@ async def notify_me(
     work: str,
     text: str,
 ) -> None:
-    """A notification 芝士 sends the person (``cheese_notify_me``); a run that
+    """A notification 芝士 sends the person (``cheese_notify``); a run that
     sends one is not announced again when it ends. The caller commits."""
     now = _now()
     run_id = run_of(work)
@@ -947,6 +948,42 @@ async def _tell(
         ),
         address(Event(audience=(handle,)), Hand.participant),
     )
+
+
+async def answered(
+    sessions: async_sessionmaker[AsyncSession],
+    user_id: int,
+    conversation_id: uuid.UUID,
+    text: str,
+    asks: int,
+    work_id: str,
+) -> None:
+    """A question the person asked was answered after a while, and they were
+    not looking: tell them, naming the topic, and how many things it left for
+    them to confirm."""
+    async with sessions() as session:
+        conversation = await session.get(AssistantConversation, conversation_id)
+        if conversation is None:
+            return
+        topic = conversation.title
+        content = (
+            say("assistantAnsweredAsks", topic=topic, count=asks)
+            if asks and topic
+            else say("assistantAnswered", topic=topic)
+            if topic
+            else say("assistantAnsweredUntitled")
+        )
+        await _tell(
+            session,
+            user_id,
+            event=f"answer:{work_id}",
+            content=content,
+            kind="answered",
+            at=datetime.now(UTC),
+            conversation_id=conversation_id,
+            quote=text.strip()[:QUOTE_CHARS],
+        )
+        await session.commit()
 
 
 async def notified_lately(session: AsyncSession, user_id: int) -> int:

@@ -47,7 +47,7 @@
       "added": "{name} 在项目设置中添加"
     },
     "task": {
-      "claims": "{n} 份领取待批准",
+      "claims": "{n} 份申请待通过",
       "reviews": "{n} 份提交待评审",
       "and": "，"
     }
@@ -80,7 +80,8 @@
     "disbandTeamDone": "已解散「{name}」",
     "disbandTeamFailed": "解散团队失败",
     "disbandTeamTypeName": "输入团队名「{name}」确认",
-    "teamDocs": "文档",
+    "teamLibrary": "资料库",
+    "teamSettings": "设置",
     "teamModels": "模型",
     "spaceReview": {
       "PENDING": "待审核",

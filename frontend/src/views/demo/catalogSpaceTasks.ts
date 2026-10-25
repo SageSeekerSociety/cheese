@@ -12,7 +12,12 @@
  * `CatalogEntry`、`CatalogNeed` 是 type-only 引用：`catalog.ts` 反过来要分册的值，
  * 运行时不构成循环。
  */
+import type { Citable } from '@/types/citable'
 import type { CatalogEntry, CatalogNeed } from './catalog'
+
+import { ref } from 'vue'
+
+import { MOST_CITED, useCitePicker } from '@/composables/useCitePicker'
 
 import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
@@ -42,6 +47,7 @@ import {
 } from './catalogViewSettingsWorkspaceFixtures'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import CiteMenu from '@/components/assistant/CiteMenu.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
@@ -56,6 +62,33 @@ import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
 import RosterView from '@/views/tasks/detail/RosterView.vue'
 import AssistantView from '@/views/user/settings/AssistantView.vue'
+
+/** @ 菜单的例子候选（假数据），眼前是项目「知是」。 */
+const CITE_ITEMS: Citable[] = [
+  { id: 'a1', kind: 'task', title: '接入搜索', where: '知是', place: '后端' },
+  { id: 'a2', kind: 'task', title: '修复回答中插话', where: '知是', place: '后端' },
+  { id: 'a3', kind: 'task', title: '接入数据集', where: '机器学习课程设计', place: '实验' },
+  { id: 'c1', kind: 'channel', title: '设计', where: '知是' },
+  { id: 'd1', kind: 'doc', title: '10 月周报', where: '知是' },
+  { id: 'd2', kind: 'doc', title: '搜索接入方案', where: '知是' },
+  { id: 'file-f1', kind: 'file', title: 'cheese自建周报-2026-10-19.md', where: '我的资料库' },
+]
+
+/** @ 菜单的一格：输入框里打着 `text`，候选是上面几样，眼前是项目「知是」。 */
+function citeDemo(text: string) {
+  const items = CITE_ITEMS
+  return useCitePicker({
+    draft: ref(text),
+    caret: ref(text.length),
+    items: () => items,
+    recents: () => ['a1', 'd1', 'c1', 'a3', 'file-f1'],
+    project: () => '知是',
+    most: MOST_CITED,
+    opened: () => {},
+    picked: () => {},
+    scrollActiveIntoView: () => {},
+  })
+}
 
 /** 画法要 Vuetify、文案要语言包。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -115,7 +148,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       get hint() {
         return t('tasks.assistant.draft.hint')
       },
-      canAttach: true,
+      attachAsMaterials: true,
     },
     states: [
       {
@@ -303,6 +336,283 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           ],
         },
         expect: '已记住',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s9.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s9.note')
+        },
+        // 一件长的事正在做：最上面是清单；先说了一句，派出两个分身，一个还在做，一个交回了；
+        // 最后一组都回来了，芝士在想下一步。
+        props: {
+          messages: [
+            {
+              role: 'user',
+              text: '把这 40 份实验报告按评分标准各给一个分，写一句理由，汇总成一张表给我。',
+              at: '2026-10-24T08:00:00Z',
+            },
+          ],
+          busy: true,
+          streaming: '我先读评分标准，再把报告分成两批，派两个分身同时打分。',
+          steps: [
+            {
+              key: 't1',
+              verb: '更新进度清单',
+              arg: '',
+              state: 'done',
+              at: 0,
+              hidden: true,
+              checklist: [
+                { content: '读评分标准，整理出评分项', status: 'completed' },
+                { content: '给第 1–20 份报告打分', status: 'in_progress' },
+                { content: '给第 21–40 份报告打分', status: 'in_progress' },
+                { content: '汇总成表，标出分数异常的几份', status: 'pending' },
+              ],
+            },
+            { key: 'r1', verb: '读取', arg: '评分标准.pdf', state: 'done', at: 0 },
+            {
+              key: 'a1',
+              verb: '派出分身',
+              arg: '给第 1–20 份报告打分',
+              state: 'run',
+              at: 27,
+              subagent: {
+                status: 'running',
+                steps: [
+                  { key: 'a1-1', verb: '读取', arg: '报告 01.pdf', state: 'done' },
+                  { key: 'a1-2', verb: '读取', arg: '报告 02.pdf', state: 'done' },
+                ],
+              },
+            },
+            {
+              key: 'a2',
+              verb: '派出分身',
+              arg: '给第 21–40 份报告打分',
+              state: 'done',
+              at: 27,
+              subagent: {
+                status: 'done',
+                steps: [{ key: 'a2-1', verb: '读取', arg: '报告 21.pdf', state: 'done' }],
+              },
+            },
+          ],
+        },
+        expect: '进行中',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s10.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s10.note')
+        },
+        // 做完了：清单收成一行，两个分身都交回了，话和步骤按发生的顺序排开。
+        props: {
+          messages: [
+            {
+              role: 'user',
+              text: '把这 40 份实验报告按评分标准各给一个分，写一句理由，汇总成一张表给我。',
+              at: '2026-10-24T08:00:00Z',
+            },
+            {
+              role: 'assistant',
+              text: '我先读评分标准，再把报告分成两批，派两个分身同时打分。\n\n40 份都打完了，平均 78 分。第 7、19、33 份分数明显偏低，理由写在表里。成绩表已经发给你。',
+              at: '2026-10-24T08:31:00Z',
+              steps: [
+                {
+                  key: 't1',
+                  verb: '更新进度清单',
+                  arg: '',
+                  state: 'done',
+                  at: 0,
+                  hidden: true,
+                  checklist: [
+                    { content: '读评分标准，整理出评分项', status: 'completed' },
+                    { content: '给第 1–20 份报告打分', status: 'completed' },
+                    { content: '给第 21–40 份报告打分', status: 'completed' },
+                    { content: '汇总成表，标出分数异常的几份', status: 'completed' },
+                  ],
+                },
+                { key: 'r1', verb: '读取', arg: '评分标准.pdf', state: 'done', at: 0 },
+                {
+                  key: 'a1',
+                  verb: '派出分身',
+                  arg: '给第 1–20 份报告打分',
+                  state: 'done',
+                  at: 27,
+                  subagent: {
+                    status: 'done',
+                    steps: [{ key: 'a1-1', verb: '读取', arg: '报告 01.pdf', state: 'done' }],
+                  },
+                },
+                {
+                  key: 'a2',
+                  verb: '派出分身',
+                  arg: '给第 21–40 份报告打分',
+                  state: 'done',
+                  at: 27,
+                  subagent: {
+                    status: 'done',
+                    steps: [{ key: 'a2-1', verb: '读取', arg: '报告 21.pdf', state: 'done' }],
+                  },
+                },
+                { key: 'g1', verb: '发送文件', arg: '成绩表.xlsx', state: 'done', at: 27 },
+              ],
+            },
+          ],
+        },
+        expect: '4/4 项已完成',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s11.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s11.note')
+        },
+        // 芝士在做，人在输入框里又说了一句：按钮是「发送」，这句话插进正在做的这一轮。
+        props: {
+          messages: [
+            { role: 'user', text: '把这 40 份实验报告各给一个分，汇总成表。', at: '2026-10-24T08:00:00Z' },
+            { role: 'user', text: '第 30 份以后的不用打了。', at: '2026-10-24T08:12:00Z' },
+          ],
+          busy: true,
+          streaming: '好，第 30 份以后的不打了。',
+          steps: [{ key: 'r1', verb: '读取', arg: '报告 12.pdf', state: 'done', at: 0 }],
+          // 「+」和麦克风在答的时候也在：选好的文件随这句话一起进这一轮。
+          canAttach: true,
+          files: [{ name: '第 35 份补交.pdf', mime: 'application/pdf' }],
+          hearVoice: async () => ({ text: '', raw: '' }),
+        },
+        expect: '第 30 份以后的不用打了',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s12.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s12.note')
+        },
+        // 做了事却一个字没写；上面还有更早的消息没读回来。
+        props: {
+          currentEarlier: true,
+          messages: [
+            { role: 'user', text: '我现在有哪些事等着我处理？', at: '2026-10-24T09:00:00Z' },
+            {
+              role: 'assistant',
+              text: '',
+              silent: true,
+              at: '2026-10-24T09:00:20Z',
+              steps: [{ key: 'i1', verb: '查看待办', arg: '', state: 'done', at: 0 }],
+            },
+          ],
+        },
+        expect: '芝士没有给出回答',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s13.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s13.note')
+        },
+        // 在频道「后端」里：上一句引用了一份文档和一个任务、带着选中的一段；输入框上方是
+        // 「当前页面」和这一次又选中的一段。
+        props: {
+          pageLabel: '频道「后端」',
+          selection: '首个字要等很久，所以超时设成 600 秒',
+          messages: [
+            {
+              role: 'user',
+              text: '<#d1> 里说的超时和 <#a1> 改的是一回事吗？',
+              at: '2026-10-24T09:00:00Z',
+              askedOn: '频道「后端」',
+              selection: '超时设成 600 秒',
+              cited: [
+                { id: 'd1', kind: 'doc', title: '搜索接入方案' },
+                { id: 'a1', kind: 'task', title: '接入搜索' },
+              ],
+            },
+            {
+              role: 'assistant',
+              text: '是一回事：方案里写的 600 秒就是任务「接入搜索」里改的模型代理读超时。',
+              at: '2026-10-24T09:00:20Z',
+            },
+          ],
+        },
+        expect: '超时设成 600 秒',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s14.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s14.note')
+        },
+        props: { pageLabel: '频道「后端」', pageOff: true },
+        expect: '频道「后端」',
+      },
+      {
+        get name() {
+          return t('catalog.assistantPanel.s15.name')
+        },
+        get note() {
+          return t('catalog.assistantPanel.s15.note')
+        },
+        // 在输入框里打 @ 就弹出菜单（候选是例子数据）。
+        props: {
+          pageLabel: '频道「后端」',
+          project: '知是',
+          citable: CITE_ITEMS,
+          recents: ['a1', 'd1', 'c1', 'a3', 'file-f1'],
+          cited: { d2: { kind: 'doc', title: '搜索接入方案' } },
+        },
+        expect: '频道「后端」',
+      },
+    ],
+  },
+  {
+    id: 'cite-menu',
+    title: 'CiteMenu',
+    get about() {
+      return t('catalog.citeMenu.about')
+    },
+    file: 'src/components/assistant/CiteMenu.vue',
+    component: CiteMenu,
+    needs: UI_T,
+    args: { picker: citeDemo('@'), project: '知是', most: MOST_CITED },
+    states: [
+      {
+        get name() {
+          return t('catalog.citeMenu.s1.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s1.note')
+        },
+        props: {},
+        expect: '最近去过',
+      },
+      {
+        get name() {
+          return t('catalog.citeMenu.s2.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s2.note')
+        },
+        props: { picker: citeDemo('@接入') },
+        expect: '搜索接入方案',
+      },
+      {
+        get name() {
+          return t('catalog.citeMenu.s3.name')
+        },
+        get note() {
+          return t('catalog.citeMenu.s3.note')
+        },
+        props: { picker: citeDemo('<#a> <#b> <#c> <#d> <#e> @') },
+        expect: '最多引用 5 样',
       },
     ],
   },
@@ -745,7 +1055,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     file: 'src/views/tasks/detail/BriefView.vue',
     component: BriefView,
     needs: UI_T,
-    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloadingId: null },
+    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloading: null },
     states: [
       {
         get name() {
@@ -819,7 +1129,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.insightsView.s1.note')
         },
         props: {},
-        expect: '领取人数',
+        expect: '参与人数',
       },
       {
         get name() {
@@ -901,7 +1211,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s3.note')
         },
         props: { denied: true },
-        expect: '只有这道题的出题人和空间管理员能看领取者',
+        expect: '只有这道题的出题人和空间管理员能看参与者',
       },
       {
         get name() {
@@ -911,7 +1221,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s4.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '领取者名单加载失败',
+        expect: '参与者名单加载失败',
       },
       {
         get name() {
@@ -921,7 +1231,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s5.note')
         },
         props: { participants: [] },
-        expect: '暂无领取者',
+        expect: '暂无参与者',
       },
     ],
   },

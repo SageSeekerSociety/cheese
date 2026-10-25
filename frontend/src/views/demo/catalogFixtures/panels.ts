@@ -103,7 +103,8 @@ const CHANGES_BASE = {
   openIsDocument: false,
   openDocumentType: null,
   revisionPath: null,
-  openRawUrl: '/api/projects/demo/file/raw?path=README.md',
+  openImageSrc: '',
+  openImageError: '',
   collapsedDirs: new Set<string>(),
   revealTick: 0,
   draftCount: 0,
@@ -119,7 +120,7 @@ export function changesPanelProps(over: Record<string, unknown> = {}): Record<st
 }
 
 /** 手上什么都没有的那几样：没有 diff、没有树，右边也没打开任何文件 —— 取数
- *  那一层在那时真会是这些值（`openRawUrl` 没有路径时是空串，横条上文件那半不摆）。 */
+ *  那一层在那时真会是这些值（没有打开图片时 `openImageSrc` 是空串，横条上文件那半不摆）。 */
 export const NOTHING_CHANGED = {
   fileDiffs: [],
   diffByPath: new Map<string, FileDiff>(),
@@ -131,7 +132,7 @@ export const NOTHING_CHANGED = {
   fileDraft: '',
   fileVersion: null,
   fileBytes: 0,
-  openRawUrl: '',
+  openImageSrc: '',
   collapsedDirs: new Set<string>(),
   fileToolReady: false,
 }

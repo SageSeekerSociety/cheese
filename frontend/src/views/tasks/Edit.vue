@@ -24,6 +24,7 @@ import { useTaskData } from './composables'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import { addTaskFile, listTaskFiles, removeTaskFile, replaceTaskFile } from '@/api/taskFiles'
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -67,11 +68,15 @@ const editCategories = computed(() =>
 
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
-/** 附件直接传到这道题上、从这道题上摘：改题页上的增删当场生效，不等保存。 */
-const uploads = useAttachmentUploads({
-  upload: async (file) => (await TaskBoardApi.uploadAttachment(taskId, file)).attachment.id,
-  remove: async (id) => {
-    await TaskBoardApi.removeAttachment(taskId, id)
+/** 附件直接放进这道题的资料库、在那里替换和删掉：改题页上的增删换当场生效，不等保存，
+ *  每一次都让题目记一版。认的是它在资料库里的名字。 */
+const uploads = useAttachmentUploads<string>({
+  upload: async (file) => (await addTaskFile(taskId, file)).name,
+  remove: async (name) => {
+    await removeTaskFile(taskId, name)
+  },
+  replace: async (name, file) => {
+    await replaceTaskFile(taskId, name, file)
   },
 })
 
@@ -157,6 +162,7 @@ const { assistant } = agent
 // 芝士读到的是这份修改草稿；面板在这一页给改题的开场问题，能交文件。
 useAgentContext(() => ({
   page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
+  label: t('tasks.assistant.page.publish'),
   starters: [
     t('tasks.assistant.draft.editStarters.later'),
     t('tasks.assistant.draft.editStarters.rubric'),
@@ -164,7 +170,7 @@ useAgentContext(() => ({
   ],
   placeholder: t('tasks.assistant.draft.placeholder'),
   hint: t('tasks.assistant.draft.hint'),
-  canAttach: true,
+  attachAsMaterials: true,
 }))
 
 // 桌面上进这一页时，芝士停在右边就把它打开：表单和面板并排，芝士写进来看得见。
@@ -273,8 +279,8 @@ onMounted(async () => {
   }
   void assistant.load()
   try {
-    const data = await TaskBoardApi.listAttachments(taskId)
-    uploads.reset(data.attachments.map(({ id, name, size }) => ({ id, name, size })))
+    const data = await listTaskFiles(taskId)
+    uploads.reset(data.files.map(({ name, size }) => ({ id: name, name, size })))
   } catch {
     // 读不出来就当没有：增删仍然走得通，只是这一页不列已有的那几份。
   }
@@ -353,8 +359,10 @@ onBeforeUnmount(() => void draft.flush())
           :files="uploads.files.value"
           :uploading="uploads.uploading.value"
           :max-file-bytes="uploads.maxFileBytes.value"
+          replaceable
           @add="uploads.add"
-          @remove="uploads.remove"
+          @remove="uploads.remove(String($event))"
+          @replace="(id, file) => uploads.replace(String(id), file)"
         />
       </template>
       <template #teaching>

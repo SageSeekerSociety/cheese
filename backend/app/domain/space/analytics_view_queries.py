@@ -28,8 +28,8 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.submission_state import (
+    COMPLETION_STATUS_SUCCESS,
     has_a_live_submission,
-    has_a_passed_submission,
 )
 from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
@@ -156,16 +156,13 @@ async def _load_people_rows(service, *, space_id: int):
     定序，两次调用给同一个顺序。
     """
     claims = func.count(TaskMembership.id).label("claims")
-    passed = func.sum(
-        case((has_a_passed_submission(TaskMembership.id), 1), else_=0)
-    ).label("passed")
+    # 通过 = 每个阶段都通过：那条轴推出来、存在领取行上的值（`submission_state`）。
+    done = TaskMembership.completion_status == COMPLETION_STATUS_SUCCESS
+    passed = func.sum(case((done, 1), else_=0)).label("passed")
     submitted = func.sum(
         case(
             (
-                and_(
-                    has_a_live_submission(TaskMembership.id),
-                    ~has_a_passed_submission(TaskMembership.id),
-                ),
+                and_(has_a_live_submission(TaskMembership.id), ~done),
                 1,
             ),
             else_=0,

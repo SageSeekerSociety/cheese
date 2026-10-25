@@ -230,10 +230,32 @@ def test_after_the_holder_releases_someone_else_can_claim(client, platform):
     assert released.status_code == 200, released.text
     seen = _view(client, REPORTER, row["id"])
     assert seen["assignee_handle"] is None
-    # Somebody did work on it; letting go does not unsay that.
-    assert seen["status"] == "in_progress"
+    # 没人在修了，就不能还挂着「处理中」——那一档说的是有人正在动它。
+    assert seen["status"] == "received"
+    step = seen["timeline"][-1]
+    assert (step["status"], step["by_handle"], step["note"]) == (
+        "received",
+        DEV,
+        "已放弃领取",
+    )
     assert _claim(client, DEV2, row["id"]).status_code == 200
     assert _view(client, REPORTER, row["id"])["assignee_handle"] == DEV2
+
+
+def test_releasing_one_already_back_at_received_does_not_move_it_again(
+    client, platform
+):
+    row = _report(client)
+    assert _claim(client, DEV, row["id"]).status_code == 200
+    _set_status(client, row["id"], "received")
+    before = _view(client, REPORTER, row["id"])["timeline"]
+
+    released = _release(client, DEV, row["id"])
+
+    assert released.status_code == 200, released.text
+    seen = _view(client, REPORTER, row["id"])
+    assert seen["status"] == "received"
+    assert seen["timeline"] == before
 
 
 def test_only_the_holder_or_a_feedback_admin_can_release(client, platform):
@@ -357,7 +379,7 @@ def test_an_agent_on_the_platform_claims_with_its_tool_and_a_person_is_then_refu
     topic = _topic(client, platform, DEV)
     agent = AgentHost(client, platform, topic)
 
-    said = agent.run("cheese_feedback_claim", feedback=row["display_id"])
+    said = agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert row["display_id"] in said
     assert "记在你名下" in said
@@ -369,7 +391,7 @@ def test_an_agent_on_the_platform_claims_with_its_tool_and_a_person_is_then_refu
     assert refused.status_code == 409
     assert seat in refused.json()["error"]["message"]
 
-    agent.run("cheese_feedback_release", feedback=row["display_id"])
+    agent.run("cheese_feedback", action="release", feedback=row["display_id"])
     assert _view(client, REPORTER, row["id"])["assignee_handle"] is None
 
 
@@ -380,7 +402,7 @@ def test_an_agent_is_told_not_to_fix_what_someone_else_holds(client, platform):
     agent = AgentHost(client, platform, topic)
 
     with pytest.raises(cheese.PlatformToolError) as refusal:
-        agent.run("cheese_feedback_claim", feedback=row["display_id"])
+        agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert "不要修" in str(refusal.value)
     assert DEV2 in str(refusal.value)
@@ -394,7 +416,7 @@ def test_an_agent_outside_the_platform_cannot_claim(client, platform):
     agent = AgentHost(client, elsewhere, topic)
 
     with pytest.raises(cheese.PlatformToolError) as refusal:
-        agent.run("cheese_feedback_claim", feedback=row["display_id"])
+        agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
 
     assert "不要修" in str(refusal.value)
     assert _view(client, REPORTER, row["id"])["assignee_handle"] is None

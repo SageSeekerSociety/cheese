@@ -70,7 +70,8 @@ class SandboxUnavailable(RuntimeError):
 
 
 # How the install exits when it refuses a room for `SandboxUnavailable`, with
-# its sentence alone on stderr, as JSON: the backend keeps it for the owner.
+# its sentence as the last line of stderr, as JSON: the backend keeps it for
+# the owner.
 SANDBOX_UNAVAILABLE_EXIT = 78
 
 
@@ -609,37 +610,16 @@ def binary(owner, api, release):
     target = f"{system}-{architecture}"
     if system == "linux" and platform.libc_ver()[0] == "musl":
         target += "-musl"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Every room of this owner installs into the one directory, and the download
-    # below writes one partial file there: one install at a time, and one that
-    # waited finds the pin another just proved.
-    with destination.with_name(destination.name + ".lock").open("a") as held:
-        lock(held)
-        try:
-            if json.loads(record.read_text()) == identity(destination):
-                return str(destination)
-        except (OSError, ValueError):
-            pass
-        # Shipped beside the runtime (`runtime_core.RELEASE_FILES`).
-        downloader = Path(release) / "remote-execution/executor_download.py"
-        temporary = runpy.run_path(str(downloader))["download"](
-            f"{api}/connector/claude/{VERSION}/{target}/claude{executable}",
-            destination,
-        )
-        temporary.chmod(0o700)
-        result = subprocess.run(
-            [str(temporary), "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=15,
-        )
-        if result.stdout.split()[0] != VERSION:
-            raise RuntimeError(
-                "The executor binary does not match the verified version"
-            )
-        temporary.replace(destination)
-        remember(destination, record)
+    # Shipped beside the runtime (`runtime_core.RELEASE_FILES`). One install at
+    # a time on this machine, whoever started it — another room, a launch, the
+    # desktop app fetching it ahead — and one that waited uses what it placed.
+    downloader = Path(release) / "remote-execution/executor_download.py"
+    runpy.run_path(str(downloader))["install"](
+        f"{api}/connector/claude/{VERSION}/{target}/claude{executable}",
+        destination,
+        VERSION,
+    )
+    remember(destination, record)
     return str(destination)
 
 

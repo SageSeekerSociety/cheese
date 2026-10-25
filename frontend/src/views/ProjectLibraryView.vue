@@ -37,6 +37,7 @@ import { useLibraryNaming } from '../composables/useLibraryNaming'
 import { useLibraryPages } from '../composables/useLibraryPages'
 import { useLibrarySelection } from '../composables/useLibrarySelection'
 import { useLibraryTransfers } from '../composables/useLibraryTransfers'
+import { useLibraryVersions } from '../composables/useLibraryVersions'
 import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
 import { libraryFileBytes } from '../lib/libraryApi'
 import { leafOf } from '../lib/libraryFolders'
@@ -100,6 +101,10 @@ const pages = useLibraryPages(
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
 const inFolder = computed(() => browsing.value && !!dir.value)
+// 这一层是只读的（项目资料库里的 `题目/`）：服务端在每一行上说，这里只看它。
+const readonlyHere = computed(
+  () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
+)
 
 function goTo(path: string) {
   const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
@@ -124,7 +129,7 @@ const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openD
   )
 
 const { selectedPath, selected, open, close } = useLibrarySelection({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   entries,
   revision,
   mdAndUp,
@@ -133,7 +138,7 @@ const { selectedPath, selected, open, close } = useLibrarySelection({
 })
 
 const transfers = useLibraryTransfers({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   dir: () => dir.value,
   reset: pages.reset,
   drop: pages.drop,
@@ -161,6 +166,12 @@ const {
   confirmRemove,
 } = transfers
 
+const history = useLibraryVersions(
+  () => props.projectId,
+  () => versionsOf.value,
+  onRestored
+)
+
 useTopBarBack(() =>
   !mdAndUp.value && selectedDocId.value
     ? { label: t(fromThread.value ? 'work.room.thread.backToThread' : 'work.library.backToList'), onBack: closeDoc }
@@ -185,7 +196,7 @@ watch(
 // ---- 文件夹：挪动、改名、新建 ---------------------------------------------------
 
 const naming = useLibraryNaming({
-  projectId: () => props.projectId,
+  shelf: () => props.projectId,
   dir: () => dir.value,
   goTo,
   opened: () => selectedPath.value,
@@ -252,6 +263,18 @@ const sharer = useDocumentShare()
 useCommands(() => {
   const open = selected.value
   // 手机上看着一份文件时，顶栏的 ⋯ 是这一份的操作；否则页头上是「上传文件」。
+  if (!mdAndUp.value && open?.readonly) {
+    return [
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
+      },
+    ]
+  }
   if (!mdAndUp.value && open) {
     return [
       {
@@ -283,6 +306,7 @@ useCommands(() => {
   }
   // 一份文档开着时，它的操作在文档自己的顶栏上。
   if (selectedDocId.value) return []
+  if (readonlyHere.value) return []
   return [
     {
       id: 'library.newFolder',
@@ -342,7 +366,7 @@ function read(file: LibraryFile) {
       :class="{ 'library--dragging': dragging }"
       @dragover.prevent="dragging = true"
       @dragleave.self="dragging = false"
-      @drop.prevent="onDrop"
+      @drop.prevent="readonlyHere ? (dragging = false) : onDrop($event)"
     >
       <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
       <input
@@ -478,7 +502,7 @@ function read(file: LibraryFile) {
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->
       <LibraryFileDetail
         v-if="selected"
-        :project-id="projectId"
+        :shelf="projectId"
         :file="selected"
         :wide="mdAndUp"
         :revision="revision"
@@ -491,12 +515,18 @@ function read(file: LibraryFile) {
     </div>
 
     <LibraryVersionsDialog
-      :project-id="projectId"
       :path="versionsOf"
+      :versions="history.versions.value"
+      :loading="history.loading.value"
+      :failed="history.failed.value"
+      :action-error="history.actionError.value"
+      :restoring="history.restoring.value"
       :can-restore="true"
       :fmt-bytes="fmtBytes"
       @close="versionsOf = null"
-      @restored="onRestored"
+      @retry="history.load"
+      @download="history.download"
+      @restore="history.restore"
     />
 
     <!-- Replace changes what every message referencing this file reads, so say it before acting. -->

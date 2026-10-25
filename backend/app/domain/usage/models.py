@@ -245,7 +245,7 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
 #: The ``route`` of a usage row that charges web searches the platform asked
-#: for (`cheese_web_search`): like a compute charge, credits and no call. The
+#: for (`cheese_web(action=search)`): like a compute charge, credits and no call. The
 #: searches are made on the caller's gateway key and drained with its model
 #: calls (``agent.gateway_spend``), which lands the gateway's search line
 #: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.

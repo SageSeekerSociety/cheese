@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import contextlib
 import errno
 import hashlib
 import json
@@ -49,6 +50,7 @@ from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
 from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
@@ -388,6 +390,7 @@ async def _start_executor(
     setup,
     sandbox,
     platform_machine,
+    on_stderr=None,
 ):
     """Bring a session's executor up on ``device_id`` and answer what it
     reports: a running one on this release, in a sandbox exactly when asked,
@@ -398,7 +401,8 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox.
+    sandbox. ``on_stderr`` hears what the install writes to stderr while it
+    runs (`install_progress`).
 
     Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
     a machine that stopped answering — its connector gone silent, its executor
@@ -461,6 +465,7 @@ async def _start_executor(
             platform_machine=platform_machine,
         ),
         timeout=lease_claim.INSTALL_MOST_S,
+        on_stderr=on_stderr,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
@@ -491,7 +496,13 @@ class ExecutorSetupFailed(RuntimeError):
     def reason(self) -> str:
         if f"[Errno {errno.ENOSPC}]" in str(self):
             return DISK_FULL
-        lines = [line.strip() for line in str(self).splitlines() if line.strip()]
+        # The download's progress lines are for the room's line
+        # (`install_progress`), not an account of why it stopped.
+        lines = [
+            line.strip()
+            for line in str(self).splitlines()
+            if line.strip() and downloaded(line.strip()) is None
+        ]
         return lines[-1] if lines else "Executor setup failed"
 
 
@@ -1258,18 +1269,28 @@ async def _install(
             work_resource=work_resource,
         )
         disk_full_mb = None
+        # On a person's own computer the room sees the runtime download
+        # (`install_progress`); a Cloud machine's getting ready is the
+        # platform's own, kept out of the conversation (`progress`).
+        shown = (
+            InstallProgress(bind, session_id=session_id, device_id=device_id)
+            if owner_device
+            else contextlib.nullcontext()
+        )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                info = await _start_executor(
-                    hub,
-                    lease,
-                    device_id=device_id,
-                    namespace=namespace,
-                    work_resource=work_resource,
-                    setup=setup,
-                    sandbox=sandbox,
-                    platform_machine=platform_machine,
-                )
+                async with shown as heard:
+                    info = await _start_executor(
+                        hub,
+                        lease,
+                        device_id=device_id,
+                        namespace=namespace,
+                        work_resource=work_resource,
+                        setup=setup,
+                        sandbox=sandbox,
+                        platform_machine=platform_machine,
+                        on_stderr=heard,
+                    )
                 target = {
                     **reservation,
                     "status": "ready",

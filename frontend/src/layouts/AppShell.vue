@@ -116,12 +116,9 @@
       :ring="!guideStep.area"
       :title="t(`welcome.guide.${guideStep.key}.title`, { agent: workspace.agentName })"
       :text="
-        t(
-          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
-          {
-            agent: workspace.agentName,
-          }
-        )
+        t(`welcome.guide.${guideStep.key}.${guideStep.text}`, {
+          agent: workspace.agentName,
+        })
       "
       :step="guide.stop.value + 1"
       :total="guide.total"
@@ -180,7 +177,7 @@ import { useInvitePrompt } from '@/composables/useInvitePrompt'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
-import { useProjectTour } from '@/composables/useProjectTour'
+import { resolveGuideStep, useProjectTour } from '@/composables/useProjectTour'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -520,24 +517,7 @@ const guideStep = computed(() => {
   void guideRevision.value
   const step = guide.current.value
   if (!guide.active.value || !step) return null
-  const hit = step.anchors.find((name) => guideAnchor(name))
-  const target = hit ? guideAnchor(hit) : null
-  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
-  // 重播时每一站都要有落脚点：这一步该指的地方没开着（支线、任务页、手机上没侧栏），
-  // 就落到频道的时间线上。不然点到这一站整块浮窗会消失，后面也没处点。
-  const replayAt = !target && !waitingAt && guide.replaying.value ? guideAnchor('timeline') : null
-  const at = target ?? waitingAt ?? replayAt
-  if (!at) return null
-  return {
-    key: step.key,
-    target: at,
-    waiting: !target,
-    failed: !!hit && hit === step.failed,
-    area: !!step.area || !target,
-    // 重播时**每一站**都有「下一步」：它不从人的旧记录里跳步（`settle` 在重播时不动），
-    // 没有这一步的话，已经发过消息的人会停在第一站，永远出不去。
-    action: !!step.done && !guide.replaying.value,
-  }
+  return resolveGuideStep(step, guideAnchor, { replaying: guide.replaying.value })
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens the new-project dialog (views/workspace/NewProjectDialog.vue).
@@ -647,9 +627,10 @@ onBeforeUnmount(
 .skip-link {
   position: fixed;
   /* 出现在左上角：让出顶部与左侧安全区，刘海机上聚焦时不压进状态栏 / 圆角。桌面上
-     `env()` 是 0，位置不变。 */
+     `env()` 是 0，位置不变。桌面版 macOS 里还要让开三颗窗口按钮（style.css 的
+     --window-buttons-inset，别处恒为 0）——它们画在网页上层，会让这一颗被盖住。 */
   top: calc(10px + env(safe-area-inset-top, 0px));
-  left: calc(16px + env(safe-area-inset-left, 0px));
+  left: max(calc(16px + env(safe-area-inset-left, 0px)), var(--window-buttons-inset));
   z-index: var(--z-banner); /* 压在顶栏和抽屉之上，和 OfflineBanner 同一档 */
   padding: 8px 14px;
   font-size: 14px;

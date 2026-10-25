@@ -18,13 +18,15 @@ import hashlib
 import ipaddress
 import json
 import socket
+import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import inspect, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
@@ -178,6 +180,7 @@ def feishu_settings(row: Integration, app: FeishuApp | None = None) -> FeishuSet
         user_access_token=secret.get("user_access_token"),
         user_token_expires_at=secret.get("user_token_expires_at"),
         refresh_token=secret.get("refresh_token"),
+        refresh_token_expires_at=secret.get("refresh_token_expires_at"),
         folders=list(row.config.get("folders") or []),
     )
 
@@ -204,9 +207,95 @@ def keep_feishu_tokens(row: Integration, settings: FeishuSettings) -> None:
         "user_access_token": settings.user_access_token,
         "user_token_expires_at": settings.user_token_expires_at,
         "refresh_token": settings.refresh_token,
+        "refresh_token_expires_at": settings.refresh_token_expires_at,
     }
     if fresh != secret:
         seal(row, fresh)
+
+
+#: How long before the refresh token stops working an authorization is renewed.
+#: Feishu's lasts about a week, so an hourly look renews it with days to spare.
+RENEW_BEFORE_S = 2 * 24 * 3600
+
+
+def _access_lapses(settings: FeishuSettings) -> bool:
+    """The user token will not last through a call."""
+    return (
+        bool(settings.user_access_token)
+        and (settings.user_token_expires_at or 0) <= time.time() + 60
+    )
+
+
+def _refresh_lapses(settings: FeishuSettings) -> bool:
+    """The refresh token is near its end; one whose end is not known (kept
+    before its expiry was) is renewed so that it is."""
+    if not settings.refresh_token:
+        return False
+    ends = settings.refresh_token_expires_at
+    return ends is None or ends <= time.time() + RENEW_BEFORE_S
+
+
+async def _renewed(
+    session: AsyncSession,
+    row: Integration,
+    lapses: Callable[[FeishuSettings], bool],
+) -> FeishuSettings:
+    """The row's settings, its user token refreshed first when ``lapses`` says so.
+
+    A refresh token is good for one refresh: two calls refreshing with the same
+    one leave the second refused and the person told to authorize again. So the
+    row is locked and read again before refreshing, and the new tokens are
+    written back at once — a caller that waited on the lock finds them there and
+    does not refresh a second time.
+    """
+    settings = await feishu_settings_for(session, row)
+    if not lapses(settings):
+        return settings
+    if inspect(row).persistent:
+        await session.refresh(row, with_for_update=True)
+        settings = await feishu_settings_for(session, row)
+        if not lapses(settings):
+            return settings
+    try:
+        await FeishuClient(settings).refresh_user_token()
+    except IntegrationError as exc:
+        if exc.kind == "auth_failed":
+            row.status, row.last_error = "auth_failed", str(exc.args[0])
+            await session.flush()
+        raise
+    keep_feishu_tokens(row, settings)
+    await session.flush()
+    return settings
+
+
+async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
+    """Refresh every Feishu authorization whose refresh token is near its end,
+    so one the person has not used for a week still works. One that cannot be
+    refreshed (Feishu ends every authorization a year after it was given) is
+    marked failed, which the person's page says."""
+    async with sessions() as session:
+        ids = list(
+            await session.scalars(
+                select(Integration.id).where(Integration.provider == "feishu")
+            )
+        )
+    for integration_id in ids:
+        async with sessions() as session:
+            row = await session.get(Integration, integration_id)
+            # One already failed waits for the person to authorize again.
+            if row is None or row.status == "auth_failed":
+                continue
+            try:
+                await _renewed(session, row, _refresh_lapses)
+            except IntegrationError as exc:
+                # A failed one is marked so (kept below); one Feishu did not
+                # answer for is tried again the next hour.
+                if exc.kind != "auth_failed":
+                    continue
+            except ValidationError:
+                # No platform app any more: there is nothing to refresh with.
+                continue
+            await session.commit()
 
 
 def public(row: Integration) -> dict:
@@ -371,6 +460,11 @@ class IntegrationService:
                 await asyncio.to_thread(mail.check, mail_settings(row))
             else:
                 settings = await feishu_settings_for(self._session, row)
+                # The owner's authorization is proved by refreshing it: a token
+                # still in its two hours says nothing of whether it will be
+                # renewed, and the refresh is what stops working when it lapses.
+                if settings.user_access_token or settings.refresh_token:
+                    settings = await _renewed(self._session, row, lambda _: True)
                 # Nothing to call with yet on the platform's app before the member
                 # has authorized: the credentials are the administrator's and the
                 # authorization-code exchange is what proves them.
@@ -673,7 +767,7 @@ class IntegrationService:
     async def feishu(self, row: Integration, action):
         if row.provider != "feishu":
             raise ValidationError(say("integrationNotFeishu"))
-        settings = await feishu_settings_for(self._session, row)
+        settings = await _renewed(self._session, row, _access_lapses)
         client = FeishuClient(settings)
         try:
             return await action(client)

@@ -24,12 +24,14 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
@@ -139,6 +141,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   }
 
   const doc = usePanelPreviewDocument({ props, state })
+  // 这一份文件上的评论：线程、写一条新的、回复和解决。
+  //
+  // 名册那一包（`useDocPeople`）先建：评论卡上的名字和头像从它来，和文档评论栏
+  // 同一处、同一份实现——不是预览这一格自己再算一遍。不接它的话卡上会显示 handle
+  // 加色块（那曾经是个静默的 bug）。
+  const people = useDocPeople({
+    members: () => props.members ?? [],
+    agentHandle: () => props.agentHandle ?? null,
+    agentName: () => props.agentName ?? '',
+  })
+  const comments = usePanelPreviewComments({ props, state, people })
   const edits = usePanelPreviewEditing({
     props,
     state,
@@ -193,6 +206,8 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docPage: doc.docPage,
     canPage: doc.canPage,
     docPageHtml: doc.docPageHtml,
+    // 这一份文件上的评论（同上，原样递下去）
+    comments,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）
     revs: edits.revs,
     editing: edits.editing,
