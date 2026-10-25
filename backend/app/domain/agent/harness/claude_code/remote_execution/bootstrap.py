@@ -739,9 +739,11 @@ def fuse_is_mountable(platform_machine):
     in `/etc/fuse.conf` — the view is mounted by this room's user and read by
     root through a bind, and FUSE refuses a second reader without it.
 
-    The library itself is not checked here: it is placed by cheesehost and
-    handed over as a path (`transcript_view_env`), and a machine without it
-    fails into the view's own silent exit.
+    The library itself is not checked here: it is handed over as a path
+    (`transcript_view_env`) once cheesehost places it, and a machine without it
+    fails into the view's own silent exit. Nothing places it yet — that wiring
+    lands with the toolchain pin, when the release exists (`toolchain.py`, and
+    `3f0f67dd5` for why the two go together).
 
     The `user_allow_other` line is written as root where `platform_machine`
     says the platform owns the machine. That line used to be installed by
@@ -824,12 +826,17 @@ def placed_libfuse():
     """The placed `libfuse.so.2`, or None.
 
     Under the platform's runtime beside bwrap and the host tools, which is
-    where cheesehost places what a machine lacks (`cli/internal/devenv`, the
-    `fuse-runtime` tool): one directory per tool, the archive's own top level
-    removed, so the file is directly inside. A copy built for another
-    architecture would not load, but the directory is per machine and cheesehost
-    places the one for the machine it runs on, so its own name is the whole
-    lookup."""
+    where cheesehost places what a machine lacks (`cli/internal/devenv`): one
+    directory per tool, the archive's own top level removed, so the file is
+    directly inside. A copy built for another architecture would not load, but
+    the directory is per machine and cheesehost places the one for the machine
+    it runs on, so its own name is the whole lookup.
+
+    The lookup is written for that placement and nothing has placed it yet:
+    `devenv.Ensure` places `bubblewrap` and `host-tools` only, and the
+    `fuse-runtime` line lands with the toolchain pin, when the release exists
+    (`3f0f67dd5`). Until then this answers None on every machine, which is the
+    same path as a machine that has no FUSE at all."""
     root = execution_root(Path.home()) / "runtime"
     candidate = root / "fuse-runtime" / "libfuse.so.2"
     return candidate if candidate.exists() else None

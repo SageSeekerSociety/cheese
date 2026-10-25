@@ -661,10 +661,15 @@ fi
 # here: this box is the session host, and the executor for an ordinary room is
 # a pool host the platform provisions. That machine gets FUSE the way it gets
 # everything else — cheesehost places the library the executor loads by path
-# (`cli/internal/devenv`, the `fuse-runtime` tool) and the executor writes the
-# one line `/etc/fuse.conf` needs, as root, only where the platform owns the
-# machine (`bootstrap.fuse_is_mountable`). Nothing is installed here, and
-# nothing is installed on a machine a person enrolled.
+# (`cli/internal/devenv`) and the executor writes the one line
+# `/etc/fuse.conf` needs, as root, only where the platform owns the machine
+# (`bootstrap.fuse_is_mountable`). Nothing is installed here, and nothing is
+# installed on a machine a person enrolled.
+#
+# The library half is not wired up in this change: `devenv.Ensure` places
+# `bubblewrap` and `host-tools` only, and the `fuse-runtime` line lands with
+# the toolchain pin once the release exists. The `/etc/fuse.conf` half is here
+# and takes effect on its own.
 #
 # This block used to `apt-get install fuse libfuse2` on the central session
 # host. It never took effect: the view is not mounted on this machine. It is
