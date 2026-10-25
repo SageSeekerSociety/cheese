@@ -76,6 +76,7 @@ const time = (extra: Record<string, unknown> = {}) => ({
   registrationStartAt: null,
   deadline: new Date(2026, 9, 14),
   defaultDeadline: 30,
+  startMode: 'APPLY',
   registrationStartAtControl: OK,
   deadlineControl: OK,
   defaultDeadlineControl: OK,
@@ -165,7 +166,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           minTeamSize: 3,
           maxTeamSize: 5,
         }),
-        expect: '报名通过后锁定',
+        expect: '申请通过后锁定',
       },
       {
         name: '有导师',
@@ -355,7 +356,7 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-form-time',
     title: 'TaskFormTime',
-    about: '「时间」那一节：报名开始与截止（都可空）、限时几天。',
+    about: '「时间」那一节：开始方式、报名开始与截止（都可空）、申请制的题限时几天。',
     file: 'src/components/tasks/form/TaskFormTime.vue',
     component: TaskFormTime,
     needs: UI_T,
@@ -368,9 +369,15 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '完成期限没填（标红）',
-        note: '完成期限是必填的：从开始做那天起按它算这个人的截止时间。',
+        note: '完成期限是必填的：从申请通过那天起按它算这个人的截止时间。',
         props: time({ defaultDeadline: undefined, defaultDeadlineControl: red('未填写完成期限') }),
         expect: '未填写完成期限',
+      },
+      {
+        name: '直接开始',
+        note: '直接开始的题所有人按截止日期交，没有完成期限这一格。',
+        props: time({ startMode: 'DIRECT' }),
+        expect: '直接开始',
       },
     ],
   },

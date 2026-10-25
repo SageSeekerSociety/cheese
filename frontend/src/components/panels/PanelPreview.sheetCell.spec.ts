@@ -24,7 +24,7 @@ import { previewBundles } from '@/test/panelBundles'
 vi.mock('./preview/PreviewSheet.vue', () => ({
   default: {
     props: ['data', 'kind', 'marks', 'activeMark'],
-    emits: ['cell', 'mark'],
+    emits: ['cell', 'range', 'mark'],
     setup(
       props: { kind?: string; marks?: readonly { id: string }[]; activeMark?: string | null },
       { emit }: { emit: (e: string, p?: unknown) => void }
@@ -43,11 +43,48 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
             },
             'cell'
           ),
+          h(
+            'button',
+            {
+              onClick: () =>
+                emit('range', {
+                  sheet: props.kind === 'csv' ? '' : 'Sheet1',
+                  start: 'B2',
+                  end: 'D4',
+                  text: '90\t80\n70\t60',
+                }),
+            },
+            'range'
+          ),
           h('span', {
             'data-testid': 'marks',
             'data-marks': JSON.stringify(props.marks ?? []),
             'data-active': props.activeMark ?? '',
           }),
+          // 一片全是空格子摊平出来的那个形状：几个制表符和换行，不是空串。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'B1', text: '\t\n' }),
+            },
+            'range-empty'
+          ),
+          // 开头 200 字是空格子、内容在后面：不能被说成空的。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'B3', text: '\t\n'.repeat(150) + '1200' }),
+            },
+            'range-blank-start'
+          ),
+          // 一长串 emoji：截到 200 字时正好会切在代理对中间。
+          h(
+            'button',
+            {
+              onClick: () => emit('range', { sheet: '', start: 'A1', end: 'A1', text: '😀'.repeat(300) }),
+            },
+            'range-emoji'
+          ),
           h('button', { 'data-testid': 'open-mark', onClick: () => emit('mark', props.marks?.[0]?.id ?? '') }, 'mark'),
         ])
     },
@@ -150,6 +187,76 @@ it('点一格发出去时带的是带文件身份的 sheet-cell 引用', async (
   })
   // 走的是结构化那条路，不再额外拼一句话。
   expect(ui.emitted().locate).toBeUndefined()
+})
+
+it('拖过一片发出去时带的是 sheet-range 引用：两个角、工作表名、和那片内容', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit as unknown as SubmitPreviewQuestion)
+  await fireEvent.click(ui.getByText('range'))
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这一片都算错了')
+  await fireEvent.click(ui.getByText('发送'))
+
+  const request = submit.mock.calls[0]?.[0]
+  expect(request.quotedContext).toEqual({
+    kind: 'sheet-range',
+    path: 'budget.xlsx',
+    source: 'committed',
+    version: 'v7',
+    task_id: 'task',
+    sheet: 'Sheet1',
+    start: 'B2',
+    end: 'D4',
+    text: '90\t80\n70\t60',
+  })
+  // 走的是结构化那条路，不再额外拼一句话。
+  expect(ui.emitted().locate).toBeUndefined()
+})
+
+it('一片的评论标记画在它左上角那一格', async () => {
+  // 表格只按格画标记；一片的锚点里两个角都在，落点是左上那个角。
+  const comments = commentsWith([
+    {
+      kind: 'sheet-range',
+      path: 'budget.xlsx',
+      source: 'committed',
+      version: 'v7',
+      task_id: 'task',
+      sheet: 'Sheet1',
+      start: 'B2',
+      end: 'D4',
+      text: '90\t80',
+    },
+  ])
+  const ui = mount(undefined, { comments: comments as never })
+  await waitFor(() => expect(marksOn(ui)).toHaveLength(1))
+  expect(marksOn(ui)[0]).toEqual({ id: 'c1', sheet: 'Sheet1', address: 'B2' })
+})
+
+it('一片全是空格子时说「空」，不说几个看不见的制表符', async () => {
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-empty'))
+
+  expect(ui.getByText('A1:B1')).toBeTruthy()
+  expect(ui.getByText('（空）')).toBeTruthy()
+})
+
+it('框里那截预览也按码点切，不把一个 emoji 劈成半个', async () => {
+  // 框里显示的是这片内容的开头 200 字。按 UTF-16 下标切会切在代理对中间，屏幕上
+  // 那半个字符渲染成一个问号。
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-emoji'))
+
+  const shown = ui.container.querySelector('.locator__quote')?.textContent ?? ''
+  expect([...shown]).toHaveLength(200)
+  expect(shown).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+})
+
+it('开头一片空格、内容在后面的一片不算空', async () => {
+  // 判空要判整片的内容，不是框里显示的那 200 字：否则这张表会被说成「（空）」。
+  const ui = mount()
+  await fireEvent.click(ui.getByText('range-blank-start'))
+
+  expect(ui.queryByText('（空）')).toBeNull()
 })
 
 it('CSV 没有工作表名，引用里 sheet 是空串，地址就是它自己', async () => {

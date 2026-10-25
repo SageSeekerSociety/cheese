@@ -136,15 +136,21 @@ def test_a_stranger_cannot_build_a_project_from_a_task(client):
     assert r.status_code == 403, r.text
 
 
-def test_a_pending_application_gets_no_pack_either(client):
-    """报名了但没过审：工作区可以先建起来，资源包要等审批。"""
+def test_a_pending_application_makes_no_project_and_so_no_pack(client):
+    """报名了但没过审：从这道题来的项目要等审批通过才有，资源包也就无从领起。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
-    seed_claim(client, task_id, handle=OUTSIDER)  # pending
+    seed_claim(client, task_id, handle=OUTSIDER, approved=2)  # pending
 
-    made = _project(client, "pending", OUTSIDER, external_task_id=task_id)
+    r = post_project(
+        client,
+        json={"name": "pending", "external_task_id": task_id},
+        headers=session_auth_headers(OUTSIDER),
+        owner=OUTSIDER,
+    )
 
-    assert _grants(client, made["id"]) == []
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["i18n"]["key"] == "challengeProjectWaitsForApproval"
 
 
 def test_an_approved_applicant_gets_the_pack(client):

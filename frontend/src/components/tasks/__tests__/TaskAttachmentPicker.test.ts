@@ -165,6 +165,21 @@ describe('题目带的材料', () => {
     view.unmount()
   })
 
+  it('字节传完了平台还在收：写「处理中」，不停在「上传中 100%」', async () => {
+    const upload = vi.fn(
+      (_file: File, progress: (sent: number, total: number) => void) =>
+        new Promise<string>(() => {
+          progress(100, 100)
+        })
+    )
+    const { view, input } = mount<string>({ upload })
+    await fireEvent.change(input, { target: { files: [pdf('数据集.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByRole('button', { name: /处理中/ })).toBeTruthy())
+    expect(view.queryByRole('button', { name: /100%/ })).toBeNull()
+    view.unmount()
+  })
+
   it('上限和服务端那句拒绝写成同一个样子：「20 GB」，不是「20.00 GB」', async () => {
     mocks.limits.mockResolvedValue({ maxFileBytes: 20 * 1024 ** 3 })
     const { view } = mount({ upload: vi.fn() })

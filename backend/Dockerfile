@@ -163,6 +163,8 @@ RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 win
 COPY --chown=cheese:python app ./app
 COPY --chown=cheese:python alembic ./alembic
 COPY --chown=cheese:python alembic.ini ./
+# The API generation an open page must be at (app/core/api_generation.py).
+COPY --chown=cheese:python api-generation ./
 # The sentences the platform says — room lines, refusals, push — in every UI
 # language. Their one copy is the frontend's catalog, outside this context, so
 # it comes in through the named `i18n` context (build.yml), to the place

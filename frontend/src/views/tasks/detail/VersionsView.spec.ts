@@ -72,7 +72,19 @@ it('后来删掉的材料只剩名字，没有下载；没记下文件的版本�
   expect(within(third).getByText('草稿.txt')).toBeTruthy()
   expect(within(third).getByText('已删除')).toBeTruthy()
   expect(within(third).getAllByRole('button', { name: '下载' })).toHaveLength(1)
-  expect(within(first).getByText('这一版的文件未记录')).toBeTruthy()
+  expect(within(first).getByText('这一版比较早，当时还没有记录文件')).toBeTruthy()
+})
+
+it('拿不到材料的人：「开始做这道题之后才能下载」在上方说一次，不在每一行重复', () => {
+  const view = mount({ canDownload: false })
+  expect(view.getAllByText('开始做这道题之后才能下载')).toHaveLength(1)
+})
+
+it('点文件名打开那一版的那一份，和「说明」页签一样预览', async () => {
+  const view = mount()
+  const second = items(view)[1]
+  await fireEvent.click(within(second).getByRole('button', { name: '数据.csv' }))
+  expect(view.emitted('open')).toEqual([[2, { name: '数据.csv', size: 1024 }]])
 })
 
 it('拿不到材料的人看得到每一版的文件名，没有下载', () => {

@@ -63,6 +63,16 @@ PY
 }
 say "log: $LOG"
 
+# Image pulls are retried the way the deploy's are (registry-retry.sh): the
+# box's link to the registries resets single connections, and `docker run`
+# pulls a missing image itself, once.
+log() { say "$@"; }
+fail() { say "ERROR: $*"; exit 1; }
+# The box's disk is the deploy's to reclaim, not this job's.
+log_disk() { :; }
+reclaim_before_pull_retry() { :; }
+. "$HERE/registry-retry.sh"
+
 # The scratch Postgres is the version the platform's database runs.
 SCRATCH_IMAGE=paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
 SCRATCH_PORT=55432
@@ -137,6 +147,11 @@ SCRATCH="cheese-merge-source-$BATCH-$$"
 PW="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
 echo "POSTGRES_PASSWORD=$PW" > "$WORK/scratch.env"
 SOURCE_URL="postgresql://postgres:$PW@127.0.0.1:$SCRATCH_PORT/source"
+# A deploy prunes every image no container uses, the scratch ones included.
+for image in "$SCRATCH_IMAGE" "$SCRATCH_REDIS_IMAGE"; do
+  docker image inspect "$image" >/dev/null 2>&1 \
+    || retry_pull "pull $image" docker pull "$image"
+done
 say "scratch database $SCRATCH"
 docker run -d --name "$SCRATCH" --network "container:$BACKEND" \
   --env-file "$WORK/scratch.env" -v "$EXPORT:/export:ro" \

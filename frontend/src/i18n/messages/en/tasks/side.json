@@ -26,7 +26,7 @@
   "once": "One only",
   "overdue": "{n} days overdue",
   "period": "Time limit",
-  "periodValue": "{n} days, counted from the day you start",
+  "periodValue": "{n} days, counted from the day the application is approved",
   "progress": "My progress",
   "projectsFailed": "Couldn't load projects",
   "rank": "Difficulty",

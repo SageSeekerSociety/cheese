@@ -24,6 +24,7 @@
   "quotedSelection": "A quoted selection on page {page}",
   "pinnedPage": "Pointed at a spot on page {page}",
   "quotedCell": "Quoted cell {address}",
+  "quotedRange": "Quoted range {address}",
   "quotedPassage": "Quoted a passage of the document",
   "quotedWebElement": "Quoted an element on the page",
   "quotedWebText": "Quoted a selection on the page",

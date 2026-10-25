@@ -75,6 +75,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         "deadline": deadline_ms,
         "registrationStartAt": registration_start_ms,
         "defaultDeadline": task.default_deadline,
+        # How a claim starts: ``DIRECT`` or ``APPLY`` (``inputs.START_*``).
+        "startMode": task.start_mode,
         "resubmittable": task.resubmittable,
         "editable": task.editable,
         "approved": approved_map.get(task.approved, "NONE"),

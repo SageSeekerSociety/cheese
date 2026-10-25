@@ -21,16 +21,16 @@ from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
+from app.domain.attachment.models import Attachment
 from app.domain.project.models import Project, ProjectStarterPush
 from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
 from tests.integration.test_task_files import (
     _add,
     _auth,
-    _create_task,
     _files,
     _member_of,
     _post_task,
@@ -38,11 +38,17 @@ from tests.integration.test_task_files import (
     _upload_loose,
     upload_root,  # noqa: F401 — the fixture every test here uses (pytestmark)
 )
+from tests.integration.test_task_files import _create_task as _create_task_of
 from tests.integration.test_task_files import _new_board as new_board
 from tests.support import git_store
 
 #: 字节落在 tmp_path：`test_task_files` 的同一个夹具。
 pytestmark = pytest.mark.usefixtures("upload_root")
+
+
+def _create_task(api_client: TestClient, board: dict, **more) -> int:
+    """直接开始的题：领题这一下就通过了、开出了项目，起始代码推进那个项目。"""
+    return _create_task_of(api_client, board, **{"startMode": "DIRECT", **more})
 
 
 def _zip(*entries: tuple[str, bytes] | zipfile.ZipInfo, data: bytes = b"") -> bytes:
@@ -92,23 +98,13 @@ def _set_starter(api_client: TestClient, task_id: int, token: str, data: bytes):
     )
 
 
-def _claim_project(
-    api_client: TestClient, task_id: int, token: str, *, approver: str | None = None
-) -> uuid.UUID:
-    """领题：领题这一下就开出了项目。给了 ``approver``（出题人的凭据）就当场批准。"""
+def _claim_project(api_client: TestClient, task_id: int, token: str) -> uuid.UUID:
+    """领题：直接开始的题，领题这一下就通过了、开出了项目。"""
     resp = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert resp.status_code == 200, resp.text
-    data = resp.json()["data"]
-    if approver is not None:
-        approved = api_client.patch(
-            f"/tasks/{task_id}/participants/{data['participant']['id']}",
-            json={"approved": "APPROVED"},
-            headers=_auth(approver),
-        )
-        assert approved.status_code == 200, approved.text
-    return uuid.UUID(data["project"]["id"])
+    return uuid.UUID(resp.json()["data"]["project"]["id"])
 
 
 def _main(project_id: uuid.UUID) -> dict[str, str]:
@@ -255,9 +251,7 @@ def test_the_projects_agents_are_told_where_the_first_commit_came_from(
     _set_starter(api_client, task_id, board["creator_token"], _lab())
     _, member_token = _member_of(user_client, api_client, board)
     # The agents read the task once the claim is approved.
-    project_id = _claim_project(
-        api_client, task_id, member_token, approver=board["creator_token"]
-    )
+    project_id = _claim_project(api_client, task_id, member_token)
 
     async def read() -> str | None:
         project = await db_session.get(Project, project_id)
@@ -401,6 +395,71 @@ def test_a_bad_archive_picked_on_the_publish_page_publishes_nothing(
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+
+
+def _attachments(db_session, portal) -> int:
+    """附件表里一共有几份。"""
+    return portal.call(db_session.scalar, select(func.count()).select_from(Attachment))
+
+
+def _send_starter(api_client: TestClient, token: str, data: bytes):
+    """发题页那条路：选完起始代码就交上来，查过才留下。"""
+    return api_client.post(
+        "/task-drafts/starter",
+        headers=_auth(token),
+        files={"file": ("lab.zip", io.BytesIO(data), "application/zip")},
+    )
+
+
+def test_a_starter_refused_on_the_publish_page_leaves_nothing_stored(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """发题页上选完压缩包就查：不合格的当场说原因（和放进题目时同一句），什么都不存下；
+    合格的存成这个人的一份附件，交回它的 id。"""
+    board = new_board(user_client, api_client)
+    token = board["creator_token"]
+    before = _attachments(db_session, _portal)
+
+    refused = _send_starter(api_client, token, _TRAVERSAL)
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+    assert _attachments(db_session, _portal) == before
+
+    accepted = _send_starter(api_client, token, _lab())
+    assert accepted.status_code == 201, accepted.text
+    assert _attachments(db_session, _portal) == before + 1
+
+
+def test_a_draft_refuses_someone_elses_upload_as_its_starter(
+    api_client: TestClient, user_client: UserCreator
+):
+    """草稿只存这个人自己传的起始代码：别人的附件在存的那一下就拒，不等到发布；
+    自己的照存。"""
+    board = new_board(user_client, api_client)
+    token = board["creator_token"]
+    _, stranger = _member_of(user_client, api_client, board)
+    theirs = _upload_loose(api_client, stranger, "lab.zip", _lab())
+    mine = _upload_loose(api_client, token, "lab.zip", _lab())
+    draft = api_client.post(
+        "/task-drafts", json={"space": board["space_id"]}, headers=_auth(token)
+    ).json()["data"]
+
+    foreign = api_client.patch(
+        f"/task-drafts/{draft['id']}",
+        json={"fields": {"starterAttachmentId": theirs}},
+        headers=_auth(token),
+    )
+    assert foreign.status_code == 403, foreign.text
+    kept = api_client.get(f"/task-drafts/{draft['id']}", headers=_auth(token))
+    assert kept.json()["data"]["fields"].get("starterAttachmentId") is None
+
+    own = api_client.patch(
+        f"/task-drafts/{draft['id']}",
+        json={"fields": {"starterAttachmentId": mine}},
+        headers=_auth(token),
+    )
+    assert own.status_code == 200, own.text
 
 
 # --- 上传时收下的，领题时一定放得进仓库 ---------------------------------------------

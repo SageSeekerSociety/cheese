@@ -9,5 +9,6 @@
   "title": "附件",
   "uploadFailed": "「{name}」上传失败：{error}",
   "uploading": "上传中…",
-  "uploadingPercent": "上传中 {percent}%"
+  "uploadingPercent": "上传中 {percent}%",
+  "processing": "处理中…"
 }

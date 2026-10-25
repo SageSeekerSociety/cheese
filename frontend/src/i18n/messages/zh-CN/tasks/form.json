@@ -5,7 +5,7 @@
   "classify": "分类与标签",
   "completion": "完成期限",
   "completionPrefix": "限时",
-  "completionSuffix": "天，从开始做那天算起",
+  "completionSuffix": "天，从申请通过那天算起",
   "content": "题目内容",
   "defaultDeadline": "默认完成期限",
   "description": "描述",
@@ -27,10 +27,13 @@
     "summaryRealName": "需实名",
     "title": "更多设置"
   },
+  "dueOn": "截止日期",
   "name": "名称",
   "namePlaceholder": "例如：图像分类基线复现",
   "noCategories": "暂无分类",
   "noTopics": "暂无标签",
+  "opensNow": "立即开放",
+  "opensOn": "开放日期",
   "participantLimit": "人数上限",
   "participantType": "参与者类型",
   "participation": "参与",
@@ -57,6 +60,13 @@
     "verificationTitle": "身份验证"
   },
   "rank": "难度",
+  "start": {
+    "apply": "申请制",
+    "applyHint": "出题人通过申请后才开始，限时从通过那天算起",
+    "direct": "直接开始",
+    "directHint": "点「开始做这道题」就开始，所有人在截止日期前提交",
+    "label": "开始方式"
+  },
   "registration": "报名时间",
   "registrationEnd": "截止日期",
   "registrationStart": "开始日期",
@@ -68,10 +78,13 @@
   "teamLimit": "队伍数上限",
   "teamLocking": {
     "free": "允许变更",
-    "freeHint": "报名通过后仍可增减成员",
+    "freeHint": "申请通过后仍可增减成员",
+    "freeHintStart": "开始做这道题后仍可增减成员",
     "label": "队伍成员变更",
-    "locked": "报名通过后锁定",
-    "lockedHint": "以报名通过时的名单为准"
+    "locked": "申请通过后锁定",
+    "lockedHint": "以申请通过时的名单为准",
+    "lockedHintStart": "以开始做这道题时的名单为准",
+    "lockedStart": "开始做这道题后锁定"
   },
   "teamLockingPolicyLockOnApproval": "报名通过后锁定",
   "teamSize": "每队人数",
@@ -83,6 +96,7 @@
   "validation": {
     "categoryRequired": "未选择分类",
     "completionRequired": "未填写完成期限",
+    "dueRequired": "未填写截止日期",
     "nameRequired": "未填写名称",
     "rankRequired": "未选择难度",
     "submitterTypeRequired": "未选择参与方式",
@@ -91,7 +105,7 @@
   "mentor": {
     "require": "把导师加入参与者的项目",
     "label": "导师",
-    "hint": "申请时要先同意导师加入。导师能看到项目里的公开频道、文档和文件"
+    "hint": "学生同意导师加入后才能申请或开始做。导师能看到项目里的公开频道、文档和文件"
   },
   "grading": {
     "title": "提交与评分",
@@ -135,7 +149,8 @@
     "nameRequired": "每个阶段都需要填写名称",
     "add": "添加阶段",
     "removeTitle": "删除第 {n} 个阶段？",
-    "removeConfirm": "删除"
+    "removeConfirm": "删除",
+    "removeBody": "点「保存更改」后生效"
   },
   "brief": "说明",
   "parts": {

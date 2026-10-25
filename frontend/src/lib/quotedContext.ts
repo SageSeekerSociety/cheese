@@ -11,6 +11,7 @@ export type QuotedContext =
   | SlidePageQuote
   | PagePinQuote
   | SheetCellQuote
+  | SheetRangeQuote
   | TextRangeQuote
   | WebElementQuote
   | WebTextQuote
@@ -81,6 +82,22 @@ export type SheetCellQuote = Readonly<
     sheet: string
     address: string
     value: string
+  }
+>
+
+/** 表格里的一片：`start`/`end` 是区域两个角的 A1 地址（左上、右下），合起来就是表格
+ *  软件自己印的那个 `A1:C3`。
+ *
+ *  和单格一样，两个角都是文件本身给得出来的地址，受话人拿它们就能回到那一片；`text`
+ *  是这片格子里的内容按行摊平的那一份，受话人不打开文件也看得见里面是什么。CSV 没有
+ *  工作表名，`sheet` 就是空串。 */
+export type SheetRangeQuote = Readonly<
+  FileIdentity & {
+    kind: 'sheet-range'
+    sheet: string
+    start: string
+    end: string
+    text: string
   }
 >
 
@@ -244,6 +261,18 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
       typeof q.address === 'string' &&
       q.address.length > 0 &&
       typeof q.value === 'string'
+    )
+  }
+  if (q.kind === 'sheet-range') {
+    // 两个角各是一个地址，后端都收 `min_length=1`；`sheet` 空串是 CSV 的正常形状；
+    // 摊平的那份内容可以是空（一格里本来就什么都没有）。
+    return (
+      typeof q.sheet === 'string' &&
+      typeof q.start === 'string' &&
+      q.start.length > 0 &&
+      typeof q.end === 'string' &&
+      q.end.length > 0 &&
+      typeof q.text === 'string'
     )
   }
   if (q.kind === 'text-range') {

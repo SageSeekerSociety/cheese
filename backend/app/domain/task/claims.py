@@ -1,25 +1,126 @@
 """一个人一道题只领一次。
 
 A claim is live unless it was rejected (``approved == 1``) or withdrawn
-(``deleted_at``), so a pending application counts: its workspace was opened
-the moment it was made.
+(``deleted_at``), so a pending application counts: nobody holds a second one
+while it waits.
+
+How a claim starts is the task's ``start_mode``: a task started directly takes
+a claim already approved, a task applied for takes it pending; either way the
+claim's project opens when the claim is approved (``starts_now``,
+``deadline_from``).
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
+from app.domain.project.models import Project
+from app.domain.task.inputs import APPROVE_APPROVED, START_DIRECT
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.task.stages import list_stages
-from app.domain.task.submission_state import STAGE_NOT_SUBMITTED, stage_states_of
+from app.domain.task.submission_state import (
+    STAGE_NOT_SUBMITTED,
+    refresh_completion_status,
+    stage_states_of,
+)
 from app.domain.team.models import Team, TeamUserRelation
+
+#: Days a claim of a task applied for has when the task names none.
+_DAYS_WHEN_UNSET = 7
+#: ``default_deadline`` was once kept in milliseconds; a value this large is one.
+_MS_PER_DAY = 86_400_000
+
+
+def starts_now(task: Task) -> bool:
+    """Whether a claim of this task is approved the moment it is made."""
+    return task.start_mode == START_DIRECT
+
+
+def deadline_from(task: Task, approved_at: datetime) -> datetime | None:
+    """The deadline a claim of this task gets when it is approved at
+    ``approved_at``: the task's own on a task started directly, shared by
+    everyone; on a task applied for, the task's 限时 days from approval."""
+    if starts_now(task):
+        return task.deadline
+    days = task.default_deadline or 0
+    if days >= _MS_PER_DAY:
+        days = round(days / _MS_PER_DAY)
+    return approved_at + timedelta(days=days or _DAYS_WHEN_UNSET)
+
+
+def started_at():
+    """When the claim (the ``TaskMembership`` row of the enclosing query)
+    started: the moment its project was created, the project of the claim's
+    team for this task (a person's claim: their personal team's). NULL while
+    it has none — still waiting for approval, or approved and not started —
+    so how long a claim has gone without moving counts from here, never from
+    when it was applied for."""
+    return (
+        select(func.min(Project.created_at))
+        .join(Team, Team.id == Project.team_id)
+        .where(
+            Project.external_task_id == TaskMembership.task_id,
+            or_(
+                and_(
+                    TaskMembership.is_team.is_(True),
+                    Project.team_id == TaskMembership.member_id,
+                ),
+                and_(
+                    TaskMembership.is_team.is_(False),
+                    Team.personal_owner_user_id == TaskMembership.member_id,
+                ),
+            ),
+        )
+        .correlate(TaskMembership)
+        .scalar_subquery()
+    )
+
+
+async def started_at_of(
+    session: AsyncSession, membership_ids: Sequence[int]
+) -> dict[int, datetime]:
+    """``started_at`` for each of these claims that has started."""
+    if not membership_ids:
+        return {}
+    rows = await session.execute(
+        select(TaskMembership.id, started_at()).where(
+            TaskMembership.id.in_(membership_ids)
+        )
+    )
+    return {int(mid): at for mid, at in rows if at is not None}
+
+
+async def follow_the_task_deadline(
+    session: AsyncSession, *, task: Task, before: datetime | None
+) -> None:
+    """On a task started directly everyone hands in by the task's deadline, so
+    when it moves, the approved claims still holding the old one move with it.
+    A claim whose deadline the publisher moved on its own keeps that one.
+    Each claim that moved is derived again (``refresh_completion_status``): a
+    claim the sweep failed at the old deadline is open again at a later one,
+    and one past the new deadline with nothing in hand reads failed."""
+    if not starts_now(task) or task.deadline == before:
+        return
+    moving = (
+        await session.scalars(
+            select(TaskMembership).where(
+                TaskMembership.task_id == task.id,
+                TaskMembership.deleted_at.is_(None),
+                TaskMembership.approved == APPROVE_APPROVED,
+                TaskMembership.deadline.is_not_distinct_from(before),
+            )
+        )
+    ).all()
+    for claim in moving:
+        claim.deadline = task.deadline
+        await refresh_completion_status(session, claim)
 
 
 async def members_claiming_through_another_team(
@@ -97,8 +198,9 @@ async def refuse_unless_project_follows_claim(
     """A project made from a task belongs to the team of the claim it comes
     from: a person's claim puts it in their own name (their personal team, which
     is also where a project with no team goes), a team's claim in that team.
-    Without a live claim there is no project to make; any other team is refused
-    by name, so the person knows where to make it."""
+    Without an approved claim there is no project to make (a claim still
+    waiting for the publisher has none yet); any other team is refused by name,
+    so the person knows where to make it."""
     repo = TaskMembershipRepository(session=session)
     live = _live_claims(
         task,
@@ -107,6 +209,9 @@ async def refuse_unless_project_follows_claim(
     )
     if not live:
         raise ForbiddenError(say("challengeProjectClaimFirst"))
+    live = [claim for claim in live if claim.approved == APPROVE_APPROVED]
+    if not live:
+        raise ForbiddenError(say("challengeProjectWaitsForApproval"))
     team = (await session.get(Team, team_id)) if team_id is not None else None
     if any(
         claim.member_id == team_id
@@ -116,8 +221,7 @@ async def refuse_unless_project_follows_claim(
         for claim in live
     ):
         return
-    # Named after the claim the person stands on: approved before pending.
-    claim = min(live, key=lambda m: m.approved != 0)
+    claim = live[0]
     if claim.is_team:
         claimant = await session.get(Team, claim.member_id)
         raise ForbiddenError(

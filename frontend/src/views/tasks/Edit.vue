@@ -5,7 +5,7 @@
 // 改动先存成这道题的修改草稿（`useTaskDraft`）：边改边存，离开再回来还在，点「保存更改」
 // 才落到题目上，学生在那之前看到的是原来的题目。芝士停在右边，接着的是题目页「问芝士」
 // 的那段对话；它改的也是这份草稿，表单跟着动（`useDraftAgent`）。
-import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData } from '@/types'
+import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData, TaskStage } from '@/types'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -26,6 +26,7 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import { useStageChangeCheck } from './composables/useStageChangeCheck'
 import { useTaskData } from './composables'
 
+import { ApiError } from '@/api/http'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import {
@@ -181,6 +182,22 @@ watch(form, (f) =>
   )
 )
 
+/** 表单上现在显示的项目集：「默认队友」沿用的是它设的那一位。从表单挂好那一刻起就读它
+ *  （它的起点可能是题目本身，也可能是打开的修改草稿），之后人改的、芝士写的都经 `change`。 */
+const formCategoryId = ref<number | undefined>(undefined)
+function onFormReady(fields: TaskDraftFields) {
+  formCategoryId.value = fields.categoryId
+  draft.baseline(fields)
+}
+function onFormChange(fields: TaskDraftFields) {
+  if ('categoryId' in fields) formCategoryId.value = fields.categoryId
+  draft.changed(fields)
+}
+const inheritedRole = computed(() => {
+  const category = editCategories.value.find((c) => c.id === formCategoryId.value)
+  return category ? category.defaultRole ?? null : undefined
+})
+
 // --- 芝士 -----------------------------------------------------------------------------
 
 const terms = () => ({
@@ -229,6 +246,19 @@ const resubmit = ref(false)
 
 // 改了阶段的截止、增删了阶段，存下去可能让学生被判未通过或回到进行中：存之前先说有几个人。
 const stageCheck = useStageChangeCheck((stages) => TaskBoardApi.stageEffect(taskId, stages))
+
+/** 点阶段的 ✕ 时就问服务端：删掉它之后的阶段存不存得下（有人交过的阶段删不掉），
+ *  存不下就交回那句拒绝。问的是保存前预览那条路（只算不写），拒绝和保存时同一句。 */
+async function stageRemovalRefusal(stages: TaskStage[]): Promise<string | null> {
+  try {
+    await TaskBoardApi.stageEffect(taskId, stages)
+    return null
+  } catch (err) {
+    // Only the save's own refusal (400) stops the removal; a request that failed
+    // for another reason leaves it to the confirm and the save.
+    return err instanceof ApiError && err.status === 400 ? err.message : null
+  }
+}
 
 /** 审核没通过的题，改完可以一并重新提交审核。 */
 const rejected = computed(() => taskData.value?.approved === 'DISAPPROVED')
@@ -386,10 +416,11 @@ onBeforeUnmount(() => void draft.flush())
       :domain-groups="domainGroups"
       :mentor-options="mentorChoices"
       :agent-writing="draft.writing.value"
+      :stage-removal-refusal="stageRemovalRefusal"
       @invalid="formInvalid = $event"
       @submit="onSubmit"
-      @change="draft.changed"
-      @ready="draft.baseline"
+      @change="onFormChange"
+      @ready="onFormReady"
     >
       <template #attachments>
         <div class="te__files">
@@ -407,6 +438,7 @@ onBeforeUnmount(() => void draft.flush())
             :file="starter.file.value"
             :uploading="starter.uploading.value"
             :percent="starter.percent.value"
+            confirm-remove
             @pick="starter.pick"
             @remove="starter.remove"
           />
@@ -419,6 +451,7 @@ onBeforeUnmount(() => void draft.flush())
             :raw-value="defaultRoleRaw"
             :types="agentTypes"
             :types-failed="agentTypesFailed"
+            :inherited="inheritedRole"
           />
           <TeachingFields
             :model-value="teaching"

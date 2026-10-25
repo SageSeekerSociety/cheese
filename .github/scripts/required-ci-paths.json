@@ -10,7 +10,9 @@
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/test.yml",
     ".github/scripts/backend_imports.py",
-    ".github/scripts/coverage_map.py"
+    ".github/scripts/coverage_map.py",
+    ".github/scripts/api_compat.py",
+    ".github/scripts/test_api_compat.py"
   ],
   "frontend": [
     "frontend/**",

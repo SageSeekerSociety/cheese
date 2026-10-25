@@ -256,7 +256,8 @@ def test_a_team_the_caller_is_in_still_registers(
         headers=_auth(board["creator_token"]),
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["project"]["team_id"] == team_id
+    assert resp.json()["data"]["participant"]["memberId"] == team_id
+    assert resp.json()["data"]["participant"]["isTeam"] is True
 
 
 # --- 2. 域组得是这块板的 -------------------------------------------------------

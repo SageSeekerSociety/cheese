@@ -4,6 +4,8 @@ import i18n, { t } from '@/i18n'
 
 /** 项目资料库里题目那个只读文件夹的名字（后端 `library/mount.py` 的 `FOLDER`）。 */
 export const TASK_FOLDER = '题目' // i18n-data: the folder's name in library paths, matched against them, not shown as copy
+/** 题目文件夹里起始代码那一份的名字（后端 `task/package.py` 的 `STARTER`）。 */
+export const STARTER_FILE = '起始代码.zip' // i18n-data: a file's name in the library, as stored, not copy
 
 /** 一版改了哪几样；`files` 是材料的名字。 */
 export interface TaskRevisionChanges {

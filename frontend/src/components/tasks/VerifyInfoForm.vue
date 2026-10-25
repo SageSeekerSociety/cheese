@@ -58,6 +58,7 @@
       </div>
 
       <v-textarea
+        v-if="askReason"
         v-model="formData.applyReason"
         autocomplete="off"
         :label="t('tasks.verifyForm.applyReason')"
@@ -82,8 +83,8 @@
           </template>
           <div class="text-body-2">
             {{ t('tasks.verifyForm.saveLocalTip1') }}<br />
-            {{ t('tasks.verifyForm.saveLocalTip2') }}<br />
-            {{ t('tasks.verifyForm.saveLocalTip3') }}
+            {{ t('tasks.verifyForm.saveLocalTip2') }}
+            <template v-if="askReason"><br />{{ t('tasks.verifyForm.saveLocalTip3') }}</template>
           </div>
         </v-tooltip>
       </div>
@@ -106,9 +107,14 @@ import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
 
-defineProps<{
-  requireRealName: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    requireRealName: boolean
+    /** 申请制的题才问申请理由：直接开始的题没有申请，这一栏不出现，也不发出去。 */
+    askReason?: boolean
+  }>(),
+  { askReason: true }
+)
 
 const STORAGE_KEY = 'verify_info_form_data'
 
@@ -188,7 +194,9 @@ const fillSavedInfo = () => {
   }
 }
 
-const submitForm = handleSubmit((values) => {
+const submitForm = handleSubmit((given) => {
+  const values = { ...given }
+  if (!props.askReason) delete values.applyReason
   if (saveToLocal.value) {
     // 保存除了申请理由之外的信息
     const dataToSave = { ...values }

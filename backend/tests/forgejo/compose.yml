@@ -25,6 +25,10 @@ services:
       FORGEJO__repository__DEFAULT_BRANCH: main
       # The integration relay listens on the host, outside this container.
       FORGEJO__webhook__ALLOWED_HOST_LIST: host.docker.internal
+    # host.docker.internal is built into Docker Desktop and Colima but not into
+    # Docker Engine on Linux, where CI runs; host-gateway names the host on all three.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - data:/var/lib/gitea
 volumes:
