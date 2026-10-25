@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
+from app.domain.machine.session_work import session_author
+from app.domain.project.repositories import ProjectRepository
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,9 @@ class MachineCaller:
     session_id: str
     project_id: str
     conversation_id: str
+    #: The seat the session acts under, as its own launch credential names it
+    #: (`session_work.session_author`): its teammate's handle, not the key the
+    #: session row is stored under.
     agent_handle: str
 
 
@@ -46,10 +51,13 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
         if _names(lease["state"], state):
+            project = await ProjectRepository(db).get(project_id)
+            if project is None:
+                return None
             return MachineCaller(
                 session_id=str(session.id),
                 project_id=str(project_id),
                 conversation_id=str(session.conversation_id),
-                agent_handle=session.agent_handle,
+                agent_handle=await session_author(db, project, session.agent_handle),
             )
     return None

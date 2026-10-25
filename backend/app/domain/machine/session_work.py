@@ -164,9 +164,11 @@ async def screen_agent_name(
     return await _agent_name(db, project, topic, handle)
 
 
-async def _session_author(db, project, handle: str) -> str:
+async def session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
-    room-derived handle itself, which is its own seat."""
+    room-derived handle itself, which is its own seat. What its launch
+    credential names, and so what a sandbox's request on its platform socket
+    acts as (`domain.machine.caller`)."""
 
     teammate = await _session_teammate(db, project, handle)
     if teammate is None:
@@ -536,7 +538,7 @@ async def restart_executor(db, row, lease):
         else None
     )
     chosen = await environment_of(db, row, topic, task, project)
-    author = await _session_author(db, project, row.agent_handle)
+    author = await session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
         mint_session_token(project.id, row.conversation_id, author),

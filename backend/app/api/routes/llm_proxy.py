@@ -549,6 +549,9 @@ async def machine_model(
         project_id=caller.project_id,
         topic_id=caller.conversation_id,
         agent_handle=caller.agent_handle,
+        # As the session's own launch credential (`mint_session_token`): the
+        # seat may act project-wide where its roles allow.
+        access_scope="project",
         ttl_s=_MACHINE_CALL_TOKEN_TTL_S,
     )
     return await _forward(path, request, db, chat, token)

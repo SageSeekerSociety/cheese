@@ -14,7 +14,7 @@ from app.domain.agent_session.models import AgentEnvironment, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, of_rooms, room_column
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.session_work import _agent_name, _session_author, presentation
+from app.domain.machine.session_work import _agent_name, presentation, session_author
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicStatus
@@ -43,7 +43,7 @@ async def conversation_sessions(db, project, place) -> list[dict]:
             {
                 "session_id": shown["id"],
                 "agent_handle": row.agent_handle,
-                "seat_handle": await _session_author(db, project, row.agent_handle),
+                "seat_handle": await session_author(db, project, row.agent_handle),
                 "environment": environment.environment if environment else None,
                 "status": lease.get("status"),
                 "online": bool(lease.get("online")),
