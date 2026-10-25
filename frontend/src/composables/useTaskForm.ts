@@ -109,6 +109,7 @@ export function useTaskForm(
           submitterType: z.enum(['USER', 'TEAM'], { required_error: t('tasks.form.validation.submitterTypeRequired') }),
           registrationStartAt: z.date().optional().nullable(),
           deadline: z.date().nullable(),
+          startMode: z.enum(['DIRECT', 'APPLY']),
           defaultDeadline: z
             .number({
               required_error: t('tasks.form.validation.completionRequired'),
@@ -165,6 +166,7 @@ export function useTaskForm(
       minTeamSize: props.initialData?.minTeamSize ?? 1,
       maxTeamSize: props.initialData?.maxTeamSize ?? 10,
       defaultDeadline: props.initialData?.defaultDeadline ?? 30,
+      startMode: props.initialData?.startMode ?? 'APPLY',
       // `||` 而不是 `??`：0 在这个表单里与「没有」是同一件事（后端不限时存的是 `null`，
       // 老行里可能是 0），留着它反而会被下面那条 `min(1)` 判成填错。
       participantLimit: props.initialData?.participantLimit || null,
@@ -180,6 +182,7 @@ export function useTaskForm(
   const [registrationStartAt, registrationStartAtProps] = defineField('registrationStartAt', vuetifyConfig)
   const [deadline, deadlineProps] = defineField('deadline', vuetifyConfig)
   const [defaultDeadline, defaultDeadlineProps] = defineField('defaultDeadline', vuetifyConfig)
+  const [startMode] = defineField('startMode', vuetifyConfig)
   const [topics] = defineField('topics', vuetifyConfig)
   const [minTeamSize, minTeamSizeProps] = defineField('minTeamSize', vuetifyConfig)
   const [maxTeamSize, maxTeamSizeProps] = defineField('maxTeamSize', vuetifyConfig)
@@ -325,6 +328,7 @@ export function useTaskForm(
       registrationStartAt: ms(registrationStartAt.value),
       deadline: ms(deadline.value),
       defaultDeadline: defaultDeadline.value,
+      startMode: startMode.value,
       topics: topics.value ?? [],
       categoryId: categoryId.value,
       minTeamSize: minTeamSize.value,
@@ -353,6 +357,7 @@ export function useTaskForm(
     if ('registrationStartAt' in fields) registrationStartAt.value = date(fields.registrationStartAt)
     if ('deadline' in fields) deadline.value = date(fields.deadline)
     if ('defaultDeadline' in fields) defaultDeadline.value = fields.defaultDeadline as number
+    if (fields.startMode) startMode.value = fields.startMode
     if ('topics' in fields) topics.value = fields.topics ?? []
     if ('categoryId' in fields) categoryId.value = fields.categoryId as number
     if ('minTeamSize' in fields) minTeamSize.value = fields.minTeamSize
@@ -411,6 +416,7 @@ export function useTaskForm(
     deadlineProps,
     defaultDeadline,
     defaultDeadlineProps,
+    startMode,
     topics,
     minTeamSize,
     minTeamSizeProps,

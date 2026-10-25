@@ -253,6 +253,33 @@ describe('题目详情', () => {
     expect(hrefs(container)).not.toContain(`${BASE}/submissions`)
   })
 
+  it.each([
+    ['直接开始', 'DIRECT', 'tasks.page.claim.start'],
+    ['申请制', 'APPLY', 'tasks.page.claim.claim'],
+  ])('%s的题：按钮说点了会怎样', async (_, startMode, label) => {
+    const { container } = await mount({ startMode })
+
+    expect(claimButton(container)?.textContent).toContain(t(label))
+    expect(claimButton(container)?.disabled).toBe(false)
+  })
+
+  it.each([
+    ['我的申请通过了', { joined: true, submittable: true }, APPROVED_ME],
+    // 早先的版本申请时就建了项目，这样的项目还在：照样进去。
+    [
+      '我的申请还在等，但早先已经有了项目',
+      { joined: true, submittable: false },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] },
+    ],
+  ])('%s：主操作是「继续做」，打开从这道题来的那个项目', async (_, task, participation) => {
+    const { container } = await mount({ ...task, myProject: { id: 'p-7', name: '红黑树' } }, participation)
+
+    const go = container.querySelector('[data-testid="task-continue"]')
+    expect(go?.textContent).toContain(t('tasks.page.claim.continue'))
+    expect(go?.getAttribute('href')).toBe('/projects/p-7')
+    expect(claimButton(container)).toBeNull()
+  })
+
   it('批过之后：主操作是「提交作业」', async () => {
     const { container } = await mount({ joined: true, submittable: true }, APPROVED_ME)
 

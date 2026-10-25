@@ -5,6 +5,7 @@ import type {
   Task,
   TaskRubricLine,
   TaskStage,
+  TaskStartMode,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -32,6 +33,7 @@ export type PostTaskRequestData = {
   submitterType: 'USER' | 'TEAM'
   deadline: number | null
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   description: string
@@ -68,6 +70,7 @@ export type PatchTaskRequestData = {
   name?: string
   deadline?: number | null
   defaultDeadline?: number
+  startMode?: TaskStartMode
   resubmittable?: boolean
   editable?: boolean
   description?: string

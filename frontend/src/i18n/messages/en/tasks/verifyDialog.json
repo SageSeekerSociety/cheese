@@ -25,7 +25,7 @@
   "titleRealName": "Confirm real-name participation",
   "understood": "Got it",
   "mentor": {
-    "title": "After you apply, {names} joins your project as a mentor",
+    "title": "Once you start this task, {names} joins your project as a mentor",
     "sees": "Mentors see the project's public channels, documents and files and can speak and comment, but cannot edit directly.",
     "notSees": "Mentors do not see private chats or private channels they are not in.",
     "remove": "You can remove a mentor from the project's members; the task's publisher will see that."

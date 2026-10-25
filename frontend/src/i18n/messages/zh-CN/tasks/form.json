@@ -5,7 +5,7 @@
   "classify": "分类与标签",
   "completion": "完成期限",
   "completionPrefix": "限时",
-  "completionSuffix": "天，从开始做那天算起",
+  "completionSuffix": "天，从申请通过那天算起",
   "content": "题目内容",
   "defaultDeadline": "默认完成期限",
   "description": "描述",
@@ -57,6 +57,13 @@
     "verificationTitle": "身份验证"
   },
   "rank": "难度",
+  "start": {
+    "apply": "申请制",
+    "applyHint": "出题人通过申请后才开始，限时从通过那天算起",
+    "direct": "直接开始",
+    "directHint": "点「开始做这道题」就开始，所有人在截止日期前提交",
+    "label": "开始方式"
+  },
   "registration": "报名时间",
   "registrationEnd": "截止日期",
   "registrationStart": "开始日期",

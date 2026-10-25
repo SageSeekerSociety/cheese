@@ -39,6 +39,12 @@ describe('previewOf', () => {
     expect(shown.writing).toBe('participant_limit')
   })
 
+  it('fills how the task starts in the form’s words, and only those', () => {
+    expect(previewOf({ start_mode: '直接开始' }, terms).fields).toEqual({ startMode: 'DIRECT' })
+    expect(previewOf({ start_mode: '申请制' }, terms).fields).toEqual({ startMode: 'APPLY' })
+    expect(previewOf({ start_mode: '直接' }, terms).fields).toEqual({})
+  })
+
   it('leaves out what is not finished or not in the space', () => {
     const shown = previewOf({ name: 'Lab', deadline: '2026-11-0', category: '作业', difficulty: '中' }, terms)
     expect(shown.fields).toEqual({ name: 'Lab' })

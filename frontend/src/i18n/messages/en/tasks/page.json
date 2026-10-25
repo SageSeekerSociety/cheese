@@ -1,9 +1,12 @@
 {
   "claim": {
     "claim": "Apply to do this task",
+    "continue": "Continue",
     "notApproved": "Can be applied for once approved",
+    "notApprovedStart": "Can be started once approved",
     "pending": "Applied, awaiting approval",
-    "rejected": "Application not approved"
+    "rejected": "Application not approved",
+    "start": "Start this task"
   },
   "dateFormat": "MMM D",
   "delete": "Delete",

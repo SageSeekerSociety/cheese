@@ -5,7 +5,7 @@
   "classify": "Category and tags",
   "completion": "Time to complete",
   "completionPrefix": "Within",
-  "completionSuffix": "days, counted from the day they start",
+  "completionSuffix": "days, counted from the day the application is approved",
   "content": "Content",
   "defaultDeadline": "Default completion deadline",
   "description": "Description",
@@ -57,6 +57,13 @@
     "verificationTitle": "Identity verification"
   },
   "rank": "Difficulty",
+  "start": {
+    "apply": "Apply first",
+    "applyHint": "Starts once the publisher approves the application; the time limit counts from that day",
+    "direct": "Start directly",
+    "directHint": "Clicking “Start this task” starts it; everyone hands in by the deadline",
+    "label": "How it starts"
+  },
   "registration": "Registration",
   "registrationEnd": "End date",
   "registrationStart": "Start date",

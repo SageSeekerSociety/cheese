@@ -20,6 +20,19 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
   const selectedTeamId = ref<number | null>(null)
 
+  /** 直接开始的题点了就开始；申请制的题先申请，等出题人通过。 */
+  const direct = () => taskData.value?.startMode === 'DIRECT'
+
+  /** 开始了就进项目；申请制的题这时还没有项目（通过时才建），留在题目页，按钮写着在等通过。 */
+  const opened = async (project: { id: string } | null) => {
+    if (project) {
+      toast.success(t('tasks.participation.started'))
+      await router.push(`/projects/${project.id}`)
+    } else {
+      toast.success(t('tasks.participation.applied'))
+    }
+  }
+
   // 注册事件监听
   events.on('select-team', (teamId: number) => {
     selectedTeamId.value = teamId
@@ -81,13 +94,14 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         teamId
       )
 
-      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
       events.emit('reload-joined-teams')
-      await router.push(`/projects/${result.project.id}`)
+      await opened(result.project)
     } catch (error) {
       // 服务端说了为什么（例如项目正在建、过一会儿再试），就说那一句。
-      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.teamClaimFailed') })
+      void errorHandler.handle(error as Error, {
+        defaultMessage: t(direct() ? 'tasks.participation.startFailed' : 'tasks.participation.teamClaimFailed'),
+      })
     }
   }
 
@@ -112,11 +126,12 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
       })
 
-      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
-      await router.push(`/projects/${result.project.id}`)
+      await opened(result.project)
     } catch (error) {
-      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.claimFailed') })
+      void errorHandler.handle(error as Error, {
+        defaultMessage: t(direct() ? 'tasks.participation.startFailed' : 'tasks.participation.claimFailed'),
+      })
     }
   }
 

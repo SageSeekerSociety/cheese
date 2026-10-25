@@ -1,7 +1,12 @@
 <script setup lang="ts">
-// 「时间」那一节：报名开始与截止（都可空）、领取后几天内完成。
+// 「时间」那一节：怎么开始（直接开始 / 申请制）、报名开始与截止（都可空）、
+// 申请制的题通过后几天内完成。
 //
-// 它只画：三样值都是 props 进来的，改一次往上报一次。今天以前的日子点不动。
+// 它只画：几样值都是 props 进来的，改一次往上报一次。今天以前的日子点不动。
+// 直接开始的题所有人按截止日期交，没有「限时几天」这一格。
+import type { TaskStartMode } from '@/types'
+
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VDateInput } from 'vuetify/labs/VDateInput'
 
@@ -21,8 +26,14 @@ defineProps<{
 const registrationStartAt = defineModel<Date | null | undefined>('registrationStartAt', { required: true })
 const deadline = defineModel<Date | null | undefined>('deadline', { required: true })
 const defaultDeadline = defineModel<number | undefined>('defaultDeadline', { required: true })
+const startMode = defineModel<TaskStartMode | undefined>('startMode', { required: true })
 
 const { t } = useI18n()
+
+const startOptions = computed(() => [
+  { value: 'DIRECT', label: t('tasks.form.start.direct'), hint: t('tasks.form.start.directHint') },
+  { value: 'APPLY', label: t('tasks.form.start.apply'), hint: t('tasks.form.start.applyHint') },
+])
 
 const errorOf = (control: FieldControl): string | undefined => control['error-messages']?.[0]
 
@@ -37,6 +48,19 @@ const isAllowedDates = (date: unknown) => {
 
 <template>
   <TaskFormSection :title="t('tasks.form.time')">
+    <BaseField data-agent-field="start_mode" :label="t('tasks.form.start.label')">
+      <v-radio-group v-model="startMode" hide-details density="compact" class="tf-choices">
+        <v-radio v-for="option in startOptions" :key="option.value" :value="option.value">
+          <template #label>
+            <span>
+              {{ option.label }}
+              <span class="tf-choice-hint">{{ option.hint }}</span>
+            </span>
+          </template>
+        </v-radio>
+      </v-radio-group>
+    </BaseField>
+
     <div class="tf-grid">
       <BaseField
         data-agent-field="deadline"
@@ -74,6 +98,7 @@ const isAllowedDates = (date: unknown) => {
       </BaseField>
 
       <BaseField
+        v-if="startMode !== 'DIRECT'"
         data-agent-field="days_to_submit"
         :label="t('tasks.form.completion')"
         required

@@ -111,6 +111,7 @@ const {
   deadlineProps,
   defaultDeadline,
   defaultDeadlineProps,
+  startMode,
   topics,
   minTeamSize,
   minTeamSizeProps,
@@ -242,6 +243,7 @@ defineExpose({
         v-model:registration-start-at="registrationStartAt"
         v-model:deadline="deadline"
         v-model:default-deadline="defaultDeadline"
+        v-model:start-mode="startMode"
         :registration-start-at-control="registrationStartAtProps"
         :deadline-control="deadlineProps"
         :default-deadline-control="defaultDeadlineProps"

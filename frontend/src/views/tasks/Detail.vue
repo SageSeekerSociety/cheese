@@ -147,6 +147,12 @@ const notStarted = computed(() => {
 })
 const full = computed(() => limit.value !== null && participantCount.value >= limit.value)
 
+/** 直接开始的题点了就开始；申请制的题先申请，出题人通过才开始。 */
+const startsDirectly = computed(() => taskData.value?.startMode === 'DIRECT')
+/** 我（或我的团队）从这道题来的项目：有它，主操作就是「继续做」，打开它。 */
+const myProject = computed(() => taskData.value?.myProject ?? null)
+const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.value.id}` : ''))
+
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
   if (!taskData.value) return null
@@ -160,11 +166,15 @@ const claim = computed(() => {
   if (!task) return null
   if (myClaimPending.value) return { label: t('tasks.page.claim.pending'), disabled: true }
   if (myClaimRejected.value) return { label: t('tasks.page.claim.rejected'), disabled: true }
-  if (task.approved !== 'APPROVED') return { label: t('tasks.page.claim.notApproved'), disabled: true }
+  if (task.approved !== 'APPROVED')
+    return {
+      label: startsDirectly.value ? t('tasks.page.claim.notApprovedStart') : t('tasks.page.claim.notApproved'),
+      disabled: true,
+    }
   if (deadlinePassed.value) return { label: t('tasks.page.state.closed'), disabled: true }
   if (notStarted.value) return { label: t('tasks.page.state.notStarted'), disabled: true }
   if (full.value) return { label: t('tasks.page.state.full'), disabled: true }
-  return { label: t('tasks.page.claim.claim'), disabled: false }
+  return { label: startsDirectly.value ? t('tasks.page.claim.start') : t('tasks.page.claim.claim'), disabled: false }
 })
 
 /** 这一颗按钮不自己发请求：发 `join-clicked`，由 `TaskDialogs` 与 `useTaskParticipation` 接着走
@@ -368,16 +378,19 @@ onMounted(() => {
           <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
           {{ t('tasks.assistant.ask') }}
         </BaseButton>
+        <BaseButton v-if="myProject" kind="primary" data-testid="task-continue" :to="myProjectTo">
+          {{ t('tasks.page.claim.continue') }}
+        </BaseButton>
         <BaseButton
           v-if="submitAction"
-          kind="primary"
+          :kind="myProject ? 'secondary' : 'primary'"
           prepend-icon="mdi-plus"
           :to="{ name: routeNames.submit, params }"
         >
           {{ submitAction }}
         </BaseButton>
         <BaseButton
-          v-else-if="!joined && claim"
+          v-else-if="!joined && !myProject && claim"
           class="td__claim"
           data-testid="task-claim"
           :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
