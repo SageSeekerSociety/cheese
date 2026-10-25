@@ -157,6 +157,7 @@ const transfers = useLibraryTransfers({
 const {
   busy,
   uploading,
+  progress: uploadProgress,
   confirming,
   replacing,
   dragging,
@@ -397,6 +398,9 @@ function read(file: LibraryFile) {
           @retry="pages.reset()"
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
+        <p v-if="uploadProgress" role="status" class="t-body c-muted">
+          {{ t('work.library.uploadProgress', uploadProgress) }}
+        </p>
 
         <div v-if="anything" class="library__tools">
           <v-text-field

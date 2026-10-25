@@ -25,6 +25,7 @@ function mount(target: StarterTarget<number>) {
         h(TaskStarterPicker, {
           file: starter.file.value,
           uploading: starter.uploading.value,
+          percent: starter.percent.value,
           onPick: starter.pick,
           onRemove: starter.remove,
         })
@@ -79,6 +80,19 @@ describe('题目的起始代码', () => {
 
     await fireEvent.click(view.getByRole('button', { name: '移除起始代码' }))
     await waitFor(() => expect(current()).toBeNull())
+  })
+
+  it('传起始代码时写着传到了百分之几', async () => {
+    const upload = vi.fn(
+      (file: File, progress: (sent: number, total: number) => void) =>
+        new Promise<{ id: number; name: string; size: number }>(() => {
+          progress(file.size / 2, file.size)
+        })
+    )
+    const { view, input } = mount({ upload })
+    await fireEvent.change(input, { target: { files: [zip()] } })
+
+    await waitFor(() => expect(view.getByRole('button', { name: /上传中 50%/ })).toBeTruthy())
   })
 
   it('只有图标的「替换」「移除」两颗按钮，鼠标停上去写着各自做什么', async () => {

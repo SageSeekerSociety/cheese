@@ -35,6 +35,7 @@ function mount<Id extends number | string>(target: Parameters<typeof useAttachme
         h(TaskAttachmentPicker, {
           files: uploads.files.value,
           uploading: uploads.uploading.value,
+          percent: uploads.percent.value,
           maxFileBytes: uploads.maxFileBytes.value,
           replaceable: !!target.replace,
           onAdd: uploads.add,
@@ -143,6 +144,24 @@ describe('题目带的材料', () => {
     await fireEvent.change(replacement, { target: { files: [pdf('新数据.csv', 300)] } })
     await waitFor(() => expect(sizes()).toEqual([300]))
     expect(ids()).toEqual(['数据(2).csv'])
+    view.unmount()
+  })
+
+  it('传一份大文件时写着传到了百分之几，传完就回到「添加文件」', async () => {
+    let finish: (name: string) => void = () => {}
+    const upload = vi.fn(
+      (_file: File, progress: (sent: number, total: number) => void) =>
+        new Promise<string>((resolve) => {
+          progress(37, 100)
+          finish = resolve
+        })
+    )
+    const { view, input } = mount<string>({ upload })
+    await fireEvent.change(input, { target: { files: [pdf('数据集.csv', 100)] } })
+
+    await waitFor(() => expect(view.getByRole('button', { name: /上传中 37%/ })).toBeTruthy())
+    finish('数据集.csv')
+    await waitFor(() => expect(view.getByRole('button', { name: /添加文件/ })).toBeTruthy())
     view.unmount()
   })
 

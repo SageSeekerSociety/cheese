@@ -84,19 +84,19 @@ const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 /** 附件直接放进这道题的资料库、在那里替换和删掉：改题页上的增删换当场生效，不等保存，
  *  每一次都让题目记一版。认的是它在资料库里的名字。 */
 const uploads = useAttachmentUploads<string>({
-  upload: async (file) => (await addTaskFile(taskId, file)).name,
+  upload: async (file, progress) => (await addTaskFile(taskId, file, progress)).name,
   remove: async (name) => {
     await removeTaskFile(taskId, name)
   },
-  replace: async (name, file) => {
-    await replaceTaskFile(taskId, name, file)
+  replace: async (name, file, progress) => {
+    await replaceTaskFile(taskId, name, file, progress)
   },
 })
 
 /** 起始代码同样当场生效：换一份、删掉都让题目记一版，之后领题的人拿到新的那份。 */
 const starter = useStarterUpload<string>({
-  upload: async (file) => {
-    const placed = await setTaskStarter(taskId, file)
+  upload: async (file, progress) => {
+    const placed = await setTaskStarter(taskId, file, progress)
     return { id: placed.name, name: placed.name, size: placed.size }
   },
   remove: async () => {
@@ -390,6 +390,7 @@ onBeforeUnmount(() => void draft.flush())
           <TaskAttachmentPicker
             :files="uploads.files.value"
             :uploading="uploads.uploading.value"
+            :percent="uploads.percent.value"
             :max-file-bytes="uploads.maxFileBytes.value"
             replaceable
             @add="uploads.add"
@@ -399,6 +400,7 @@ onBeforeUnmount(() => void draft.flush())
           <TaskStarterPicker
             :file="starter.file.value"
             :uploading="starter.uploading.value"
+            :percent="starter.percent.value"
             @pick="starter.pick"
             @remove="starter.remove"
           />

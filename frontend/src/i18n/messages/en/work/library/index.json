@@ -58,6 +58,7 @@
   "upload": "Upload files",
   "uploadFailed": "Upload failed",
   "uploaded": "Uploaded {n} files",
+  "uploadProgress": "Uploading {name} · {percent}%",
   "versionCurrent": "Current",
   "versionNumber": "Version {n}",
   "versions": "Versions…",

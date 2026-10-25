@@ -18,6 +18,8 @@ defineProps<{
   files: PickedAttachment[]
   /** 正在上传：「添加文件」先按住，免得同一份传两遍。 */
   uploading: boolean
+  /** 正在传的那一份传到了百分之几；`null` / 不给 = 报不出来，只写「上传中」。 */
+  percent?: number | null
   /** 单份文件的上限；`null` = 没问到，不写这句话。 */
   maxFileBytes: number | null
   /** 每一行能不能换成新的一版（改题时，旧的一版留作历史）。 */
@@ -108,7 +110,13 @@ function onReplacement(event: Event) {
       <button type="button" class="tap__add" :disabled="uploading" @click="input?.click()">
         <v-progress-circular v-if="uploading" indeterminate size="16" width="2" />
         <v-icon v-else size="18">mdi-plus</v-icon>
-        {{ uploading ? t('tasks.attachmentPicker.uploading') : t('tasks.attachmentPicker.add') }}
+        {{
+          !uploading
+            ? t('tasks.attachmentPicker.add')
+            : percent != null
+              ? t('tasks.attachmentPicker.uploadingPercent', { percent })
+              : t('tasks.attachmentPicker.uploading')
+        }}
       </button>
     </div>
   </BaseField>

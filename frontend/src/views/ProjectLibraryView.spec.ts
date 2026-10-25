@@ -195,6 +195,24 @@ describe('资料库', () => {
     await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
   })
 
+  it('上传一份大文件时写着传到了百分之几，传完就不写了', async () => {
+    let finish: () => void = () => {}
+    vi.mocked(uploadLibraryFile).mockImplementation(
+      (_shelf, _file, _folder, progress) =>
+        new Promise((resolve) => {
+          progress?.(30, 100)
+          finish = () => resolve({ path: '数据集.tar', bytes: 100 })
+        })
+    )
+    const { container } = await mount()
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], '数据集.tar')])
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('正在上传 数据集.tar · 30%'))
+    finish()
+    await waitFor(() => expect(container.textContent).not.toContain('正在上传'))
+  })
+
   it('替换先问一句，答应了才换；取消什么也不动', async () => {
     const { container, baseElement } = await mount('/projects/p1/library?file=预算表.xlsx')
     const input = container.querySelector('input[type="file"]:not([multiple])') as HTMLInputElement
@@ -218,7 +236,9 @@ describe('资料库', () => {
       return button as HTMLElement
     })
     await fireEvent.click(confirm)
-    await waitFor(() => expect(replaceLibraryFile).toHaveBeenCalledWith('p1', '预算表.xlsx', expect.any(File)))
+    await waitFor(() =>
+      expect(vi.mocked(replaceLibraryFile).mock.calls[0]?.slice(0, 3)).toEqual(['p1', '预算表.xlsx', expect.any(File)])
+    )
   })
 
   it('删除先问一句，答应了才真的删', async () => {
@@ -349,7 +369,9 @@ describe('资料库的文件夹', () => {
     const { container } = await open('/projects/p1/library?dir=合同')
     const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
     await pick(input, [new File(['a'], 'a.txt')])
-    await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledWith('p1', expect.any(File), '合同'))
+    await waitFor(() =>
+      expect(vi.mocked(uploadLibraryFile).mock.calls[0]?.slice(0, 3)).toEqual(['p1', expect.any(File), '合同'])
+    )
   })
 
   it('题目的材料那个文件夹标着只读；拖文件进去不上传，说清为什么', async () => {

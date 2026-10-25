@@ -16,6 +16,8 @@ defineProps<{
   file: { name: string; size: number } | null
   /** 正在上传：按钮先按住，免得同时传两份。 */
   uploading: boolean
+  /** 传到了百分之几；`null` / 不给 = 报不出来，只写「上传中」。 */
+  percent?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -71,7 +73,13 @@ function onPicked(event: Event) {
       <button v-if="!file" type="button" class="tsp__add" :disabled="uploading" @click="input?.click()">
         <v-progress-circular v-if="uploading" indeterminate size="16" width="2" />
         <v-icon v-else size="18">mdi-plus</v-icon>
-        {{ uploading ? t('tasks.starterPicker.uploading') : t('tasks.starterPicker.pick') }}
+        {{
+          !uploading
+            ? t('tasks.starterPicker.pick')
+            : percent != null
+              ? t('tasks.starterPicker.uploadingPercent', { percent })
+              : t('tasks.starterPicker.uploading')
+        }}
       </button>
     </div>
   </BaseField>

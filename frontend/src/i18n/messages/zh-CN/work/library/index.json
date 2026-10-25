@@ -58,6 +58,7 @@
   "upload": "上传文件",
   "uploadFailed": "上传失败",
   "uploaded": "已上传 {n} 份文件",
+  "uploadProgress": "正在上传 {name} · {percent}%",
   "versionCurrent": "当前",
   "versionNumber": "第 {n} 版",
   "versions": "版本…",
