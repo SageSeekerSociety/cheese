@@ -457,13 +457,17 @@ def test_applying_the_default_role_leaves_the_other_keys_alone() -> None:
     assert task.protocol_override["teaching"] == {"current_week": 3}
     assert task.protocol_override["shell"] == "course"
 
-    # 空串是一次写（明说「不要默认队友」），不是「没写」。
-    apply_task_default_role(task, "")
-    assert task.protocol_override["default_role"] == ""
-
-    # None 才是「没写」：不改动已经存下的那一格。
+    # None 是「没写」：不改动已经存下的那一格。
     apply_task_default_role(task, None)
-    assert task.protocol_override["default_role"] == ""
+    assert task.protocol_override["default_role"] == "academic-research"
+
+    # 空串是「继承」：清掉这道题自己的，项目集那份重新生效。
+    apply_task_default_role(task, "")
+    assert "default_role" not in task.protocol_override
+    assert task.protocol_override["shell"] == "course"
+    assert (
+        resolve(category=_category(default_role="fullstack-engineer"), task=task)
+    ).default_role == "fullstack-engineer"
 
 
 # ── 出题人私有指导 (#944 第二种可见性) ─────────────────────────────────────────

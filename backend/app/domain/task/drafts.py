@@ -907,17 +907,24 @@ def agent_view(draft: TaskDraft, space: Space, *, task_name: str | None = None) 
         draft.fields or {},
         space,
         "</草稿>",
+        # A draft is its writer's own, and changes to a published 题目 are
+        # drafted only by those who may teach it: the private guidance is theirs.
+        private=True,
     )
 
 
-def published_view(task_id: int, name: str, fields: dict, space: Space) -> str:
-    """A published 题目 as 芝士 reads it, in the same words as a draft."""
+def published_view(
+    task_id: int, name: str, fields: dict, space: Space, *, private: bool
+) -> str:
+    """A published 题目 as 芝士 reads it, in the same words as a draft.
+    ``private``: the reader may teach it, so its private guidance is said."""
     return _view(
         f"<题目 id={task_id} 空间id={space.id} 空间={space.name}>",
         f"题目 {task_id}（已发布）：{name}",
         fields,
         space,
         "</题目>",
+        private=private,
     )
 
 
@@ -1021,7 +1028,15 @@ def doc_markdown(text: str) -> str:
     return "\n\n".join(b for b in blocks if b.strip())
 
 
-def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) -> str:
+def _view(
+    open_tag: str,
+    head: str,
+    fields: dict,
+    space: Space,
+    close_tag: str,
+    *,
+    private: bool,
+) -> str:
     by_id = {v: k for k, v in space.categories.items()}
     tag_by_id = {v: k for k, v in space.tags.items()}
     forms = {v: k for k, v in FORMS.items()}
@@ -1099,7 +1114,11 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         ),
         "ai_mode: " + modes.get(teaching.get("mode"), "沿用空间设置"),
         "ai_guidance: " + str(teaching.get("systemPrompt") or "（无）"),
-        "ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）"),
+        *(
+            ["ai_private_guidance: " + str(teaching.get("privatePrompt") or "（无）")]
+            if private
+            else []
+        ),
         "ai_goals: " + ("、".join(teaching.get("learningGoals") or []) or "（无）"),
         "ai_materials: "
         + (

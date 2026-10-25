@@ -11,12 +11,9 @@ later never got them, and a 题目 that changed them reached no project already
 running. They now live in the 题目's guidance (``protocol_override ->
 teaching``), which every turn of every teammate reads: the prompt is added to
 the guidance's requirements (``system_prompt``), the skills to its
-``skills``.
-
-For every 题目, the 资源包 it was reading — its own override when it has one,
-else its 项目集's (a whole-key replacement, as ``protocol.resolve`` reads it)
-— is moved into its guidance; then ``prompt`` and ``skills`` are removed from
-every 资源包, so only ``compute_credits`` is left.
+``skills``. For every 题目 the 资源包 it was reading is moved — its own
+override when it has one, else its 项目集's (a whole-key replacement, as
+``protocol.resolve`` reads it).
 
 What every teammate reads stays what it was:
 
@@ -24,14 +21,29 @@ What every teammate reads stays what it was:
   and private guidance included. Once the move gives it guidance of its own,
   ``Teaching.combine`` takes those two from the 题目, so the 空间's are copied
   onto it with the move.
+- Guidance with learning goals and no requirements in force was given the
+  platform's default teaching requirements (``DEFAULT_TEACHING_PROMPT``). The
+  moved prompt is a requirement, which would switch that default off, so the
+  default's text goes in front of it.
 - A project built from such a 题目 had the prompt appended to its default
-  teammate's persona (``configuration.body``, joined with a blank line). The
-  guidance now says it on every turn, so it is taken out of the persona rather
-  than read twice. A persona that no longer holds the text (edited since, or a
-  prompt the 题目 changed afterwards) is left as it is.
+  teammate's persona (``configuration.body``, joined with a blank line) and
+  the skills merged into its ``configuration.skills``. The guidance now gives
+  both on every turn, so they come out of the teammate rather than being had
+  twice. A persona that no longer ends with the text is left as it is, and so
+  is a project with guidance of its own (``settings.teaching``), which
+  replaces the 题目's whole.
+- A 题目's own ``default_role`` of ``""`` was written by the page's 「继承」,
+  which meant "use the level above"; ``""`` now clears the key, and the stored
+  ones are cleared the same way.
+
+**The 资源包 keys stay.** The previous release serves while this runs and
+reads ``prompt`` and ``skills`` from the 资源包 when it builds a project; they
+are removed by a later migration, after this release is deployed. This
+release reads neither.
 
 Data only, on a few dozen rows at most, so one pass in Python. Idempotent: a
-second run finds no ``prompt`` or ``skills`` in any 资源包 and changes nothing.
+second run finds every prompt already in the requirements, every skill already
+listed and every persona already without the prompt.
 """
 
 import json
@@ -46,8 +58,6 @@ down_revision: str | Sequence[str] | None = "e6b2d9f4a173"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_MOVED = ("prompt", "skills")
-
 #: The keys that make a guidance say something — `Teaching.is_empty` as it is
 #: at this revision, copied rather than imported.
 _SAYS = (
@@ -59,6 +69,32 @@ _SAYS = (
     "document_ids",
     "skills",
 )
+
+#: `app.domain.agent.harness.opening.DEFAULT_TEACHING_PROMPT` at this revision,
+#: copied rather than imported: the requirements guidance with learning goals
+#: and none of its own is given.
+DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
+不要直接给出答案，让他自己做出来。
+
+用问题带着他走：先问「你观察到了什么」「试过什么」，
+再让他自己说出判断，最后才给方向。
+
+一次只推进一步，一次只问一个问题；他跟上了再往下。
+
+他做错时不要直接纠正，用一个问题让他自己发现；
+讲错在哪时说清「为什么会错」和「怎么才能自己看出来」，
+不只给正确写法。
+
+他要答案要得再急，也别把答案交出去：
+说明给了答案对他没帮助，然后换一个更小的提示接着陪他做。
+
+关键的几行让他亲手写：改动里涉及判断和选择的地方，
+把决定留给他——你指出哪里要想、答他的疑问，
+那一小段代码让他自己敲出来；重复的力气活你来做。
+
+能演示就别写长文：讲一条执行过程或一个概念的运转方式时，
+用 cheese show 把可交互的图示、变量追踪做出来让他自己拨着看，
+胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
 
 
 def _text(value) -> str | None:
@@ -80,34 +116,38 @@ def _blank(teaching) -> bool:
     )
 
 
-def _stripped(pack):
-    """The 资源包 without the moved keys, or None when it has none of them."""
-    if not isinstance(pack, dict) or not any(k in pack for k in _MOVED):
-        return None
-    return {k: v for k, v in pack.items() if k not in _MOVED}
+def _pack_parts(pack) -> tuple[str | None, list[str]]:
+    pack = pack if isinstance(pack, dict) else {}
+    return _text(pack.get("prompt")), _texts(pack.get("skills"))
 
 
 def _with_pack(teaching, pack, space_teaching) -> dict | None:
     """``teaching`` with ``pack``'s prompt and skills added, or None when the
-    pack carries neither. Guidance that said nothing before takes the 空间's
-    learning goals and private guidance, which it was reading until now."""
-    pack = pack if isinstance(pack, dict) else {}
-    prompt = _text(pack.get("prompt"))
-    skills = _texts(pack.get("skills"))
+    pack carries neither — read the way the guidance in force before it was."""
+    prompt, skills = _pack_parts(pack)
     if prompt is None and not skills:
         return None
+    space = space_teaching if isinstance(space_teaching, dict) else {}
     out = dict(teaching) if isinstance(teaching, dict) else {}
-    if _blank(teaching) and isinstance(space_teaching, dict):
-        goals = _texts(space_teaching.get("learning_goals"))
-        private = _text(space_teaching.get("private_prompt"))
+    if _blank(teaching):
+        # It read the 空间's alone; what `combine` takes from the 题目 comes
+        # along so it still reads the 空间's.
+        goals = _texts(space.get("learning_goals"))
         if goals:
             out["learning_goals"] = goals
-        if private is not None:
-            out["private_prompt"] = space_teaching["private_prompt"]
+        if _text(space.get("private_prompt")) is not None:
+            out["private_prompt"] = space["private_prompt"]
     if prompt is not None:
         said = _text(out.get("system_prompt"))
         if said is None:
-            out["system_prompt"] = prompt
+            in_force = _text(space.get("system_prompt"))
+            # Goals and no requirements anywhere: the default requirements were
+            # in force, and stay so in front of the moved prompt.
+            out["system_prompt"] = (
+                f"{DEFAULT_TEACHING_PROMPT}\n\n{prompt}"
+                if in_force is None and _texts(out.get("learning_goals"))
+                else prompt
+            )
         elif prompt not in said:
             out["system_prompt"] = f"{said}\n\n{prompt}"
     if skills:
@@ -117,7 +157,7 @@ def _with_pack(teaching, pack, space_teaching) -> dict | None:
 
 def _persona_without(body, prompt):
     """The persona with the prompt the 资源包 appended taken out, or None when
-    it does not hold it."""
+    it does not end with it."""
     if not isinstance(body, str) or not isinstance(prompt, str) or not prompt:
         return None
     if body == prompt:
@@ -143,24 +183,27 @@ def upgrade() -> None:
         )
     }
 
-    #: The prompt each 题目's 资源包 carried, raw, as it was appended.
-    prompts: dict[int, str] = {}
+    #: What each 题目's 资源包 carried: its raw prompt, as it was appended, and
+    #: its skills.
+    carried: dict[int, tuple[str | None, list[str]]] = {}
     for task_id, category_id, space_id, override in bind.execute(
         sa.text("SELECT id, category_id, space_id, protocol_override FROM task")
     ):
         override = dict(override) if isinstance(override, dict) else {}
         own = override.get("resource_pack")
         pack = own if own is not None else packs.get(category_id)
-        if isinstance(pack, dict) and _text(pack.get("prompt")) is not None:
-            prompts[task_id] = pack["prompt"]
+        _, skills = _pack_parts(pack)
+        raw = pack.get("prompt") if isinstance(pack, dict) else None
+        if _text(raw) is not None or skills:
+            carried[task_id] = (raw if _text(raw) is not None else None, skills)
         teaching = _with_pack(override.get("teaching"), pack, spaces.get(space_id))
-        stripped = _stripped(own)
-        if teaching is None and stripped is None:
+        clears_role = override.get("default_role") == ""
+        if teaching is None and not clears_role:
             continue
         if teaching is not None:
             override["teaching"] = teaching
-        if stripped is not None:
-            override["resource_pack"] = stripped
+        if clears_role:
+            del override["default_role"]
         bind.execute(
             sa.text(
                 "UPDATE task SET protocol_override = CAST(:o AS json) WHERE id = :id"
@@ -168,41 +211,38 @@ def upgrade() -> None:
             {"o": json.dumps(override, ensure_ascii=False), "id": task_id},
         )
 
-    for category_id, pack in packs.items():
-        stripped = _stripped(pack)
-        if stripped is not None:
-            bind.execute(
-                sa.text(
-                    "UPDATE space_categories SET resource_pack = CAST(:p AS json)"
-                    " WHERE id = :id"
-                ),
-                {"p": json.dumps(stripped, ensure_ascii=False), "id": category_id},
-            )
-
-    if not prompts:
+    if not carried:
         return
-    for instance_id, task_id, configuration in bind.execute(
+    for instance_id, task_id, settings, configuration in bind.execute(
         sa.text(
-            "SELECT a.id, p.external_task_id, a.configuration"
+            "SELECT a.id, p.external_task_id, p.settings, a.configuration"
             " FROM projects p JOIN agent_instances a"
             " ON a.id = p.default_agent_instance_id"
             " WHERE p.external_task_id IS NOT NULL"
         )
     ):
-        if task_id not in prompts or not isinstance(configuration, dict):
+        if task_id not in carried or not isinstance(configuration, dict):
             continue
-        body = _persona_without(configuration.get("body"), prompts[task_id])
-        if body is None:
+        # A project with guidance of its own does not read the 题目's: what its
+        # teammate was given stays with it.
+        if isinstance(settings, dict) and not _blank(settings.get("teaching")):
+            continue
+        prompt, skills = carried[task_id]
+        config = dict(configuration)
+        body = _persona_without(config.get("body"), prompt)
+        if body is not None:
+            config["body"] = body
+        own = config.get("skills")
+        if isinstance(own, list) and skills:
+            config["skills"] = [s for s in own if s not in skills]
+        if config == configuration:
             continue
         bind.execute(
             sa.text(
                 "UPDATE agent_instances SET configuration = CAST(:c AS json)"
                 " WHERE id = :id"
             ),
-            {
-                "c": json.dumps({**configuration, "body": body}, ensure_ascii=False),
-                "id": instance_id,
-            },
+            {"c": json.dumps(config, ensure_ascii=False), "id": instance_id},
         )
 
 
@@ -211,5 +251,6 @@ def downgrade() -> None:
 
     The prompt cannot be told back apart from the requirements it was added to,
     and the previous release reads a guidance with ``skills`` fine (the key is
-    ignored), so nothing a teacher wrote is lost by staying.
+    ignored). The 资源包 keeps its ``prompt`` and ``skills``, so the previous
+    release builds projects from it as it did.
     """

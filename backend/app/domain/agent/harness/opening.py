@@ -143,8 +143,12 @@ def teaching_section(context: TeachingContext) -> str | None:
     if teaching.space_prompt and teaching.system_prompt:
         parts.append("### 课程的要求\n" + teaching.fill(teaching.space_prompt))
         parts.append("### 这道题的要求\n" + teaching.fill(teaching.system_prompt))
-    elif teaching.system_prompt:
-        parts.append(teaching.fill(teaching.system_prompt))
+    elif teaching.system_prompt or teaching.space_prompt:
+        # Only one level wrote requirements — a 题目 that says something else of
+        # its own (a way of helping, skills) still has the 空间's in force.
+        parts.append(
+            teaching.fill(teaching.system_prompt or teaching.space_prompt or "")
+        )
     elif teaching.learning_goals:
         # 教育性（写了学习目标）而老师没留自己的要求：带上默认教学要求 ——
         # 「留空」在这里是「用你的教学规矩」，不是「没规矩」。只有范围没有
