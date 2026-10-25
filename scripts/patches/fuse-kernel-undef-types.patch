@@ -1,0 +1,13 @@
+--- a/include/fuse_kernel.h
++++ b/include/fuse_kernel.h
+@@ -688,4 +688,10 @@
+ 	__u64	dummy4;
+ };
+
++#undef __u64
++#undef __s64
++#undef __u32
++#undef __s32
++#undef __u16
++
+ #endif /* _LINUX_FUSE_H */

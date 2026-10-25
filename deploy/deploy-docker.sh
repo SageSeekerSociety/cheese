@@ -657,27 +657,25 @@ if [ -n "${ACTIVE_BACKEND_DIR:-}" ] && [ -n "${ACTIVE_FRONTEND_DIR:-}" ]; then
     || fail "FRONTEND_PORT_DIRECT='${FRONTEND_PORT_DIRECT}' is not a port, ip:port or [ipv6]:port app-router can listen on; nothing was changed"
 fi
 
-if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
-  ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
-}; then
-  log "installing central-session FUSE runtime"
-  (
-    . /etc/os-release
-    [ -n "${VERSION_CODENAME:-}" ] || fail "/etc/os-release has no VERSION_CODENAME"
-    fuse_apt_source="$(mktemp)"
-    trap 'rm -f "$fuse_apt_source"' EXIT
-    chmod 0644 "$fuse_apt_source"
-    printf '%s\n' \
-      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/debian $VERSION_CODENAME main" \
-      > "$fuse_apt_source"
-    fuse_apt_options=(
-      -o "Dir::Etc::sourcelist=$fuse_apt_source"
-      -o "Dir::Etc::sourceparts=-"
-    )
-    sudo apt-get "${fuse_apt_options[@]}" update -qq
-    sudo apt-get "${fuse_apt_options[@]}" install -y -qq fuse libfuse2
-  )
-fi
+# A room's transcript view is mounted on the machine its tools run on, not
+# here: this box is the session host, and the executor for an ordinary room is
+# a pool host the platform provisions. That machine gets FUSE the way it gets
+# everything else — cheesehost places the library the executor loads by path
+# (`cli/internal/devenv`) and the executor writes the one line
+# `/etc/fuse.conf` needs, as root, only where the platform owns the machine
+# (`bootstrap.fuse_is_mountable`). Nothing is installed here, and nothing is
+# installed on a machine a person enrolled.
+#
+# The library half is not wired up in this change: `devenv.Ensure` places
+# `bubblewrap` and `host-tools` only, and the `fuse-runtime` line lands with
+# the toolchain pin once the release exists. The `/etc/fuse.conf` half is here
+# and takes effect on its own.
+#
+# This block used to `apt-get install fuse libfuse2` on the central session
+# host. It never took effect: the view is not mounted on this machine. It is
+# left as a comment rather than deleted silently, because the two lines it
+# wrote — the packages and `user_allow_other` — moved, and the next person to
+# look for them will look here.
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
 
