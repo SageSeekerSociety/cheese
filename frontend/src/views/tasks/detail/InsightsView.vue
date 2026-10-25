@@ -77,10 +77,12 @@ const statusSegments = computed(() => [
   { label: t('tasks.insights.status.rejected'), count: counts.value.REJECTED, tone: 'danger' as const },
 ])
 
-/** 「卡住的人」：领了但一步没动，而且领了超过 5 天。出题人最该盯的就是这一行。 */
+/** 「卡住的人」：开始做（项目建好）超过 5 天，一版都没交。从开始做那一下算，不从申请
+ *  那一下算；还没开始做的（没有 `startedAt`）不算。出题人最该盯的就是这一行。 */
 const stalled = computed(() =>
   claimedRoster.value.filter(
-    (r) => statusById.value.get(r.id) === 'IN_PROGRESS' && Date.now() - r.createdAt > 5 * 86_400_000
+    (r) =>
+      statusById.value.get(r.id) === 'IN_PROGRESS' && r.startedAt != null && Date.now() - r.startedAt > 5 * 86_400_000
   )
 )
 

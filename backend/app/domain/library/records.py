@@ -29,7 +29,7 @@ from sqlalchemy.orm import aliased
 from app.core import blob_store
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.domain.block.models import Block, BlockKind
 from app.domain.library import mount, service
 from app.domain.library.models import LibraryFileRecord
@@ -186,14 +186,25 @@ async def used(session: AsyncSession, shelf: Shelf) -> int:
     )
 
 
-async def refuse_past_room(session: AsyncSession, shelf: Shelf, adding: int) -> None:
+async def refuse_past_room(
+    session: AsyncSession, shelf: Shelf, adding: int, *, counted: bool = False
+) -> None:
     """团队的资料库放不下这么多就不放（`settings.team_library_bytes`）。项目的资料库
-    没有总量上限。"""
+    没有总量上限。``counted``：这份文件已经记进资料库了（落地前最后再查一次时），
+    剩多少按没有它的时候算。拒绝时说出这份多大、还剩多少、一共多少。"""
     if shelf.team_id is None:
         return
     total = settings.team_library_bytes
-    if await used(session, shelf) + adding > total:
-        raise UnprocessableEntityError(say("libraryFull", mb=total // (1024 * 1024)))
+    held = await used(session, shelf) - (adding if counted else 0)
+    if held + adding > total:
+        raise UnprocessableEntityError(
+            say(
+                "libraryFull",
+                size=size_text(adding),
+                free=size_text(max(total - held, 0)),
+                total=size_text(total),
+            )
+        )
 
 
 async def _put(
@@ -202,7 +213,7 @@ async def _put(
     # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
     service.refuse_oversize(row.bytes, row.name, ceiling(shelf, row.name, row.location))
     # 这一行已经记进去了，算总量时它也在里面。
-    await refuse_past_room(session, shelf, 0)
+    await refuse_past_room(session, shelf, row.bytes, counted=True)
     store = blob_store.store(row.location)
     if isinstance(data, Upload):
         try:

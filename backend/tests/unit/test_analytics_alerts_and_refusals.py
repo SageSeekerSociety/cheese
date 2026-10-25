@@ -125,6 +125,7 @@ def _context(
     submissions: list[TaskSubmission] | None = None,
     reviews_by_submission_id: dict[int, TaskSubmissionReview] | None = None,
     users_by_id: dict[int, User] | None = None,
+    started: dict[int, datetime] | None = None,
 ) -> _Context:
     return _Context(
         tasks=tasks or [],
@@ -134,6 +135,7 @@ def _context(
         categories_by_id={},
         users_by_id=users_by_id or {},
         profiles_by_user_id={},
+        started_at_by_membership_id=started or {},
     )
 
 
@@ -145,9 +147,9 @@ def build_context() -> _Context:
     - 题 2's approved participant submitted a day ago, so 题 2 is neither
       stalled nor its submission overdue; 题 5 is the same, with the one
       submission that has been reviewed.
-    - 题 3 and 题 4 were approved and their approved participants have not
-      submitted for 30 and 15 days: the two stalled tasks, and two of the
-      five overdue submissions.
+    - 题 3 and 题 4 were approved and their approved participants, who
+      started 40 days ago, have not submitted for 30 and 15 days: the two
+      stalled tasks, and two of the five overdue submissions.
     - The remaining three overdue submissions are on memberships nobody has
       approved, and so stall nothing: two at 30 and 15 days, one at 10 —
       past the review line, short of the stall line.
@@ -198,6 +200,7 @@ def build_context() -> _Context:
             13: User(id=13, username="p13"),
             14: User(id=14, username="p14"),
         },
+        started={3: QUIET, 5: QUIET, 6: QUIET, 7: QUIET},
     )
 
 
@@ -296,8 +299,8 @@ async def test_a_submission_leaves_the_overdue_count_once_it_is_over_a_week_old(
 
 @pytest.mark.anyio
 async def test_a_task_is_stalled_only_once_its_approved_participants_go_quiet():
-    """题 1's approved participant last submitted 20 days ago and 题 4's never
-    has: both are stalled. 题 2's submitted two days ago, and 题 3 has nobody
+    """题 1's approved participant last submitted 20 days ago and 题 4's,
+    who started 30 days ago, never has: both are stalled. 题 2's submitted two days ago, and 题 3 has nobody
     approved on it, so neither is the bar's business."""
     ctx = _context(
         tasks=[
@@ -316,6 +319,7 @@ async def test_a_task_is_stalled_only_once_its_approved_participants_go_quiet():
             _submission(id=1, membership_id=1, created_at=NOW - 20 * DAYS),
             _submission(id=2, membership_id=2, created_at=NOW - 2 * DAYS),
         ],
+        started={1: STALE, 2: STALE, 4: STALE},
     )
 
     alerts = await _alerts(ctx)

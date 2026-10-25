@@ -127,17 +127,19 @@ def stages_to_api(rows: Sequence[TaskStage]) -> list[dict]:
 
 @dataclass(frozen=True)
 class StageNews:
-    """What a change to a task's stages means to whoever took it: the stages
-    added and removed (by name), and each kept stage whose due date moved
-    (name, new due in epoch ms or None). A rename or a reorder asks nothing new
-    of them and is not here."""
+    """What a change to a task's stages means to whoever took it: each kept
+    stage given a new name (old name, new name), the stages added and removed
+    (by name), and each kept stage whose due date moved (name, new due in epoch
+    ms or None). A reorder alone changes nothing they would look for and is not
+    here."""
 
+    renamed: tuple[tuple[str, str], ...] = ()
     added: tuple[str, ...] = ()
     removed: tuple[str, ...] = ()
     due_moved: tuple[tuple[str, int | None], ...] = ()
 
     def __bool__(self) -> bool:
-        return bool(self.added or self.removed or self.due_moved)
+        return bool(self.renamed or self.added or self.removed or self.due_moved)
 
 
 def stage_news(before: Sequence[dict], after: Sequence[dict]) -> StageNews:
@@ -145,6 +147,11 @@ def stage_news(before: Sequence[dict], after: Sequence[dict]) -> StageNews:
     old = {s["id"]: s for s in before}
     new = {s["id"]: s for s in after}
     return StageNews(
+        renamed=tuple(
+            (old[s["id"]]["name"], s["name"])
+            for s in after
+            if s["id"] in old and old[s["id"]]["name"] != s["name"]
+        ),
         added=tuple(s["name"] for s in after if s["id"] not in old),
         removed=tuple(s["name"] for s in before if s["id"] not in new),
         due_moved=tuple(

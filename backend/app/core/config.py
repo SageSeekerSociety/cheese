@@ -186,10 +186,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
     # A team's own library (a person's is their personal team's): how much it
-    # holds in all, the versions a file was replaced from included, and how
-    # large one file in it may be. A file's ceiling is the attachment one, so
-    # what a person attaches to 芝士 can always land in their library.
-    team_library_bytes: int = 1024 * 1024 * 1024
+    # holds in all, the versions a file was replaced from included. As large as
+    # the largest one file the files bucket takes (`files_bucket_file_max_bytes`),
+    # so a file that size fits in an empty library. One value for every team:
+    # no team has a capacity of its own.
+    team_library_bytes: int = 20 * 1024**3
     # A task's starter code (`app/domain/project/starter.py`): how many files
     # and how many bytes it may unpack to, and how many times larger than the
     # zip itself it may unpack (past 64 MiB); more is refused as a zip bomb.
