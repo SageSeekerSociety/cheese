@@ -397,6 +397,14 @@ class ApiSurfaceTest(unittest.TestCase):
             with self.subTest(api=api):
                 self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
 
+    def test_a_change_to_both_halves_still_asks_api(self):
+        # Whether the change breaks pages built against the base is asked of
+        # every backend change, the frontend suite selected by paths or not.
+        paths = ("backend/app/api/rooms.py", "frontend/src/main.ts")
+        self.assertTrue(gate.failures(self.needs(paths, api={"result": "skipped"}), "full"))
+        needs = self.needs(paths, api={"result": "success", "outputs": {"moved": "true"}})
+        self.assertEqual(gate.failures(needs, "full"), [])
+
     def test_a_draft_never_asks_api(self):
         needs = needs_for(["backend/app/api/rooms.py"], "draft")
         self.assertEqual(gate.failures(needs, "draft"), [])
