@@ -15,6 +15,7 @@ import pytest
 
 from app.core import blob_store
 from app.core.config import settings
+from tests.conftest import seed_user
 from tests.integration.test_library import _library, _project
 from tests.support import library_uploads
 from tests.support.files_bucket import files_bucket
@@ -201,6 +202,57 @@ def test_a_dataset_of_several_gigabytes_gets_an_upload_into_the_bucket(
     slot = taken.json()["data"]
     assert slot["parts"] * slot["part_bytes"] >= 5 * 1024**3
     assert over.status_code == 422
+
+
+def test_a_teams_library_takes_a_file_as_large_as_the_bucket_takes(
+    client, new_files_go_to
+):
+    """A team's library, as it comes, has room for the largest one file the
+    bucket takes: that limit is not a number no library can reach."""
+    new_files_go_to("bucket")
+    headers = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    team = client.post(
+        "/teams", json={"name": "数据组", "handle": "data-team"}, headers=headers
+    )
+    assert team.status_code == 201, team.text
+    base = f"/teams/{team.json()['data']['team']['id']}/library"
+
+    taken = client.post(
+        f"{base}/uploads",
+        json={"name": "数据集.tar", "size": settings.files_bucket_file_max_bytes},
+        headers=headers,
+    )
+
+    assert taken.status_code == 200, taken.text
+
+
+def _team_room(client, new_files_go_to, store: str) -> dict:
+    new_files_go_to(store)
+    headers = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    team = client.post(
+        "/teams", json={"name": "资料组", "handle": f"room-{store}"}, headers=headers
+    )
+    assert team.status_code == 201, team.text
+    room = client.get(
+        f"/teams/{team.json()['data']['team']['id']}/library/room", headers=headers
+    )
+    assert room.status_code == 200, room.text
+    return room.json()["data"]
+
+
+def test_a_teams_library_kept_in_the_bucket_holds_twenty_gigabytes(
+    client, new_files_go_to
+):
+    """Files kept in the bucket: a team's library holds 20 GB."""
+    assert _team_room(client, new_files_go_to, "bucket")["total"] == 20 * 1024**3
+
+
+def test_a_teams_library_kept_on_this_servers_disk_holds_one_gigabyte(
+    client, new_files_go_to
+):
+    """Files kept on this server's own disk: a team's library holds 1 GB, so
+    no team can fill the server's disk with 20."""
+    assert _team_room(client, new_files_go_to, "local")["total"] == 1024**3
 
 
 def test_a_file_in_parts_reads_back_whole(client, new_files_go_to, monkeypatch):

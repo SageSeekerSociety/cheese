@@ -874,8 +874,29 @@ DUE = int(datetime(2030, 11, 15, 15, 59, tzinfo=UTC).timestamp() * 1000)
 LATE_DEADLINE = int(datetime(2031, 1, 1, tzinfo=UTC).timestamp() * 1000)
 
 
-def test_renaming_or_reordering_stages_tells_takers_nothing(api_client, board):
-    """A new name or order asks nothing new of whoever took the 题目."""
+def test_reordering_stages_alone_tells_takers_nothing(api_client, board):
+    """A new order asks nothing new of whoever took the 题目."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    task = _read(api_client, board, task_id)
+    first, second = task["stages"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "stages": [second, first],
+            "submissionSchema": task["submissionSchema"],
+            "rubric": task["rubric"],
+        },
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _changes_heard(api_client, board["student"]) == []
+
+
+def test_a_renamed_stage_is_told_with_its_old_and_new_name(api_client, board):
+    """Takers look for a stage by its name, so a new one reaches them, saying
+    which stage it was and what it is called now; moved in the same save, it is
+    still the one notice."""
     task_id = _publish(api_client, board)
     _claim(api_client, board, task_id)
     task = _read(api_client, board, task_id)
@@ -890,7 +911,25 @@ def test_renaming_or_reordering_stages_tells_takers_nothing(api_client, board):
         headers=_headers(board["teacher"]),
     )
     assert resp.status_code == 200, resp.text
-    assert _changes_heard(api_client, board["student"]) == []
+    assert _changes_heard(api_client, board["student"]) == [
+        f"「{task['name']}」阶段「实现」改名为「编码实现」"
+    ]
+
+
+def test_a_renamed_task_is_told_by_the_name_its_takers_knew(api_client, board):
+    """The notice names the 题目 as its takers knew it and says its new name."""
+    task_id = _publish(api_client, board)
+    _claim(api_client, board, task_id)
+    old_name = _read(api_client, board, task_id)["name"]
+    resp = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"name": "B 树的插入与删除"},
+        headers=_headers(board["teacher"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _changes_heard(api_client, board["student"]) == [
+        f"「{old_name}」改名为「B 树的插入与删除」"
+    ]
 
 
 def test_a_moved_stage_due_date_is_told_on_the_readers_clock(api_client, board):

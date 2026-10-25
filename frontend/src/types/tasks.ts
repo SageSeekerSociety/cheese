@@ -249,6 +249,8 @@ export interface TaskMembership {
   /** 这条报名背后的团队。查不到队（已解散 / 老数据）或按人领取时没有这个字段。 */
   team?: { id: number; name: string }
   teamMembers?: TaskTeamParticipantMemberSummary[]
+  /** 开始做的时刻：这条报名的项目建好的那一下（列表接口给的）。还没开始做是 null。 */
+  startedAt?: number | null
 }
 
 export type TaskFormSubmitData = {

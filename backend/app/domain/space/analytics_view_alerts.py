@@ -35,22 +35,23 @@ def _count_pending_submission_reviews(ctx: _Context) -> int:
 
 
 def _count_stalled_tasks(ctx: _Context, *, now: datetime) -> int:
-    """Tasks that have at least one approved participant but no submission for 14 days."""
+    """Tasks someone has started on, where for 14 days nobody has started or
+    handed anything in. The clock of a claim starts when it started (its
+    project was created), not when it was applied for; a claim not started yet
+    — waiting for approval, or approved and not begun — stalls nothing."""
     threshold = now - timedelta(days=STALLED_TASK_DAYS)
     stalled = 0
     for task in ctx.tasks:
-        members = ctx.memberships_by_task_id.get(task.id, [])
-        approved_members = [
-            m for m in members if m.approved == APPROVED_MAP["APPROVED"]
-        ]
-        if not approved_members:
-            continue
-        latest_submission: datetime | None = None
-        for m in approved_members:
-            for sub in ctx.submissions_by_membership_id.get(m.id, []):
-                if latest_submission is None or sub.created_at > latest_submission:
-                    latest_submission = sub.created_at
-        if latest_submission is None or latest_submission < threshold:
+        latest: datetime | None = None
+        for m in ctx.memberships_by_task_id.get(task.id, []):
+            started = ctx.started_at_by_membership_id.get(m.id)
+            if m.approved != APPROVED_MAP["APPROVED"] or started is None:
+                continue
+            subs = ctx.submissions_by_membership_id.get(m.id, [])
+            for moment in (started, *(sub.created_at for sub in subs)):
+                if latest is None or moment > latest:
+                    latest = moment
+        if latest is not None and latest < threshold:
             stalled += 1
     return stalled
 

@@ -189,12 +189,16 @@ async def reviewed(
 
 
 def _change_clauses(
-    requirements: bool, stages: StageNews, zone: str | None
+    renamed_to: str | None, requirements: bool, stages: StageNews, zone: str | None
 ) -> list[NoticeText]:
     """What changed, one clause each, due times on the reader's clock."""
     clauses = []
+    if renamed_to is not None:
+        clauses.append(say("spaceTaskChangedName", name=renamed_to))
     if requirements:
         clauses.append(say("spaceTaskChangedRequirements"))
+    for before, after in stages.renamed:
+        clauses.append(say("spaceTaskChangedStageName", stage=before, name=after))
     if stages.added:
         clauses.append(
             say(
@@ -235,16 +239,20 @@ async def task_changed(
     session: AsyncSession,
     *,
     task: Task,
+    old_name: str,
     requirements: bool,
     stages: StageNews,
     by: int,
     at: datetime,
 ) -> None:
-    """What to hand in, how it is scored, or which stages there are and when
-    they are due changed: everyone who claimed the 题目 and was not turned down
-    hears it, in one notice that says what changed. A stage's new due time is
-    written on each reader's own clock."""
-    if not (requirements or stages):
+    """The 题目's name, what to hand in, how it is scored, or which stages there
+    are, what they are called and when they are due changed: everyone who
+    claimed the 题目 and was not turned down hears it, in one notice that says
+    what changed. The notice names the 题目 as they knew it (``old_name``), so a
+    renamed one reads 「旧名」改名为「新名」. A stage's new due time is written on
+    each reader's own clock."""
+    renamed_to = task.name if task.name != old_name else None
+    if not (renamed_to or requirements or stages):
         return
     memberships = list(
         await session.scalars(
@@ -273,8 +281,8 @@ async def task_changed(
     for zone, user_ids in by_zone.items():
         content = say(
             "spaceTaskChanged",
-            task=task.name,
-            changes=listing(_change_clauses(requirements, stages, zone)),
+            task=old_name,
+            changes=listing(_change_clauses(renamed_to, requirements, stages, zone)),
         )
         await tell(
             session,

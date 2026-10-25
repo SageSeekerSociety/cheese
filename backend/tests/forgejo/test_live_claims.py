@@ -1,6 +1,7 @@
 """Opt-in: claims against the pinned, isolated Forgejo container (#4767)."""
 
 import asyncio
+import itertools
 import os
 import uuid
 from pathlib import Path
@@ -45,20 +46,11 @@ def test_one_team_claiming_twice_at_once_makes_one_forgejo_repository(
     # The real forge, not the test one the client fixture puts in.
     monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
 
-    def accounts() -> set[str]:
-        response = httpx.get(
-            url + "/api/v1/admin/users",
-            params={"limit": 50},
-            headers={"Authorization": "token " + admin},
-        )
-        response.raise_for_status()
-        return {row["login"] for row in response.json()}
-
     board = _board(client)
     task_id = _create_task(client, board, name="一个团队同时领两次")
     handle = f"student{uuid.uuid4().hex[:8]}"
     user_id = verify_access_token(seed_user(client, handle)).user_id
-    before = accounts()
+    before = _forge_accounts(admin)
 
     async def claim() -> uuid.UUID:
         async with client.test_request_factory() as session:
@@ -88,7 +80,7 @@ def test_one_team_claiming_twice_at_once_makes_one_forgejo_repository(
     opened = [one for one in outcomes if isinstance(one, uuid.UUID)]
     assert len(opened) == 1, outcomes
     assert client.portal.call(claim) == opened[0]
-    assert accounts() - before == {f"cheese-{opened[0].hex}"}
+    assert _forge_accounts(admin) - before == {f"cheese-{opened[0].hex}"}
 
 
 def _real_forge(monkeypatch) -> str:
@@ -105,13 +97,19 @@ def _real_forge(monkeypatch) -> str:
 
 
 def _forge_accounts(admin: str) -> set[str]:
-    response = httpx.get(
-        "http://127.0.0.1:33086/api/v1/admin/users",
-        params={"limit": 50},
-        headers={"Authorization": "token " + admin},
-    )
-    response.raise_for_status()
-    return {row["login"] for row in response.json()}
+    """Every account on the forge, read page by page: Forgejo answers at most
+    50 a page, and a forge that outlived earlier runs holds more."""
+    accounts: set[str] = set()
+    for page in itertools.count(1):
+        response = httpx.get(
+            "http://127.0.0.1:33086/api/v1/admin/users",
+            params={"limit": 50, "page": page},
+            headers={"Authorization": "token " + admin},
+        )
+        response.raise_for_status()
+        if not response.json():
+            return accounts
+        accounts |= {row["login"] for row in response.json()}
 
 
 @pytest.mark.parametrize("as_team", [False, True], ids=["person", "shared-team"])
