@@ -182,15 +182,19 @@ watch(form, (f) =>
   )
 )
 
-/** 表单上现在选的项目集：「默认队友」沿用的是它设的那一位。 */
+/** 表单上现在显示的项目集：「默认队友」沿用的是它设的那一位。从表单挂好那一刻起就读它
+ *  （它的起点可能是题目本身，也可能是打开的修改草稿），之后人改的、芝士写的都经 `change`。 */
 const formCategoryId = ref<number | undefined>(undefined)
+function onFormReady(fields: TaskDraftFields) {
+  formCategoryId.value = fields.categoryId
+  draft.baseline(fields)
+}
 function onFormChange(fields: TaskDraftFields) {
   if ('categoryId' in fields) formCategoryId.value = fields.categoryId
   draft.changed(fields)
 }
 const inheritedRole = computed(() => {
-  const id = formCategoryId.value ?? taskData.value?.category?.id
-  const category = editCategories.value.find((c) => c.id === id)
+  const category = editCategories.value.find((c) => c.id === formCategoryId.value)
   return category ? category.defaultRole ?? null : undefined
 })
 
@@ -416,7 +420,7 @@ onBeforeUnmount(() => void draft.flush())
       @invalid="formInvalid = $event"
       @submit="onSubmit"
       @change="onFormChange"
-      @ready="draft.baseline"
+      @ready="onFormReady"
     >
       <template #attachments>
         <div class="te__files">
