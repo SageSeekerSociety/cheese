@@ -24,7 +24,7 @@ import { previewBundles } from '@/test/panelBundles'
 vi.mock('./preview/PreviewSheet.vue', () => ({
   default: {
     props: ['data', 'kind', 'marks', 'activeMark'],
-    emits: ['cell', 'mark'],
+    emits: ['cell', 'range', 'mark'],
     setup(
       props: { kind?: string; marks?: readonly { id: string }[]; activeMark?: string | null },
       { emit }: { emit: (e: string, p?: unknown) => void }
@@ -42,6 +42,19 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
                 }),
             },
             'cell'
+          ),
+          h(
+            'button',
+            {
+              onClick: () =>
+                emit('range', {
+                  sheet: props.kind === 'csv' ? '' : 'Sheet1',
+                  start: 'B2',
+                  end: 'D4',
+                  text: '90\t80\n70\t60',
+                }),
+            },
+            'range'
           ),
           h('span', {
             'data-testid': 'marks',
@@ -150,6 +163,49 @@ it('点一格发出去时带的是带文件身份的 sheet-cell 引用', async (
   })
   // 走的是结构化那条路，不再额外拼一句话。
   expect(ui.emitted().locate).toBeUndefined()
+})
+
+it('拖过一片发出去时带的是 sheet-range 引用：两个角、工作表名、和那片内容', async () => {
+  const submit = vi.fn().mockReturnValue(true)
+  const ui = mount(submit as unknown as SubmitPreviewQuestion)
+  await fireEvent.click(ui.getByText('range'))
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这一片都算错了')
+  await fireEvent.click(ui.getByText('发送'))
+
+  const request = submit.mock.calls[0]?.[0]
+  expect(request.quotedContext).toEqual({
+    kind: 'sheet-range',
+    path: 'budget.xlsx',
+    source: 'committed',
+    version: 'v7',
+    task_id: 'task',
+    sheet: 'Sheet1',
+    start: 'B2',
+    end: 'D4',
+    text: '90\t80\n70\t60',
+  })
+  // 走的是结构化那条路，不再额外拼一句话。
+  expect(ui.emitted().locate).toBeUndefined()
+})
+
+it('一片的评论标记画在它左上角那一格', async () => {
+  // 表格只按格画标记；一片的锚点里两个角都在，落点是左上那个角。
+  const comments = commentsWith([
+    {
+      kind: 'sheet-range',
+      path: 'budget.xlsx',
+      source: 'committed',
+      version: 'v7',
+      task_id: 'task',
+      sheet: 'Sheet1',
+      start: 'B2',
+      end: 'D4',
+      text: '90\t80',
+    },
+  ])
+  const ui = mount(undefined, { comments: comments as never })
+  await waitFor(() => expect(marksOn(ui)).toHaveLength(1))
+  expect(marksOn(ui)[0]).toEqual({ id: 'c1', sheet: 'Sheet1', address: 'B2' })
 })
 
 it('CSV 没有工作表名，引用里 sheet 是空串，地址就是它自己', async () => {

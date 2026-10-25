@@ -4,6 +4,7 @@ import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type {
   QuotedContext,
   SheetCellQuote,
+  SheetRangeQuote,
   TextRangeQuote,
   WebElementQuote,
   WebRect,
@@ -28,6 +29,7 @@ type Identity = 'path' | 'source' | 'version' | 'task_id'
  *  发的时候才配上文件身份。 */
 type FilePick =
   | Omit<SheetCellQuote, Identity>
+  | Omit<SheetRangeQuote, Identity>
   | Omit<TextRangeQuote, Identity>
   | Omit<WebElementQuote, Identity>
   | Omit<WebTextQuote, Identity>
@@ -55,6 +57,17 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
 
   function cell(payload: { address: string; value: string; sheet: string }) {
     pick.value = { kind: 'sheet-cell', sheet: payload.sheet, address: payload.address, value: payload.value }
+  }
+
+  /** 表格里拖过的一片。两个角和内容都是指的那一刻量下来的；发的时候才配文件身份。 */
+  function sheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
+    pick.value = {
+      kind: 'sheet-range',
+      sheet: payload.sheet,
+      start: payload.start,
+      end: payload.end,
+      text: payload.text,
+    }
   }
 
   function range(payload: MarkdownQuote) {
@@ -164,5 +177,5 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return isQuotedContext(quotedContext) ? quotedContext : null
   }
 
-  return { page, pick, clear, cell, range, web, region, send, anchor }
+  return { page, pick, clear, cell, sheetRange, range, web, region, send, anchor }
 }

@@ -24,6 +24,7 @@
   "quotedSelection": "引用第 {page} 页里选中一段",
   "pinnedPage": "指了第 {page} 页的一处",
   "quotedCell": "引用单元格 {address}",
+  "quotedRange": "引用区域 {address}",
   "quotedPassage": "引用文档里的一段文字",
   "quotedWebElement": "引用了页面上的一处",
   "quotedWebText": "引用了页面上选中一段文字",

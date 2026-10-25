@@ -139,6 +139,7 @@ const {
   onPageContext,
   onQuote,
   onCell,
+  onSheetRange,
   onMarkdownQuote,
   onAnnotate,
 } = usePreviewLocator(props, {
@@ -287,14 +288,23 @@ const pageAnchors = computed(() =>
  *  地址是文件本身给得出来的坐标，不像页码要过一次转换；所以这一档只判形状，地址在
  *  这一版里落不到任何一格上时由表格自己决定不画（表短了、那一格没画出来）。
  *  这一版照样按**屏幕上那份字节**算（`slideContext`），理由和页上那几颗同一条。 */
-const sheetAnchors = computed(() =>
-  liveAnchors('sheet-cell', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+const sheetAnchors = computed(() => {
+  const version = props.slideContext?.version ?? null
+  // 一片的标记画在它左上角那一格：锚点里两个角都在，而表格只按格画。
+  const ranges = liveAnchors('sheet-range', version).flatMap(({ id, anchor }) => {
+    const sheet = anchor.sheet
+    const start = anchor.start
+    if (typeof sheet !== 'string' || typeof start !== 'string' || !start) return []
+    return [{ id, sheet, address: start }]
+  })
+  const cells = liveAnchors('sheet-cell', version).flatMap(({ id, anchor }) => {
     const sheet = anchor.sheet
     const address = anchor.address
     if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
     return [{ id, sheet, address }]
   })
-)
+  return [...cells, ...ranges]
+})
 /** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
 function openAnchor(id: string) {
   focusedThread.value = id
@@ -437,6 +447,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @quote="onQuote"
       @page-context="onPageContext"
       @cell="onCell"
+      @sheet-range="onSheetRange"
       @markdown-quote="onMarkdownQuote"
       @pin="pageLocator.onPin"
       @dropped="clearLocator"

@@ -60,6 +60,9 @@ const rangeWhere = computed(() =>
     <div v-else-if="quote.kind === 'sheet-cell'" class="message-quote__text">
       {{ quote.value || t('work.room.preview.emptyCell') }}
     </div>
+    <div v-else-if="quote.kind === 'sheet-range'" class="message-quote__text">
+      {{ quote.text || t('work.room.preview.emptyCell') }}
+    </div>
     <div v-else-if="quote.kind === 'page-pin'" class="message-quote__where">{{ pinWhere }}</div>
     <template v-else-if="quote.kind === 'web-element' || quote.kind === 'web-text'">
       <div class="message-quote__where">{{ webWhere }}</div>

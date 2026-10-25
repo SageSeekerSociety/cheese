@@ -128,6 +128,14 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     quoted.cell(payload)
   }
 
+  /** 表格里拖过的一片：位置写成表格软件自己印的那个 `A1:C3`。 */
+  function onSheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
+    const area = `${payload.start}:${payload.end}`
+    const where = payload.sheet ? `${payload.sheet}!${area}` : area
+    openLocator(where, payload.text.slice(0, 200) || t('work.room.preview.emptyCell'), where)
+    quoted.sheetRange(payload)
+  }
+
   function onMarkdownQuote(payload: MarkdownQuote) {
     // 位置说的是「哪一节」而不是行号：改一句话要重新渲染，行号下一版就不成立了；它之前没有标题就是文件开头。
     const where = payload.heading
@@ -225,6 +233,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onPageContext,
     onQuote,
     onCell,
+    onSheetRange,
     onMarkdownQuote,
     onAnnotate,
   }

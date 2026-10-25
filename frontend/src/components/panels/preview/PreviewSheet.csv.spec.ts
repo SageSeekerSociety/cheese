@@ -193,3 +193,61 @@ it('正打开的那一条画得显眼些', async () => {
   await waitFor(() => expect(grid(container).length).toBe(2))
   expect(markAt(container, 'B2')!.classList.contains('is-active')).toBe(true)
 })
+
+/** 地址（`B2`）那一格本身。 */
+function cellAt(container: Element, address: string): Element | null {
+  const td = Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+  return td[gridIndex(container, address)] ?? null
+}
+
+it('拖过一片格子：发的是两个角，加上这一片摊平的内容', async () => {
+  // 表格一直只能指单格；一片（比如「这一列的数」）以前得靠一句话说清是哪几格。地址
+  // 本来就在文件里，两个角就够指回来了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+  await fireEvent.mouseUp(cellAt(container, 'B3')!)
+
+  expect(emitted().range).toEqual([[{ sheet: '', start: 'A1', end: 'B3', text: '姓名\t分数\n张三\t90\n李四\t85' }]])
+  // 单击那一格不能同时发出去。
+  expect(emitted().cell).toBeUndefined()
+})
+
+it('从右下往左上拖也一样：两个角摆回左上、右下', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'B3')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A1')!)
+  await fireEvent.mouseUp(cellAt(container, 'A1')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('B3')
+})
+
+it('按在同一格上松开是单击，不是一片', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.click(cellAt(container, 'B2')!)
+
+  expect(emitted().range).toBeUndefined()
+  expect(emitted().cell).toEqual([[{ address: 'B2', value: '90', sheet: '' }]])
+})
+
+it('拖的时候那一片有底色，松开之后留着；单击不留', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+})
