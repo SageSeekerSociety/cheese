@@ -15,9 +15,9 @@ What comes over, for each kind in ``KINDS`` (parents before children):
 
 - A source row whose primary key is here with the same identity (its
   ``created_at``, or the columns its kind names) is the same row: both
-  deployments have it from the history they share. So is a row an earlier
-  batch already brought, under the key it got then, so the same export under
-  another batch name brings nothing twice. It changes only if the
+  deployments have it from the history they share. A row an earlier batch
+  inserted is that row here, under the key it got then, and is left as that
+  batch wrote it: the same export under another batch name brings nothing twice. It changes only if the
   manifest lists it as changed on the source since then. Then the source wins
   for the columns the source deployment itself had (``--source-columns``: a
   column a migration added on the way here holds this deployment's value), except
