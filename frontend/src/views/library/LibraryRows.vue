@@ -65,7 +65,7 @@ function rowMeta(file: LibraryFile): string {
 }
 
 function folderMeta(folder: LibraryFolder): string {
-  return t('work.library.folderMeta', {
+  return t(folder.readonly ? 'work.library.readonlyFolderMeta' : 'work.library.folderMeta', {
     n: folder.count,
     when: relTime(new Date(folder.modified * 1000).toISOString()),
   })

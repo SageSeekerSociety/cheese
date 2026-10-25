@@ -342,8 +342,14 @@ describe('发题表单：两个阶段一个一个删掉', () => {
     })
 
     const removes = () => view.getAllByRole('button', { name: 'tasks.form.stages.remove' })
+    // 删一个阶段先问一句，答「删除」才删。
+    const confirm = async () =>
+      fireEvent.click(await waitFor(() => view.getByRole('button', { name: 'tasks.form.stages.removeConfirm' })))
     await fireEvent.click(removes()[1])
+    await confirm()
+    await waitFor(() => expect(removes()).toHaveLength(1))
     await fireEvent.click(removes()[0])
+    await confirm()
     const sent = await submitted(view)
     expect(sent.stages).toEqual([])
     expect(sent.submissionSchema).toEqual([{ prompt: '需求文档', type: 'TEXT', stage: null }])

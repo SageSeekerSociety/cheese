@@ -138,6 +138,7 @@
   "starterTooLarge": "压缩包解开后超过 {mb} MB",
   "starterCompressionRatio": "压缩包解开后比它本身大得太多，不能作为起始代码",
   "starterEmpty": "压缩包里没有文件",
+  "starterAllIgnored": "压缩包里的文件都被它自带的 .gitignore 排除了",
   "starterPathClash": "压缩包里的 {path} 出现了两次，或者和一个文件夹同名",
   "forgejoStarterPushFailed": "起始代码没能放进项目的代码仓库，稍后重试",
   "starterNameInvalid": "压缩包里的 {path} 这个名字放不进代码仓库：名字太长、含控制字符，或者 git 不接受",

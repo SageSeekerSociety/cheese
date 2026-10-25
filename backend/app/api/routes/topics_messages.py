@@ -94,7 +94,7 @@ from app.core.errors import (
     ForbiddenError,
     ValidationError,
 )
-from app.core.sentences import listing, say
+from app.core.sentences import listing, say, size_text
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
@@ -240,7 +240,7 @@ def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
             raise ValidationError(say("emptyFile"))
         if len(raw) > library.MAX_FILE_BYTES:
             raise ValidationError(
-                say("fileTooLarge", mb=library.MAX_FILE_BYTES // (1024 * 1024))
+                say("fileTooLarge", size=size_text(library.MAX_FILE_BYTES))
             )
         mime = raster_images.sniff(raw[:12])
         if mime is None:

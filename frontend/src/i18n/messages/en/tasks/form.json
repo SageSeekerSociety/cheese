@@ -133,7 +133,9 @@
     "moveDown": "Move stage {n} down",
     "remove": "Remove stage {n}",
     "nameRequired": "Every stage needs a name",
-    "add": "Add stage"
+    "add": "Add stage",
+    "removeTitle": "Delete stage {n}?",
+    "removeConfirm": "Delete"
   },
   "brief": "Brief",
   "parts": {

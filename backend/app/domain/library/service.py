@@ -36,7 +36,7 @@ from app.core.errors import (
     UnprocessableEntityError,
     ValidationError,
 )
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.domain.textfile import text_payload
 
 
@@ -127,7 +127,7 @@ def refuse_oversize(
     """
     limit = max_bytes_for(name) if limit is None else limit
     if size > limit:
-        raise UnprocessableEntityError(say("fileTooLarge", mb=limit // (1024 * 1024)))
+        raise UnprocessableEntityError(say("fileTooLarge", size=size_text(limit)))
 
 
 def size_of(content: Content) -> int:

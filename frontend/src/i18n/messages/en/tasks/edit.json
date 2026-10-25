@@ -5,5 +5,10 @@
   "resubmitted": "Resubmitted — waiting for an admin to review it",
   "saveAndResubmit": "Save and resubmit for review",
   "saveChanges": "Save changes",
-  "unsaved": "Unsaved changes"
+  "unsaved": "Unsaved changes",
+  "stageEffect": {
+    "title": "Save these stage changes?",
+    "failing": "Participants with a stage past its due date and nothing handed in: {n}. Saving marks them as failed",
+    "reopening": "Participants going from failed back to in progress: {n}"
+  }
 }

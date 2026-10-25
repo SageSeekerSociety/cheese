@@ -4697,6 +4697,11 @@ def _task_step(tool: str, args: dict, host) -> str:
         )
     if data.get("missing"):
         said += f"发布前还缺：{'、'.join(data['missing'])}。"
+    if data.get("stageEffect"):
+        said += (
+            f"保存这些阶段的影响：{str(data['stageEffect']).rstrip('。')}。"
+            "发布前把这句原样告诉用户，等他确认再发布。"
+        )
     if data.get("description"):
         said += (
             "套用模板后的详情如下，按它的小标题往下填（用 description_edits 或"

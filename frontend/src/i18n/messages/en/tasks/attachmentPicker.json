@@ -8,5 +8,6 @@
   "replaceWith": "Choose the new version",
   "title": "Attachments",
   "uploadFailed": "Couldn't upload \"{name}\": {error}",
-  "uploading": "Uploading…"
+  "uploading": "Uploading…",
+  "uploadingPercent": "Uploading {percent}%"
 }

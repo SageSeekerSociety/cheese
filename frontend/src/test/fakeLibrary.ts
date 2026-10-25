@@ -56,7 +56,8 @@ export function servesLibrary(files: () => LibraryFile[]) {
       return page<LibraryEntry>(matched, query.cursor, query.limit)
     }
     const prefix = query.dir ? `${query.dir}/` : ''
-    const folders = new Map<string, { count: number; modified: number }>()
+    // 一个文件夹只读（项目资料库的 `题目/`），是它里面的文件只读，和后端一样。
+    const folders = new Map<string, { count: number; modified: number; readonly: boolean }>()
     const here: LibraryEntry[] = []
     for (const file of all) {
       if (!file.path.startsWith(prefix)) continue
@@ -67,8 +68,12 @@ export function servesLibrary(files: () => LibraryFile[]) {
         continue
       }
       const name = rest.slice(0, slash)
-      const folder = folders.get(name) ?? { count: 0, modified: 0 }
-      folders.set(name, { count: folder.count + 1, modified: Math.max(folder.modified, file.modified) })
+      const folder = folders.get(name) ?? { count: 0, modified: 0, readonly: false }
+      folders.set(name, {
+        count: folder.count + 1,
+        modified: Math.max(folder.modified, file.modified),
+        readonly: folder.readonly || !!file.readonly,
+      })
     }
     for (const [name, folder] of folders)
       here.push({
@@ -77,6 +82,7 @@ export function servesLibrary(files: () => LibraryFile[]) {
         name,
         count: folder.count,
         modified: folder.modified,
+        ...(folder.readonly ? { readonly: true } : {}),
         rank: rankOf(0, BigInt(Math.round(folder.modified * 1e6)), name),
       })
     return page(here, query.cursor, query.limit)

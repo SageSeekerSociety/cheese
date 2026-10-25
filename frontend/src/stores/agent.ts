@@ -12,7 +12,7 @@
 // 应用之间会重新挂载，芝士答到一半不该跟着丢。换页时芝士照样答完。
 import type { AgentFormField } from '@/composables/useAgentPointer'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
-import type { AssistantCited, AssistantPage, AssistantProposal } from '@/stores/agentThread'
+import type { AssistantCited, AssistantMessage, AssistantPage, AssistantProposal } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, shallowRef, watch } from 'vue'
@@ -319,7 +319,7 @@ const NO_TERMS = { categories: [], topics: [] }
 export function plainView(): AgentPanelView {
   const thread = agentThread
   return {
-    messages: panelMessages(thread.messages.value, NO_TERMS),
+    messages: panelMessages(thread.messages.value, NO_TERMS, undefined, null, undefined, thread.edits.value),
     steps: withSubagents(thread.steps.value.map(stepView), thread.subagents.value),
     ...writesView(thread.edits.value, NO_TERMS, null, () => false),
     results: thread.published.value.map(resultView),
@@ -329,11 +329,18 @@ export function plainView(): AgentPanelView {
 
 /** 更早的话题怎么画：读回来的，只给看，不给撤销。 */
 export function earlierView() {
-  return agentThread.earlier.value.map((topic) => ({
+  const topics = agentThread.earlier.value
+  const editsOf = (messages: AssistantMessage[]) => messages.flatMap((m) => m.edits ?? [])
+  // 更早的话题从旧到新排；每一个之后写的（后面的话题、眼下这段、还在写的回答）都比它新。
+  const now = [...editsOf(agentThread.messages.value), ...agentThread.edits.value]
+  return topics.map((topic, index) => ({
     id: topic.id,
     title: topic.title,
     at: topic.lastActiveAt,
-    messages: panelMessages(topic.messages, NO_TERMS),
+    messages: panelMessages(topic.messages, NO_TERMS, undefined, null, undefined, [
+      ...topics.slice(index + 1).flatMap((later) => editsOf(later.messages)),
+      ...now,
+    ]),
     earlier: topic.earlier === true,
   }))
 }

@@ -45,9 +45,15 @@ from app.domain.task.services import (
     TaskSubmissionService,
     ensure_task_readable,
 )
-from app.domain.task.stages import open_stage, stage_index, stages_to_api
+from app.domain.task.stages import (
+    open_stage,
+    stage_index,
+    stage_lines,
+    stages_to_api,
+)
 from app.domain.task.submission_state import (
     past_deadline,
+    stage_change_effect,
     stage_distribution,
     stage_states_of,
 )
@@ -118,6 +124,42 @@ async def get_task_progress(
             "distribution": distribution,
         }
     )
+
+
+class StageChangeIn(BaseModel):
+    #: The stages as the save would send them (``PATCH /tasks/{id}``'s ``stages``).
+    stages: list[dict]
+
+
+class StageChangeEffectOut(BaseModel):
+    failing: int
+    reopening: int
+
+
+@router.post(
+    "/{taskId}/stages/effect",
+    summary="What Saving These Stages Would Do To Claims",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(StageChangeEffectOut),
+)
+async def get_stage_change_effect(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    body: StageChangeIn,
+    task_service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """How many claims saving ``stages`` would turn failed (``failing``) and
+    how many it would take out of failed again (``reopening``), so the
+    publisher can be told before saving. Nothing is written. Only whoever may
+    change the task asks."""
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError(say("draftTaskNotYours"))
+    effect = await stage_change_effect(db, task.id, stage_lines(body.stages))
+    return ok({"failing": effect.failing, "reopening": effect.reopening})
 
 
 @router.get(

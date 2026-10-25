@@ -8,5 +8,6 @@
   "replaceWith": "选择新的一版",
   "title": "附件",
   "uploadFailed": "「{name}」上传失败：{error}",
-  "uploading": "上传中…"
+  "uploading": "上传中…",
+  "uploadingPercent": "上传中 {percent}%"
 }

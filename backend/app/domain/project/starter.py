@@ -165,7 +165,7 @@ def _entries(archive: zipfile.ZipFile, size: int) -> list[_Entry]:
             raise _refuse("starterPathClash", path=str(entry.path))
     files = _not_ignored(archive, files)
     if not files:
-        raise _refuse("starterEmpty")
+        raise _refuse("starterAllIgnored")
     _refuse_unless_git_accepts([str(entry.path) for entry in files])
     return files
 

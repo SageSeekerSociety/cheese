@@ -97,7 +97,7 @@ async def _push(
     async with sessions() as session:
         push = await session.get(ProjectStarterPush, project_id)
         assert push is not None  # leased just now
-        recorded, revision = push.commit_sha, push.revision
+        recorded = push.commit_sha
         message, when, file_id = push.message, push.created_at, push.library_file_id
         remote = await forge.starter_remote(project_id, session)
     main = await asyncio.to_thread(starter_archive.remote_main, remote)
@@ -106,7 +106,7 @@ async def _push(
             starter_archive.holds, remote, main, recorded
         ):
             return
-        raise UnprocessableEntityError(say("starterMainTaken", revision=revision))
+        raise UnprocessableEntityError(say("starterMainTaken"))
     async with sessions() as session:
         row = await session.get(LibraryFileRecord, file_id) if file_id else None
         if row is None:

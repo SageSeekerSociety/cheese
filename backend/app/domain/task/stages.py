@@ -186,20 +186,29 @@ def _task_submissions(task_id: int):
     )
 
 
-async def replace_stages(
+@dataclass(frozen=True)
+class StageChange:
+    """A change to a task's stages that may be saved: the stages it has now,
+    the new ones (a line without an id matched to a stage by name), and where
+    each old stage goes (``stage_moves``)."""
+
+    old: list[TaskStage]
+    lines: list[StageLine]
+    moved: dict[int, int]
+
+
+async def planned_stage_change(
     session: AsyncSession, task_id: int, lines: Sequence[StageLine]
-) -> None:
-    """Write the task's stages as ``lines`` say, carrying what already points
-    at a stage — submissions, submission items, rubric lines — to where that
-    stage now stands. A stage dropped while it holds a live submission is
-    refused, before anything is written."""
+) -> StageChange:
+    """The change saving ``lines`` would make, checked as the save checks it:
+    a stage dropped while it holds a live submission is refused
+    (``stageHasSubmissions``). The save (``replace_stages``) and its preview
+    (``submission_state.stage_change_effect``) both start here, so the preview
+    refuses exactly what the save would."""
     old = await list_stages(session, task_id)
-    old_count = stage_count(old)
-    lines = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
+    keyed = keyed_by_name(lines, [(stage.key, stage.name) for stage in old])
     old_ids = [stage.key for stage in old]
-    new_ids = [line.key for line in lines]
-    moved = stage_moves(old_ids, new_ids)
-    rows_moved = row_moves(old_ids, new_ids)
+    new_ids = [line.key for line in keyed]
     held = set(
         (
             await session.execute(
@@ -218,6 +227,20 @@ async def replace_stages(
     if refused is not None:
         name = old[refused].name if refused < len(old) else ""
         raise BadRequestError(say("stageHasSubmissions", name=name))
+    return StageChange(old=old, lines=keyed, moved=stage_moves(old_ids, new_ids))
+
+
+async def replace_stages(
+    session: AsyncSession, task_id: int, lines: Sequence[StageLine]
+) -> None:
+    """Write the task's stages as ``lines`` say, carrying what already points
+    at a stage — submissions, submission items, rubric lines — to where that
+    stage now stands. A stage dropped while it holds a live submission is
+    refused, before anything is written (``planned_stage_change``)."""
+    change = await planned_stage_change(session, task_id, lines)
+    old, lines, moved = change.old, change.lines, change.moved
+    old_count = stage_count(old)
+    rows_moved = row_moves([stage.key for stage in old], [line.key for line in lines])
     gone = [i for i in range(old_count) if i not in rows_moved]
     if gone:
         await session.execute(

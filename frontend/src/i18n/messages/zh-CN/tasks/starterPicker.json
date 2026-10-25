@@ -5,6 +5,7 @@
   "replace": "替换起始代码",
   "remove": "移除起始代码",
   "uploading": "上传中…",
+  "uploadingPercent": "上传中 {percent}%",
   "uploadFailed": "起始代码上传失败：{error}",
   "removeFailed": "起始代码移除失败：{error}"
 }

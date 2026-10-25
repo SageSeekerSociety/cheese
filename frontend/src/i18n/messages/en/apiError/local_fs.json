@@ -3,7 +3,7 @@
   "assistantFileOneOf": "This attachment is not recognized",
   "downloadExpired": "The download link has expired",
   "fileNotFound": "This file doesn't exist",
-  "fileTooLarge": "The file is too large ({mb}MB max)",
+  "fileTooLarge": "The file is too large ({size} max)",
   "grantProjectForbidden": "A grant for everything can't be bound to a single project",
   "grantProjectRequired": "A grant limited to a project must name the project",
   "grantRootNotAllowed": "Only a specific directory can be granted, not a whole disk or the whole computer",
