@@ -1274,7 +1274,11 @@ def stop_transcript_view(home: Path) -> None:
     handler), and what it wrote is read rather than walked for: the bind can be
     at a path this process cannot even list.
     """
-    record = platform_dir(home) / "transcript-view.json"
+    # `.cheese`, not `platform_dir`: the helper writes this file where
+    # `bootstrap.PLATFORM_DIR` puts it, which is fixed, while `platform_dir`
+    # resolves a room's *installation* and can answer `.claude` for one that
+    # moved — the two would then disagree and the record would never be found.
+    record = home / FOOTPRINT_ROOT / "transcript-view.json"
     try:
         held = json.loads(record.read_text())
     except (OSError, ValueError):
@@ -1324,7 +1328,7 @@ def _is_this_rooms_view(pid: int, home: Path) -> bool:
     it for the helpers they end: this helper is the one running the release's
     `transcript_view.py` with this room's view directory as its argument.
     """
-    view = str(platform_dir(home) / "transcript-view")
+    view = str(home / FOOTPRINT_ROOT / "transcript-view")
     try:
         argv = Path(PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
     except OSError:
