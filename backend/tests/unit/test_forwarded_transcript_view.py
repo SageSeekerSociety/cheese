@@ -45,7 +45,42 @@ def test_the_one_file_is_read_at_the_offset_and_size_asked_for():
     view = _view()
 
     assert view.read("/" + TRANSCRIPT_NAME, 10, 4) == WHOLE[4:14]
-    assert view.calls[-1] == {"offset": 4, "size": 10}
+    assert view.read("/" + TRANSCRIPT_NAME, len(WHOLE), 0) == WHOLE
+
+
+def test_the_same_bytes_are_not_asked_for_twice():
+    """What the kernel re-reads is answered here, not over the wire.
+
+    The kernel asks for pages out of order and asks for some of them again;
+    one round trip per request is what makes a `grep` over a long transcript
+    cost a minute. A block is kept, so the repeats do not leave this side.
+    """
+    view = _view()
+
+    assert view.read("/" + TRANSCRIPT_NAME, 6, 0) == WHOLE[:6]
+    asked_once = len(view.calls)
+    assert view.read("/" + TRANSCRIPT_NAME, 6, 0) == WHOLE[:6]
+    assert view.read("/" + TRANSCRIPT_NAME, 4, 2) == WHOLE[2:6]
+    assert len(view.calls) == asked_once
+
+
+def test_what_is_kept_is_bounded_however_long_the_transcript_is():
+    """A block past `TRANSCRIPT_BLOCKS_KEPT` drops the oldest.
+
+    A view's memory must not grow with the transcript: a 200 MB one is not
+    held twice. Dropping a block is not a correctness problem — reading it
+    again fetches it again.
+    """
+    from app.domain.agent.harness.claude_code.remote_execution import (
+        forwarded_transcript,
+    )
+
+    view = _view()
+    view.known_size = 10 * forwarded_transcript.TRANSCRIPT_BLOCK_BYTES
+
+    for index in range(forwarded_transcript.TRANSCRIPT_BLOCKS_KEPT + 5):
+        view._block(index * forwarded_transcript.TRANSCRIPT_BLOCK_BYTES)
+    assert len(view.blocks) == forwarded_transcript.TRANSCRIPT_BLOCKS_KEPT
 
 
 def test_the_file_reports_the_whole_size_reads_do_not_change_it():
