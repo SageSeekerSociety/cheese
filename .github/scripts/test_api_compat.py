@@ -155,6 +155,45 @@ class BreakingForAnOldPage(unittest.TestCase):
 
         self.assertDoesNotBreak(add)
 
+    def test_a_new_kind_in_a_request_union_does_not_break(self):
+        def kinds(doc, *names):
+            _schemas(doc)["PostIn"]["properties"]["quote"] = {
+                "anyOf": [
+                    {
+                        "oneOf": [
+                            {"type": "object", "required": [name], "properties": {name: {"type": "string"}}}
+                            for name in names
+                        ]
+                    },
+                    {"type": "null"},
+                ]
+            }
+
+        base = _document()
+        kinds(base, "block_id", "file")
+        head = copy.deepcopy(base)
+        kinds(head, "block_id", "file", "url")
+        self.assertEqual(api_compat.breaking_changes(base, head), [])
+
+    def test_a_new_required_field_in_an_optional_object_already_sent_breaks(self):
+        def nested(doc, *required):
+            _schemas(doc)["PostIn"]["properties"]["poll"] = {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "required": list(required),
+                        "properties": {"question": {"type": "string"}, "closes": {"type": "string"}},
+                    },
+                    {"type": "null"},
+                ]
+            }
+
+        base = _document()
+        nested(base, "question")
+        head = copy.deepcopy(base)
+        nested(head, "question", "closes")
+        self.assertNotEqual(api_compat.breaking_changes(base, head), [])
+
     def test_renaming_a_model_alone_does_not_break(self):
         def rename(doc):
             _schemas(doc)["Message"] = _schemas(doc).pop("Block")

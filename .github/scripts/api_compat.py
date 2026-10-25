@@ -26,7 +26,10 @@ to compare, so a change inside it goes unseen here; that ratchet only shrinks.
 
 Fields are compared by where they sit, ``$ref``s resolved, so renaming a model
 alone breaks nothing. Variants of ``anyOf``/``oneOf``/``allOf`` are merged:
-their fields pooled, a field's types the union over the variants.
+their fields pooled, a field's types the union over the variants. A field
+inside one of several alternative shapes (a union of kinds, not ``X | None``)
+counts as never required: an old page sends only the kinds it knew, so a new
+kind with fields of its own breaks nothing.
 """
 
 from __future__ import annotations
@@ -64,11 +67,13 @@ def fields(spec: dict, schema: dict | None) -> dict[str, Field]:
     ``{}`` a map's values."""
     out: dict[str, Field] = {}
     if schema is not None:
-        _walk(spec, schema, "", out, required=True, seen=())
+        _walk(spec, schema, "", out, required=True, seen=(), conditional=False)
     return out
 
 
-def _walk(spec, schema, at, out, *, required, seen):
+def _walk(spec, schema, at, out, *, required, seen, conditional):
+    """``conditional``: ``at`` sits inside one of several alternatives, so a
+    field there is required only when that alternative is the one sent."""
     schema, ref = _resolve(spec, schema)
     field = out.setdefault(at, Field())
     field.required = field.required or required
@@ -79,9 +84,15 @@ def _walk(spec, schema, at, out, *, required, seen):
         return
     if ref:
         seen = (*seen, ref)
-    variants = [*schema.get("anyOf", ()), *schema.get("oneOf", ()), *schema.get("allOf", ())]
-    for variant in variants:
-        _walk(spec, variant, at, out, required=False, seen=seen)
+    alternatives = [*schema.get("anyOf", ()), *schema.get("oneOf", ())]
+    variants = [*alternatives, *schema.get("allOf", ())]
+    # `X | None` is one alternative, not a choice between shapes: X's required
+    # fields are required whenever X is sent.
+    shapes = [v for v in alternatives if _resolve(spec, v)[0].get("type") != "null"]
+    for variant in alternatives:
+        _walk(spec, variant, at, out, required=False, seen=seen, conditional=conditional or len(shapes) > 1)
+    for variant in schema.get("allOf", ()):
+        _walk(spec, variant, at, out, required=False, seen=seen, conditional=conditional)
     kind = schema.get("type")
     if kind is not None:
         field.types.update(kind if isinstance(kind, list) else [kind])
@@ -93,12 +104,15 @@ def _walk(spec, schema, at, out, *, required, seen):
         field.enum = (field.enum or set()) | {json.dumps(schema["const"])}
     needed = set(schema.get("required", ()))
     for name, child in schema.get("properties", {}).items():
-        _walk(spec, child, f"{at}.{name}", out, required=name in needed, seen=seen)
+        _walk(
+            spec, child, f"{at}.{name}", out,
+            required=name in needed and not conditional, seen=seen, conditional=conditional,
+        )
     if "items" in schema and isinstance(schema["items"], dict):
-        _walk(spec, schema["items"], f"{at}[]", out, required=False, seen=seen)
+        _walk(spec, schema["items"], f"{at}[]", out, required=False, seen=seen, conditional=conditional)
     extra = schema.get("additionalProperties")
     if isinstance(extra, dict) and extra:
-        _walk(spec, extra, f"{at}{{}}", out, required=False, seen=seen)
+        _walk(spec, extra, f"{at}{{}}", out, required=False, seen=seen, conditional=conditional)
 
 
 def _operations(spec: dict) -> dict[str, dict]:

@@ -22,8 +22,6 @@ import type { Outgoing } from '../../../lib/composerDrafts'
 
 import { onScopeDispose, ref } from 'vue'
 
-import { trackOutbox } from '../../../lib/composerDrafts'
-
 /**
  * 一次发送等多久算没送到。宁可长一点：误报比晚一点显示更伤——房间里已经有过一次
  * 这种误报（#539）。等满了也不判失败，只是带同一个 id 再发一次。
@@ -160,11 +158,7 @@ export function useOutbox(options: {
     outbox.value = outbox.value.filter((o) => o.clientId !== clientId)
   }
 
-  const untrack = trackOutbox(outbox)
-  onScopeDispose(() => {
-    pause()
-    untrack()
-  })
+  onScopeDispose(pause)
 
   return { outbox, enqueue, flush, settle, retry, drop, pause }
 }

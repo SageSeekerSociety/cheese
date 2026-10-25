@@ -101,25 +101,6 @@ function memoryIsEmpty(value: ComposerMemory): boolean {
   return !value.draft.trim() && !value.quotedContext && !value.reply && !value.atts.length && !value.outbox.length
 }
 
-/** 此刻开着的发件箱（`useOutbox` 登记、卸载时注销）：内存层只在切话题时才写进去，开着的这一个不在里面。 */
-const openOutboxes = new Set<{ readonly value: readonly Outgoing[] }>()
-
-/** 登记一个开着的发件箱；返回注销它的函数。 */
-export function trackOutbox(outbox: { readonly value: readonly Outgoing[] }): () => void {
-  openOutboxes.add(outbox)
-  return () => openOutboxes.delete(outbox)
-}
-
-/**
- * 这一页还有没落库的消息：开着的发件箱里，或者切走的话题记着的发件箱里。整页加载会把它们
- * 丢掉（发件箱不落盘，见文件头），所以替人刷新之前先问这一句（lib/apiGeneration.ts）。
- */
-export function holdsUnsentMessages(): boolean {
-  for (const outbox of openOutboxes) if (outbox.value.length) return true
-  for (const memory of composerMemory.values()) if (memory.outbox.length) return true
-  return false
-}
-
 /** 记下这个话题的输入状态（含发件箱）。 */
 export function saveComposerMemory(topicId: string, value: ComposerMemory): void {
   const id = topicId.trim()
