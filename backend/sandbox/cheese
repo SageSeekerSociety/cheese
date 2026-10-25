@@ -1463,6 +1463,8 @@ TASK_WRITE_DESCRIPTION = (
     "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人做这道题，"
     "空列表是空间全部成员都能做；attachments 题目附件，写用户交给你的文件 id，"
     "新题目整组替换，已发布的题目保存时追加上去；"
+    "starter 起始代码，写用户交给你的一个 .zip 文件 id：领题时解开作为项目代码仓库的"
+    "第一个提交，已发布的题目保存时换上这一份；"
     "「AI 的设置」几格写的是从这道题建出的项目里 AI 队友怎么帮学生：ai_teammate "
     "默认队友（写预设名称，或沿用上层设置）；"
     "ai_mode AI 队友怎么帮学生（引导为主、讲解与示例、先明确需求再实现、不加限制，"
@@ -1580,6 +1582,10 @@ TASK_WRITE_FIELDS = {
         "type": "array",
         "items": {"type": "integer"},
         "description": "用户交给你的文件 id，作为题目附件",
+    },
+    "starter": {
+        "type": "integer",
+        "description": "用户交给你的一个 .zip 文件 id，作为起始代码；0 是不要起始代码",
     },
     "ai_mode": {
         "type": "string",
@@ -4649,6 +4655,7 @@ _TASK_FIELD_WORDS = {
     "accessControlEnabled": "access",
     "accessDomainGroupIds": "access",
     "attachmentIds": "attachments",
+    "starterAttachmentId": "starter",
     "teaching": "ai_guidance",
     "defaultRole": "ai_teammate",
 }
