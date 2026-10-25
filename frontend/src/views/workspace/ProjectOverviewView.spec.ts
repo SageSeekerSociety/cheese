@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ProjectOverviewView from './ProjectOverviewView.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { renderNoticeMessage } from '@/lib/noticeText'
 
 Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
 
@@ -266,6 +267,20 @@ it('仓库从题目的起始代码开始的：在放、放好了、没放成各�
   cleanup()
   const plain = mount({ overviewText: '## 赛题要求', starter: null })
   expect(plain.queryByTestId('overview-starter')).toBeNull()
+})
+
+it('main 先被占了而没放成的：题目第几版的起始代码只说一次', () => {
+  const view = mount({
+    overviewText: '## 赛题要求',
+    starter: {
+      revision: 3,
+      state: 'failed',
+      reason: renderNoticeMessage({ key: 'starterMainTaken', params: { revision: 3 } }, ''),
+    },
+  })
+  const line = view.getByTestId('overview-starter').textContent ?? ''
+  expect(line.split('题目第 3 版').length - 1).toBe(1)
+  expect(line).toContain('main 分支')
 })
 
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {
