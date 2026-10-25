@@ -76,8 +76,9 @@ def inherit(repo, base, since, head, previous, kept=""):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    a = sub.add_parser("inherit")
+    # `inherit` is the only subcommand left, and the required subparser means argparse
+    # itself exits 2 when it is missing or misspelled — so there is no `cmd` to branch on.
+    a = ap.add_subparsers(dest="cmd", required=True).add_parser("inherit")
     a.add_argument("--repo", required=True)
     a.add_argument("--base", default="", help="the PR's base branch name (main)")
     a.add_argument("--since", required=True)
@@ -86,15 +87,13 @@ def main(argv=None):
     a.add_argument("--kept", default="", help="result.json already in this round, if any")
     a.add_argument("--out", required=True)
     args = ap.parse_args(argv)
-    if args.cmd == "inherit":
-        result, why = inherit(args.repo, args.base, args.since, args.head, args.previous, args.kept)
-        if result is None:
-            print(f"bundle: 不继承：{why}", file=sys.stderr)
-            return 1
-        Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"bundle: 增量自 {args.since[:8]} {why}，继承上一轮结论，不起分身", file=sys.stderr)
-        return 0
-    return 2
+    result, why = inherit(args.repo, args.base, args.since, args.head, args.previous, args.kept)
+    if result is None:
+        print(f"bundle: 不继承：{why}", file=sys.stderr)
+        return 1
+    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"bundle: 增量自 {args.since[:8]} {why}，继承上一轮结论，不起分身", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

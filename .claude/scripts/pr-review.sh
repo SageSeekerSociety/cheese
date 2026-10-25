@@ -26,11 +26,13 @@
 #       subagent topology that tier spends. A tier G change is mechanical: no
 #       reviewer runs, prepare writes a result.json that says so, and post can
 #       be run straight away.
-#       It writes no precomputed facts of its own any more. The reading is one
-#       open-code-review run (see .claude/scripts/ocr-review.sh), and it reads the files
-#       itself; the PRECOMPUTED.md and BUNDLE.md sections prepare used to append were for
-#       the subagent method and went with it. The PR body's own numbers are still
-#       recomputed — that is recompute-pr-claims, run by the seat, not by prepare.
+#       It writes PRECOMPUTED.md (precompute.py): the public symbols the change adds,
+#       drops or changes and where else they are referenced, plus the numbers the PR body
+#       states recomputed. The method's step 3 tells the seat to read it. The BUNDLE.md
+#       section prepare used to append as well — call slices and single-file pyright for
+#       the subagents — went with the subagent method; the reading is one
+#       open-code-review run now (see .claude/scripts/ocr-review.sh) and it opens the
+#       files itself.
 #       A --since round whose increment §4 does not re-review (only a merge of the base
 #       branch, or only tests, docs or copy) and whose last round on this machine had no
 #       blocker/major inherits that conclusion: result.json is written, no reviewer runs,
