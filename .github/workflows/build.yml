@@ -422,6 +422,10 @@ jobs:
           # 关于 dialog next to the app's own version.
           build-args: |
             GIT_SHA=${{ github.sha }}
+          # The API generation the build bakes in is the backend's one file
+          # (frontend/Dockerfile, vite.config.ts).
+          build-contexts: |
+            api=./backend
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,version=2,scope=frontend

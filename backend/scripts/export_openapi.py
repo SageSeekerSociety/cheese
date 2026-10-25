@@ -19,7 +19,10 @@ ejected three times for that file alone. Its readers ask for the document here,
   the document at the merge base and at the change and runs the frontend suite
   when the two differ. That is what the digest was committed for: the path map
   watches files, not the app, so it needed a file that moved exactly when the
-  document did. Comparing the two documents asks the question directly.
+  document did. Comparing the two documents asks the question directly. The
+  same job hands both documents to ``.github/scripts/api_compat.py``, which
+  fails a change that breaks pages built against the base unless it raised
+  ``backend/api-generation``.
 
 Two runs over the same tree must print the same bytes, or that comparison would
 call every change an API change: ``canonicalize`` is what makes the document a
