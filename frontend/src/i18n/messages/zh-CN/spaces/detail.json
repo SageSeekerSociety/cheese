@@ -184,6 +184,8 @@
       "by": "{name} 发布",
       "claimed": "{n} 人参与",
       "claimedOf": "{n} / {limit} 人",
+      "claimedTeams": "{n} 支队伍参与",
+      "claimedTeamsOf": "{n} / {limit} 支队伍",
       "deadline": "{date}截止",
       "mine": "在做",
       "noDeadline": "不限截止",

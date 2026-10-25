@@ -1009,25 +1009,25 @@ class TestTaskEnumeration:
         assert len(members_of(task_ids[0])) == 1
         assert page_data["distinctParticipants"] == 1
 
-    def test_participant_count_leaves_out_applications_still_waiting(
+    def test_places_are_taken_only_by_approved_applications(
         self,
         api_client: TestClient,
         user_client: UserCreator,
         multi_task_setup: dict,
     ) -> None:
-        """「参与人数」只数申请通过的人：还在等出题人通过的申请不是参与者。
-
-        名额满没满仍按全部申请（``total``）判，这条只钉页面上写「参与」的那个数。
-        """
+        """名额和「参与人数」只算申请通过的：等批的、被拒的都不占。申请随时可以交，
+        名额满了之后再通过一份就被拒，并说明是名额满了。"""
         creator = multi_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
         task_id = multi_task_setup["task_ids"][0]
         resp = api_client.patch(
-            f"/tasks/{task_id}", json={"approved": "APPROVED"}, headers=headers
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED", "participantLimit": 1},
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
 
-        for _ in range(2):
+        for _ in range(3):
             user = user_client.create_user()
             user.token = user_client.login(api_client, user.username, user.password)
             resp = api_client.post(
@@ -1040,20 +1040,29 @@ class TestTaskEnumeration:
         assert resp.status_code == 200, resp.text
         claims = [row["id"] for row in resp.json()["data"]["participants"]]
 
-        def counts() -> dict:
+        def counts() -> tuple[int, int]:
             resp = api_client.get(f"/tasks/{task_id}", headers=headers)
             assert resp.status_code == 200, resp.text
-            return resp.json()["data"]["task"]["participants"]
+            participants = resp.json()["data"]["task"]["participants"]
+            return participants["total"], participants["approved"]
 
-        assert (counts()["total"], counts()["approved"]) == (2, 0)
+        def decide(claim: int, approved: str):
+            return api_client.patch(
+                f"/tasks/{task_id}/participants/{claim}",
+                json={"approved": approved},
+                headers=headers,
+            )
 
-        resp = api_client.patch(
-            f"/tasks/{task_id}/participants/{claims[0]}",
-            json={"approved": "APPROVED"},
-            headers=headers,
-        )
-        assert resp.status_code == 200, resp.text
-        assert (counts()["total"], counts()["approved"]) == (2, 1)
+        assert counts() == (3, 0)
+        assert decide(claims[0], "DISAPPROVED").status_code == 200
+        assert counts() == (3, 0)
+        assert decide(claims[1], "APPROVED").status_code == 200
+        assert counts() == (3, 1)
+
+        refused = decide(claims[2], "APPROVED")
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["i18n"]["key"] == "taskPlacesFull"
+        assert counts() == (3, 1)
 
     def test_enumerate_tasks_without_the_flag_carries_no_participant_count(
         self, api_client: TestClient, multi_task_setup: dict

@@ -261,9 +261,9 @@ async def _enrich_task_models(
         if getattr(category, "name", None)
     }
 
-    # ``total`` 数每一份没删的申请（等批准的、被拒的都算），名额满没满按它判；
-    # ``approved`` 只数申请通过的 —— 页面上写「参与人数」的是这一个：还在等批准的
-    # 人不是参与者。
+    # ``total`` 数每一份没删的申请（等批准的、被拒的都算）；``approved`` 只数申请
+    # 通过的 —— 页面上的「参与人数」和名额满没满都按它：还在等批准的人不是参与者，
+    # 也不占名额（通过时才数，``TaskMembershipService.update_membership``）。
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     approved_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     for membership in memberships:

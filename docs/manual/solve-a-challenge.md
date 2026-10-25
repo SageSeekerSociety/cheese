@@ -61,7 +61,7 @@ parts:
     at: 3
   - kind: task
     title: B 树的插入与删除
-    status: 报名中
+    status: 可申请
     at: 3
   - kind: bars
     lines: 2

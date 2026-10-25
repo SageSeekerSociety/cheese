@@ -13,7 +13,7 @@
   "progressTitle": "Where everyone is",
   "solo": "Individual",
   "stalled": "No activity since starting",
-  "stalledHint": "Still \"In progress\" more than 5 days after starting",
+  "stalledHint": "Applied more than 5 days ago and still \"In progress\"",
   "status": {
     "inProgress": "In progress",
     "passed": "Passed",
@@ -28,7 +28,7 @@
   "trendEmptyText": "The trend appears once the challenge is published.",
   "trendEmptyTitle": "No participants yet",
   "trendSeries": "Total participants",
-  "trendSubtitle": "Total participants over the last 12 days",
+  "trendSubtitle": "Total participants over the last 12 days, by the day they applied",
   "trendTitle": "Participants over time",
   "stagesTitle": "Progress by stage"
 }

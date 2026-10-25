@@ -209,7 +209,8 @@ describe('题目详情', () => {
   })
 
   it('审过了、没截止、没满：领取按钮点得动，点了走领取那条路', async () => {
-    const { container } = await mount({ participants: { total: 1, approved: 1, examples: [] }, participantLimit: 5 })
+    // 申请比名额多，但通过的还没到上限：还能申请。
+    const { container } = await mount({ participants: { total: 7, approved: 1, examples: [] }, participantLimit: 5 })
     const events = useEvents()
     const joined = vi.fn()
     events.on('join-clicked', joined)
@@ -441,6 +442,16 @@ describe('题目详情', () => {
 
     expect(hrefs(container)).toContain(`${BASE}/participants`)
     expect(hrefs(container)).toContain(`${BASE}/insights`)
+  })
+
+  it('出题人：「参与者」页签上的数只算申请通过的，等批的不算', async () => {
+    AccountService.user = { id: 1, nickname: '蔡松洋' } as never
+    const { container } = await mount({ participants: { total: 4, approved: 1, examples: [] } })
+
+    const roster = [...container.querySelectorAll('a')].find((a) =>
+      a.getAttribute('href')?.endsWith(`${BASE}/participants`)
+    )
+    expect(roster?.textContent?.trim()).toBe(`${t('tasks.page.tabs.roster')}1`)
   })
 
   it('没领这道题：不能用它新建项目', async () => {

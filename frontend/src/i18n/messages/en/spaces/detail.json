@@ -184,6 +184,8 @@
       "by": "By {name}",
       "claimed": "{n} participants",
       "claimedOf": "{n} / {limit}",
+      "claimedTeams": "{n} teams taking part",
+      "claimedTeamsOf": "{n} / {limit} teams",
       "deadline": "Due {date}",
       "mine": "Working on it",
       "noDeadline": "No deadline",

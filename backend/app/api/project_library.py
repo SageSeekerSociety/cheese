@@ -2,7 +2,7 @@
 without (`Shelf.with_task`).
 
 `题目/` holds a task's materials, and who may read those is the task's rule
-(publisher, space admin, taker — `task.package.may_download`), not the
+(publisher, space admin, approved participant — `task.package.may_download`), not the
 project's roster: a member of the project's team who never took the task, or
 someone the publisher removed, can still open the project. So every read of a
 project's library is made on the shelf this module hands out for the reader.

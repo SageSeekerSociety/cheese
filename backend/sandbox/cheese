@@ -1657,7 +1657,7 @@ DELEGATED_TOOLS = ToolTable(
             "spaces/4/tasks/87，题目的材料 spaces/4/tasks/87/files/<名字>，"
             "草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
-            "library/成绩.xlsx；me 是用户参加的题目和各自的截止时间，"
+            "library/成绩.xlsx；me 是用户申请过、在做的题目和各自的截止时间，"
             "settings 是用户的通知设置。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
@@ -4585,7 +4585,7 @@ def _say_attachment_read(args, data, env) -> str:
 
 def _say_joined_problems(args, data, env) -> str:
     if not data:
-        return "提问人没有参加任何题目。"
+        return "提问人没有申请过、也没有在做的题目。"
     return json.dumps(data, ensure_ascii=False)
 
 
