@@ -17,10 +17,11 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from app.api.deps import get_session_host
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.core.db import release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -36,7 +37,30 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 Host = Annotated[SessionHost, Depends(get_session_host)]
 
 
-@router.get("/{topic_id}/session-transcript", response_model=None)
+class TranscriptChunkOut(BaseModel):
+    """One answer from `runner.transcript_chunk`, through the relay.
+
+    Three shapes, one type: a session whose transcript is not written yet
+    (`missing`), a location ask that carries `path` and none of the bytes
+    (`size` is 0 on that request), and a chunk (`data`, plus `eof` when the
+    reader asked for bytes). Every field is optional because each shape omits
+    the ones it does not carry, so one model describes all three without
+    pretending they are the same answer.
+
+    Documentation only — the route returns `ok(...)` and `typed_response`
+    keeps FastAPI from filtering it, so a field cannot be dropped from a live
+    answer by this class being incomplete.
+    """
+
+    missing: bool | None = None
+    size: int | None = None
+    offset: int | None = None
+    data: str | None = None
+    eof: bool | None = None
+    path: str | None = None
+
+
+@router.get("/{topic_id}/session-transcript", **typed_response(TranscriptChunkOut))
 async def session_transcript(
     topic_id: uuid.UUID,
     request: Request,
