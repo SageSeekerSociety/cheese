@@ -332,6 +332,46 @@ func TestOnLinuxTheFuseRuntimeIsPlacedWhereTheExecutorLooksForIt(t *testing.T) {
 	}
 }
 
+func TestOnLinuxAMissingFuseRuntimeDoesNotFailTheConnect(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the fuse runtime is placed on Linux only")
+	}
+	// Everything else is served; only the fuse runtime answers 404, which is
+	// what a transient outage on the toolchain route or a release not fetched
+	// yet looks like. `Ensure`'s error is fatal in `cheesehost connect`
+	// (`daemoncmd.model_login`), so this artifact must not produce one: the
+	// machine runs without a transcript view rather than without a connector.
+	machine(t, true)
+	// Everything else is served, so the only failure is the optional one.
+	base := toolchainServerWithout(t, "fuse-runtime")
+	if err := Ensure(context.Background(), base, io.Discard); err != nil {
+		t.Fatalf("an unfetchable fuse runtime failed the whole Ensure: %v", err)
+	}
+}
+
+func toolchainServerWithout(t *testing.T, absent string) string {
+	t.Helper()
+	served := map[string][]byte{
+		"bubblewrap": pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
+		"host-tools": pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
+		"tmux":       pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),
+		"git":        pythonArchive(t, map[string]string{"git-1/bin/git": "#!/bin/sh\necho placed git\n"}),
+	}
+	delete(served, absent)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.Split(strings.TrimPrefix(r.URL.Path, "/connector/toolchain/"), "/")[0]
+		archive, ok := served[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("X-Checksum-SHA256", digest(archive))
+		w.Write(archive)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/connector"
+}
+
 func TestOnLinuxWhatWasPlacedIsUsedWhileTheServerCannotBeReached(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("tmux is placed on Linux only")
