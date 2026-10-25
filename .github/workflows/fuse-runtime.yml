@@ -81,8 +81,16 @@ jobs:
           # The version comes from `backend/uv.lock`, not written here: the
           # point of this job is that the copy the smoke test loads is the copy
           # a room's executor ships (`release.sources` takes `fuse.py` out of
-          # the installed `fusepy`), and a lock bump would otherwise leave this
-          # testing a version nothing runs.
+          # the installed `fusepy`), and a number written here would drift from
+          # the lock with nothing to say so.
+          #
+          # What this does not do is *follow* a lock bump: `backend/uv.lock` is
+          # not in this workflow's `paths:`, because a lock-only pull request
+          # would then build both architectures and the arm leg is expected to
+          # fail until the header patch lands. So the version is current at
+          # every run and a bump is exercised at the next one — the recipe
+          # changing is what brings it back. Adding the lock to `paths:` is the
+          # way to close that gap once arm builds.
           fusepy="$(awk '/^name = "fusepy"$/{found=1; next}
                          found && /^version = /{gsub(/[",]/,""); print $3; exit}' \
                        backend/uv.lock)"
