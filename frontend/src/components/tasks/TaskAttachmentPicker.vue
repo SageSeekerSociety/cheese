@@ -12,12 +12,14 @@ import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
-import { fmtFileSize } from '@/lib/usageFormat'
+import { fmtFileSize, fmtSizeLimit } from '@/lib/usageFormat'
 
 defineProps<{
   files: PickedAttachment[]
   /** 正在上传：「添加文件」先按住，免得同一份传两遍。 */
   uploading: boolean
+  /** 正在传的那一份传到了百分之几；`null` / 不给 = 报不出来，只写「上传中」。 */
+  percent?: number | null
   /** 单份文件的上限；`null` = 没问到，不写这句话。 */
   maxFileBytes: number | null
   /** 每一行能不能换成新的一版（改题时，旧的一版留作历史）。 */
@@ -61,7 +63,7 @@ function onReplacement(event: Event) {
 <template>
   <BaseField
     :label="t('tasks.attachmentPicker.title')"
-    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: fmtFileSize(maxFileBytes) }) : undefined"
+    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: fmtSizeLimit(maxFileBytes) }) : undefined"
   >
     <div class="tap">
       <ul v-if="files.length" class="tap__list">
@@ -74,6 +76,7 @@ function onReplacement(event: Event) {
             icon="mdi-file-replace-outline"
             size="sm"
             :disabled="uploading"
+            :title="t('tasks.attachmentPicker.replace', { name: file.name })"
             :aria-label="t('tasks.attachmentPicker.replace', { name: file.name })"
             @click="pickReplacement(file.id)"
           />
@@ -81,6 +84,7 @@ function onReplacement(event: Event) {
             icon="mdi-close"
             size="sm"
             :disabled="uploading"
+            :title="t('tasks.attachmentPicker.remove', { name: file.name })"
             :aria-label="t('tasks.attachmentPicker.remove', { name: file.name })"
             @click="emit('remove', file.id)"
           />
@@ -107,7 +111,13 @@ function onReplacement(event: Event) {
       <button type="button" class="tap__add" :disabled="uploading" @click="input?.click()">
         <v-progress-circular v-if="uploading" indeterminate size="16" width="2" />
         <v-icon v-else size="18">mdi-plus</v-icon>
-        {{ uploading ? t('tasks.attachmentPicker.uploading') : t('tasks.attachmentPicker.add') }}
+        {{
+          !uploading
+            ? t('tasks.attachmentPicker.add')
+            : percent != null
+              ? t('tasks.attachmentPicker.uploadingPercent', { percent })
+              : t('tasks.attachmentPicker.uploading')
+        }}
       </button>
     </div>
   </BaseField>

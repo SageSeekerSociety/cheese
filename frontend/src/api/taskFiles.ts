@@ -6,7 +6,7 @@ import type { TaskFileData, TaskFileListData } from '@/types/taskFiles'
 
 import { axiosRequest } from './axiosHttp'
 import { BASE } from './http'
-import { sendInParts } from './partUpload'
+import { sendInParts, type UploadProgress } from './partUpload'
 
 export type { TaskFileData, TaskFileListData }
 
@@ -18,8 +18,12 @@ export function listTaskFiles(taskId: number): Promise<TaskFileListData> {
 }
 
 /** 放进一份材料（出题人本人或空间管理员）。撞名不覆盖，返回它最后叫什么。 */
-export async function addTaskFile(taskId: number, file: File): Promise<{ name: string; size: number }> {
-  const uploaded = await sendInParts(base(taskId), file)
+export async function addTaskFile(
+  taskId: number,
+  file: File,
+  progress?: UploadProgress
+): Promise<{ name: string; size: number }> {
+  const uploaded = await sendInParts(base(taskId), file, progress)
   return axiosRequest({ url: base(taskId), method: 'POST', data: { ...uploaded, filename: file.name } }, true)
 }
 
@@ -27,9 +31,10 @@ export async function addTaskFile(taskId: number, file: File): Promise<{ name: s
 export async function replaceTaskFile(
   taskId: number,
   name: string,
-  file: File
+  file: File,
+  progress?: UploadProgress
 ): Promise<{ name: string; size: number }> {
-  const uploaded = await sendInParts(base(taskId), file)
+  const uploaded = await sendInParts(base(taskId), file, progress)
   return axiosRequest({ url: base(taskId), method: 'PUT', params: { name }, data: uploaded }, true)
 }
 
@@ -39,8 +44,12 @@ export function removeTaskFile(taskId: number, name: string): Promise<{ removed:
 }
 
 /** 把一份 .zip 设成起始代码（已有的那份留作历史）。压缩包不合格时服务端说为什么。 */
-export async function setTaskStarter(taskId: number, file: File): Promise<{ name: string; size: number }> {
-  const uploaded = await sendInParts(base(taskId), file)
+export async function setTaskStarter(
+  taskId: number,
+  file: File,
+  progress?: UploadProgress
+): Promise<{ name: string; size: number }> {
+  const uploaded = await sendInParts(base(taskId), file, progress)
   return axiosRequest({ url: `/tasks/${taskId}/starter`, method: 'PUT', data: uploaded }, true)
 }
 

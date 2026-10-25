@@ -2,7 +2,15 @@
 //
 // 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
 // 读字节、版本列表、按版本下载、恢复旧版。
-import { authToken, libraryBase, libraryFileRawUrl, type LibraryShelf, request, sendInParts } from '../api'
+import {
+  authToken,
+  libraryBase,
+  libraryFileRawUrl,
+  type LibraryShelf,
+  request,
+  sendInParts,
+  type UploadProgress,
+} from '../api'
 import { t } from '../i18n'
 
 import { libraryParams, type LibraryQuery } from './libraryQuery'
@@ -86,10 +94,11 @@ async function libraryUpload(
   shelf: LibraryShelf,
   file: File,
   replacing?: string,
-  folder?: string
+  folder?: string,
+  progress?: UploadProgress
 ): Promise<{ path: string; bytes: number }> {
   const base = libraryBase(shelf)
-  const uploaded = await sendInParts(base, file)
+  const uploaded = await sendInParts(base, file, progress)
   if (replacing) {
     return request(`${base}?path=${encodeURIComponent(replacing)}`, {
       method: 'PUT',
@@ -106,9 +115,10 @@ async function libraryUpload(
 export function uploadLibraryFile(
   shelf: LibraryShelf,
   file: File,
-  folder?: string
+  folder?: string,
+  progress?: UploadProgress
 ): Promise<{ path: string; bytes: number }> {
-  return libraryUpload(shelf, file, undefined, folder)
+  return libraryUpload(shelf, file, undefined, folder, progress)
 }
 
 /** 把一份资料或一个文件夹改名、挪到别处：`to` 是它的新名字。引用旧名字的消息跟着改。 */
@@ -123,9 +133,10 @@ export function moveLibraryFile(shelf: LibraryShelf, path: string, to: string): 
 export function replaceLibraryFile(
   shelf: LibraryShelf,
   path: string,
-  file: File
+  file: File,
+  progress?: UploadProgress
 ): Promise<{ path: string; bytes: number }> {
-  return libraryUpload(shelf, file, path)
+  return libraryUpload(shelf, file, path, undefined, progress)
 }
 
 /** 一份资料的字节，给页面预览；Office 文档可以转成 PDF 再给。 */

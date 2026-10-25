@@ -106,6 +106,13 @@ const readonlyHere = computed(
   () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
 )
 
+// 拖进 `题目/` 的文件放不进去：说一句为什么，而不是什么也不发生。
+function dropHere(event: DragEvent) {
+  if (!readonlyHere.value) return onDrop(event)
+  dragging.value = false
+  actionError.value = t('work.library.readonlyDrop', { folder: dir.value })
+}
+
 function goTo(path: string) {
   const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
   delete next.file
@@ -150,6 +157,7 @@ const transfers = useLibraryTransfers({
 const {
   busy,
   uploading,
+  progress: uploadProgress,
   confirming,
   replacing,
   dragging,
@@ -366,7 +374,7 @@ function read(file: LibraryFile) {
       :class="{ 'library--dragging': dragging }"
       @dragover.prevent="dragging = true"
       @dragleave.self="dragging = false"
-      @drop.prevent="readonlyHere ? (dragging = false) : onDrop($event)"
+      @drop.prevent="dropHere"
     >
       <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
       <input
@@ -390,6 +398,9 @@ function read(file: LibraryFile) {
           @retry="pages.reset()"
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
+        <p v-if="uploadProgress" role="status" class="t-body c-muted">
+          {{ t('work.library.uploadProgress', uploadProgress) }}
+        </p>
 
         <div v-if="anything" class="library__tools">
           <v-text-field

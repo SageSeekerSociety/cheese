@@ -89,6 +89,7 @@ _STAGE_SAYS = {
     "PENDING_REVIEW": "待批改",
     "PASSED": "已通过",
     "REJECTED": "被退回",
+    "MISSED": "未通过（过了截止没有提交）",
 }
 
 

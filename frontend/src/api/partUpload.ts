@@ -57,9 +57,18 @@ async function putPart(
   }
 }
 
+/** 传了多少：落进存储的那几段的字节数，和整份多大。 */
+export type UploadProgress = (sent: number, total: number) => void
+
+/** 一份文件传到了百分之几（向下取整，传完才是 100）。 */
+export function uploadPercent(sent: number, total: number): number {
+  return total > 0 ? Math.floor((sent / total) * 100) : 100
+}
+
 /** 把 `file` 传进 `base`（`/projects/<id>/library`、`/teams/<id>/library`、
- *  `/tasks/<id>/files`）领到的一次上传，交回登记要用的凭据和哈希。 */
-export async function sendInParts(base: string, file: File): Promise<Uploaded> {
+ *  `/tasks/<id>/files`）领到的一次上传，交回登记要用的凭据和哈希。每落进存储
+ *  一段就报一次 `progress`：几 GB 的文件要传很久，页面靠它写传到了多少。 */
+export async function sendInParts(base: string, file: File, progress?: UploadProgress): Promise<Uploaded> {
   const slot = await request<UploadSlot>(`${base}/uploads`, {
     method: 'POST',
     body: JSON.stringify({ name: file.name, size: file.size }),
@@ -68,6 +77,8 @@ export async function sendInParts(base: string, file: File): Promise<Uploaded> {
   const parts: string[] = []
   const inFlight = new Set<Promise<void>>()
   let failure: unknown = null
+  let sent = 0
+  progress?.(0, file.size)
   for (let part = 1; part <= slot.parts && failure === null; part++) {
     const start = (part - 1) * slot.part_bytes
     const bytes = new Uint8Array(await file.slice(start, start + slot.part_bytes).arrayBuffer())
@@ -75,6 +86,10 @@ export async function sendInParts(base: string, file: File): Promise<Uploaded> {
     const digest = await md5(bytes)
     parts.push(digest)
     const sending: Promise<void> = putPart(base, slot.upload, part, digest, bytes)
+      .then(() => {
+        sent += bytes.byteLength
+        progress?.(sent, file.size)
+      })
       .catch((error: unknown) => {
         failure ??= error
       })

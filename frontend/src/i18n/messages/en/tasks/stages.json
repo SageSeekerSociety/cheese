@@ -9,6 +9,7 @@
     "NOT_SUBMITTED": "Not submitted",
     "PENDING_REVIEW": "Awaiting grading",
     "PASSED": "Passed",
-    "REJECTED": "Sent back"
+    "REJECTED": "Sent back",
+    "MISSED": "Failed"
   }
 }

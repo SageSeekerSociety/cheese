@@ -32,7 +32,7 @@ from app.core.errors import (
     NotFoundError,
     UnprocessableEntityError,
 )
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.domain.feedback.models import FeedbackAttachment
 from app.domain.library import service as library
 
@@ -68,7 +68,7 @@ async def store(
     # 所以报给用户的上限就是网关真正挡住的那个数。
     limit = library.MAX_FILE_BYTES
     if size > limit:
-        raise UnprocessableEntityError(say("fileTooLarge", mb=limit // (1024 * 1024)))
+        raise UnprocessableEntityError(say("fileTooLarge", size=size_text(limit)))
 
     declared = (content_type or "").split(";")[0].strip().lower()
     media_type = declared or "application/octet-stream"

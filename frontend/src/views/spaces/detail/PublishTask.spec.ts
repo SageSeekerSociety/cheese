@@ -464,6 +464,10 @@ describe('发题页：发一道', () => {
     await fireEvent.update(view.getAllByLabelText('第 1 个提交项')[2], '第三阶段的文件')
 
     await fireEvent.click(view.getByRole('button', { name: '删除第 2 个阶段' }))
+    // 删一个阶段先问一句，答「删除」才删。
+    const dialog = await waitFor(() => view.getByRole('alertdialog', { name: '删除第 2 个阶段？' }))
+    await fireEvent.click(within(dialog).getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(view.getAllByPlaceholderText('例如：需求分析')).toHaveLength(2))
     await publish(view)
     await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
 

@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { AttachmentsApi } from '@/api/attachments'
+import { uploadPercent, type UploadProgress } from '@/api/partUpload'
 
 /** 这道题带着的一份材料：发题时认附件 id，改题时认它在题目资料库里的名字。 */
 export interface PickedAttachment<Id extends number | string = number | string> {
@@ -23,12 +24,12 @@ export interface PickedAttachment<Id extends number | string = number | string> 
 }
 
 export interface AttachmentTarget<Id extends number | string> {
-  /** 传一份，拿回它的 id。 */
-  upload: (file: File) => Promise<Id>
+  /** 传一份，拿回它的 id；传得出进度的（分段上传）边传边报 `progress`。 */
+  upload: (file: File, progress: UploadProgress) => Promise<Id>
   /** 从这道题上摘下一份；不给就只是不再带上它。 */
   remove?: (id: Id) => Promise<void>
   /** 把一份换成新的一版，名字不变；不给就不能替换。 */
-  replace?: (id: Id, file: File) => Promise<void>
+  replace?: (id: Id, file: File, progress: UploadProgress) => Promise<void>
 }
 
 export function useAttachmentUploads<Id extends number | string>(target: AttachmentTarget<Id>) {
@@ -37,6 +38,9 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
   // shallowRef: the list is always replaced whole, and a deep ref would unwrap the generic id.
   const files = shallowRef<PickedAttachment<Id>[]>([])
   const uploading = ref(false)
+  /** 正在传的那一份传到了百分之几；没在传、或传法报不出进度时是 `null`。 */
+  const percent = ref<number | null>(null)
+  const progress: UploadProgress = (sent, total) => (percent.value = uploadPercent(sent, total))
   /** 单份文件的上限，`null` = 还没问到（问不到就不写这句话，不猜一个数出来）。 */
   const maxFileBytes = ref<number | null>(null)
 
@@ -55,7 +59,8 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
     try {
       for (const file of picked) {
         try {
-          const id = await target.upload(file)
+          percent.value = null
+          const id = await target.upload(file, progress)
           // 认名字的那一边，撞名时服务端拿了下一个 `(n)`：列它最后叫什么。
           const name = typeof id === 'string' ? id : file.name
           files.value = [...files.value, { id, name, size: file.size }]
@@ -70,6 +75,7 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
       }
     } finally {
       uploading.value = false
+      percent.value = null
     }
   }
 
@@ -95,7 +101,7 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
     if (!target.replace) return
     uploading.value = true
     try {
-      await target.replace(id, file)
+      await target.replace(id, file, progress)
       files.value = files.value.map((picked) => (picked.id === id ? { ...picked, size: file.size } : picked))
     } catch (error) {
       const name = files.value.find((picked) => picked.id === id)?.name ?? ''
@@ -107,6 +113,7 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
       )
     } finally {
       uploading.value = false
+      percent.value = null
     }
   }
 
@@ -117,5 +124,5 @@ export function useAttachmentUploads<Id extends number | string>(target: Attachm
 
   const ids = computed(() => files.value.map((file) => file.id))
 
-  return { files, uploading, maxFileBytes, ids, add, remove, replace, reset }
+  return { files, uploading, percent, maxFileBytes, ids, add, remove, replace, reset }
 }
