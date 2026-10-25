@@ -44,7 +44,11 @@ class PlatformLoopback(unittest.TestCase):
         threading.Thread(target=answer, daemon=True).start()
         self.helper = subprocess.Popen(
             [sys.executable, str(SCRIPT)],
-            env={**os.environ, "CHEESE_PLATFORM_SOCKET": self.socket_path},
+            env={
+                **os.environ,
+                "CHEESE_PLATFORM_SOCKET": self.socket_path,
+                "PLATFORM_LOOPBACK_HEAD_TIMEOUT_S": "1",
+            },
             stdout=subprocess.PIPE,
             text=True,
         )
@@ -68,9 +72,16 @@ class PlatformLoopback(unittest.TestCase):
         self.assertEqual(self.heard[0].split(b"\r\n")[0], b"GET /llm/v1/models HTTP/1.1")
 
     def test_a_request_without_the_prefix_never_reaches_the_socket(self):
-        for path in ("/llm/v1/models", "/guess/llm/v1/models", "/"):
+        prefix = "/" + self.base.split("/", 3)[3]
+        for path in ("/llm/v1/models", "/guess/llm/v1/models", "/", prefix + "/whoami"):
             self.assertTrue(self._get(path).startswith(b"HTTP/1.1 404"), path)
         self.assertEqual(self.heard, [])
+
+    def test_a_connection_that_never_sends_its_request_is_dropped(self):
+        host, port = self.base.split("//")[1].split("/")[0].split(":")
+        with socket.create_connection((host, int(port))) as idle:
+            idle.settimeout(30)
+            self.assertEqual(idle.recv(1), b"")
 
 
 if __name__ == "__main__":
