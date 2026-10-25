@@ -68,5 +68,6 @@
   "teammateTaskSummaryRequired": "A new task needs a summary of what it is for",
   "taskStarterHasItsOwnPlace": "{name} is this task's starter code. Replace or remove it under Starter code",
   "starterRemovedBeforePush": "The publisher removed this starter code before it reached the repository",
-  "starterPushGaveUp": "The code repository service kept refusing the starter code, so the platform stopped trying"
+  "starterPushGaveUp": "The code repository service kept refusing the starter code, so the platform stopped trying",
+  "starterMainTaken": "Before the starter code arrived, the code repository's main branch already held other commits, so the task's starter code, version {revision}, wasn't added"
 }

@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
-from sqlalchemy import BigInteger, and_, column, func, or_, select, table
+from sqlalchemy import BigInteger, and_, column, func, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -371,16 +371,17 @@ class ProjectRepository:
         )
         return list(result.scalars())
 
-    async def lock_external_task(self, task_id: int) -> None:
-        """Serialize everything that opens a registration workspace for this 赛题.
+    async def lock_claim(self, task_id: int, team_id: int | None) -> None:
+        """Take this team's claim on this 赛题 one at a time, until commit.
 
         Two teammates submitting together must not leave two projects for one
-        application, and the row they must both wait on is the 赛题's own — this
-        domain writes no column on it. The 赛题 row is read through the bare
-        ``task`` table for the cycle reason next door.
+        application. Only claims of the same team on the same 赛题 wait on each
+        other: a transaction-scoped advisory lock, not a lock on the 赛题 row,
+        which every other claim's own rows reference and would queue behind.
         """
         await self._session.execute(
-            select(_task.c.id).where(_task.c.id == task_id).with_for_update()
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"task-claim:{task_id}:{team_id}"},
         )
 
     async def list_visible_to(

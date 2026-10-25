@@ -16,6 +16,7 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import PROJECT, tell_project
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.queries import turn_starts
@@ -211,7 +212,13 @@ def periodic_jobs(
         assistants=assistants,
     )
     integration_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    task_periodic.register_periodic_jobs(jobs, sessions=sessions)
+
+    async def starter_settled(project_id: uuid.UUID, room_id: uuid.UUID) -> None:
+        await tell_project(room_id, PROJECT, project_id=project_id)
+
+    task_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, starter_settled=starter_settled
+    )
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 

@@ -10,29 +10,32 @@ at once.
 One row at a time, leased the way the notification outbox leases a delivery:
 the lease is taken and committed before the work starts, no transaction is held
 while the forge is contacted, and a worker whose lease was taken over cannot
-record its result. A push that can never land (the archive is refused when
-unpacked, or the publisher removed it) fails at once with the sentence that
-says why; one that hit a passing condition (the forge did not answer) is tried
-again later, and after ``MAX_ATTEMPTS`` it fails too, saying so.
+record its result. ``done`` means the starter commit is on `main`. A push
+that can never land fails at once with the sentence that says why: the archive
+is refused when read, the publisher removed it, or `main` was made by someone
+else first. One that hit a passing condition (the forge did not answer) is
+tried again later, and after ``MAX_ATTEMPTS`` it fails too, saying so.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 
 from app.core.db import SessionFactory
 from app.core.errors import BaseError, UnprocessableEntityError, message_key
 from app.core.sentences import say
 from app.domain.library.models import LibraryFileRecord
 from app.domain.project import forge
-from app.domain.project.models import ProjectStarterPush, StarterPushState
-from app.domain.project.starter import Starter
+from app.domain.project import starter as starter_archive
+from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
 from app.domain.task import package
 
 log = logging.getLogger(__name__)
@@ -81,28 +84,62 @@ async def _lease(sessions: SessionFactory) -> tuple[uuid.UUID, uuid.UUID] | None
     return leased
 
 
-async def _push(sessions: SessionFactory, project_id: uuid.UUID) -> None:
-    """Fetch the archive the claim took and push it. Raises what went wrong."""
+async def _push(
+    sessions: SessionFactory, project_id: uuid.UUID, token: uuid.UUID
+) -> None:
+    """Put the starter commit on the repository's `main`. Raises what went wrong.
+
+    The repository is asked first what already happened, before the archive is
+    looked at: an earlier attempt may have pushed and lost its answer (then the
+    commit it recorded is on `main`, whatever became of the archive since), or
+    someone with write access may have made `main` before the push (then the
+    starter commit is not on it, and that is said, not called done)."""
     async with sessions() as session:
         push = await session.get(ProjectStarterPush, project_id)
         assert push is not None  # leased just now
-        row = (
-            await session.get(LibraryFileRecord, push.library_file_id)
-            if push.library_file_id is not None
-            else None
-        )
+        recorded, revision = push.commit_sha, push.revision
+        message, when, file_id = push.message, push.created_at, push.library_file_id
+        remote = await forge.starter_remote(project_id, session)
+    main = await asyncio.to_thread(starter_archive.remote_main, remote)
+    if main is not None:
+        if recorded is not None and await asyncio.to_thread(
+            starter_archive.holds, remote, main, recorded
+        ):
+            return
+        raise UnprocessableEntityError(say("starterMainTaken", revision=revision))
+    async with sessions() as session:
+        row = await session.get(LibraryFileRecord, file_id) if file_id else None
         if row is None:
             raise UnprocessableEntityError(say("starterRemovedBeforePush"))
-        revision, message = push.revision, push.message
         session.expunge(row)
-    # No transaction is held while the archive is fetched, unpacked and pushed.
+    # No transaction is held while the archive is fetched, built and pushed.
     with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
         archive = Path(temporary) / "starter.zip"
         with archive.open("wb") as out:
             await package.write_file(row, out)
-        starter = Starter(archive=archive, revision=revision, message=message)
-        async with sessions() as session:
-            await forge.push_starter(project_id, session, starter)
+        repository = Path(temporary) / "starter.git"
+        commit = await asyncio.to_thread(
+            starter_archive.build, archive, message, when, repository
+        )
+        # Recorded before it is pushed: a push whose answer is lost is then
+        # recognised on the next attempt by this commit being on `main`.
+        await _note_commit(sessions, project_id, token, commit)
+        await asyncio.to_thread(starter_archive.push, remote, repository, commit)
+
+
+async def _note_commit(
+    sessions: SessionFactory, project_id: uuid.UUID, token: uuid.UUID, commit: str
+) -> None:
+    async with sessions() as session:
+        await session.execute(
+            update(ProjectStarterPush)
+            .where(
+                ProjectStarterPush.project_id == project_id,
+                ProjectStarterPush.claim_token == token,
+            )
+            .values(commit_sha=commit)
+        )
+        await session.commit()
 
 
 async def _record(
@@ -151,7 +188,14 @@ async def _record(
     return outcome
 
 
-async def push_due(sessions: SessionFactory, *, batch: int = 4) -> dict[str, int]:
+#: Told once a push is settled (done or failed), with the project and its
+#: root room, so the pages showing the project read it again.
+Settled = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
+
+
+async def push_due(
+    sessions: SessionFactory, *, settled: Settled | None = None, batch: int = 4
+) -> dict[str, int]:
     """Push up to ``batch`` starter archives whose turn has come."""
     counts = {"done": 0, "failed": 0, "retried": 0, "lost": 0}
     for _ in range(batch):
@@ -161,11 +205,19 @@ async def push_due(sessions: SessionFactory, *, batch: int = 4) -> dict[str, int
         project_id, token = leased
         failure: Exception | None = None
         try:
-            await _push(sessions, project_id)
+            await _push(sessions, project_id, token)
         except BaseError as exc:
             failure = exc
         except Exception as exc:  # a crash is a retry, and logged
             log.exception("starter push for project %s failed", project_id)
             failure = exc
-        counts[await _record(sessions, project_id, token, failure)] += 1
+        outcome = await _record(sessions, project_id, token, failure)
+        counts[outcome] += 1
+        if settled is not None and outcome in ("done", "failed"):
+            async with sessions() as session:
+                room = await session.scalar(
+                    select(Project.root_topic_id).where(Project.id == project_id)
+                )
+            if room is not None:
+                await settled(project_id, room)
     return counts

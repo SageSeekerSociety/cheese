@@ -3,6 +3,7 @@
 import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from app.core.sentences import say
 from app.domain.delivery_events import SettleCard
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.environment import project_environment
+from app.domain.project.forge import PreparedRepository
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import (
     AiMode,
@@ -26,6 +28,7 @@ from app.domain.project.ports import (
     DefaultTeammate,
     SeatMentors,
     SeedOverview,
+    StarterSource,
     TaskBrief,
     TaskTerms,
 )
@@ -46,6 +49,15 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClaimedRepository:
+    """What a claim settled before taking its lock: the repository it made on
+    the forge, and the starter code that repository is to begin with."""
+
+    repository: PreparedRepository
+    starter: StarterSource | None
 
 
 def _intent_brief(intent: str) -> str:
@@ -240,6 +252,7 @@ class ProjectService:
         forge_kind: str = "forgejo",
         intent: str = "",
         project_id: uuid.UUID | None = None,
+        claimed: ClaimedRepository | None = None,
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -298,8 +311,8 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import provision_repository
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import bind_repository, provision_repository
 
         if forge_kind == "forgejo":
             # A 题目's starter code is the repository's first commit (#4767):
@@ -308,14 +321,19 @@ class ProjectService:
             # the push runs after this transaction commits
             # (`task.starter_jobs`): unpacking and pushing a large archive must
             # not hold the claim open.
-            source = (
-                await self._terms().starter(external_task_id)
-                if external_task_id is not None
-                else None
-            )
-            await provision_repository(
-                project.id, self._session, initialize=source is None
-            )
+            if claimed is not None:
+                # The claim made the repository before taking its lock.
+                source = claimed.starter
+                await bind_repository(self._session, claimed.repository)
+            else:
+                source = (
+                    await self._terms().starter(external_task_id)
+                    if external_task_id is not None
+                    else None
+                )
+                await provision_repository(
+                    project.id, self._session, initialize=source is None
+                )
             if source is not None:
                 self._session.add(
                     ProjectStarterPush(
@@ -354,23 +372,36 @@ class ProjectService:
         layer up and are handed in by whoever has them.
         """
 
-        # Serialize registration workspace creation for this task. Two teammates
-        # submitting together must not leave two projects for one application.
-        await self._repo.lock_external_task(task.id)
         team_id = (
             claim.member_id
             if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
-        projects = await self._repo.list_for_external_task(task.id)
-        for project in projects:
-            if project.team_id == team_id and team_id is not None:
-                return project
+        if (found := await self._claimed_project(task.id, team_id)) is not None:
+            return found
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import prepare_repository
+
+        # The repository is made on the forge before any lock is taken: no
+        # claim waits on the forge with a row locked. One made for a claim that
+        # then finds its project already there is never bound, and the orphan
+        # sweep removes it (`forge.sweep_orphan_accounts`).
+        starter = await self._terms().starter(task.id)
+        project_id = uuid.uuid4()
+        repository = await prepare_repository(project_id, initialize=starter is None)
+        # Two teammates submitting together must not leave two projects for one
+        # application: this team's claims on this task go one at a time, from
+        # here to commit, and nothing under this lock leaves the database.
+        await self._repo.lock_claim(task.id, team_id)
+        if (found := await self._claimed_project(task.id, team_id)) is not None:
+            return found
         project = await self.create(
             name=task.name[:200],
             owner_handle=owner_handle,
             team_id=team_id,
             external_task_id=task.id,
+            project_id=project_id,
+            claimed=ClaimedRepository(repository=repository, starter=starter),
         )
         # The claimer agreed to the task's mentors before claiming; they join
         # the project it opened, once — a project reused on reapplication keeps
@@ -390,6 +421,17 @@ class ProjectService:
         )
         await self._seed_overview(project, brief)
         return project
+
+    async def _claimed_project(
+        self, task_id: int, team_id: int | None
+    ) -> Project | None:
+        """The project this team already opened for this task, if any."""
+        if team_id is None:
+            return None
+        for project in await self._repo.list_for_external_task(task_id):
+            if project.team_id == team_id:
+                return project
+        return None
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
         """Whether a document is some project's goals document."""

@@ -156,7 +156,6 @@ def _world():
             "task.deadline_scheduler.sweep_expired_deadlines",
             "sessions",
         ),
-        ("starter code pushes", "task.starter_jobs.push_due", "sessions"),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
     ],
 )

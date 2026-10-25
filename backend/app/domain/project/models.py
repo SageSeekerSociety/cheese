@@ -459,6 +459,9 @@ class ProjectStarterPush(Base):
     retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claim_token: Mapped[uuid.UUID | None] = mapped_column()
+    #: The starter commit the job built, recorded before it is pushed: on a later
+    #: attempt, the repository's `main` holding it means the push landed.
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")

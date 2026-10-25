@@ -94,10 +94,7 @@ const challengeStages = computed<ChallengeStages | null>(() => {
 })
 // 代码仓库从题目的起始代码开始的：第几版、放好了没有，没放成的那句原因按读的人的语言写。
 const starter = computed<ProjectStarter | null>(() => {
-  const s = project.data.value?.starter as
-    | { revision: number; state: ProjectStarter['state']; error: unknown }
-    | null
-    | undefined
+  const s = project.data.value?.starter
   if (!s) return null
   return { revision: s.revision, state: s.state, reason: renderNoticeMessage(s.error, '') }
 })

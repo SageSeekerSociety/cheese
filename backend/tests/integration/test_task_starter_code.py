@@ -21,9 +21,10 @@ from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
 from app.core.config import settings
-from app.domain.project.models import Project
+from app.domain.project.models import Project, ProjectStarterPush
 from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
 from tests.integration.test_task_files import (
@@ -509,3 +510,108 @@ def test_the_ai_teammate_removes_a_published_tasks_starter_code(
     latest = _portal.call(package.current, db_session, task_id)
     assert latest is not None
     assert latest.changes[package.STARTER_CHANGE] == package.REMOVED
+
+
+# --- 后台放代码：放成了才算放成，没放成说清为什么 -----------------------------------
+
+
+def test_a_path_as_long_as_upload_allows_lands_in_the_repository(
+    api_client: TestClient, user_client: UserCreator, push_starters
+):
+    """上传时收下的最长路径（4095 字节），领题后照样进仓库，不因为后台在哪个目录干活
+    而变长、然后永远放不进去。"""
+    long = "/".join(["n" * 254 + str(i % 10) for i in range(16)])
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="路径很长的起始代码")
+    archive = _zip((long, b"deep"), ("README.md", b"readme"))
+    resp = _set_starter(api_client, task_id, board["creator_token"], archive)
+    assert resp.status_code == 200, resp.text
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+
+    assert push_starters()["done"] == 1
+    assert set(_main(project_id)) == {long, "README.md"}
+
+
+async def _due_now(session, project_id: uuid.UUID) -> None:
+    await session.execute(
+        update(ProjectStarterPush)
+        .where(ProjectStarterPush.project_id == project_id)
+        .values(retry_at=None)
+    )
+    await session.commit()
+
+
+def test_a_push_whose_answer_was_lost_is_done_even_if_the_starter_is_gone(
+    api_client: TestClient,
+    user_client: UserCreator,
+    push_starters,
+    monkeypatch,
+    db_session,
+    _portal,
+):
+    """推送其实落地了、只是回答没回来；之后出题人删了起始代码。下一次先问仓库：
+    起始代码已经在 main 上，就是放好了。"""
+    from app.core.errors import GatewayUnavailableError
+    from app.domain.project import starter as starter_archive
+
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="回答丢了的推送")
+    _set_starter(api_client, task_id, board["creator_token"], _lab(b"original\n"))
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+
+    real_git = starter_archive._git
+
+    def answer_lost(work, *args, env):
+        out = real_git(work, *args, env=env)
+        if args[0] == "push":
+            raise GatewayUnavailableError("the answer never came back")
+        return out
+
+    monkeypatch.setattr(starter_archive, "_git", answer_lost)
+    assert push_starters()["retried"] == 1
+    monkeypatch.setattr(starter_archive, "_git", real_git)
+    removed = api_client.delete(
+        f"/tasks/{task_id}/starter", headers=_auth(board["creator_token"])
+    )
+    assert removed.status_code == 200, removed.text
+    # The retry's wait is over.
+    _portal.call(_due_now, db_session, project_id)
+
+    second = push_starters()
+    assert second["done"] == 1, (second, _starter(api_client, project_id, member_token))
+    assert _show(project_id, "main:README.md") == "original\n"
+    assert _starter(api_client, project_id, member_token)["state"] == "done"
+
+
+def test_a_main_made_before_the_push_is_not_called_the_starter(
+    api_client: TestClient, user_client: UserCreator, push_starters
+):
+    """领题之后、起始代码放进去之前，有写权限的人（学生或他的 agent）先往 main 推了
+    别的提交：起始代码没有放进去，就照实这么说，不说放好了。"""
+    board = new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="main 先被占了")
+    _set_starter(api_client, task_id, board["creator_token"], _lab())
+    _, member_token = _member_of(user_client, api_client, board)
+    project_id = _claim_project(api_client, task_id, member_token)
+    repo = git_store.path(project_id)
+    empty_tree = git_store.git(repo, "hash-object", "-t", "tree", "-w", "/dev/null")
+    work = git_store.git(
+        repo,
+        "-c",
+        "user.name=Student",
+        "-c",
+        "user.email=student@example.test",
+        "commit-tree",
+        empty_tree.strip(),
+        "-m",
+        "Student work",
+    )
+    git_store.git(repo, "update-ref", "refs/heads/main", work.strip())
+
+    assert push_starters()["failed"] == 1
+    starter = _starter(api_client, project_id, member_token)
+    assert starter["state"] == "failed"
+    assert starter["error"]["key"] == "starterMainTaken"
+    assert _log(project_id) == ["Student <student@example.test>|Student work"]

@@ -112,3 +112,53 @@ def test_two_claims_at_once_both_return_and_both_repositories_get_the_code(
     assert client.portal.call(starter_jobs.push_due, client.test_factory)["done"] == 2
     for project_id in projects:
         assert set(_main(project_id)) == {"README.md", "dataset.bin"}
+
+
+def test_a_slow_repository_service_does_not_make_a_second_claim_fail(
+    client, monkeypatch
+):
+    """The repository service takes 6 s to make each repository — longer than
+    the 5 s a claim waits on a lock. Two people claiming at once both succeed:
+    no claim waits on the service while holding something the other needs."""
+    import asyncio
+
+    from app.common.auth import verify_access_token
+    from app.domain.project import forge
+    from app.main import app
+
+    board = _board(client)
+    task_id = _create_task(client, board, name="仓库服务很慢时一起领的题")
+    students = [seed_user(client, f"student{uuid.uuid4().hex[:8]}") for _ in range(2)]
+    for token in students:
+        response = client.post(
+            f"/spaces/{board['space_id']}/members",
+            json={"userId": verify_access_token(token).user_id},
+            headers=_auth(board["creator_token"]),
+        )
+        assert response.status_code == 201, response.text
+
+    # Whichever step talks to the service in this build, it answers slowly.
+    for name in ("prepare_repository", "provision_repository"):
+        quick = getattr(forge, name, None)
+        if quick is None:
+            continue
+
+        async def slow(*args, _quick=quick, **kwargs):
+            await asyncio.sleep(6)
+            return await _quick(*args, **kwargs)
+
+        monkeypatch.setattr(forge, name, slow)
+    monkeypatch.setattr(core_db, "async_session_factory", client.test_request_factory)
+    monkeypatch.setitem(app.dependency_overrides, core_db.get_db, core_db.get_db)
+
+    def claim(token: str) -> tuple[int, str]:
+        response = client.post(
+            f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+        )
+        return response.status_code, response.text
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, students))
+
+    for status, body in results:
+        assert status == 200, body

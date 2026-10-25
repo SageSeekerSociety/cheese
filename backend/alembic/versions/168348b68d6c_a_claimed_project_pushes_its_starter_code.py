@@ -40,6 +40,7 @@ def upgrade() -> None:
         sa.Column("retry_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("claim_token", sa.Uuid(), nullable=True),
+        sa.Column("commit_sha", sa.String(length=64), nullable=True),
         sa.Column("error", postgresql.JSONB(), nullable=True),
         sa.Column(
             "created_at",

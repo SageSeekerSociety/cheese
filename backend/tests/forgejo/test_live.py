@@ -25,16 +25,16 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
 from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.agent_instance.adapters import project_team
+from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
     provision_repository,
-    push_starter,
     reconcile_repository_webhooks,
+    starter_remote,
 )
 from app.domain.project.forgejo_tokens import ForgejoTokens, purge_expired_tokens
 from app.domain.project.models import ForgeToken, Project
-from app.domain.project.starter import Starter
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
@@ -383,7 +383,6 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
         bundle.writestr("lab1/README.md", "# Lab 1\n")
         bundle.writestr("lab1/src/main.py", "print('hi')\n")
         bundle.writestr("__MACOSX/lab1/._README.md", "")
-    starter = Starter(archive=archive, revision=3, message="Starter code (version 3)")
     async with db_factory() as session:
         team = await a_team(session)
         seeded, plain = (
@@ -396,7 +395,13 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
         without = await provision_repository(plain.id, session)
         await session.commit()
     async with db_factory() as session:
-        await push_starter(seeded.id, session, starter)
+        remote = await starter_remote(seeded.id, session)
+    assert starter_archive.remote_main(remote) is None
+    built = starter_archive.build(
+        archive, "Starter code (version 3)", datetime.now(UTC), tmp_path / "s.git"
+    )
+    starter_archive.push(remote, tmp_path / "s.git", built)
+    assert starter_archive.remote_main(remote) == built
     headers = {"Authorization": "token " + admin}
     async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
         tree = await client.get(
@@ -420,13 +425,11 @@ async def test_a_repository_with_starter_code_begins_with_that_code(
         assert commit.json()["commit"]["author"]["email"] == "starter@users.invalid"
         readme = await client.get(f"/repos/{without.repo}/contents/README.md")
         assert readme.status_code == 200, readme.text
-    # Pushing again (an attempt whose answer was lost) leaves the repository be.
-    async with db_factory() as session:
-        await push_starter(seeded.id, session, starter)
-    async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
-        again = await client.get(f"/repos/{with_code.repo}/git/refs/heads/main")
-    again.raise_for_status()
-    assert again.json()[0]["object"]["sha"] == head["object"]["sha"]
+    assert head["object"]["sha"] == built
+    # The starter commit is still on main once someone builds on it, and a
+    # commit main never had is not.
+    assert starter_archive.holds(remote, built, built)
+    assert not starter_archive.holds(remote, built, "0" * 40)
 
 
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):

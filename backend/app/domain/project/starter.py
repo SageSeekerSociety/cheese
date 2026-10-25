@@ -28,6 +28,7 @@ import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -65,15 +66,6 @@ _UNIX = 3
 #: 第一个提交的作者：平台自己，不是哪一个人。
 AUTHOR_NAME = "Cheese"
 AUTHOR_EMAIL = "starter@users.invalid"
-
-
-@dataclass(frozen=True)
-class Starter:
-    """领题这一刻的起始代码：压缩包在哪、来自题目第几版、第一个提交怎么写。"""
-
-    archive: Path
-    revision: int
-    message: str
 
 
 @dataclass(frozen=True)
@@ -224,30 +216,75 @@ def check(source: BinaryIO) -> int:
         raise _refuse("starterNotZip") from exc
 
 
-def unpack(source: BinaryIO, destination: Path) -> int:
-    """把压缩包解到 `destination`（一个空目录）里。返回解出了几份文件。"""
-    root = destination.resolve()
-    try:
-        with zipfile.ZipFile(source) as archive:
-            entries = _entries(archive, _size(source))
-            for entry in entries:
-                target = (root / entry.path).resolve()
-                if not target.is_relative_to(root) or target == root:
-                    raise _refuse("starterUnsafeEntry", path=str(entry.path))
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # 'xb'：已经在的不覆盖。上面查过没有重复的路径，撞上就是出了别的错。
-                with archive.open(entry.info) as stream, target.open("xb") as out:
-                    shutil.copyfileobj(stream, out, 1024 * 1024)
-                target.chmod(0o755 if entry.executable else 0o644)
-    except (
-        zipfile.BadZipFile,
-        zipfile.LargeZipFile,
-        EOFError,
-        ValueError,
-        NotImplementedError,
-    ) as exc:
-        raise _refuse("starterNotZip") from exc
-    return len(entries)
+def _quoted(path: str) -> str:
+    """A path as `git fast-import` reads one: C-style quoted. Control characters
+    were refused already, so only the quote and the backslash need escaping."""
+    return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def build(archive: Path, message: str, when: datetime, repository: Path) -> str:
+    """The starter commit, built in a new bare repository at ``repository``, with
+    no file ever written: each entry streams from the archive into `git
+    fast-import` as a blob, so no path is bounded by where the job runs, and
+    nothing the archive holds lands on a disk outside git's own objects. The
+    same archive, message and time give the same commit. Returns its id.
+
+    An archive that cannot be read to its end (a corrupt entry) raises the
+    refusal that says so; nothing about it changes on a retry."""
+    env = _git_env()
+    _git(repository.parent, "init", "-q", "--bare", str(repository), env=env)
+    stamp = f"{int(when.timestamp())} +0000"
+    who = f"{AUTHOR_NAME} <{AUTHOR_EMAIL}> {stamp}"
+    with tempfile.TemporaryFile() as errors:
+        importer = subprocess.Popen(
+            ["git", "-C", str(repository), "fast-import", "--quiet"],
+            stdin=subprocess.PIPE,
+            stderr=errors,
+            env=env,
+        )
+        assert importer.stdin is not None
+        feed = importer.stdin
+        try:
+            with archive.open("rb") as source, zipfile.ZipFile(source) as zipped:
+                entries = _entries(zipped, _size(source))
+                for mark, entry in enumerate(entries, start=1):
+                    feed.write(
+                        f"blob\nmark :{mark}\ndata {entry.info.file_size}\n".encode()
+                    )
+                    with zipped.open(entry.info) as stream:
+                        shutil.copyfileobj(stream, feed, 1024 * 1024)
+                    feed.write(b"\n")
+                text = message.encode()
+                feed.write(
+                    f"commit refs/heads/main\nauthor {who}\ncommitter {who}\n"
+                    f"data {len(text)}\n".encode()
+                    + text
+                    + b"\n"
+                )
+                for mark, entry in enumerate(entries, start=1):
+                    mode = "100755" if entry.executable else "100644"
+                    feed.write(
+                        f"M {mode} :{mark} {_quoted(str(entry.path))}\n".encode()
+                    )
+                feed.write(b"done\n")
+        except (
+            zipfile.BadZipFile,
+            zipfile.LargeZipFile,
+            EOFError,
+            ValueError,
+            NotImplementedError,
+        ) as exc:
+            importer.kill()
+            importer.wait()
+            raise _refuse("starterNotZip") from exc
+        finally:
+            if not feed.closed:
+                feed.close()
+        if importer.wait(timeout=600):
+            errors.seek(0)
+            log.warning("starter fast-import failed: %s", errors.read().decode())
+            raise GatewayUnavailableError(say("forgejoStarterPushFailed"))
+    return _git(repository, "rev-parse", "refs/heads/main", env=env).strip()
 
 
 def _git(work: Path, *args: str, env: dict) -> str:
@@ -275,33 +312,69 @@ def _git_env() -> dict:
     }
 
 
-def push(starter: Starter, url: str, username: str, password: str) -> None:
-    """解开起始代码，作为 `main` 上唯一的一个提交推到 `url`（一个空仓库）。
+@dataclass(frozen=True)
+class Remote:
+    """The project's repository as git reaches it, with the account's
+    credential sent as a request header (as `forge_migration.push` does), never
+    in the address or a config file."""
 
-    凭据放在请求头里（和 `forge_migration.push` 一样），不进地址、不进 git 配置文件。"""
-    env = {
-        **_git_env(),
-        "GIT_AUTHOR_NAME": AUTHOR_NAME,
-        "GIT_AUTHOR_EMAIL": AUTHOR_EMAIL,
-        "GIT_COMMITTER_NAME": AUTHOR_NAME,
-        "GIT_COMMITTER_EMAIL": AUTHOR_EMAIL,
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "http.extraHeader",
-        "GIT_CONFIG_VALUE_0": "Authorization: Basic "
-        + base64.b64encode(f"{username}:{password}".encode()).decode(),
-    }
+    url: str
+    username: str
+    password: str
+
+    def env(self) -> dict:
+        return {
+            **_git_env(),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraHeader",
+            "GIT_CONFIG_VALUE_0": "Authorization: Basic "
+            + base64.b64encode(f"{self.username}:{self.password}".encode()).decode(),
+        }
+
+
+def remote_main(remote: Remote) -> str | None:
+    """The commit the repository's `main` is at, asked of the repository itself
+    (the forge's API learns of a push only some time after it); None while
+    there is no `main`."""
     with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
-        work = Path(temporary) / "work"
-        work.mkdir()
-        # The repository itself says whether `main` is there already (an
-        # earlier attempt pushed and lost its answer); the forge's API learns
-        # of a push only some time after it.
-        if _git(work, "ls-remote", url, "refs/heads/main", env=env).strip():
-            return
-        with starter.archive.open("rb") as source:
-            unpack(source, work)
-        _git(work, "init", "-q", "--initial-branch=main", env=env)
-        _git(work, "add", "-A", env=env)
-        # 压缩包里的文件全被它自己的 .gitignore 挡掉时，仍然要有一个提交：仓库得有 main。
-        _git(work, "commit", "-q", "--allow-empty", "-m", starter.message, env=env)
-        _git(work, "push", "-q", url, "HEAD:refs/heads/main", env=env)
+        found = _git(
+            Path(temporary),
+            "ls-remote",
+            remote.url,
+            "refs/heads/main",
+            env=remote.env(),
+        )
+    return found.split()[0] if found.strip() else None
+
+
+def holds(remote: Remote, main: str, commit: str) -> bool:
+    """Whether ``commit`` is on the repository's `main` (now at ``main``): fetch
+    `main`'s history without file contents and ask git."""
+    if main == commit:
+        return True
+    env = remote.env()
+    with tempfile.TemporaryDirectory(prefix="starter-") as temporary:
+        work = Path(temporary) / "history.git"
+        _git(Path(temporary), "init", "-q", "--bare", str(work), env=env)
+        _git(work, "fetch", "-q", "--filter=blob:none", remote.url, main, env=env)
+        result = subprocess.run(
+            ["git", "-C", str(work), "merge-base", "--is-ancestor", commit, main],
+            capture_output=True,
+            env=env,
+            timeout=600,
+            check=False,
+        )
+    return result.returncode == 0
+
+
+def push(remote: Remote, repository: Path, commit: str) -> None:
+    """Push ``commit`` as `main`. Not forced: a `main` that appeared meanwhile
+    refuses it, and the next attempt finds that `main` and says so."""
+    _git(
+        repository,
+        "push",
+        "-q",
+        remote.url,
+        f"{commit}:refs/heads/main",
+        env=remote.env(),
+    )
