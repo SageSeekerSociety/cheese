@@ -119,7 +119,9 @@ def test_a_draft_is_saved_as_written_and_published_as_a_task(
     assert task["name"] == "Lab 3 缓存模拟器"
     assert task["intro"].startswith("用 C 写一个缓存模拟器")
     read = api_client.get(f"/tasks/{task['id']}", headers=_headers(teacher))
-    assert read.json()["data"]["task"]["rubric"] == FORM["rubric"]
+    assert read.json()["data"]["task"]["rubric"] == [
+        {**line, "stage": None} for line in FORM["rubric"]
+    ]
 
     gone = api_client.get(f"/task-drafts/{draft['id']}", headers=_headers(teacher))
     assert gone.status_code == 404
@@ -198,7 +200,9 @@ def test_cheese_writes_a_new_draft_in_its_own_words(
     fields = draft["fields"]
     assert fields["rank"] == 2
     assert fields["submitterType"] == "USER"
-    assert fields["submissionSchema"] == [{"prompt": "csim.c", "type": "FILE"}]
+    assert fields["submissionSchema"] == [
+        {"prompt": "csim.c", "type": "FILE", "stage": None}
+    ]
     # On the asker's clock: they never said theirs, so Beijing time.
     assert fields["deadline"] == int(
         datetime(2026, 11, 8, 15, 59, tzinfo=UTC).timestamp() * 1000
@@ -365,3 +369,241 @@ def test_the_page_routes_do_not_take_cheeses_credential(
         headers=_as_cheese(board["teacher"]),
     )
     assert resp.status_code == 403
+
+
+def test_cheese_fills_every_ai_setting_and_the_published_task_has_them(
+    api_client: TestClient, board: dict
+):
+    """芝士 writes each field of 「AI 的设置」 in its own words — the default
+    teammate and every part of the 题目's guidance — and the 题目 it publishes
+    carries each of them."""
+    from app.domain.agent_type.library import preset_types
+
+    teacher = board["teacher"]
+    space_id = board["space"]["id"]
+    uploaded = api_client.post(
+        f"/spaces/{space_id}/materials",
+        files={
+            "file": ("week6.pdf", io.BytesIO(b"%PDF-1.4 week 6"), "application/pdf")
+        },
+        data={"type": "file"},
+        headers=_headers(teacher),
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    handout = next(
+        m
+        for m in api_client.get(
+            f"/spaces/{space_id}/materials", headers=_headers(teacher)
+        ).json()["data"]["materials"]
+        if m["name"] == "week6.pdf"
+    )
+    role, preset = next(iter(preset_types().items()))
+
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": space_id,
+            "name": "Lab 3 缓存模拟器",
+            "description": "用 C 写一个缓存模拟器。",
+            "difficulty": "中级",
+            "form": "个人",
+            "submission": [{"name": "csim.c", "kind": "文件"}],
+            "ai_teammate": preset.title,
+            "ai_mode": "引导为主",
+            "ai_guidance": "不要直接给出代码。",
+            "ai_private_guidance": "参考答案在讲义第 12 页。",
+            "ai_goals": ["能自己写出 LRU", "能讲清组相联"],
+            "ai_materials": ["week6.pdf"],
+            "ai_skills": ["wolfram"],
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    draft = written.json()["data"]["draft"]
+
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": draft},
+        headers=_as_cheese(teacher),
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+
+    task = api_client.get(f"/tasks/{task_id}", headers=_headers(teacher)).json()[
+        "data"
+    ]["task"]
+    assert task["defaultRole"] == role
+    teaching = task["teaching"]
+    assert teaching["mode"] == "guide"
+    assert teaching["systemPrompt"] == "不要直接给出代码。"
+    assert teaching["privatePrompt"] == "参考答案在讲义第 12 页。"
+    assert teaching["learningGoals"] == ["能自己写出 LRU", "能讲清组相联"]
+    assert teaching["materialIds"] == [handout["id"]]
+    assert teaching["skills"] == ["wolfram"]
+
+
+def test_a_published_tasks_private_guidance_is_read_only_by_who_may_teach_it(
+    api_client: TestClient, board: dict
+):
+    """Anyone who can read a 题目 can have 芝士 read it; its private guidance
+    goes only to its publisher and the space's admins."""
+    teacher = board["teacher"]
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={
+            "space": board["space"]["id"],
+            "name": "Lab 3 缓存模拟器",
+            "description": "用 C 写一个缓存模拟器。",
+            "difficulty": "中级",
+            "form": "个人",
+            "submission": [{"name": "csim.c", "kind": "文件"}],
+            "ai_private_guidance": "SECRET_ANSWER_4777",
+        },
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    published = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": written.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+    approved = api_client.patch(
+        f"/tasks/{task_id}", json={"approved": "APPROVED"}, headers=_headers(teacher)
+    )
+    assert approved.status_code == 200, approved.text
+
+    def read_as(user) -> str:
+        resp = api_client.post(
+            "/task-drafts/agent/read", json={"task": task_id}, headers=_as_cheese(user)
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["text"]
+
+    assert "SECRET_ANSWER_4777" in read_as(teacher)
+    seen = read_as(board["stranger"])
+    assert "Lab 3 缓存模拟器" in seen
+    assert "SECRET_ANSWER_4777" not in seen
+
+
+def test_an_admin_who_lost_the_board_no_longer_reads_a_drafts_private_guidance(
+    api_client: TestClient, board: dict
+):
+    """Changes to a published 题目 carry its private guidance only while their
+    writer may still teach it: a board admin who opened them and was then
+    removed reads them without it, on the page and through 芝士."""
+    teacher, admin = board["teacher"], board["stranger"]
+    space_id = board["space"]["id"]
+    draft = _start(
+        api_client,
+        board,
+        fields={
+            **FORM,
+            "teaching": {"privatePrompt": "SECRET_ANSWER_4777"},
+            "teachingOwn": True,
+        },
+    )
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+    made = api_client.post(
+        f"/spaces/{space_id}/managers",
+        json={"userId": admin.user_id, "role": "ADMIN"},
+        headers=_headers(teacher),
+    )
+    assert made.status_code == 201, made.text
+    changes = api_client.post(
+        "/task-drafts", json={"task": task_id}, headers=_headers(admin)
+    )
+    assert changes.status_code == 201, changes.text
+    changes_id = changes.json()["data"]["id"]
+    assert "SECRET_ANSWER_4777" in changes.text
+
+    removed = api_client.delete(
+        f"/spaces/{space_id}/managers/{admin.user_id}", headers=_headers(teacher)
+    )
+    assert removed.status_code in (200, 204), removed.text
+
+    page = api_client.get(f"/task-drafts/{changes_id}", headers=_headers(admin))
+    assert page.status_code == 200, page.text
+    assert "SECRET_ANSWER_4777" not in page.text
+    read = api_client.post(
+        "/task-drafts/agent/read", json={"draft": changes_id}, headers=_as_cheese(admin)
+    )
+    assert read.status_code == 200, read.text
+    assert "SECRET_ANSWER_4777" not in read.text
+
+
+def test_inheriting_the_default_teammate_brings_back_the_categorys(
+    api_client: TestClient, board: dict, db_session, _portal
+):
+    """A 题目 that names its own default teammate, set back to 沿用上层设置 by
+    芝士, gets its 项目集's default again — not "no teammate"."""
+    from app.domain.agent_type.library import preset_types
+    from app.domain.space.models import SpaceCategory
+    from app.domain.task.models import Task
+
+    own, category_role = list(preset_types())[:2]
+    teacher = board["teacher"]
+    draft = _start(api_client, board, fields={**FORM, "defaultRole": own})
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+    assert published.status_code == 200, published.text
+    task_id = published.json()["data"]["task"]["id"]
+
+    async def put_in_a_category() -> None:
+        now = datetime.now(UTC)
+        category = SpaceCategory(
+            space_id=board["space"]["id"],
+            name="课程",
+            description="",
+            display_order=0,
+            default_role=category_role,
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(category)
+        await db_session.flush()
+        (await db_session.get(Task, task_id)).category_id = category.id
+        await db_session.commit()
+
+    _portal.call(put_in_a_category)
+    written = api_client.post(
+        "/task-drafts/agent/write",
+        json={"task": task_id, "ai_teammate": "沿用上层设置"},
+        headers=_as_cheese(teacher),
+    )
+    assert written.status_code == 200, written.text
+    saved = api_client.post(
+        "/task-drafts/agent/publish",
+        json={"draft": written.json()["data"]["draft"]},
+        headers=_as_cheese(teacher),
+    )
+    assert saved.status_code == 200, saved.text
+
+    found = api_client.get(f"/tasks/{task_id}/inheritance", headers=_headers(teacher))
+    assert found.status_code == 200, found.text
+    assert (found.json()["data"]["agent"] or {}).get("typeName") == category_role
+
+
+def test_cheese_is_refused_an_ai_setting_the_space_does_not_offer(
+    api_client: TestClient, board: dict
+):
+    """A skill, a file or a teammate the 题目 cannot have is refused, not
+    written."""
+    teacher = board["teacher"]
+    for field, value in (
+        ("ai_skills", ["no-such-skill"]),
+        ("ai_materials", ["missing.pdf"]),
+        ("ai_teammate", "no-such-teammate"),
+    ):
+        refused = api_client.post(
+            "/task-drafts/agent/write",
+            json={"space": board["space"]["id"], "name": "题", field: value},
+            headers=_as_cheese(teacher),
+        )
+        assert refused.status_code == 400, (field, refused.text)

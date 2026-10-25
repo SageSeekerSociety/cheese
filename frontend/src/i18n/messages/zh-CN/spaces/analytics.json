@@ -42,7 +42,7 @@
     "NONE": "待审核",
     "NOT_STARTED": "未提交",
     "NOT_SUBMITTED": "未提交",
-    "NO_PARTICIPANTS": "无人领取",
+    "NO_PARTICIPANTS": "无人参与",
     "PARTIAL_SUCCESS": "部分通过",
     "PENDING_REVIEW": "待评审",
     "REJECTED_RESUBMITTABLE": "退回可重交",

@@ -109,7 +109,15 @@ const context = {
   version: 'v7',
 }
 
-function mount(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+/** 挂这一格。`marks` / `activeMark` 是这一份上已有的评论指着的几处（见 `PreviewPages` 的 props）。 */
+type PagesProps = {
+  data: ArrayBuffer | null
+  context?: typeof context
+  marks?: readonly { id: string; page: number; x: number; y: number }[]
+  activeMark?: string | null
+}
+
+function mount(props: PagesProps = { data: new ArrayBuffer(8) }) {
   return render(PreviewPages, {
     props,
     global: {
@@ -124,7 +132,7 @@ function mount(props: { data: ArrayBuffer | null; context?: typeof context } = {
 }
 
 /** 打开一份能画出来的文档：pdf.js 是假的，解析得自己放行，然后等两页都画出来。 */
-async function opened(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+async function opened(props: PagesProps = { data: new ArrayBuffer(8) }) {
   const ui = mount(props)
   await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
   pdf.resolveDoc?.(DOCUMENT)
@@ -375,5 +383,64 @@ describe('在页面上指一点', () => {
 
     await waitFor(() => expect(ui.container.querySelector('.pv__pin')).toBeNull())
     expect(ui.container.querySelector('.pv')?.className).not.toContain('pv--pointing')
+  })
+})
+
+describe('页上已有的评论标记', () => {
+  const marks = [
+    { id: 'c1', page: 1, x: 0.25, y: 0.5 },
+    { id: 'c2', page: 2, x: 0.75, y: 0.1 },
+  ]
+
+  it('每一处画在它说的那一页、那个比例位置上', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+
+    const onOne = ui.container.querySelector('[data-page="1"] [data-comment-mark="c1"]') as HTMLElement
+    const onTwo = ui.container.querySelector('[data-page="2"] [data-comment-mark="c2"]') as HTMLElement
+    expect(onOne).not.toBeNull()
+    expect(onTwo).not.toBeNull()
+    // 位置写的是比例，页按面板宽度重画、读者缩放都跟着走。
+    expect(onOne.style.left).toBe('25%')
+    expect(onOne.style.top).toBe('50%')
+    expect(onTwo.style.left).toBe('75%')
+    // 各在各的页上：左边那一页只有 c1，右边只有 c2。筛错了（比如每页都把前面的也画上）
+    // 时，读者会在第 1 页上看到第 2 页的那一颗，指着完全不同的地方。
+    expect(ui.container.querySelectorAll('[data-page="1"] [data-comment-mark]')).toHaveLength(1)
+    expect(ui.container.querySelectorAll('[data-page="2"] [data-comment-mark]')).toHaveLength(1)
+  })
+
+  it('这一版里没有的那一页上不画：页数少了，那个页码落不到任何一页', async () => {
+    // 评论记的是「哪一版 + 第几页 + 比例」。换成只有一页的那一版时，第 2 页上的那一处
+    // 没有地方可落——这一档不去猜它去哪了，不画。
+    const ui = await opened({
+      data: new ArrayBuffer(8),
+      context,
+      marks: [{ id: 'c2', page: 9, x: 0.5, y: 0.5 }],
+    })
+    expect(ui.container.querySelector('[data-comment-mark="c2"]')).toBeNull()
+  })
+
+  it('点一处标记，把那一串评论开出来', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+    await fireEvent.click(ui.container.querySelector('[data-comment-mark="c1"]')!)
+
+    const emitted = (ui.emitted('mark') ?? []) as unknown[][]
+    expect(emitted).toEqual([['c1']])
+  })
+
+  it('正在看的那一条画得显眼些', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks, activeMark: 'c2' })
+    expect(ui.container.querySelector('[data-comment-mark="c2"]')?.className).toContain('is-active')
+    expect(ui.container.querySelector('[data-comment-mark="c1"]')?.className).not.toContain('is-active')
+  })
+
+  it('标记接得上指针：它自己就是一个按钮，不是一层盖住页面的透明块', async () => {
+    // 页上原来只有「指位置」点的那个记号（`pointer-events: none`）。评论标记要能点，
+    // 就必须真的收得到点击——顺手给错了类，读者点了没反应，这条守着它。
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+    const mark = ui.container.querySelector('[data-comment-mark="c1"]') as HTMLElement
+    expect(mark.tagName).toBe('BUTTON')
+    expect(mark.className).not.toContain('pv__pin')
+    expect(mark.getAttribute('aria-label')).toBe('评论这一处')
   })
 })

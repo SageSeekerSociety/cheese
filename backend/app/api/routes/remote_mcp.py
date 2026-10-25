@@ -297,6 +297,7 @@ def _failure(exc: AppError | BaseError) -> dict[str, str]:
 
 @router.get("/mcp/oauth/callback")
 async def callback(
+    request: Request,
     db: DbSession,
     state: str = "",
     code: str = "",
@@ -321,7 +322,7 @@ async def callback(
     else:
         query["mcp_result"] = "connected"
     landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
-    return back_in_app(landing) if flow.get("app") else landing
+    return back_in_app(request, landing) if flow.get("app") else landing
 
 
 class ProxyIn(BaseModel):

@@ -357,6 +357,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
@@ -577,7 +581,7 @@
     "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
     "s1": {
       "name": "Claimed and submitted",
-      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+      "note": "Default cell: four KPIs (participants / submitted / pass rate / idle since starting), a participation trend, how far they got, squad makeup."
     },
     "s2": {
       "name": "Read failure, not drawn as 0",
@@ -593,18 +597,18 @@
     }
   },
   "rosterView": {
-    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "about": "Task detail 'Participants' tab: handling applications, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
     "s1": {
       "name": "Roster loaded",
       "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
     },
     "s2": {
       "name": "Roster still loading",
-      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No participants' first."
     },
     "s3": {
       "name": "Not for you",
-      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see participants."
     },
     "s4": {
       "name": "Failed this time",
@@ -612,7 +616,7 @@
     },
     "s5": {
       "name": "No one has claimed",
-      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No participants'."
     }
   },
   "views404": {

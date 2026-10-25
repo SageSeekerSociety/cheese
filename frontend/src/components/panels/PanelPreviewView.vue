@@ -224,6 +224,83 @@ async function commentHere() {
 const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
 const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
 
+// ---- 把已有的评论画在文件上 ----
+//
+// 只画没解决的那几种，和概览文档一致（那边 `openThreads` 也是只看 open 的）：一条已经
+// 说完的评论还压在正文上，读者会以为它还等着人回。
+//
+// 而且只画**这一版**上记的那几处：评论记的是哪一版 + 哪一处，换了一版那一段话可能已经
+// 挪走或改过，照旧位置画会指到别的东西上。找不回来的（正文改了）就不画——比画错强。
+const focusedThread = ref<string | null>(null)
+/** 这份文件上还没解决、且记在**某一版**上的那几条，各自的锚点原样交回去。
+ *
+ *  什么样的锚点画得出来是每一档自己的事（正文按文字找、页按页码和比例找），这里只管
+ *  两条共用的判据：没解决、是这一种、记在要画的那一版上。分几处各写一遍的话，改了一处
+ *  就会漂。
+ *
+ *  `version` 是**屏幕上那一份**的版本，不是「文件现在这一版」：页上的字节可能还是上一版
+ *  的（新的一版还在路上，或者它转不出来了，旧的那份就那样留着）。照文件元数据放行的话，
+ *  新一版记下的页码和比例会画在旧一版的页上，指到完全不同的地方。`null` 表示连屏幕上是
+ *  哪一版都说不清——那就不画。 */
+function liveAnchors(kind: string, version: string | null): { id: string; anchor: Record<string, unknown> }[] {
+  if (!version) return []
+  return (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
+    if (thread.state !== 'open') return []
+    const anchor = thread.comment.anchor as Record<string, unknown> | null | undefined
+    if (!anchor || anchor.kind !== kind) return []
+    if (!anchor.version || anchor.version !== version) return []
+    return [{ id: thread.comment.id, anchor }]
+  })
+}
+const threadAnchors = computed(() =>
+  liveAnchors('text-range', commentTarget.value?.version ?? null).flatMap(({ id, anchor }) => {
+    const text = anchor.text
+    if (typeof text !== 'string' || !text) return []
+    return [
+      {
+        id,
+        quote: {
+          text,
+          heading: (anchor.heading as string | null | undefined) ?? null,
+          prefix: (anchor.prefix as string | undefined) ?? '',
+          suffix: (anchor.suffix as string | undefined) ?? '',
+        },
+      },
+    ]
+  })
+)
+/** 分页文档上一页里指着的那几处：第几页 + 页内比例（`page-pin`）。
+ *
+ *  这一版按**屏幕上那份字节**算（`slideContext` 只在字节与文件版本核过、且没在加载、
+ *  没出错时才给得出），和「在页上指一处」那条路用的是同一道判据。 */
+const pageAnchors = computed(() =>
+  liveAnchors('page-pin', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const page = anchor.page
+    const x = anchor.x
+    const y = anchor.y
+    if (typeof page !== 'number' || typeof x !== 'number' || typeof y !== 'number') return []
+    return [{ id, page, x, y }]
+  })
+)
+/** 表格上指着的那几格：工作表名 + A1 地址（`sheet-cell`）。
+ *
+ *  地址是文件本身给得出来的坐标，不像页码要过一次转换；所以这一档只判形状，地址在
+ *  这一版里落不到任何一格上时由表格自己决定不画（表短了、那一格没画出来）。
+ *  这一版照样按**屏幕上那份字节**算（`slideContext`），理由和页上那几颗同一条。 */
+const sheetAnchors = computed(() =>
+  liveAnchors('sheet-cell', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const sheet = anchor.sheet
+    const address = anchor.address
+    if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
+    return [{ id, sheet, address }]
+  })
+)
+/** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
+function openAnchor(id: string) {
+  focusedThread.value = id
+  if (!props.comments?.open.value) props.comments?.toggle()
+}
+
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
 defineExpose({ handleEscape, handlePick: pick.fromFrame })
@@ -345,6 +422,11 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :revs="revs"
       :file-history="fileHistory"
       :show-history="showHistory"
+      :anchors="threadAnchors"
+      :page-anchors="pageAnchors"
+      :sheet-anchors="sheetAnchors"
+      :active-anchor="focusedThread"
+      @anchor="openAnchor"
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
@@ -392,9 +474,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
-    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。 -->
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。图上圈着一块、标注条开着时
+         先收起来：矮的面板里它正落在标注条上，会盖住「取消」。 -->
     <BaseButton
-      v-if="commentTarget"
+      v-if="commentTarget && !imageRegion.target.value"
       class="panel-preview__comments-toggle"
       kind="secondary"
       size="sm"
@@ -414,6 +497,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :thread-state="props.comments!.threads.state"
       :thread-actions="props.comments!.threads.actions"
       :pick="commentPick"
+      :focus-id="focusedThread"
       :writable="true"
       :post="postFileComment"
       :name-of="commentNameOf"
@@ -421,6 +505,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :agent-name="agentName"
       @clear-pick="clearLocator"
       @close="props.comments?.toggle()"
+      @update:open-id="focusedThread = $event"
     />
 
     <PreviewLocator

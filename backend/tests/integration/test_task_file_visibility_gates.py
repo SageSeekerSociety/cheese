@@ -1,14 +1,14 @@
-"""题目的附件清单，不许比题目本身更看得见。
+"""题目的材料清单，不许比题目本身更看得见。
 
-`GET /tasks/{taskId}` 对「这道题存不存在于这个读者眼里」有两道闸，是附件那两条
-路由一度没有走的：
+`GET /tasks/{taskId}` 对「这道题存不存在于这个读者眼里」有两道闸，是材料那两条
+路由（当时还叫附件）一度没有走的：
 
 1. **没通过审批的题**（``approved == 2``）：对出题人和板管理员是草稿，对其他人
    还不该存在 —— 403（``get_task`` 的原文口径）；
 2. **超出本板上限**（``space.visible_task_limit``）：它已经是一道普通成员看不见的
    题了，再问就是 404，与「这道题不存在」同一句话。
 
-附件路由当时只问了 ``TaskVisibilityService.can_view_task``，而那个判据在
+材料路由当时只问了 ``TaskVisibilityService.can_view_task``，而那个判据在
 ``task.access_control_enabled`` 为假（题目默认值）时对任何登录用户都放行 —— 于是
 一道 403 或 404 的题，仍然把它的材料清单（文件名、大小、上传者 id、下载次数）
 交出去，题目 id 又是可猜的小整数，可以直接遍历。
@@ -30,14 +30,16 @@ from fastapi.testclient import TestClient
 from app.core import storage as storage_module
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
-from tests.integration.test_task_attachments import (
+from tests.integration.test_task_files import (
+    MATERIAL,
+    _add,
     _approve_task,
     _auth,
     _create_task,
-    _list,
+    _download,
+    _files,
     _login,
     _new_board,
-    _upload_to_task,
 )
 
 
@@ -45,7 +47,7 @@ from tests.integration.test_task_attachments import (
 def upload_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把本地存储落到 tmp_path。
 
-    与 ``test_task_attachments.py`` 里那个同名的 fixture 是同一件事，就地重写成
+    与 ``test_task_files.py`` 里那个同名的 fixture 是同一件事，就地重写成
     一个本文件的 fixture 而不是 import 过来的：那个名字既要当 fixture 又要当测试
     参数，跨模块 import 会让 ruff 把它读成「参数重定义」。``get_storage_backend()``
     是模块级单例，第一次调用就把 base_path 定死 —— 所以光改 settings 不够，还得先
@@ -75,6 +77,19 @@ def _detail(api_client: TestClient, task_id: int, token: str):
     return api_client.get(f"/tasks/{task_id}", headers=_auth(token))
 
 
+def _list(api_client: TestClient, task_id: int, token: str) -> tuple[int, dict]:
+    resp = _files(api_client, task_id, token)
+    return resp.status_code, resp.json() if resp.content else {}
+
+
+def _upload_to_task(
+    api_client: TestClient, task_id: int, token: str, *, filename: str = "讲义.pdf"
+) -> str:
+    resp = _add(api_client, task_id, token, filename, MATERIAL)
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["name"]
+
+
 def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
@@ -84,7 +99,7 @@ def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     「有没有材料」在这里恰好又是「这道草稿题存不存在」的探针。
     """
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="还没过审的题")
+    task_id = _create_task(api_client, board, name="还没过审的题", approve=False)
     attached = _upload_to_task(api_client, task_id, board["creator_token"])
     member = user_client.create_user()
     member_token = _login(user_client, api_client, member)
@@ -105,7 +120,7 @@ def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     assert _detail(api_client, task_id, board["creator_token"]).status_code == 200
     status, body = _list(api_client, task_id, board["creator_token"])
     assert status == 200
-    assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
+    assert [f["name"] for f in body["data"]["files"]] == [attached]
 
     # 板管理员也一样：他是替出题人管这块板的人，草稿题归他管。
     manager = user_client.create_user()
@@ -119,7 +134,7 @@ def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     assert _detail(api_client, task_id, manager_token).status_code == 200
     status, body = _list(api_client, task_id, manager_token)
     assert status == 200
-    assert [a["id"] for a in body["data"]["attachments"]] == [attached["id"]]
+    assert [f["name"] for f in body["data"]["files"]] == [attached]
 
 
 def test_a_stranger_gets_nothing_from_an_unapproved_task(
@@ -131,7 +146,7 @@ def test_a_stranger_gets_nothing_from_an_unapproved_task(
     """陌生人连这块板的成员都不是，却一度拿得到草稿题的材料清单。"""
     _, stranger_token = stranger
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="草稿题")
+    task_id = _create_task(api_client, board, name="草稿题", approve=False)
     _upload_to_task(api_client, task_id, board["creator_token"])
 
     assert _detail(api_client, task_id, stranger_token).status_code == 403
@@ -148,8 +163,8 @@ def test_a_task_over_the_board_limit_hides_its_list_too(
     另一句话 —— 403 与 404 的差别本身就是「这道题到底存不存在」的答案。
     """
     board = _new_board(user_client, api_client)
-    first = _create_task(api_client, board, name="先发的题")
-    second = _create_task(api_client, board, name="后发的题")
+    first = _create_task(api_client, board, name="先发的题", approve=False)
+    second = _create_task(api_client, board, name="后发的题", approve=False)
     _approve_task(api_client, board, first)
     _approve_task(api_client, board, second)
 
@@ -183,20 +198,16 @@ def test_a_task_over_the_board_limit_hides_its_list_too(
 
     status, body = _list(api_client, first, member_token)
     assert status == 200
-    assert len(body["data"]["attachments"]) == 1
+    assert len(body["data"]["files"]) == 1
 
     status, _ = _list(api_client, second, member_token)
     assert status == 404, "超出上限的题对成员不存在，它的清单也不存在"
     assert (
-        api_client.get(
-            f"/tasks/{second}/attachments/{hidden_material['id']}/download",
-            headers=_auth(member_token),
-        ).status_code
-        == 404
+        _download(api_client, second, member_token, hidden_material).status_code == 404
     )
 
     # 出题人不受上限约束，两道题与两道题的材料都还是他的。
     assert _detail(api_client, second, board["creator_token"]).status_code == 200
     status, body = _list(api_client, second, board["creator_token"])
     assert status == 200
-    assert [a["id"] for a in body["data"]["attachments"]] == [hidden_material["id"]]
+    assert [f["name"] for f in body["data"]["files"]] == [hidden_material]

@@ -83,7 +83,7 @@ export interface AssistantCited {
   title: string
 }
 
-/** 芝士交给人的一份文件（`cheese_file_give`）：存在他自己的资料库里——他名下那个团队
+/** 芝士交给人的一份文件（`cheese_library(action=give)`）：存在他自己的资料库里——他名下那个团队
  *  （`team`）的，叫 `path`。 */
 export interface AssistantHanded {
   team: number
@@ -246,7 +246,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
   const streaming = ref<string | null>(null)
-  /** 芝士此刻在用的工具名（`cheese_docs_search` 之类），面板把它说成人话。 */
+  /** 芝士此刻在用的工具名（`cheese_help` 之类），面板把它说成人话。 */
   const tool = ref<string | null>(null)
   /** 这一轮正在做的几步。 */
   const steps = ref<AssistantStep[]>([])

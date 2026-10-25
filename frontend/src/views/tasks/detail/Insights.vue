@@ -8,6 +8,7 @@
     :failed="failed"
     :failure-reason="failureReason"
     :forbidden="forbidden"
+    :progress="progress ?? null"
     @retry="load"
   />
 </template>
@@ -22,7 +23,7 @@
 // 数据来自两个真接口，没有一个数字是本地编的：
 // - `GET /tasks/{id}/participants` —— 领取名单（含每人加入时刻，走势图就从它算）
 // - `GET /spaces/{id}/submissions?taskId=…` —— 这道题的所有提交（含判没判、判过没过）
-import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
+import type { Task, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -37,6 +38,8 @@ const props = defineProps<{
   taskData: Task | null
   isCreator?: boolean
   isAdmin?: boolean
+  /** 每个阶段上的进度，题目页取的那一份（全体分布只有批改的人读得到）。 */
+  progress?: TaskProgress | null
 }>()
 
 const route = useRoute()

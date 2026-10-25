@@ -232,14 +232,10 @@ async def create_task_participant(
         raise ForbiddenError(
             "You must be a member of this team to register it for a task"
         )
-    # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
-    approved = 2
-
     membership = await membership_service.create_membership(
         task=task,
         member_id=member,
         is_team=is_team,
-        approved=approved,
         deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
@@ -297,7 +293,6 @@ async def join_task_as_user(
         task=task,
         member_id=auth_user.user_id,
         is_team=False,
-        approved=2,
         deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
@@ -363,7 +358,6 @@ async def join_task_as_team(
         task=task,
         member_id=payload.team_id,
         is_team=True,
-        approved=2,
         deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
@@ -371,11 +365,12 @@ async def join_task_as_team(
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-    # Commit before answering, as in ``join_task_as_user``: the publisher lists
-    # the pending claims on the next request.
+    # The claim and the project it opens commit together, after both are
+    # settled, and before answering, as in ``join_task_as_user``: the publisher
+    # lists the pending claims on the next request.
+    response = await _participation_response(db, task, membership, auth_user)
     await db.commit()
-
-    return await _participation_response(db, task, membership, auth_user)
+    return response
 
 
 @router.patch(

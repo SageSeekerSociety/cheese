@@ -139,6 +139,7 @@ describe('空间设置：给 AI 队友的指导', () => {
           learningGoals: [],
           materialIds: [],
           documentIds: [],
+          skills: [],
         },
       })
     )
@@ -160,6 +161,7 @@ describe('空间设置：给 AI 队友的指导', () => {
         learningGoals: [],
         materialIds: [],
         documentIds: [],
+        skills: [],
       },
     })
   })

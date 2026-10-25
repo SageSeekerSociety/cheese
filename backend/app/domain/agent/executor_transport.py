@@ -506,7 +506,7 @@ class PlatformHost:
         #: reports is known to be that run's (`presentation.task_presentation`).
         self.run = run
         #: Ask this session's harness to compact its context, for the one
-        #: tool that does (`cheese_compact`); a session with none refuses.
+        #: tool that does (`cheese_session(action=compact)`); a session with none refuses.
         self.compact = compact
 
     def request(self, plan):

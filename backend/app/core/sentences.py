@@ -224,6 +224,10 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        # A 题目's takers heard 「修改了提交内容或评分要点」 on every change to
+        # what it asks; the notice now says which thing changed
+        # (``spaceTaskChanged``), and old notifications still carry the key.
+        "spaceTaskRequirementsChanged",
     }
 )
 

@@ -27,6 +27,30 @@ __all__ = [
 ]
 
 
+def _latest_only(stmt):
+    """Keep only each membership's latest live version in each stage: a stage is
+    judged by its latest submission (``submission_state``), so "the latest" is
+    per stage, not per membership."""
+    latest = (
+        select(
+            TaskSubmission.membership_id,
+            TaskSubmission.stage,
+            func.max(TaskSubmission.version).label("max_version"),
+        )
+        .where(TaskSubmission.deleted_at.is_(None))
+        .group_by(TaskSubmission.membership_id, TaskSubmission.stage)
+        .subquery()
+    )
+    return stmt.join(
+        latest,
+        and_(
+            TaskSubmission.membership_id == latest.c.membership_id,
+            TaskSubmission.stage == latest.c.stage,
+            TaskSubmission.version == latest.c.max_version,
+        ),
+    )
+
+
 class TaskSubmissionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -46,12 +70,16 @@ class TaskSubmissionRepository:
         membership_id: int,
         submitter_id: int,
         version: int,
+        stage: int = 0,
+        package_revision: int | None = None,
     ) -> TaskSubmission:
         now = datetime.now(UTC)
         submission = TaskSubmission(
             membership_id=membership_id,
             submitter_id=submitter_id,
             version=version,
+            stage=stage,
+            package_revision=package_revision,
             created_at=now,
             updated_at=now,
             deleted_at=None,
@@ -87,51 +115,12 @@ class TaskSubmissionRepository:
         await self._session.flush()
         return submission
 
-    async def list_review_verdicts_for_memberships(
-        self,
-        *,
-        membership_ids: Sequence[int],
-    ) -> dict[int, list[bool | None]]:
-        """这些领取名下**每条 live 提交**的判决，按领取分组。
-
-        判决三态照 ``app.domain.task.submission_state`` 的口径：``True`` = 判过、
-        ``False`` = 退回、``None`` = 还没判（没有 live 评审行）。两个「live」的条件
-        与那边一致：提交行与评审行各自 ``deleted_at IS NULL``。
-
-        一页题一次性问完：逐题各发一条就是 20 条查询，而这一条按领取去重后只跑一次
-        （`has_work_in_hand` 那边是相关的 EXISTS 谓词，用途不同，不通用）。
-        """
-        if not membership_ids:
-            return {}
-        stmt = (
-            select(TaskSubmission.membership_id, TaskSubmissionReview.accepted)
-            .select_from(TaskSubmission)
-            .outerjoin(
-                TaskSubmissionReview,
-                and_(
-                    TaskSubmissionReview.submission_id == TaskSubmission.id,
-                    TaskSubmissionReview.deleted_at.is_(None),
-                ),
-            )
-            .where(
-                TaskSubmission.membership_id.in_(membership_ids),
-                TaskSubmission.deleted_at.is_(None),
-            )
-            .order_by(TaskSubmission.id.asc())
-        )
-        result = await self._session.execute(stmt)
-        verdicts: dict[int, list[bool | None]] = {}
-        for membership_id, accepted in result.all():
-            verdicts.setdefault(int(membership_id), []).append(
-                None if accepted is None else bool(accepted)
-            )
-        return verdicts
-
     async def list_submissions(
         self,
         *,
         task_id: int,
         participant_id: int | None = None,
+        stage: int | None = None,
         all_versions: bool = False,
         reviewed: bool | None = None,
         limit: int,
@@ -144,7 +133,7 @@ class TaskSubmissionRepository:
         NOTE: 简化实现：
         - 使用 offset 分页；
         - 当 all_versions=False 时，
-          仅返回每个 membership 的最新版本（按 version 最大）。
+          仅返回每个 membership 在每个阶段的最新版本（按 version 最大）。
         """
         # Base query: join membership -> task for filtering
         stmt: Select[tuple[TaskSubmission]] = (
@@ -161,24 +150,11 @@ class TaskSubmissionRepository:
 
         if participant_id is not None:
             stmt = stmt.where(TaskMembership.id == participant_id)
+        if stage is not None:
+            stmt = stmt.where(TaskSubmission.stage == stage)
 
         if not all_versions:
-            latest_subq = (
-                select(
-                    TaskSubmission.membership_id,
-                    func.max(TaskSubmission.version).label("max_version"),
-                )
-                .where(TaskSubmission.deleted_at.is_(None))
-                .group_by(TaskSubmission.membership_id)
-                .subquery()
-            )
-            stmt = stmt.join(
-                latest_subq,
-                and_(
-                    TaskSubmission.membership_id == latest_subq.c.membership_id,
-                    TaskSubmission.version == latest_subq.c.max_version,
-                ),
-            )
+            stmt = _latest_only(stmt)
 
         if reviewed is not None:
             # LEFT JOIN review and filter by existence
@@ -210,6 +186,7 @@ class TaskSubmissionRepository:
         *,
         task_id: int,
         participant_id: int | None = None,
+        stage: int | None = None,
         all_versions: bool = False,
         reviewed: bool | None = None,
     ) -> int:
@@ -227,24 +204,11 @@ class TaskSubmissionRepository:
 
         if participant_id is not None:
             stmt = stmt.where(TaskMembership.id == participant_id)
+        if stage is not None:
+            stmt = stmt.where(TaskSubmission.stage == stage)
 
         if not all_versions:
-            latest_subq = (
-                select(
-                    TaskSubmission.membership_id,
-                    func.max(TaskSubmission.version).label("max_version"),
-                )
-                .where(TaskSubmission.deleted_at.is_(None))
-                .group_by(TaskSubmission.membership_id)
-                .subquery()
-            )
-            stmt = stmt.join(
-                latest_subq,
-                and_(
-                    TaskSubmission.membership_id == latest_subq.c.membership_id,
-                    TaskSubmission.version == latest_subq.c.max_version,
-                ),
-            )
+            stmt = _latest_only(stmt)
 
         if reviewed is not None:
             review_exists = exists().where(
@@ -293,22 +257,7 @@ class TaskSubmissionRepository:
         if task_id is not None:
             stmt = stmt.where(Task.id == task_id)
 
-        latest_subq = (
-            select(
-                TaskSubmission.membership_id,
-                func.max(TaskSubmission.version).label("max_version"),
-            )
-            .where(TaskSubmission.deleted_at.is_(None))
-            .group_by(TaskSubmission.membership_id)
-            .subquery()
-        )
-        stmt = stmt.join(
-            latest_subq,
-            and_(
-                TaskSubmission.membership_id == latest_subq.c.membership_id,
-                TaskSubmission.version == latest_subq.c.max_version,
-            ),
-        )
+        stmt = _latest_only(stmt)
 
         if reviewed is not None:
             review_exists = exists().where(
@@ -340,11 +289,7 @@ class TaskSubmissionRepository:
         task_id: int | None = None,
         reviewed: bool | None = None,
     ) -> int:
-        """``list_for_space`` 的总数，同样是「每人最新一版」的口径。
-
-        因为每人只算一版，这个数也正好是**交过东西的人数**——课程那一屏拿它算
-        「还有多少人没交」。
-        """
+        """``list_for_space`` 的总数，同样是「每人每个阶段最新一版」的口径。"""
         stmt = (
             select(func.count(TaskSubmission.id))
             .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
@@ -359,22 +304,7 @@ class TaskSubmissionRepository:
         if task_id is not None:
             stmt = stmt.where(Task.id == task_id)
 
-        latest_subq = (
-            select(
-                TaskSubmission.membership_id,
-                func.max(TaskSubmission.version).label("max_version"),
-            )
-            .where(TaskSubmission.deleted_at.is_(None))
-            .group_by(TaskSubmission.membership_id)
-            .subquery()
-        )
-        stmt = stmt.join(
-            latest_subq,
-            and_(
-                TaskSubmission.membership_id == latest_subq.c.membership_id,
-                TaskSubmission.version == latest_subq.c.max_version,
-            ),
-        )
+        stmt = _latest_only(stmt)
 
         if reviewed is not None:
             review_exists = exists().where(
@@ -388,6 +318,26 @@ class TaskSubmissionRepository:
 
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    async def count_members_handed_in_for_space(
+        self, *, space_id: int, task_id: int | None = None
+    ) -> int:
+        """这块板上交过东西（任一阶段、任一版 live 提交）的领取有几条 —— 课程那一屏
+        拿它算「还有多少人没交」。"""
+        stmt = (
+            select(func.count(func.distinct(TaskSubmission.membership_id)))
+            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
+            .join(Task, TaskMembership.task_id == Task.id)
+            .where(
+                Task.deleted_at.is_(None),
+                TaskSubmission.deleted_at.is_(None),
+                TaskMembership.deleted_at.is_(None),
+                Task.space_id == space_id,
+            )
+        )
+        if task_id is not None:
+            stmt = stmt.where(Task.id == task_id)
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
 
 
 class TaskSubmissionEntryRepository:

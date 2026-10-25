@@ -1331,7 +1331,7 @@ def test_a_skill_the_project_gained_between_turns_is_offered_in_the_next(
 
 
 def test_an_idle_session_compacts_itself_when_asked(screen, contract):
-    """`cheese_compact` reaches this runner as `compact`, and the runner writes
+    """`cheese_session(action=compact)` reaches this runner as `compact`, and the runner writes
     `/compact` — the same door `/reload-skills` goes through. An idle session
     has no turn to wait for, so it goes at once, and the build reports the
     compaction the way the room already reads it (`system/status`)."""

@@ -86,7 +86,7 @@
   },
   "manageTemplates": {
     "createTemplate": "创建模板",
-    "defaultDeadline": "领取后 {n} 天",
+    "defaultDeadline": "限时 {n} 天",
     "delete": "删除模板",
     "deleteConfirm": "确定要删除这个模板吗？",
     "edit": "编辑模板",
@@ -115,7 +115,6 @@
     "needsReview": "发布后需管理员审核",
     "publish": "发布",
     "teaching": {
-      "subtitle": "用于从本题创建的项目",
       "title": "AI 队友辅导"
     },
     "useTemplate": "使用模板",
@@ -150,7 +149,8 @@
       "failed": "《{name}》发布失败",
       "separator": "；",
       "removeFailed": "删除失败"
-    }
+    },
+    "starterNotSent": "题目已发布，起始代码没有放进去：{error}。在改题页重新上传"
   },
   "tasks": {
     "allTopics": "全部标签",
@@ -161,13 +161,13 @@
     "pendingOnly": "只看待处理",
     "publishTask": "发布题目",
     "published": {
-      "approved": "已批准 {n}",
-      "claimed": "领取 {n}",
+      "approved": "参与 {n}",
+      "claimed": "申请 {n}",
       "createdOn": "{date}创建",
       "failed": "未通过 {n}",
       "passRate": "通过率 {rate}",
       "passed": "通过 {n}",
-      "pendingClaims": "{n} 个待批准领取",
+      "pendingClaims": "{n} 个申请待通过",
       "pendingReviews": "{n} 个待评审",
       "publishedOn": "{date}发布",
       "state": {
@@ -182,11 +182,14 @@
     },
     "row": {
       "by": "{name} 发布",
-      "claimed": "{n} 人领取",
+      "claimed": "{n} 人参与",
       "claimedOf": "{n} / {limit} 人",
+      "claimedTeams": "{n} 支队伍参与",
+      "claimedTeamsOf": "{n} / {limit} 支队伍",
       "deadline": "{date}截止",
-      "mine": "已领取",
-      "noDeadline": "不限截止"
+      "mine": "在做",
+      "noDeadline": "不限截止",
+      "applied": "已申请"
     },
     "scope": {
       "all": "全部",
@@ -204,7 +207,7 @@
     "topic": "标签",
     "topicCount": "{n} 个标签",
     "closed": "已截止或名额已满（{n}）",
-    "noOpenTasks": "暂无可领取的题目"
+    "noOpenTasks": "暂无开放的题目"
   },
   "templateForm": {
     "cancel": "取消",
@@ -212,8 +215,8 @@
     "contestTitle": "题目标题",
     "createSuccess": "模板创建成功",
     "createTitle": "创建题目模板",
-    "deadlinePrefix": "领取题目后",
-    "deadlineSuffix": "天",
+    "deadlinePrefix": "限时",
+    "deadlineSuffix": "天，从开始做那天算起",
     "defaults": "题目默认设置",
     "defaultsHint": "用这个模板发题时自动填入，发题时可以修改",
     "editTitle": "编辑题目模板",

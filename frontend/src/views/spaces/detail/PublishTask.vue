@@ -22,6 +22,7 @@ import { storeToRefs } from 'pinia'
 import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -29,13 +30,13 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
-import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import { setTaskStarter } from '@/api/taskFiles'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
-import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
+import { isTeachingBlank } from '@/lib/teaching'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
@@ -51,6 +52,7 @@ const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
 // 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
 const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
@@ -103,6 +105,9 @@ const terms = () => ({
   topics: classificationTopics.value.map((topic) => ({ id: topic.id, name: topic.name })),
   domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
+  materials: materials.value.map(({ id, name }) => ({ id, name })),
+  teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  teaching: teaching.value,
 })
 
 // --- 草稿 ------------------------------------------------------------------------
@@ -131,25 +136,73 @@ const initialData = ref<Partial<TaskFormSubmitData>>({})
 const formKey = ref(0)
 const publishedHere = ref(false)
 
-/** 不在表单里、但也存进草稿的几样：附件、AI 指导。 */
+/** 不在表单里、但也存进草稿的几样：附件、AI 指导、默认队友。 */
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
+/** 这道题指定的默认队友（#944）：`''` = 不指定（继承项目集 / 空间）。新题没有自己的可清，
+ *  所以草稿里存的是预设名或 `null`。 */
+const defaultRole = ref('')
 const uploads = useAttachmentUploads({
   upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
 })
+/** 起始代码。人在这一页选的压缩包可能有几百 MB，走题目资料库那条分段上传；题目建好之前
+ *  还没有资料库可放，所以先留在页面上，发布之后再传（`starterLocal`），不进草稿。芝士替人
+ *  写进草稿的是人交给它的一份附件（`starterStaged`），随草稿一起发布。两样只会有一样。 */
+const starterLocal = ref<File | null>(null)
+const starterStaged = ref<{ id: number; name: string; size: number } | null>(null)
+const starterUploading = ref(false)
+const starterShown = computed(() =>
+  starterLocal.value ? { name: starterLocal.value.name, size: starterLocal.value.size } : starterStaged.value
+)
+
+function pickStarter(file: File) {
+  starterLocal.value = file
+  starterStaged.value = null
+}
+
+function removeStarter() {
+  starterLocal.value = null
+  starterStaged.value = null
+}
+
+/** 发布之后把页面上选的起始代码传上去。传不成（压缩包不合格、断网），题目已经发布了：
+ *  说清楚原因，起始代码到改题页再传。 */
+async function sendStarter(taskId: number) {
+  const file = starterLocal.value
+  if (!file) return
+  starterUploading.value = true
+  try {
+    await setTaskStarter(taskId, file)
+    starterLocal.value = null
+  } catch (error) {
+    toast.error(
+      t('spaces.detail.publishTask.starterNotSent', {
+        error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
+      })
+    )
+  } finally {
+    starterUploading.value = false
+  }
+}
 
 function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
   teaching.value = { ...(fields.teaching ?? {}) }
   teachingOwn.value = !!fields.teachingOwn
+  defaultRole.value = fields.defaultRole ?? ''
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
+  starterLocal.value = null
+  starterStaged.value = fields.starterFile ?? null
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
     teachingOwn: teachingOwn.value,
+    defaultRole: defaultRole.value || null,
     attachmentIds: files.map((f) => f.id),
     attachmentFiles: files,
+    starterAttachmentId: fields.starterFile?.id ?? null,
+    starterFile: fields.starterFile ?? null,
   })
   formKey.value++
 }
@@ -211,6 +264,7 @@ function useTemplate(index: number) {
 watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
   deep: true,
 })
+watch(defaultRole, (role) => draft.changed({ defaultRole: role || null }))
 watch(
   () => uploads.files.value,
   (files) =>
@@ -220,6 +274,8 @@ watch(
     }),
   { deep: true }
 )
+
+watch(starterStaged, (file) => draft.changed({ starterAttachmentId: file?.id ?? null, starterFile: file }))
 
 // --- 芝士 --------------------------------------------------------------------------
 
@@ -235,16 +291,23 @@ watch(view, (v) =>
   )
 )
 
-/** 草稿里不在表单上的几格（AI 指导、附件），芝士写到它们时由页面自己填。 */
+/** 草稿里不在表单上的几格（AI 指导、默认队友、附件），芝士写到它们时由页面自己填。 */
 function pageApply(fields: TaskDraftFields): TaskDraftFields {
   const shown: TaskDraftFields = {}
   if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
   if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+  if ('defaultRole' in fields) defaultRole.value = fields.defaultRole ?? ''
   if ('attachmentFiles' in fields) {
     const files = fields.attachmentFiles ?? []
     uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
     shown.attachmentFiles = files
     shown.attachmentIds = files.map((f) => f.id)
+  }
+  if ('starterFile' in fields) {
+    starterLocal.value = null
+    starterStaged.value = fields.starterFile ?? null
+    shown.starterFile = fields.starterFile ?? null
+    shown.starterAttachmentId = fields.starterFile?.id ?? null
   }
   return shown
 }
@@ -372,7 +435,7 @@ async function removeDraft(id: number) {
 /** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
 async function publishAll() {
   if (publishingAll.value || publishing.value) return
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starterUploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -396,7 +459,8 @@ async function publishAll() {
         continue
       }
       try {
-        await TaskDraftsApi.publish(item.id as number)
+        const { task } = await TaskDraftsApi.publish(item.id as number)
+        if (item.id === draft.id.value) await sendStarter(task.id)
         sent += 1
         publishedInGroup.value = [
           ...publishedInGroup.value,
@@ -423,10 +487,6 @@ async function publishAll() {
   else view.value?.check()
 }
 
-/** 这道题指定的默认队友（#944）。新建题没有原始值，留空 = 不指定（继承项目集 / 空间）。 */
-const defaultRole = ref('')
-const defaultRoleSubmit = computed(() => defaultRolePayload(defaultRole.value, null))
-
 // --- 发布 --------------------------------------------------------------------------
 
 const publishing = ref(false)
@@ -441,7 +501,7 @@ const mentorChoices = computed(() => {
 async function publish(form: TaskFormSubmitData) {
   if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starterUploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -457,15 +517,14 @@ async function publish(form: TaskFormSubmitData) {
         descriptionMarkdown: view.value?.form.values().descriptionMarkdown,
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
+        defaultRole: defaultRole.value || null,
         attachmentIds: uploads.ids.value,
+        starterAttachmentId: starterStaged.value?.id ?? null,
+        starterFile: starterStaged.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
-    if (defaultRoleSubmit.value !== undefined) {
-      // 「默认队友」不在草稿字段里（`TASK_DRAFT_FIELDS` 没有它），发布之后按题目补写
-      // 一次。`undefined` = 这一格选的是「继承」，不发这个键。
-      await TaskBoardApi.update(task.id, { defaultRole: defaultRoleSubmit.value })
-    }
+    await sendStarter(task.id)
     const { approved } = task
     draft.gone()
     toast.success(
@@ -530,12 +589,16 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
     :max-file-bytes="uploads.maxFileBytes.value"
+    :starter="starterShown"
+    :starter-uploading="starterUploading"
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
     :agent-types="agentTypes"
     :agent-types-failed="agentTypesFailed"
+    :skill-catalog="skillCatalog"
+    :skill-catalog-failed="skillCatalogFailed"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"
@@ -551,6 +614,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
+    @pick-starter="pickStarter"
+    @remove-starter="removeStarter"
     @submit="publish"
     @change="onFormChange"
     @form-ready="onFormReady"

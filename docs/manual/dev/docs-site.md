@@ -217,7 +217,7 @@ cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`
 
 文档站和平台是**同站**（同一个可注册域 `okcheese.com`），不是同源。SameSite 管的是跨站，挡不住 `okcheese.com` 下别的子域名带着 cookie 发请求，所以靠 Origin：
 
-- 换 cookie 的那一下，`Origin` 必须是平台的源，别的页面没法替读者登录（也就没法把人登到别人的账号上）。
+- 换 cookie 的那一下，`Origin` 必须是平台的源（`FRONTEND_URL` 或 `FRONTEND_ALIASES` 里的任一个），别的页面没法替读者登录（也就没法把人登到别人的账号上）。
 - 文档站上会改东西的请求（问芝士要花读者的额度），`Origin` 必须是文档站自己。
 - cookie 用 `SameSite=Lax`，不用 `Strict`：从别处的链接打开一页开发文档是跨站的顶层跳转，`Strict` 时这一下不带 cookie，管理员会先看到门。
 
@@ -251,7 +251,7 @@ cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`
 
 ## AI 队友查文档 {#agent-docs}
 
-AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_docs_search`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_docs_read`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
+AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_help`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_help`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
 
 - 使用文档对所有项目开放。
 - 开发文档只对「在做知是本身」的项目开放：项目绑定的仓库在 `DOCS_DEV_REPOSITORIES` 里（默认 `SageSeekerSociety/cheese`）。别的项目检索不到开发文档，点名读 `dev/…` 返回 403。

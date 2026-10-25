@@ -36,6 +36,7 @@ import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { SLIDE_SUFFIXES } from '@/lib/fileKind'
 
 // The history pane only loads once someone opens it: most previews never do, and
 // every panel that shows a preview would otherwise carry it. Same reason, and the
@@ -67,6 +68,17 @@ const props = defineProps<{
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
   showHistory: boolean
+  /** 这一份文件上已有的评论指着的那几处（Markdown 里画成标记）。 */
+  anchors?: readonly {
+    id: string
+    quote: { text: string; heading: string | null; prefix: string; suffix: string }
+  }[]
+  /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
+  pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
+  /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
+  sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
+  /** 现在打开的那一条：它那颗标记画得显眼些。 */
+  activeAnchor?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -85,6 +97,8 @@ const emit = defineEmits<{
   'page-context': [payload: SlidePageContext]
   cell: [payload: { address: string; value: string; sheet: string }]
   'markdown-quote': [payload: MarkdownQuote]
+  /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
+  anchor: [id: string]
   /** 页上钉了一处 / 那个钉不该再留了。 */
   pin: [payload: PagePin]
   dropped: []
@@ -190,7 +204,10 @@ defineExpose({ snapshot, clearMark })
     <PreviewMarkdown
       v-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
+      :anchors="anchors"
+      :active-id="activeAnchor"
       @quote="emit('markdown-quote', $event)"
+      @anchor="emit('anchor', $event)"
     />
 
     <div v-else-if="docLoading && !docShown" class="doc__state">
@@ -210,7 +227,7 @@ defineExpose({ snapshot, clearMark })
     </div>
     <div v-else class="doc__body">
       <PreviewSlides
-        v-if="['pptx', 'ppt', 'odp'].includes(documentSuffix)"
+        v-if="SLIDE_SUFFIXES.has(documentSuffix)"
         :data="docBytes"
         :pending="docLoading"
         :error="docError"
@@ -224,11 +241,22 @@ defineExpose({ snapshot, clearMark })
         ref="pagesRef"
         :data="docBytes"
         :context="slideContext"
+        :marks="pageAnchors"
+        :active-mark="activeAnchor"
         @quote="emit('quote', $event)"
         @pin="emit('pin', $event)"
+        @mark="emit('anchor', $event)"
         @dropped="emit('dropped')"
       />
-      <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="emit('cell', $event)" />
+      <PreviewSheet
+        v-else
+        :data="docBytes"
+        :kind="documentType.sheet ?? 'workbook'"
+        :marks="sheetAnchors"
+        :active-mark="activeAnchor"
+        @cell="emit('cell', $event)"
+        @mark="emit('anchor', $event)"
+      />
 
       <RevisionList :revs="props.revs" :path="documentSuffix === 'docx' ? previewFile.path : null" />
     </div>

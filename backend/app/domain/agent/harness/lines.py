@@ -54,12 +54,13 @@ def attachment_prompt_line(
             f"需要它的话，请对方重新发一份。"
         )
     if undecodable:
-        # Named or sent as a picture, but its bytes do not decode (`model_images`).
-        # Read would hand it to the model as a picture all the same, and the
-        # model's API refuses every later request of the conversation over it.
+        # Named or sent as a picture, but its bytes do not decode or are more
+        # than a model takes in one picture (`model_images`). Read would hand it
+        # to the model as a picture all the same, and the model's API refuses
+        # every later request of the conversation over it.
         return (
-            f"[{author}] 发来一个文件：{path}。它看起来是图片，但内容解不开，"
-            f"不能当图片看。不要用 Read 打开它；要查看，用命令行工具检查它的字节。"
+            f"[{author}] 发来一个文件：{path}。它看起来是图片，但内容解不开或者文件"
+            f"太大，不能当图片看。不要用 Read 打开它；要查看，用命令行工具检查它的字节。"
         )
     if not is_inline_image(mime):
         return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"

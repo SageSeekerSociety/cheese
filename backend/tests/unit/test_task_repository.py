@@ -475,7 +475,7 @@ class TestTaskMembershipRepository:
     async def test_get_user_membership(self):
         session = _mock_session()
         m = _membership()
-        session.execute.return_value = _mock_scalar(m)
+        session.scalar.return_value = m
         repo = TaskMembershipRepository(session)
 
         result = await repo.get_user_membership(1, 10)
@@ -539,7 +539,7 @@ class TestTaskMembershipRepository:
     async def test_get_by_task_and_member(self):
         session = _mock_session()
         m = _membership()
-        session.execute.return_value = _mock_scalar(m)
+        session.scalar.return_value = m
         repo = TaskMembershipRepository(session)
 
         result = await repo.get_by_task_and_member(1, 10)

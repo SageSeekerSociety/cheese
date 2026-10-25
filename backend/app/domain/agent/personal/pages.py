@@ -26,7 +26,6 @@ from typing import Any, Literal, Protocol, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.core.storage import get_storage_backend
 from app.domain.agent.personal import billing, people
 from app.domain.agent.personal.prompt import task_brief
 from app.domain.assistant import refs
@@ -36,8 +35,7 @@ from app.domain.library.shelf import Shelf
 from app.domain.living_doc.services import Documents
 from app.domain.project import address
 from app.domain.project.services import ProjectService
-from app.domain.task import drafts
-from app.domain.task.attachment_service import TaskAttachmentService
+from app.domain.task import drafts, package
 from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.team.services import team_service
@@ -117,18 +115,16 @@ async def _task(reader: Reader, page_id: str) -> Shown:
     await ensure_task_readable(
         session=reader.session, task=task, user_id=reader.user_id
     )
-    files, _, readable = await TaskAttachmentService(
-        session=reader.session, storage=get_storage_backend()
-    ).list_for_task(task=task, user_id=reader.user_id)
+    files = await package.files(reader.session, task.id)
     return Shown(
         task_brief(
             task,
             claim=await claim_of(reader.session, task=task, user_id=reader.user_id),
             timezone=reader.timezone,
-            materials=[
-                (f.id, (f.meta or {}).get("filename") or str(f.id)) for f in files
-            ],
-            materials_readable=readable,
+            materials=[f.name for f in files],
+            materials_readable=await package.may_download(
+                reader.session, task, reader.user_id
+            ),
         ),
         label=f"题目「{task.name}」",
     )

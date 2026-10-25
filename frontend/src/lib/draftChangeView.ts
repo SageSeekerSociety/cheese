@@ -6,7 +6,7 @@
 import type { PanelChange, PanelChangeRow, PanelResult, PanelWrites } from '@/lib/assistantView'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
 import type { AssistantEdit, AssistantMessage, AssistantPublished } from '@/stores/agentThread'
-import type { TaskRubricLine, TaskSubmissionSchemaEntry } from '@/types'
+import type { TaskRubricLine, TaskStage, TaskSubmissionSchemaEntry } from '@/types'
 
 import dayjs from 'dayjs'
 
@@ -18,6 +18,7 @@ import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 const LABEL_KEYS: Record<string, string> = {
   name: 'tasks.form.name',
   description: 'tasks.form.description',
+  stages: 'tasks.form.stages.title',
   submission: 'tasks.form.grading.items',
   rubric: 'tasks.form.grading.rubric',
   rubric_public: 'tasks.form.grading.public',
@@ -36,8 +37,14 @@ const LABEL_KEYS: Record<string, string> = {
   mentors: 'tasks.form.mentor.label',
   access: 'tasks.form.more.access',
   attachments: 'tasks.attachmentPicker.title',
+  starter: 'tasks.starterPicker.title',
+  ai_teammate: 'spaces.teaching.defaultTeammate.title',
   ai_guidance: 'spaces.detail.publishTask.teaching.title',
   ai_mode: 'spaces.teaching.fields.mode',
+  ai_private_guidance: 'spaces.teaching.fields.privatePrompt',
+  ai_goals: 'spaces.teaching.fields.learningGoals',
+  ai_materials: 'spaces.teaching.fields.materials',
+  ai_skills: 'spaces.teaching.fields.skills',
 }
 
 export function fieldLabel(key: string): string {
@@ -77,6 +84,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
             .map((id) => terms.domainGroups?.find((g) => g.id === id)?.name ?? String(id))
             .join('、') || t('tasks.form.more.accessDomains')
         : t('tasks.form.more.accessAll')
+    case 'starter':
+      return (value as { name: string }).name
     case 'attachments':
       return (value as { name: string }[]).map((f) => f.name).join('、') || t('tasks.assistant.changes.none')
     case 'ai_guidance': {
@@ -97,6 +106,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
       return terms.categories.find((c) => c.id === value)?.name ?? String(value)
     case 'tags':
       return (value as number[]).map((id) => terms.topics.find((topic) => topic.id === id)?.name ?? id).join('、')
+    case 'stages':
+      return (value as TaskStage[]).map((s) => s.name).join('、') || t('tasks.assistant.changes.none')
     case 'submission':
       return (value as TaskSubmissionSchemaEntry[]).map((e) => e.prompt).join('、')
     case 'rubric': {
@@ -151,6 +162,7 @@ function rowValue(key: string, edit: AssistantEdit) {
     return { after: on ? pick('accessDomainGroupIds')?.after ?? [] : false }
   }
   if (key === 'attachments') return { after: pick('attachmentFiles')?.after ?? [] }
+  if (key === 'starter') return { after: pick('starterFile')?.after ?? null }
   if (key === 'ai_guidance') {
     const own = pick('teachingOwn')?.after ?? true
     return { after: own ? pick('teaching')?.after ?? {} : {} }

@@ -199,7 +199,10 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
     ]
 
     _due_now(client, routine.id)
-    gateway.script = [("tool", "cheese_inbox", {}), ("text", "今天没有待办。")]
+    gateway.script = [
+        ("tool", "cheese_inbox", {"action": "list"}),
+        ("text", "今天没有待办。"),
+    ]
     _tick(client, gateway)
     [run] = _ended(client, user_id)
 
@@ -254,7 +257,7 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
 
     _due_now(client, routine.id)
     gateway.script = [
-        ("tool", "cheese_message_send", {"where": room, "text": "收到，我会处理"}),
+        ("tool", "chat_send", {"where": room, "content": "收到，我会处理"}),
         ("text", "我起草了一条回复，等你确认。"),
     ]
     started = time.monotonic()

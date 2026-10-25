@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「更多设置」：可领取范围、实名、AI 指导（调用方塞进来的那一格）。
+// 「更多设置」：可领取范围、实名。AI 的设置不在这里，是表单自己的一块。
 //
 // 多数题目一样都不用改，所以默认收起；收起时那一行写明现在设成了什么，不用点开就看得
 // 见。它只画：值都是 props 进来的，改一次往上报一次。
@@ -12,15 +12,8 @@ import BaseField from '@/components/base/BaseField.vue'
 const props = defineProps<{
   /** 邮箱域名组的选项（外面从 `domainGroups` 映射好，带一句域名清单当副标题）。 */
   domainGroupItems: { title: string; value: number; subtitle: string }[]
-  /** 这道题有没有单独写 AI 指导；收起时那一行要说。 */
-  teachingCustom: boolean
   /** 芝士正在写这里面的一格：展开，指针才找得到它。 */
   reveal?: boolean
-}>()
-
-defineSlots<{
-  /** AI 指导那一格。 */
-  teaching?: () => unknown
 }>()
 
 const accessControlEnabled = defineModel<boolean | undefined>('accessControlEnabled', { required: true })
@@ -54,7 +47,6 @@ const summary = computed(() => {
       ? t('tasks.form.more.summaryDomains', { names: names.join('、') })
       : t('tasks.form.more.summaryAll'),
     requireRealName.value ? t('tasks.form.more.summaryRealName') : t('tasks.form.more.summaryNoRealName'),
-    props.teachingCustom ? t('tasks.form.more.summaryTeachingOwn') : t('tasks.form.more.summaryTeachingDefault'),
   ].join(' · ')
 })
 </script>
@@ -117,10 +109,6 @@ const summary = computed(() => {
             </span>
           </template>
         </v-switch>
-      </div>
-
-      <div v-if="$slots.teaching" class="tfm__row">
-        <slot name="teaching" />
       </div>
     </div>
   </section>

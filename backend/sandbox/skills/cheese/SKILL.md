@@ -23,7 +23,7 @@ description: 在知是里交付工作时使用：创建任务、在任务里准�
 1. 有人在支线里 @ 你，你才回答。
 2. 你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、查资料、PR 和 issue；但不推送、不交付、不摆预览。能不能跑命令和测试、临时改文件，看这台机器归不归你独占：归你独占时都能；和别的会话或机器主人共用时只能读文件，跑命令会被拒（那不是故障，重试结果一样）。要改的事转为任务。
 3. 这个频道里已经有任务在做的事，告诉人去那个任务，不再新建一个。
-4. 别处定过的事不记得时，用 `cheese_chat_search` 加 `channel` 搜整个频道：主线、别的支线和任务。
+4. 别处定过的事不记得时，用 `cheese_chat(action=search)` 加 `channel` 搜整个频道：主线、别的支线和任务。
 
 ## 在任务里
 
@@ -79,7 +79,7 @@ description: 在知是里交付工作时使用：创建任务、在任务里准�
 | 用户要「每周、每天做一次」或「某件事发生时就做」；这次是被一条规则唤起的 | `references/routines.md` |
 | PR 上的检查失败了 | `references/ci.md` |
 
-**要 Docker、sudo、KVM 或装内核模块**：你的沙箱做不了这些。用 `cheese_environment` 把自己换到 `vm` 规格（一整台虚拟机做的沙箱，准备要几分钟）；不带参数调它会列出这个项目能选的规格。只换你自己，换之前平台尽力推送一次改动。不要为了推送或拿到别的权限去换环境：支线里改动留不下，换到哪里都一样。
+**要 Docker、sudo、KVM 或装内核模块**：你的沙箱做不了这些。用 `cheese_session(action=environment)` 把自己换到 `vm` 规格（一整台虚拟机做的沙箱，准备要几分钟）；不带参数调它会列出这个项目能选的规格。只换你自己，换之前平台尽力推送一次改动。不要为了推送或拿到别的权限去换环境：支线里改动留不下，换到哪里都一样。
 
 **要用某个 Python 库**（比如处理图片要 Pillow）：用 `uv run --no-project --with <包名> python …` 临时取用，`--no-project` 让 uv 不去给当前目录所在的仓库建环境、写 `uv.lock`；仓库说明里的 `pip install …` 换成 `uv pip install …`，装进 `uv venv` 建的环境。不要往机器上已有的 Python 里装（`--system`、`--break-system-packages` 都算）：云端沙箱里装不上，别人的电脑上会改掉主人的环境。uv 是平台在后台放上去的，刚开的机器上可能还没有；uv 不在 PATH 上、或库取不到时，如实说这台机器现在做不了，不要手写图片编解码这类读写文件格式的代码顶替：那种代码出错不报错，只产出一份坏文件。
 
@@ -101,7 +101,7 @@ description: 在知是里交付工作时使用：创建任务、在任务里准�
 | `cheese serve <端口> [<一句话说明>]` | 把这台机器上跑起来的应用设为当前预览。先在 `127.0.0.1` 上把服务起起来、放到后台，端口固定住（比如 `vite --strictPort`），再报端口；默认先探到应用应答才报，最多等 30 秒（`--wait <秒>`、`--no-wait`）。平台会当场再敲一次，敲不通就拒绝。前端怎么起最快见 `references/artifacts.md`。沙箱没人用一段时间后会被换成新的，后台起的服务和预览跟着停；之后再要预览，重新起它、再报一次 |
 | `cheese pull <路径> [-o <路径>]` | 把文件区里一份文件最新保存的那一版取到这台机器上。用户可能在编辑器里改过，接着改之前先 pull |
 | `cheese transcript [--digest] [--turns N] [--all] [--turn ID] [--grep 词] [--author 座位]` | 把本会话的会话记录（含分身的）拉到 `~/attachments/transcript/<话题>.jsonl`，归一化成一种形状，重复拉就覆盖；stdout 回一行统计。想查自己上一轮做过什么、压缩掉了什么，就拉下来 grep。`--digest` 不落文件，每轮一行先看个大概 |
-| `cheese library get <名字> [--out <路径>]` | 把资料库里的一份文件取到 `~/attachments/library/<名字>`。用户提到一份你手上没有的文件，就用它取，不要让人重传 |
+| `cheese library get <名字> [--out <路径>]` | 把资料库里的一份文件取到 `~/attachments/library/<名字>`。用户提到一份你手上没有的文件，就用它取，不要让人重传。从题目来的项目，题目的材料和 `题目说明.md` 在只读的 `题目/` 下（`cheese library get 题目/<名字>`），出题人改了题目，这里就是新的一版 |
 | `cheese mail attachment <连接> <uid> <序号>` | 把一封邮件的附件取到 `~/attachments/mail/` 下，见 `references/mail-and-feishu.md` |
 | `cheese template list` / `cheese template new <模板> <路径>` | 列出平台的标准模板，或者从一份模板在文件区新建文件并取到本地；怎么填见 documents 技能 |
 | `cheese convert <路径> --to <格式>` | 转格式：把 `.doc`、`.ppt`、`.xls` 这类老格式升级成新格式（告诉用户这是格式升级，转出来的不是原件）；或者转成 PDF 自己看一眼版面 |

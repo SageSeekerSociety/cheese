@@ -39,7 +39,7 @@ covers:
 ## 凭证怎么换 {#grant}
 
 1. 平台签一张 30 秒有效的预览凭证。
-2. 内容主机用它换一个 8 小时的 cookie，HttpOnly。https 部署下还带 Secure、SameSite=None 和 Partitioned；项目网站那份是 SameSite=Lax，不带 Partitioned。频道预览的实现在 `backend/app/api/preview_host.py`，项目网站在 `backend/app/domain/site/hosting.py`。
+2. 内容主机用它换一个 8 小时的 cookie，HttpOnly。https 部署下还带 Secure、SameSite=None 和 Partitioned；项目网站那份是 SameSite=Lax，不带 Partitioned。频道预览的实现在 `backend/app/api/preview_host.py`，项目网站在 `backend/app/domain/site/hosting.py`。换 cookie 的请求，`Origin` 必须是平台的某个源（`FRONTEND_URL` 或 `FRONTEND_ALIASES` 里的一个）；频道预览的 cookie 记下是哪个源换的，预览里的运行时只和这个源通信，CSP 的 `frame-ancestors` 列出平台的每个源。
 3. 之后每个 HTTP 请求和 WebSocket 连接都重新检查房间访问权：私有房间要求是房间成员。WebSocket 最晚在会话到期时断开。
 
 在预览里运行的应用可以正常用自己的 cookie 登录：这些 cookie 会被改写成只属于该主机的 Partitioned cookie；应用自己的 Bearer 鉴权原样转发。

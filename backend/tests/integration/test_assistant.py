@@ -1225,7 +1225,11 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     page = {"kind": "draft", "id": draft}
 
     gateway.script = [
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "高级"},
+        ),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(
@@ -1247,7 +1251,7 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     # What it did is kept with the answer: the conversation shows it again.
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     parts = kept["data"]["messages"][-1]["parts"]
-    assert [step["name"] for step in parts["steps"]] == ["cheese_problem_write"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_problem"]
     assert '"difficulty"' in parts["steps"][0]["args"]
     assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
 
@@ -1276,8 +1280,16 @@ def test_what_cheese_wrote_into_a_draft_is_undone_by_the_person(client, gateway)
         "id"
     ]
     gateway.script = [
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "初级"}),
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "初级"},
+        ),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "高级"},
+        ),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(
@@ -1517,10 +1529,10 @@ def test_asked_in_a_channel_it_reads_the_channel_and_drafts_what_the_person_send
         ("tool", "cheese_find", {"query": "演示视频", "where": slug}),
         (
             "tool",
-            "cheese_message_send",
+            "chat_send",
             {
                 "where": f"{slug}/channels/{number}",
-                "text": "演示视频我来负责，周五前给初版。",
+                "content": "演示视频我来负责，周五前给初版。",
                 "confirm": True,
             },
         ),

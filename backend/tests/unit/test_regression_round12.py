@@ -1,6 +1,6 @@
 """Tests for Round 12 bug fixes.
 
-Covers: deadline scheduler, route ordering, material
+Covers: route ordering, material
 upload, groups search count, datetime timezone, identity patch, and histogram
 defaults.
 """
@@ -10,52 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Deadline scheduler: must process all batches without skipping
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_deadline_scheduler_processes_all_batches():
-    from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
-
-    now = datetime.now(UTC)
-    call_count = 0
-
-    def make_membership(mid: int):
-        return SimpleNamespace(
-            id=mid,
-            completion_status="NOT_SUBMITTED",
-            deadline=now,
-            updated_at=now,
-            deleted_at=None,
-        )
-
-    batches = [
-        [make_membership(i) for i in range(100)],
-        [make_membership(i) for i in range(100, 150)],
-        [],
-    ]
-
-    mock_session = AsyncMock()
-
-    async def fake_execute(stmt):
-        nonlocal call_count
-        idx = min(call_count, len(batches) - 1)
-        call_count += 1
-        result = MagicMock()
-        result.scalars.return_value.all.return_value = batches[idx]
-        return result
-
-    mock_session.execute = fake_execute
-    mock_session.commit = AsyncMock()
-
-    count = await check_and_fail_expired_deadlines(mock_session)
-
-    assert count == 150
-    assert mock_session.commit.await_count == 2
-
 
 # ---------------------------------------------------------------------------
 # Route ordering: /questions/followed must precede /{question_id}

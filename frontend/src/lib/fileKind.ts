@@ -53,6 +53,12 @@ export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'p
  *  而网页恰恰把地址留在元素上。 */
 export const PAGE_FORMATS = new Set(['docx', 'xlsx', 'pptx'])
 
+/** 幻灯片那一组。它们和文档一样转成 PDF、按页读（`view` 也是 `pages`），但页视图
+ *  那一档画不出评论标记：幻灯片上评的是**整页**（`slide-page`），不是页上的一点。
+ *  「按页读」和「页上能画评论」不是同一件事，所以「谁要按档位决定读不读评论」得问
+ *  这一张表，问 `view === 'pages'` 会把幻灯片一起圈进来。 */
+export const SLIDE_SUFFIXES = new Set(['pptx', 'ppt', 'odp'])
+
 /** 这一份能不能换成网页读。
  *
  *  收路径，因为它总是和「读者按了没有」一起用，而那一格认得的是文件。 */

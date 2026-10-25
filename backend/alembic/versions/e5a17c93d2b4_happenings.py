@@ -8,7 +8,7 @@ sweep it wakes. Nothing reads the cursor any more; the column is dropped in a
 later release, once no deployed backend maps it.
 
 Revision ID: e5a17c93d2b4
-Revises: b7d41e9c05af
+Revises: a7d3e5c91f20
 """
 
 from collections.abc import Sequence
@@ -20,7 +20,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e5a17c93d2b4"
-down_revision: str | Sequence[str] | None = "b7d41e9c05af"
+down_revision: str | Sequence[str] | None = "a7d3e5c91f20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

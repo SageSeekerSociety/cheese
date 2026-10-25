@@ -96,7 +96,7 @@ const BASE_TASK = {
   creator: { id: 1, username: 'cai', nickname: '蔡松洋' },
   topics: [],
   videoUrl: '',
-  participants: { total: 0, examples: [] },
+  participants: { total: 0, approved: 0, examples: [] },
   participantLimit: 0,
   deadline: null as number | null,
   registrationStartAt: null as number | null,
@@ -209,7 +209,8 @@ describe('题目详情', () => {
   })
 
   it('审过了、没截止、没满：领取按钮点得动，点了走领取那条路', async () => {
-    const { container } = await mount({ participants: { total: 1, examples: [] }, participantLimit: 5 })
+    // 申请比名额多，但通过的还没到上限：还能申请。
+    const { container } = await mount({ participants: { total: 7, approved: 1, examples: [] }, participantLimit: 5 })
     const events = useEvents()
     const joined = vi.fn()
     events.on('join-clicked', joined)
@@ -225,7 +226,7 @@ describe('题目详情', () => {
     ['题目被驳回', { approved: 'DISAPPROVED' }, {}],
     ['已截止', { deadline: Date.now() - DAY }, {}],
     ['还没开始', { registrationStartAt: Date.now() + DAY }, {}],
-    ['人数已满', { participants: { total: 3, examples: [] }, participantLimit: 3 }, {}],
+    ['人数已满', { participants: { total: 3, approved: 3, examples: [] }, participantLimit: 3 }, {}],
     ['我的申请还在等批', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] }],
     ['我的申请被拒了', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'DISAPPROVED' }] }],
   ])('%s：领取按钮点不动', async (_, task, participation) => {
@@ -260,7 +261,7 @@ describe('题目详情', () => {
   })
 
   it('上限 0 是「不限」：人再多也领得动', async () => {
-    const { container } = await mount({ participants: { total: 30, examples: [] }, participantLimit: 0 })
+    const { container } = await mount({ participants: { total: 30, approved: 30, examples: [] }, participantLimit: 0 })
 
     expect(claimButton(container)?.disabled).toBe(false)
   })
@@ -325,7 +326,7 @@ describe('题目详情', () => {
     await fireEvent.update(getByRole('textbox', { name: '成果说明' }), '旋转了三次')
     await fireEvent.submit(container.querySelector('form')!)
 
-    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }]))
+    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }], null))
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
     const mineTab = Array.from(container.querySelectorAll('a')).find((a) =>
       a.getAttribute('href')?.endsWith('/submissions')
@@ -346,14 +347,14 @@ describe('题目详情', () => {
       return {}
     })
     const { container, router } = await mount(
-      { joined: true, submittable: false, participants: { total: 1, examples: [] } },
+      { joined: true, submittable: false, participants: { total: 1, approved: 1, examples: [] } },
       { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] },
       `${BASE}/participants`
     )
     // 批准之后再问，接口说的就是批过的那一份。
     taskDetail.mockImplementation(async () =>
       payload(
-        { joined: true, submittable: approved === 'APPROVED', participants: { total: 1, examples: [] } },
+        { joined: true, submittable: approved === 'APPROVED', participants: { total: 1, approved: 1, examples: [] } },
         { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
       )
     )
@@ -401,7 +402,7 @@ describe('题目详情', () => {
       return {}
     })
     const { container, router } = await mount(
-      { joined: true, submittable: true, participants: { total: 1, examples: [] } },
+      { joined: true, submittable: true, participants: { total: 1, approved: 1, examples: [] } },
       APPROVED_ME
     )
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
@@ -428,7 +429,7 @@ describe('题目详情', () => {
   })
 
   it('不是出题人：领取者和数据两个页签都没有，名单接口也不问', async () => {
-    const { container } = await mount({ participants: { total: 3, examples: [] } })
+    const { container } = await mount({ participants: { total: 3, approved: 3, examples: [] } })
 
     expect(getParticipants).not.toHaveBeenCalled()
     expect(hrefs(container)).not.toContain(`${BASE}/participants`)
@@ -441,6 +442,16 @@ describe('题目详情', () => {
 
     expect(hrefs(container)).toContain(`${BASE}/participants`)
     expect(hrefs(container)).toContain(`${BASE}/insights`)
+  })
+
+  it('出题人：「参与者」页签上的数只算申请通过的，等批的不算', async () => {
+    AccountService.user = { id: 1, nickname: '蔡松洋' } as never
+    const { container } = await mount({ participants: { total: 4, approved: 1, examples: [] } })
+
+    const roster = [...container.querySelectorAll('a')].find((a) =>
+      a.getAttribute('href')?.endsWith(`${BASE}/participants`)
+    )
+    expect(roster?.textContent?.trim()).toBe(`${t('tasks.page.tabs.roster')}1`)
   })
 
   it('没领这道题：不能用它新建项目', async () => {

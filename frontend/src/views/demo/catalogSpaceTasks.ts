@@ -467,7 +467,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     file: 'src/views/tasks/detail/BriefView.vue',
     component: BriefView,
     needs: UI_T,
-    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloadingId: null },
+    args: { taskData: TASK_DEMO, attachments: TASK_BRIEF_ATTACHMENTS, canDownload: true, downloading: null },
     states: [
       {
         get name() {
@@ -541,7 +541,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.insightsView.s1.note')
         },
         props: {},
-        expect: '领取人数',
+        expect: '参与人数',
       },
       {
         get name() {
@@ -623,7 +623,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s3.note')
         },
         props: { denied: true },
-        expect: '只有这道题的出题人和空间管理员能看领取者',
+        expect: '只有这道题的出题人和空间管理员能看参与者',
       },
       {
         get name() {
@@ -633,7 +633,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s4.note')
         },
         props: { failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '领取者名单加载失败',
+        expect: '参与者名单加载失败',
       },
       {
         get name() {
@@ -643,7 +643,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.rosterView.s5.note')
         },
         props: { participants: [] },
-        expect: '暂无领取者',
+        expect: '暂无参与者',
       },
     ],
   },

@@ -31,10 +31,14 @@ from app.api.routes.tasks._writes import create_task_from, update_task
 from app.api.space_deps import get_space_service
 from app.api.task_deps import (
     _attachment_service,
-    _task_attachment_service,
     get_task_service,
 )
-from app.api.task_serialization import _enrich_task_models, _task_to_api_model
+from app.api.task_serialization import (
+    _enrich_task_models,
+    _enrich_task_topics,
+    _task_requirements,
+    _task_to_api_model,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.space_access import may_publish_in_space, may_teach_task
 from app.core import model_roles
@@ -52,11 +56,11 @@ from app.domain.agent.personal import service as assistant
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
+from app.domain.library import records as library_records
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
-from app.domain.task import drafts
+from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
-from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.user.services import timezones_by_ids
 
@@ -127,7 +131,7 @@ async def _person(resolver: ActorResolverDep) -> int:
     return actor.user_id
 
 
-def _summary(row, task_names: dict[int, str]) -> dict:
+def _summary(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
     fields = row.fields or {}
     return {
         "id": row.id,
@@ -139,12 +143,12 @@ def _summary(row, task_names: dict[int, str]) -> dict:
         "conversationId": str(row.conversation_id) if row.conversation_id else None,
         "version": row.version,
         "updatedAt": row.updated_at.isoformat(),
-        "missing": drafts.missing(row),
+        "missing": drafts.missing(row, items.get(row.task_id or 0, 0)),
     }
 
 
-def _full(row, task_names: dict[int, str]) -> dict:
-    return {**_summary(row, task_names), "fields": row.fields or {}}
+def _full(row, task_names: dict[int, str], items: dict[int, int]) -> dict:
+    return {**_summary(row, task_names, items), "fields": row.fields or {}}
 
 
 async def _task_names(db, rows: list) -> dict[int, str]:
@@ -169,12 +173,17 @@ async def _editable_task(db, task_id: int, user_id: int):
     return task
 
 
-async def _task_as_form(db, task) -> dict:
-    """The published 题目 as its edit form starts out."""
+async def _task_as_form(db, task, *, private: bool) -> dict:
+    """The published 题目 as its edit form starts out: every field the form
+    saves back, so a change draft saved with one field changed leaves the rest
+    as they are — its stages, submission items, rubric and tags included.
+    ``private``: the reader may teach the 题目 (``may_teach_task``), so its
+    private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
-    model = _task_to_api_model(task, include_private_teaching=True)
-    model["rubric"] = rubric_to_api(await service.list_rubric(task.id))
+    model = _task_to_api_model(task, include_private_teaching=private)
+    model.update(await _task_requirements(service, task.id))
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
+    await _enrich_task_topics(db, [model])
     return drafts.task_form(model)
 
 
@@ -189,7 +198,8 @@ async def _edit_draft(db, task, user_id: int, conversation_id=None):
         user_id=user_id,
         space_id=task.space_id,
         task_id=task.id,
-        fields=await _task_as_form(db, task),
+        # Only those who may teach it get here (``_editable_task``).
+        fields=await _task_as_form(db, task, private=True),
         conversation_id=conversation_id,
     )
 
@@ -207,7 +217,8 @@ async def list_drafts(
     user_id = await _person(resolver)
     rows = await drafts.list_mine(db, user_id, space)
     names = await _task_names(db, rows)
-    return ok({"drafts": [_summary(r, names) for r in rows]})
+    items = await drafts.published_items(db, rows)
+    return ok({"drafts": [_summary(r, names, items) for r in rows]})
 
 
 class StartIn(BaseModel):
@@ -246,7 +257,7 @@ async def start_draft(
         )
         names = {}
     await db.commit()
-    return ok(_full(row, names))
+    return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
 @router.get("/{draftId:int}", **typed_response(TaskDraftOut))
@@ -257,7 +268,14 @@ async def read_draft(
 ) -> dict:
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
-    return ok(_full(row, await _task_names(db, [row])))
+    shown = _full(
+        row,
+        await _task_names(db, [row]),
+        await drafts.published_items(db, [row]),
+    )
+    if not await drafts.private_shown(db, row):
+        shown["fields"] = drafts.without_private(shown["fields"])
+    return ok(shown)
 
 
 class SaveIn(BaseModel):
@@ -311,6 +329,11 @@ async def publish_draft(
     one. The draft is gone after."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
+    # The same loss 芝士's publish refuses: every submission item the
+    # published 题目 has, gone.
+    published = (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    if "submission" in drafts.missing(row, published):
+        raise BadRequestError(say("draftKeepsASubmissionItem"))
     return ok(await _publish(db, service, row, user_id))
 
 
@@ -344,18 +367,12 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
         answer = await create_task_from(creating, db=db, user_id=user_id)
     else:
         assert task_id is not None and changing is not None
+        # The files 芝士 added to the changes (``attachmentIds``, and the
+        # starter code in ``starterAttachmentId``) go into the 题目's library
+        # with them, as one version.
         answer = await update_task(
             task_id, changing, db=db, service=service, user_id=user_id
         )
-        # A published 题目's files are kept on it as they are uploaded; the
-        # ones 芝士 added to its changes go on when they are saved.
-        added = form.get("attachmentIds") or []
-        task = await service.get_task(task_id) if added else None
-        if task is not None:
-            await _task_attachment_service(db).attach_uploaded(
-                task=task, user_id=user_id, attachment_ids=added
-            )
-            await db.commit()
     return {**answer, "draftId": row.id}
 
 
@@ -364,12 +381,37 @@ async def _publish(db, service: TaskService, row, user_id: int) -> dict:
 
 async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
     return await drafts.terms(
-        db, spaces, space_id, await _zone(db, user_id), user_id=user_id
+        db,
+        spaces,
+        space_id,
+        await _zone(db, user_id),
+        user_id=user_id,
+        materials=await _library(db, space_id, user_id),
     )
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:
-    return await drafts.context(db, spaces, row, await _zone(db, user_id))
+    return await drafts.context(
+        db,
+        spaces,
+        row,
+        await _zone(db, user_id),
+        materials=await _library(db, row.space_id, row.user_id),
+    )
+
+
+async def _library(db, space_id: int, user_id: int) -> dict[str, int]:
+    """The space library's files this person sees, by name: what 芝士 may
+    point the 题目's AI teammates at (the page's picker lists the same)."""
+    try:
+        listed = await SpaceMaterialService(
+            session=db, storage=get_storage_backend()
+        ).list_for_space(space_id=space_id, user_id=user_id)
+    except NotFoundError:
+        # Not one of the space's people: its library is not theirs to see,
+        # so there is nothing in it they could point the teammates at.
+        return {}
+    return {str(m["name"]): int(m["id"]) for m in listed["materials"]}
 
 
 class SearchIn(BaseModel):
@@ -439,8 +481,13 @@ async def agent_read(
         raise NotFoundError.for_resource("task", body.task)
     await ensure_task_readable(session=db, task=task, user_id=user_id)
     terms = await _space_terms(db, spaces, task.space_id, user_id)
+    teaches = await may_teach_task(session=db, task=task, user_id=user_id)
     text = drafts.published_view(
-        task.id, task.name, await _task_as_form(db, task), terms
+        task.id,
+        task.name,
+        await _task_as_form(db, task, private=teaches),
+        terms,
+        private=teaches,
     )
     pending = await drafts.for_task(db, user_id, task.id)
     if pending is not None:
@@ -467,7 +514,7 @@ async def agent_write(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_write: write fields of a draft — a new one in a space, the
+    """cheese_problem(action=write): write fields of a draft — a new one in a space, the
     one named, or the person's changes to a published 题目 — and tell the
     page."""
     user_id = await _person(resolver)
@@ -501,7 +548,16 @@ async def agent_write(
         if "attachments" in args
         else None
     )
-    fields = drafts.from_agent(args, terms, row.fields or {}, files)
+    starter = (
+        (await _own_files(db, [args["starter"]], user_id))[0]
+        # 0 (or nothing) is "no starter code" (the tool's own wording).
+        if args.get("starter")
+        else None
+    )
+    removed: list[str] = []
+    fields = drafts.from_agent(
+        args, terms, row.fields or {}, files, removed, starter=starter
+    )
     written = drafts.cheese_writes(
         row, fields, read_at=None if created else body.version
     )
@@ -512,6 +568,15 @@ async def agent_write(
         for n in body.notes
         if isinstance(n, dict) and n.get("text")
     ]
+    if removed:
+        # Never silently: the person reads on the change card what went with
+        # the stages 芝士 removed, before anything is saved to the 题目.
+        notes.append(
+            {
+                "field": "stages",
+                "text": str(say("draftStageRemovedRows", names="、".join(removed))),
+            }
+        )
     told = await _report(
         db,
         resolver,
@@ -539,7 +604,11 @@ async def agent_write(
             "version": row.version,
             "changed": sorted(written.changed),
             "kept": written.kept,
-            "missing": drafts.missing(row),
+            "missing": drafts.missing(
+                row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+            ),
+            # Submission items and rubric lines that left with a removed stage.
+            "removed": removed,
             # A template's skeleton, for 芝士 to fill under its headings.
             **(
                 {"description": drafts.markdown_of(row.fields or {})}
@@ -587,10 +656,12 @@ async def agent_publish(
     questions: Questions,
     db=Depends(get_db),
 ) -> dict:
-    """cheese_problem_publish: publish a draft as the person would."""
+    """cheese_problem(action=publish): publish a draft as the person would."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, body.draft)
-    missing = drafts.missing(row)
+    missing = drafts.missing(
+        row, (await drafts.published_items(db, [row])).get(row.task_id or 0, 0)
+    )
     if missing:
         raise BadRequestError(say("draftIncomplete", fields=", ".join(missing)))
     editing = row.task_id is not None
@@ -627,23 +698,36 @@ def _pictures() -> bool:
 
 
 class FileIn(BaseModel):
-    file: int
+    #: A file the person handed over (``files/<id>``) ...
+    file: int | None = None
+    #: ... or one of a 题目's materials (``spaces/<s>/tasks/<task>/files/<name>``).
+    task: int | None = None
+    name: str | None = None
     pages: str | None = None
 
 
 @router.post("/agent/file", include_in_schema=False, dependencies=[ROUTE_DECIDES])
 async def agent_file(body: FileIn, resolver: ActorResolverDep, db=Depends(get_db)):
-    """`cheese_read` of `files/<id>`: a file the person handed over (or one on a 题目 they
-    can read), as text, a range of pages at a time."""
+    """`cheese_read` of `files/<id>` (a file the person handed over) or of
+    `spaces/<s>/tasks/<t>/files/<name>` (one of the materials of a 题目 they
+    may download), as text, a range of pages at a time."""
     user_id = await _person(resolver)
+    if body.task is not None and body.name:
+        task = await TaskService.of(db).get_task(body.task)
+        if task is None:
+            raise NotFoundError.for_resource("task", body.task)
+        await ensure_task_readable(session=db, task=task, user_id=user_id)
+        await package.refuse_unless_downloader(db, task, user_id)
+        content = await library_records.read(db, package.shelf(task.id), body.name)
+        return ok(
+            read_document(content, body.name, pages=body.pages, pictures=_pictures())
+        )
+    if body.file is None:
+        raise BadRequestError(say("draftNeedsTarget"))
     files = _attachment_service(db)
     attachment = await files.get(body.file)
     if not files.is_uploader(attachment, user_id):
-        on_task = await _task_attachment_service(db).may_read_file(
-            attachment_id=attachment.id, user_id=user_id
-        )
-        if on_task is not True:
-            raise ForbiddenError(say("draftFileNotYours"))
+        raise ForbiddenError(say("draftFileNotYours"))
     content, filename, _ = await files.download(body.file)
     return ok(read_document(content, filename, pages=body.pages, pictures=_pictures()))
 
@@ -715,11 +799,12 @@ def _draft_parts(payload: dict) -> list[str]:
     """A draft write's parts: the fields as 芝士 names them, each one or a few
     form fields (``AGENT_FIELDS``)."""
     changed = payload.get("changed") or {}
-    return [
-        key
-        for key, targets in drafts.AGENT_FIELDS.items()
-        if any(t in changed for t in targets)
-    ]
+    parts: dict[tuple[str, ...], str] = {}
+    for key, targets in drafts.AGENT_FIELDS.items():
+        # Several of 芝士's fields write the one guidance: it is one part.
+        if any(t in changed for t in targets):
+            parts.setdefault(targets, key)
+    return list(parts.values())
 
 
 async def _put_back(db, resolver, same, parts: list[str], redo: bool) -> dict:

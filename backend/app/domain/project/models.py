@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -404,6 +405,68 @@ class ProjectForge(UuidPk, Timestamps, Base):
     default_branch: Mapped[str] = mapped_column(String(255), default="main")
     # Only the backend can mint credentials; the account password never leaves it.
     account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class StarterPushState(str, enum.Enum):
+    pending = "pending"
+    done = "done"
+    failed = "failed"
+
+
+class ProjectStarterPush(Base):
+    """A 题目's starter code on its way into a claimed project's repository (#4767).
+
+    The claim records which archive it took (the library row as it was that
+    moment, so a later replacement reaches only later claims) and commits; the
+    push itself runs in the background (`task.starter_jobs`), because unpacking
+    and pushing a large archive must not hold the claim open. ``state`` is what
+    the overview and the project's agents read; ``error`` is the sentence that
+    says why a push could not land, as ``{key, params}``.
+    """
+
+    __tablename__ = "project_starter_pushes"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'done', 'failed')",
+            name="ck_project_starter_pushes_state",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_starter_pushes_project_id_projects",
+        ),
+        primary_key=True,
+    )
+    # The archive the claim took. NULL once the publisher removed the starter
+    # code (with every version of it) before the push ran.
+    library_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "library_files.id",
+            ondelete="SET NULL",
+            name="fk_project_starter_pushes_library_file_id_library_files",
+        ),
+        index=True,
+    )
+    #: The 题目's version (`task_package_revisions.number`) at the claim.
+    revision: Mapped[int] = mapped_column(Integer)
+    #: The first commit's message.
+    message: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), default=StarterPushState.pending)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[uuid.UUID | None] = mapped_column()
+    #: The starter commit the job built, recorded before it is pushed: on a later
+    #: attempt, the repository's `main` holding it means the push landed.
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ForgeToken(UuidPk, Timestamps, Base):

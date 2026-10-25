@@ -153,7 +153,7 @@ class Runner(runner.Runner[Journal]):
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
@@ -567,11 +567,21 @@ class Runner(runner.Runner[Journal]):
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
         reason = ""
+        # What a room that calls one of the CLI's commands as a tool is told
+        # instead of pi's own "not found": it runs them with its bash. A
+        # session without hands has no bash to send it to.
+        commands: dict[str, str] = {}
         if tools is None:
             try:
                 tools = catalog.tools()
             except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
+            try:
+                commands = {
+                    name: catalog.not_a_tool(name) for name in catalog.cli_commands()
+                }
+            except Exception:  # pi's own "not found" is said instead
+                commands = {}
         (home / "platform.json").write_text(
             json.dumps(
                 {
@@ -600,6 +610,7 @@ class Runner(runner.Runner[Journal]):
                     # monitor prints is told to the session, never a subagent.
                     "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
+                    "commands": commands,
                     "unavailable": reason,
                     # The project's MCP servers, each at the session's gateway
                     # (`open_servers`), for pi's own MCP client.
@@ -668,12 +679,8 @@ class Runner(runner.Runner[Journal]):
         """One platform tool call.
 
         A tool from the platform's table runs here against the backend, reaching
-        the machine only for what it needs from it. Anything else is a CLI
-        command, run on the machine as the CLI would have been typed there:
-        argparse is the authority twice over — it says what the arguments mean,
-        and ``catalog.argv`` re-parses what it built, so a call that could not
-        have been typed fails here rather than reaching the CLI as a malformed
-        command line.
+        the machine only for what it needs from it. The CLI's own commands are
+        no tools: the session runs them with its `bash`, as `cheese …`.
 
         A session with no hands, or one that only reads the machine, has
         neither: each of its tools is one request to the platform, under the
@@ -699,19 +706,26 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
-        code, output = await asyncio.to_thread(
-            self.machine.run, f"exec {command} </dev/null", cwd=cwd
-        )
-        return {
-            "status": code,
-            "stdout": output.decode("utf-8", "replace"),
-            "stderr": "",
-        }
+        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
-        if tool not in (self.tools.get("names") or []):
-            return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
+        # A session may be named only some of an object's verbs
+        # (`catalog.schemas_of`): one it was not named is refused with the
+        # ones it was, the way a call naming no verb is.
+        names = self.tools.get("names") or []
+        key = (
+            f"{tool}.{arguments.get('action')}" if isinstance(arguments, dict) else tool
+        )
+        if tool not in names and key not in names:
+            held = [
+                verb
+                for name, _, verb in (n.partition(".") for n in names)
+                if name == tool and verb
+            ]
+            said = (
+                catalog.ask_for_action(tool, held) if held else f"{tool}: no such tool"
+            )
+            return {"status": 1, "stdout": "", "stderr": said}
         if not self.platform_token:
             # Never the credential the session started with: that one is the
             # room's, and a tool acts for whoever asked.
@@ -723,7 +737,7 @@ class Runner(runner.Runner[Journal]):
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
             # A person's 芝士 works on a computer of its own and moves files
-            # between it and their library (`cheese_file_give`): the commands
+            # between it and their library (`cheese_library(action=give)`): the commands
             # run there, the requests go out under the question's credential.
             # One that only reads a room's machine (a document's 芝士) runs
             # nothing on it.
@@ -1187,7 +1201,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

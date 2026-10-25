@@ -11,7 +11,9 @@ covers:
   - backend/app/api/awaiting_deps.py
   - backend/app/api/routes/git_http.py
   - backend/app/domain/addressing.py
-  - backend/app/domain/task/attachment_service.py
+  - backend/app/domain/task/package.py
+  - backend/app/domain/library/mount.py
+  - backend/app/domain/project/starter.py
   - backend/app/domain/task/visibility_service.py
   - backend/app/api/routes/tasks/
   - backend/sandbox/cheese
@@ -198,19 +200,43 @@ covers:
 
 ## 题目附件 {#task-attachments}
 
-活旁边还有这一类附件：出题时带在题目上的材料（`domain/task/attachment_service.py`）。三条判据各自一句话：
+题目的材料是题目自己的资料库（`Shelf.of_task`，`library_files.task_id`）里的文件，字节走 `app.core.blob_store`，和项目、团队的资料库是同一套记录；替换留历史行（`superseded_at`）。读写在 `domain/task/package.py`，路由在 `routes/tasks/files.py`。三条判据各自一句话：
 
 | 判据 | 谁 |
 |---|---|
-| 谁能传、谁能删 | 出题人本人，或这块板的所有者 / 管理员（`may_teach_task`） |
+| 谁能放进、替换、删掉 | 出题人本人，或这块板的所有者 / 管理员（`may_teach_task`） |
 | 谁能看到清单 | 看得见这道题的人 |
-| 谁能下载 | 出题人 / 板管理员 / **已经领取的人**（`is_participant`） |
+| 谁能下载 | 出题人 / 板管理员 / **参与者**，即申请通过的人（`is_approved_participant`）；等批的、被拒的、退出的都不能 |
 
-清单绝不比题目本身更保密——看不见材料就无法判断要不要领；下载比「看得见」窄一格、比「管得了」宽一格——领取者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/attachments`）先过题目详情那三道闸（`_ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：后者在题目没开可见范围时对任何登录用户都放行，会让未审批（403）和超出板上限（404）的题把材料清单交出去——文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload` 标志，前端据此显示「下载」还是「领取这道题之后才能下载」。
+清单绝不比题目本身更保密——看不见材料就无法判断要不要申请；下载比「看得见」窄一格、比「管得了」宽一格——参与者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/files`）先过题目详情那三道闸（`ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload`，前端据此显示「下载」还是「开始做这道题之后才能下载」。
 
-写侧三道校验收在 `ensure_attachable` 里，因为**附件 id 是可猜的连续整数**：必须存在、必须是本人传的、且还没挂在别处——不校验的话，任何登录用户都能把别人上传的文件（例如别人交作业附的材料）挂到自己的题目上公开出去。建题时一次挂上（`POST /tasks` 的 `attachmentIds`）而不是先建题再补传：后者会在两步之间留一道缝，别人先看到一道没有材料的题，作者还得回去补。
+改题页直接上传，和资料库是同一条分段上传的路（`library.md` 的「资料库的记录表」一节）：领一次上传的凭据（`POST /tasks/{id}/files/uploads`），按段领地址（`…/uploads/part`），浏览器把每一段连同它的 MD5 放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
 
-取消挂载是软删关联行，存储上的对象留着——同一个文件可能还被别处引用（交作业、素材库走同一张 `attachment` 表），而对象删掉没有回头路。
+### 版本 {#task-package-revisions}
+
+`task_package_revisions` 记题目内容的每一版：发布是第 1 版（`changes = {"published": true}`），之后描述、阶段（名称、说明、截止时间、顺序）、提交内容、评分要点（含 `rubric_public`）、材料每变一次记下一版，`changes` 写明哪几样，材料带名字（`added` / `replaced` / `removed`）。`PATCH /tasks/{id}` 改之前、改之后各取一份比对（`_writes._package_parts`），和「在做的人收到要求变了的通知」是同一次比对。每记一版，题目资料库里的 `题目说明.md` 换成这一版的样子，它的历史就是每一版的说明；它不算材料，清单里不列，不能单独替换或删除。提交记下当时的版本号（`task_submission.package_revision`）。
+
+### 项目里的 `题目/` {#task-folder}
+
+从题目派生的项目（`Project.external_task_id`），资料库多一个只读的 `题目/`：`library/mount.py` 把这个前缀下的名字解析到题目资料库（读的是那一边现在的行，不是拷贝），清单、读文本、取字节、版本、项目搜索都经过它；放进、替换、移动、删除、恢复碰到这个前缀一律 422。谁看得到它按题目自己的下载判据，不按项目名册：读的那一侧（`app/api/project_library.py`）把判过的结果放在 `Shelf.with_task` 上交进来，没说就看不到，`题目/` 下的字节、文本、版本一律 403。项目里的 agent 按项目所有者的判据读（`package.mount_for_agents`），人自己的芝士按那个人的。题目删了（`task.deleted_at`），文件夹跟着不见；项目自己在挂上之前放在 `题目/` 下的文件被盖住。
+
+题目更新之后，项目总览「最近进展」里每一版一条（`project_progress/feed.py` 的 `revised`，只算项目建好之后的版本）；项目里的 agent 开场带一段「题目」（`package.section_for_project`），是 `TRACKED_SECTIONS` 之一，版本一变，跑着的会话下一轮就读到新的版本号和改动。
+
+### 起始代码 {#starter-code}
+
+起始代码是题目资料库里名为 `起始代码.zip`（`package.STARTER`）的那一份：它有自己的登记接口（`PUT` / `DELETE /tasks/{id}/starter`），字节和材料走同一条分段上传（`POST /tasks/{id}/files/uploads` 起头）；材料清单不列它，材料接口碰到这个名字一律 422；替换照样留历史行，设上、换掉、删掉各记一版（`changes.starter` 是 `added` / `replaced` / `removed`）。发题页上题目还不存在，人选的压缩包留在页面上，发布之后再走这条上传（传不成时题目照样发布，提示到改题页重传）；芝士写进草稿的是人交给它的一份附件（`starterAttachmentId`，只认本人传的），随草稿发布。
+
+压缩包在登记时就查一遍（`project/starter.py` 的 `check`），领题后做提交时（`build`）走的是同一个函数（`_entries`），所以登记时收下的，领题时一定提交得上。提交不经过磁盘上的工作目录：每一项从压缩包直接流进 `git fast-import` 成为 blob，路径的长短与后台在哪个目录干活无关，压缩包里的东西也不会落到 git 自己的对象以外。规矩是：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；`zipfile` 解不开的压缩方式（如 Deflate64）拒绝；每层名字超过 255 字节、整条路径超过 4096 字节、含控制字符（NUL 在内）的拒绝；其余路径问 git 自己（`update-index --index-info`，开着 `core.protectNTFS` 和 `core.protectHFS`），它不收的（`GIT~1`、`.git ` 这类 `.git` 的别名）拒绝，并说是哪一项；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git`（大小写不论）的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原；压缩包自带的 `.gitignore`（顶层的和各个文件夹里的）忽略掉的文件不进提交：进提交的正是 `git add -A` 从解开的文件夹里会提交的那些。由 git 自己判，不另抄一份规矩：只把这些 `.gitignore` 放进一个临时仓库的原位置，再用 `git check-ignore --no-index --stdin` 判每一条路径，被排除的文件夹里的文件不能再被放回来、开头的 BOM、多大的文件都和 git 一样（`tests/unit/test_starter_archive.py` 拿真的 `git add -A` 对照）；放不进临时仓库的 `.gitignore` 整份拒绝（`starterIgnoreUnreadable`），不默认把它列的文件放进去。分段上传登记时才合成一份，所以登记在一个保存点里先放进来、再查：按范围从存储读压缩包末尾的目录（`package._Stored`），不整份取回、不进内存；不合格的退回保存点并删掉这份字节。内容损坏（CRC 对不上、压缩数据坏了）要到领题后做提交时才读得出来：不管解压器报的是哪种异常，都是压缩包的事，记 `failed`（`starterNotZip`），不再重试；停掉 `fast-import` 时管道上的报错不会顶替它。
+
+领一道自己（或自己的团队）已经领着的题不是错：`TaskMembershipService.create_membership` 答的就是那一份领取（等着通过的、已经通过的都算），路由接着打开它的项目，所以「再试一次」总能进到项目里；被拒的那份不算领着，可以重新申请。整条领题路径有先后：路由里第一件写库的事就是用 `pg_try_advisory_xact_lock` 试着拿下这个成员（人或团队）在这道题上的领取（`TaskMembershipRepository.try_lock_claim`，到提交为止），拿不到就是同一个人或同一个团队的另一次领取正在建项目，当场回一句可以重试的 409（`claimInProgress`，`ClaimInProgressError`，界面照服务端那句话说），不等它、也不另建仓库；领取和它的项目在同一个事务里一起提交（团队那条路由也是）。数据库里还没有约束挡住同一个成员在同一道题上有两份还在的领取（以前没有这把锁时并发留下的，见 #4824）；按成员读领取的地方（`TaskMembershipRepository.get_by_task_and_member`，`get_user_membership` 也走它）有重复时挑一份、不报错：先挑已通过的，再挑最新的，人和团队的 id 分开看。`ProjectService.for_participation` 里同样的一把（`ProjectRepository.try_lock_claim`，按这个团队在这道题上）守着别的打开项目的路径。锁不锁题目那一行：别人的领取写的行都引用题目那一行，锁它会让所有人排队；别的团队、别的题目的领取碰不到这把锁。拿到之后再看一次这个团队是不是已经有了项目，有就用它；没有就读这道题此刻的起始代码是资料库里哪一行、题目第几版（`TaskTerms.starter`），用一个随机的项目 id 在 Forgejo 上建好账号和仓库（`forge.prepare_repository`，有起始代码时是空仓库），建项目、登记仓库（`forge.bind_repository`），有起始代码时再记一行 `project_starter_pushes`（`pending`），领题就提交返回了。项目 id 随机、猜不到：由题目和团队推出来的 id 会撞上这个团队搬走、交出去的旧项目，也能被别人抢先用 `POST /projects` 占住。直接建项目（`POST /projects`）不持锁，照旧在 `create` 里一步建好仓库（`provision_repository`）。
+
+后台任务「starter code pushes」（`task.starter_jobs.push_due`，每 10 秒）一次领一行，租约提交之后才动手，干活时不占事务。它先问仓库本身已经发生了什么（`ls-remote`，Forgejo API 的 `empty` 在推送之后一阵子才更新），再看压缩包：
+
+- `main` 已经存在，而且上面有这一行记下的那个提交（`commit_sha`，`merge-base --is-ancestor`，拉 `main` 的历史时不取文件内容）：上一次推成了、回答没回来，记 `done`，不管压缩包后来怎样。
+- `main` 已经存在，却没有那个提交（有写权限的人先推了别的）：起始代码没有放进去，记 `failed`（`starterMainTaken`），不说放好了。
+- 还没有 `main`：按记下的那一行取字节（之后出题人换了压缩包，已经领了的人拿到的仍是领题那一刻的那份；删掉了就是 `starterRemovedBeforePush`），以平台身份（`Cheese <starter@users.invalid>`）、领题那一刻的时间做出提交，先把提交号记进 `commit_sha`，再不强制地推成 `main`，凭据放在请求头里（同 `forge_migration.push`）。
+
+`done` 只在起始代码那个提交确实在 `main` 上时才记。压缩包本身成不了提交（读到一半坏了、出题人删了）或 `main` 被占，当场记 `failed`，`error` 是那句原因，不再重试；代码仓库服务一时没有回应，过一会儿再试（30 秒起、翻倍、最多 30 分钟），试满 8 次记 `failed`（`starterPushGaveUp`）。`GET /projects/{id}` 的 `starter` 说第几版、`pending` / `done` / `failed` 和原因，项目总览和 agent 的「题目」一段据此说起始代码在放、放好了，还是没放成。放好或没放成时，任务在项目推送上发一帧 `project`（`agent/project_feed.py`，由 `app/periodic_jobs.py` 接上），开着的页面重读项目那一行；推送没到时，页面在 `pending` 期间每 20 秒自己再读一次。没有起始代码的题，建仓库和从前一样由 Forgejo 初始化 `main`。GitHub 仓库的项目不建 Forgejo 仓库，也就没有起始代码。
 
 ## 边界与坑 {#traps}
 

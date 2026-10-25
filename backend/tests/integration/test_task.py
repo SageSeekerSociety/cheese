@@ -136,9 +136,12 @@ class TestTaskIntegration:
             ]
             earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
             assert [g["credits_total"] for g in earmarks] == [100]
-        # Repeating the application must not create a second workspace.
+        # Repeating the application answers with the claim held and its
+        # workspace; it never creates a second one.
         response = api_client.post(endpoint, json=payload, headers=student_headers)
-        assert response.status_code == 400, response.text
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["participant"]["id"] == membership_id
+        assert response.json()["data"]["project"]["id"] == project["id"]
         response = api_client.get(
             f"/projects?team_id={project['team_id']}", headers=student_headers
         )
@@ -1009,6 +1012,61 @@ class TestTaskEnumeration:
         assert len(members_of(task_ids[0])) == 1
         assert page_data["distinctParticipants"] == 1
 
+    def test_places_are_taken_only_by_approved_applications(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        multi_task_setup: dict,
+    ) -> None:
+        """名额和「参与人数」只算申请通过的：等批的、被拒的都不占。申请随时可以交，
+        名额满了之后再通过一份就被拒，并说明是名额满了。"""
+        creator = multi_task_setup["creator"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        task_id = multi_task_setup["task_ids"][0]
+        resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED", "participantLimit": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        for _ in range(3):
+            user = user_client.create_user()
+            user.token = user_client.login(api_client, user.username, user.password)
+            resp = api_client.post(
+                f"/tasks/{task_id}/participants",
+                json={},
+                headers={"Authorization": f"Bearer {user.token}"},
+            )
+            assert resp.status_code == 200, resp.text
+        resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
+        assert resp.status_code == 200, resp.text
+        claims = [row["id"] for row in resp.json()["data"]["participants"]]
+
+        def counts() -> tuple[int, int]:
+            resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            participants = resp.json()["data"]["task"]["participants"]
+            return participants["total"], participants["approved"]
+
+        def decide(claim: int, approved: str):
+            return api_client.patch(
+                f"/tasks/{task_id}/participants/{claim}",
+                json={"approved": approved},
+                headers=headers,
+            )
+
+        assert counts() == (3, 0)
+        assert decide(claims[0], "DISAPPROVED").status_code == 200
+        assert counts() == (3, 0)
+        assert decide(claims[1], "APPROVED").status_code == 200
+        assert counts() == (3, 1)
+
+        refused = decide(claims[2], "APPROVED")
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["i18n"]["key"] == "taskPlacesFull"
+        assert counts() == (3, 1)
+
     def test_enumerate_tasks_without_the_flag_carries_no_participant_count(
         self, api_client: TestClient, multi_task_setup: dict
     ) -> None:
@@ -1498,7 +1556,7 @@ class TestParticipantManagement:
         participants = update_resp.json()["data"]["participants"]
         assert len(participants) >= 1
 
-    def test_duplicate_participant_fails(
+    def test_joining_again_answers_with_the_claim_held(
         self, api_client: TestClient, participant_setup: dict
     ) -> None:
         participant1 = participant_setup["participant1"]
@@ -1516,8 +1574,10 @@ class TestParticipantManagement:
             json={},
             headers={"Authorization": f"Bearer {participant1.token}"},
         )
-        assert join_resp2.status_code == 400, (
-            f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        assert join_resp2.status_code == 200, join_resp2.text
+        assert (
+            join_resp2.json()["data"]["participant"]["id"]
+            == join_resp1.json()["data"]["participant"]["id"]
         )
 
 
@@ -2792,14 +2852,14 @@ class TestTeamParticipant:
             f"Add team participant failed: {add_resp.text}"
         )
 
-    def test_add_team_again_fails(
+    def test_adding_the_team_again_answers_with_its_claim(
         self, api_client: TestClient, team_participant_setup: dict
     ) -> None:
         creator = team_participant_setup["creator"]
         team_id = team_participant_setup["team_id"]
         task_id = team_participant_setup["task_id"]
 
-        api_client.post(
+        first = api_client.post(
             f"/tasks/{task_id}/participants",
             params={"member": team_id},
             json={},
@@ -2812,8 +2872,10 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert add_again_resp.status_code == 400, (
-            f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        assert add_again_resp.status_code == 200, add_again_resp.text
+        assert (
+            add_again_resp.json()["data"]["participant"]["id"]
+            == first.json()["data"]["participant"]["id"]
         )
 
     def test_list_team_participants(

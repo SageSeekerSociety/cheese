@@ -67,7 +67,7 @@ covers:
 和房间里的芝士是同一套底座：中心会话机上钉住版本的 pi，由 runner 守着，用同一个启动脚本起（`harness/pi/launch.py`、`host.py`），后端用同一种「等到有新东西才回」的读法读它的日志和正在写的内容（`driven/runner.py`）。区别是没有房间要的那些东西：没有项目、频道锁和房间日志。起会话、发问题、读回答由会话核心做（`agent/session_host/`），和[文档里的芝士](/dev/doc-agent#session)、[房间里的芝士](/dev/harness#contract)共用；这里只决定会话是什么样的（`personal/session.py`）。
 
 - **一段对话一个 pi 会话**，会话 id 就是对话 id，放在会话机的 `~/.cheese/personal/<用户 id>/<对话 id>`。
-- **一台自己的电脑**：部署配了会话机（`agent_session_device_id`）、能开云沙箱时，pi 除了平台列给它的工具（`personal/session.py` 的 `TOOLS`）还开自己的读写文件、跑命令（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`），落在这段对话自己的标准沙箱里：能上网，第一次用时才开，闲置回收，按时长扣这个人的个人额度。规则里多出「你的电脑」一节，说明这些。文件放在这个人自己的资料库里（他名下那个团队的资料库，见[团队的资料库](#library)），芝士用 `cheese_file_to_computer` 取进电脑、用 `cheese_file_give` 交出来。沙箱怎么归属、怎么要手见[沙箱归谁](/dev/execution#personal-sandbox)。没有会话机或云沙箱的部署不开这些工具，规则里也不说。
+- **一台自己的电脑**：部署配了会话机（`agent_session_device_id`）、能开云沙箱时，pi 除了平台列给它的工具（`personal/session.py` 的 `TOOLS`）还开自己的读写文件、跑命令（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`），落在这段对话自己的标准沙箱里：能上网，第一次用时才开，闲置回收，按时长扣这个人的个人额度。规则里多出「你的电脑」一节，说明这些。文件放在这个人自己的资料库里（他名下那个团队的资料库，见[团队的资料库](#library)），芝士用 `cheese_library(action=take)` 取进电脑、用 `cheese_library(action=give)` 交出来。沙箱怎么归属、怎么要手见[沙箱归谁](/dev/execution#personal-sandbox)。没有会话机或云沙箱的部署不开这些工具，规则里也不说。
 - **电脑上的文件只在电脑上**：芝士还不能把电脑上的文件交给人，也不能把人附上的文件放上电脑；结果写进回答。
 - 系统提示词替换掉 pi 默认的那份编程助手说明，只写规则，对每段对话都一样；用户眼前是哪一页随问题说（见[一次提问](#ask)）。
 - **能做的事处处一样**：不管在哪一页问，工具都是同一套、同一顺序（`personal/session.py` 的 `TOOLS`，`backend/sandbox/cheese` 的 `DELEGATED_TOOLS`）。页面只决定芝士看到什么，不收窄它能做什么：做不了的事由接口按这个人的权限拒绝，不靠少给工具。见[工具](#credential)和[开头保持不变](#cache)。
@@ -90,22 +90,22 @@ covers:
 | 工具 | 做什么 | 接口 |
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
-| `cheese_inbox_respond` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
+| `cheese_inbox(action=respond)` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
 | `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置 |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
-| `cheese_message_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
+| `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
 | `cheese_task(action=open)` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
 | `cheese_card(action=decide)` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
-| `cheese_member_set` | 项目里邀请、改角色、移出；频道里加入、移出 | 经授权判断，成员接口 |
-| `cheese_channel_create` | 新建频道 | 经授权判断，`POST /topics` |
-| `cheese_settings_set` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
-| `cheese_web_fetch` | 读一个网页 | 经授权判断，`POST /fetch` |
-| `cheese_web_search` | 搜网页，和房间里的 agent 同一个工具 | 直接 `GET /web-search`，不经授权判断：搜索词只发给 DeepSeek，它是模型的提供方，本来就收着整段对话；在他自己的网关 key 上搜，花费和这次提问的模型调用一起扣他的额度 |
-| `cheese_problem_write` | 写题目草稿 | `POST /task-drafts/agent/write`：见[题目草稿](#drafts) |
-| `cheese_problem_publish` | 发布草稿，和人点「发布」「保存更改」同一条路 | `POST /task-drafts/agent/publish` |
-| `cheese_file_give` | 把电脑上的一份文件交给他：存进他的资料库，回答里出现文件卡片 | `POST /assistant/agent/files/slot` 领地址，电脑自己 `curl -T` 传上去，再 `POST /assistant/agent/files/handed` 登记；流里发 `handed` |
-| `cheese_file_to_computer` | 把他资料库里的一份文件放进电脑 | `POST /assistant/agent/files/link` 领地址，电脑自己 `curl -o` 取下来 |
+| `cheese_room(action=member)` | 项目里邀请、改角色、移出；频道里加入、移出 | 经授权判断，成员接口 |
+| `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
+| `cheese_settings` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
+| `cheese_web(action=fetch)` | 读一个网页 | 经授权判断，`POST /fetch` |
+| `cheese_web(action=search)` | 搜网页，和房间里的 agent 同一个工具 | 直接 `GET /web-search`，不经授权判断：搜索词只发给 DeepSeek，它是模型的提供方，本来就收着整段对话；在他自己的网关 key 上搜，花费和这次提问的模型调用一起扣他的额度 |
+| `cheese_problem(action=write)` | 写题目草稿 | `POST /task-drafts/agent/write`：见[题目草稿](#drafts) |
+| `cheese_problem(action=publish)` | 发布草稿，和人点「发布」「保存更改」同一条路 | `POST /task-drafts/agent/publish` |
+| `cheese_library(action=give)` | 把电脑上的一份文件交给他：存进他的资料库，回答里出现文件卡片 | `POST /assistant/agent/files/slot` 领地址，电脑自己 `curl -T` 传上去，再 `POST /assistant/agent/files/handed` 登记；流里发 `handed` |
+| `cheese_library(action=take)` | 把他资料库里的一份文件放进电脑 | `POST /assistant/agent/files/link` 领地址，电脑自己 `curl -o` 取下来 |
 | `cheese_todo` | 一件长的事的步骤清单，每次写整份 | `POST /assistant/agent/todo` 只核对、数回去；面板从这次调用的参数直接画，见[长的事](#long-work) |
 | `cheese_subagent_start` / `cheese_subagent_send` / `cheese_subagent_stop` | 派出分身、给分身发消息（做完的就接着做）、停下分身 | 不走平台接口：扩展自己在会话进程里开分身，见[长的事](#long-work) |
 
@@ -121,7 +121,7 @@ covers:
 
 `POST /api/assistant/conversations/{id}/ask`，带上问题、问的时候眼前是哪一页（`page`：`{kind: "task" | "draft", id}`，省略时是对话挂着的那样东西）和交给芝士的文件（`files`：先传进他自己的资料库的 `path` 和名字，芝士按 `library/<path>` 读；发布、改题目页上交的是题目材料，仍是经 `POST /attachments` 传上去的 `id`，按 `files/<id>` 读）。以 server-sent events 流式返回：`queued`（在等会话机空出来）、`thinking`（模型开始推理；只说它在推理，推理的内容不发）、`delta`（文字）、`tool`（芝士开始调一个工具，带调用 id）、`tool_args`（这次调用的参数原文，边写边流，带 `at`）、`tool_failed`（这次调用报错了）、`change`（芝士写进了草稿，带这次改动记下的编号，见[题目草稿](#drafts)和[改动与撤销](#changes)）、`published`（芝士发布了一份草稿）、`handed`（芝士交给他一份文件：团队 id、资料库里的名字和大小，回答里画成文件卡片）、`tool_done`（这次调用回来了，没报错）、`subagents`（这一轮派出的分身现在怎样：做什么、做到哪了、最近做的几步）、`error`、`done`（`stopped`：被人停下了）。`tool` 和 `thinking` 带 `at`：它之前回答已经写了多少字，面板把它排在这些字后面；存下的步骤也带着它。
 
-**眼前的页面随问题说**：页面写成一段「当前页面」（题目页是题目说明、这个人的领取和题目材料；草稿页是整份草稿，带 version、空间 id 和这个空间可选的分类、标签、邮箱域名组、能当导师的人——芝士的工具按空间 id 办事），放在问题前面。前端只传页面的种类和 id，正文由服务端按提问人的权限写出（`personal/pages.py`）：每种页面是 `PAGES` 里的一行，写明怎么写出这一页、在这里提问记作哪种用量；加一种页面就是加一个渲染器和一行，提问的路由不用改。请求里的种类列在 `PageKind`，测试保证它和 `PAGES` 一致；不认识的种类在问模型之前就以参数错误拒绝。
+**眼前的页面随问题说**：页面写成一段「当前页面」（题目页是题目说明、这个人的申请和题目材料；草稿页是整份草稿，带 version、空间 id 和这个空间可选的分类、标签、邮箱域名组、能当导师的人——芝士的工具按空间 id 办事），放在问题前面。前端只传页面的种类和 id，正文由服务端按提问人的权限写出（`personal/pages.py`）：每种页面是 `PAGES` 里的一行，写明怎么写出这一页、在这里提问记作哪种用量；加一种页面就是加一个渲染器和一行，提问的路由不用改。请求里的种类列在 `PageKind`，测试保证它和 `PAGES` 一致；不认识的种类在问模型之前就以参数错误拒绝。
 
 「当前页面」开头是一段「这一页」：这一页是做什么的、「这道题」指什么、只附文件不打字在这里是什么意思（发布页是导入，草稿还空着就先填它；改题页是按文件改这道题；题目页是说明文件和题目的关系）。它由管这一页的模块自己写（`drafts.scene`、`prompt.TASK_SCENE`），所以全局规则里不放任何一页专属的做法，加一种页面就在它的渲染器里加一段「这一页」。只发文件不打字时问题是空的，文件名存在这条消息的 `parts.files` 里，读回对话时照样显示。只在它和这段对话上一次听到的不一样时才说（Valkey 里记着上一次说的摘要，`assistant:page:<对话 id>`，六小时后不认），没变就只送问题。系统提示词因此对每段对话都一样，每次提问都能走缓存。
 
@@ -146,9 +146,9 @@ covers:
 两只手往里写：
 
 - **人**在发布页、改题页上改，页面停手 600ms 后把改了的那几格存进去（`PATCH /task-drafts/{id}`）。还没有草稿时，第一次改动或第一次问芝士才建（`POST /task-drafts`），地址栏 `?draft=` 记下它。每写一次 `version` 加一，`marks` 记着每一格人最后一次写它时的 `version`。
-- **芝士**用 `cheese_problem_write` 写，说的是它自己的字段名（`AGENT_FIELDS`：分类、标签写名字，截止时间写这个人时区的「YYYY-MM-DD HH:MM」，详情写 Markdown，也可以按原文替换几处）。它带着读草稿时的 `version`：人在那之后写过的格子保持人的版本，返回里列在 `kept`。写完记下这次改动（见[改动与撤销](#changes)），往这一问的流里推一条 `change`：改动编号、草稿 id、改了哪几格（各自原来是什么）、`kept`、芝士留给人确认的 `notes`、已撤销的格子。
+- **芝士**用 `cheese_problem(action=write)` 写，说的是它自己的字段名（`AGENT_FIELDS`：分类、标签写名字，截止时间写这个人时区的「YYYY-MM-DD HH:MM」，详情写 Markdown，也可以按原文替换几处）。它带着读草稿时的 `version`：人在那之后写过的格子保持人的版本，返回里列在 `kept`。写完记下这次改动（见[改动与撤销](#changes)），往这一问的流里推一条 `change`：改动编号、草稿 id、改了哪几格（各自原来是什么）、`kept`、芝士留给人确认的 `notes`、已撤销的格子。
 
-发布（`POST /task-drafts/{id}/publish`，或芝士的 `cheese_problem_publish`）把草稿当成 `POST /tasks` 或 `PATCH /tasks/{id}` 的请求体，走同一段建题、改题代码（`routes/tasks/_writes.py`），然后删掉草稿、把对话改挂到题目上。页面点「发布」「保存更改」时，先把表单校验过的样子存进草稿，再发布草稿。
+发布（`POST /task-drafts/{id}/publish`，或芝士的 `cheese_problem(action=publish)`）把草稿当成 `POST /tasks` 或 `PATCH /tasks/{id}` 的请求体，走同一段建题、改题代码（`routes/tasks/_writes.py`），然后删掉草稿、把对话改挂到题目上。页面点「发布」「保存更改」时，先把表单校验过的样子存进草稿，再发布草稿。
 
 ## 改动与撤销 {#changes}
 
@@ -222,10 +222,10 @@ covers:
 - **事件从哪来**：事情发生的地方，在同一个事务里写一行 `happenings`（`domain/happenings`，C5 最底层，不认识芝士和规则）：投递账本给人记下一条通知时（`delivery/ledger.record_mailbox`，`notified`），审阅递卡时（`review/room_notices._announce_filed`，`task_filed`），卡被采纳或退回时（`_settle_the_card`，`task_decided`）。提交后经 Valkey 列表 `cheese:happenings:wake` 叫醒周期任务；周期任务一次取走最多 500 行、读完即删，逐条对照所有启用中的事件规则，命中一条记一行 `assistant_runs`（`occurrence = <规则>:h:<事件>`，`(user_id, occurrence)` 唯一）。没有规则在等的事件照样删掉。一条反复的事件规则一小时最多运行 6 次，超出的记为跳过。
 - **运行**：周期任务 `assistant routines` 被事件叫醒时只处理事件和开始运行；每 30 秒的那一拍做全部（过期的卡、长时间未登录、额度恢复、到点的定时规则、等太久的规则），也兜住丢了的叫醒。叫醒不占那一拍的租约，所以只在持有所有权锁的进程上跑（`PeriodicRunner` 的 `woken_by`）。每人同时只跑一个，同一条规则上一次还没跑完，这一次跳过。只做一次的规则在建它的那段对话里运行，命中第一件事就是 `done`，之后的不再触发；14 天（`WAITS_FOR`）没等到就是 `done` 并通知他，通知点开是那段对话。反复的每次开一段新对话（`place_kind = routine`）。第一条消息由平台写（`role = platform`，授权判断、对话标题都不读它；面板上只显示「例行事务「X」开始运行」），触发它的那件事写成资料。运行和人提问走同一条路（`personal.service.admit` / `ask`），记这个人的额度，没有人看着也能答完。
 - **不等确认**：运行中要请人确认的操作照样出卡片，但工具不等（`agent_wait` 看到这次回答是一次运行就立刻返回），芝士接着做别的或结束。这些卡片保留 3 天；同一条规则下一次运行开始时，上一次没处理的也作废，状态为 `expired`，不能再确认。
-- **结束**：运行结束时按这次回答的 token 和网关价格算出花费，记下留给他确认的卡片数，再给他发一条通知（`ASSISTANT_NOTICE`）：已完成、有几项待他确认、或未能完成，只做一次的说法和他提问后答完的一样（「芝士已完成「X」」）；芝士在运行中已经用 `cheese_notify_me` 通知过他的，不再发。通知点开在待办页打开那段对话（`/inbox?assistant=<对话>`，`AgentHost` 认这个参数）。只做一次的规则跑完即为 `done`：不能暂停或恢复，不占名额，3 天后连同运行记录自动删除；芝士给它改一个新时间，它重新生效。
+- **结束**：运行结束时按这次回答的 token 和网关价格算出花费，记下留给他确认的卡片数，再给他发一条通知（`ASSISTANT_NOTICE`）：已完成、有几项待他确认、或未能完成，只做一次的说法和他提问后答完的一样（「芝士已完成「X」」）；芝士在运行中已经用 `cheese_notify` 通知过他的，不再发。通知点开在待办页打开那段对话（`/inbox?assistant=<对话>`，`AgentHost` 认这个参数）。只做一次的规则跑完即为 `done`：不能暂停或恢复，不占名额，3 天后连同运行记录自动删除；芝士给它改一个新时间，它重新生效。
 - **暂停**：额度用完时这个人的例行事务全部暂停并通知他一次，有额度后自动恢复（每 10 分钟看一次）；14 天没有登录（`user_sessions.last_used_at`）也全部暂停并通知他，回来后在设置页恢复。恢复后从现在起运行，暂停期间错过的不补。
 - **设置页**：「芝士」页分两组。「正在等的事」列只做一次的：等什么、查看建它的对话、取消；「例行事务」列反复的：何时运行、下次运行、最近一次的结果、近 7 天花了多少点，可以查看对话、暂停、恢复、删除（`GET /assistant/routines` 等，`once` 和 `conversationId` 分开两组）。面板上，这段对话里还在等的事列在输入框上方，可以取消（`useAgentWaits`，一轮回答结束时重读）。通知设置里「芝士发来的通知」一行管这些通知走哪几个渠道，默认全开。
-- **`cheese_notify_me`**：芝士给这个人发一条通知，点开是这段对话，一小时最多 10 条。
+- **`cheese_notify`**：芝士给这个人发一条通知，点开是这段对话，一小时最多 10 条。
 
 ## 记忆 {#memory}
 
@@ -243,9 +243,9 @@ covers:
 
 一个人的文件放在他自己的资料库里，也就是他名下那个单人团队的资料库（`library_files.team_id`，见 `domain/library/shelf.py`）。资料库可以属于一个项目，也可以属于一个团队，一行只属于其中一个，读写都以书架（`Shelf`）为单位。
 
-- **谁放进来**：他在面板里附的文件（发布、改题目页上的除外，那是题目材料，仍走附件表），和芝士用 `cheese_file_give` 交出来的文件。他也能在团队的「资料库」页直接上传。
-- **芝士怎么用**：`cheese_read library` 列出全部，`library/<名字>` 读文字；`cheese_file_to_computer` 把一份放进电脑。芝士的凭据只进 `/assistant/agent/library`、`/files/slot`、`/files/handed`、`/files/link` 这四条（`api.auth.DELEGATED_ROUTES`），团队资料库的页面接口（`/teams/{id}/library`）它进不来。
-- **上限**：每个团队的资料库共 `team_library_bytes`（1 GB），被替换下来的旧版本也算；单个文件最大和附件相同（100 MB），比项目资料库的 10 MB 宽。满了在领上传地址时就拒（`libraryFull`）。
+- **谁放进来**：他在面板里附的文件（发布、改题目页上的除外，那是题目材料，仍走附件表），和芝士用 `cheese_library(action=give)` 交出来的文件。他也能在团队的「资料库」页直接上传。
+- **芝士怎么用**：`cheese_read library` 列出全部，`library/<名字>` 读文字；`cheese_library(action=take)` 把一份放进电脑。芝士的凭据只进 `/assistant/agent/library`、`/files/slot`、`/files/part`、`/files/handed`、`/files/link` 这五条（`api.auth.DELEGATED_ROUTES`），团队资料库的页面接口（`/teams/{id}/library`）它进不来。
+- **上限**：每个团队的资料库共 `team_library_bytes`（1 GB），被替换下来的旧版本也算；单个文件最大：存在服务器本地盘上时和附件相同（100 MB），比项目资料库的 10 MB 宽；存进文件桶时是 `files_bucket_file_max_bytes`。满了在领上传地址时就拒（`libraryFull`）。
 - **卡片**：`handed` 事件和这次回答的其他部分一起存进 `assistant_messages.parts.handed`，面板重新打开时照样画出文件卡片。
 
 ## 打转 {#loops}
@@ -282,7 +282,7 @@ covers:
 发布页、改题页上，表单跟着芝士动（`useTaskDraft`、`useDraftAgent`）：
 
 - `tool_args` 流进来时，页面把参数读成表单的几格先填上（`lib/taskDraftAgent.ts` 的 `previewOf`，只填能确定的值），这几格这时不算人改的；`change` 到了，用服务端的值覆盖预览，记成已存；`tool_failed` 就收回预览。只改详情里几处（`description_edits`）时，预览在现在的详情上把已经写出来的那几处换掉。
-- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏（哪些参数长、哪些只用来定位由工具说，`cheese_problem_write` 的是 `DRAFT_WRITE_PACE`）：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`change`、`published` 都排在放完之后。
+- 参数常常一大块一起到，`lib/typist.ts` 按格子定节奏（哪些参数长、哪些只用来定位由工具说，`cheese_problem(action=write)` 的是 `DRAFT_WRITE_PACE`）：边读那段 JSON 边认出在写哪个字段，一格的字每秒 60 个，字多就加快，短格子最多 1 秒、详情和评分标准最多 2 秒写完；换到下一格前停 0.22 秒，让指针先过去；定位用的字段（草稿 id、要替换的原文）一下子放完。调用结束、`change`、`published` 都排在放完之后。
 - 要整格重写、原来有字时，停的那一下把原来的字选中；改详情里的一段时，先选中原文，再跟着新文字走（`useAgentPointer` 在编辑器里找那段字，`AgentLayer` 画选中）。
 - 页面跟着芝士滚：换到一格时平滑滚进视野；字写到看不见的地方时立刻滚过去，先滚那一格自己（详情超过最大高度后在框里滚），再滚页面。人刚自己滚过就不跟。
 - 表单上一层是 `AgentLayer`：整张表单一个指针。写打字的格子（名称、详情）时是带「芝士」名字的文字光标，停在字的末尾（输入框量字宽，编辑器读 TipTap 挂在 `.ProseMirror` 上的编辑器）；写选项、数字、日期、列表时是箭头。正在写的那一格描着边，写过的格子标「芝士已填写」，人改过这一格后标记消失。位置由 `useAgentPointer` 量 `data-agent-field` 标着的那几格：芝士在答时每一帧都量，不在答时格子变了大小也量。描边只在换格子时滑过去，光标不带过渡，免得落在字后面。「芝士已填写 撤销」那一小行是 `AgentMark`，以后别的页面上芝士改过的地方也用它。
@@ -290,4 +290,4 @@ covers:
 
 一份文件拆出几道题时，芝士在同一段对话里建的几份新题目草稿排在表单上方（`TaskDraftStrip`）：点了切换，对话还是那一段，不重读；芝士正在写的那份转圈，还没建好的先占一格。「全部发布」先存下眼前这份，再一份份发布（`POST /task-drafts/{id}/publish`）：草稿列表的 `missing`（后端 `drafts.missing`，名称、详情、参与方式、难度）不空的那份不发，标出缺几项，切过去时表单标出缺的格子。
 
-芝士的「当前页面」里列着空间的题目模板。`cheese_problem_write` 给 `template` 时，先按模板填好名称、详情和几项设置（和页面上「使用模板」一样），再写同一次给出的其他字段；返回里带着套好的详情骨架，芝士在它的小标题下面填。
+芝士的「当前页面」里列着空间的题目模板。`cheese_problem(action=write)` 给 `template` 时，先按模板填好名称、详情和几项设置（和页面上「使用模板」一样），再写同一次给出的其他字段；返回里带着套好的详情骨架，芝士在它的小标题下面填。

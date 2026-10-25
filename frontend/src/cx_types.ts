@@ -51,6 +51,9 @@ export interface Project {
    * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
    */
   shell?: Shell
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有（只在单个项目那一行里有）；
+   *  没有起始代码是 null。`error` 是没放成的原因（`{ key, params }`）。 */
+  starter?: { revision: number; state: 'pending' | 'done' | 'failed'; error: unknown } | null
 }
 
 export interface ProjectSite {

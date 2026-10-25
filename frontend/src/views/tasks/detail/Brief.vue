@@ -3,15 +3,16 @@
     :task-data="taskData"
     :attachments="attachments"
     :can-download="canDownload"
-    :downloading-id="downloadingId"
+    :downloading="downloading"
+    :progress="progress ?? null"
     @download="onDownload"
   />
 </template>
 
 <script setup lang="ts">
 // 「说明」页签：取材料清单、处理下载，画面交给 `BriefView.vue`。
-import type { Task } from '@/types'
-import type { TaskAttachmentData } from '@/types/taskBoard'
+import type { Task, TaskProgress } from '@/types'
+import type { TaskFileData } from '@/types/taskBoard'
 
 import { watch } from 'vue'
 
@@ -21,11 +22,13 @@ import { useTaskAttachments } from '@/views/tasks/composables'
 
 const props = defineProps<{
   taskData: Task | null
+  /** 每个阶段上的进度，题目页取的那一份。 */
+  progress?: TaskProgress | null
 }>()
 
-const { attachments, canDownload, downloadingId, load, download } = useTaskAttachments()
+const { attachments, canDownload, downloading, load, download } = useTaskAttachments()
 
-function onDownload(file: TaskAttachmentData) {
+function onDownload(file: TaskFileData) {
   if (props.taskData) download(props.taskData.id, file)
 }
 
