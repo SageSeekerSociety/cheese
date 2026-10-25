@@ -12,10 +12,11 @@
 // 不会被看到。
 
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
-import type { PagePin, SlideSource } from './slidesContext'
+import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -37,8 +38,15 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** 读者选中了一段原文，附带它在第几页。 */
+  /** 读者选中了一段原文，附带它在第几页。指的是哪一版只有这一句，没有文件身份——
+   *  那是「没有已验证的身份」时那条老路（`pageContext` 才带身份）。 */
   (e: 'quote', payload: { text: string; page: number }): void
+  /** 读者选中的一段，连同这一份已验证的身份：和幻灯片选段走同一条出口。
+   *
+   *  两者本是一回事——`slide-page` 这个锚点说的就是「某份文档的一页，整页或页里的
+   *  一段」，`scope` 分这两样。分页这一档自己核过字节、身份最靠得住，却一直只发一
+   *  句不带版本的纯文本，受话人回到的那一版可能早不是读者指的那一版。 */
+  (e: 'page-context', payload: SlidePageContext): void
   /** 读者在一页上点了一下。 */
   (e: 'pin', payload: PagePin): void
   /** 屏上那一点被撤掉了（重排把它撤了），外面记着的那一点也跟着作废。 */
@@ -267,6 +275,15 @@ useSelectionHighlight({
   paintClass: 'pv-hl',
 })
 
+/** 这一页现在能不能带身份地指出去：画出来了、这一份是屏幕上那一版、也没有转不动。
+ *
+ *  和幻灯片那边（`PreviewSlides.canQuote`）同一条判据——那边也只在 `ready` 上建。
+ *  松这一档没有意义：真发出去之前父级还会把身份整个再核一遍（`usePreviewLocator`
+ *  走 `usePreviewPagePin` 的 `canUse`），这里放行的只会是一场白选。 */
+const canQuote = computed(
+  () => !!props.context && pages.value.some((slot) => slot.rendered) && !loading.value && !failure.value
+)
+
 function onSelect() {
   const selection = window.getSelection()
   // 和 `PreviewSlides.quote()`、父级 `onQuote` 同一条门槛：先归一化空白，再要求不止
@@ -274,10 +291,31 @@ function onSelect() {
   // 没反应」，而这正是那句门槛存在的理由。
   const text = selection?.toString().replace(/\s+/g, ' ').trim() ?? ''
   if (text.length < 2 || !selection?.rangeCount) return
-  const node = selection.getRangeAt(0).startContainer
+  const range = selection.getRangeAt(0)
+  const node = range.startContainer
   const host = (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest('[data-page]')
   if (!host) return
-  emit('quote', { text, page: Number((host as HTMLElement).dataset.page) })
+  const page = Number((host as HTMLElement).dataset.page)
+  // 有身份就走幻灯片那条结构化出口：同一个锚点、同一份版本，两侧文字帮受话人分辨同
+  // 一句话在这一页的哪一处。没有身份（这一份还没核过）才退回那句不带版本的拼话——
+  // 它指不回哪一版，但也不撒谎。
+  //
+  // 两侧文字量的是这一页的文字层（`contextAround` 要求选区落在它给的根里）；选区不
+  // 在文字层里（选到的是画布那层）就退到页框本身，量出来的两侧是空的，锚点照样成立。
+  const textRoot =
+    (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest<HTMLElement>('.pv-text') ??
+    (host as HTMLElement)
+  if (canQuote.value && props.context) {
+    emit('page-context', {
+      text,
+      page,
+      scope: 'selection',
+      context: { ...props.context },
+      ...contextAround(textRoot, range),
+    })
+    return
+  }
+  emit('quote', { text, page })
 }
 
 function setRef(slot: PageSlot, el: unknown) {

@@ -269,6 +269,70 @@ describe('分页文档的阅读视图', () => {
     expect(emitted().quote![0]).toEqual([{ text: '第一页', page: 1 }])
     selection.removeAllRanges()
   })
+
+  it('有已核过的身份时，选中一段发的是结构化引用，不是那句拼话', async () => {
+    // 这一条原本是这句话的反面：分页文档选段只发一句不带版本的纯文本，而幻灯片同一
+    // 件事发的是带身份、带两侧文字的 `slide-page`。两边本是一回事，受话人拿不到版本
+    // 就回不到读者指的那一版。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const layer = document.createElement('div')
+    layer.className = 'pv-text'
+    // 真的文字层由 pdf.js 立出来；假的这条自己摆一层，好让选区落进它里面，两侧文字
+    // 也才量得到（`contextAround` 量的是它给的根）。
+    const node = document.createTextNode('前文重试三次后文')
+    layer.appendChild(node)
+    host.appendChild(layer)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 2)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [
+      { text: string; page: number; scope: string; context: typeof context; prefix: string; suffix: string },
+    ]
+    expect(payload.text).toBe('重试三次')
+    expect(payload.page).toBe(2)
+    expect(payload.scope).toBe('selection')
+    // 带的是这一份已验证的身份：受话人据此回到读者当时看的那一版。
+    expect(payload.context).toEqual(context)
+    // 两侧文字：同一句话在这一页往往不止一处，前后文才是能分辨它说的是哪一处的东西。
+    expect(payload.prefix).toBe('前文')
+    expect(payload.suffix).toBe('后文')
+    // 老那条出口没被用上——用了就会同时发两种引用。
+    expect(ui.emitted('quote')).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('还没核过身份时，仍旧发那句不带版本的拼话', async () => {
+    // 没有身份不是「不发」——读者那一下指的确实是一处；拼话至少把选中的原文交出去，
+    // 只是指不回哪一版。这条守着别为了结构化把这条老路掐掉。
+    const ui = await opened({ data: new ArrayBuffer(8) })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const node = document.createTextNode('第一页正文')
+    host.appendChild(node)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 3)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    await waitFor(() => expect(ui.emitted('quote')).toHaveLength(1))
+    expect(ui.emitted('quote')![0]).toEqual([{ text: '第一页', page: 1 }])
+    expect(ui.emitted('page-context')).toBeUndefined()
+    selection.removeAllRanges()
+  })
 })
 
 describe('在页面上指一点', () => {
