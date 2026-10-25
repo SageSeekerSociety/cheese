@@ -1,6 +1,7 @@
 // 这段对话里芝士正在等的事：用户让它「等某件事发生了再做」，它建了一条只做一次的规则，
 // 事情发生时平台回到这段对话里接着说。面板在输入框上方列出来，可以取消。
-// 一轮回答结束时重读（这一轮可能刚建了一条），换对话时也重读。
+// 一轮回答结束时重读（这一轮可能刚建了一条），换对话时、对话在别处有了新动静时（等的事到了，
+// 平台在这段对话里开始运行）也重读。
 import type { Ref } from 'vue'
 import type { AssistantRoutine } from '@/api'
 
@@ -49,5 +50,5 @@ export function useAgentWaits(conversation: Ref<string | null>, busy: Ref<boolea
     }
   }
 
-  return { waits, cancel }
+  return { waits, cancel, load }
 }

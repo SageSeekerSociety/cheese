@@ -231,6 +231,7 @@
   "alembic_check_drift": [
     "add_fk task_access_domain.task_id->task",
     "add_index memory_dream_states.ix_memory_dream_states_project_id",
+    "remove_column assistant_routines.event_cursor",
     "remove_column space.course_modules",
     "remove_column tasks.transcripts_archived_at",
     "remove_column topics.transcripts_archived_at",

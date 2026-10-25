@@ -131,8 +131,16 @@ watch(
   { immediate: true }
 )
 
+// 这段对话里芝士正在等的事，列在输入框上方，可以取消。
+const waiting = useAgentWaits(agentThread.current, agentThread.busy)
+
 // 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
-onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+onBeforeUnmount(
+  onAssistantChange((conversation) => {
+    void agentThread.heard(conversation).catch(() => undefined)
+    void waiting.load()
+  })
+)
 
 // 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
 // 服务端只记几十秒，看着的时候隔一会儿说一次。
@@ -203,9 +211,6 @@ function openTask(id: number) {
   const spaceId = route.params.spaceId
   if (spaceId) void router.push({ name: 'TasksDetail', params: { spaceId, taskId: id } })
 }
-
-// 这段对话里芝士正在等的事，列在输入框上方，可以取消。
-const waiting = useAgentWaits(agentThread.current, agentThread.busy)
 
 const panelProps = computed(() => {
   const context = agentContext.value ?? {}

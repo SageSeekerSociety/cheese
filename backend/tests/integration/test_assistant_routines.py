@@ -21,6 +21,7 @@ from sqlalchemy import select, update
 from app.api.deps import get_consumptions, get_session_host
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain import happenings
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent.session_host.answer import Answer
 from app.domain.assistant import gate
@@ -445,6 +446,27 @@ def test_a_scheduled_routine_still_running_skips_its_next_time(client):
     assert [r.status for r in _runs(client, routine.user_id)] == ["queued", "skipped"]
 
 
+def test_a_happening_that_cannot_be_read_does_not_hold_up_the_ones_behind(client):
+    routine = _routine(client, "dora", spec={"from": ["bob"], "fromNames": ["鲍勃"]})
+
+    async def garbled(db):
+        await happenings.happened(
+            db,
+            happenings.NOTIFIED,
+            user_id=routine.user_id,
+            payload={"type": NotificationType.MENTION.value, "payload": "garbled"},
+        )
+
+    _db(client, garbled)
+    _notified(client, routine.user_id, NotificationType.MENTION)
+
+    _sweep(client)
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert "周五前能交吗？" in run.detail
+
+
 def test_a_mention_rule_limited_to_some_people_hears_only_them(client):
     routine = _routine(client, "dora", spec={"from": ["bob"], "fromNames": ["鲍勃"]})
     _notified(client, routine.user_id, NotificationType.MENTION)
@@ -555,7 +577,7 @@ def test_a_rule_waiting_once_that_nothing_fires_is_given_up_and_said(client):
         await db.execute(
             update(AssistantRoutine)
             .where(AssistantRoutine.id == routine.id)
-            .values(created_at=datetime.now(UTC) - personal.WAITS_FOR)
+            .values(updated_at=datetime.now(UTC) - personal.WAITS_FOR)
         )
 
     _db(client, long_ago)

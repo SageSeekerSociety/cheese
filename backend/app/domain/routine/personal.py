@@ -678,28 +678,37 @@ async def _happened(session: AsyncSession, now: datetime) -> int:
     fired = 0
     for happening in happened:
         for routine in routines:
-            if routine.state != "active" or not _waits_for(
-                routine, handles.get(routine.user_id, ""), happening
-            ):
-                continue
-            one = once(routine)
-            over = not one and started.get(routine.id, 0) >= EVENT_RUNS_PER_HOUR
-            if (
-                await _run(
-                    session,
-                    user_id=routine.user_id,
-                    routine_id=routine.id,
-                    occurrence=f"{routine.id}:h:{happening.id}",
-                    conversation_id=routine.conversation_id if one else None,
-                    detail=await _detail(session, happening),
-                    skipped=OVER_LIMIT if over else "",
+            # One happening this cannot read is logged and dropped with the
+            # rest: kept, it would come back on every sweep and hold up every
+            # other behind it.
+            try:
+                if routine.state != "active" or not _waits_for(
+                    routine, handles.get(routine.user_id, ""), happening
+                ):
+                    continue
+                one = once(routine)
+                over = not one and started.get(routine.id, 0) >= EVENT_RUNS_PER_HOUR
+                async with session.begin_nested():
+                    if (
+                        await _run(
+                            session,
+                            user_id=routine.user_id,
+                            routine_id=routine.id,
+                            occurrence=f"{routine.id}:h:{happening.id}",
+                            conversation_id=routine.conversation_id if one else None,
+                            detail=await _detail(session, happening),
+                            skipped=OVER_LIMIT if over else "",
+                        )
+                        and not over
+                    ):
+                        started[routine.id] = started.get(routine.id, 0) + 1
+                        fired += 1
+                    if one:
+                        routine.state = "done"
+            except Exception:
+                logger.exception(
+                    "happening %s could not fire routine %s", happening.id, routine.id
                 )
-                and not over
-            ):
-                started[routine.id] = started.get(routine.id, 0) + 1
-                fired += 1
-            if one:
-                routine.state = "done"
     return fired
 
 
@@ -764,7 +773,9 @@ async def _given_up(session: AsyncSession, now: datetime) -> int:
                 AssistantRoutine.state == "active",
                 AssistantRoutine.trigger.in_(EVENTS),
                 AssistantRoutine.spec["once"].as_boolean().is_(True),
-                AssistantRoutine.created_at < now - WAITS_FOR,
+                # Since it last changed: a wait given a new time, or resumed,
+                # waits afresh.
+                AssistantRoutine.updated_at < now - WAITS_FOR,
             )
             .with_for_update(skip_locked=True)
         )
