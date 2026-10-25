@@ -13,7 +13,7 @@ release expects (``APPLY``).
 
 from tests.integration.migration_replay import ReplayDatabase, database_at
 
-BEFORE = "e5a17c93d2b4"
+BEFORE = "2b398ee3e416"
 AFTER = "8103084f5e42"
 
 #: The task columns the previous release reads and writes (its ``Task`` mapping

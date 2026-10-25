@@ -12,7 +12,7 @@ behaviour. The release still serving does not map the column, so the rows it
 inserts take the default and behave as they do under it.
 
 Revision ID: 8103084f5e42
-Revises: e5a17c93d2b4
+Revises: 2b398ee3e416
 """
 
 from collections.abc import Sequence
@@ -23,7 +23,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "8103084f5e42"
-down_revision: str | Sequence[str] | None = "e5a17c93d2b4"
+down_revision: str | Sequence[str] | None = "2b398ee3e416"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
