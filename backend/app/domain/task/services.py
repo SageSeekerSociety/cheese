@@ -189,7 +189,6 @@ class TaskMembershipService:
         task: Task,
         member_id: int,
         is_team: bool,
-        approved: int,
         deadline: datetime | None,
         email: str | None,
         phone: str | None,
@@ -197,7 +196,8 @@ class TaskMembershipService:
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """Create a new TaskMembership row with扩展校验（重复申请、团队、实名）。名额不在这里看：申请随时可以交，通过时才看还有没有名额（`update_membership`）。"""
+        """一份新的申请：总是等出题人通过（``approved`` 2）。名额、实名都在通过时看
+        （``update_membership``），这里只拒重复申请和团队那两条。"""
 
         # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
         now = datetime.now(UTC)
@@ -215,7 +215,7 @@ class TaskMembershipService:
             raise BadRequestError("Member already participating in this task.")
 
         # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
-        if is_team and approved != 1:
+        if is_team:
             already = await members_claiming_through_another_team(
                 self._repo._session,
                 task_id=task.id,  # type: ignore[arg-type]
@@ -233,16 +233,10 @@ class TaskMembershipService:
             if team is not None and team.personal_owner_user_id is not None:
                 raise BadRequestError("A team task is claimed by a team, not a person.")
 
-        # requireRealName：简化为只校验提交者本人
-        if task.require_real_name and self._realname_repo is not None and approved == 0:
-            has_identity = await self._realname_repo.has_identity(member_id)
-            if not has_identity:
-                raise BadRequestError("Missing required real name information.")
-
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
             member_id=member_id,
-            approved=approved,
+            approved=2,
             is_team=is_team,
             email=email or "",
             phone=phone or "",
@@ -288,6 +282,7 @@ class TaskMembershipService:
             # 名额只被通过了的申请占：申请随时可以交，通过时才看还有没有名额。
             # participant_limit 的 0 是「不限」。
             if task.participant_limit:
+                await self._repo.hold_places(task.id)  # type: ignore[arg-type]
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     raise TaskParticipantsReachedLimitError(

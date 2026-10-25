@@ -212,7 +212,6 @@ class TestTaskMembershipService:
             task=task,
             member_id=42,
             is_team=False,
-            approved=0,
             deadline=None,
             email="a@b.com",
             phone="555",
@@ -223,7 +222,7 @@ class TestTaskMembershipService:
 
         assert result.task_id == 1
         assert result.member_id == 42
-        assert result.approved == 0
+        assert result.approved == 2  # 申请总是等出题人通过
         repo.save.assert_awaited_once()
 
     @pytest.mark.anyio
@@ -240,32 +239,6 @@ class TestTaskMembershipService:
                 task=task,
                 member_id=42,
                 is_team=False,
-                approved=0,
-                deadline=None,
-                email=None,
-                phone=None,
-                apply_reason=None,
-                personal_advantage=None,
-                remark=None,
-            )
-
-    @pytest.mark.anyio
-    async def test_create_membership_requires_real_name(self):
-        repo = AsyncMock()
-        repo.get_by_task_and_member.return_value = None
-
-        realname_repo = AsyncMock()
-        realname_repo.has_identity.return_value = False
-
-        svc, _ = self._build_service(repo=repo, realname_repo=realname_repo)
-        task = _make_task(require_real_name=True)
-
-        with pytest.raises(BadRequestError, match="real name"):
-            await svc.create_membership(
-                task=task,
-                member_id=42,
-                is_team=False,
-                approved=0,
                 deadline=None,
                 email=None,
                 phone=None,

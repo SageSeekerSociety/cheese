@@ -1,4 +1,4 @@
-/** 「等你处理」里出题人的那几行：批准领取和批改提交都去「领取者」页签。 */
+/** 「等你处理」里出题人的那几行：通过申请和批改提交都去「参与者」页签。 */
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -54,7 +54,7 @@ describe('题目上等你处理的', () => {
   it('只有提交待评审时也去「参与者」页签', () => {
     const view = show(0, 3)
 
-    view.getByText('3 份提交待评审')
+    view.getByText(i18n.global.t('home.inbox.task.reviews', { n: 3 }))
     expect(view.getByText('缓存模拟器').closest('a')?.getAttribute('href')).toBe('/spaces/7/tasks/88/participants')
   })
 
