@@ -1009,6 +1009,61 @@ class TestTaskEnumeration:
         assert len(members_of(task_ids[0])) == 1
         assert page_data["distinctParticipants"] == 1
 
+    def test_places_are_taken_only_by_approved_applications(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        multi_task_setup: dict,
+    ) -> None:
+        """名额和「参与人数」只算申请通过的：等批的、被拒的都不占。申请随时可以交，
+        名额满了之后再通过一份就被拒，并说明是名额满了。"""
+        creator = multi_task_setup["creator"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        task_id = multi_task_setup["task_ids"][0]
+        resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED", "participantLimit": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        for _ in range(3):
+            user = user_client.create_user()
+            user.token = user_client.login(api_client, user.username, user.password)
+            resp = api_client.post(
+                f"/tasks/{task_id}/participants",
+                json={},
+                headers={"Authorization": f"Bearer {user.token}"},
+            )
+            assert resp.status_code == 200, resp.text
+        resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
+        assert resp.status_code == 200, resp.text
+        claims = [row["id"] for row in resp.json()["data"]["participants"]]
+
+        def counts() -> tuple[int, int]:
+            resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            participants = resp.json()["data"]["task"]["participants"]
+            return participants["total"], participants["approved"]
+
+        def decide(claim: int, approved: str):
+            return api_client.patch(
+                f"/tasks/{task_id}/participants/{claim}",
+                json={"approved": approved},
+                headers=headers,
+            )
+
+        assert counts() == (3, 0)
+        assert decide(claims[0], "DISAPPROVED").status_code == 200
+        assert counts() == (3, 0)
+        assert decide(claims[1], "APPROVED").status_code == 200
+        assert counts() == (3, 1)
+
+        refused = decide(claims[2], "APPROVED")
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["i18n"]["key"] == "taskPlacesFull"
+        assert counts() == (3, 1)
+
     def test_enumerate_tasks_without_the_flag_carries_no_participant_count(
         self, api_client: TestClient, multi_task_setup: dict
     ) -> None:

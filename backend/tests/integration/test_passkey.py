@@ -415,3 +415,52 @@ class TestPasskeySignInVerifiesTheUser:
         resp = api_client.post("/users/auth/passkey/options", json={})
 
         assert resp.json()["data"]["options"]["userVerification"] == "required"
+
+
+def test_a_passkey_signs_in_on_every_origin_the_platform_is_served_under(
+    authenticated_user: CreatedUser, api_client: TestClient, monkeypatch
+):
+    """One RP ID for every origin (WebAuthn Related Origin Requests): a key
+    registered on the canonical origin signs in on an alias."""
+    from app.core.config import settings
+
+    alias = "https://alias.example"
+    monkeypatch.setattr(settings, "frontend_aliases", [alias])
+    key = _SoftAuthenticator()
+    user = authenticated_user
+    headers = {"Authorization": f"Bearer {user.token}"}
+    options = api_client.post(
+        f"/users/{user.user_id}/passkeys/options",
+        headers=headers,
+        json={"sudoTicket": _sudo_ticket(api_client, user, "passkey:add")},
+    )
+    challenge = options.json()["data"]["options"]["challenge"]
+    registered = api_client.post(
+        f"/users/{user.user_id}/passkeys",
+        headers=headers,
+        json={"response": key.register(challenge)},
+    )
+    assert registered.status_code == 200, registered.text
+
+    key._origin = alias
+    challenge = api_client.post("/users/auth/passkey/options", json={}).json()["data"][
+        "options"
+    ]["challenge"]
+    resp = api_client.post(
+        "/users/auth/passkey/verify",
+        json={"response": key.assertion(challenge, verified_user=True)},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["accessToken"]
+
+    # An origin that is not the platform's is still refused.
+    key._origin = "https://attacker.example"
+    challenge = api_client.post("/users/auth/passkey/options", json={}).json()["data"][
+        "options"
+    ]["challenge"]
+    refused = api_client.post(
+        "/users/auth/passkey/verify",
+        json={"response": key.assertion(challenge, verified_user=True)},
+    )
+    assert refused.status_code == 400, refused.text

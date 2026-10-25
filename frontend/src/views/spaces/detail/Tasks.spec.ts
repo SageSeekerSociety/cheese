@@ -59,7 +59,7 @@ function task(id: number, name: string) {
     approved: 'APPROVED',
     deadline: null,
     participantLimit: 0,
-    participants: { total: 0, examples: [] },
+    participants: { total: 0, approved: 0, examples: [] },
     creator: { id: 1, username: 'alice', nickname: 'Alice' },
     createdAt: 1,
   }

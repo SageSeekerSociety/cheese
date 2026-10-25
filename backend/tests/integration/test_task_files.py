@@ -702,6 +702,43 @@ def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
     assert "题目" in _top_paths(api_client, project_id, a_token)
 
 
+def test_the_materials_wait_for_the_application_to_be_approved(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """材料只给参与者：申请还在等批的、被拒了的，题目页和项目里的 `题目/` 都拿不到，
+    申请通过了才拿得到。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="通过了才拿得到材料的题")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
+    _, waiting = _member_of(user_client, api_client, board)
+    _, declined = _member_of(user_client, api_client, board)
+    waiting_claim = _claim(api_client, board, task_id, waiting, approve=False)
+    declined_claim = _claim(api_client, board, task_id, declined, approve=False)
+    resp = api_client.patch(
+        f"/tasks/{task_id}/participants/{declined_claim}",
+        json={"approved": "DISAPPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    project_id = _project_from(api_client, task_id, waiting)
+
+    for token in (waiting, declined):
+        assert _files(api_client, task_id, token).json()["data"]["canDownload"] is False
+        resp = _download(api_client, task_id, token, "数据.csv")
+        assert resp.status_code == 403
+        assert resp.json()["error"]["i18n"]["key"] == "taskFilesForTakers"
+    assert "题目" not in _top_paths(api_client, project_id, waiting)
+
+    resp = api_client.patch(
+        f"/tasks/{task_id}/participants/{waiting_claim}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert _download(api_client, task_id, waiting, "数据.csv").content == b"a,b\n"
+    assert "题目" in _top_paths(api_client, project_id, waiting)
+
+
 def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
     api_client: TestClient,
     user_client: UserCreator,

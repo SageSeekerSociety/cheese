@@ -84,7 +84,7 @@ export function task(over: Partial<Task> = {}): Task {
     editable: false,
     description: '',
     submissionSchema: [{ prompt: '提交文件', type: 'FILE' }],
-    participants: { total: 0, examples: [] },
+    participants: { total: 0, approved: 0, examples: [] },
     submittable: false,
     createdAt: 1757000000000,
     updatedAt: 1757000000000,

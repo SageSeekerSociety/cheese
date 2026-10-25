@@ -243,6 +243,7 @@ async def get_github_install_url(
 
 @router.get("/github/app/callback")
 async def github_app_install_callback(
+    request: Request,
     installation_id: int | None = Query(default=None),
     setup_action: str | None = Query(default=None),
     state: str | None = Query(default=None),
@@ -250,7 +251,7 @@ async def github_app_install_callback(
 ) -> RedirectResponse:
     claims = verify_install_state(state) if state else None
     landing = await _install(installation_id, setup_action, claims, db)
-    return back_in_app(landing) if claims and claims.in_app else landing
+    return back_in_app(request, landing) if claims and claims.in_app else landing
 
 
 async def _install(

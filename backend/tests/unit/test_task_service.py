@@ -212,7 +212,6 @@ class TestTaskMembershipService:
             task=task,
             member_id=42,
             is_team=False,
-            approved=0,
             deadline=None,
             email="a@b.com",
             phone="555",
@@ -223,69 +222,8 @@ class TestTaskMembershipService:
 
         assert result.task_id == 1
         assert result.member_id == 42
-        assert result.approved == 0
+        assert result.approved == 2  # 申请总是等出题人通过
         repo.save.assert_awaited_once()
-
-    @pytest.mark.anyio
-    async def test_create_membership_raises_when_limit_reached(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        from app.core.config import settings as _settings
-
-        # Limit enforcement is opt-in via APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK
-        # (mirrors NT applicationConfig.enforceTaskParticipantLimitCheck).
-        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
-        repo = AsyncMock()
-        repo.count_approved_for_task.return_value = 5
-        repo.get_by_task_and_member.return_value = None
-
-        svc, _ = self._build_service(repo=repo)
-        task = _make_task(participant_limit=5, auto_reject_when_full=False)
-
-        with pytest.raises(BadRequestError, match="participant limit reached"):
-            await svc.create_membership(
-                task=task,
-                member_id=42,
-                is_team=False,
-                approved=0,
-                deadline=None,
-                email=None,
-                phone=None,
-                apply_reason=None,
-                personal_advantage=None,
-                remark=None,
-            )
-
-    @pytest.mark.anyio
-    async def test_create_membership_auto_reject_when_full(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        from app.core.config import settings as _settings
-
-        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
-        repo = AsyncMock()
-        repo.count_approved_for_task.return_value = 5
-        repo.get_by_task_and_member.return_value = None
-        repo.save.side_effect = lambda m: m
-
-        svc, _ = self._build_service(repo=repo)
-        task = _make_task(participant_limit=5, auto_reject_when_full=True)
-
-        result = await svc.create_membership(
-            task=task,
-            member_id=42,
-            is_team=False,
-            approved=0,
-            deadline=None,
-            email=None,
-            phone=None,
-            apply_reason=None,
-            personal_advantage=None,
-            remark=None,
-        )
-
-        # approved should have been changed to DISAPPROVED (1)
-        assert result.approved == 1
 
     @pytest.mark.anyio
     async def test_create_membership_rejects_duplicate(self):
@@ -301,32 +239,6 @@ class TestTaskMembershipService:
                 task=task,
                 member_id=42,
                 is_team=False,
-                approved=0,
-                deadline=None,
-                email=None,
-                phone=None,
-                apply_reason=None,
-                personal_advantage=None,
-                remark=None,
-            )
-
-    @pytest.mark.anyio
-    async def test_create_membership_requires_real_name(self):
-        repo = AsyncMock()
-        repo.get_by_task_and_member.return_value = None
-
-        realname_repo = AsyncMock()
-        realname_repo.has_identity.return_value = False
-
-        svc, _ = self._build_service(repo=repo, realname_repo=realname_repo)
-        task = _make_task(require_real_name=True)
-
-        with pytest.raises(BadRequestError, match="real name"):
-            await svc.create_membership(
-                task=task,
-                member_id=42,
-                is_team=False,
-                approved=0,
                 deadline=None,
                 email=None,
                 phone=None,
@@ -348,12 +260,7 @@ class TestTaskMembershipService:
         repo.save.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_update_membership_approve_checks_participant_limit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        from app.core.config import settings as _settings
-
-        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
+    async def test_update_membership_approve_checks_participant_limit(self):
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 5
         repo.save.side_effect = lambda m: m
@@ -486,12 +393,7 @@ class TestTaskMembershipService:
         assert "ALREADY_PARTICIPATING" in codes
 
     @pytest.mark.anyio
-    async def test_eligibility_user_participant_limit_reached(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        from app.core.config import settings as _settings
-
-        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
+    async def test_eligibility_user_participant_limit_reached(self):
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 10
         repo.get_user_membership.return_value = None
@@ -1394,13 +1296,8 @@ class TestTaskMembershipServiceAdditional:
         assert "TEAM_TOO_LARGE" in codes
 
     @pytest.mark.anyio
-    async def test_eligibility_team_participant_limit_reached(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_eligibility_team_participant_limit_reached(self):
         """TEAM eligibility includes PARTICIPANT_LIMIT_REACHED."""
-        from app.core.config import settings as _settings
-
-        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         team_membership = _make_membership(
             id=60, member_id=99, approved=2, is_team=True

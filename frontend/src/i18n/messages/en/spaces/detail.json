@@ -86,7 +86,7 @@
   },
   "manageTemplates": {
     "createTemplate": "Create template",
-    "defaultDeadline": "{n} days after claiming",
+    "defaultDeadline": "{n} days to finish",
     "delete": "Delete template",
     "deleteConfirm": "Delete this template?",
     "edit": "Edit template",
@@ -162,13 +162,13 @@
     "pendingOnly": "Needs action only",
     "publishTask": "Publish challenge",
     "published": {
-      "approved": "Approved {n}",
-      "claimed": "Claimed {n}",
+      "approved": "Participants {n}",
+      "claimed": "Applied {n}",
       "createdOn": "Created {date}",
       "failed": "Failed {n}",
       "passRate": "Pass rate {rate}",
       "passed": "Passed {n}",
-      "pendingClaims": "{n} claims to approve",
+      "pendingClaims": "{n} applications to approve",
       "pendingReviews": "{n} to review",
       "publishedOn": "Published {date}",
       "state": {
@@ -183,11 +183,14 @@
     },
     "row": {
       "by": "By {name}",
-      "claimed": "{n} claimed",
+      "claimed": "{n} participants",
       "claimedOf": "{n} / {limit}",
+      "claimedTeams": "{n} teams taking part",
+      "claimedTeamsOf": "{n} / {limit} teams",
       "deadline": "Due {date}",
-      "mine": "Claimed",
-      "noDeadline": "No deadline"
+      "mine": "Working on it",
+      "noDeadline": "No deadline",
+      "applied": "Applied"
     },
     "scope": {
       "all": "All",
@@ -205,7 +208,7 @@
     "topic": "Tag",
     "topicCount": "{n} tags",
     "closed": "Closed or full ({n})",
-    "noOpenTasks": "No tasks open to claim"
+    "noOpenTasks": "No open tasks"
   },
   "templateForm": {
     "cancel": "Cancel",
@@ -213,8 +216,8 @@
     "contestTitle": "Challenge title",
     "createSuccess": "Template created",
     "createTitle": "Create a challenge template",
-    "deadlinePrefix": "After claiming,",
-    "deadlineSuffix": "days",
+    "deadlinePrefix": "Within",
+    "deadlineSuffix": "days, counted from the day they start",
     "defaults": "Task defaults",
     "defaultsHint": "Filled in when a task is published from this template, and can be changed then",
     "editTitle": "Edit challenge template",
