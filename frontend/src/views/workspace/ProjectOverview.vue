@@ -3,8 +3,9 @@
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
-import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
+import type { ChallengeDeadline, ChallengeStages } from '@/views/workspace/ProjectOverviewView.vue'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -74,6 +75,21 @@ const challengeDeadline = computed<ChallengeDeadline | null>(() => {
   // 还没有就是题目的截止。
   const d = project.data.value?.challenge_deadline as { at: string; mine: boolean } | null | undefined
   return d ? { at: Date.parse(d.at), mine: d.mine } : null
+})
+// 题目分了阶段：每个阶段的截止和这个项目在上面的状态，同样在那一行里（`challenge_stages`）。
+const challengeStages = computed<ChallengeStages | null>(() => {
+  const rows = project.data.value?.challenge_stages as
+    | { name: string; description: string; due_at: string | null; status: TaskStageStatus }[]
+    | undefined
+  if (!rows?.length) return null
+  return {
+    stages: rows.map((r) => ({
+      name: r.name,
+      description: r.description,
+      dueAt: r.due_at ? Date.parse(r.due_at) : null,
+    })),
+    statuses: rows.map((r) => r.status),
+  }
 })
 // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(
@@ -179,6 +195,7 @@ function allTasks() {
     :project-name="projectName"
     :overview-text="overviewText"
     :challenge-deadline="challengeDeadline"
+    :challenge-stages="challengeStages"
     :starter-revision="(project.data.value?.starter_revision as number | null | undefined) ?? null"
     :progress="progress"
     :progress-failed="progressFailed"

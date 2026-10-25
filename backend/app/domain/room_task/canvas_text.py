@@ -140,7 +140,7 @@ def canvases_section(texts: Sequence[tuple[uuid.UUID, str, str]]) -> str:
     body = "\n\n".join(text for _, _, text in texts)
     return (
         "\n\n---\n\n文档里的画布（下面是画布的文字版，不在文档原文里：改文档时别引用它；"
-        "改画布用 cheese_canvas_edit）\n\n" + body
+        "改画布用 cheese_canvas(action=edit)）\n\n" + body
     )
 
 
@@ -163,7 +163,9 @@ async def living_doc_canvases(
                 canvas_id,
                 title,
                 clipped(
-                    text, share, hint=f"用 cheese_canvas_get(canvas={canvas_id}) 读全部"
+                    text,
+                    share,
+                    hint=f"用 cheese_canvas(action=get, canvas={canvas_id}) 读全部",
                 ),
             )
             for canvas_id, title, text in found

@@ -161,5 +161,6 @@
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "The platform stopped the AI teammate's work. Changes made so far are kept; send “continue” and it picks up where it left off",
-  "upstreamModelRequired": "The upstream model ID can't be empty"
+  "upstreamModelRequired": "The upstream model ID can't be empty",
+  "assistantCitesTooMany": "Cite at most {most} things in one question"
 }

@@ -6,7 +6,7 @@
 import type { PanelChange, PanelChangeRow, PanelResult, PanelWrites } from '@/lib/assistantView'
 import type { DraftTerms } from '@/lib/taskDraftAgent'
 import type { AssistantEdit, AssistantMessage, AssistantPublished } from '@/stores/agentThread'
-import type { TaskRubricLine, TaskSubmissionSchemaEntry } from '@/types'
+import type { TaskRubricLine, TaskStage, TaskSubmissionSchemaEntry } from '@/types'
 
 import dayjs from 'dayjs'
 
@@ -18,6 +18,7 @@ import { AGENT_FIELDS } from '@/lib/taskDraftAgent'
 const LABEL_KEYS: Record<string, string> = {
   name: 'tasks.form.name',
   description: 'tasks.form.description',
+  stages: 'tasks.form.stages.title',
   submission: 'tasks.form.grading.items',
   rubric: 'tasks.form.grading.rubric',
   rubric_public: 'tasks.form.grading.public',
@@ -100,6 +101,8 @@ export function valueText(key: string, value: unknown, terms: DraftTerms, before
       return terms.categories.find((c) => c.id === value)?.name ?? String(value)
     case 'tags':
       return (value as number[]).map((id) => terms.topics.find((topic) => topic.id === id)?.name ?? id).join('、')
+    case 'stages':
+      return (value as TaskStage[]).map((s) => s.name).join('、') || t('tasks.assistant.changes.none')
     case 'submission':
       return (value as TaskSubmissionSchemaEntry[]).map((e) => e.prompt).join('、')
     case 'rubric': {
@@ -345,6 +348,9 @@ export function panelMessages(
     at: m.at,
     files: m.files,
     shown: m.shown,
+    askedOn: m.askedOn,
+    selection: m.selection,
+    cited: m.cited,
     steps: withSubagents((m.steps ?? []).map(stepView), m.subagents),
     ...writesView(m.edits ?? [], terms, current, canUndo, ordinal),
     results: (m.published ?? []).map(resultView),

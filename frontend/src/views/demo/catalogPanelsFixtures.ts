@@ -371,6 +371,9 @@ export function previewBundle(
       toggle: noop,
       threads: docThreadsBundle(),
       post: noopAsync,
+      // 名册那一包给的：演示里照 handle 显示，头像交给首字母。
+      nameOf: (handle: string) => handle,
+      avatarOf: () => '',
     },
     revs: v.revs,
     editing: ref(v.editing),
@@ -449,6 +452,8 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    imageData: view.imageSrc,
+    savePdf: refuseWrite,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
     undoAgentChanges: refuseWrite,

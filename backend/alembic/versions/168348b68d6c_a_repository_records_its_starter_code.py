@@ -1,7 +1,7 @@
 """A project's repository records the task version its starter code came from
 
 Revision ID: 168348b68d6c
-Revises: 1f0ec6a6894e
+Revises: e6b2d9f4a173
 Create Date: 2026-10-24
 
 #4767 §二. A project made from a 题目 with starter code begins with that
@@ -19,7 +19,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "168348b68d6c"
-down_revision: str | Sequence[str] | None = "1f0ec6a6894e"
+down_revision: str | Sequence[str] | None = "e6b2d9f4a173"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

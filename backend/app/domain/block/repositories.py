@@ -190,37 +190,6 @@ class BlockRepository(
         stmt = select(Block).where(Block.id.in_(list(block_ids)))
         return list((await self._session.scalars(stmt)).all())
 
-    async def client_delivery(
-        self, conversation_id: uuid.UUID, *, author: str, client_id: str
-    ) -> list[Block]:
-        """Return the block bundle one browser delivery wrote.
-
-        ``author`` + ``client_id`` already name one send by one sender; the
-        author's 档位 never selected anything on top of that.
-        """
-        anchor = await self._session.scalar(
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-                Block.author == author,
-                Block.meta["client_id"].as_string() == client_id,
-            )
-            .order_by(Block.created_at, Block.id)
-            .limit(1)
-        )
-        if anchor is None:
-            return []
-        rows = await self._session.scalars(
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-                Block.author == author,
-                Block.turn_id == anchor.turn_id,
-            )
-            .order_by(Block.created_at, Block.id)
-        )
-        return list(rows)
-
     async def has_eid(self, conversation_id: uuid.UUID, eid: str) -> bool:
         """Whether this topic already materialized a hook event id."""
         return await self.has_any_eid(conversation_id, [eid])

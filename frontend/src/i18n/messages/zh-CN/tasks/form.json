@@ -118,6 +118,23 @@
     "addLine": "添加一项",
     "total": "合计 {n} 分",
     "nameRequired": "写了评分标准的项需要填写项目名称",
-    "public": "评分要点对学生可见"
+    "public": "评分要点对学生可见",
+    "stageTitle": "阶段 {n}：{name}",
+    "stageTotal": "本阶段 {n} 分"
+  },
+  "stages": {
+    "title": "阶段",
+    "none": "不分阶段",
+    "nameOf": "第 {n} 个阶段的名称",
+    "namePlaceholder": "例如：需求分析",
+    "due": "截止日期",
+    "dueOf": "第 {n} 个阶段的截止日期",
+    "descriptionOf": "第 {n} 个阶段的要求",
+    "descriptionPlaceholder": "这个阶段要做到什么",
+    "moveUp": "上移第 {n} 个阶段",
+    "moveDown": "下移第 {n} 个阶段",
+    "remove": "删除第 {n} 个阶段",
+    "nameRequired": "每个阶段都需要填写名称",
+    "add": "添加阶段"
   }
 }

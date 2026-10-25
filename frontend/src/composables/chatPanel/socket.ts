@@ -59,7 +59,7 @@ export function usePanelSocket(deps: {
   /** 往上翻着的时候来了几条：底部那颗提示读它。 */
   unseen: Ref<string[]>
   /** 落库的那条回声到了/重连读回来了：发件箱据此收尾。 */
-  settleOutbox: (block: Block) => boolean
+  settleOutbox: (block: Block) => 'dimmed' | 'fast' | false
   /** 断线期间没送出去的那几条，连上就自己走。 */
   flushOutbox: () => void
   /** 已经送达的那几条（useTimelineMotion）。 */
@@ -209,7 +209,7 @@ export function usePanelSocket(deps: {
     if (told) deps.emit('thread-status', told.threadId, told.record)
     switch (frame.type) {
       case 'user_block':
-        if (deps.settleOutbox(frame.block)) deps.delivered().add(frame.block.id)
+        if (deps.settleOutbox(frame.block) === 'dimmed') deps.delivered().add(frame.block.id)
         pushBlock(frame.block)
         deps.autoScroll()
         break

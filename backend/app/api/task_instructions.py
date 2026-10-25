@@ -56,7 +56,7 @@ async def thread_text(db, thread, *, root: bool = True) -> str:
     left = thread.reply_count - len(replies)
     if left > 0:
         lines.append(
-            f"（前面还有 {left} 条回复没列出，用 cheese_chat_list 读支线 {thread.id}）"
+            f"（前面还有 {left} 条回复没列出，用 cheese_chat(action=list) 读支线 {thread.id}）"
         )
     lines.append(_lines(replies))
     return "\n".join(line for line in lines if line)

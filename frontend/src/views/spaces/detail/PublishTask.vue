@@ -24,7 +24,6 @@ import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
-import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import PublishTaskView from './PublishTaskView.vue'
@@ -32,6 +31,7 @@ import PublishTaskView from './PublishTaskView.vue'
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import { setTaskStarter } from '@/api/taskFiles'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
@@ -138,14 +138,45 @@ const teachingOwn = ref(false)
 const uploads = useAttachmentUploads({
   upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
 })
-/** 起始代码同理：先传成附件，发布时服务端查它能不能解开、拷进题目资料库。 */
-const starter = useStarterUpload<number>({
-  upload: async (file) => ({
-    id: (await AttachmentsApi.upload({ type: 'file', file })).id,
-    name: file.name,
-    size: file.size,
-  }),
-})
+/** 起始代码。人在这一页选的压缩包可能有几百 MB，走题目资料库那条分段上传；题目建好之前
+ *  还没有资料库可放，所以先留在页面上，发布之后再传（`starterLocal`），不进草稿。芝士替人
+ *  写进草稿的是人交给它的一份附件（`starterStaged`），随草稿一起发布。两样只会有一样。 */
+const starterLocal = ref<File | null>(null)
+const starterStaged = ref<{ id: number; name: string; size: number } | null>(null)
+const starterUploading = ref(false)
+const starterShown = computed(() =>
+  starterLocal.value ? { name: starterLocal.value.name, size: starterLocal.value.size } : starterStaged.value
+)
+
+function pickStarter(file: File) {
+  starterLocal.value = file
+  starterStaged.value = null
+}
+
+function removeStarter() {
+  starterLocal.value = null
+  starterStaged.value = null
+}
+
+/** 发布之后把页面上选的起始代码传上去。传不成（压缩包不合格、断网），题目已经发布了：
+ *  说清楚原因，起始代码到改题页再传。 */
+async function sendStarter(taskId: number) {
+  const file = starterLocal.value
+  if (!file) return
+  starterUploading.value = true
+  try {
+    await setTaskStarter(taskId, file)
+    starterLocal.value = null
+  } catch (error) {
+    toast.error(
+      t('spaces.detail.publishTask.starterNotSent', {
+        error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
+      })
+    )
+  } finally {
+    starterUploading.value = false
+  }
+}
 
 function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
@@ -153,7 +184,8 @@ function fill(fields: TaskDraftFields) {
   teachingOwn.value = !!fields.teachingOwn
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
-  starter.reset(fields.starterFile ?? null)
+  starterLocal.value = null
+  starterStaged.value = fields.starterFile ?? null
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
@@ -233,14 +265,7 @@ watch(
   { deep: true }
 )
 
-watch(
-  () => starter.file.value,
-  (file) =>
-    draft.changed({
-      starterAttachmentId: file?.id ?? null,
-      starterFile: file ? { id: file.id, name: file.name, size: file.size } : null,
-    })
-)
+watch(starterStaged, (file) => draft.changed({ starterAttachmentId: file?.id ?? null, starterFile: file }))
 
 // --- 芝士 --------------------------------------------------------------------------
 
@@ -268,7 +293,8 @@ function pageApply(fields: TaskDraftFields): TaskDraftFields {
     shown.attachmentIds = files.map((f) => f.id)
   }
   if ('starterFile' in fields) {
-    starter.reset(fields.starterFile ?? null)
+    starterLocal.value = null
+    starterStaged.value = fields.starterFile ?? null
     shown.starterFile = fields.starterFile ?? null
     shown.starterAttachmentId = fields.starterFile?.id ?? null
   }
@@ -291,6 +317,7 @@ const agent = useDraftAgent({
 // 芝士读到的是这份草稿；面板在发布页给出题的问候和开场问题，能交文件（从文件导入）。
 useAgentContext(() => ({
   page: draft.id.value ? { kind: 'draft', id: draft.id.value } : null,
+  label: t('tasks.assistant.page.publish'),
   greeting: t('tasks.assistant.draft.greeting'),
   starters: [
     t('tasks.assistant.draft.starters.rubric'),
@@ -397,7 +424,7 @@ async function removeDraft(id: number) {
 /** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
 async function publishAll() {
   if (publishingAll.value || publishing.value) return
-  if (uploads.uploading.value || starter.uploading.value) {
+  if (uploads.uploading.value || starterUploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -421,7 +448,8 @@ async function publishAll() {
         continue
       }
       try {
-        await TaskDraftsApi.publish(item.id as number)
+        const { task } = await TaskDraftsApi.publish(item.id as number)
+        if (item.id === draft.id.value) await sendStarter(task.id)
         sent += 1
         publishedInGroup.value = [
           ...publishedInGroup.value,
@@ -466,7 +494,7 @@ const mentorChoices = computed(() => {
 async function publish(form: TaskFormSubmitData) {
   if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
-  if (uploads.uploading.value || starter.uploading.value) {
+  if (uploads.uploading.value || starterUploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -483,11 +511,12 @@ async function publish(form: TaskFormSubmitData) {
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
         attachmentIds: uploads.ids.value,
-        starterAttachmentId: starter.file.value?.id ?? null,
-        starterFile: starter.file.value,
+        starterAttachmentId: starterStaged.value?.id ?? null,
+        starterFile: starterStaged.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
+    await sendStarter(task.id)
     if (defaultRoleSubmit.value !== undefined) {
       // 「默认队友」不在草稿字段里（`TASK_DRAFT_FIELDS` 没有它），发布之后按题目补写
       // 一次。`undefined` = 这一格选的是「继承」，不发这个键。
@@ -557,8 +586,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
     :max-file-bytes="uploads.maxFileBytes.value"
-    :starter="starter.file.value"
-    :starter-uploading="starter.uploading.value"
+    :starter="starterShown"
+    :starter-uploading="starterUploading"
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
@@ -580,8 +609,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
-    @pick-starter="starter.pick"
-    @remove-starter="starter.remove"
+    @pick-starter="pickStarter"
+    @remove-starter="removeStarter"
     @submit="publish"
     @change="onFormChange"
     @form-ready="onFormReady"

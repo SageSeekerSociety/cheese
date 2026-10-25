@@ -51,8 +51,8 @@ covers:
 |---|---|---|
 | `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
-| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写完总结用 `cheese_close_task` 关掉它，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的活在做、或有一条消息在等着被读时不关，最晚再等两小时；这期间显示「已采纳」 |
-| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`，写完总结的那次也是），或最后一步采纳后平台到点的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
+| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写完总结用 `cheese_task(action=close)` 关掉它，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的活在做、或有一条消息在等着被读时不关，最晚再等两小时；这期间显示「已采纳」 |
+| `closed_at` | 负责人、协作者或任务的会话关闭（`cheese_task(action=close)`，写完总结的那次也是），或最后一步采纳后平台到点的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
 所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」或「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
 
@@ -69,7 +69,7 @@ covers:
 | 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，负责人第一句话时会话才起 |
 | 主线上一条消息「转为任务」（支线页头那颗也是它） | `POST /blocks/{id}/upgrade` | 这条消息的支线**原地**转成任务，见下 |
 | 支线里的一条回复、任务里的一条消息、主线上的文件「转为任务」 | `POST /blocks/{id}/upgrade` | 另开一件，任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论 |
-| AI 队友的 `cheese_task` | `POST /topics/{支线}/teammate-tasks` | `here` 为真时这条支线原地转成任务；否则另开一件，同上，再加上它写的 `summary` |
+| AI 队友的 `cheese_task(action=open)` | `POST /topics/{支线}/teammate-tasks` | `here` 为真时这条支线原地转成任务；否则另开一件，同上，再加上它写的 `brief`（请求里的 `summary`） |
 
 任务建出来就在做，没有「开始」这一步：芝士从第一轮起就能改动项目。审阅人在建任务时定下（`TaskService.default_reviewer`）：负责人审阅得了就是负责人，审阅不了（协作模式里的 AI 队友）用项目默认审阅人，都没有时留空，第一次交付时再要（`review/services/reviewers.py`）。
 
@@ -77,11 +77,11 @@ covers:
 
 一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
 
-任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
+任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task(action=open)` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
 
-`cheese_task` 只在有人说要做时调。`owner` 是要这件事的人，省略时是这一轮回应的那个人（`asked_in`），再没有就是支线挂着的那条消息的作者。芝士自己看出来该做的，先用 `cheese_ask` 问一句「要转为任务吗？」，选项「转为任务」「不转」；选了的人发出的那句话叫醒它，它再调 `cheese_task`，负责人就是那个人。
+`cheese_task(action=open)` 只在有人说要做时调。`owner` 是要这件事的人，省略时是这一轮回应的那个人（`asked_in`），再没有就是支线挂着的那条消息的作者。芝士自己看出来该做的，先用 `cheese_ask` 问一句「要转为任务吗？」，选项「转为任务」「不转」；选了的人发出的那句话叫醒它，它再调 `cheese_task(action=open)`，负责人就是那个人。
 
-私聊里没有任务：新建、转为任务、`cheese_task` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
+私聊里没有任务：新建、转为任务、`cheese_task(action=open)` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
 
 另开的任务，开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本、会话对这份输入的回执和会话报上来的状态现读，不另存：读到之前和会话还在干活时是 `drafting`，读进去的工作失败了、或会话读到之后停下来却一句话没说是 `failed`。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
 
@@ -91,7 +91,7 @@ covers:
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、任务的会话写完总结自己关、写总结的指令被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的活就被打断，写下的留着。「写完总结」只认会话调了 `cheese_close_task` 这件事：会话读到了总结指令、之后停下来，平台看不出它写没写，任务照旧开着等到点。后两种是平台自己关的，下面几样都是平台核得了的事实，有一样就不关，等它们没了之后的那次再关（`closing.unfinished`）：任务的会话 runner 报着在干活、而它还没读到总结指令（那它在干的就是别的）；有发给 AI 队友的消息还没被读；有消息读进去之后那段工作失败了。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、会话照停，按会话的座位各记一条运行记录，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，参加这件活的人（负责人或协作者，`TaskService.takes_part`）或这条任务自己的会话（`cheese_task(action=close)`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——人关、任务的会话写完总结自己关、写总结的指令被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的活就被打断，写下的留着。「写完总结」只认会话调了 `cheese_task(action=close)` 这件事：会话读到了总结指令、之后停下来，平台看不出它写没写，任务照旧开着等到点。后两种是平台自己关的，下面几样都是平台核得了的事实，有一样就不关，等它们没了之后的那次再关（`closing.unfinished`）：任务的会话 runner 报着在干活、而它还没读到总结指令（那它在干的就是别的）；有发给 AI 队友的消息还没被读；有消息读进去之后那段工作失败了。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、会话照停，按会话的座位各记一条运行记录，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 人在任务上看得到的变化，做它的 AI 队友也要知道，不然人说的一句话它对不上（`room_task/heard.py`）。它自己做的（递卡、报状态、关任务、起名）由它调的那个工具在回复里说清对任务做了什么；别人做的——人，或者平台自己——分两种。要它动手的（验收退回、作废、检查红了、冲突、PR 被拒绝合并或离开合并队列、采纳之后接着做或写总结）是一条指令，经投递账本直接交给任务自己的会话，把它叫起来（`heard.act` → `delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转；给人看的那一行在同一个事务里落进任务对话，任务已关闭时只落那一行。依赖通知、消息被编辑也走投递账本，各自写在 `review/pr_publish.py` 和 `block/editing.py` 里。只要它知道的（换验收人、撤回采纳、人关闭或重新打开任务、改名、换负责人或协作者、换 AI 队友、平台关任务）不叫醒它：那句话挂在任务对话里一个块的 `agent_notice` 上，跟着它下一次的输入进去，读过就盖戳（`block/history.notices_after`）。这件事本来就有一行给人看的，话挂在那一行上（`heard.informing`）；没有的落一行房间里不显示的（`in_room: false`，`heard.inform`）。看板上的「已离开」不告诉它：那说的是它的会话不在，会话一回来这个标记就撤掉，它读得到的时候已经不成立了。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
@@ -117,7 +117,7 @@ covers:
 1. **备份未提交的文件**：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
 2. **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
 
-手动跑的 `cheese sync`（不带 `--all`）先看这个检出有没有要做的（`_synced_already`）：没有未提交的改动、HEAD 已在本检出上次推送或 fetch 时记下的分支尖里、也没有待恢复的快照，就只问一次平台这条任务现在在哪条分支：还是检出所在的这条（或任务已结束），就直接退出 0，不探托管平台、不问快照。前两条和 `sync --all` 跳过没有东西要同步的任务（`_has_work_to_sync`）是同一个判断；分支那一条是因为一步合并后任务换到新分支，完整的 sync 会把检出带过去、在新分支上交付，交卡（`cheese_accept_request`）走的正是这条 `cheese sync --task`。agent 常在 `git commit` 后面再手动跑一次 `cheese sync`，而提交的钩子刚同步完。
+手动跑的 `cheese sync`（不带 `--all`）先看这个检出有没有要做的（`_synced_already`）：没有未提交的改动、HEAD 已在本检出上次推送或 fetch 时记下的分支尖里、也没有待恢复的快照，就只问一次平台这条任务现在在哪条分支：还是检出所在的这条（或任务已结束），就直接退出 0，不探托管平台、不问快照。前两条和 `sync --all` 跳过没有东西要同步的任务（`_has_work_to_sync`）是同一个判断；分支那一条是因为一步合并后任务换到新分支，完整的 sync 会把检出带过去、在新分支上交付，交卡（`cheese_card(action=request)`）走的正是这条 `cheese sync --task`。agent 常在 `git commit` 后面再手动跑一次 `cheese sync`，而提交的钩子刚同步完。
 
 任务的 PR 在合并队列里时（任务数据里的 `merge_queued_pr`），托管平台锁着这条分支：有新东西要推就不推，只备份，房间里说清楚这些提交为什么不在 PR 里——重试推不上去，合并后在新任务里交付，或由验收人退回、PR 撤出队列。
 
@@ -165,7 +165,7 @@ covers:
 
 ## 分步交付 {#steps}
 
-一件任务可以交付好几次。每次递卡时芝士说明这是不是最后一步（`cheese_accept_request` 的 `completes_task`，存在 `AcceptCard.completes_task`；这一列之前递的卡都算最后一步）。合并之后怎么走只在一处决定（`review/task_landing.py` 的 `delivery_landed`），采纳、合并队列、轮询器、在托管平台上直接合并的那几条路都经过它：
+一件任务可以交付好几次。每次递卡时芝士说明这是不是最后一步（`cheese_card(action=request)` 的 `completes_task`，存在 `AcceptCard.completes_task`；这一列之前递的卡都算最后一步）。合并之后怎么走只在一处决定（`review/task_landing.py` 的 `delivery_landed`），采纳、合并队列、轮询器、在托管平台上直接合并的那几条路都经过它：
 
 - 最后一步：AI 队友写完总结后任务关闭（见上面 `closing_since`），`after_close` 收拾机器上的工作目录。例外是合并落地时，或者写总结的窗口里，AI 队友正在做递卡之后才开始的事（它的会话 runner 报着在干活，而它读到了这张卡递上之后人或它自己发给它的一条消息；平台的那几种指令——别的座位被叫进任务、冲突/CI 修复——不算），或者任务里有一条发给它的消息还没被读（窗口里由周期任务 `task closing` 每一跳看一次，`pr_poll.sweep_closings` → `task_landing.go_on_while_working`，每条任务各自一个事务，一条够不着代码托管不影响别的）：那件事不在这次合并里，关掉任务就把它半路打断、也没处交付，所以这次合并按「不是最后一步」走，平台叫芝士把手上的活作为下一步交付，没东西可交就自己关任务。没送出去的总结指令不再发（`delivery.agent.dispatch_pending`）。
 - 不是最后一步：任务开着，`TaskService.next_step` 把它换到一条从默认分支切出的新分支上（`task/<id>` 之后是 `task/<id>-2`、`-3`……），清掉 `pr_number`，下一步开自己的 PR；平台在任务的会话里留一条指令叫芝士接着做。叠在它旧分支上的任务由 `retarget_completed_dependencies` 改到默认分支。
@@ -174,7 +174,7 @@ covers:
 
 机器上的工作目录在下一次 `cheese worktree` 时跟过去（`_follow_task_branch`）：`delivered_head` 之后的提交变基到最新的默认分支上，没提交的文件原样带过去；和最新代码冲突就留在原分支上不动，报出冲突让芝士先解决。只有这件任务自己早先的分支会被跟过去，芝士自己切出的分支不动。
 
-每次采纳（以及带结论关闭）的结果由任务的 AI 队友回复到它出自的那条支线里（`tell_origin`），没有支线就开一条。负责人可以重新打开关了的任务（`POST /topics/{task}/reopen`）；交付过的同样换到新分支上，没交付过的忘掉旧 PR、留在原分支上，草稿 PR 扫描再为这条分支开一个 PR（旧 PR 当初没关掉的话就沿用它）。
+每次采纳（以及带结论关闭）的结果由任务的 AI 队友回复到它出自的那条支线里（`tell_origin`），没有支线就开一条。角色有 `Permission.tasks` 的人或任务自己的会话（`cheese_task(action=reopen)`）可以重新打开关了的任务（`POST /topics/{task}/reopen`）。比能关闭它的人宽，是有意的不对称：关闭撤不回（开着的卡作废、PR 关掉，重开都不还原），所以只给参加这件活的人；重开能再关回去，房间里也写着谁重开的，所以给项目里做任务的人。别的任务的会话、房间的会话凭证两样都做不了。关闭之后任务对话照样能叫到它的会话，有人要它接着做，它就自己重开；交付过的同样换到新分支上，没交付过的忘掉旧 PR、留在原分支上，草稿 PR 扫描再为这条分支开一个 PR（旧 PR 当初没关掉的话就沿用它）。
 
 ## 任务列表与待处理清单是同一份规则 {#awaiting}
 
@@ -192,7 +192,7 @@ covers:
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
-一件任务只有一个状态：开启、在做、在等、卡住、待回答、待审阅、退回、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task_state`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的标签分别是「在做」「在等」「卡住」，它那句说明写在标签后面那一行（`lib/taskState.ts`）；卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_accept_request` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示在做。报了「在等」之后被构建叫醒、报了「卡住」之后有人回了它，都是在做；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
+一件任务只有一个状态：开启、在做、在等、卡住、待回答、待审阅、退回、关闭（`room_task/presentation.task_presentation` 是看板唯一的判据）。平台核得了的事实定它：有一张卡在等审阅就是待审阅，由卡说清在哪一步，验收人被点到；卡被退回或作废，平台把任务放回在做；人关闭、重新打开就是关闭、开启。没有卡的时候，做它的 AI 队友用 `cheese_task(action=state)`（`PUT /topics/{task}/task/progress`）报 `working`、`waiting` 或 `blocked`，外加一句说明，记在 `tasks.progress_*` 那几列上（`room_task/progress.py`）：界面上的标签分别是「在做」「在等」「卡住」，它那句说明写在标签后面那一行（`lib/taskState.ts`）；卡住了落进 `needs_you` 并点到负责人。递卡时它之前报的作废；卡在等审阅时它报不了，接口回 409。这几样都会告诉它：递卡在 `cheese_card(action=request)` 的回复里说，退回、作废在叫醒它的那条指令里说，重新打开在它下一次的输入里说。做它的那位队友的会话在跑是核得了的事实：没有卡、也没有待回答的问题时，它的会话在跑就是在做，除非它在这一次跑里报了别的。「这一次跑」由 runner 自己说，平台不推：开始一次跑的那个 `running` 事件的 (epoch, seq) 就是这一次的名字，runner 记着它，会话里每一次平台工具调用都带上（`X-Cheese-Run`，`executor_transport.PlatformHost.run`；Claude Code 的工具在会话自己的 transport 进程里跑，它像 `compact` 一样经会话 socket 问 runner）。平台在应用这个事件时把它记在 `session_states.run_epoch` / `run_seq` 上（每一个应用到的 `running` 事件都记，不管是哪一次登记送来的、状态翻没翻：事件按 runner 写下的次序应用，最后一个就是正在跑的那一次；替掉一个还读作在跑的旧进程，新进程的这一次是新的），报状态时把调用带来的那一次记在 `tasks.progress_run_*` 上，看板拿 (座位, harness, epoch, seq) 和这条活自己那位队友此刻在跑的那一次比（`agent.teammate_runs`）。Codex 和 pi 的 runner 不报会话状态，没有「哪一次」可说，它们报的状态照旧算数；还没被替换的旧版 runner 不带这一次，它在跑时任务显示在做。报了「在等」之后被构建叫醒、报了「卡住」之后有人回了它，都是在做；在这一次里报的照它说的，runner 的报告晚到也一样。审阅的、被叫进来的别的 agent 在这段对话里跑，不算。会话开始或停下时，runner 的报告让任务所在的页面重读（`room_task/live.sessions_moved`）。平台不从轮次推断，会话停下不改它报的；会话结束只在旁边记一笔 `agent_left_at`（页头写「已离开」），不改它报的——只认报这句话的那位队友自己的会话（`progress_set_by`），任务对话里别的队友的会话进出不算。会话还在跑、而它报的状态 `chat_progress_reminder_after_s` 没动过，平台提醒它再报一次（`turn/steps/reminders.StaleProgressReminder`）。报的是「卡住了」时还有一处补位：它多半是轮次末尾报的，等有人回话时那一轮早结束了，上面那条提醒够不着，所以人说话开的那一轮，平台在输入前面再问它一句能不能往下走（`harness/notices.blocked_report_reminder`）——只问，不替它改。
 
 「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 
@@ -210,23 +210,23 @@ covers:
 
 清单绝不比题目本身更保密——看不见材料就无法判断要不要领；下载比「看得见」窄一格、比「管得了」宽一格——领取者拿不到材料就没法做题。清单接口（`GET /tasks/{id}/files`）先过题目详情那三道闸（`ensure_task_readable`），不是服务里那条更宽的 `can_view_task`：文件名常常就是答案，「有没有清单」本身就是那道题的探针。返回里带 `canDownload`，前端据此显示「下载」还是「领取这道题之后才能下载」。
 
-改题页直接上传：领上传地址（`POST /tasks/{id}/files/uploads`），浏览器把字节放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
+改题页直接上传，和资料库是同一条分段上传的路（`library.md` 的「资料库的记录表」一节）：领一次上传的凭据（`POST /tasks/{id}/files/uploads`），按段领地址（`…/uploads/part`），浏览器把每一段连同它的 MD5 放进存储，再登记（`POST`、替换是 `PUT`）。发题页上题目还不存在，选的文件先传成通用附件，`POST /tasks` 带着 `attachmentIds`，建题时拷进题目资料库（`package.add_uploads`）。只认本人传的那几份：**附件 id 是可猜的连续整数**，不认上传者的话，谁都能把别人交作业附的文件拷进自己的题目公开出去。
 
 ### 版本 {#task-package-revisions}
 
-`task_package_revisions` 记题目内容的每一版：发布是第 1 版（`changes = {"published": true}`），之后描述、提交内容、评分要点（含 `rubric_public`）、材料每变一次记下一版，`changes` 写明哪几样，材料带名字（`added` / `replaced` / `removed`）。`PATCH /tasks/{id}` 改之前、改之后各取一份比对（`_writes._package_parts`），和「领过的人收到要求变了的通知」是同一次比对。每记一版，题目资料库里的 `题目说明.md` 换成这一版的样子，它的历史就是每一版的说明；它不算材料，清单里不列，不能单独替换或删除。提交记下当时的版本号（`task_submission.package_revision`）。
+`task_package_revisions` 记题目内容的每一版：发布是第 1 版（`changes = {"published": true}`），之后描述、阶段（名称、说明、截止时间、顺序）、提交内容、评分要点（含 `rubric_public`）、材料每变一次记下一版，`changes` 写明哪几样，材料带名字（`added` / `replaced` / `removed`）。`PATCH /tasks/{id}` 改之前、改之后各取一份比对（`_writes._package_parts`），和「领过的人收到要求变了的通知」是同一次比对。每记一版，题目资料库里的 `题目说明.md` 换成这一版的样子，它的历史就是每一版的说明；它不算材料，清单里不列，不能单独替换或删除。提交记下当时的版本号（`task_submission.package_revision`）。
 
 ### 项目里的 `题目/` {#task-folder}
 
-从题目派生的项目（`Project.external_task_id`），资料库多一个只读的 `题目/`：`library/mount.py` 把这个前缀下的名字解析到题目资料库（读的是那一边现在的行，不是拷贝），清单、读文本、取字节、版本、项目搜索都经过它；放进、替换、移动、删除、恢复碰到这个前缀一律 422。题目删了（`task.deleted_at`），文件夹跟着不见；项目自己在挂上之前放在 `题目/` 下的文件被盖住。
+从题目派生的项目（`Project.external_task_id`），资料库多一个只读的 `题目/`：`library/mount.py` 把这个前缀下的名字解析到题目资料库（读的是那一边现在的行，不是拷贝），清单、读文本、取字节、版本、项目搜索都经过它；放进、替换、移动、删除、恢复碰到这个前缀一律 422。谁看得到它按题目自己的下载判据，不按项目名册：读的那一侧（`app/api/project_library.py`）把判过的结果放在 `Shelf.with_task` 上交进来，没说就看不到，`题目/` 下的字节、文本、版本一律 403。项目里的 agent 按项目所有者的判据读（`package.mount_for_agents`），人自己的芝士按那个人的。题目删了（`task.deleted_at`），文件夹跟着不见；项目自己在挂上之前放在 `题目/` 下的文件被盖住。
 
 题目更新之后，项目总览「最近进展」里每一版一条（`project_progress/feed.py` 的 `revised`，只算项目建好之后的版本）；项目里的 agent 开场带一段「题目」（`package.section_for_project`），是 `TRACKED_SECTIONS` 之一，版本一变，跑着的会话下一轮就读到新的版本号和改动。
 
 ### 起始代码 {#starter-code}
 
-起始代码是题目资料库里名为 `起始代码.zip`（`package.STARTER`）的那一份：它有自己的接口（`PUT` / `DELETE /tasks/{id}/starter`，上传地址和材料共用 `POST /tasks/{id}/files/uploads`），材料清单不列它，材料接口碰到这个名字一律 422；替换照样留历史行，设上、换掉、删掉各记一版（`changes.starter` 是 `added` / `replaced` / `removed`）。发题页和芝士写的草稿带 `starterAttachmentId`（先传成通用附件，同样只认本人传的）。
+起始代码是题目资料库里名为 `起始代码.zip`（`package.STARTER`）的那一份：它有自己的登记接口（`PUT` / `DELETE /tasks/{id}/starter`），字节和材料走同一条分段上传（`POST /tasks/{id}/files/uploads` 起头）；材料清单不列它，材料接口碰到这个名字一律 422；替换照样留历史行，设上、换掉、删掉各记一版（`changes.starter` 是 `added` / `replaced` / `removed`）。发题页上题目还不存在，人选的压缩包留在页面上，发布之后再走这条上传（传不成时题目照样发布，提示到改题页重传）；芝士写进草稿的是人交给它的一份附件（`starterAttachmentId`，只认本人传的），随草稿发布。
 
-压缩包在登记时就查一遍（`project/starter.py` 的 `check`），领题时解开再查一遍（`unpack`），规矩是同一套：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git` 的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原。登记时只读目录、不解压，内容损坏要到领题时才发现。
+压缩包在登记时就查一遍（`project/starter.py` 的 `check`），领题时解开再查一遍（`unpack`），规矩是同一套：绝对路径、盘符、`..`、符号链接和其他非普通文件拒绝；文件数、解开后的总大小有上限（`starter_max_files`、`starter_max_bytes`），解开后超过 64 MiB 且大于压缩包 `starter_max_ratio` 倍的当压缩炸弹拒绝；`__MACOSX/`、`.DS_Store` 和任何一层叫 `.git` 的路径跳过；只有一个顶层文件夹时去掉这一层；没标 UTF-8 的文件名按 UTF-8、GBK 还原。分段上传登记时才合成一份，所以登记在一个保存点里先放进来、再查：按范围从存储读压缩包末尾的目录（`package._Stored`），不整份取回、不进内存；不合格的退回保存点并删掉这份字节。内容损坏（CRC）要到领题时才发现。
 
 领题建项目时（`ProjectService.create` 带着题目 id，`for_participation` 也走这里），`TaskTerms.starter` 把那一刻的压缩包写进临时目录，`provision_repository` 不让 Forgejo `auto_init`，解开后以平台身份（`Cheese <starter@users.invalid>`）提交成 `main` 上唯一的提交，凭据放在请求头里推上去（同 `forge_migration.push`），`project_forges.starter_revision` 记下题目当时是第几版；项目总览和 agent 的「题目」一段据此说起始代码来自第几版。之后换压缩包只影响之后领题的人。仓库里自带的 `.gitignore` 照常生效。
 

@@ -31,6 +31,7 @@ import { usePanelPreviewEditing } from './panelPreview/editing'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
@@ -141,7 +142,16 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
 
   const doc = usePanelPreviewDocument({ props, state })
   // 这一份文件上的评论：线程、写一条新的、回复和解决。
-  const comments = usePanelPreviewComments({ props, state })
+  //
+  // 名册那一包（`useDocPeople`）先建：评论卡上的名字和头像从它来，和文档评论栏
+  // 同一处、同一份实现——不是预览这一格自己再算一遍。不接它的话卡上会显示 handle
+  // 加色块（那曾经是个静默的 bug）。
+  const people = useDocPeople({
+    members: () => props.members ?? [],
+    agentHandle: () => props.agentHandle ?? null,
+    agentName: () => props.agentName ?? '',
+  })
+  const comments = usePanelPreviewComments({ props, state, people })
   const edits = usePanelPreviewEditing({
     props,
     state,

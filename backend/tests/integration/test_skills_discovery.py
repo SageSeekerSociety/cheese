@@ -1,4 +1,4 @@
-"""skills_search / skills_read over the real HTTP stack and database.
+"""cheese_skill search / read over the real HTTP stack and database.
 
 What is pinned: an AI teammate in a room finds the skills it can already load —
 the platform's shipped skills and this project's **confirmed** skills — and

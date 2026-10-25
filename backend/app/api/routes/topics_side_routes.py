@@ -218,7 +218,7 @@ async def upgrade_block(
 
     这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
     自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
-    由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task`）。
+    由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task(action=open)`）。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:

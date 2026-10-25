@@ -19,10 +19,18 @@ For each 题目 that has no version yet:
   taken gets the next ``(n)``, the way the library names a second upload), as
   added by whoever uploaded it, when it was attached.
 
-A 题目 with a version is done, so running this again does nothing to it. The
-``attachment`` rows and their bytes stay: other features read that table, and
-nothing is overwritten. ``task_attachment`` stays too until the next release
-drops it: the release this deploy replaces still reads it while this runs.
+A 题目 with a version is done, so running this again does nothing to it.
+
+Then the ``attachment`` rows that were a 题目's live attachments stop being
+served: their bytes are the 题目's files now, read under the 题目's own rule
+(publisher, space admin, taker). Left in ``attachment``, the generic
+``GET /attachments/{id}`` would hand an image among them to any signed-in
+person — that route lets images through for everyone, and the ids are
+sequential. So those rows, and every ``task_attachment`` row naming them, are
+copied into ``task_material_attachments_1f0ec6a6894e`` (the record of what was
+there) and deleted. Their bytes in the old storage are not touched.
+``task_attachment`` itself stays until the next release drops it: the release
+this deploy replaces still reads it while this runs, and finds nothing.
 
 The bytes move outside the database, so this reads the storage settings of the
 backend it runs beside; see the two imports below.
@@ -144,7 +152,53 @@ def _location() -> str:
     return settings.files_store
 
 
+#: Where the retired attachment rows and their links are kept.
+BACKUP = "task_material_attachments_1f0ec6a6894e"
+
+
+def _retire_attachment_rows() -> None:
+    """The ``attachment`` rows a live ``task_attachment`` names — on any 题目,
+    a deleted one included, since the generic route gated those too — kept in
+    ``BACKUP`` with the links that named them, then deleted, links first (the
+    links hold the foreign key)."""
+    op.execute(f"""
+        CREATE TABLE IF NOT EXISTS {BACKUP} (
+            attachment_id integer NOT NULL,
+            type varchar(20) NOT NULL,
+            url text NOT NULL,
+            meta jsonb NOT NULL,
+            link_id bigint NOT NULL,
+            task_id bigint NOT NULL,
+            link_deleted_at timestamptz,
+            retired_at timestamptz NOT NULL DEFAULT now()
+        )
+    """)
+    op.execute(f"""
+        INSERT INTO {BACKUP}
+            (attachment_id, type, url, meta, link_id, task_id, link_deleted_at)
+        SELECT a.id, a.type, a.url, a.meta::jsonb, ta.id, ta.task_id, ta.deleted_at
+        FROM attachment a
+        JOIN task_attachment ta ON ta.attachment_id = a.id
+        WHERE a.id IN (
+            SELECT attachment_id FROM task_attachment WHERE deleted_at IS NULL
+        )
+    """)
+    op.execute(f"""
+        DELETE FROM task_attachment
+        WHERE attachment_id IN (SELECT attachment_id FROM {BACKUP})
+    """)
+    op.execute(f"""
+        DELETE FROM attachment
+        WHERE id IN (SELECT attachment_id FROM {BACKUP})
+    """)
+
+
 def upgrade() -> None:
+    _copy_into_libraries()
+    _retire_attachment_rows()
+
+
+def _copy_into_libraries() -> None:
     bind = op.get_bind()
     tasks = list(
         bind.execute(
@@ -278,6 +332,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """The rows this wrote go with ``0f147393ad6a``'s downgrade, which drops
-    the column and the table they are in; the bytes stay where they were
-    written, and the attachments they were copied from were never touched."""
+    """The retired attachment rows and their links come back from ``BACKUP``.
+    The library rows this wrote go with ``0f147393ad6a``'s downgrade, which
+    drops the column and the table they are in; the bytes stay where they were
+    written."""
+    op.execute(f"""
+        INSERT INTO attachment (id, type, url, meta)
+        SELECT DISTINCT ON (attachment_id) attachment_id, type, url, meta::json
+        FROM {BACKUP}
+        ORDER BY attachment_id
+        ON CONFLICT (id) DO NOTHING
+    """)
+    op.execute(f"""
+        INSERT INTO task_attachment
+            (id, task_id, attachment_id, download_count, created_at, updated_at,
+             deleted_at)
+        SELECT link_id, task_id, attachment_id, 0, retired_at, retired_at,
+               link_deleted_at
+        FROM {BACKUP}
+        ON CONFLICT (id) DO NOTHING
+    """)
+    op.execute(f"DROP TABLE {BACKUP}")

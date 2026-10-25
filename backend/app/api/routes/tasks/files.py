@@ -1,9 +1,10 @@
 """题目的材料：题目资料库（`Shelf.of_task`）里出题人放进来的文件。
 
-列出、下载、放进、替换、删掉。字节不经过这里上传：先领一个上传地址
-（``POST /tasks/{id}/files/uploads``），浏览器把字节直接放进存储，再拿领到的凭据来
-登记。放进、替换、删掉一份，题目记一版（`app.domain.task.package`）。起始代码用同一个
-上传地址，登记走 ``PUT /tasks/{id}/starter``。
+列出、下载、放进、替换、删掉。字节不经过这里上传，和资料库是同一条分段上传的路
+（`library.records`）：先领一次上传的凭据（``POST /tasks/{id}/files/uploads``），
+按段领地址（``…/uploads/part``），浏览器把每一段连同它的 MD5 直接放进存储，再拿凭据、
+整份的 SHA-256 和每段的 MD5 来登记。放进、替换、删掉一份，题目记一版
+（`app.domain.task.package`）。起始代码走同一条上传的路，登记在 ``PUT /tasks/{id}/starter``。
 
 看得见这道题就能看到清单；下载要是出题人、空间管理员或已经领取的人（`package` 里的
 三条判据）。
@@ -14,7 +15,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.byte_response import blob_response
 from app.api.response import ok, typed_response
@@ -57,20 +58,50 @@ class TaskFileUploadSlotIn(BaseModel):
 
 
 class TaskFileUploadSlot(BaseModel):
-    """把字节原样 PUT 到 ``url``（以 ``/`` 开头的是本后端的地址），再拿 ``upload``
-    来登记。"""
+    """一次上传的凭据（``upload``）和它怎么切：每段 ``part_bytes`` 个字节，一共
+    ``parts`` 段，最后一段可以短。"""
+
+    upload: str
+    part_bytes: int
+    parts: int
+
+
+class TaskFileUploadPartIn(BaseModel):
+    """第 ``part`` 段（从 1 数）的字节的 MD5，十六进制。"""
+
+    upload: str
+    part: int = Field(ge=1)
+    md5: str
+
+
+class TaskFileUploadPart(BaseModel):
+    """把这一段原样 PUT 到 ``url``（以 ``/`` 开头的是本后端的地址），带上
+    ``headers``。"""
 
     url: str
-    upload: str
+    headers: dict[str, str]
 
 
-class TaskFileAddIn(BaseModel):
+class TaskFileUploaded(BaseModel):
+    """传完的一次上传：凭据，整份的 SHA-256，每段的 MD5（按段的顺序）。"""
+
     upload: str
+    sha256: str
+    parts: list[str]
+
+
+class TaskFileAddIn(TaskFileUploaded):
     filename: str
 
 
-class TaskFileReplaceIn(BaseModel):
-    upload: str
+class TaskFileReplaceIn(TaskFileUploaded):
+    pass
+
+
+def _received(task_id: int, body: TaskFileUploaded) -> library_records.Upload:
+    return library_records.received(
+        package.shelf(task_id), body.upload, body.sha256, body.parts
+    )
 
 
 class TaskFilePlacedOut(BaseModel):
@@ -80,10 +111,6 @@ class TaskFilePlacedOut(BaseModel):
 
 class TaskFileRemovedOut(BaseModel):
     removed: bool
-
-
-class TaskStarterIn(BaseModel):
-    upload: str
 
 
 def _file(row) -> dict:
@@ -185,7 +212,7 @@ async def task_file_upload_slot(
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    """领一个上传地址（出题人本人或空间管理员）。超过上限的不给地址。"""
+    """领一次上传的凭据（出题人本人或空间管理员）。超过上限的不给。"""
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
     if body.size <= 0:
@@ -193,6 +220,28 @@ async def task_file_upload_slot(
     name = library.clean_upload_name(body.name)
     return ok(
         await library_records.upload_slot(package.shelf(task.id), name, body.size)
+    )
+
+
+@router.post(
+    "/{taskId}/files/uploads/part",
+    summary="Task File Upload Part",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskFileUploadPart),
+)
+async def task_file_upload_part(
+    task_id: TaskId,
+    body: TaskFileUploadPartIn,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    """一次上传里一段的地址：只收这一段，字节的 MD5 对不上的存储不收。"""
+    task = await _require_task(db, task_id)
+    await package.refuse_unless_teacher(db, task, auth_user.user_id)
+    return ok(
+        await library_records.upload_part(
+            package.shelf(task.id), body.upload, body.part, body.md5
+        )
     )
 
 
@@ -212,7 +261,7 @@ async def add_task_file(
     """把传上来的一份登记成这道题的材料，题目记一版。撞名不覆盖：拿下一个 `(n)`。"""
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
-    upload = await library_records.received(package.shelf(task.id), body.upload)
+    upload = _received(task.id, body)
     name = await package.add_file(
         db,
         task,
@@ -243,7 +292,7 @@ async def replace_task_file(
     """把一份材料换成传上来的新版本，旧的留作历史，题目记一版。"""
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
-    upload = await library_records.received(package.shelf(task.id), body.upload)
+    upload = _received(task.id, body)
     name = _name(name)
     await package.replace_file(db, task, by=auth_user.user_id, name=name, data=upload)
     await db.commit()
@@ -278,17 +327,17 @@ async def remove_task_file(
 )
 async def set_task_starter(
     task_id: TaskId,
-    body: TaskStarterIn,
+    body: TaskFileUploaded,
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    """把传上来的一份 .zip 设成起始代码（先领 ``/files/uploads`` 的地址），题目记一版。
+    """把传上来的一份 .zip 设成起始代码（和材料同一条分段上传），题目记一版。
 
     当场查它能不能解开、有没有越出目录的路径或链接、大小和文件数在不在上限内，不合格
     的说清楚为什么。已有一份的，旧的留作历史；已经领了题的项目不受影响。"""
     task = await _require_task(db, task_id)
     await package.refuse_unless_teacher(db, task, auth_user.user_id)
-    upload = await library_records.received(package.shelf(task.id), body.upload)
+    upload = _received(task.id, body)
     verb = await package.set_starter(db, task, by=auth_user.user_id, data=upload)
     await package.record(
         db, task, by=auth_user.user_id, changes={package.STARTER_CHANGE: verb}

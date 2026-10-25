@@ -174,7 +174,7 @@ class AgentInstanceService:
         if peer is not None:
             return peer
         seat = await TopicMemberService(self._session).addressable_agent_handle(
-            topic.id
+            topic.id, room_id=topic.id
         )
         seated = await self.for_seat_handle(project, seat)
         return seated if seated is not None else await self.for_project(project)

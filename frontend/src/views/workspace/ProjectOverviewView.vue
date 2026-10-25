@@ -14,9 +14,10 @@ import type { ProjectSituation } from '@/api/projectProgress'
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { RoomTask } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
+import type { TaskStage, TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import dayjs from 'dayjs'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
@@ -34,6 +35,12 @@ import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 /** 从一道题领出来的项目截到哪一刻。 */
+/** 从一道分阶段的题领出来的项目：每个阶段，和这个项目在每个阶段上走到哪一步。 */
+export interface ChallengeStages {
+  stages: TaskStage[]
+  statuses: TaskStageStatus[]
+}
+
 export interface ChallengeDeadline {
   /** 截止那一刻（毫秒）。 */
   at: number
@@ -49,6 +56,8 @@ const props = defineProps<{
   /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
    *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
   challengeDeadline?: ChallengeDeadline | null
+  /** 题目分了阶段时，用阶段时间轴代替那一行截止时间；不分阶段是 null。 */
+  challengeStages?: ChallengeStages | null
   /** 代码仓库的第一个提交是题目第几版的起始代码；没有起始代码、或读不到，是 null。 */
   starterRevision?: number | null
   /** 最近进展；还没读到是 null。 */
@@ -89,6 +98,10 @@ const emit = defineEmits<{
   /** 看题目的材料：项目资料库的 `题目/`。 */
   'open-task-folder': []
 }>()
+
+// Only a project from a staged task shows the timeline, so the overview loads it
+// only then: every other project's first paint does not wait on it.
+const TaskStageTimeline = defineAsyncComponent(() => import('@/components/tasks/TaskStageTimeline.vue'))
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
 
@@ -209,7 +222,16 @@ function stateOf(task: RoomTask): TaskState {
               {{ t('work.overview.edit') }}
             </button>
           </div>
-          <p v-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">{{ deadlineText }}</p>
+          <TaskStageTimeline
+            v-if="challengeStages?.stages.length"
+            class="ov-stages"
+            :stages="challengeStages.stages"
+            :statuses="challengeStages.statuses"
+            data-testid="overview-stages"
+          />
+          <p v-else-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">
+            {{ deadlineText }}
+          </p>
           <p v-if="starterRevision" class="ov-deadline t-body" data-testid="overview-starter">
             {{ t('work.overview.starterFrom', { n: starterRevision }) }}
           </p>
@@ -438,6 +460,9 @@ function stateOf(task: RoomTask): TaskState {
 .ov-deadline {
   margin: 0 0 8px;
   color: var(--muted);
+}
+.ov-stages {
+  margin: 0 0 16px;
 }
 .ov-situation {
   margin-bottom: 32px;

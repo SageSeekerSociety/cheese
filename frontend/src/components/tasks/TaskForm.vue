@@ -23,6 +23,7 @@ import TaskFormGrading from './form/TaskFormGrading.vue'
 import TaskFormMore from './form/TaskFormMore.vue'
 import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
+import TaskFormStages from './form/TaskFormStages.vue'
 import TaskFormTime from './form/TaskFormTime.vue'
 
 import { MORE_FIELDS } from '@/lib/taskDraftAgent'
@@ -124,6 +125,8 @@ const {
   rubric,
   rubricPublic,
   rubricMissingName,
+  stages,
+  stageMissingName,
   isSubmitting,
   submitForm,
   check,
@@ -180,10 +183,18 @@ defineExpose({
 
     <slot name="shared" />
 
+    <TaskFormStages
+      v-model:stages="stages"
+      v-model:submission-schema="submissionSchema"
+      v-model:rubric="rubric"
+      :missing-name="stageMissingName"
+    />
+
     <TaskFormGrading
       v-model:submission-schema="submissionSchema"
       v-model:rubric="rubric"
       v-model:rubric-public="rubricPublic"
+      :stages="stages"
       :missing-name="rubricMissingName"
     />
 

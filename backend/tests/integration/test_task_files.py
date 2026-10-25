@@ -15,9 +15,9 @@ from __future__ import annotations
 import io
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,12 +25,14 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.project.models import Project
 from app.domain.task import package
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
     create_approved_space,
     unique_int,
 )
+from tests.support import library_uploads
 
 MATERIAL = b"%PDF-1.4 fake subject material"
 
@@ -162,43 +164,41 @@ def _upload_loose(api_client: TestClient, token: str, name: str, data: bytes) ->
 
 
 def _put(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    """领一个上传地址、把字节放上去，交回凭据：材料那一页的上传。"""
+    """领一次上传、把字节一段一段放上去，交回登记要带的凭据和哈希：材料那一页的上传。"""
+    base = f"/tasks/{task_id}/files"
     slot = api_client.post(
-        f"/tasks/{task_id}/files/uploads",
+        f"{base}/uploads",
         json={"name": name, "size": len(data)},
         headers=_auth(token),
     )
     if slot.status_code != 200:
         return slot, None
-    url = slot.json()["data"]["url"]
-    put = (
-        api_client.put(url, content=data)
-        if url.startswith("/")
-        else httpx.put(url, content=data)
+    refused, uploaded = library_uploads.send_parts(
+        api_client, base, slot.json()["data"], data, _auth(token)
     )
-    assert put.status_code == 200, put.text
-    return None, slot.json()["data"]["upload"]
+    assert refused is None, refused.text
+    return None, uploaded
 
 
 def _add(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    refused, upload = _put(api_client, task_id, token, name, data)
+    refused, uploaded = _put(api_client, task_id, token, name, data)
     if refused is not None:
         return refused
     return api_client.post(
         f"/tasks/{task_id}/files",
-        json={"upload": upload, "filename": name},
+        json={**uploaded, "filename": name},
         headers=_auth(token),
     )
 
 
 def _replace(api_client: TestClient, task_id: int, token: str, name: str, data: bytes):
-    refused, upload = _put(api_client, task_id, token, name, data)
+    refused, uploaded = _put(api_client, task_id, token, name, data)
     if refused is not None:
         return refused
     return api_client.put(
         f"/tasks/{task_id}/files",
         params={"name": name},
-        json={"upload": upload},
+        json=uploaded,
         headers=_auth(token),
     )
 
@@ -505,15 +505,9 @@ def test_nothing_in_the_project_writes_under_the_task_folder(
     base = f"/projects/{project_id}/library"
 
     def put(name: str, folder: str | None = None):
-        slot = api_client.post(
-            f"{base}/uploads", json={"name": name, "size": 3}, headers=headers
+        return library_uploads.put_into(
+            api_client, base, name, b"abc", folder=folder, headers=headers
         )
-        assert slot.status_code == 200, slot.text
-        api_client.put(slot.json()["data"]["url"], content=b"abc")
-        body = {"upload": slot.json()["data"]["upload"], "filename": name}
-        if folder is not None:
-            body["folder"] = folder
-        return api_client.post(base, json=body, headers=headers)
 
     assert put("我的.csv", folder="题目").status_code == 422
     assert (
@@ -579,3 +573,220 @@ def test_the_projects_agents_are_told_the_version_and_what_changed(
     second = section()
     assert "第 2 版" in second
     assert "新增文件 数据.csv" in second
+
+
+# --- 谁在项目里读得到 `题目/`：题目的判据，不是项目的名册 ------------------------------
+
+
+def _raw_in_project(api_client: TestClient, project_id: str, token: str, name: str):
+    return api_client.get(
+        f"/projects/{project_id}/library/raw",
+        params={"path": f"题目/{name}"},
+        headers=_auth(token),
+    )
+
+
+def _top_paths(api_client: TestClient, project_id: str, token: str) -> list[str]:
+    resp = api_client.get(f"/projects/{project_id}/library", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return [row["path"] for row in resp.json()["data"]["data"]]
+
+
+def test_a_board_manager_who_did_not_publish_may_download_without_claiming(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """管理员是替出题人管这块板的人，不该为了看一眼材料先把自己报名上去。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="管理员要看材料的题")
+    _add(api_client, task_id, board["creator_token"], "讲义.pdf", MATERIAL)
+
+    manager = user_client.create_user()
+    manager_token = _login(user_client, api_client, manager)
+    resp = api_client.post(
+        f"/spaces/{board['space_id']}/managers",
+        json={"userId": manager.user_id, "role": "ADMIN"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 201, resp.text
+
+    assert _files(api_client, task_id, manager_token).json()["data"]["canDownload"]
+    resp = _download(api_client, task_id, manager_token, "讲义.pdf")
+    assert resp.status_code == 200
+    assert resp.content == MATERIAL
+
+
+def test_a_teammate_who_never_took_the_task_does_not_read_it_in_the_project(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,
+    db_session,
+    _portal,
+):
+    """个人题的项目挂在一个团队下：团队里没领这道题的人进得了项目，题目的材料他照样
+    拿不到——和在题目页上一样。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="个人题进团队")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"secret\n")
+    _, a_token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, task_id, a_token)
+    resp = api_client.post(
+        "/teams",
+        json={
+            "name": f"队 {unique_int(10000000, 99999999)}",
+            "intro": "x",
+            "description": "x",
+            "avatarId": 1,
+        },
+        headers=_auth(a_token),
+    )
+    assert resp.status_code == 201, resp.text
+    team_id = resp.json()["data"]["team"]["id"]
+    b_user, b_token = _member_of(user_client, api_client, board)
+
+    async def join() -> None:
+        now = datetime.now(UTC)
+        db_session.add(
+            TeamUserRelation(
+                team_id=team_id,
+                user_id=b_user.user_id,
+                role=TeamMemberRole.MEMBER,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(join)
+    resp = api_client.post(
+        "/projects",
+        json={"name": "个人题挂团队", "external_task_id": task_id, "team_id": team_id},
+        headers=_auth(a_token),
+    )
+    assert resp.status_code == 200, resp.text
+    project_id = resp.json()["data"]["id"]
+
+    assert _download(api_client, task_id, b_token, "数据.csv").status_code == 403
+    assert (
+        _raw_in_project(api_client, project_id, b_token, "数据.csv").status_code == 403
+    )
+    assert "题目" not in _top_paths(api_client, project_id, b_token)
+    found = api_client.get(
+        f"/projects/{project_id}/library", params={"q": "数据"}, headers=_auth(b_token)
+    ).json()["data"]["data"]
+    assert found == []
+    text = api_client.get(
+        f"/projects/{project_id}/library/text",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(b_token),
+    )
+    assert text.status_code == 403
+    # `cheese library get` 先要的下载地址也一样不给。
+    link = api_client.get(
+        f"/projects/{project_id}/library/link",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(b_token),
+    )
+    assert link.status_code == 403
+
+    # 领了题的那个人照旧读得到，下载地址取到的也是那份字节。
+    resp = _raw_in_project(api_client, project_id, a_token, "数据.csv")
+    assert resp.status_code == 200
+    assert resp.content == b"secret\n"
+    link = api_client.get(
+        f"/projects/{project_id}/library/link",
+        params={"path": "题目/数据.csv"},
+        headers=_auth(a_token),
+    )
+    assert link.status_code == 200, link.text
+    assert api_client.get(link.json()["data"]["url"]).content == b"secret\n"
+    assert "题目" in _top_paths(api_client, project_id, a_token)
+
+
+def test_someone_the_publisher_removed_stops_reading_the_task_in_their_project(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,
+    db_session,
+    _portal,
+):
+    """出题人撤掉了一个领取：他的项目还在，题目的材料（现在的和以后改的）他读不到了，
+    项目里的 agent 也不再被告知题目。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="撤掉的人")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"v1\n")
+    _, token = _member_of(user_client, api_client, board)
+    participant = _claim(api_client, board, task_id, token)
+    project_id = _project_from(api_client, task_id, token)
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 200
+
+    resp = api_client.delete(
+        f"/tasks/{task_id}/participants/{participant}",
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 204, resp.text
+    _replace(api_client, task_id, board["creator_token"], "数据.csv", b"v2\n")
+
+    assert _download(api_client, task_id, token, "数据.csv").status_code == 403
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 403
+    assert "题目" not in _top_paths(api_client, project_id, token)
+
+    async def section() -> str | None:
+        project = await db_session.get(Project, uuid.UUID(project_id))
+        return await package.section_for_project(db_session, project)
+
+    assert _portal.call(section) is None
+
+
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
+)
+
+
+def test_the_taker_reads_the_task_files_everywhere_the_project_reads_its_library(
+    api_client: TestClient, user_client: UserCreator, upload_root: Path
+):
+    """领了题的人在项目里读 `题目/` 的每一条路都读得到：资料库、房间里取文件
+    （`cheese pull`）、复制一份到房间里改、项目文档里引用的图片。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="到处都读得到")
+    _add(api_client, task_id, board["creator_token"], "数据.csv", b"a,b\n")
+    _add(api_client, task_id, board["creator_token"], "示意.png", PNG)
+    _, token = _member_of(user_client, api_client, board)
+    _claim(api_client, board, task_id, token)
+    project_id = _project_from(api_client, task_id, token)
+    headers = _auth(token)
+
+    assert _raw_in_project(api_client, project_id, token, "数据.csv").status_code == 200
+    room = api_client.post(
+        "/topics", json={"project_id": project_id, "title": "频道"}, headers=headers
+    )
+    assert room.status_code == 200, room.text
+    room_id = room.json()["data"]["id"]
+
+    pulled = api_client.get(
+        f"/topics/{room_id}/files/raw",
+        params={"path": "library/题目/数据.csv"},
+        headers=headers,
+    )
+    assert pulled.status_code == 200, pulled.text
+    copied = api_client.post(
+        f"/topics/{room_id}/files/copy",
+        json={"source": "library/题目/数据.csv", "path": "我的数据.csv"},
+        headers=headers,
+    )
+    assert copied.status_code == 200, copied.text
+
+    made = api_client.post(
+        f"/projects/{project_id}/documents",
+        json={"title": "笔记", "content": "![](library/题目/示意.png)\n"},
+        headers=headers,
+    )
+    assert made.status_code == 200, made.text
+    image = api_client.get(
+        f"/documents/{made.json()['data']['id']}/image",
+        params={"path": "library/题目/示意.png"},
+        headers=headers,
+    )
+    assert image.status_code == 200, image.text
+    assert image.content == PNG

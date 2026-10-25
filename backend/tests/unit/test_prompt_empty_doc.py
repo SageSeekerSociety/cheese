@@ -22,7 +22,7 @@ def test_an_empty_room_doc_asks_for_the_first_version():
     told = _told("")
 
     assert "这里还没有实况文档" in told
-    assert "`cheese_doc_set` 建第一版" in told
+    assert "`cheese_doc(action=set)` 建第一版" in told
     assert "不论你是哪个队友" in told
     # 怎么写和有文档时是同一份。
     assert DOC_FORM in told
@@ -31,8 +31,8 @@ def test_an_empty_room_doc_asks_for_the_first_version():
 def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
     told = _told("## 目标\n\n做一件事。\n")
 
-    # 改已有文档用 doc_edit：doc_set 整份覆盖，会盖掉别人的段落和正在打的字。
-    assert "`cheese_doc_edit`" in told
+    # 改已有文档用 edit：set 整份覆盖，会盖掉别人的段落和正在打的字。
+    assert "`cheese_doc(action=edit)`" in told
     assert "这里还没有实况文档" not in told
     assert DOC_FORM in told
     assert "做一件事。" in told

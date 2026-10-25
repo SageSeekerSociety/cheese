@@ -254,6 +254,11 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     )
     invitee_handle: Mapped[str] = mapped_column(String(64), index=True)
     inviter_handle: Mapped[str] = mapped_column(String(64))
+    # The inviter's own 芝士 sent it for them (`Actor.by_assistant`); the
+    # invitee is told so wherever the inviter is named.
+    invited_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, native_enum=False, length=16),
         default=InvitationStatus.pending,

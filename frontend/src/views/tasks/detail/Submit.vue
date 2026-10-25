@@ -16,6 +16,17 @@
       <v-divider class="mx-4"></v-divider>
 
       <v-card-text class="py-6">
+        <!-- A staged task is handed in stage by stage: pick which stage this version is for. -->
+        <TaskStageTimeline
+          v-if="stages.length"
+          class="mb-6"
+          :stages="stages"
+          :statuses="progress?.mine?.stages"
+          selectable
+          :current="stage"
+          @select="stage = $event"
+        />
+
         <v-alert v-if="!taskData?.submittable" type="warning" class="mb-6" variant="tonal">
           {{ t('tasks.submit.notSubmittable') }}
         </v-alert>
@@ -25,6 +36,10 @@
           <template #text>
             <p>{{ t('tasks.submit.noIdentityText') }}</p>
           </template>
+        </v-alert>
+
+        <v-alert v-else-if="stagePastDue" type="warning" class="mb-6" variant="tonal">
+          {{ t('tasks.submit.stagePastDue', { name: stages[stage]?.name ?? '' }) }}
         </v-alert>
 
         <v-alert v-else-if="reachedSubmissionLimit" type="warning" class="mb-6" variant="tonal">
@@ -217,7 +232,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Task } from '@/types'
+import type { Task, TaskProgress } from '@/types'
 import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
@@ -230,7 +245,9 @@ import { AttachmentsApi } from '@/api/attachments'
 import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { settledStage } from '@/lib/taskStages'
 import { fmtFileSize } from '@/lib/usageFormat'
 import { useEvents } from '@/views/tasks/events'
 
@@ -244,7 +261,27 @@ const events = useEvents()
 const props = defineProps<{
   taskData: Task | null
   participationInfo?: TaskParticipationInfo
+  /** 每个阶段上的进度，题目页取的那一份。 */
+  progress?: TaskProgress | null
 }>()
+
+// 分了阶段的题：这一版交的是哪个阶段。默认第一个还没通过、也还没截止的阶段。
+const stages = computed(() => props.taskData?.stages ?? [])
+const stage = ref(0)
+const isPastDue = (index: number) => {
+  const due = stages.value[index]?.dueAt
+  return due != null && due < Date.now()
+}
+watch(
+  () => [stages.value.length, props.progress?.mine?.stages] as const,
+  ([, mine]) => {
+    const open = stages.value.findIndex((_, i) => mine?.[i] !== 'PASSED' && !isPastDue(i))
+    stage.value = open >= 0 ? open : 0
+  },
+  { immediate: true }
+)
+/** 这个阶段过了截止：不再收新的一版（服务端也这样拒）。 */
+const stagePastDue = computed(() => stages.value.length > 0 && isPastDue(stage.value))
 
 const router = useRouter()
 const formRef = ref(null)
@@ -279,13 +316,22 @@ const currentIdentity = computed(() => {
 
 // 是否可以提交
 const canSubmit = computed(() => {
-  return props.taskData?.submittable && hasValidIdentity.value && !reachedSubmissionLimit.value
+  return props.taskData?.submittable && hasValidIdentity.value && !reachedSubmissionLimit.value && !stagePastDue.value
 })
 
-// 提交数据
-const submissionSchema = computed(() => props.taskData?.submissionSchema || [])
-const submissionContent = ref<{ contentText?: string; contentAttachment?: File }[]>(
-  props.taskData?.submissionSchema?.map(() => ({ contentText: '', contentAttachment: undefined })) || []
+// 提交数据：这个阶段的那几项（不分阶段时就是全部）。换了阶段，填的内容重新开始。
+const submissionSchema = computed(() =>
+  (props.taskData?.submissionSchema || []).filter(
+    (entry) => settledStage(stages.value, entry.stage) === (stages.value[stage.value]?.id ?? null)
+  )
+)
+const submissionContent = ref<{ contentText?: string; contentAttachment?: File }[]>([])
+watch(
+  submissionSchema,
+  (schema) => {
+    submissionContent.value = schema.map(() => ({ contentText: '', contentAttachment: undefined }))
+  },
+  { immediate: true }
 )
 
 // 用户截止时间
@@ -299,8 +345,14 @@ const reachedSubmissionLimit = computed(() =>
 )
 
 watch(
-  () => [props.taskData?.id, props.taskData?.resubmittable, currentIdentity.value?.id] as const,
-  async ([taskId, resubmittable, identityId]) => {
+  () =>
+    [
+      props.taskData?.id,
+      props.taskData?.resubmittable,
+      currentIdentity.value?.id,
+      stages.value[stage.value]?.id ?? undefined,
+    ] as const,
+  async ([taskId, resubmittable, identityId, stageId]) => {
     alreadySubmitted.value = false
     if (!taskId || resubmittable || !identityId) return
     try {
@@ -308,6 +360,7 @@ watch(
         pageSize: 1,
         sort_by: 'createdAt',
         sort_order: 'desc',
+        stage: stageId,
       })
       alreadySubmitted.value = data.submissions.length > 0
     } catch {
@@ -477,7 +530,12 @@ const submitTask = async () => {
     }
 
     // 使用参与者ID而不是成员ID进行提交
-    await TaskBoardApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
+    await TaskBoardApi.createSubmission(
+      props.taskData.id,
+      currentIdentity.value.id,
+      finalSubmissionContent,
+      stages.value[stage.value]?.id ?? null
+    )
     toast.success(t('tasks.submit.submitted'))
     // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。
     events.emit('participation-changed')

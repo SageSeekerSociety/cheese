@@ -811,6 +811,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "assets/sample.bin",
                     None,
                     "committed",
+                    with_task=False,
                 )
                 == raw
             )

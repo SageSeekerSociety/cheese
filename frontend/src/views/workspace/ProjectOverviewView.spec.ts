@@ -149,6 +149,24 @@ it('题目更新了：写到了第几版、改了什么，点开去看题目的�
   expect(view.emitted('open-task-folder')).toEqual([[]])
 })
 
+it('题目的阶段改了：这一版写明改了阶段', () => {
+  const item: ProgressItem = {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version: 2,
+    changes: { stages: true },
+  }
+  const view = mount({ progress: [item] })
+  expect(view.getByText('第 2 版：改了阶段')).toBeTruthy()
+})
+
 it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
   const item: ProgressItem = {
     kind: 'accepted',
@@ -200,6 +218,27 @@ it('领题开的项目：写着这份报名自己截到哪一刻，按看的人�
   cleanup()
   const closing = mount({ overviewText: '## 赛题要求', challengeDeadline: { at, mine: false } })
   expect(closing.getByTestId('overview-deadline').textContent).toBe('题目截止：10月24日 16:05')
+})
+
+it('领的题分了阶段：那一行截止换成阶段时间轴，写着这个项目每个阶段走到哪一步', async () => {
+  const at = new Date(2030, 9, 24, 16, 5).getTime()
+  const view = mount({
+    overviewText: '## 赛题要求',
+    challengeDeadline: { at, mine: true },
+    challengeStages: {
+      stages: [
+        { name: '需求分析', description: '', dueAt: at },
+        { name: '实现', description: '', dueAt: null },
+      ],
+      statuses: ['PASSED', 'NOT_SUBMITTED'],
+    },
+  })
+  expect(view.queryByTestId('overview-deadline')).toBeNull()
+  const timeline = await view.findByTestId('overview-stages')
+  expect(timeline.textContent).toContain('需求分析')
+  expect(timeline.textContent).toContain('截止 10月24日 16:05')
+  expect(timeline.textContent).toContain('已通过')
+  expect(timeline.textContent).toContain('未提交')
 })
 
 it('不是领题开的项目：不写截止', () => {

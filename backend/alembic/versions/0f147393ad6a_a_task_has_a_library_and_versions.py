@@ -1,7 +1,7 @@
 """A 题目 has a library, and its content has versions
 
 Revision ID: 0f147393ad6a
-Revises: c5e8a2d71f46
+Revises: b7d41e9c05af
 Create Date: 2026-10-24
 
 #4767 §一. A library belongs to a project, a team, or now a 题目
@@ -29,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "0f147393ad6a"
-down_revision: str | Sequence[str] | None = "c5e8a2d71f46"
+down_revision: str | Sequence[str] | None = "b7d41e9c05af"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

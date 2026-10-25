@@ -1,4 +1,5 @@
 {
+  "actedByAssistant": "芝士代 {person}",
   "actionNotify": "{actor} 发送了通知",
   "apiRetry": "AI 服务请求失败，正在重试",
   "apiRetryAttempt": "AI 服务请求失败，正在重试（第 {attempt} 次）",

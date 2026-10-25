@@ -188,7 +188,7 @@ async def test_a_library_replace_over_the_ceiling_is_refused_before_bytes_are_st
     with pytest.raises(UnprocessableEntityError) as refused:
         await records.replace(
             session,
-            shelf=Shelf.of_project(project),
+            shelf=Shelf.of_project(project, with_task=False),
             name="预算.xlsx",
             data=b"x" * (CEILING + 1),
             by="user-1",

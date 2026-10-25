@@ -30,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.task.models import TaskDraft
+from app.domain.task.models import TaskDraft, new_stage_key
+from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
 
@@ -63,6 +64,7 @@ FORM_FIELDS = frozenset(
         "submissionSchema",
         "rubric",
         "rubricPublic",
+        "stages",
         "attachmentIds",
         "attachmentFiles",
         "starterAttachmentId",
@@ -89,6 +91,7 @@ INTRO_CHARS = 255
 AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "name": ("name",),
     "description": ("description", "descriptionMarkdown"),
+    "stages": ("stages",),
     "submission": ("submissionSchema",),
     "rubric": ("rubric",),
     "rubric_public": ("rubricPublic",),
@@ -237,6 +240,18 @@ async def _people(session: AsyncSession, user_ids: list[int]) -> dict[str, str]:
     return dict(found[uid] for uid in ids if uid in found)
 
 
+async def published_items(
+    session: AsyncSession, rows: list[TaskDraft]
+) -> dict[int, int]:
+    """How many submission items each published 题目 these drafts change has:
+    what ``missing`` checks a change draft against."""
+    ids = [r.task_id for r in rows if r.task_id]
+    if not ids:
+        return {}
+    found = await TaskService.of(session).list_submission_schemas(ids)
+    return {task_id: len(found.get(task_id, [])) for task_id in ids}
+
+
 async def task_names(session: AsyncSession, rows: list[TaskDraft]) -> dict[int, str]:
     """The names of the published 题目 these drafts change."""
     ids = [r.task_id for r in rows if r.task_id]
@@ -268,7 +283,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 用户说「这道题」「表单」，指这道题。",
             "- 用户只附上文件、没说要做什么时，按文件内容修改这道题（给 draft），"
             "不新建草稿。",
-            "- 用户说保存时，用 cheese_problem_publish 保存修改。",
+            "- 用户说保存时，用 cheese_problem(action=publish) 保存修改。",
         ]
     else:
         lines = [
@@ -280,7 +295,7 @@ def scene(draft: TaskDraft, task_name: str | None = None) -> str:
             "- 这份草稿尚未填写时，文件里的第一道题写进它（给 draft），不要另建；其余每道"
             "题各新建一份草稿（给 space，source 写文件名）。草稿已经填写了，就不要覆盖它，"
             "文件里的题都新建。",
-            "- 用户说发布时，用 cheese_problem_publish 发布。",
+            "- 用户说发布时，用 cheese_problem(action=publish) 发布。",
         ]
     return "<这一页>\n" + "\n".join(lines) + "\n</这一页>"
 
@@ -408,14 +423,17 @@ def from_agent(
     space: Space,
     current: dict,
     files: list[dict] | None = None,
+    removed: list[str] | None = None,
     starter: dict | None = None,
 ) -> dict:
     """What 芝士 asked to write, as form fields. Refuses, with what to write
     instead, a value the form would not take: a category the space does not
     have, a deadline it cannot read. ``files`` are the attachments it named
-    (``attachments``), already found to be the person's: id, name and size;
-    ``starter`` is the one it named as starter code (``starter``), the same
-    way, or None when it asked for none."""
+    (``attachments``), already found to be the person's: id, name and size.
+    ``removed`` collects the names of the items and rubric lines that left
+    with a stage this write removed; ``starter`` is the file it named as
+    starter code (``starter``), found the same way, or None when it asked for
+    none."""
     out: dict = _template(args["template"], space) if "template" in args else {}
     if "name" in args:
         name = str(args["name"] or "").strip()
@@ -465,10 +483,33 @@ def from_agent(
                 )
             )
         out["topics"] = [space.tags[n] for n in names]
+    if "stages" in args:
+        out["stages"] = _stages(args["stages"], space.zone, current.get("stages"))
+    # Items and lines name their stage by its id; 芝士 may name it by its id or
+    # its name, among the stages this write gives or the draft already has.
+    stages = out.get("stages", current.get("stages") or [])
     if "submission" in args:
-        out["submissionSchema"] = _submission(args["submission"])
+        out["submissionSchema"] = _submission(args["submission"], stages)
     if "rubric" in args:
-        out["rubric"] = _rubric(args["rubric"])
+        out["rubric"] = _rubric(args["rubric"], stages)
+    if "stages" in args:
+        # The stages changed under the items and lines already in the draft:
+        # they follow the same rules the page and the publish apply
+        # (``stages.rows_after_stage_change``), so the draft says now what the
+        # 题目 will say. What went with a removed stage is said back by name.
+        ids = [s["id"] for s in out["stages"]]
+        before = [
+            str(s.get("id"))
+            for s in current.get("stages") or []
+            if isinstance(s, dict) and s.get("id")
+        ]
+        for form_field, label in (("submissionSchema", "prompt"), ("rubric", "item")):
+            rows = out.get(form_field, current.get(form_field))
+            if isinstance(rows, list):
+                settled = rows_after_stage_change(rows, before, ids)
+                out[form_field] = settled.kept
+                if removed is not None:
+                    removed.extend(str(row.get(label) or "") for row in settled.removed)
     if "rubric_public" in args:
         out["rubricPublic"] = bool(args["rubric_public"])
     if "real_name" in args:
@@ -609,7 +650,73 @@ def _deadline(value, zone: tzinfo) -> int | None:
     return int(moment.timestamp() * 1000)
 
 
-def _submission(items) -> list[dict]:
+def _stages(items, zone: tzinfo, current=None) -> list[dict]:
+    """The stages 芝士 lists, in order: a name, what it asks for, and when it
+    is due on the person's clock. A stage the task already has keeps its
+    ``id`` (as the draft view shows it), so what was handed in under it
+    follows it. One written without an id is the stage the draft already
+    has under that name (``stages.keyed_by_name``), or else a new stage, which
+    gets its id here so the items and lines in the same write can name it
+    (``app.domain.task.stages``)."""
+    known = [
+        (str(s.get("id")), str(s.get("name")))
+        for s in current or []
+        if isinstance(s, dict) and s.get("id")
+    ]
+    taken = {str(item.get("id")) for item in items or [] if (item or {}).get("id")}
+    out = []
+    for item in items or []:
+        item = item or {}
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        key = str(item.get("id") or "").strip()
+        if not key:
+            same = [k for k, n in known if n == name]
+            key = same[0] if len(same) == 1 and same[0] not in taken else ""
+            taken.add(key)
+        out.append(
+            {
+                "id": key or new_stage_key(),
+                "name": name,
+                "description": str(item.get("description") or "").strip(),
+                "dueAt": _deadline(item.get("due"), zone),
+            }
+        )
+    return out
+
+
+def _stage_ref(item: dict, stages: list) -> str | None:
+    """The id of the stage 芝士 names for an item or line — by the stage's id
+    or its name. None on a task without stages."""
+    if not stages:
+        return None
+    said = str(item.get("stage") or "").strip()
+    ids = [str(s.get("id")) for s in stages if isinstance(s, dict)]
+    if not said:
+        return settled_stage(None, ids)
+    if said in ids:
+        return said
+    named = [
+        s.get("id") for s in stages if isinstance(s, dict) and s.get("name") == said
+    ]
+    if len(named) > 1:
+        raise BadRequestError(say("draftStageAmbiguous", name=said))
+    if named:
+        return named[0]
+    raise BadRequestError(
+        say(
+            "draftStageChoice",
+            names="、".join(
+                f"{s.get('name')}（{s.get('id')}）"
+                for s in stages
+                if isinstance(s, dict)
+            ),
+        )
+    )
+
+
+def _submission(items, stages: list) -> list[dict]:
     out = []
     for item in items or []:
         name = str((item or {}).get("name") or "").strip()
@@ -618,13 +725,19 @@ def _submission(items) -> list[dict]:
             continue
         if kind not in KINDS:
             raise BadRequestError(say("draftSubmissionKind"))
-        out.append({"prompt": name[:255], "type": KINDS[kind]})
+        out.append(
+            {
+                "prompt": name[:255],
+                "type": KINDS[kind],
+                "stage": _stage_ref(item or {}, stages),
+            }
+        )
     if not out:
         raise BadRequestError(say("draftSubmissionEmpty"))
     return out
 
 
-def _rubric(lines) -> list[dict]:
+def _rubric(lines, stages: list) -> list[dict]:
     out = []
     for line in lines or []:
         line = line or {}
@@ -637,6 +750,7 @@ def _rubric(lines) -> list[dict]:
                 "item": str(line.get("item") or "").strip(),
                 "points": points,
                 "criteria": str(line.get("criteria") or "").strip(),
+                "stage": _stage_ref(line, stages),
             }
         )
     return out
@@ -809,6 +923,14 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         moment = datetime.fromtimestamp(int(ms) / 1000, tz=UTC).astimezone(space.zone)
         return moment.strftime("%Y-%m-%d %H:%M")
 
+    stages = [s for s in fields.get("stages") or [] if isinstance(s, dict)]
+
+    def in_stage(entry: dict) -> str:
+        if not stages:
+            return ""
+        named = next((s for s in stages if s.get("id") == entry.get("stage")), {})
+        return f"｜阶段 {named.get('name', '?')}（{entry.get('stage')}）"
+
     lines = [
         open_tag,
         head,
@@ -860,14 +982,24 @@ def _view(open_tag: str, head: str, fields: dict, space: Space, close_tag: str) 
         + modes.get((fields.get("teaching") or {}).get("mode"), "沿用空间设置"),
         "ai_guidance: "
         + str((fields.get("teaching") or {}).get("systemPrompt") or "（无）"),
+        "stages:" + ("" if stages else " （不分阶段）"),
+        *(
+            f"  {n}. {s.get('name')}"
+            + f"（id: {s.get('id')}）"
+            + f"｜截止 {when(s.get('dueAt')) or '不设'}"
+            + (f"｜{s.get('description')}" if s.get("description") else "")
+            for n, s in enumerate(stages, start=1)
+        ),
         "submission:",
         *(
             f"  - {e.get('prompt')}（{kinds.get(e.get('type'), e.get('type'))}）"
+            + in_stage(e)
             for e in fields.get("submissionSchema") or []
         ),
         f"rubric（对学生{'可见' if fields.get('rubricPublic', True) else '不可见'}）:",
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
+            + in_stage(r)
             for r in fields.get("rubric") or []
         ),
         "description:",
@@ -944,16 +1076,17 @@ def published_form(draft: TaskDraft) -> dict:
 
 def blank(fields: dict) -> bool:
     """Nothing of the 题目 is written yet: no name, no description, no
-    rubric — what the page starts a draft with is not writing."""
+    rubric, no stages — what the page starts a draft with is not writing."""
     return not (
         str(fields.get("name") or "").strip()
         or markdown_of(fields).strip()
         or _doc_text(fields.get("description")).strip()
         or fields.get("rubric")
+        or fields.get("stages")
     )
 
 
-def missing(draft: TaskDraft) -> list[str]:
+def missing(draft: TaskDraft, published_items: int = 0) -> list[str]:
     """What still has to be written before the draft can be published, in
     芝士's words."""
     fields = draft.fields or {}
@@ -966,6 +1099,21 @@ def missing(draft: TaskDraft) -> list[str]:
         out.append("form")
     if fields.get("rank") not in (1, 2, 3):
         out.append("difficulty")
+    # Changes that would take away every item the published 题目 has
+    # (``published_items``); a 题目 that never had any stays editable.
+    if published_items and fields.get("submissionSchema") == []:
+        out.append("submission")
+    # What the publish would refuse: an item or line naming a stage the draft
+    # does not have (``stages.stage_index``), said now rather than at publish.
+    ids = [str(s.get("id")) for s in fields.get("stages") or [] if isinstance(s, dict)]
+    for form_field, word in (("submissionSchema", "submission"), ("rubric", "rubric")):
+        for row in fields.get(form_field) or []:
+            ref = (
+                settled_stage(row.get("stage"), ids) if isinstance(row, dict) else None
+            )
+            if ref is not None and ref not in ids:
+                out.append(word)
+                break
     return out
 
 
@@ -993,6 +1141,7 @@ def task_form(task: dict) -> dict:
         "submissionSchema": task.get("submissionSchema") or [],
         "rubric": task.get("rubric") or [],
         "rubricPublic": task.get("rubricPublic", True),
+        "stages": task.get("stages") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
     }

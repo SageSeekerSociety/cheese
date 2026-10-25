@@ -124,7 +124,10 @@ async def _events_for(
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
         for name, when in await library_listing.added_since(
-            session, Shelf.of_project(routine.project_id), since
+            # 「资料库新增」说的是项目自己放进来的；题目的材料不算。
+            session,
+            Shelf.of_project(routine.project_id, with_task=False),
+            since,
         ):
             found.append(
                 (

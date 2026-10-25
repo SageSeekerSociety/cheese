@@ -3,6 +3,7 @@
 import type { SpaceTeaching } from './spaces'
 import type {
   TaskRubricLine,
+  TaskStage,
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
@@ -33,6 +34,7 @@ export interface TaskDraftFields {
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  stages?: TaskStage[]
   attachmentIds?: number[]
   /** 附件的名字和大小，页面列附件用；发布时不带。 */
   attachmentFiles?: { id: number; name: string; size: number }[]
@@ -91,6 +93,7 @@ export const TASK_DRAFT_FIELDS: readonly TaskDraftField[] = [
   'submissionSchema',
   'rubric',
   'rubricPublic',
+  'stages',
   'attachmentIds',
   'attachmentFiles',
   'starterAttachmentId',

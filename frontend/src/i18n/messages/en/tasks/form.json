@@ -118,6 +118,23 @@
     "addLine": "Add a line",
     "total": "{n} points in total",
     "nameRequired": "A line with a standard needs a criterion name",
-    "public": "Students can see the rubric"
+    "public": "Students can see the rubric",
+    "stageTitle": "Stage {n}: {name}",
+    "stageTotal": "{n} points this stage"
+  },
+  "stages": {
+    "title": "Stages",
+    "none": "Not split into stages",
+    "nameOf": "Name of stage {n}",
+    "namePlaceholder": "e.g. Requirements",
+    "due": "Due date",
+    "dueOf": "Due date of stage {n}",
+    "descriptionOf": "What stage {n} asks for",
+    "descriptionPlaceholder": "What this stage should achieve",
+    "moveUp": "Move stage {n} up",
+    "moveDown": "Move stage {n} down",
+    "remove": "Remove stage {n}",
+    "nameRequired": "Every stage needs a name",
+    "add": "Add stage"
   }
 }

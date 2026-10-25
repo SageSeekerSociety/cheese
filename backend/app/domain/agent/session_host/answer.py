@@ -94,9 +94,12 @@ class Subagents:
 @dataclass(frozen=True)
 class ToolDone:
     """A call came back without an error: a reader shows it ended now rather
-    than when the model next does something."""
+    than when the model next does something. ``shown`` names what it read,
+    when what came back says (「频道「综合」」), for a reader to show in place
+    of the reference it was given."""
 
     call: str
+    shown: str | None = None
 
 
 @dataclass(frozen=True)
@@ -237,6 +240,8 @@ class Progress:
     returned: set[str] = field(default_factory=set)
     #: The branches as last told.
     branched: str = ""
+    #: The calls whose arguments were told whole, as they were made.
+    completed: set[str] = field(default_factory=set)
     result: Answer | None = None
 
     def whole(self) -> str:
@@ -259,7 +264,7 @@ class Progress:
 
     def arguments(self, call: str | None, raw: str) -> list[ToolArgs]:
         """What more of a call's arguments was written since last handed on."""
-        if not call:
+        if not call or call in self.completed:
             return []
         seen = self.argued.get(call, 0)
         if len(raw) <= seen:
@@ -272,16 +277,22 @@ class Progress:
         blocks: tuple[dict, ...],
         returned: tuple[str, ...] = (),
         branches: tuple[dict, ...] = (),
+        made: tuple[dict, ...] = (),
     ) -> list[Said]:
         """What the message being written says more, block by block in the
         order it is written: words said before a call are handed on before
-        it, so the call is placed after them."""
+        it, so the call is placed after them. ``made`` is each call of the
+        work as it was made: its arguments whole, which the message may have
+        stopped showing before they were all written, and what it read."""
         said: list[Said] = []
+        calls = {str(m.get("call")): m for m in made if m.get("call")}
         # A call that came back was made before anything this message says.
         for call in returned:
             if call in self.announced and call not in self.returned:
                 self.returned.add(call)
-                said.append(ToolDone(call))
+                said += self.complete(calls.get(call))
+                shown = (calls.get(call) or {}).get("shown")
+                said.append(ToolDone(call, str(shown) if shown else None))
         now = json.dumps(list(branches), ensure_ascii=False, sort_keys=True)
         if branches and now != self.branched:
             self.branched = now
@@ -305,7 +316,23 @@ class Progress:
                 call = block.get("id")
                 said += self.tool(call, str(block.get("name") or ""))
                 said += self.arguments(call, str(block.get("arguments") or ""))
+        for call in calls:
+            if call in self.announced:
+                said += self.complete(calls[call])
         return said
+
+    def complete(self, made: dict | None) -> list[ToolArgs]:
+        """A made call's arguments, whole, once: they replace what was told
+        of them as they were written."""
+        if not made or made.get("args") is None:
+            return []
+        call = str(made["call"])
+        if call in self.completed:
+            return []
+        self.completed.add(call)
+        args = str(made["args"])
+        self.argued[call] = len(args)
+        return [ToolArgs(call, args, 0)]
 
     def message(self, text: str, record: str | None = None) -> list[Words]:
         if record is not None:
@@ -325,6 +352,7 @@ class Progress:
             "taken": sorted(self.taken),
             "returned": sorted(self.returned),
             "branched": self.branched,
+            "completed": sorted(self.completed),
             "result": (
                 None
                 if self.result is None
@@ -344,6 +372,7 @@ class Progress:
             taken=set(data.get("taken") or []),
             returned=set(data.get("returned") or []),
             branched=str(data.get("branched") or ""),
+            completed=set(data.get("completed") or []),
             result=None if result is None else Answer(result["text"], result["error"]),
         )
 
@@ -385,6 +414,10 @@ async def follow(
         assert pending is not None
         return Answer(progress.whole(), pending.error, usage=pending.usage)
 
+    # The next item being read. A look that times out leaves it reading:
+    # cancelling it would close the reading itself, and the next look would
+    # find it ended — an answer cut off while 芝士 waits for its branches.
+    reading_next: asyncio.Future | None = None
     try:
         while True:
             left = deadline - time.monotonic()
@@ -394,9 +427,15 @@ async def follow(
                 # Each read is timed, never the whole loop: a deadline that
                 # fell while the caller was handling what was handed on would
                 # land in the caller's code.
-                read = await asyncio.wait_for(
-                    anext(reading), left if pending is None else min(left, LOOK_AGAIN_S)
+                if reading_next is None:
+                    reading_next = asyncio.ensure_future(anext(reading))
+                done, _ = await asyncio.wait(
+                    {reading_next},
+                    timeout=left if pending is None else min(left, LOOK_AGAIN_S),
                 )
+                if not done:
+                    raise TimeoutError
+                read, reading_next = reading_next.result(), None
             except StopAsyncIteration:
                 yield await ended(
                     last() if pending else Answer("", "the session ended mid-answer")
@@ -431,18 +470,25 @@ async def follow(
                 yield await ended(Answer("", "the session ended mid-answer"))
                 return
             if isinstance(event, Writing):
-                said = [*progress.writing(event.blocks, event.returned, event.branches)]
+                said = [
+                    *progress.writing(
+                        event.blocks, event.returned, event.branches, event.made
+                    )
+                ]
             elif read.work_id != work:
                 continue
             elif isinstance(event, AgentMessage):
                 said = list(progress.message(event.text, read.eid))
             elif isinstance(event, AgentToolUse):
                 said = [*progress.tool(event.call_id, event.name)]
-                if event.call_id and not progress.argued.get(event.call_id):
-                    # Written faster than a reader saw any of it: the call's
-                    # whole arguments, once, as it was made.
-                    said += progress.arguments(
-                        event.call_id, json.dumps(event.input, ensure_ascii=False)
+                if event.call_id:
+                    # The call's whole arguments, once, as it was made: a
+                    # reader may have seen none of them, or only their start.
+                    said += progress.complete(
+                        {
+                            "call": event.call_id,
+                            "args": json.dumps(event.input, ensure_ascii=False),
+                        }
                     )
             elif isinstance(event, AgentStepFailed):
                 said = [ToolFailed(event.call_id, event.text)]
@@ -468,6 +514,9 @@ async def follow(
             if keep is not None:
                 await keep(progress)
     finally:
+        if reading_next is not None and not reading_next.done():
+            reading_next.cancel()
+            await asyncio.gather(reading_next, return_exceptions=True)
         await reading.aclose()
 
 

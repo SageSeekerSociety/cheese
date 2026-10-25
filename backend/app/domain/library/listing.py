@@ -50,13 +50,13 @@ def _escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _current(shelf: Shelf, task_id: int | None = None) -> ColumnElement[bool]:
-    """这个资料库现在的每一份；挂着题目时（`task_id`），项目自己在 `题目/` 底下的
+def _current(shelf: Shelf, hidden: int | None = None) -> ColumnElement[bool]:
+    """这个资料库现在的每一份；挂着题目时（`hidden`，`mount.mounted`），项目自己在 `题目/` 底下的
     那几行不算（`mount.project_rows`）。"""
     return and_(
         shelf.holds(),
         Row.superseded_at.is_(None),
-        mount.project_rows(shelf, task_id),
+        mount.project_rows(shelf, hidden),
     )
 
 
@@ -141,7 +141,7 @@ async def _folders(
     prefix: str,
     after: rank.Rank | None,
     limit: int,
-    task_id: int | None = None,
+    hidden: int | None = None,
 ) -> list[dict]:
     rest = func.substr(Row.name, len(prefix) + 1)
     name = func.split_part(rest, "/", 1).label("name")
@@ -152,7 +152,7 @@ async def _folders(
             func.max(Row.created_at).label("latest"),
         )
         .where(
-            _current(shelf, task_id),
+            _current(shelf, hidden),
             Row.name.like(f"{_escape(prefix)}%", escape="\\"),
             func.strpos(rest, "/") > 0,
         )
@@ -261,6 +261,7 @@ async def page(
     cursor = rank.decode(after) if after else None
     flat = flat or bool(q) or kind is not None
     task_id = await mount.task_of(session, shelf)
+    hidden = await mount.mounted(session, shelf)
     if task_id is not None and not flat and mount.under(dir):
         entries, more = await page(
             session,
@@ -274,7 +275,7 @@ async def page(
     prefix = f"{dir}/" if dir and not flat else ""
     entries: list[dict] = []
     if not flat and (cursor is None or cursor.group == FOLDERS):
-        entries = await _folders(session, shelf, prefix, cursor, limit + 1, task_id)
+        entries = await _folders(session, shelf, prefix, cursor, limit + 1, hidden)
         if task_id is not None and not prefix:
             entries = sorted(
                 entries + await _task_folder(session, task_id, after),
@@ -288,7 +289,7 @@ async def page(
                 session,
                 shelf,
                 rooms,
-                [_current(shelf, task_id), *match],
+                [_current(shelf, hidden), *match],
                 cursor,
                 wanted,
             )
@@ -313,7 +314,7 @@ async def page(
                 shelf,
                 rooms,
                 [
-                    _current(shelf, task_id),
+                    _current(shelf, hidden),
                     Row.name.like(f"{_escape(prefix)}%", escape="\\"),
                     func.strpos(rest, "/") == 0,
                 ],
@@ -335,7 +336,10 @@ async def one(
 ) -> dict:
     """一份资料的那一行（地址上点名的那一份，不一定在已经取回来的那几页里）。"""
     at, inner = await mount.resolve(session, shelf, name)
-    row = await session.scalar(select(Row).where(_current(at), Row.name == inner))
+    hidden = await mount.mounted(session, shelf) if at == shelf else None
+    row = await session.scalar(
+        select(Row).where(_current(at, hidden), Row.name == inner)
+    )
     if row is None:
         raise NotFoundError(say("libraryFileNotFound"))
     if at == shelf:
@@ -348,12 +352,12 @@ async def one(
 async def folders(session: AsyncSession, shelf: Shelf) -> list[str]:
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。`题目/` 不在里面：那里
     放不进东西。"""
-    task_id = await mount.task_of(session, shelf)
+    hidden = await mount.mounted(session, shelf)
     deepest = func.regexp_replace(Row.name, "/[^/]*$", "")
     found: set[str] = set()
     for folder in await session.scalars(
         select(deepest)
-        .where(_current(shelf, task_id), func.strpos(Row.name, "/") > 0)
+        .where(_current(shelf, hidden), func.strpos(Row.name, "/") > 0)
         .distinct()
     ):
         parts = folder.split("/")
@@ -377,8 +381,9 @@ async def matching(
     session: AsyncSession, shelf: Shelf, q: str, *, limit: int, offset: int = 0
 ) -> list[dict]:
     """名字里有 `q` 的那些（项目里的搜索用），新放进来的在前；挂着题目的项目连
-    `题目/` 底下的一起找。"""
+    `题目/` 底下的一起找（读的人看得到它的时候）。"""
     task_id = await mount.task_of(session, shelf)
+    hidden = await mount.mounted(session, shelf)
 
     async def of(where: ColumnElement[bool]):
         return await session.scalars(
@@ -388,7 +393,7 @@ async def matching(
             .limit(offset + limit)
         )
 
-    found = _found(await of(_current(shelf, task_id)))
+    found = _found(await of(_current(shelf, hidden)))
     if task_id is not None:
         found += _found(await of(_current(Shelf.of_task(task_id))), mount.shown)
     found.sort(key=lambda hit: (-hit["at"][0].timestamp(), hit["at"][1]))
@@ -400,7 +405,8 @@ async def matching(
 
 async def count_matching(session: AsyncSession, shelf: Shelf, q: str) -> int:
     task_id = await mount.task_of(session, shelf)
-    where = _current(shelf, task_id)
+    hidden = await mount.mounted(session, shelf)
+    where = _current(shelf, hidden)
     if task_id is not None:
         where = or_(where, _current(Shelf.of_task(task_id)))
     return await session.scalar(select(func.count()).where(where, _matching(q))) or 0

@@ -38,10 +38,28 @@ describe('stepView', () => {
       stepView({ call: name, name, args: JSON.stringify(args), state: 'done' })
     expect(step('cheese_read', { ref: 'ml-course/channels/3' }).arg).toBe('')
     expect(step('cheese_inbox_respond', { ref: 'alerts/9029', choice: '采纳' }).arg).toBe('')
-    expect(step('cheese_message_send', { where: 'ml-course/tasks/12', text: '好' }).arg).toBe('')
+    expect(step('chat_send', { where: 'ml-course/tasks/12', content: '好' }).arg).toBe('')
     expect(step('cheese_read', { ref: 'library/报告/实验 3.pdf' }).arg).toBe('实验 3.pdf')
     expect(step('cheese_file_to_computer', { ref: 'library/squares.csv' }).arg).toBe('squares.csv')
     expect(step('cheese_find', { query: '缓存实验' }).arg).toBe('缓存实验')
+  })
+
+  it('读回来的东西有名字时写名字，分身读的也一样', () => {
+    const read = { call: 'c1', name: 'cheese_read', args: '{"ref": "ml/tasks/12"}', state: 'done' as const }
+    expect(stepView({ ...read, shown: '任务「报名说明」' }).arg).toBe('任务「报名说明」')
+    const [sent] = withSubagents(
+      [stepView({ call: 's1', name: 'cheese_subagent_start', args: '{}', state: 'done' })],
+      [
+        {
+          id: 'branch-1',
+          call: 's1',
+          description: '读频道',
+          status: 'done',
+          steps: [{ name: 'cheese_read', args: '{"ref": "ml/channels/3"}', shown: '频道「综合」' }],
+        },
+      ]
+    )
+    expect(sent.subagent?.steps.map((s) => s.arg)).toEqual(['频道「综合」'])
   })
 })
 

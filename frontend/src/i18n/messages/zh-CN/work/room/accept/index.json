@@ -17,6 +17,7 @@
   "conflictsWithMain": "与主分支冲突",
   "createPr": "创建 PR",
   "decidedBy": "{'@'}{name} 已采纳",
+  "decidedByAssistant": "芝士代 {'@'}{name} 已采纳",
   "delivering": "已采纳，合并未完成",
   "deliveringBy": "{who} 采纳的这一版没合并进主线，你点下面的按钮再提交一次",
   "download": "下载",

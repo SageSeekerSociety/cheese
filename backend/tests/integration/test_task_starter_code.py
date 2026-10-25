@@ -86,7 +86,7 @@ def _set_starter(api_client: TestClient, task_id: int, token: str, data: bytes):
     if refused is not None:
         return refused
     return api_client.put(
-        f"/tasks/{task_id}/starter", json={"upload": upload}, headers=_auth(token)
+        f"/tasks/{task_id}/starter", json=upload, headers=_auth(token)
     )
 
 
