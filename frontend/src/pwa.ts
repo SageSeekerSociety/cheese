@@ -35,8 +35,8 @@
  */
 import type { Router } from 'vue-router'
 
-import { registerSW } from 'virtual:pwa-register'
 import { toast } from 'vuetify-sonner'
+import { registerSW } from 'virtual:pwa-register'
 
 import { t } from '@/i18n'
 
