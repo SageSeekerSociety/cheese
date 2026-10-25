@@ -78,11 +78,13 @@ cat > "$FAKE_BIN/sleep" <<'EOF'
 EOF
 chmod +x "$FAKE_BIN/docker" "$FAKE_BIN/sleep"
 
-# merge <registry fetches to reset> — runs a dry run and prints its exit status.
+# merge <registry fetches to reset> [VAR=value…] — runs a dry run with the
+# given environment and prints its exit status.
 merge() {
   echo "$1" > "$RUN_DIR/resets"
+  shift
   local rc=0
-  PATH="$FAKE_BIN:$PATH" FAKE_PRESENT="$RUN_DIR/present" FAKE_RESETS="$RUN_DIR/resets" \
+  env "$@" PATH="$FAKE_BIN:$PATH" FAKE_PRESENT="$RUN_DIR/present" FAKE_RESETS="$RUN_DIR/resets" \
     CHEESE_BACKUP_DIR="$RUN_DIR/backups" \
     bash "$ROOT/deploy/merge-deployment.sh" dry-run batch-1 "$EXPORT" \
     > "$RUN_DIR/out" 2>&1 || rc=$?
@@ -94,9 +96,9 @@ merge() {
 rc="$(merge 1)"
 [ "$rc" = 0 ] || fail "a single connection reset ended the merge (exit $rc): $(cat "$RUN_DIR/out")"
 
-# 2. The images are on the box and the registry cannot be reached at all: the
-#    merge does not need it.
-rc="$(merge 1000)"
+# 2. The images are on the box, the registry cannot be reached at all, and
+#    there is no time to wait for it: the merge does not need it.
+rc="$(merge 1000 DEPLOY_PULL_BUDGET_SECONDS=0)"
 [ "$rc" = 0 ] || fail "a merge with its images on the box needed the registry (exit $rc): $(cat "$RUN_DIR/out")"
 
 echo "merge-deployment pull: all cases passed"
