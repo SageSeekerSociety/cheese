@@ -104,7 +104,7 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
         },
     )
 
-    view = drafts.agent_view(row, SPACE)
+    view = drafts.agent_view(row, SPACE, private=True)
 
     assert "team_locking: 报名通过后锁定" in view
     assert "mentors: 王立（wangli）" in view
@@ -144,7 +144,9 @@ def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
     assert fields["rubric"][0]["stage"] == "a1b2c3"
 
     view = drafts.agent_view(
-        TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields), SPACE
+        TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields),
+        SPACE,
+        private=True,
     )
     assert f"  1. 需求分析（id: {new_id}）｜截止 2026-11-01 23:59｜交需求" in view
     assert "  - 代码（文件）｜阶段 实现（a1b2c3）" in view
@@ -209,11 +211,11 @@ def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():
         fields={"submitterType": "USER", "submissionSchema": []},
     )
 
-    assert "新题目，尚未填写" in drafts.agent_view(row, SPACE)
+    assert "新题目，尚未填写" in drafts.agent_view(row, SPACE, private=True)
     assert "第一道题写进它" in drafts.scene(row)
 
     row.fields = {**row.fields, "name": "课题 A"}
-    assert "尚未填写" not in drafts.agent_view(row, SPACE)
+    assert "尚未填写" not in drafts.agent_view(row, SPACE, private=True)
 
 
 def test_the_edit_page_changes_the_task_it_is_open_on():
