@@ -15,6 +15,11 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return { ...actual, readPreviewFile: vi.fn(), previewDocumentPdfSnapshot: vi.fn() }
 })
+// 分页文档现在也会读这一份的评论串（页上要画已有的评论标记），所以这一条也得打桩。
+vi.mock('@/api/fileThreads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/fileThreads')>()),
+  listFileThreads: vi.fn(async () => ({ data: [], total: 0 })),
+}))
 vi.mock('./preview/PreviewSlides.vue', () => ({
   default: {
     props: ['data', 'context'],

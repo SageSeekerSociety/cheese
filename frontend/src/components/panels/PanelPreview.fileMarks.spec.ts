@@ -69,6 +69,7 @@ it('打开一份有评论的 markdown，评论栏没开，正文上那几处也�
     props: { topicId: 'room', projectId: 'project', members: [] } as never,
     state,
     people: { names: ref({}), avatars: ref({}) } as never,
+    docPage: () => false,
   })
   expect(comments.open.value).toBe(false)
 
