@@ -134,6 +134,79 @@ it('编辑器开着的时候这一格换了别的文件：编辑收起来，别�
   expect(api.writeRoomTextFile).not.toHaveBeenCalled()
 })
 
+it('一次静默轮询读失败把这一份清空了：编辑还开着，打的字不丢', async () => {
+  // `previewFile` 被置空不止一种时候。一次轮询读失败也是这样——这一份并没有换掉，
+  // 把读者打的字连同编辑器一起丢掉，只是因为网抖了一下。
+  const { bundle, state } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  state.previewFile.value = null
+  await nextTick()
+
+  expect(bundle.draft.value).toBe('# 我改的\n')
+})
+
+it('存下去这一程里读者开了另一份：落下来不关现在这个编辑器', async () => {
+  // 「存」是异步的。这一程飞在天上时读者可能已经收起、又开了另一份；那这一次落下来
+  // 和现在的屏幕无关，不能把新开的那一份连同刚打的字一起收掉。
+  const { bundle, state } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+
+  let release!: (v: { path: string; version: string; seq: number }) => void
+  api.writeRoomTextFile.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve
+    })
+  )
+  const inflight = bundle.save()
+
+  // 这一程还在天上：读者切到别的文件（编辑器收起），又在新的一份上开了编辑器。
+  state.previewFile.value = {
+    path: 'notes/别的.md',
+    content: '# 另一份\n',
+    version: 'v1',
+    bytes: 10,
+    binary: false,
+    too_large: false,
+  } as never
+  await nextTick()
+  bundle.begin()
+  bundle.setDraft('# 另一份，我在改\n')
+
+  release({ path: 'notes/记录.md', version: 'v2', seq: 2 })
+
+  expect(await inflight).toBe(false)
+  // 新开的那一份还开着，字还在，钉住的仍是它。
+  expect(bundle.draft.value).toBe('# 另一份，我在改\n')
+  expect(bundle.pinnedPath.value).toBe('notes/别的.md')
+})
+
+it('存下去这一程里读者接着打字：落下来的正文是送出去的那一版', async () => {
+  const { bundle, state } = setup('notes/记录.md')
+  bundle.begin()
+  bundle.setDraft('# 第一版\n')
+
+  let release!: (v: { path: string; version: string; seq: number }) => void
+  api.writeRoomTextFile.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve
+    })
+  )
+  const inflight = bundle.save()
+
+  // 这一程还在天上，读者又敲了几笔。那几笔不在这一版里。
+  bundle.setDraft('# 第一版\n后来打的\n')
+
+  release({ path: 'notes/记录.md', version: 'v2', seq: 2 })
+  await inflight
+
+  // 送出去的是第一版；预览台上那份记的也得是第一版，不是读者后敲的字。
+  expect(api.writeRoomTextFile).toHaveBeenCalledWith('room', 'notes/记录.md', '# 第一版\n', 'v1')
+  expect(state.previewFile.value?.content).toBe('# 第一版\n')
+})
+
 it('空文件的正文是空串，不是 null：照样能改', async () => {
   // 「读不出版本」和「正文恰好是空的」是两回事：前者的 `content` 是 null。
   const { bundle } = setup('notes/空.md', { content: '', bytes: 0 })
@@ -198,6 +271,22 @@ it('报冲突之后「载入最新的」：正文和版本都换成文件现在�
   expect(await bundle.save()).toBe(true)
   expect(api.writeRoomTextFile).toHaveBeenLastCalledWith('room', 'notes/记录.md', '# 别人写的\n\n我补的。\n', 'v9')
   expect(refreshDocument).toHaveBeenCalled()
+})
+
+it('「载入最新的」自己读失败：提示条上要说得出这一句', async () => {
+  // 提示条是「冲突优先」的：不把 `conflicted` 放下来，读失败那一句永远轮不到显示，
+  // 读者按一下「载入最新的」就像什么都没发生。
+  const { bundle } = setup('notes/记录.md')
+  api.writeRoomTextFile.mockRejectedValue(new ApiError(409, 'refused'))
+  bundle.begin()
+  bundle.setDraft('# 我改的\n')
+  expect(await bundle.save()).toBe(false)
+
+  api.readPreviewFile.mockRejectedValue(new Error('网络断了'))
+  await bundle.reload()
+
+  expect(bundle.conflicted.value).toBe(false)
+  expect(bundle.error.value).toBe('网络断了')
 })
 
 it('没改过的存一次不写一版：内容一样，白留一版历史', async () => {

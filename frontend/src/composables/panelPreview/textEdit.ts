@@ -94,10 +94,14 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
 
   // 屏幕上那份文件换掉了（读者切到了别的文件、芝士换了当前预览）：编辑器里打的是
   // 上一份的字，再留在屏幕上就是「这一格写着文件 B，改的却是文件 A」。收起来。
+  //
+  // 只在换到**另一份**时收：`previewFile` 会被置空，而且不止一种时候——一次静默轮询
+  // 读失败了、换话题时那一格先清空。那些时候这一份并没有变，把开着的东西连同读者打的
+  // 字一起丢掉，只是因为一次网络抖动。
   watch(
     () => state.previewFile.value?.path ?? '',
     (path) => {
-      if (pinned.value && path !== pinned.value.path) cancel()
+      if (pinned.value && path && path !== pinned.value.path) cancel()
     }
   )
 
@@ -106,8 +110,11 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     const target = pinned.value
     const tid = props.topicId
     if (!target || !tid || draft.value === null || saving.value) return false
+    // 这一版要送出去的正文：连着 `await` 之前取好。写这段时间里读者还能接着打字，
+    // 那几笔不在这一版里——落下来的正文不能是它们。
+    const sent = draft.value
     // 没改就别写一版：内容一样，白留一版历史（比的是打开时那一版）。
-    if (draft.value === target.content) {
+    if (sent === target.content) {
       cancel()
       return true
     }
@@ -115,18 +122,24 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     error.value = ''
     conflicted.value = false
     try {
-      const saved = await writeRoomTextFile(tid, target.path, draft.value, target.version)
+      const saved = await writeRoomTextFile(tid, target.path, sent, target.version)
+      // 这一程飞在天上时，读者可能已经收起编辑器、或者开了另一份。那这一次落下来就
+      // 和现在的屏幕无关：不去动现在这一份的正文和版本。答 false——报了 `saved`，
+      // 宿主那一下就按「存成了」把现在这一份的编辑器也收掉。
+      if (pinned.value !== target) return false
       // 存下去了：立刻反映到预览台上，别让人以为没生效。正文和版本一起换成刚存下的
       // ——只换正文、留着旧版本，评论标记那几处会按一个早已过期的版本去比。
       const file = state.previewFile.value
       if (file && file.path === target.path) {
-        file.content = draft.value
+        file.content = sent
         if (saved.version) file.version = saved.version
       }
       cancel()
       refreshDocument()
       return true
     } catch (e) {
+      // 同上：这一程说的不是现在这一份的事，就不摆到它头上。
+      if (pinned.value !== target) return false
       // 别人在那之后存过：这一版不写，让读者先看看最新的。编辑里的字留着——
       // 读者可以先把它们拷走，再按「载入最新的」换成文件现在的样子。
       if (e instanceof ApiError && e.status === 409) {
@@ -136,7 +149,7 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
       }
       return false
     } finally {
-      saving.value = false
+      if (pinned.value === target) saving.value = false
     }
   }
 
@@ -151,9 +164,12 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
     error.value = ''
     try {
       const latest = await readPreviewFile(tid, target.path)
-      if (!pinned.value || pinned.value.path !== target.path) return
+      if (pinned.value !== target) return
       if (latest.content === null || !latest.version) {
-        error.value = t('work.room.preview.saveFileFailed')
+        // 读到了，但这一份现在交不出正文（成了二进制、或者大得读不动）。这是一次
+        // 读取的问题，不是保存——说的也得是那一句。
+        conflicted.value = false
+        error.value = t('work.room.preview.fileReadFailed')
         return
       }
       pinned.value = { path: target.path, version: latest.version, content: latest.content }
@@ -165,7 +181,11 @@ export function usePanelPreviewTextEdit(deps: TextEditDeps): PanelPreviewTextEdi
         file.version = latest.version
       }
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.room.preview.saveFileFailed')
+      if (pinned.value !== target) return
+      // 提示条是 `conflicted` 优先的：不把它放下来，这一句永远轮不到显示，读者按一下
+      // 「载入最新的」就像什么都没发生。
+      conflicted.value = false
+      error.value = e instanceof Error ? e.message : t('work.room.preview.fileReadFailed')
     }
   }
 

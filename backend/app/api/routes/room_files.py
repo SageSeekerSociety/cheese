@@ -456,13 +456,17 @@ async def write_text_file(
     ):
         raise NotFoundError(say("roomFileNotFound"))
     # 这是「文本」那条路：一份二进制（docx、表格、图片）也能有这个地址，把 UTF-8 写进
-    # 去就把它毁了（旧版还在历史里，但文件本身没了）。读的人拿到的 `content` 是 null，
+    # 去就把它毁了（旧版还在历史里，但文件本身没了）。读的人拿到的 `binary` 为真，
     # 那也正是「这一份不是文本」；这里照同一条读法问一次，不靠面板那一层只给 markdown
     # 开按钮。同一次读也把版本带回来——比的就是读它的人手上那一版。
+    #
+    # 判 `binary`，不是判 `content` 是不是 null：大过 `MAX_TEXT_BYTES` 的文本（1 MB）
+    # 正文也不交出来（`too_large`），但它是文本、写得回去——`save_room_file` 收得下
+    # 它。`binary` 和 `too_large` 在 `domain/textfile.py` 里是分开的两件事。
     shown = await asyncio.to_thread(
         library.read_room_text_file, place.project_id, place.room_id, path
     )
-    if shown.get("content") is None:
+    if shown.get("binary"):
         raise UnprocessableEntityError(say("roomFileNotText"))
     version = shown.get("version")
     if version is None:

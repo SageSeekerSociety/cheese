@@ -11,7 +11,7 @@
 import base64
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.textfile import content_version
+from app.domain.textfile import MAX_TEXT_BYTES, content_version
 from tests.integration.conftest import post_project
 
 PATH = "notes/记录.md"
@@ -121,3 +121,20 @@ def test_text_is_not_written_over_a_binary_file(client):
 
     assert r.status_code == 422, r.text
     assert _read(client, room, path="deck.pptx") == deck
+
+
+def test_a_text_file_too_large_to_read_still_saves(client):
+    """大得读不出正文的文本文件是文本，不是二进制。
+
+    它和二进制一样「正文没交出来」（`too_large` 时 `content` 也是 None），但它写得
+    回去——`save_room_file` 收得下。要按「不是文本」拒了，这一份就再也改不动。
+    """
+    project, room = _room(client)
+    big = ("# 长文档\n" + "这一行够长，撑过大得读不出正文那一档。\n" * 40_000).encode()
+    assert len(big) > MAX_TEXT_BYTES
+    assert _put(client, project, room, big, path="长文.md").status_code == 200
+
+    r = _write_text(client, room, "# 重写过\n", content_version(big), path="长文.md")
+
+    assert r.status_code == 200, r.text
+    assert _read(client, room, path="长文.md") == "# 重写过\n".encode()

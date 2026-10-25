@@ -27,6 +27,7 @@ import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, ref } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewMarkdownEdit from './PreviewMarkdownEdit.vue'
@@ -113,9 +114,17 @@ const emit = defineEmits<{
 
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。markdown 走另一条
 // 路（预览格里直接编辑正文，`textEdit`），两种都收在「编辑」这一个按钮上。
+//
+// markdown 那一条在手机上不开：软键盘配 Monaco 不是一件值得存下去的事，编辑器在那边
+// 是只读的。让按钮露着、点开一个存不下去的只读编辑器，比不露更糟——和「改动」那一格
+// 同一条（那里手机上把「编辑」换成「全文」）。Office 那几个不受影响：它们开的是全屏
+// 对话框，手机上本来就是那一套。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
+const { mdAndUp } = useDisplay()
 const officeEditable = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
-const textEditable = computed(() => props.documentType?.view === 'markdown' && !!props.textEdit?.canEdit.value)
+const textEditable = computed(
+  () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.textEdit?.canEdit.value
+)
 const canEdit = computed(() => officeEditable.value || textEditable.value)
 
 function startEdit() {

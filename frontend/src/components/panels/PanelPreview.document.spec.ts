@@ -182,6 +182,20 @@ it('offers edit on a markdown file, and hands the panel its editing session', as
   expect(editor.getAttribute('data-path')).toBe('output/说明.md')
 })
 
+it('手机上不摆这个按钮：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+  editableMarkdown()
+  const width = window.innerWidth
+  window.innerWidth = 400
+  try {
+    mount()
+    // 正文画出来了，说明这一档确实上了屏；只是没有「编辑」。
+    await screen.findByTestId('markdown')
+    expect(screen.queryByTestId('edit-file')).toBeNull()
+  } finally {
+    window.innerWidth = width
+  }
+})
+
 it('shows a Word report rather than offering it as a download', async () => {
   mount()
 
