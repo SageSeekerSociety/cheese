@@ -97,7 +97,7 @@ beforeEach(() => {
   vi.mocked(libraryFileBytes).mockResolvedValue(new ArrayBuffer(0))
   // 项目那一行（`GET /projects/{id}`）：不是从题目来的项目。缓存是全局一份，每条测试从空的开始。
   queryClient.clear()
-  vi.mocked(getProject).mockResolvedValue({ id: 'p1', name: '项目', task: null })
+  vi.mocked(getProject).mockResolvedValue({ id: 'p1', name: '项目', task: null } as never)
 })
 
 const Blank = defineComponent({ render: () => h('div') })
@@ -409,7 +409,7 @@ describe('资料库的文件夹', () => {
       id: 'p1',
       name: '项目',
       task: { id: 7, space_id: 3, name: '实验一', version: 4 },
-    })
+    } as never)
     library = [file('题目/数据.csv', { readonly: true }), file('结题报告.docx')]
     const { container, router } = await open()
     expect(container.textContent).not.toContain('来自题目')
