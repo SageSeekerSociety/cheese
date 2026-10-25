@@ -92,13 +92,23 @@ def _set_starter(api_client: TestClient, task_id: int, token: str, data: bytes):
     )
 
 
-def _claim_project(api_client: TestClient, task_id: int, token: str) -> uuid.UUID:
-    """领题：领题这一下就开出了项目。"""
+def _claim_project(
+    api_client: TestClient, task_id: int, token: str, *, approver: str | None = None
+) -> uuid.UUID:
+    """领题：领题这一下就开出了项目。给了 ``approver``（出题人的凭据）就当场批准。"""
     resp = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert resp.status_code == 200, resp.text
-    return uuid.UUID(resp.json()["data"]["project"]["id"])
+    data = resp.json()["data"]
+    if approver is not None:
+        approved = api_client.patch(
+            f"/tasks/{task_id}/participants/{data['participant']['id']}",
+            json={"approved": "APPROVED"},
+            headers=_auth(approver),
+        )
+        assert approved.status_code == 200, approved.text
+    return uuid.UUID(data["project"]["id"])
 
 
 def _main(project_id: uuid.UUID) -> dict[str, str]:
@@ -244,7 +254,10 @@ def test_the_projects_agents_are_told_where_the_first_commit_came_from(
     task_id = _create_task(api_client, board, name="agent 要知道起始代码")
     _set_starter(api_client, task_id, board["creator_token"], _lab())
     _, member_token = _member_of(user_client, api_client, board)
-    project_id = _claim_project(api_client, task_id, member_token)
+    # The agents read the task once the claim is approved.
+    project_id = _claim_project(
+        api_client, task_id, member_token, approver=board["creator_token"]
+    )
 
     async def read() -> str | None:
         project = await db_session.get(Project, project_id)
