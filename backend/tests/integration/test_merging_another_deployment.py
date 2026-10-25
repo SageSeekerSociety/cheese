@@ -214,10 +214,20 @@ async def deployments(db_factory, monkeypatch, tmp_path):
     await _member(src, 21, 10, 4, AFTER)
     await _member(src, 22, 10, 5, AFTER)
     for conn in (src, tgt):
-        # As on a running deployment, the id sequence is past every id.
-        await conn.execute(
-            "SELECT setval(pg_get_serial_sequence('\"user\"', 'id'), max(id)) FROM \"user\""
-        )
+        # As on a running deployment, each id sequence is past every id.
+        for sequence, table in [
+            ("user_id_seq1", '"user"'),
+            ("task_seq", "task"),
+            ("task_membership_seq", "task_membership"),
+            ("team_seq", "team"),
+            ("material_id_seq", "material"),
+            ("avatar_id_seq", "avatar"),
+            ("user_profile_id_seq", "user_profile"),
+            ("user_real_name_identities_id_seq", "user_real_name_identities"),
+        ]:
+            await conn.execute(
+                f"SELECT setval('{sequence}', coalesce(max(id), 1)) FROM {table}"
+            )
     (source_uploads / "attachments").mkdir()
     (source_uploads / "attachments" / "brief.pdf").write_bytes(b"from the source")
     (source_uploads / "attachments" / "shared.pdf").write_bytes(b"the source's bytes")
