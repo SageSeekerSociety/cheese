@@ -19,6 +19,10 @@
   "transportWriteFailure": "Service temporarily unavailable. The operation may have completed. Refresh to check before trying again. (HTTP {status})",
   "cancel": "Cancel",
   "updateFailed": "Couldn't update",
+  "outdatedClient": {
+    "message": "A new version of this page is out and this one can no longer be used. Messages not yet sent are lost on refresh, so copy them first.",
+    "refresh": "Refresh"
+  },
   "requiredUpdate": {
     "message": "An important fix is out. Refresh to get it.",
     "refresh": "Refresh"
