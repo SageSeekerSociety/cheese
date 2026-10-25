@@ -357,6 +357,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
