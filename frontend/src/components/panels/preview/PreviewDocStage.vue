@@ -72,6 +72,8 @@ const props = defineProps<{
     id: string
     quote: { text: string; heading: string | null; prefix: string; suffix: string }
   }[]
+  /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
+  pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
   /** 现在打开的那一条：它那颗标记画得显眼些。 */
   activeAnchor?: string | null
 }>()
@@ -236,8 +238,11 @@ defineExpose({ snapshot, clearMark })
         ref="pagesRef"
         :data="docBytes"
         :context="slideContext"
+        :marks="pageAnchors"
+        :active-mark="activeAnchor"
         @quote="emit('quote', $event)"
         @pin="emit('pin', $event)"
+        @mark="emit('anchor', $event)"
         @dropped="emit('dropped')"
       />
       <PreviewSheet v-else :data="docBytes" :kind="documentType.sheet ?? 'workbook'" @cell="emit('cell', $event)" />
