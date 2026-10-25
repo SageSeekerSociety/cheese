@@ -180,6 +180,7 @@ def test_one_team_claiming_twice_at_once_makes_one_repository(client, monkeypatc
     from app.domain.project.services import ProjectService
     from app.domain.task.adapters import TaskTerms, as_brief
     from app.domain.task.models import Task
+    from app.domain.team.services import team_service
     from app.domain.usage.adapters import ComputeCredits
 
     board = _board(client)
@@ -218,7 +219,15 @@ def test_one_team_claiming_twice_at_once_makes_one_repository(client, monkeypatc
             await session.commit()
             return project.id
 
+    async def personal_team() -> None:
+        # The student's own team exists already, as it does for anyone who has
+        # used the platform; making it is not what the two claims race on.
+        async with client.test_request_factory() as session:
+            await team_service(session).ensure_personal_team(user_id)
+            await session.commit()
+
     async def both():
+        await personal_team()
         return await asyncio.gather(claim(), claim())
 
     first, second = client.portal.call(both)
