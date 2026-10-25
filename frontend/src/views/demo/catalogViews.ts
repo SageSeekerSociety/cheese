@@ -15,6 +15,7 @@
 import type { SpaceApplication } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { VIEW_ASSISTANT_ENTRIES } from './catalogAssistant'
 import {
   ARTIFACT_VERSIONS,
   ARTIFACT_VERSIONS_MANY,
@@ -72,6 +73,7 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
   // 空间与题目那一组整页（空间设置四栏、发题页、被拒进门，和题目详情下三个页签）也在
   // 自己那一册里，展开进来。
   ...VIEW_SPACE_TASKS_ENTRIES,
+  ...VIEW_ASSISTANT_ENTRIES,
   // 账号设置的那几屏（通用、通知、资料、实名、密码与安全、这台设备）和项目工作台的那几
   // 屏（全部频道、全部任务、项目总览）也在自己那一册里，展开进来。
   ...VIEW_SETTINGS_WORKSPACE_ENTRIES,
