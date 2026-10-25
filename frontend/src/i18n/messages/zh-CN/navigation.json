@@ -195,6 +195,7 @@
     "projectWorkspace": "项目工作台",
     "dm": "私聊",
     "artifact": "产物",
-    "member": "成员"
+    "member": "成员",
+    "taskVersions": "历史版本"
   }
 }

@@ -73,7 +73,9 @@
         :attachments="attachments"
         :can-download="canDownload"
         :downloading="downloading"
+        previewable
         @download="emit('download', $event)"
+        @open="emit('open', $event)"
       />
     </section>
   </div>
@@ -104,7 +106,7 @@ const props = withDefaults(
   { progress: null }
 )
 
-const emit = defineEmits<{ download: [file: TaskFileData] }>()
+const emit = defineEmits<{ download: [file: TaskFileData]; open: [file: TaskFileData] }>()
 
 const { t } = useI18n()
 

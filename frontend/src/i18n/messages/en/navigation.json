@@ -195,6 +195,7 @@
     "projectWorkspace": "Project workspace",
     "dm": "Direct message",
     "artifact": "Artifact",
-    "member": "Member"
+    "member": "Member",
+    "taskVersions": "Version history"
   }
 }

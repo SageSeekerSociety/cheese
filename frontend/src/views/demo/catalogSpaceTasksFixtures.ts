@@ -23,6 +23,7 @@ import type {
   User,
 } from '@/types'
 import type { DomainGroup } from '@/types/spaces'
+import type { TaskVersionData } from '@/types/taskFiles'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
@@ -291,6 +292,40 @@ export const TASK_DEMO: Task = {
 export const TASK_BRIEF_ATTACHMENTS: TaskAttachmentData[] = [
   { name: '实验指导书.pdf', size: 2_400_000, addedAt: NOW - 9 * DAY },
   { name: 'starter.zip', size: 12_400_000, addedAt: NOW - 9 * DAY },
+]
+
+/** 历史版本：发布、加了一份数据、换了数据又删了草稿；最早那一版记版本时还没记文件。 */
+export const TASK_VERSIONS: TaskVersionData[] = [
+  {
+    number: 3,
+    at: NOW - 1 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { files: { replaced: ['数据.csv'], removed: ['草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 48_000 },
+      { name: '题目说明.md', size: 1_200 },
+    ],
+  },
+  {
+    number: 2,
+    at: NOW - 4 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { description: true, files: { added: ['数据.csv', '草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 40_000 },
+      { name: '草稿.txt', size: null },
+      { name: '题目说明.md', size: 1_100 },
+    ],
+  },
+  {
+    number: 1,
+    at: NOW - 9 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { published: true },
+    files: null,
+  },
 ]
 
 /** 报名名单：四种状态各一人，外加一个领了五天没动的（给「卡住了」那格用）。 */

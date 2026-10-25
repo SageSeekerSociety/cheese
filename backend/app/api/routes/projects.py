@@ -89,6 +89,7 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
+from app.domain.task import package
 from app.domain.task.adapters import TaskTerms
 from app.domain.task.claims import deadline_for_project, stages_for_project
 from app.domain.task.services import refuse_unless_project_follows_claim
@@ -434,6 +435,20 @@ async def get_project(
     payload["starter"] = (
         {"revision": push.revision, "state": push.state, "error": push.error}
         if push is not None
+        else None
+    )
+    # The 题目 itself while the project's `题目/` folder is shown — that follows
+    # the claim the project came from, the same for everyone in it: where its
+    # page and its version history are, and which version it is at now.
+    found = await package.shown_task(db, project_id)
+    payload["task"] = (
+        {
+            "id": found[0].id,
+            "space_id": found[0].space_id,
+            "name": found[0].name,
+            "version": found[1],
+        }
+        if found is not None
         else None
     )
     _with_standing(
