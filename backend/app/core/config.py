@@ -250,6 +250,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    #: The other origins this deployment is served under, `frontend_url` being
+    #: the canonical one: a JSON list, FRONTEND_ALIASES='["https://example.cn"]'.
+    #: A request that arrives on one of them is answered for that origin
+    #: (`app.core.origins`).
+    frontend_aliases: list[str] = []
     #: A person's mail server may resolve to a private or loopback address, and
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
@@ -1319,6 +1324,37 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         )
 
     @model_validator(mode="after")
+    def _frontend_aliases_are_origins(self) -> "Settings":
+        """Each alias is a browser origin, written as browsers do, and none is
+        the canonical one: a request's origin is found by comparing its Host
+        with these, and the Origin header of a grant or a passkey with them."""
+        canonical = browser_origin(self.frontend_url)
+        aliases: list[str] = []
+        for value in self.frontend_aliases:
+            parts = urlsplit(value.strip().lower())
+            host = parts.hostname or ""
+            local = host == "localhost" or host.endswith(".localhost")
+            if (
+                parts.scheme not in ("https", "http")
+                or (parts.scheme == "http" and not local)
+                or not host
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+                or parts.username
+            ):
+                raise RuntimeError(
+                    f"FRONTEND_ALIASES entry {value!r} is not an https origin. "
+                    "Write the scheme and host only, e.g. https://example.cn "
+                    "(http is accepted for *.localhost)."
+                )
+            origin = browser_origin(value)
+            if origin != canonical and origin not in aliases:
+                aliases.append(origin)
+        self.frontend_aliases = aliases
+        return self
+
+    @model_validator(mode="after")
     def _docs_origin_is_an_origin(self) -> "Settings":
         """``docs_origin`` is a browser origin of its own, written as browsers do.
 
@@ -1351,7 +1387,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
                 "Write the scheme and host only, e.g. https://docs.okcheese.com "
                 "(http is accepted for *.localhost)."
             )
-        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+        if host in {
+            urlsplit(origin).hostname
+            for origin in (self.frontend_url.strip().lower(), *self.frontend_aliases)
+        }:
             raise RuntimeError(
                 f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
                 f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "

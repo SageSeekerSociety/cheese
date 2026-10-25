@@ -1178,13 +1178,15 @@ number, linked to beian.miit.gov.cn, as the filing requires.
 - The Aliyun instance firewall and ufw allow 22, 80 and 443.
 - `okcheese.com` stays in Hong Kong and is not served here.
 
-The backend knows one public address, `FRONTEND_URL` (okcheese.com). Password
-and email-code sign-in and the workspace work on okcheese.cn because nothing
-checks the Host, and links copied there are okcheese.cn links. What is bound to
-okcheese.com does not work on okcheese.cn: passkeys (their rpId is okcheese.com),
-GitHub and Google sign-in (their callback is okcheese.com, where the state
-cookie set on .cn is missing), embedded previews and Sites (their CSP and grant
-check name okcheese.com), and docs sign-in. Mailed links point to okcheese.com.
+okcheese.com is the backend's canonical origin, `FRONTEND_URL`; okcheese.cn is
+served by the same backend as an alias once the backend env lists it in
+`FRONTEND_ALIASES` (`backend/app/core/origins.py`). A request's origin is read
+from its `Host`. Browser flows return to the origin they ran on; passkeys keep
+the rpId okcheese.com and are accepted on the alias through
+`/.well-known/webauthn`; previews, Sites and docs sign-in accept every origin.
+GitHub and Google sign-in started on okcheese.cn run on okcheese.com, where
+their callback is registered, and the sign-in is handed back to okcheese.cn
+(`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
