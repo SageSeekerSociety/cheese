@@ -29,7 +29,14 @@ async def machine_caller(
     state: Annotated[str | None, Header(alias=STATE_HEADER)] = None,
 ) -> MachineCaller:
     expected = settings.device_connection_auth_secret
-    if not expected or not secret or not secrets.compare_digest(secret, expected):
+    # Bytes: a header Starlette decoded as Latin-1 may hold any character, and
+    # comparing a non-ASCII str raises instead of refusing.
+    given = (secret or "").encode("utf-8", "surrogateescape")
+    if (
+        not expected
+        or not given
+        or not secrets.compare_digest(given, expected.encode())
+    ):
         raise AuthenticationRequiredError("machine requests come from the device link")
     if not device or not state:
         raise AuthenticationRequiredError("no device or state named")

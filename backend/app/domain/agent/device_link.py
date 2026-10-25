@@ -49,9 +49,6 @@ class LinkMsg:
     executor: bool = False
     # `hello` only: the connector expands `place.ROOT_PLACEHOLDER` itself.
     profiles: bool = False
-    # `hello` only: the connector relays its sandboxes' platform sockets as
-    # machine.* streams (`device_hub.machine`).
-    machine: bool = False
     name: str = ""
     value: Any = None
     id: str = ""
@@ -74,7 +71,6 @@ class LinkMsg:
             target=str(m.get("target", "")),
             executor=m.get("executor") is True,
             profiles=m.get("profiles") is True,
-            machine=m.get("machine") is True,
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),

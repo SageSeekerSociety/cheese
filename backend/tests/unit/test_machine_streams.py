@@ -192,3 +192,44 @@ async def test_the_relay_names_the_caller_itself_and_drops_what_the_sandbox_clai
     assert head.startswith(b"HTTP/1.1 200")
     assert b"connection: close" in head.lower()
     assert body == b'{"ok":true}'
+
+
+async def test_a_header_byte_outside_utf8_costs_nothing_but_that_request(handled):
+    """One odd byte from one sandbox must not end the link every session on the
+    machine shares: the frame is read on that link's loop."""
+    hub, transport = await _linked()
+    await hub.on_device_message("dev", {"t": "machine.open", "id": "s1", "path": STATE})
+    await hub.on_device_message(
+        "dev", _data("s1", b"GET /whoami HTTP/1.1\r\nhost: x\r\nx-a: \xff\r\n\r\n")
+    )
+    await _settled(transport, "s1")
+    assert handled[0].target == "/whoami"
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["/../admin", "/%2e%2e/admin", "/a/%2E%2E/b", "/a\\b", "/./x", "relative"],
+)
+async def test_the_relay_refuses_a_path_that_would_leave_machine(target, monkeypatch):
+    """The secret rides with the request, so a path a client or proxy would
+    resolve outside /machine is refused before anything is sent."""
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
+    sent: list = []
+
+    def anywhere(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200)
+
+    relay = machine_relay.forwarder(
+        httpx.AsyncClient(transport=httpx.MockTransport(anywhere)), "http://backend"
+    )
+    written = bytearray()
+
+    async def write(data: bytes) -> None:
+        written.extend(data)
+
+    await relay(
+        machine_streams.MachineRequest("dev", STATE, "GET", target, [], b""), write
+    )
+    assert sent == []
+    assert bytes(written).startswith(b"HTTP/1.1 400")

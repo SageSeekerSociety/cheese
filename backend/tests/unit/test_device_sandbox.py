@@ -500,3 +500,16 @@ def test_a_room_dials_its_platform_socket_and_cannot_put_its_own_in_its_place(
         )
     finally:
         server.close()
+
+
+def test_a_platform_directory_someone_else_put_there_is_refused(tmp_path):
+    """The platform socket's directory has a fixed name in a shared /tmp; a
+    link planted there would put the socket where its maker can replace it."""
+    elsewhere = tmp_path / "theirs"
+    elsewhere.mkdir()
+    planted = tmp_path / "cheese-platform"
+    planted.symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="not this user's own directory"):
+        confinement.own_directory(planted)
+    mine = confinement.own_directory(tmp_path / "mine")
+    assert mine.is_dir() and (mine.stat().st_mode & 0o777) == 0o700

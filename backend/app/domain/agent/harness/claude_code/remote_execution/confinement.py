@@ -8,6 +8,7 @@ Runs on the machine with the Python the executor runs on, as old as 3.9.
 
 import json
 import os
+import stat
 import struct
 import subprocess
 import sys
@@ -138,6 +139,19 @@ def sbpl(path):
     return json.dumps(os.path.realpath(str(path)))
 
 
+def own_directory(path):
+    """``path`` made for this user only, or refused. It is a fixed name in a
+    shared /tmp: one somebody else made, or a link to somewhere else, would
+    put the platform socket where they can replace it (`runtime.py` guards the
+    executor's socket directory the same way)."""
+    path.mkdir(exist_ok=True, mode=0o700)
+    made = path.lstat()
+    if not stat.S_ISDIR(made.st_mode) or made.st_uid != os.getuid():
+        raise RuntimeError(f"{path} is not this user's own directory")
+    path.chmod(0o700)
+    return path
+
+
 def seatbelt_profile(*, owner, writable, readable, link, dialled=()):
     """The macOS sandbox for a room, as `sandbox_argv` builds the
     Linux one: the machine readable and nothing of it writable, and of the
@@ -236,7 +250,7 @@ def start_seatbelt(
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     sockets.mkdir(exist_ok=True, mode=0o700)
     if platform is not None:
-        platform.mkdir(exist_ok=True, mode=0o700)
+        own_directory(platform)
     profile = seatbelt_profile(
         owner=owner,
         writable=[home, store, sockets],
@@ -315,7 +329,7 @@ def sandbox_argv(
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     sockets.mkdir(exist_ok=True, mode=0o700)
     if platform is not None:
-        platform.mkdir(exist_ok=True, mode=0o700)
+        own_directory(platform)
     command = [
         bwrap,
         "--unshare-user",

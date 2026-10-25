@@ -12,10 +12,17 @@ that owns its device links itself (no ``device_connection_url``) answers in
 process.
 """
 
+from urllib.parse import unquote
+
 import httpx
 
 from app.core.config import settings
-from app.domain.agent.device_hub.machine import Handler, MachineRequest, Write
+from app.domain.agent.device_hub.machine import (
+    Handler,
+    MachineRequest,
+    Write,
+    plain_answer,
+)
 
 #: Who the caller is, as the backend's ``/machine`` routes read it.
 DEVICE_HEADER = "x-machine-device"
@@ -39,6 +46,20 @@ _DROPPED = {
 }
 
 
+def _under_machine(target: str) -> str | None:
+    """``/machine`` plus the sandbox's path, or None for a path that would
+    leave it. The secret goes with the request, so a path an HTTP client or a
+    proxy would resolve elsewhere (``..``, encoded or not, a backslash) is
+    refused rather than cleaned up."""
+    path, _, query = target.partition("?")
+    decoded = unquote(path)
+    if not path.startswith("/") or "\\" in decoded or "\x00" in decoded:
+        return None
+    if any(part in (".", "..") for part in decoded.split("/")):
+        return None
+    return "/machine" + path + (f"?{query}" if query else "")
+
+
 def forwarder(client: httpx.AsyncClient, base: str) -> Handler:
     """Answer each machine request from the backend at ``base`` over ``client``."""
 
@@ -49,10 +70,13 @@ def forwarder(client: httpx.AsyncClient, base: str) -> Handler:
             (STATE_HEADER, request.state),
             (SECRET_HEADER, settings.device_connection_auth_secret),
         ]
-        target = request.target if request.target.startswith("/") else "/"
+        target = _under_machine(request.target)
+        if target is None:
+            await write(plain_answer(400, "not a path the platform serves"))
+            return
         async with client.stream(
             request.method,
-            f"{base.rstrip('/')}/machine{target}",
+            f"{base.rstrip('/')}{target}",
             headers=headers,
             content=request.body,
             timeout=httpx.Timeout(30, read=None),
@@ -73,7 +97,9 @@ def forwarder(client: httpx.AsyncClient, base: str) -> Handler:
 
 
 def over_http(origin: str) -> Handler:
-    return forwarder(httpx.AsyncClient(), origin)
+    # An address inside the deployment: never through an outbound proxy the
+    # environment may name, which would also be handed the secret.
+    return forwarder(httpx.AsyncClient(trust_env=False), origin)
 
 
 def in_process(app) -> Handler:

@@ -125,3 +125,32 @@ func TestNoPlatformSocketWithoutTheInstallsDirectory(t *testing.T) {
 		t.Fatalf("the connector made the platform directory itself: %v", err)
 	}
 }
+
+// A sandbox that stops reading its answer loses its own stream; the link's
+// read loop, which every session on the machine shares, keeps going.
+func TestASandboxThatStopsReadingDoesNotHoldTheLink(t *testing.T) {
+	state, listener := executorListener(t)
+	socket := platformDir(t, state)
+	answerOnce(listener)
+	server := hostOnAFakeServer(t, nil)
+	server.send(t, link.Msg{T: "execution.call", ID: "call-1", Path: state, Stdin: `{"method":"ping"}`})
+	until(t, server, "execution.result")
+
+	stalled := dialEventually(t, socket)
+	defer stalled.Close()
+	_, _ = stalled.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	open := until(t, server, "machine.open")
+	chunk := make([]byte, 1<<20)
+	for i := 0; i < 2*machineQueue; i++ {
+		server.send(t, link.MachineData(open.ID, chunk))
+	}
+	if closed := until(t, server, "machine.close"); closed.ID != open.ID || closed.Error == "" {
+		t.Fatalf("the stalled stream was not ended with a reason: %+v", closed)
+	}
+
+	// The read loop still serves the next frame: an exec answers.
+	server.send(t, link.Msg{T: "exec", ID: "after", Command: []string{"true"}})
+	if result := until(t, server, "exec.result"); result.ID != "after" {
+		t.Fatalf("got %+v", result)
+	}
+}

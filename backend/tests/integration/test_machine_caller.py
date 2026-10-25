@@ -159,3 +159,16 @@ async def test_a_request_on_the_socket_comes_back_with_whose_it_is(client, monke
     head, _, body = answer.partition(b"\r\n\r\n")
     assert head.startswith(b"HTTP/1.1 200"), answer
     assert json.loads(body)["session"] == str(room.session_id)
+
+
+async def test_a_secret_header_with_any_bytes_is_refused_not_a_crash(client):
+    room = await _room(client)
+    answer = client.get(
+        "/machine/whoami",
+        headers=[
+            ("x-device-connection-secret", "sécret".encode("latin-1")),
+            ("x-machine-device", room.old_device),
+            ("x-machine-state", "/old/state"),
+        ],
+    )
+    assert answer.status_code == 401, answer.text

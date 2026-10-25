@@ -132,8 +132,14 @@ def _complete(stream: MachineStream, device_id: str):
         if event is h11.NEED_DATA:
             return None
         if isinstance(event, h11.Request):
-            stream.method, stream.target = event.method.decode(), event.target.decode()
-            stream.headers = [(k.decode(), v.decode()) for k, v in event.headers]
+            # Latin-1 decodes any byte: a header value with obs-text is the
+            # sandbox's own business, never a reason to lose the link this
+            # read loop serves for every session on the machine.
+            stream.method = event.method.decode("latin-1")
+            stream.target = event.target.decode("latin-1")
+            stream.headers = [
+                (k.decode("latin-1"), v.decode("latin-1")) for k, v in event.headers
+            ]
         elif isinstance(event, h11.Data):
             stream.body.extend(event.data)
         elif isinstance(event, h11.EndOfMessage):

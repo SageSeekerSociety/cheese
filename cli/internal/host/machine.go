@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -31,12 +32,27 @@ const machineStreamLimit = 256
 
 const machineChunk = 32 * 1024
 
-var errMachineBusy = errors.New("too many platform streams on this machine")
+var (
+	errMachineBusy    = errors.New("too many platform streams on this machine")
+	errMachineStalled = errors.New("the sandbox stopped reading its answer")
+)
+
+// machineQueue bounds the answer bytes waiting for one sandbox to read them.
+// A sandbox that stops reading loses its own stream at this depth; it never
+// holds the link's read loop, which every session on the machine shares.
+const machineQueue = 64
 
 type machineRelay struct {
 	mu        sync.Mutex
-	listeners map[string]net.Listener // platform socket path -> its listener
-	streams   map[string]net.Conn     // stream id -> the sandbox's connection
+	listeners map[string]net.Listener   // platform socket path -> its listener
+	streams   map[string]*machineStream // stream id -> the sandbox's connection
+}
+
+type machineStream struct {
+	conn     net.Conn
+	down     chan []byte // answer bytes, written to conn by its own goroutine
+	done     chan struct{}
+	finished bool // down is closed; touched only on the link's read loop
 }
 
 // listenMachine makes sure the platform socket of the state the backend named
@@ -51,7 +67,7 @@ func (h *Host) listenMachine(named, resolved string) {
 	defer r.mu.Unlock()
 	if r.listeners == nil {
 		r.listeners = map[string]net.Listener{}
-		r.streams = map[string]net.Conn{}
+		r.streams = map[string]*machineStream{}
 	}
 	// A session torn down takes its directory with it; its listener would
 	// otherwise accept nothing for the life of this process.
@@ -72,9 +88,12 @@ func (h *Host) listenMachine(named, resolved string) {
 	_ = os.Remove(socket)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: cannot serve the platform socket %s: %v\n", socket, err)
 		return
 	}
-	_ = os.Chmod(socket, 0o600)
+	if err := os.Chmod(socket, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: cannot restrict the platform socket %s: %v\n", socket, err)
+	}
 	r.listeners[socket] = listener
 	go h.acceptMachine(listener, named)
 }
@@ -85,11 +104,12 @@ func (h *Host) acceptMachine(listener net.Listener, named string) {
 		if err != nil {
 			return
 		}
-		id, err := h.machine.add(conn)
+		id, stream, err := h.machine.add(conn)
 		if err != nil {
 			_ = conn.Close()
 			continue
 		}
+		go h.answerMachine(id, stream.conn, stream.down, stream.done)
 		if h.conn.Send(link.MachineOpen(id, named)) != nil {
 			h.machine.drop(id)
 			continue
@@ -111,7 +131,10 @@ func (h *Host) pumpMachine(id string, conn net.Conn) {
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			_ = h.conn.Send(link.MachineEnd(id))
+			// Without the link the answer can never come down.
+			if h.conn.Send(link.MachineEnd(id)) != nil {
+				h.machine.drop(id)
+			}
 			return
 		}
 		if err != nil {
@@ -123,55 +146,102 @@ func (h *Host) pumpMachine(id string, conn net.Conn) {
 	}
 }
 
-// machineFrame applies one machine.* frame the platform sent down.
+// machineFrame applies one machine.* frame the platform sent down. It runs on
+// the link's read loop, so it only queues: the stream's own goroutine writes.
 func (h *Host) machineFrame(m link.Msg) {
-	conn := h.machine.get(m.ID)
-	if conn == nil {
+	stream := h.machine.get(m.ID)
+	if stream == nil {
 		return
 	}
 	switch m.T {
 	case "machine.data":
 		data, err := base64.StdEncoding.DecodeString(m.Data)
-		if err == nil {
-			_, err = conn.Write(data)
+		if err != nil {
+			h.failMachine(m.ID, err)
+			return
 		}
-		if err != nil && h.machine.drop(m.ID) {
-			_ = h.conn.Send(link.MachineClose(m.ID, err))
+		if stream.finished {
+			return
+		}
+		select {
+		case stream.down <- data:
+		case <-stream.done:
+		default:
+			h.failMachine(m.ID, errMachineStalled)
 		}
 	case "machine.close":
-		h.machine.drop(m.ID)
+		// After what is queued: closing the queue ends the writer once it has
+		// written the rest.
+		h.machine.finish(m.ID)
 	}
 }
 
-func (r *machineRelay) add(conn net.Conn) (string, error) {
+// answerMachine writes the platform's answer to the sandbox, in order.
+func (h *Host) answerMachine(id string, conn net.Conn, down <-chan []byte, done <-chan struct{}) {
+	for {
+		select {
+		case data, open := <-down:
+			if !open {
+				h.machine.drop(id)
+				return
+			}
+			if _, err := conn.Write(data); err != nil {
+				h.failMachine(id, err)
+				return
+			}
+		case <-done:
+			return
+		}
+	}
+}
+
+func (h *Host) failMachine(id string, err error) {
+	if h.machine.drop(id) {
+		_ = h.conn.Send(link.MachineClose(id, err))
+	}
+}
+
+func (r *machineRelay) add(conn net.Conn) (string, *machineStream, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	id := "machine-" + hex.EncodeToString(raw)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.streams) >= machineStreamLimit {
-		return "", errMachineBusy
+		return "", nil, errMachineBusy
 	}
-	r.streams[id] = conn
-	return id, nil
+	stream := &machineStream{conn: conn, down: make(chan []byte, machineQueue), done: make(chan struct{})}
+	r.streams[id] = stream
+	return id, stream, nil
 }
 
-func (r *machineRelay) get(id string) net.Conn {
+func (r *machineRelay) get(id string) *machineStream {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.streams[id]
 }
 
+// finish ends a stream once what is queued for it is written.
+func (r *machineRelay) finish(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if stream, ok := r.streams[id]; ok && !stream.finished {
+		stream.finished = true
+		close(stream.down)
+	}
+}
+
 // drop closes and forgets a stream, reporting whether it was still open.
 func (r *machineRelay) drop(id string) bool {
 	r.mu.Lock()
-	conn, ok := r.streams[id]
+	stream, ok := r.streams[id]
 	delete(r.streams, id)
 	r.mu.Unlock()
 	if ok {
-		_ = conn.Close()
+		close(stream.done)
+		_ = stream.conn.Close()
 	}
 	return ok
 }
