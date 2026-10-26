@@ -44,6 +44,7 @@ from app.domain.machine.services import (
 )
 from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
@@ -274,7 +275,7 @@ def _warm_machine_ready(case: Case) -> str:
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="warm-1",
                     name="warm-1",
-                    token="warm-token",
+                    token_digest=digest_token("warm-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),
@@ -730,7 +731,7 @@ def test_the_device_owner_admits_tool_calls_only_on_live_hosts(pool):
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="host-device",
                     name="host",
-                    token="host-token",
+                    token_digest=digest_token("host-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),

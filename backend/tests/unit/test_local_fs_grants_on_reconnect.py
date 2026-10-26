@@ -35,6 +35,7 @@ from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import GrantMode, GrantScope
 from app.domain.local_fs.wiring import sql_local_directory_service
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.support import wire
 from tests.support.devices import enrollment_team
 from tests.support.hang import HANG_S
@@ -105,7 +106,7 @@ async def _owner_of_the_machine(db_factory) -> int:
                 team_id=await enrollment_team(sql_device_service(session), user.id),
                 device_id=MACHINE,
                 name=MACHINE,
-                token=f"tok-{uuid.uuid4().hex}",
+                token_digest=digest_token(f"tok-{uuid.uuid4().hex}"),
                 owner_user_id=user.id,
                 created_at=now,
             )
