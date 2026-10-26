@@ -370,11 +370,9 @@ export function useChatScroll(
         if (pending === null && !atBottom.value && showingNewest()) holdPending({ top: lastTop })
         return
       }
-      // 跳完了、这一栏当时还没有布局：现在有高度了，按落点把「在不在底部」定回来。
-      if (ownScrollAwaitingLayout) {
-        settleOwnScroll()
-        return
-      }
+      // 我们自己发的那一下还在滚（跳到某一条）：这一阵不跟随，落到哪一条由停下来的
+      // 那一刻说了算。
+      if (ownScrollTimer !== null) return
       // 回填还没落到位：内容此刻比记下时短（行是分批挂上来的），放不进去。「卡在当前
       // 末端」不是「他本来就停在底部」——把它当后者正是「退出支线被甩到最底」的来路。
       // 目标留着，等长够了再放；在这之前也不跟新消息。
@@ -435,7 +433,7 @@ export function useChatScroll(
   // 只在用户没往上翻时跟随新消息。重放追赶期间逐帧的调用被压住，由 `noteFrame`
   // 在这一阵静下来之后滚一次。
   function autoScroll() {
-    if (catchingUp || !showingNewest()) return
+    if (catchingUp || ownScrollTimer !== null || !showingNewest()) return
     if (atBottom.value) scrollToBottom()
   }
 
@@ -443,14 +441,13 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
-    // 我们自己发的那一下还在滚（跳到某一条）：只把位置记进 lastTop/lastHeight，记下的
-    // 位置和「在不在底部」都等它停下再定。半路上判，头几帧还在底部、后面又被 `clamped`
-    // 那条兜底读成锚定，人就被钉回原处。
+    // 我们自己发的那一下还在滚（跳到某一条）：这一阵里「在不在底部」和记下的位置都由
+    // 停下来的那一刻说了算（`settleOwnScroll`）。半路上判，头几帧还在底部、后面又被
+    // `clamped` 那条兜底读成锚定，人就被钉回原处。`lastTop` 也先不动——留着它，切走
+    // 话题时那一支才看得出这一跳真的把位置挪上去了。
     if (ownScrollTimer !== null) {
       if (currentTopicId() === ownScrollTopic) {
         armOwnScroll()
-        lastTop = el.scrollTop
-        lastHeight = el.scrollHeight
         return
       }
       // 滚到一半切走了话题：离开的这一段该照常记下它此刻停在哪（回来要落在那儿），
@@ -529,9 +526,6 @@ export function useChatScroll(
   // 150ms 里切走了话题，读的是新话题，落到它头上的会是一个指着别的内容的位置。
   // `scrollToBottom` 出于同一个理由先抓住话题 id。
   let ownScrollTopic: string | undefined
-  // 滚完了、可这一栏没有布局（`v-show` 藏着、另一个页签在前）：看不出落在哪，
-  // 等观察者看到它有高度了再落账。留着这个标记，别把 `atBottom=false` 撂在那儿。
-  let ownScrollAwaitingLayout = false
 
   function armOwnScroll() {
     if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
@@ -544,18 +538,12 @@ export function useChatScroll(
   /** 这一下滚完了：落点在哪就按哪定。 */
   function settleOwnScroll() {
     const el = scrollRef.value
-    if (!el || !el.clientHeight) {
-      ownScrollAwaitingLayout = true
-      return
-    }
-    ownScrollAwaitingLayout = false
-    // 跳到一半切走了话题：这一跳不算数，别把新话题按旧落点写掉。按此刻的位置把
-    // 「在不在底部」判回来——不然它停在 `beginOwnScroll` 设的 false 上，要等下一次
-    // 滚动事件才有人改。
-    if (ownScrollTopic !== undefined && currentTopicId() !== ownScrollTopic) {
-      cancelOwnScroll()
-      return
-    }
+    // 没有布局（`v-show` 藏着、另一个页签在前）：这一跳本来就没能挪动它，位置没变，
+    // 不用落账，`atBottom` 也还是跳之前那个值。
+    if (!el || !el.clientHeight) return
+    // 跳到一半切走了话题：这一跳不算数，别把新话题按旧落点写掉。`atBottom` 从头到尾
+    // 没被改过，新话题自己记下的那份还在。
+    if (ownScrollTopic !== undefined && currentTopicId() !== ownScrollTopic) return
     lastTop = el.scrollTop
     lastHeight = el.scrollHeight
     atBottom.value = isAtBottom(el)
@@ -572,11 +560,10 @@ export function useChatScroll(
   function beginOwnScroll() {
     // 读的人点名要去某一条，回填中的目标就作废了。
     settlePending()
-    // 上一次跳完时这一栏没有布局、还等着落账：这一跳取代它，别让观察者按旧的那一跳
-    // 把新的这一跳在半路上结掉。
-    ownScrollAwaitingLayout = false
-    // 这一阵不跟新消息：落到哪一条由停下来的那一刻说了算（`settleOwnScroll`）。
-    atBottom.value = false
+    // 这一阵里**不动** `atBottom`：它只在停下来那一刻按落点重定一次。曾经在这里把它
+    // 设成 false 来挡住跟随，于是每个出口（切话题、没有布局、读者接手、又跳一次）都得
+    // 记得改回来，漏一个就永远卡在 false 上——三轮自审各抓到一个。不设就没有这么多
+    // 出口：跟随由 `ownScrollTimer` 自己挡（见下面观察者与 `autoScroll`）。
     ownScrollTopic = currentTopicId()
     armOwnScroll()
   }
@@ -584,16 +571,12 @@ export function useChatScroll(
   /**
    * 不算我们自己发的了：读的人接了手，或者又要钉回底部。
    *
-   * 撤的时候按此刻的位置把「在不在底部」定回来：这一下手势可能一个像素都没挪
-   * （已经贴着底部，或只想往下滚一点点），随后的滚动事件不会来，`atBottom` 就会
-   * 一直停在 `beginOwnScroll` 设的 false——「回到最新」一直亮着、新消息也不再跟。
+   * 只撤这一阵，不动 `atBottom`——它在整个窗口里就没被改过，读者接手之后随后的滚动
+   * 事件照常会按位置把它定下来（位置没动的话，它本来就还是对的那个值）。
    */
   function cancelOwnScroll() {
     if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
     ownScrollTimer = null
-    ownScrollAwaitingLayout = false
-    const el = scrollRef.value
-    if (el?.clientHeight) atBottom.value = isAtBottom(el)
   }
 
   /** 不再记这个话题停在哪：再打开时落到底部。 */

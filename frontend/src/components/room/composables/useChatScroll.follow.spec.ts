@@ -315,10 +315,14 @@ describe('点书签跳到上面那一条', () => {
     scroll.beginOwnScroll() // scrollIntoView 之前
     box.el.scrollTop = 1600 - 30 // 平滑滚动的第一帧：离底部还不到 80
     scroll.rememberScroll('t-jump')
-    // 这一帧近底部，也不能把「跟新消息」重新打开——不然下一帧就被钉回去了。
-    expect(scroll.atBottom.value).toBe(false)
+    // 这一帧近底部、又赶上刚被改写：那一瞬间位置和「在不在底部」都还没定，跟随由
+    // 窗口自己挡着（下面长高一截，也不该被拽回底部）。
+    box.grow(400)
+    fire()
+    expect(box.el.scrollTop).toBe(1600 - 30)
     box.el.scrollTop = 1600 - 900 // 落到了书签那一条
     scroll.rememberScroll('t-jump')
+    await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(700)
   })
@@ -341,7 +345,6 @@ describe('点书签跳到上面那一条', () => {
     scroll.beginOwnScroll()
     box.el.scrollTop = 1600 - 40 // 书签正是最后一条那一带
     scroll.rememberScroll('t-jump-bottom')
-    expect(scroll.atBottom.value).toBe(false) // 还在滚，先不定
     await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
     expect(scroll.atBottom.value).toBe(true)
     box.grow(10)

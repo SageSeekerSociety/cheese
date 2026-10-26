@@ -91,44 +91,31 @@ describe('窗口期内读的人自己动了一下，却一个像素都没挪', (
 })
 
 describe('跳的时候这一栏还没有布局', () => {
-  it('露出来之后按落点定回来，继续跟新消息', async () => {
+  it('停在哪还是哪，露出来照常跟新消息', async () => {
     const { box, scroll } = await mounted(2000)
     box.setHeight(0) // v-show 藏着，或另一个页签在前
     scroll.beginOwnScroll()
     await settle() // 窗口在没有布局的情况下到点
     box.setHeight(400)
-    box.el.scrollTop = 1600
     fire() // 布局回来了，观察者报一次
-    expect(scroll.atBottom.value).toBe(true)
+    expect(scroll.atBottom.value).toBe(true) // 跳前就停在底部，没被这一跳改过
     box.grow(10)
     fire()
     expect(box.el.scrollTop).toBe(1610)
   })
 })
 
-describe('上一次跳完还在等布局时又跳了一次', () => {
-  it('新的这一跳不会被观察者提前结掉', async () => {
+describe('没有布局的时候又跳了一次', () => {
+  it('还在滚的时候观察者不跟随，停下再按落点定', async () => {
     const { box, scroll } = await mounted(2000)
     box.setHeight(0)
     scroll.beginOwnScroll()
-    await settle() // 第一跳在没有布局的情况下到点，等布局再落账
+    await settle()
     box.setHeight(400)
-    scroll.beginOwnScroll() // 第二跳，此刻还在底部
-    fire() // 布局回来了
-    expect(scroll.atBottom.value).toBe(false) // 还在滚，落点由这一跳自己停下那一刻说了算
-  })
-})
-
-describe('当时没有布局、又切走了话题', () => {
-  it('有布局之后按此刻的位置定回来，不卡在 false', async () => {
-    const { box, scroll, switchTo } = await mounted(2000)
-    box.setHeight(0)
-    scroll.beginOwnScroll()
-    await settle() // 等布局
-    switchTo('next-room')
-    box.setHeight(400)
-    box.el.scrollTop = 1600 // 新话题落到了底部
+    scroll.beginOwnScroll() // 第二跳
+    box.grow(400) // 还在滚，长出来的这一截不该把它拽下去
     fire()
-    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+    await settle()
   })
 })
