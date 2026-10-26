@@ -159,7 +159,7 @@ class DeviceService:
             return {"status": DeviceStatus.PENDING}
         token = await self.issue_token(device.device_id)
         if token is None:
-            raise NotFoundError("Unknown or expired device code")
+            raise NotFoundError(say("deviceCodeSpent"))
         await self._repo.delete_code(entry.code)
         return {
             "status": DeviceStatus.APPROVED,
@@ -185,11 +185,9 @@ class DeviceService:
         token, and replacing it would cut that machine off."""
         device = await self._repo.get_device(device_id)
         if device is None:
-            raise NotFoundError("Unknown device")
+            raise NotFoundError(say("deviceNotFound"))
         if device.supply is not Supply.cloud:
-            raise ForbiddenError(
-                "Only a machine the platform provisioned is bootstrapped"
-            )
+            raise ForbiddenError(say("deviceTokenNotReplaced"))
         token = secrets.token_urlsafe(24)
         await self._repo.replace_token_digest(device_id, digest_token(token))
         return token
