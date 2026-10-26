@@ -367,17 +367,25 @@ def test_a_task_may_use_its_own_boards_domain_group(
     )
     assert approved.status_code == 200, approved.text
 
-    # 名单里的人：不是这块板的成员，只是邮箱域名在那份名单上。
-    reader = user_client.create_user(email=f"reader-{suffix}@{domain}")
-    reader_token = _login(user_client, api_client, reader)
+    def a_member(**kwargs):
+        user = user_client.create_user(**kwargs)
+        joined = api_client.post(
+            f"/spaces/{board['space_id']}/members",
+            json={"userId": user.user_id},
+            headers=_auth(board["creator_token"]),
+        )
+        assert joined.status_code == 201, joined.text
+        return _login(user_client, api_client, user)
+
+    # 名单里的人：这块板的成员，邮箱域名在那份名单上。
+    reader_token = a_member(email=f"reader-{suffix}@{domain}")
     assert (
         api_client.get(f"/tasks/{task_id}", headers=_auth(reader_token)).status_code
         == 200
     )
 
-    # 名单外的人读不到 —— 否则上面那个 200 什么都证明不了。
-    outsider = user_client.create_user()
-    outsider_token = _login(user_client, api_client, outsider)
+    # 同一块板里、名单外的人读不到 —— 否则上面那个 200 什么都证明不了。
+    outsider_token = a_member()
     assert (
         api_client.get(f"/tasks/{task_id}", headers=_auth(outsider_token)).status_code
         == 404
