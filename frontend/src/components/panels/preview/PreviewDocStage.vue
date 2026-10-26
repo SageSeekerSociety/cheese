@@ -40,6 +40,7 @@ import RevisionList from './RevisionList.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { SLIDE_SUFFIXES } from '@/lib/fileKind'
+import { previewStage } from '@/lib/previewStage'
 
 // The history pane only loads once someone opens it: most previews never do, and
 // every panel that shows a preview would otherwise carry it. Same reason, and the
@@ -139,6 +140,20 @@ function startEdit() {
 // 所以哪一份非空，就是哪一份在说话。
 const docShown = computed(() => (props.docPage ? props.docPageHtml : props.docBytes))
 
+// 这一刻在第几步、失败是哪一种，由 `lib/previewStage` 一处判（授权、连接、导航、就绪、
+// 已更新、失败）。模板照它分岔，不再各自拼 `!docShown` 那几行条件：同一处境在任何
+// 一档上说同一套名词，是这一层存在的理由。
+const stage = computed(() =>
+  previewStage({
+    loading: props.docLoading,
+    shown: !!docShown.value,
+    // 上一版还在、这一版取失败了：`docError` 有值而屏幕上仍有东西。
+    stale: !!props.docError && !!docShown.value,
+    rendererMissing: props.docRendererMissing,
+    cannotRender: !!props.docError,
+  })
+)
+
 // 模板里那几处分岔的道理，写在这里，因为模板里不留中文注释（docs/i18n.md §5）：
 //
 //   Markdown 排在最前面 —— 它不走 `docBytes` 那条路（`loadDocument` 直接跳过），
@@ -223,7 +238,7 @@ defineExpose({ snapshot, clearMark })
     <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
       {{ downloadError }}
     </v-alert>
-    <v-alert v-else-if="docError && docShown" type="warning" density="compact" class="mx-3 mb-2">
+    <v-alert v-else-if="stage.stage === 'updated'" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
     <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，
@@ -252,14 +267,17 @@ defineExpose({ snapshot, clearMark })
       @anchor="emit('anchor', $event)"
     />
 
-    <div v-else-if="docLoading && !docShown" class="doc__state">
+    <div v-else-if="stage.stage === 'navigate'" class="doc__state">
       <v-progress-circular indeterminate color="primary" size="24" />
     </div>
-    <div v-else-if="docRendererMissing && !docShown" class="doc__state doc__state--text">
+    <div
+      v-else-if="stage.stage === 'failed' && stage.failure === 'rendererMissing'"
+      class="doc__state doc__state--text"
+    >
       <v-icon size="28" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
       <div>{{ t('work.room.preview.docPreviewDisabled') }}</div>
     </div>
-    <div v-else-if="docError && !docShown" class="doc__state doc__state--text">
+    <div v-else-if="stage.stage === 'failed' && stage.failure === 'cannotRender'" class="doc__state doc__state--text">
       <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>{{ t('work.room.preview.cantDisplay') }}</div>
       <div class="t-meta mt-1">{{ docError }}</div>
