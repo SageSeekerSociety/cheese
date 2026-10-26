@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_type.library import preset_types
@@ -335,14 +335,12 @@ async def context(
 async def private_shown(session: AsyncSession, row: TaskDraft) -> bool:
     """Whether a draft's private guidance is shown to its writer: a new 题目's
     is their own; changes to a published one only while they may teach it
-    (``may_teach_task``), checked when it is read — an admin who opened the
+    (``task_roles.teaches``), checked when it is read — an admin who opened the
     changes and has since lost the board no longer reads it."""
     if row.task_id is None:
         return True
     task = await session.get(Task, row.task_id)
-    return task is not None and await may_teach_task(
-        session=session, task=task, user_id=row.user_id
-    )
+    return task is not None and await task_seats.teaches(session, task, row.user_id)
 
 
 def without_private(fields: dict) -> dict:

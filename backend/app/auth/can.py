@@ -3,7 +3,7 @@ route asks, whatever the object.
 
 A permission names its kind of object by its type — a team's
 (``app.domain.team.permissions.Permission``) is asked of a team, a space's of a
-space — and each kind answers it from its own seats. A route declares what it
+space, a problem's of a problem — and each kind answers it from its own seats. A route declares what it
 needs (``app.api.write_access.needs``) and :func:`require` decides it before
 the handler runs.
 
@@ -19,18 +19,20 @@ from types import ModuleType
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import task_roles as task
 from app.core.errors import AccessDeniedError, NotFoundError
 from app.domain.space import permissions as space
 from app.domain.team import permissions as team
 
 #: Every permission a route may declare, by the kind of object it is asked of.
-Permission = team.Permission | space.Permission
+Permission = team.Permission | space.Permission | task.Permission
 
 #: Each kind's seats, by its permission type: the module answers ``may`` and
 #: ``sees`` for an object of that kind.
 _KINDS: dict[type, tuple[str, ModuleType]] = {
     team.Permission: ("team", team),
     space.Permission: ("space", space),
+    task.Permission: ("task", task),
 }
 
 

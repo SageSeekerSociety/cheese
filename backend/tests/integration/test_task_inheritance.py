@@ -341,11 +341,11 @@ def test_an_unapproved_task_is_forbidden_and_hands_over_nothing(client: TestClie
 
     # 详情那一侧是怎么答的，这里就得怎么答 —— 这条断言就是「同一条判据」。
     detail = client.get(f"/tasks/{task_id}", headers=_headers(token))
-    assert detail.status_code == 403, detail.text
+    assert detail.status_code == 404, detail.text
 
     resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
-    assert resp.status_code == 403, resp.text
-    # 403 的正文里不许漏出这道题会交出什么。
+    assert resp.status_code == 404, resp.text
+    # 404 的正文里不许漏出这道题会交出什么。
     body = resp.text
     assert "999" not in body
     assert "compute_credits" not in body
