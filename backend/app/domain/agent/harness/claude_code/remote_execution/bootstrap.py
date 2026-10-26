@@ -1153,6 +1153,8 @@ def start_sandbox(
 
 @contextlib.contextmanager
 def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
+    if sys.platform != "win32":  # Before every path below: its room holds none (docs).
+        payload["env"]["CHEESE_TOKEN"] = ""
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -1225,16 +1227,14 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         if policy is not None:
             for name, value in policy["environment"](mirrors, store).items():
                 package_env.setdefault(name, variables.get(name, value))
-        # How many test workers this room's tools may start, from its CPU quota
-        # (`worker_quota`), defaulted the same way.
+        # Test workers this room may start, by CPU quota (`worker_quota`).
         quota = shipped(release, "worker_quota")
         for name, value in quota["environment"](payload.get("sandbox")).items():
             package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
-            # Except, on Windows, the one the connector sets for every command:
-            # Claude Code finds its shell there, and without it takes whatever
-            # Git the machine happens to have installed, or none.
+            # Except Windows' one from the connector: Claude Code's shell, or it
+            # takes whatever Git the machine has, or none.
             if sys.platform == "win32" and name == "CLAUDE_CODE_GIT_BASH_PATH":
                 continue
             if (

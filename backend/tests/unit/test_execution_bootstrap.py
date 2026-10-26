@@ -135,9 +135,10 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         assert (work / "draft.txt").read_text() == "retain this draft"
         assert not (work / "startup-result").exists()
         assert json.loads(task_config.read_text()) == configuration
+        # Whatever credential the install is handed, the running room is left
+        # holding none: it asks the platform on its socket.
         assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
-            == "rotated-token"
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"] == ""
         )
         # The existing environment reset must stop the execution daemon too.
         reset = subprocess.run(
