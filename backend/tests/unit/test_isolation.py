@@ -207,6 +207,7 @@ def _probe(tmp_path, *, workers=0):
         isolation.LOCK_DIRECTORY = ROOT / 'leases'
         harness._ensure_template = lambda: False
         harness.drop_connections_left_in_the_app_pool = lambda: None
+        harness._empty_the_job_clock = lambda: None
 
         def assert_occupied():
             with pytest.raises(RuntimeError, match='already occupied'):
