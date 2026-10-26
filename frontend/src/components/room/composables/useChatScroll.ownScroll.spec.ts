@@ -1,7 +1,11 @@
-// 跳到某一条时那一段「这一下是我们自己发的滚动」窗口：它把位置和「在不在底部」
-// 都推后到滚停下来的那一刻再定。窗口期内这一栏被切走、被藏起来、或者读的人动了一下
-// 却没挪位置，都得各有出路——不然窗口过了，`atBottom` 就撂在开始那一刻设的 false 上，
-// 「回到最新」一直亮着、新消息也不再跟（独立 review 在 e2936a36 上报出这三条）。
+// 跳到某一条时那一段「这一下是我们自己发的滚动」窗口：这一阵里不动「在不在底部」，
+// 跟随由窗口自己挡（观察者与 `autoScroll` 各一处判据），位置和「在不在底部」都推后到
+// 滚停下来那一刻再定一次。
+//
+// 曾经它靠把 `atBottom` 强设成 false 来挡跟随，于是每个出口（切话题、没有布局、读的人
+// 接手、又跳一次）都得记得把它改回来，漏一个就永远卡在 false 上——三轮独立 review 各
+// 抓到一个。这里钉的就是那个根不在了之后还成立的几条：切话题时离开那段照常记位置、
+// 读的人动了却没挪位置、这一栏当时没有布局。
 import { defineComponent, h, nextTick } from 'vue'
 import { render } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -82,7 +86,7 @@ describe('窗口期内读的人自己动了一下，却一个像素都没挪', (
     box.el.scrollTop = 1600 // 就在底部
     box.el.dispatchEvent(new WheelEvent('wheel', { deltaY: 300 }))
     await settle()
-    // 这一下没有滚动事件跟着来（位置没动），所以撤窗口时就得按位置判回来。
+    // 窗口从没改过它，位置也没动，所以还是「停在底部」。
     expect(scroll.atBottom.value).toBe(true)
     box.grow(10)
     fire()
