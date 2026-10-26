@@ -620,7 +620,7 @@ class RoomFileCollab(UuidPk, Base):
     #: Every suggestion still waiting for a decision: ``{id, author, old, new,
     #: reason}``, as the service reported them. Rooms keep the shape documents
     #: do, so a decision here needs no second implementation.
-    suggestions: Mapped[list] = mapped_column(JSON, default=list)
+    suggestions: Mapped[list] = mapped_column(JSONB, default=list)
     #: When this state was last stored. Assigned on every write in Python
     #: rather than left to the database: a store mutates the row in place, and
     #: a column whose name says "last edited" must not keep reading its

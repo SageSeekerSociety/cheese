@@ -16,6 +16,7 @@ Revises: 8103084f5e42
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -44,11 +45,9 @@ def upgrade() -> None:
         sa.Column("path", sa.String(512), nullable=False),
         sa.Column("state", sa.LargeBinary(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False, server_default=""),
-        sa.Column("suggestions", sa.JSON(), nullable=False),
+        sa.Column("suggestions", postgresql.JSONB(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint(
-            "room_id", "path", name="uq_room_file_collab_room_path"
-        ),
+        sa.UniqueConstraint("room_id", "path", name="uq_room_file_collab_room_path"),
     )
     op.create_index(
         "ix_room_file_collab_project_id", "room_file_collab", ["project_id"]
