@@ -526,3 +526,23 @@ def test_a_room_on_a_whole_machine_is_given_its_platform_socket_too(rooms):
     made = expected.parent.lstat()
     assert expected.parent.is_dir() and made.st_uid == os.getuid()
     assert (made.st_mode & 0o777) == 0o700
+
+
+def _holds_no_credential(room):
+    assert room.bash('printf %s "${CHEESE_TOKEN-unset}"') == ""
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"')
+    token_file = room.home / ".cheese" / "cheese-preview.token"
+    assert not token_file.exists() or token_file.read_text() == ""
+
+
+@sandboxed
+def test_an_isolated_room_holds_no_credential(rooms):
+    """Given its platform socket, a sandboxed room holds no credential of its
+    own: not in its environment, not in the file its preview helper could
+    read."""
+    _holds_no_credential(rooms(sandbox=True))
+
+
+def test_a_room_on_its_whole_machine_holds_no_credential(rooms):
+    """The same on a whole machine, which has the platform socket too."""
+    _holds_no_credential(rooms(sandbox=False))
