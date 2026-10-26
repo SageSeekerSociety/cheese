@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
@@ -138,6 +139,7 @@ import app.domain.agent.turn_inputs  # noqa: E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
+from app.core.job_runs import JobRun  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
@@ -1642,19 +1644,20 @@ def _clean_slate_queries() -> tuple[str, str]:
     return occupied, moved_sequences
 
 
-#: The loop and engine the harness's own work on the client database runs on,
-#: made on first use. See ``_on_worker_connection``.
+#: The loop the harness's own work on this worker's databases runs on, and one
+#: engine per database, made on first use. See ``_on_worker_connection``.
 _worker_loop: asyncio.AbstractEventLoop | None = None
-_worker_engine = None
+_worker_engines: dict[str, AsyncEngine] = {}
 
 
-def _on_worker_connection(work):
-    """Run ``work(engine)`` on this worker's own connection to the client
-    database, and return what it returns.
+def _on_worker_connection(work, url: str = TEST_DATABASE_URL):
+    """Run ``work(engine)`` on this worker's own connection to the database at
+    ``url`` (the client database unless named), and return what it returns.
 
     The harness's reads and writes between tests (the clear, the seeded agent
-    user, the check for transactions a test left open) all go through one
-    connection that lives as long as the worker, on a loop of its own. A
+    user, the check for transactions a test left open, the emptied job clock)
+    all go through one connection per database that lives as long as the
+    worker, on a loop of its own. A
     backend's first read of a table loads its catalog entries: 25-45 ms on a
     fresh connection against under 1 ms on one that has read them before, and
     every engine the fixtures build is new per test. On a hosted runner a
@@ -1663,16 +1666,38 @@ def _on_worker_connection(work):
     (``asyncio.run`` per step) that an asyncpg connection cannot outlive.
     ``pool_pre_ping`` reconnects it if the database was recreated underneath.
     """
-    global _worker_loop, _worker_engine
+    global _worker_loop
     if _worker_loop is None:
         _worker_loop = asyncio.new_event_loop()
         threading.Thread(
             target=_worker_loop.run_forever, name="client-db-worker", daemon=True
         ).start()
-        _worker_engine = create_async_engine(
-            TEST_DATABASE_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
+    if url not in _worker_engines:
+        _worker_engines[url] = create_async_engine(
+            url, pool_size=1, max_overflow=0, pool_pre_ping=True
         )
-    return asyncio.run_coroutine_threadsafe(work(_worker_engine), _worker_loop)
+    return asyncio.run_coroutine_threadsafe(work(_worker_engines[url]), _worker_loop)
+
+
+def _empty_the_job_clock() -> None:
+    """Start the test with no periodic job's clock in the integration database.
+
+    Every app lifespan a test enters (``client``, ``python_client``, a test's
+    own ``lifespan_context``) records its jobs' runs and tick leases in
+    ``periodic_job_runs`` through the app's own engine, which commits outside
+    both the client database's clear and ``db_session``'s rollback. Left
+    there, an earlier test's clock decides a later one's: once a worker is
+    300 s old, some ``client`` lifespan takes the real orphan sweep's overdue
+    tick, and its lease refuses every claim on that job for 300 s more. A test
+    whose own runner of that job has to tick then waits out a process it never
+    met. Each test begins as a first deployment does, with no job recorded.
+    """
+
+    async def empty(engine) -> None:
+        async with engine.begin() as connection:
+            await connection.execute(delete(JobRun))
+
+    _on_worker_connection(empty, settings.database_url).result(timeout=60)
 
 
 async def _clear_client_db(*, seed_agent_user: bool = False) -> None:
@@ -2450,6 +2475,7 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
         drop_connections_left_in_the_app_pool()
+        _empty_the_job_clock()
         explicit_anyio = request.node.get_closest_marker("anyio") is not None
         if explicit_anyio or inspect.iscoroutinefunction(request.function):
             request.getfixturevalue("_app_engine_on_test_loop")
