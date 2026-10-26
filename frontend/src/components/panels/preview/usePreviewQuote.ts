@@ -181,12 +181,20 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
    *
    *  和 `send` 拼的是同一份东西，只是不发出去：留下一条评论时，锚点要的就是它。 */
   function anchor(): QuotedContext | null {
-    // 图片上框的那一块**不走这里**：框着的时候评论入口是收起的（`PanelPreviewView` 在
-    // `imageRegion.target` 有值时藏掉评论按钮），而且没有任何地方画 `image-region` 的
-    // 锚点。它有 `send` 那条出口，没有「留成评论」那条——那要另开一步，先把图片档的
-    // 锚点渲染和评论入口接上。
     if (area.value) {
       const quotedContext = { kind: 'web-region' as const, ...area.value }
+      return isQuotedContext(quotedContext) ? quotedContext : null
+    }
+    // 图片上框的那一块也要给出来：评论栏已经开着时读者可以直接在里面写一条，那时
+    // `commentPick` 带的是这一块的位置文字；锚点要是 null，这条新评论会被画成「这一处
+    // 已经不在原处了」（`PreviewComments` 的 `placeOf` 只认带版本号的锚点）。
+    // 还没做的是「在图上看得到这一处」：没有地方画 `image-region` 的标记，框着时评论
+    // 按钮也收起来，所以它目前只从已经开着的那条评论栏里被写下去。
+    if (image.value) {
+      const identity = props.docIdentity
+      if (!identity?.version) return null
+      const { path, source, version, taskId } = identity
+      const quotedContext = { ...image.value, path, source, version, task_id: taskId ?? null }
       return isQuotedContext(quotedContext) ? quotedContext : null
     }
     if (page.value) {

@@ -118,3 +118,19 @@ it('拿不到身份时退回拼一句话那条老路，不白丢读者写的那�
   // 退回去的是那一句话（替身给的那一句），不是结构化引用。
   expect(onLocate.mock.calls[0]?.[0]).toMatchObject({ message: '图片区域：一句话' })
 })
+
+it('评论栏里留一条评论时也给得出锚点，不是让它挂成「这一处已经不在原处了」', () => {
+  // 评论栏已经开着时读者可以直接在里面写一条；那时面板带下去的是这一块的位置文字，
+  // 锚点要是 null，`PreviewComments` 的 `placeOf` 只认带版本号的锚点，会把这条刚挂上
+  // 去的评论画成「已失效」（`DocThreadCard` 的 `is-gone`）。
+  const { locator } = mount(undefined)
+  locator.onImageRegion(selection)
+
+  expect(locator.quoted.anchor()).toMatchObject({
+    kind: 'image-region',
+    path: '示意图.png',
+    version: 'v8',
+    task_id: 'task',
+    natural_width: 1024,
+  })
+})
