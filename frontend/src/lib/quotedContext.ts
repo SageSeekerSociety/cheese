@@ -16,6 +16,7 @@ export type QuotedContext =
   | WebElementQuote
   | WebTextQuote
   | WebRegionQuote
+  | ImageRegionQuote
 
 /** 带文件身份的那些引文共有的那一半：文件身份 + 版本。少了哪一样都指不回同一份东西。
  *
@@ -165,6 +166,25 @@ export type WebRegionQuote = Readonly<{
   viewport: WebViewport
 }>
 
+/** 图片上框出的一块：坐标是**原图像素**，不是显示像素。图片没有视口，它自己有一份不变
+ *  的原图尺寸，位置直接记原图上的像素；显示出来是缩放的，读者改窗口大小也不改变这一块
+ *  指的原图上是哪一块。这和网页那一类刚好相反——那边非得记像素加视口，正是因为网页没有
+ *  一份稳定的原图。
+ *
+ *  `natural_width`/`natural_height` 是框的时候那张原图的尺寸：带上它，受话人不必先取一次
+ *  原图，就能把这一块按比例画回任何一种缩放下。 */
+export type ImageRegionQuote = Readonly<
+  FileIdentity & {
+    kind: 'image-region'
+    x: number
+    y: number
+    width: number
+    height: number
+    natural_width: number
+    natural_height: number
+  }
+>
+
 export function frozenQuote(quote: QuotedContext): QuotedContext {
   return Object.freeze({ ...quote })
 }
@@ -212,6 +232,11 @@ function isLength(value: unknown): value is number {
  *  一个 422。 */
 function isPositiveLength(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+/** 一个正整数：原图尺寸用。后端收 `int`，1.5 或 "10" 都会吃 422。 */
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
 /** 量出来的一块地方。 */
@@ -281,6 +306,20 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
       (q.heading === null || typeof q.heading === 'string') &&
       typeof q.prefix === 'string' &&
       typeof q.suffix === 'string'
+    )
+  }
+  if (q.kind === 'image-region') {
+    // 原图像素：左上角可以贴边（0），宽高得真的框出东西来（后端 `gt=0`）。原图尺寸是
+    // 正整数——它来自图片自己，不是量出来的浮点数。
+    return (
+      isCoordinate(q.x) &&
+      q.x >= 0 &&
+      isCoordinate(q.y) &&
+      q.y >= 0 &&
+      isPositiveLength(q.width) &&
+      isPositiveLength(q.height) &&
+      isPositiveInt(q.natural_width) &&
+      isPositiveInt(q.natural_height)
     )
   }
   return false
