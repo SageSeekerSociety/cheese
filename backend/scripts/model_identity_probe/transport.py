@@ -195,21 +195,23 @@ class Endpoint:
         )
 
     # ---- requests ------------------------------------------------------------
-    def _client(self, *, stream: bool = False) -> httpx.Client:
+    def _client(
+        self, *, stream: bool = False, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> httpx.Client:
         if self.mode in ("proxy", "seat"):
             return httpx.Client(
                 proxy=self.proxy_url,
                 verify=self.ca_path or True,
-                timeout=DEFAULT_TIMEOUT_S,
+                timeout=timeout,
                 trust_env=False,
             )
         if self.mode == "gateway" and self.socket:
             return httpx.Client(
                 transport=httpx.HTTPTransport(uds=self.socket),
-                timeout=DEFAULT_TIMEOUT_S,
+                timeout=timeout,
                 trust_env=False,
             )
-        return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
+        return httpx.Client(timeout=timeout, trust_env=False)
 
     def _gateway_base(self) -> str:
         return "http://cheese" if self.socket else self.backend.rstrip("/")
@@ -223,7 +225,9 @@ class Endpoint:
                 "authorization": f"Bearer {os.environ.get(self.connector_token_env, '')}"
             }
         )
-        with self._client() as client:
+        # The catalog carries every row's full parameters; it gets longer
+        # than a probe turn.
+        with self._client(timeout=60) as client:
             return client.get(f"{self._gateway_base()}/llm/v1/models", headers=auth)
 
     def _url(self) -> str:
