@@ -121,6 +121,63 @@ describe('who decides that the reader is at the end', () => {
     expect(stick.following.value).toBe(false)
   })
 
+  it('does not read a click inside the log as the reader scrolling away', async () => {
+    // 页签、「查看完整输出」、图片都长在这一窗里，点它们同样从容器里冒上来一次
+    // pointerdown。那一下就挨着换内容，如果把按下当成「读者在滚」，这一窗就停住了
+    // ——从某个队友切回「全部」落在原地，不回最新一条。
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 }
+    const el = pane(box)
+    const { stick } = await mount(el)
+    el.dispatchEvent(new Event('scroll'))
+    expect(stick.following.value).toBe(true)
+
+    // 点一个页签：按下、松开；紧接着内容换成别的一窗，高度变了，scroll 落在半路。
+    el.dispatchEvent(new Event('pointerdown'))
+    window.dispatchEvent(new Event('pointerup'))
+    box.scrollHeight = 3000
+    box.scrollTop = 1200
+    el.dispatchEvent(new Event('scroll'))
+
+    expect(stick.following.value, '点一下不算读者滚走').toBe(true)
+  })
+
+  it('counts a drag that is still held when the content moves', async () => {
+    // 按住滚动条拖是真在挪视口：那几下 scroll 都到在松手之前，得算读者的。
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 }
+    const el = pane(box)
+    const { stick } = await mount(el)
+    el.dispatchEvent(new Event('scroll'))
+
+    el.dispatchEvent(new Event('pointerdown'))
+    box.scrollHeight = 3000
+    box.scrollTop = 1200
+    el.dispatchEvent(new Event('scroll'))
+    expect(stick.following.value).toBe(false)
+
+    // 松手之后这一次才算布局的。
+    window.dispatchEvent(new Event('pointerup'))
+    el.dispatchEvent(new Event('scroll'))
+    expect(stick.following.value, '松手后的那一次归布局，读数不动').toBe(false)
+  })
+
+  it('drops the claim when the window loses focus mid-press', async () => {
+    // 按着的时候切走窗口，这一页再也收不到 pointerup；不作废的话这一笔挂到下一次
+    // 按下，同一个「点一下就被当成滚走」的 bug 只是更难碰上。
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 }
+    const el = pane(box)
+    const { stick } = await mount(el)
+    el.dispatchEvent(new Event('scroll'))
+
+    el.dispatchEvent(new Event('pointerdown'))
+    window.dispatchEvent(new Event('blur'))
+    // 内容换掉、高度跟着变，scroll 落在半路——这一下该归布局。
+    box.scrollHeight = 3000
+    box.scrollTop = 1200
+    el.dispatchEvent(new Event('scroll'))
+
+    expect(stick.following.value, '失焦之后不算读者还在按着').toBe(true)
+  })
+
   it('stops pinning the moment the reader scrolls away', async () => {
     const frames: FrameRequestCallback[] = []
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {

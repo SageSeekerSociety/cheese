@@ -46,11 +46,27 @@ export function useStickToBottom(scrollRef: Ref<HTMLElement | null>, threshold: 
   const following = ref(true)
   let contentHeight = 0
   let viewport = 0
-  // 读者自己的输入（滚轮、触屏、按住滚动条）到过一次、还没被下一次 scroll 认领。
+  // 读者自己的输入（滚轮、触屏、按住滚动条拖）到过一次、还没被下一次 scroll 认领。
   let readerScrolled = false
 
   const noteReader = (): void => {
     readerScrolled = true
+  }
+
+  // 按下就记一笔「读者在动视口」是错的：页签、<summary>、图片这些控件都长在这一窗里，
+  // 点它们同样冒上来一次 pointerdown，可它们跟滚动毫无关系。记下来之后，紧跟其后那次
+  // 布局自己的 scroll（换视角时整窗换掉、高度跟着变）就会被当成读者滚的，跟随当场停住
+  // ——从某个队友切回「全部」就停在原地，不回最新一条。
+  //
+  // 所以这一笔只在**按住**期间有效：拖滚动条滚出来的 scroll 都在松手之前到，松手时把
+  // 它作废；而一次点击在松手前不会再冒出 scroll，那一笔就到此为止，后面换内容引起的
+  // scroll 还归布局。滚轮、触屏照旧——它们本身就是滚动，一按就走。
+  //
+  // 松手那一下不一定回得来：按着的时候切走窗口（Alt-Tab、点到别的应用上），浏览器不
+  // 会再给这一页派 pointerup，这一笔就永远挂着，同一个 bug 只是更难碰上。所以窗口失焦
+  // 也作废。
+  const releasePointer = (): void => {
+    readerScrolled = false
   }
 
   function measure(el: HTMLElement): void {
@@ -148,6 +164,9 @@ export function useStickToBottom(scrollRef: Ref<HTMLElement | null>, threshold: 
         old.removeEventListener('touchmove', noteReader)
         old.removeEventListener('pointerdown', noteReader)
       }
+      window.removeEventListener('pointerup', releasePointer, true)
+      window.removeEventListener('pointercancel', releasePointer, true)
+      window.removeEventListener('blur', releasePointer, true)
       observer.disconnect()
       if (!el) return
       // 换了个滚动容器＝这一格重新挂上了：打开它就停在最新的一条。
@@ -158,6 +177,11 @@ export function useStickToBottom(scrollRef: Ref<HTMLElement | null>, threshold: 
       el.addEventListener('wheel', noteReader, { passive: true })
       el.addEventListener('touchmove', noteReader, { passive: true })
       el.addEventListener('pointerdown', noteReader, { passive: true })
+      // 松手可能发生在这一窗外面（拖到边上才松开），也可能是 pointercancel：
+      // 挂在 window 上才收得到。
+      window.addEventListener('pointerup', releasePointer, true)
+      window.addEventListener('pointercancel', releasePointer, true)
+      window.addEventListener('blur', releasePointer, true)
       observer.observe(el)
     },
     { immediate: true }
@@ -169,6 +193,9 @@ export function useStickToBottom(scrollRef: Ref<HTMLElement | null>, threshold: 
     el?.removeEventListener('wheel', noteReader)
     el?.removeEventListener('touchmove', noteReader)
     el?.removeEventListener('pointerdown', noteReader)
+    window.removeEventListener('pointerup', releasePointer, true)
+    window.removeEventListener('pointercancel', releasePointer, true)
+    window.removeEventListener('blur', releasePointer, true)
     observer.disconnect()
   })
 
