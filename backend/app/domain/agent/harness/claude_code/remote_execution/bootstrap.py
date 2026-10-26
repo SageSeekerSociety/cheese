@@ -1153,6 +1153,8 @@ def start_sandbox(
 
 @contextlib.contextmanager
 def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
+    if sys.platform != "win32":  # Before every path below: its room holds none (docs).
+        payload["env"]["CHEESE_TOKEN"] = ""
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -1241,8 +1243,6 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
             ):
                 env.pop(name)
         env.update(payload["env"])
-        if sys.platform != "win32":  # A room with its socket holds none (docs).
-            env["CHEESE_TOKEN"] = ""
         env.update(package_env)
         env.update(
             HOME=str(home),
