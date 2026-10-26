@@ -20,7 +20,8 @@
  * `catalogPanels.ts`。
  */
 import type { MaybeRef, Ref } from 'vue'
-import type { PanelPreviewTextEdit } from '@/composables/panelPreview/textEdit'
+import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
+import type { DocSession } from '@/composables/useDocCollab'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
@@ -36,6 +37,8 @@ import type { AgentControlState } from '@/types/agentControl'
 import type { ThreadReply, ThreadRow } from '@/types/threads'
 
 import { computed, reactive, ref, shallowRef, unref } from 'vue'
+
+import { localDocSession } from '@/lib/docLocalSession'
 
 import { useDocPeople } from '@/composables/useDocPeople'
 
@@ -377,9 +380,9 @@ export function previewBundle(
       avatarOf: () => '',
     },
     revs: v.revs,
-    // 演示里编辑会话是活的（点「编辑」真能改、能收起），但保存不连后端——预览站不写
+    // 演示里协同会话是活的（点「编辑」真能改、能收起），但存回不连后端——预览站不写
     // 任何东西（同上面的 `refuseWrite`）。
-    textEdit: demoTextEdit(ref(v.previewFile)),
+    liveEdit: demoLiveEdit(ref(v.previewFile)),
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
     editor: v.editor,
@@ -464,53 +467,38 @@ export function docBundle(
   }
 }
 
-/** 预览格里就地改 markdown 的那个会话（`usePanelPreviewTextEdit` 的返回）。
+/** 预览格里和大家一起改 markdown 的那个会话（`usePanelPreviewLiveEdit` 的返回）。
  *
- *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件、正文
- *  读得出来）。只有「存到后端」不连——预览站不写任何东西，存一下就当存成了、把编辑器
- *  收起来（同上面那些 `refuseWrite` 的说明）。 */
-function demoTextEdit(file: Ref<FileContent | null>): PanelPreviewTextEdit {
-  const draft = ref<string | null>(null)
-  const error = ref('')
-  const saving = ref(false)
-  const conflicted = ref(false)
-  const pinnedPath = ref('')
+ *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件）。正文
+ *  绑在一份只活在这个页面里的协同文档上（`localDocSession`），所以点「编辑」真能打字，
+ *  只是不连协作服务、也不存回文件——预览站不写任何东西（同上面那些 `refuseWrite`）。 */
+function demoLiveEdit(file: Ref<FileContent | null>): PanelPreviewLiveEdit {
+  const session = shallowRef<DocSession | null>(null)
+  const editingPath = computed(() => (session.value ? file.value?.path ?? '' : ''))
   const canEdit = computed(() => {
     const f = file.value
-    if (!f || f.content === null || !f.version || f.binary || f.too_large) return false
-    if (f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
+    if (!f || f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
     return (DOCUMENT_TYPES[suffixOf(f.path)]?.view ?? null) === 'markdown'
   })
-  const close = () => {
-    draft.value = null
-    pinnedPath.value = ''
-    error.value = ''
-    conflicted.value = false
-    saving.value = false
-  }
   return {
-    draft,
-    error,
-    saving,
-    conflicted,
-    pinnedPath,
     canEdit,
-    begin() {
+    editingPath,
+    refused: ref(''),
+    session,
+    connection: ref('connected'),
+    synced: ref(true),
+    readOnly: ref(false),
+    peers: shallowRef([]),
+    error: ref(''),
+    outdated: ref(false),
+    deleted: ref(false),
+    begin: async () => {
       const f = file.value
-      if (!canEdit.value || !f || f.content === null) return
-      draft.value = f.content
-      pinnedPath.value = f.path
-      error.value = ''
-      conflicted.value = false
+      if (!canEdit.value || !f) return
+      session.value = localDocSession(f.content ?? '', `demo:${f.path}`)
     },
-    cancel: close,
-    save: async () => {
-      close()
-      return true
-    },
-    reload: noopAsync,
-    setDraft: (value: string) => {
-      draft.value = value
+    end: () => {
+      session.value = null
     },
   }
 }

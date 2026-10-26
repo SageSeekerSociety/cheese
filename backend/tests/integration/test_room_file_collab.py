@@ -133,6 +133,32 @@ def test_a_store_through_the_service_becomes_a_version_of_the_file(client):
     assert reloaded["content"] == "第一版\n第二行\n"
 
 
+def test_a_store_that_moved_the_text_tells_the_open_editors(client, monkeypatch):
+    # A store becomes a new version of the file; the editors still hold the old
+    # text and everything derived from it (the history, the comment anchors) has
+    # to be re-read. That is the frame a living document's store sends, and the
+    # room-file store has to send it too — under the name the service knows.
+    told: list[tuple[str, dict]] = []
+
+    async def record(name: str, frame: dict):
+        told.append((name, frame))
+
+    monkeypatch.setattr(collab, "tell_named", record)
+    project, room = _room(client)
+    _put(client, project, room, "第一版\n".encode())
+    name = _open(client, room).json()["data"]["document"]
+    told.clear()  # opening a file tells nobody anything
+
+    assert _store(client, name, "第一版\n第二行\n", "alice").status_code == 200
+    assert told == [(name, {"type": "state", "resource": "doc"})]
+
+    # A store that changed no text wrote no version, so there is nothing for the
+    # editors to re-read: no frame either.
+    told.clear()
+    assert _store(client, name, "第一版\n第二行\n", "alice").status_code == 200
+    assert told == []
+
+
 def test_the_live_state_row_is_inserted_inside_the_savepoint(client):
     # Losing the create race must not abort the caller's transaction. That
     # only holds if the INSERT is inside the savepoint: begin_nested() flushes

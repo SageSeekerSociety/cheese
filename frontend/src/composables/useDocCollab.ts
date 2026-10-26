@@ -120,7 +120,20 @@ function heard(document: string, payload: string, on: Heard) {
   }
 }
 
-export function useDocCollab(document: () => string | null) {
+/** How a caller opens its own kind of live document.
+ *
+ *  A living document asks the backend for a ticket by id (`getDocTicket`). A room
+ *  file is opened by `(room, path)` instead, and the name it connects under is the
+ *  one that call returns (`roomfile:<id>`) — not the id the caller watches. Both
+ *  end up as the same `DocTicket`, so the socket half below is identical. */
+export interface DocLiveSource {
+  /** Which live document to be on, or null to be on none. Changing it reopens. */
+  watch: () => string | null
+  /** The ticket and the name to connect under, asked again on every reconnect. */
+  open: (key: string) => Promise<DocTicket>
+}
+
+export function useDocCollab(document: () => string | null, source?: DocLiveSource) {
   // 「这个人挑过头像吗」要先知道全局默认头像的 id（见 useChosenAvatar）：注册时
   // profile 一律被填上默认头像，直接 getAvatarUrl 会给没挑过的人配同一张脸。幂等，
   // 问一次全进程共用；到这里打开文档时通常已经有答案。
@@ -165,7 +178,7 @@ export function useDocCollab(document: () => string | null) {
     deleted.value = false
     let first: DocTicket
     try {
-      first = await getDocTicket(id)
+      first = await (source ? source.open(id) : getDocTicket(id))
     } catch (cause) {
       if (mine === generation) {
         error.value = cause instanceof Error ? cause.message : String(cause)
@@ -176,8 +189,12 @@ export function useDocCollab(document: () => string | null) {
     if (mine !== generation) return
     readOnly.value = first.read_only
     suggestOnly.value = first.suggest_only
-    const opened = connectToService(() => getDocTicket(id), first)
+    const opened = connectToService(() => (source ? source.open(id) : getDocTicket(id)), first)
     const { doc, provider } = opened
+    // The name the service knows this document by. A living document is named
+    // after its id; a room file is named after its live state's id, which the
+    // open call returns — the signals below travel under that name.
+    const name = first.document
     const account = myAccount()
     const user = {
       name: account?.nickname || account?.username || '',
@@ -192,11 +209,11 @@ export function useDocCollab(document: () => string | null) {
       if (state) synced.value = true
     })
     provider.on('authenticated', () => {
-      if (mine === generation && !session.value) session.value = { document: id, doc, provider, user }
+      if (mine === generation && !session.value) session.value = { document: name, doc, provider, user }
     })
     provider.on('stateless', ({ payload }: { payload: string }) => {
       if (mine !== generation) return
-      heard(id, payload, {
+      heard(name, payload, {
         stored: () => stores.value++,
         mentionedOutside: (outside) => (mentionedOutside.value = outside),
         renamed: () => renames.value++,
@@ -243,7 +260,7 @@ export function useDocCollab(document: () => string | null) {
   }
 
   watch(
-    document,
+    source?.watch ?? document,
     (id) => {
       if (id) void open(id)
       else {
