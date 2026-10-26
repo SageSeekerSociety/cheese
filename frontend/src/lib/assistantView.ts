@@ -191,6 +191,7 @@ const STEP_ARG: Record<string, string> = {
   'cheese_task.open': 'title',
   'cheese_card.decide': 'ref',
   'cheese_inbox.respond': 'ref',
+  cheese_people: 'who',
   'cheese_room.member': 'who',
   'cheese_room.create': 'title',
   'cheese_web.fetch': 'url',

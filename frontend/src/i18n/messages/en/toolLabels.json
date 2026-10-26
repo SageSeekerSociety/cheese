@@ -152,5 +152,9 @@
   "webFetch": "Read web page",
   "webSearch": "Search the web",
   "write": "Write file",
-  "writeFile": "Write file"
+  "writeFile": "Write file",
+  "cheeseSpaceAnnounce": "Announce",
+  "cheeseSpaceCategory": "Manage categories",
+  "cheeseSpaceCode": "Manage invite codes",
+  "cheeseSpaceReview": "Review a problem"
 }

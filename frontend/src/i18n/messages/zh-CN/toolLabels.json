@@ -152,5 +152,9 @@
   "webFetch": "读取网页",
   "webSearch": "搜索网页",
   "write": "写入文件",
-  "writeFile": "写入文件"
+  "writeFile": "写入文件",
+  "cheeseSpaceAnnounce": "发公告",
+  "cheeseSpaceCategory": "管理分类",
+  "cheeseSpaceCode": "管理邀请码",
+  "cheeseSpaceReview": "审核题目"
 }

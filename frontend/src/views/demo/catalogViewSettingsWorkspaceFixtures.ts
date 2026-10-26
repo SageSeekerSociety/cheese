@@ -642,7 +642,7 @@ export const ASSISTANT_RULES: AssistantRules = {
     { code: 'remove_member', label: '移除成员' },
     { code: 'lower_role', label: '降低成员的角色' },
     { code: 'delete', label: '删除内容' },
-    { code: 'to_everyone', label: '在综合频道发消息' },
+    { code: 'to_everyone', label: '发给所有人的消息' },
   ],
 }
 
@@ -761,7 +761,7 @@ export const ASSISTANT_RECENT: AssistantActivityItem[] = [
     summary: '在频道「综合」（项目「机器学习课程」，全体成员都会看到）发消息：\n@李老师 演示视频我来负责',
     verdict: 'asked',
     stage: 'rule',
-    reason: '你设置了「在综合频道发消息」需要确认',
+    reason: '你设置了「发给所有人的消息」需要确认',
     at: '2026-10-22T09:00:12Z',
   },
   {

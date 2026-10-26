@@ -95,8 +95,12 @@ class ActorResolver:
         writes: bool = False,
         endpoint: str | None = None,
         gate_pass: str = "",
+        path_ids: frozenset[str] = frozenset(),
     ):
         self._session = session
+        # The ids the route's path names (a team's, a space's, an invitation's):
+        # where a pass may be spent, besides the project and room it resolves.
+        self._path_ids = path_ids
         # What a person's 芝士 shows at a gated route (``GATED_ROUTES``), and
         # whether it has already been let through this request.
         self._gate_pass = gate_pass
@@ -207,7 +211,8 @@ class ActorResolver:
                     self._gate_pass,
                     work=claims.work,
                     endpoint=self._endpoint or "",
-                    places={str(p) for p in (topic_id, project_id) if p is not None},
+                    places={str(p) for p in (topic_id, project_id) if p is not None}
+                    | self._path_ids,
                 )
             if not self._through_gate:
                 raise ForbiddenError(say("assistantGateNotPassed"))
