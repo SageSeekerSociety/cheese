@@ -447,21 +447,28 @@ class SocketTokenSource:
             connection.request("GET", "/credential")
             response = connection.getresponse()
             body = response.read()
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            # Nothing answered (the connector or the platform is away): worth
+            # waiting out, as any other absence of the tunnel's far end.
             raise PreviewError(
-                f"could not ask the platform socket: {exc}"  # i18n-exempt: machine log
+                f"could not ask the platform socket: {exc}",  # i18n-exempt: machine log
+                retryable=True,
             ) from exc
         finally:
             connection.close()
         if response.status != 200:
+            # A 4xx is the platform saying no (the session is gone); a 5xx is it
+            # being away.
             raise PreviewError(
-                f"the platform socket refused: HTTP {response.status}"  # i18n-exempt: machine log
+                f"the platform socket refused: HTTP {response.status}",  # i18n-exempt: machine log
+                retryable=response.status >= 500,
             )
         try:
             token = json.loads(body)["token"]
         except (ValueError, KeyError, TypeError) as exc:
             raise PreviewError(
-                "the platform socket gave no credential"  # i18n-exempt: machine log
+                "the platform socket gave no credential",  # i18n-exempt: machine log
+                retryable=True,
             ) from exc
         return str(token)
 

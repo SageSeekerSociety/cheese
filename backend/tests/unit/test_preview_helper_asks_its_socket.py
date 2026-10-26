@@ -1,7 +1,8 @@
 """The preview helper on a machine with a platform socket.
 
-The rule, as a person would state it: each connection it opens is opened on a
-credential asked of the socket for it, not on a token kept in a file.
+The rules, as a person would state them: each connection it opens is opened
+on a credential asked of the socket for it, not on a token kept in a file; a
+socket that does not answer is waited out like any other absence.
 """
 
 import json
@@ -56,6 +57,7 @@ def test_each_connection_is_opened_on_a_credential_asked_for_it(platform_socket)
     assert asked == ["/credential", "/credential"]
 
 
-def test_a_socket_that_is_not_there_is_said_plainly():
-    with pytest.raises(PreviewError):
+def test_a_socket_that_does_not_answer_is_waited_out():
+    with pytest.raises(PreviewError) as raised:
         SocketTokenSource("/tmp/no-such-platform.sock", timeout=1).get()
+    assert raised.value.retryable

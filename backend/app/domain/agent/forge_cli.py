@@ -182,6 +182,10 @@ def _ask_socket(path, target, timeout=30):
         connection.request("GET", target)
         response = connection.getresponse()
         body = response.read()
+    except http.client.HTTPException as exc:
+        raise OSError(
+            f"the platform socket broke off: {exc}"  # i18n-exempt: machine log
+        ) from exc
     finally:
         connection.close()
     if response.status != 200:
@@ -254,7 +258,16 @@ def github_transport(data, env):
 
         class Connection(socketserver.BaseRequestHandler):
             def handle(self):
-                helper["handle_connection"](self.request, tunnel, _tunnel_secret())
+                try:
+                    secret = _tunnel_secret()
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    print(
+                        f"[cheese] 平台通道暂时没给出凭据，这次连接没能打开：{exc}",
+                        file=sys.stderr,
+                    )
+                    self.request.close()
+                    return
+                helper["handle_connection"](self.request, tunnel, secret)
 
         class Proxy(socketserver.ThreadingTCPServer):
             daemon_threads = True

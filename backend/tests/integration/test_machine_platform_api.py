@@ -115,6 +115,7 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
         },
     )
     assert answer.status_code == 200, answer.text
+    assert answer.headers["cache-control"] == "no-store"
     claims = scoped_token_claims(answer.json()["token"])
     assert claims is not None
     assert claims["session"] == str(room.session_id)

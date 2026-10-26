@@ -13,7 +13,7 @@ names, under the session's own credential made for that request.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.exceptions import ExceptionMiddleware
 from starlette.types import Receive, Scope, Send
@@ -85,7 +85,7 @@ async def whoami(caller: Caller) -> dict:
 @router.get("/credential")
 async def credential(
     caller: Caller, db: Annotated[AsyncSession, Depends(get_db)]
-) -> dict:
+) -> JSONResponse:
     """The session's credential for what cannot go down the socket: git's
     own requests to the forge relay, the preview tunnel, a body over the
     socket's limit. It lasts a minute and is asked for right before that use,
@@ -93,7 +93,11 @@ async def credential(
     token = await credential_of(db, caller, ttl_s=HANDED_CREDENTIAL_TTL_S)
     if token is None:
         raise ForbiddenError()
-    return {"token": token, "expires_in": HANDED_CREDENTIAL_TTL_S}
+    return JSONResponse(
+        {"token": token, "expires_in": HANDED_CREDENTIAL_TTL_S},
+        # A credential: nothing between here and the sandbox keeps a copy.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class _AsTheSession(Response):
