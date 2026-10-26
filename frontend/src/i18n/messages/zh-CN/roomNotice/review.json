@@ -1,8 +1,6 @@
 {
   "acceptConflict": "采纳停下：PR #{pr} 和目标分支冲突了",
   "acceptConflictDetail": "{url}\n冲突不能在采纳时解决：代码托管服务现在合并不了这个 PR。平台会把冲突交给 AI 队友，它在任务目录里合入目标分支、解决冲突后重新推送；检查通过后再重新采纳。",
-  "acceptRefusedByForge": "采纳停下：代码托管服务一直判定 PR #{pr} 不能合并",
-  "acceptRefusedByForgeDetail": "{url}\n代码托管服务一直判定这个 PR 不能合并，多半是和目标分支冲突了，这在采纳时解决不了。平台会把它交给 AI 队友，它在任务目录里合入目标分支、解决冲突后重新推送；检查通过后再重新采纳。",
   "acceptDismissed": "PR #{pr} 有新提交，已有的采纳批准被作废",
   "acceptDismissedDetail": "被作废的批准：{voided}。\n新提交作废已有的采纳（项目分支保护，默认开）。请重新查看这个 PR 后再采纳。\n{url}",
   "acceptDone": "{actor} 采纳了这次改动，PR #{pr} {how}",
@@ -106,7 +104,6 @@
   "prClosed": "PR #{pr} 已关闭且没有合并，审阅已作废",
   "prClosedDetail": "PR 在 GitHub 上被关闭且没有合并，平台自动作废了这次审阅，不会合并它。要继续交付，重新提交审阅。\n{url}",
   "prConflict": "PR #{pr} 和目标分支冲突了",
-  "prRefusedByForge": "代码托管服务一直判定 PR #{pr} 不能合并",
   "prMerged": "已合并",
   "prMergedDelivered": "PR #{pr} 已在代码仓库合并，任务已交付",
   "prMergedExternally": "已在 GitHub 上被人工合并（不是平台合的）",

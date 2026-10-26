@@ -5,7 +5,17 @@ import json
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
+
+
+@pytest.fixture(autouse=True)
+def _no_reachable_repository(tmp_path, monkeypatch):
+    """A `mergeable: false` here starts a test merge in the background
+    (`merge_check`); it finds no repository and leaves no answer."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "workspace"))
+    missing = (tmp_path / "missing.git").as_uri()
+    monkeypatch.setattr(ForgejoClient, "git_url", lambda self, owner, repo: missing)
 
 
 class Tokens:

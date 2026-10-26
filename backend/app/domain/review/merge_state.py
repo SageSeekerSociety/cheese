@@ -314,41 +314,6 @@ def _passthrough(
             return MergeVerdict(state="unknown", reasons=(verdict,))
 
 
-#: How long Forgejo may keep refusing one (head, base) pair before the platform
-#: stops reading the refusal as a merge check still running. Measured on Forgejo
-#: 15.0.9, the check that follows a push starts about a second after it and
-#: finishes 0.5–1.7 s later; a busy queue takes longer, and this is far past any
-#: of that. Past it, what is left is a conflict or a check that errored, and the
-#: copy says exactly that much.
-FORGE_REFUSAL_SETTLES = timedelta(minutes=2)
-
-#: Where a card's merge-state mirror keeps the :func:`forge_refusal` record.
-FORGE_REFUSED_KEY = "forge_refused"
-
-#: What the card says while Forgejo's refusal is younger than that.
-FORGE_REFUSAL_PENDING = "代码托管服务尚未算出 PR 能否合并"
-#: And once it is not: true of a conflict and of a merge check that errored.
-FORGE_REFUSAL_SETTLED = "代码托管服务一直判定不能合并，多半是和目标分支冲突了"
-
-
-def forge_refusal(
-    previous: object, *, head: str, base: str, now: datetime
-) -> dict[str, str]:
-    """Since when the forge has refused this (head, base) pair.
-
-    ``previous`` is the record the last reading left (anything else when there
-    is none). The same pair keeps its clock; a push to either side is a new
-    pair and starts it again, because the forge then checks again."""
-    if (
-        isinstance(previous, dict)
-        and previous.get("head") == head
-        and previous.get("base") == base
-        and isinstance(previous.get("since"), str)
-    ):
-        return {"head": head, "base": base, "since": previous["since"]}
-    return {"head": head, "base": base, "since": now.isoformat()}
-
-
 def compute_merge_state(
     *,
     github_mergeable_state: str | None,
@@ -360,7 +325,6 @@ def compute_merge_state(
     base_ancestry: str | None = None,
     github_enforces: bool = False,
     draft: bool = False,
-    refused_for: timedelta | None = None,
 ) -> MergeVerdict:
     """绑了 GitHub 的项目的合并态。规则见模块 docstring。
 
@@ -378,9 +342,6 @@ def compute_merge_state(
     - ``github_enforces``：GitHub 自己开了分支保护 → 原样透传它的裁决。
     - ``draft``：PR 是 draft（REST 也会在 ``mergeable_state`` 里给 "draft"，
       两个入口等价）。
-    - ``refused_for``：``mergeable_state`` 是 Forgejo 的 "refused" 时，它对同一对
-      (head, base) 已经说了多久「不能合」（:func:`forge_refusal`）。不到
-      ``FORGE_REFUSAL_SETTLES`` 是 unknown，过了才是 dirty。
     """
     state_word = _normalize(github_mergeable_state)
 
@@ -404,15 +365,6 @@ def compute_merge_state(
         return MergeVerdict(
             state="dirty",
             reasons=(MergeReason(kind="conflict", detail="与目标分支冲突"),),
-        )
-    if (
-        state_word == "refused"
-        and refused_for is not None
-        and refused_for >= FORGE_REFUSAL_SETTLES
-    ):
-        return MergeVerdict(
-            state="dirty",
-            reasons=(MergeReason(kind="conflict", detail=FORGE_REFUSAL_SETTLED),),
         )
 
     # 必跑名单（#468/#470 语义）：红 → blocked；缺席/skipped → blocked（等
@@ -528,12 +480,6 @@ def compute_merge_state(
                         kind="github_verdict", detail=f"GitHub 合并状态：{word}"
                     ),
                 ),
-            )
-        case "refused":
-            # Forgejo 说「不能合」还没满 FORGE_REFUSAL_SETTLES：多半还在检查。
-            return MergeVerdict(
-                state="unknown",
-                reasons=(MergeReason(kind="no_signal", detail=FORGE_REFUSAL_PENDING),),
             )
         case _:
             # "unknown"（GitHub 还没算完）或 None（payload 没带）。不可采纳

@@ -39,8 +39,8 @@ class PullRequestStatus:
     head_ref: str = ""
     base_ref: str = ""
     #: The commit the base branch is at as the forge answers (`base.sha`).
-    #: With `head_sha` it names the pair a merge check is about: a push to
-    #: either side starts a new one (`merge_state.forge_refusal`).
+    #: With `head_sha` it names the pair a test merge is about
+    #: (`merge_check`); a push to either side is a new pair.
     base_sha: str = ""
     #: GitHub's `mergeable`. **Three-valued on purpose**: True = git can merge
     #: it, False = it conflicts with the base, and None = GitHub has not
@@ -56,9 +56,6 @@ class PullRequestStatus:
     #: is that function's input, not a judgement of its own. None = the
     #: payload didn't carry it (fake/older payload) — distinct from the
     #: string "unknown", which is GitHub saying it hasn't computed one yet.
-    #: Forgejo adds one word of its own, "refused": it says the PR cannot be
-    #: merged right now, which is what it says while its merge check runs as
-    #: well as on a conflict (`ForgejoClient.status`).
     mergeable_state: str | None = None
     #: How many INLINE review comments the PR carries, from the PR payload
     #: itself. The poller uses it to decide whether the extra request that

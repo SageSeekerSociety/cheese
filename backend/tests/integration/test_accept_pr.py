@@ -12,6 +12,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 
 import asyncio
 import subprocess
+import threading
 import time
 import uuid
 import uuid as _uuid
@@ -321,6 +322,9 @@ class FakeGitHubPrClient:
         self.status_error: Exception | None = None
         # How long GitHub takes to say where a PR stands.
         self.status_delay_s: float = 0.0
+        # (entered, release): a status read sets `entered` and then waits for
+        # `release`, so a test can act while a reading is in flight.
+        self.status_gate: tuple[threading.Event, threading.Event] | None = None
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -433,6 +437,10 @@ class FakeGitHubPrClient:
     async def pull_request_status(
         self, *, owner, repo, number, token
     ) -> PullRequestStatus:
+        if self.status_gate is not None:
+            entered, release = self.status_gate
+            entered.set()
+            await asyncio.to_thread(release.wait, 30)
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:

@@ -14,7 +14,6 @@ from app.domain.review.merge_state import (
     RequiredCheck,
     checks_running,
     compute_merge_state,
-    forge_refusal,
     local_merge_state,
     whose_move,
 )
@@ -762,34 +761,3 @@ def test_a_mirror_saying_both_ci_runs_and_a_check_is_red_is_still_waiting_on_ci(
         now=_at(1),
         fresh_for=_FRESH,
     )
-
-
-# ---- Forgejo's refusal: a merge check still running, or a conflict -----------
-
-
-def test_forgejo_refusing_for_a_moment_is_not_yet_known():
-    verdict = compute_merge_state(
-        github_mergeable_state="refused",
-        github_mergeable=None,
-        refused_for=timedelta(seconds=5),
-    )
-    assert verdict.state == "unknown"
-
-
-def test_forgejo_refusing_past_the_settling_time_is_a_conflict():
-    verdict = compute_merge_state(
-        github_mergeable_state="refused",
-        github_mergeable=None,
-        refused_for=timedelta(minutes=3),
-    )
-    assert verdict.state == "dirty"
-
-
-def test_a_push_to_either_side_restarts_the_refusal_clock():
-    then = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
-    later = then + timedelta(minutes=5)
-    first = forge_refusal(None, head="h1", base="b1", now=then)
-    assert forge_refusal(first, head="h1", base="b1", now=later) == first
-    restarted = later.isoformat()
-    assert forge_refusal(first, head="h2", base="b1", now=later)["since"] == restarted
-    assert forge_refusal(first, head="h1", base="b2", now=later)["since"] == restarted

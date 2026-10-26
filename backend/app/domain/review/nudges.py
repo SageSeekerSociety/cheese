@@ -224,15 +224,9 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
     没有上限。冲突和 CI 失败一样是客观的：解掉它就消失，所以多叫几轮不会白叫
     （评审意见不是，见 `REVIEW_NUDGE_LIMIT`）。
 
-    Forgejo 没有这个 False：它的「不能合」（`mergeable_state == "refused"`）在合并
-    检查还没跑完时也这么说。调用方只在那份拒绝对同一对 (head, base) 持续过
-    `merge_state.FORGE_REFUSAL_SETTLES`、判定成 dirty 之后才叫到这里，这时说的也
-    只是那么多：托管服务一直判定不能合，多半是冲突。
-
     A dependent task can target its parent's branch; use the PR's actual base.
     """
-    refused = getattr(status, "mergeable_state", None) == "refused"
-    if getattr(status, "mergeable", None) is not False and not refused:
+    if getattr(status, "mergeable", None) is not False:
         return None
     # 分支名是 provider 可控的字符串，而它要被贴进芝士的终端。
     branch = pr_signals.sanitize_external(getattr(status, "head_ref", "") or "")
@@ -241,30 +235,18 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
         kind=pr_signals.NudgeKind.conflict,
         # commit 变了就重新算一次：芝士推了一次合并上来，冲突还在，那是新事实。
         signature=pr_signals.signature("conflict", card.pr_head_sha or ""),
-        event=say("prRefusedByForge" if refused else "prConflict", pr=card.pr_number),
+        event=say("prConflict", pr=card.pr_number),
         content=(
-            f"PR #{card.pr_number}（{card.pr_url}）的{where}"
-            + (
-                "代码托管服务一直判定不能合并，多半是和目标分支冲突了。\n"
-                if refused
-                else "和目标分支冲突了，代码托管服务现在合不了它。\n"
-            )
-            + "先确认 PR 当前目标分支，在对应任务目录合入该分支、解决冲突并验证。"
+            f"PR #{card.pr_number}（{card.pr_url}）的{where}和目标分支冲突了，"
+            "代码托管服务现在合不了它。\n"
+            "先确认 PR 当前目标分支，在对应任务目录合入该分支、解决冲突并验证。"
             "撞的是 .docx、.pptx、.xlsx 这类文件时不要合并内容：git 不在这类文件里"
             "留冲突标记，直接提交会把对方的修改悄悄丢掉。在对方那一版上把你的改动"
             "重做一遍，做法见 cheese 技能里「合并冲突」一节。"
             "提交后用 cheese push-fix 更新原 PR，说明处理结果。\n"
-            + (
-                "如果合入时没有冲突、冲突解不动、或者不该由你来解，在频道里说清楚卡在哪。"
-                if refused
-                else "如果冲突解不动、或者不该由你来解，在频道里说清楚卡在哪。"
-            )
+            "如果冲突解不动、或者不该由你来解，在频道里说清楚卡在哪。"
         ),
-        note=(
-            f"PR #{card.pr_number} 代码托管服务一直判定不能合并，正在处理"
-            if refused
-            else f"PR #{card.pr_number} 与目标分支冲突，正在解决"
-        ),
+        note=f"PR #{card.pr_number} 与目标分支冲突，正在解决",
         note_code=notes.NoteCode.merge_conflict,
         event_type=EVENT_PR_CONFLICT,
     )

@@ -383,30 +383,6 @@ async def _pr_verdict(
             files = None
         changed_paths = None if files is None else [path for _, path in files]
 
-    # Forgejo's "refused" is a merge check still running or a conflict, and
-    # only time tells them apart: the record of since when it has refused this
-    # (head, base) pair lives on the card's mirror, and every reading here —
-    # the poller's, a click's, a stale-snapshot refresh — carries it forward.
-    refused_for = None
-    mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
-    refusal = None
-    if status.mergeable_state == "refused":
-        now = datetime.now(UTC)
-        refusal = merge_state.forge_refusal(
-            mirror.get(merge_state.FORGE_REFUSED_KEY),
-            head=status.head_sha,
-            base=status.base_sha,
-            now=now,
-        )
-        refused_for = now - datetime.fromisoformat(refusal["since"])
-    if refusal != mirror.get(merge_state.FORGE_REFUSED_KEY):
-        # A new dict, so the JSON column sees the change; `_write_merge_mirror`
-        # keeps the record when it rewrites the rest of the mirror.
-        rest = {k: v for k, v in mirror.items() if k != merge_state.FORGE_REFUSED_KEY}
-        if refusal is not None:
-            rest[merge_state.FORGE_REFUSED_KEY] = refusal
-        card.merge_state = rest
-
     verdict = merge_state.compute_merge_state(
         github_mergeable_state=status.mergeable_state,
         github_mergeable=status.mergeable,
@@ -417,7 +393,6 @@ async def _pr_verdict(
         base_ancestry=ancestry,
         github_enforces=enforces,
         draft=status.draft,
-        refused_for=refused_for,
     )
     dependency = await self._dependency_block_reason(card, status)
     if dependency:
@@ -454,7 +429,7 @@ async def _mirror_pr_verdict(
         status=status,
         ref=ref,
     )
-    self._write_merge_mirror(card, verdict, who, ref)
+    await self._write_merge_mirror(card, verdict, who, ref)
     return verdict, who, protection, enforces, runs
 
 
@@ -689,7 +664,7 @@ async def _stop_accept_pr_unavailable(
 
 
 async def _stop_accept_conflict(
-    self: pkg.AcceptService, card: AcceptCard, topic: Topic, *, refused: bool = False
+    self: pkg.AcceptService, card: AcceptCard, topic: Topic, status: PullRequestStatus
 ) -> NoReturn:
     """PR 和目标分支冲突：采纳停下，说清是冲突，把解冲突交给芝士。
 
@@ -705,10 +680,13 @@ async def _stop_accept_conflict(
     `dirty`，它**不是**平台重算的结论：强制项目那份是 GitHub 的
     `mergeStateStatus` 原样透传，非强制项目那份也是 GitHub 的 `dirty` /
     `mergeable=False` 抄下来的（`compute_merge_state`）—— 两个方向都说的是
-    GitHub 的话。
+    托管服务的话。Forgejo 的 `False` 来自 git 的试合并（`forgejo_pr`、
+    `merge_check`），同样是确定了的冲突。
 
     叫醒的是芝士，和轮询那条路同一个判据：`whose_move(dirty)` 是 `agent`，
-    `_conflict_nudge` 也是这么派的（合入目标分支、解完重新推送）。房间提示的
+    `_conflict_nudge` 也是这么派的（合入目标分支、解完重新推送）：同一条提醒
+    在这里也发给芝士（`_hand_conflict_to_agent`），并记进同一本账，轮询不会再
+    发一遍。房间提示的
     `accept_conflict` 是为此登记的码（`notice_meta`），在此之前后端没有一处发过
     它 —— 卡的 `note_code` 同样落 `merge_conflict`，卡面因此显示「和主线有冲突，
     芝士正在处理」（`room_task.presentation`）。
@@ -716,43 +694,60 @@ async def _stop_accept_conflict(
     Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is
     written on its own connection and must never queue behind a row lock this
     doomed transaction still holds. The room notice goes out first, while
-    `topic` is still live.
-
-    ``refused``: the dirty came from Forgejo refusing the same (head, base)
-    past `merge_state.FORGE_REFUSAL_SETTLES`, not from a forge that reports a
-    conflict as such, so every line says only that much."""
+    `topic` is still live."""
     number = card.pr_number
     card_id = card.id
+    nudge = self._conflict_nudge(card=card, status=status)
     self._notify_merge_result(
         topic,
-        say("acceptRefusedByForge" if refused else "acceptConflict", pr=number),
+        say("acceptConflict", pr=number),
         task_id=card.task_id,
         meta=notice(
             EVENT_ACCEPT_CONFLICT,
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
-            detail=say(
-                "acceptRefusedByForgeDetail" if refused else "acceptConflictDetail",
-                url=card.pr_url or "",
-            ),
+            detail=say("acceptConflictDetail", url=card.pr_url or ""),
             detail_label=say("labelReason"),
         ),
     )
-    cause = (
-        "代码托管服务一直判定不能合并，多半是和目标分支冲突了"
-        if refused
-        else "和目标分支冲突了，代码托管服务现在合不了它"
-    )
     note = (
-        f"采纳未完成：PR #{number} {cause}（合并态：dirty）。"
-        "冲突要在任务目录里合入目标分支、解决并重新推送，"
+        f"采纳未完成：PR #{number} 和目标分支冲突了（合并态：dirty），"
+        "代码托管服务现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
         "所以这次采纳停下：解完冲突、检查绿了之后再重新采纳。"
     )
     await self._session.rollback()
+    if nudge is not None:
+        await _hand_conflict_to_agent(self, card_id, nudge)
     await self._note_outside_accept_txn(card_id, notes.NoteCode.merge_conflict, note)
-    raise UnprocessableEntityError(
-        say("acceptForgeRefused" if refused else "acceptConflicted", pr=number)
-    )
+    raise UnprocessableEntityError(say("acceptConflicted", pr=number))
+
+
+async def _hand_conflict_to_agent(
+    self: pkg.AcceptService, card_id: uuid.UUID, nudge: pr_signals.PendingNudge
+) -> None:
+    """Tell the task's agent about the conflict that stopped this accept.
+
+    The accept's own transaction is rolled back by then, so this commits on a
+    session of its own, through the poller's door (`_dispatch_nudges`): the
+    same delivery, and the same ledger, so the next poll does not send it
+    again. It runs before the stop note is written, so the card keeps that
+    note rather than the nudge's."""
+    async with pkg.async_session_factory() as session:
+        other = pkg.AcceptService(
+            session,
+            announce=self._announce,
+            settle_card=self._settle_card,
+            record_instruction=self._record_instruction,
+            task_teammate=self._task_teammate,
+            roster_team=self._roster_team,
+            executor=self._executor,
+        )
+        card = await other._card_or_404(card_id)
+        topic = await other._topic_or_404(card.topic_id)
+        await other._dispatch_nudges(
+            card=card, topic=topic, pending=[nudge], chat_service=None, runner=None
+        )
+        await session.commit()
 
 
 async def _stop_accept_title_disagrees(
