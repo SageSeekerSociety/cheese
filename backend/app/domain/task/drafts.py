@@ -225,9 +225,7 @@ class SpaceReads(Protocol):
 
     async def list_admins(self, space_id: int) -> Any: ...
 
-    async def list_domain_groups(
-        self, *, space_id: int, actor_user_id: int | None
-    ) -> Any: ...
+    async def list_domain_groups(self, *, space_id: int) -> Any: ...
 
 
 async def terms(
@@ -247,7 +245,7 @@ async def terms(
         raise NotFoundError.for_resource("space", space_id)
     categories = await spaces.list_categories(space_id)
     tags = await spaces.list_classification_topics(space_id)
-    groups = await spaces.list_domain_groups(space_id=space_id, actor_user_id=user_id)
+    groups = await spaces.list_domain_groups(space_id=space_id)
     admins = [a.user_id for a in await spaces.list_admins(space_id)]
     try:
         zone: tzinfo = ZoneInfo(zone_name or DEFAULT_ZONE)

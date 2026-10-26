@@ -252,7 +252,7 @@ MANAGER_ACTIONS = [
         "only a manager changes the board's settings",
         lambda b, h: b.client.patch(b.base, json={"intro": "after"}, headers=h),
         allowed=200,
-        outsider=403,
+        outsider=404,
         done=lambda b: b.owner_get("")["space"]["intro"] == "after",
     ),
     ManagerAction(
@@ -261,7 +261,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/categories", json={"name": "新单元"}, headers=h
         ),
         allowed=201,
-        outsider=403,
+        outsider=404,
         done=lambda b: (
             "新单元" in {c["name"] for c in b.owner_get("/categories")["categories"]}
         ),
@@ -274,7 +274,7 @@ MANAGER_ACTIONS = [
             headers=h,
         ),
         allowed=200,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_category),
         done=lambda b: (_category(b) or {}).get("name") == "改过的单元",
     ),
@@ -284,7 +284,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/categories/{b.made['category']}", headers=h
         ),
         allowed=204,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_category),
         done=lambda b: _category(b) is None,
     ),
@@ -294,7 +294,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/categories/{b.made['category']}/archive", headers=h
         ),
         allowed=200,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_category),
         done=lambda b: bool((_category(b) or {}).get("archivedAt")),
     ),
@@ -304,7 +304,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/categories/{b.made['category']}/archive", headers=h
         ),
         allowed=200,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_archived_category),
         done=lambda b: not (_category(b) or {"archivedAt": 1}).get("archivedAt"),
     ),
@@ -312,7 +312,7 @@ MANAGER_ACTIONS = [
         "only a manager lists the invite codes",
         lambda b, h: b.client.get(f"{b.base}/invite-codes", headers=h),
         allowed=200,
-        outsider=403,
+        outsider=404,
     ),
     ManagerAction(
         "only a manager mints an invite code",
@@ -320,7 +320,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/invite-codes", json={"maxUses": 3, "note": "第二班"}, headers=h
         ),
         allowed=201,
-        outsider=403,
+        outsider=404,
         done=lambda b: (
             "第二班"
             in {c.get("note") for c in b.owner_get("/invite-codes")["inviteCodes"]}
@@ -332,7 +332,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/invite-codes/{b.made['code']}", json={"maxUses": 6}, headers=h
         ),
         allowed=200,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_code),
         done=lambda b: (_code(b) or {}).get("maxUses") == 6,
     ),
@@ -342,7 +342,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/invite-codes/{b.made['code']}", headers=h
         ),
         allowed=204,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_code),
         done=lambda b: _code(b) is None,
     ),
@@ -372,7 +372,7 @@ MANAGER_ACTIONS = [
             headers=h,
         ),
         allowed=201,
-        outsider=403,
+        outsider=404,
         done=lambda b: "人民大学" in _group_names(b),
     ),
     ManagerAction(
@@ -383,7 +383,7 @@ MANAGER_ACTIONS = [
             headers=h,
         ),
         allowed=200,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_group),
         done=lambda b: _group_names(b) == {"北大"},
     ),
@@ -393,7 +393,7 @@ MANAGER_ACTIONS = [
             f"{b.base}/domain-groups/{b.made['group']}", headers=h
         ),
         allowed=204,
-        outsider=403,
+        outsider=404,
         prepare=_p(_make_group),
         done=lambda b: _group_names(b) == set(),
     ),
@@ -550,13 +550,14 @@ def test_an_admin_cannot_do_what_only_the_owner_may(
     board: Board, act: Callable[[Board, dict[str, str]], Response]
 ) -> None:
     """Deleting the board and deciding who manages it is the owner's alone: an
-    admin, a member and a stranger get 403, nobody signed in 401, and the board
+    admin and a member get 403, a stranger 404 (the board does not exist for
+    them), nobody signed in 401, and the board
     and its managers stay as they were. (The owner doing each is pinned in
     ``test_space.py``.)"""
     before = _managers(board)
     for who, headers, expected in [
         ("anonymous", ANON, 401),
-        ("outsider", board.outsider, 403),
+        ("outsider", board.outsider, 404),
         ("member", board.member, 403),
         ("admin", board.admin, 403),
     ]:

@@ -2,10 +2,10 @@
 route asks, whatever the object.
 
 A permission names its kind of object by its type — a team's
-(``app.domain.team.permissions.Permission``) is asked of a team — and each kind
-answers it from its own seats (``app.domain.team.permissions``). A route declares what it needs
-(``app.api.write_access.Needs``) and :func:`require` decides it before the
-handler runs.
+(``app.domain.team.permissions.Permission``) is asked of a team, a space's of a
+space — and each kind answers it from its own seats. A route declares what it
+needs (``app.api.write_access.needs``) and :func:`require` decides it before
+the handler runs.
 
 What a person cannot see does not exist for them: :func:`require` answers 404
 when the object is hidden from them, and 403 only when they see it but their
@@ -14,32 +14,47 @@ seat does not reach.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from types import ModuleType
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AccessDeniedError, NotFoundError
+from app.domain.space import permissions as space
 from app.domain.team import permissions as team
 
 #: Every permission a route may declare, by the kind of object it is asked of.
-Permission = team.Permission
+Permission = team.Permission | space.Permission
 
-_KIND: dict[type, str] = {team.Permission: "team"}
+#: Each kind's seats, by its permission type: the module answers ``may`` and
+#: ``sees`` for an object of that kind.
+_KINDS: dict[type, tuple[str, ModuleType]] = {
+    team.Permission: ("team", team),
+    space.Permission: ("space", space),
+}
 
 
 def kind_of(permission: Permission) -> str:
-    return _KIND[type(permission)]
+    return _KINDS[type(permission)][0]
+
+
+def _seats(permission: Permission) -> ModuleType:
+    return _KINDS[type(permission)][1]
 
 
 async def can(
     session: AsyncSession, user_id: int, permission: Permission, on: int
 ) -> bool:
-    return await team.may(session, on, user_id, permission)
+    may: Callable[..., Awaitable[bool]] = _seats(permission).may
+    return await may(session, on, user_id, permission)
 
 
 async def sees(
     session: AsyncSession, user_id: int, permission: Permission, on: int
 ) -> bool:
     """Whether the object the permission is asked of exists for this person."""
-    return await team.sees(session, on, user_id)
+    seen: Callable[..., Awaitable[bool]] = _seats(permission).sees
+    return await seen(session, on, user_id)
 
 
 async def require(

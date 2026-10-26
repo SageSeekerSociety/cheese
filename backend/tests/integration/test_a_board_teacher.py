@@ -469,7 +469,6 @@ def test_a_student_cannot_export_the_participant_roster(
         headers=_auth(student_token),
     )
     assert denied.status_code == 403, denied.text
-    assert "ForbiddenError" in denied.text
 
     # 紧邻那一格（参与者的分组统计）读的是同一批解密出来的身份，同一个门。
     denied_summary = api_client.get(

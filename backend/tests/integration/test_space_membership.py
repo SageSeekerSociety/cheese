@@ -739,7 +739,7 @@ class TestSpaceManagerPermissions:
             headers=_auth(first_token),
         )
         assert resp.status_code == 403, resp.text
-        assert _error_name(resp) == "ForbiddenError", resp.text
+        assert _error_name(resp) == "AccessDeniedError", resp.text
 
 
 class TestSideDoors:

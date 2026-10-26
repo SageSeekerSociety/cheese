@@ -281,14 +281,13 @@ class SpaceService:
         return await self._classification_topics_repo.list_topics_for_spaces(space_ids)
 
     async def replace_classification_topics(
-        self, *, space_id: int, topic_ids: Sequence[int], actor_user_id: int | None
+        self, *, space_id: int, topic_ids: Sequence[int]
     ) -> None:
         if self._classification_topics_repo is None:
             raise BadRequestError(
                 "classificationTopics is not configured on this server",
                 data={"spaceId": space_id},
             )
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._classification_topics_repo.replace_topics_for_space(
             space_id=space_id, topic_ids=topic_ids
         )
@@ -452,7 +451,6 @@ class SpaceService:
         teaching: dict | None = None,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
 
         if teaching is not None:
             # Refused here, before a single field of the row is touched: a
@@ -510,10 +508,8 @@ class SpaceService:
         name: str,
         description: str | None,
         display_order: int,
-        actor_user_id: int | None,
         default_role: str | None = None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         if not name.strip():
             raise BadRequestError("Category name cannot be empty")
         if await self._category_repo.exists_unarchived_name(space_id, name.strip()):
@@ -534,14 +530,12 @@ class SpaceService:
         *,
         space_id: int,
         category_id: int,
-        actor_user_id: int | None,
         name: str | None = None,
         description: str | None = None,
         display_order: int | None = None,
         archived: bool | None = None,
         default_role: str | None = None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
         if name is not None:
@@ -587,9 +581,7 @@ class SpaceService:
         *,
         space_id: int,
         category_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
         space = await self._repo.get_by_id(space_id)
@@ -617,9 +609,7 @@ class SpaceService:
         space_id: int,
         category_id: int,
         archived: bool,
-        actor_user_id: int | None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
         category.archived_at = datetime.now(UTC) if archived else None
         category.updated_at = datetime.now(UTC)
@@ -640,9 +630,7 @@ class SpaceService:
         space_id: int,
         target_user_id: int,
         role: SpaceAdminRole,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         existing = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -671,9 +659,7 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         relation = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -691,10 +677,8 @@ class SpaceService:
         space_id: int,
         target_user_id: int,
         new_role: SpaceAdminRole,
-        actor_user_id: int | None,
     ) -> None:
         """Update an existing admin's role (e.g. ADMIN <-> OWNER)."""
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         relation = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -713,9 +697,8 @@ class SpaceService:
             relation.updated_at = datetime.now(UTC)
             await self._admin_repo.save(relation)
 
-    async def delete_space(self, *, space_id: int, actor_user_id: int | None) -> None:
+    async def delete_space(self, *, space_id: int) -> None:
         space = await self._get_space_or_error(space_id)
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         space.deleted_at = datetime.now(UTC)
         space.updated_at = datetime.now(UTC)
         await self._repo.save(space)
@@ -843,7 +826,6 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> SpaceMember:
         """Put someone in the space directly.
 
@@ -851,7 +833,6 @@ class SpaceService:
         useful when the code has been spent or when only one person should
         have it.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
         member_repo = self._require_member_repo()
 
@@ -871,7 +852,6 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> None:
         """Drop someone from the space. Owner and admins alike may do this.
 
@@ -879,7 +859,6 @@ class SpaceService:
         submissions and projects are not this space's to delete — the same
         reason leaving keeps them and deleting a space keeps them.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         member_repo = self._require_member_repo()
 
         if self._admin_repo is not None:
@@ -899,10 +878,7 @@ class SpaceService:
             )
         await member_repo.remove_member(member)
 
-    async def list_invite_codes(
-        self, *, space_id: int, actor_user_id: int | None
-    ) -> Sequence[SpaceInviteCode]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+    async def list_invite_codes(self, *, space_id: int) -> Sequence[SpaceInviteCode]:
         return await self._require_invite_code_repo().list_codes_for_space(space_id)
 
     async def create_invite_code(
@@ -914,7 +890,6 @@ class SpaceService:
         expires_at: datetime | None = None,
         note: str | None = None,
     ) -> SpaceInviteCode:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
 
         uses = _validated_max_uses(
@@ -939,7 +914,6 @@ class SpaceService:
         self,
         *,
         space_id: int,
-        actor_user_id: int | None,
         code_id: int,
         max_uses: int | None = None,
         max_uses_set: bool = False,
@@ -968,7 +942,6 @@ class SpaceService:
         refuses everyone — is the kind of quiet failure the person adjusting it
         would go looking for in the wrong place.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         invite = await self._get_invite_code_or_error(
             space_id=space_id, code_id=code_id
         )
@@ -988,9 +961,7 @@ class SpaceService:
 
         return await self._require_invite_code_repo().save(invite)
 
-    async def revoke_invite_code(
-        self, *, space_id: int, actor_user_id: int | None, code_id: int
-    ) -> None:
+    async def revoke_invite_code(self, *, space_id: int, code_id: int) -> None:
         """Take a code out of circulation. Redeeming it stops working at once.
 
         The refusal is not implemented here: ``consume_use`` already declines
@@ -998,7 +969,6 @@ class SpaceService:
         decides every other redemption. A revoke that relied on a check of its
         own would be a second copy of that rule, free to drift.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         invite = await self._get_invite_code_or_error(
             space_id=space_id, code_id=code_id
         )
@@ -1033,7 +1003,7 @@ class SpaceService:
     # ------------------------------------------------------------------
 
     async def list_domain_groups(
-        self, *, space_id: int, actor_user_id: int | None
+        self, *, space_id: int
     ) -> list[tuple[SpaceDomainGroup, list[str]]]:
         # Listing is open to all authenticated users so they can select
         # domain groups when publishing/editing tasks.
@@ -1051,9 +1021,7 @@ class SpaceService:
         name: str,
         description: str | None,
         domains: list[str],
-        actor_user_id: int | None,
     ) -> tuple[SpaceDomainGroup, list[str]]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1083,9 +1051,7 @@ class SpaceService:
         name: str | None,
         description: str | None,
         domains: list[str] | None,
-        actor_user_id: int | None,
     ) -> tuple[SpaceDomainGroup, list[str]]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1122,9 +1088,7 @@ class SpaceService:
         *,
         space_id: int,
         group_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1137,23 +1101,6 @@ class SpaceService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    async def _ensure_admin(
-        self,
-        space_id: int,
-        user_id: int | None,
-        *,
-        allow_admin: bool,
-    ) -> None:
-        if self._admin_repo is None:
-            return
-        if user_id is None:
-            raise ForbiddenError("Authentication required")
-        relation = await self._admin_repo.get_relation(space_id, user_id)
-        if relation is None:
-            raise ForbiddenError("Only space admins can perform this action")
-        if not allow_admin and relation.role != SpaceAdminRole.OWNER.value:
-            raise ForbiddenError("Only space owner can perform this action")
 
     async def _get_space_or_error(self, space_id: int) -> Space:
         space = await self._repo.get_by_id(space_id)
