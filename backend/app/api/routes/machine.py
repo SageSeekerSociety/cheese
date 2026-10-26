@@ -80,6 +80,9 @@ class _AsTheSession(Response):
             "raw_path": self._path.encode(),
             "root_path": "",
             "headers": headers,
+            # Its own copy: what the route asked keeps on its request stays
+            # off this one's.
+            "state": dict(scope.get("state") or {}),
         }
         await self._request.app(inner, receive, send)
 
