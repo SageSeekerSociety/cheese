@@ -16,6 +16,7 @@ Revises: c4d5e6f7a8b9
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 from sqlalchemy.dialects import postgresql
 
 from alembic import op
@@ -27,6 +28,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # The foreign key takes a lock on `projects`, which the running release
+    # writes to.
+    with_lock_retries("projects")
     op.create_table(
         "machine_gateway_accounts",
         sa.Column("conversation_id", sa.Uuid(), nullable=False),
