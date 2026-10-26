@@ -111,9 +111,12 @@ class RecruitmentService:
             raise ForbiddenError("Only the post creator can edit this recruitment post")
         # Editing the text or closing it is fine. Opening it again is not: the
         # creator of a post on a personal team is that team's owner, so this is
-        # the route that could undo the withdrawal the migration made, and the
-        # database refuses the same write (trigger
-        # `team_recruitment_post_respects_personal_teams`).
+        # the route that could undo the withdrawal the migration made. This
+        # check is the guard — there is deliberately no trigger on
+        # team_recruitment_post (the release still serving during the deploy
+        # creates such posts, and one would fail it) — so do not drop it. The
+        # plaza's own read excludes a personal team's posts as well, which
+        # covers every other writer.
         if status == RecruitmentStatus.OPEN.value:
             team = await self._team_repo.get_by_id(post.team_id)
             if team is not None and team.personal_owner_user_id is not None:
