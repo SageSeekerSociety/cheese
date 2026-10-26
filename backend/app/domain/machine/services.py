@@ -819,6 +819,7 @@ class HostPool(PoolSweep):
                 .where(DeviceRow.device_id == device.device_id)
                 .values(cloud_control_private=True)
             )
+        token = await self._devices.bootstrap_token(device.device_id)
         # The device row and its token have to be visible to the connector route
         # before the machine dials in, and the bootstrap below makes it dial in
         # while this sweep's transaction is still open. Uncommitted, the first
@@ -826,7 +827,7 @@ class HostPool(PoolSweep):
         await self._session.commit()
         script = enrollment.bootstrap_script(
             origin=origin,
-            token=device.token,
+            token=token,
             device_id=device.device_id,
             sandbox_disk=not host.whole_machine,
         )
@@ -841,7 +842,7 @@ class HostPool(PoolSweep):
             disk_gb = None if host.whole_machine else enrollment.sandbox_disk_gb(output)
         except enrollment.EnrollmentError as exc:
             # Never let the token reach a log line or an API error body.
-            reason = enrollment.redact(str(exc), device.token)
+            reason = enrollment.redact(str(exc), token)
             logger.warning("enrolling host %s failed: %s", host.hostname, reason)
             # The next attempt mints a device of its own, and nothing points at
             # this one: the host records a device only once it enrolls. Kept, a
@@ -855,7 +856,7 @@ class HostPool(PoolSweep):
             "enrolled host %s as device %s: %s",
             host.hostname,
             device.device_id,
-            enrollment.redact(output, device.token)[-200:],
+            enrollment.redact(output, token)[-200:],
         )
         return await self._repo.mark_enrolled(
             host,

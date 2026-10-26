@@ -14,6 +14,7 @@ from app.domain.agent.device_storage import list_device_storage
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.user.tokens import digest_token
 from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
@@ -29,7 +30,7 @@ async def _seed_device(
             team_id=await enrollment_team(sql_device_service(session), owner.id),
             device_id=device_id,
             name=device_id,
-            token=f"tok-{device_id}",
+            token_digest=digest_token(f"tok-{device_id}"),
             owner_user_id=owner.id,
             created_at=datetime.now(UTC),
         )

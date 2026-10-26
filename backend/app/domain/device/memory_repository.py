@@ -23,6 +23,7 @@ class InMemoryDeviceRepository:
         self.project_teams: dict[uuid.UUID, int] = {}
         self._codes: dict[str, AuthCode] = {}
         self._devices: dict[str, Device] = {}
+        self._digests: dict[str, str] = {}
         self._hosted_device_ids: set[str] = set()
         self._health: dict[str, HostHealth] = {}
         self._sandbox: dict[str, SandboxCheck] = {}
@@ -32,6 +33,9 @@ class InMemoryDeviceRepository:
 
     async def get_code(self, code: str) -> AuthCode | None:
         return self._codes.get(code)
+
+    async def delete_code(self, code: str) -> None:
+        self._codes.pop(code, None)
 
     async def save_device(self, device: Device) -> None:
         self._devices[device.device_id] = device
@@ -59,14 +63,25 @@ class InMemoryDeviceRepository:
             return None
         return self._devices.get(device_id)
 
-    async def get_device_by_token(self, token: str) -> Device | None:
-        for device in self._devices.values():
-            if device.token == token:
-                return device
+    async def get_device_by_token_digest(self, digest: str) -> Device | None:
+        for device_id, held in self._digests.items():
+            if held == digest:
+                return self._devices.get(device_id)
         return None
+
+    async def set_token_digest(self, device_id: str, digest: str) -> bool:
+        if device_id not in self._devices or device_id in self._digests:
+            return False
+        self._digests[device_id] = digest
+        return True
+
+    async def replace_token_digest(self, device_id: str, digest: str) -> None:
+        if device_id in self._devices:
+            self._digests[device_id] = digest
 
     async def delete_device(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
+        self._digests.pop(device_id, None)
         self._hosted_device_ids.discard(device_id)
 
     async def list_enrolled_by(self, owner_user_id: int) -> list[Device]:
