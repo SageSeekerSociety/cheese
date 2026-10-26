@@ -36,7 +36,6 @@ from sqlalchemy.schema import CreateIndex
 
 from app.auth.core import Role
 from app.auth.domains.task import get_task_roles
-from app.auth.domains.team import get_team_roles
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import (
     TaskMembership,
@@ -50,6 +49,7 @@ from app.domain.task.repositories import (
     TaskSubmissionReviewRepository,
 )
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
+from app.domain.team.permissions import Seat, seat_of
 from tests.integration.conftest import a_team
 
 #: What each model declares, and what `d3f6a2c85b71` builds.
@@ -357,9 +357,7 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
             assert await get_task_roles(session, MEMBER, "task", task_id) == {
                 Role.PARTICIPANT
             }
-            assert await get_team_roles(session, MEMBER, "team", team_id) == {
-                Role.MEMBER
-            }
+            assert await seat_of(session, team_id, MEMBER) is Seat.member
             assert (
                 await TaskSubmissionRepository(
                     session

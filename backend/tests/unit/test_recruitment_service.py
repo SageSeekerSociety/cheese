@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import ForbiddenError, NotFoundError
+from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.recruitment_services import RecruitmentService
 
 NOW_DUMMY = "2025-06-01T12:00:00"
@@ -55,7 +56,7 @@ class TestCreatePost:
         repo = AsyncMock()
         team_repo = AsyncMock()
         team_repo.get_by_id.return_value = _team()
-        team_repo.is_team_at_least_admin.return_value = True
+        team_repo._session.scalar.return_value = TeamMemberRole.ADMIN
         post = _post()
         repo.create.return_value = post
         svc = _make_service(repo=repo, team_repo=team_repo)
@@ -80,7 +81,7 @@ class TestCreatePost:
     async def test_not_admin(self):
         team_repo = AsyncMock()
         team_repo.get_by_id.return_value = _team()
-        team_repo.is_team_at_least_admin.return_value = False
+        team_repo._session.scalar.return_value = TeamMemberRole.MEMBER
         svc = _make_service(team_repo=team_repo)
 
         with pytest.raises(ForbiddenError):
@@ -163,7 +164,7 @@ class TestDeletePost:
         team_repo = AsyncMock()
         post = _post(team_id=10)
         repo.get_by_id.return_value = post
-        team_repo.is_team_at_least_admin.return_value = True
+        team_repo._session.scalar.return_value = TeamMemberRole.ADMIN
         svc = _make_service(repo=repo, team_repo=team_repo)
 
         await svc.delete_post(post_id=1, actor_user_id=20)
@@ -184,7 +185,7 @@ class TestDeletePost:
         team_repo = AsyncMock()
         post = _post(team_id=10)
         repo.get_by_id.return_value = post
-        team_repo.is_team_at_least_admin.return_value = False
+        team_repo._session.scalar.return_value = TeamMemberRole.MEMBER
         svc = _make_service(repo=repo, team_repo=team_repo)
 
         with pytest.raises(ForbiddenError):

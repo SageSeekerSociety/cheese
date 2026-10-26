@@ -9,6 +9,8 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_instance.models import AccountConnection, PersonalModelResource
 from app.domain.device.models import DeviceClaudeLoginRow
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 
 
@@ -32,7 +34,9 @@ async def manage(db, user_id: int, row):
     if row.owner_user_id is not None:
         if row.owner_user_id != user_id:
             raise ForbiddenError(say("ownAgentConnectionNotFound"))
-    elif not await team_service(db).is_team_at_least_admin(row.team_id, user_id):
+    elif not await team_seats.may(
+        db, row.team_id, user_id, TeamPermission.manage_machines
+    ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
 
 
@@ -77,9 +81,9 @@ async def remove(db, team_id: int, user_id: int, connection_id: str):
     row = await credential(db, connection_id)
     if row.owner_user_id is None:
         raise NotFoundError(say("ownAgentConnectionNotFound"))
-    if row.owner_user_id != user_id and not await team_service(
-        db
-    ).is_team_at_least_admin(team_id, user_id):
+    if row.owner_user_id != user_id and not await team_seats.may(
+        db, team_id, user_id, TeamPermission.manage_machines
+    ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
     field, value = next(iter(reference(row).items()))
     ref = await db.scalar(
