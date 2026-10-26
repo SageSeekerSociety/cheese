@@ -84,3 +84,26 @@ it('弹出时不去抢正文那边的焦点', async () => {
   input.focus()
   expect(document.activeElement).toBe(input)
 })
+
+it('支持把当前指认加入待发列表，并在待发条上一键全部发送', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '改这里', queuedCount: 0 },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const queueBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '加入待发')
+  expect(queueBtn).toBeTruthy()
+  queueBtn!.click()
+  expect(ui.emitted().queue).toHaveLength(1)
+
+  await ui.rerender({ target: null, note: '', queuedCount: 2 })
+  expect(ui.container.textContent).toContain('待发批注 2 处')
+  const sendAllBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '全部发送（2）')
+  expect(sendAllBtn).toBeTruthy()
+  sendAllBtn!.click()
+  expect(ui.emitted().sendQueued).toHaveLength(1)
+})

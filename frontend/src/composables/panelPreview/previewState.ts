@@ -9,7 +9,7 @@ import type { FileContent } from '../../cx_types'
 
 import { computed, ref } from 'vue'
 
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf, videoMimeOf } from '../../lib/fileKind'
 
 /** 这一格现在摆的是哪一件，以及路上那一次属于哪一代。 */
 export function createPreviewState() {
@@ -34,6 +34,7 @@ export function createPreviewState() {
   const documentType = computed(() => DOCUMENT_TYPES[documentSuffix.value] ?? null)
   const documentName = computed(() => previewFile.value?.path.split('/').pop() ?? '')
   const isImageArtifact = computed(() => IMAGE_SUFFIXES.has(documentSuffix.value))
+  const isVideoArtifact = computed(() => !!videoMimeOf(previewFile.value?.path ?? '', previewMime.value))
 
   /** 开一次取数：报回它落在哪一代，落下来时拿这个数问还作不作数。 */
   function begin(): number {
@@ -65,6 +66,7 @@ export function createPreviewState() {
     documentType,
     documentName,
     isImageArtifact,
+    isVideoArtifact,
     begin,
     invalidate,
     stillCurrent,
