@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.team import permissions as team_seats
 from app.domain.team.models import TeamRecruitmentPost
 from app.domain.team.permissions import Permission as TeamPermission
@@ -52,6 +52,13 @@ class RecruitmentService:
             raise ForbiddenError(
                 "Only team admins or owner can create recruitment posts"
             )
+        # Asked after the permission, not before: a personal team answers a
+        # non-member with the same 403 a shared one does, so the refusal tells
+        # nobody what kind of team they guessed the id of. To its owner: an ad
+        # asking people to join a team that takes nobody can only disappoint
+        # them, and a group that takes people is a shared team.
+        if team.personal_owner_user_id is not None:
+            raise BadRequestError("A personal team takes no recruits")
         return await self._repo.create(
             team_id=team_id,
             title=title,
