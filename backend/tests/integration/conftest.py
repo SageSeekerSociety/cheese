@@ -88,14 +88,17 @@ def _caller_handle(headers: dict | None) -> str | None:
     return claims.get("handle") or claims.get("sub")
 
 
-async def shared_team_of(session, project_id) -> int:
-    """The team a project must be in to hold someone besides its owner.
+async def shared_team_of(
+    session, project_id, *, joiner_user_id: int | None = None
+) -> int:
+    """The team a project must be in to hold ``joiner_user_id``.
 
     A project is born in its owner's personal team, and a personal team takes
     no members but its owner. The first time a test puts a second person on
     it, the project moves into a shared team of that owner — the same move the
-    product makes (``ProjectTransferService.move_to_team``). Returns the team
-    id to put the member row on.
+    product makes (``ProjectTransferService.move_to_team``). Someone who is
+    that team's owner (or a joiner not named at all) needs no move. Returns the
+    team id to put the member row on.
     """
     import uuid as _uuid
 
@@ -107,7 +110,9 @@ async def shared_team_of(session, project_id) -> int:
     assert project is not None, project_id
     team = await session.get(Team, project.team_id)
     assert team is not None, project_id
-    if team.personal_owner_user_id is None:
+    if team.personal_owner_user_id is None or (
+        joiner_user_id is not None and team.personal_owner_user_id == joiner_user_id
+    ):
         return team.id
     shared = Team(
         name="Test team",
@@ -315,7 +320,7 @@ def join_project_team(
             assert user is not None, handle
             from app.domain.team.repositories import TeamRepository
 
-            team_id = await shared_team_of(session, project_id)
+            team_id = await shared_team_of(session, project_id, joiner_user_id=user.id)
 
             if not await TeamRepository(session).is_team_member(team_id, user.id):
                 session.add(

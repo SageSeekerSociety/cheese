@@ -108,7 +108,7 @@ async def _member(client, room, handle="bob") -> dict:
     """A person on the project's team who owns nothing there."""
     async with client.test_factory() as db:
         user_id = await registered(db, handle)
-        team_id = await shared_team_of(db, room.project_id)
+        team_id = await shared_team_of(db, room.project_id, joiner_user_id=user_id)
         # The room's two machines were enrolled on the team the project sat in;
         # the project has just moved, so they move with it.
         devices = sql_device_service(db)

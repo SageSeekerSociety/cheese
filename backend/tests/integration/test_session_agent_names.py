@@ -66,7 +66,7 @@ async def _teammates_on_bobs_device(client):
         now = datetime.now(UTC)
         db.add(
             TeamUserRelation(
-                team_id=await shared_team_of(db, project_id),
+                team_id=await shared_team_of(db, project_id, joiner_user_id=bob),
                 user_id=bob,
                 role=TeamMemberRole.ADMIN,
                 created_at=now,

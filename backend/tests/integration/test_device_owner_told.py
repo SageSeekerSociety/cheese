@@ -55,7 +55,7 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
         if owner_handle != "alice":
             # A second person on the project means a shared team: the project
             # moves there first, as the product's move_to_team does.
-            team_id = await shared_team_of(db, project_id)
+            team_id = await shared_team_of(db, project_id, joiner_user_id=owner_id)
             now = datetime.now(UTC)
             db.add(
                 TeamUserRelation(
