@@ -12,6 +12,7 @@ import os
 import platform
 import runpy
 import shutil
+import socket
 import socketserver
 import subprocess
 import sys
@@ -156,7 +157,44 @@ def _recall(path):
     return None
 
 
+class _UnixConnection(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        super().__init__("platform.cheese", timeout=timeout)
+        self._socket_path = path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+def _platform_socket():
+    path = os.environ.get("CHEESE_PLATFORM_SOCKET", "")
+    return path if path and os.path.exists(path) else ""
+
+
+def _ask_socket(path, target, timeout=30):
+    """``GET target`` on the sandbox's platform socket, to its JSON: the
+    platform knows whose the request is without a token."""
+    connection = _UnixConnection(path, timeout)
+    try:
+        connection.request("GET", target)
+        response = connection.getresponse()
+        body = response.read()
+    finally:
+        connection.close()
+    if response.status != 200:
+        raise OSError(
+            f"the platform socket answered HTTP {response.status}"  # i18n-exempt: machine log
+        )
+    return json.loads(body)
+
+
 def credentials():
+    socket_path = _platform_socket()
+    if socket_path:
+        return _ask_socket(socket_path, "/api/sandbox/forge-token")["data"]
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
@@ -164,6 +202,16 @@ def credentials():
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)["data"]
+
+
+def _tunnel_secret():
+    """What a forge tunnel connection is opened with: a credential asked of
+    the platform socket for that connection, lasting a minute, or without a
+    socket the session's own token."""
+    socket_path = _platform_socket()
+    if socket_path:
+        return _ask_socket(socket_path, "/credential")["token"]
+    return os.environ["CHEESE_TOKEN"]
 
 
 def reaches(url):
@@ -203,11 +251,10 @@ def github_transport(data, env):
                 "",
             )
         )
-        secret = os.environ["CHEESE_TOKEN"]
 
         class Connection(socketserver.BaseRequestHandler):
             def handle(self):
-                helper["handle_connection"](self.request, tunnel, secret)
+                helper["handle_connection"](self.request, tunnel, _tunnel_secret())
 
         class Proxy(socketserver.ThreadingTCPServer):
             daemon_threads = True
