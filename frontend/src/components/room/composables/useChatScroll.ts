@@ -437,8 +437,9 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
-    // 我们自己发的那一下还在滚（跳到某一条）：位置照记，但「在不在底部」等它停下再定。
-    // 半路上判，头几帧还在底部、后面又被 `clamped` 那条兜底读成锚定，人就被钉回原处。
+    // 我们自己发的那一下还在滚（跳到某一条）：只把位置记进 lastTop/lastHeight，记下的
+    // 位置和「在不在底部」都等它停下再定。半路上判，头几帧还在底部、后面又被 `clamped`
+    // 那条兜底读成锚定，人就被钉回原处。
     if (ownScrollTimer !== null) {
       armOwnScroll()
       lastTop = el.scrollTop
@@ -504,13 +505,14 @@ export function useChatScroll(
   // ── 我们自己发起的滚动（跳到某一条）──────────────────────────────────────
   //
   // 它既不是读的人在滚，也不是浏览器被就地改写夹的。可两条判据都把它当成后两者：
-  // 平滑滚动的头几帧离底部还不到一屏，照位置算会把「跟新消息」重新打开；而收紧一点
-  // 之后，若这一栏刚被就地改写（agent 在跑时输入框上方那行「用时」每秒都在跳），
-  // 上面那条 `clamped` 兜底就把这次往上的移动读成锚定，当场钉回底部。真机
-  // 2026-10-26：停在对话最底下点左上角书签，被拽回来，到不了设为书签的那一条。
+  // 平滑滚动的头几帧离底部还不到一屏，照位置算会把「跟新消息」重新打开；而只要这一栏
+  // 在跳转前后被就地改写过一次（展开浮条、跳过去时离屏的行成批挂上来、agent 在跑时
+  // 输入框上方那行「用时」每秒跳），上面那条 `clamped` 兜底就把这次往上的移动读成
+  // 锚定，当场钉回底部。真机 2026-10-26：停在对话最底下点左上角书签，被拽回来，
+  // 到不了设为书签的那一条。
   //
-  // 所以这一阵里位置照记，`atBottom` 先不动；滚到停下来（安静一个 OWN_SCROLL_IDLE_MS）
-  // 再按真正停下的位置定它——跳到最后一条时跟新消息要照常接上。
+  // 所以这一阵里 `atBottom` 先不动；滚到停下来（安静一个 OWN_SCROLL_IDLE_MS）再按
+  // 真正停下的位置定它——跳到最后一条时跟新消息要照常接上。
   let ownScrollTimer: ReturnType<typeof setTimeout> | null = null
 
   function armOwnScroll() {
