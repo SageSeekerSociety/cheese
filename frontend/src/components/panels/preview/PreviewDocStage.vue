@@ -140,12 +140,15 @@ function startEdit() {
 // 所以哪一份非空，就是哪一份在说话。
 const docShown = computed(() => (props.docPage ? props.docPageHtml : props.docBytes))
 
-// 这一刻在第几步、失败是哪一种，由 `lib/previewStage` 一处判（授权、连接、导航、就绪、
-// 已更新、失败）。模板照它分岔，不再各自拼 `!docShown` 那几行条件：同一处境在任何
-// 一档上说同一套名词，是这一层存在的理由。
+// 屏幕上有没有可读的东西、在取的那一份走到哪一步，由 `lib/previewStage` 一处判。模板照
+// 它分岔，不再各自拼 `!docShown` 那几行条件：同一处境在任何一档上说同一套名词，是这一层
+// 存在的理由。
+//
+// 这一档只报「在取」这一件（`navigate`），不报「在等授权」：它取的是文件字节，没有帧那
+// 一档那条要先拿会话的授权。`loading` 因此只可能是 `navigate` 或 null。
 const stage = computed(() =>
   previewStage({
-    loading: props.docLoading,
+    loading: props.docLoading ? 'navigate' : null,
     shown: !!docShown.value,
     // 上一版还在、这一版取失败了：`docError` 有值而屏幕上仍有东西。
     stale: !!props.docError && !!docShown.value,
@@ -238,7 +241,7 @@ defineExpose({ snapshot, clearMark })
     <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
       {{ downloadError }}
     </v-alert>
-    <v-alert v-else-if="stage.stage === 'updated'" type="warning" density="compact" class="mx-3 mb-2">
+    <v-alert v-else-if="stage.stage === 'shown' && stage.stale" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
     <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，
@@ -267,7 +270,7 @@ defineExpose({ snapshot, clearMark })
       @anchor="emit('anchor', $event)"
     />
 
-    <div v-else-if="stage.stage === 'navigate'" class="doc__state">
+    <div v-else-if="stage.stage === 'waiting' && stage.step === 'navigate'" class="doc__state">
       <v-progress-circular indeterminate color="primary" size="24" />
     </div>
     <div
