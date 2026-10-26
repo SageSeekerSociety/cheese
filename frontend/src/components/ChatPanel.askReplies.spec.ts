@@ -90,9 +90,7 @@ function closedByAsker(topic: string, kind: 'withdrawn' | 'expired'): Block {
     ...open,
     meta: {
       ...open.meta,
-      answer_log: [
-        { kind, option: null, note: null, by: 'agent', at: '2026-08-02T00:00:00Z', reply_id: null },
-      ],
+      answer_log: [{ kind, option: null, note: null, by: 'agent', at: '2026-08-02T00:00:00Z', reply_id: null }],
     },
   } as unknown as Block
 }

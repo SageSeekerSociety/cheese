@@ -63,6 +63,14 @@ from app.domain.run_record.models import RunRecord
 #: scan every message the project ever had.
 REPLY_LOOKBACK = timedelta(days=7)
 
+#: How long an unrecovered failure may hold a line red before it stops counting
+#: (`unresolved_failures`): three days. A dead branch — a 支线 whose turn blew up
+#: and which nobody came back to — otherwise holds its whole channel red for
+#: ever, since only a recovery ends a failure and silence is not one. Long
+#: enough that an overnight machine being down is not a fault to retire; a
+#: failure inside the window still counts, whatever else happens.
+FAILURE_GIVES_UP_AFTER = timedelta(hours=72)
+
 #: The reason a failed turn is reported under.
 FAILED = "failed"
 

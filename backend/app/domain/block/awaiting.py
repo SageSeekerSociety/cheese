@@ -21,6 +21,7 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Literal, overload
 
 from sqlalchemy import (
@@ -83,8 +84,8 @@ class AwaitingQueries:
         return await self._awaiting_an_answer(conversation_ids)
 
     async def awaiting_answer_blocks(self, conversation_ids):
-        """Return addressed person and exact question for each waiting
-        conversation."""
+        """Return addressed person, exact question, its text and when it was
+        asked, for each waiting conversation."""
         return await self._awaiting_an_answer(conversation_ids, with_blocks=True)
 
     @overload
@@ -99,7 +100,7 @@ class AwaitingQueries:
         self,
         place_ids: list[uuid.UUID],
         with_blocks: Literal[True],
-    ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID, str]]: ...
+    ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID, str, datetime]]: ...
 
     #: 频道、活、支线的 id 作为按名绑定的数组参数传入，查询本身建一次处处复用。
     #: 语句是只读的，并发执行不往语句上挂编译期状态。
@@ -131,6 +132,10 @@ class AwaitingQueries:
                 Block.meta,
                 Block.id,
                 Block.content,
+                # 这一行右边那个时刻是**题**问出来的时刻，不是频道最后被改的时刻
+                # （`awaiting_deps` 的频道行原先取 `topic.updated_at`，一道 10-13 的
+                # 题因此显示成 10-12）。
+                Block.created_at,
             )
             .where(
                 place_column == any_(cls._places_param),
@@ -161,7 +166,8 @@ class AwaitingQueries:
         selected = {}
         waiting: dict[uuid.UUID, Awaited] = {}
         contents: dict[uuid.UUID, str] = {}
-        for place_id, meta, block_id, content in (
+        asked_at: dict[uuid.UUID, datetime] = {}
+        for place_id, meta, block_id, content, created_at in (
             await self._session.execute(
                 self._awaiting_statement("places", self._build_places_statement),
                 {"places": query_ids},
@@ -174,9 +180,10 @@ class AwaitingQueries:
             waiting[place_id] = Awaited.of(meta)
             selected[place_id] = block_id
             contents[place_id] = content or ""
+            asked_at[place_id] = created_at
         if with_blocks:
             return {
-                place: (asked, selected[place], contents[place])
+                place: (asked, selected[place], contents[place], asked_at[place])
                 for place, asked in waiting.items()
             }
         for pid in query_ids:

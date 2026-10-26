@@ -360,7 +360,14 @@ async def waiting_items(
                 task_title_source=None,
                 phrase=shown.phrase,
                 reason=reason,
-                at=topic.updated_at,
+                # 这间房这一格若是在等一道题，日期就是**那一道题**问出来的时刻；
+                # `topic.updated_at` 只在频道行自己被改时动，一道挂了十天的题会写成
+                # 频道最后一次改名的那天。
+                at=(
+                    questions[topic.id][3]
+                    if reason == REASON_ASKED
+                    else topic.updated_at
+                ),
                 block_id=questions[topic.id][1] if reason == "asked" else None,
                 thread_id=asked_in_thread.get(topic.id) if reason == "asked" else None,
                 detail=(

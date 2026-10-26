@@ -197,12 +197,12 @@ export function askAnswers(block: Block): AskAnswer[] {
   return (log as Record<string, unknown>[])
     .filter((entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired')
     .map((entry: Record<string, unknown>) => ({
-    by: String(entry.by ?? ''),
-    // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
-    text:
-      entry.kind === 'reject'
-        ? t('ask.replies.noneOfThese')
-        : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
-    skipped: entry.kind === 'skipped',
-  }))
+      by: String(entry.by ?? ''),
+      // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
+      text:
+        entry.kind === 'reject'
+          ? t('ask.replies.noneOfThese')
+          : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
+      skipped: entry.kind === 'skipped',
+    }))
 }
