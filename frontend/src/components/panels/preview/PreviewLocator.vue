@@ -103,6 +103,13 @@ function comment(event: MouseEvent) {
         >
           {{ t('work.room.comments.comment') }}
         </BaseButton>
+        <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
+          {{
+            canQueue && queuedCount
+              ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
+              : t('work.room.preview.send')
+          }}
+        </BaseButton>
         <BaseButton
           v-if="canQueue"
           kind="secondary"
@@ -112,13 +119,6 @@ function comment(event: MouseEvent) {
           @click="emit('queue')"
         >
           {{ t('work.room.preview.queue') }}
-        </BaseButton>
-        <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
-          {{
-            canQueue && queuedCount
-              ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
-              : t('work.room.preview.send')
-          }}
         </BaseButton>
         <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
       </template>
