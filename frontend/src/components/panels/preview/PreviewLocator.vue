@@ -2,18 +2,29 @@
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  target: { label: string; quote: string } | null
-  note: string
-  /** 待发批注篮里已攒的条数：一次指认多处后合并成一条消息发给芝士。 */
-  queuedCount?: number
-  /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
-  busy?: boolean
-  /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
-  canComment?: boolean
-  /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
-  commentError?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    target: { label: string; quote: string } | null
+    note: string
+    /** 待发批注篮里已攒的条数：一次指认多处后合并成一条消息发给芝士。 */
+    queuedCount?: number
+    /** 这一处指认能不能先加入待发（钉在页上的一处要当场带截图发，不进纯文本待发篮）。 */
+    canQueue?: boolean
+    /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
+    busy?: boolean
+    /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
+    canComment?: boolean
+    /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
+    commentError?: string
+  }>(),
+  {
+    queuedCount: 0,
+    canQueue: true,
+    busy: false,
+    canComment: false,
+    commentError: undefined,
+  }
+)
 const emit = defineEmits<{
   'update:note': [note: string]
   send: []
@@ -93,6 +104,7 @@ function comment(event: MouseEvent) {
           {{ t('work.room.comments.comment') }}
         </BaseButton>
         <BaseButton
+          v-if="canQueue"
           kind="secondary"
           size="sm"
           :title="t('work.room.preview.queueHint')"
@@ -103,7 +115,9 @@ function comment(event: MouseEvent) {
         </BaseButton>
         <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
           {{
-            queuedCount ? t('work.room.preview.sendQueued', { count: queuedCount + 1 }) : t('work.room.preview.send')
+            canQueue && queuedCount
+              ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
+              : t('work.room.preview.send')
           }}
         </BaseButton>
         <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />

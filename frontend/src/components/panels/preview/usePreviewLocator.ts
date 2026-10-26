@@ -38,18 +38,10 @@ interface LocatorDeps {
   clearMark: () => void
 }
 
-export interface QueuedLocatorItem {
-  label: string
-  quote: string
-  address: string
-  note: string
-  message: string
-}
-
 export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
-  const queued = ref<QueuedLocatorItem[]>([])
+  const queued = ref<string[]>([])
   /** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
   const annotateError = ref('')
 
@@ -198,14 +190,8 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function queueLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
-    if (!target || !note) return
-    const message = imageRegion.target.value
-      ? imageRegion.message(note) ?? formatLocateMessage(target, note)
-      : formatLocateMessage(target, note)
-    queued.value = [
-      ...queued.value,
-      { label: target.label, quote: target.quote, address: target.address, note, message },
-    ]
+    if (!target || !note || pageLocator.pin.value) return
+    queued.value = [...queued.value, formatLocateMessage(target, note)]
     clearLocator()
   }
 
@@ -217,28 +203,25 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const target = locator.value
     const note = locatorNote.value.trim()
     const pending = [...queued.value]
-    if (target && note) {
-      const extra = imageRegion.target.value
-        ? imageRegion.message(note) ?? formatLocateMessage(target, note)
-        : formatLocateMessage(target, note)
-      pending.push({ label: target.label, quote: target.quote, address: target.address, note, message: extra })
+    if (target && note && !pageLocator.pin.value) {
+      pending.push(formatLocateMessage(target, note))
     }
     if (!pending.length) return
-    deps.onLocate({ message: pending.map((item) => item.message).join('\n\n') })
+    deps.onLocate({ message: pending.join('\n\n') })
     queued.value = []
-    clearLocator()
+    if (!pageLocator.pin.value) clearLocator()
   }
 
   function sendLocator() {
-    if (queued.value.length > 0) {
-      sendQueued()
-      return
-    }
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note) return
     if (pageLocator.pin.value) {
       void pageLocator.send(note)
+      return
+    }
+    if (queued.value.length > 0) {
+      sendQueued()
       return
     }
     if (imageRegion.target.value) {

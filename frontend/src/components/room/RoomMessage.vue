@@ -24,10 +24,9 @@ import {
   isVideoBlock,
   replySnippet,
 } from '../../lib/blockDisplay'
-import { fileIcon, hasPagePreview, previewCanShowInRoom } from '../../lib/fileKind'
+import { fileIcon, previewCanShowInRoom } from '../../lib/fileKind'
 import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
-import AttachmentDocThumb from '../AttachmentDocThumb.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import AttachmentVideo from '../AttachmentVideo.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -177,6 +176,7 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
@@ -306,23 +306,15 @@ const told = computed(() => toldByMessage(props.refs))
           @download="emit('download', block)"
         />
         <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
-           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线；支持首页缩略图的
-           文档直接画出第一页封面。 -->
-        <template v-else-if="block.kind === 'artifact' || previewCanShowInRoom(block.content)">
+           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <template v-else-if="canOpenFile">
           <button
             type="button"
             class="im-artifact"
             :title="t('work.room.message.openFile', { name: artifactName(block) })"
             @click="emit('open-file', block.content)"
           >
-            <AttachmentDocThumb
-              v-if="hasPagePreview(block.content)"
-              class="im-artifact__face"
-              :topic-id="topicId"
-              :path="block.content"
-              :icon-size="20"
-            />
-            <span v-else class="att-face im-artifact__face">
+            <span class="att-face im-artifact__face">
               <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
             </span>
             <span class="im-artifact__text">
@@ -355,7 +347,7 @@ const told = computed(() => toldByMessage(props.refs))
         <v-icon v-if="pinned" size="14" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')">mdi-pin</v-icon>
         <FileBlockMenu
           :name="artifactName(block)"
-          :can-open="block.kind === 'artifact' || previewCanShowInRoom(block.content)"
+          :can-open="canOpenFile"
           :can-download="block.kind === 'attachment'"
           :can-keep="
             (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId

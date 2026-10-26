@@ -554,6 +554,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
       :queued-count="queued.length"
+      :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :comment-error="commentError"
