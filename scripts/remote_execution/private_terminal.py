@@ -85,12 +85,12 @@ def main():
     handler = Handler
     work = "/work"
     if args.ordinary:
-        from room_fixture import RoomExecutor
+        from room_fixture import ROOM_TOKEN, RoomExecutor
 
         room = RoomExecutor(folder, args.claude)
         config = room.target
         work = str(room.work)
-        os.environ["CHEESE_TOKEN"] = "room-fixture-token"
+        os.environ["CHEESE_TOKEN"] = ROOM_TOKEN
         handler = room.handler(handler)
     server = Server(("127.0.0.1", 0), handler)
     base = f"http://127.0.0.1:{server.server_port}"
@@ -143,7 +143,7 @@ def main():
             DISABLE_ERROR_REPORTING="1",
         )
         if room:
-            env["CHEESE_TOKEN"] = "room-fixture-token"
+            env["CHEESE_TOKEN"] = ROOM_TOKEN
         if resume:
             env["CHEESE_RESUME_SESSION"] = resume
         command = runner_fixture.room_command(

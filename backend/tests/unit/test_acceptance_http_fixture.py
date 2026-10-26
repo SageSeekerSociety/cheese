@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import socket
 import subprocess
 import threading
 from http.client import HTTPConnection, RemoteDisconnected
@@ -130,6 +131,82 @@ def test_execution_endpoint_reaches_wire(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_the_room_reaches_the_fixture_platform_on_its_socket(tmp_path):
+    """The room holds no credential, so its platform calls come down the socket
+    the fixture serves (#4877, #4839), marked as the room's own there and
+    arriving without a token; a call that arrives with neither is refused."""
+    model = load("model_fixture")
+    room_module = load("room_fixture")
+    room = object.__new__(room_module.RoomExecutor)
+    room.project, room.task = "project", "task"
+    room.owner = tmp_path
+    room.snapshots = {}
+    room.target = {"resource_id": "room"}
+    room.remote = str(tmp_path / "origin")
+    server = model.Server(("127.0.0.1", 0), room.handler(model.Handler))
+    server.state = {"dir": tmp_path}
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    socket_path = tmp_path / "platform" / "platform.sock"
+    platform = room_module.PlatformSocket(socket_path, "room-fixture-token")
+    platform.platform = f"http://127.0.0.1:{server.server_port}"
+    try:
+
+        def ask(raw):
+            """One request on the socket, read whole: the answer ends where the
+            platform closes the connection, as it does for the CLI."""
+            connection = socket.socket(socket.AF_UNIX)
+            connection.settimeout(10)
+            connection.connect(str(socket_path))
+            try:
+                connection.sendall(raw)
+                answer = b""
+                while chunk := connection.recv(65536):
+                    answer += chunk
+                return answer
+            finally:
+                connection.close()
+
+        answer = ask(
+            b"GET /api/projects/project/git/tasks/task HTTP/1.1\r\n"
+            b"Host: platform.cheese\r\n\r\n"
+        )
+        assert answer.split(b"\r\n", 1)[0].endswith(b" 200 OK")
+        assert json.loads(answer.split(b"\r\n\r\n", 1)[1])["data"]["task_id"] == "task"
+        answer = ask(b"GET /credential HTTP/1.1\r\nHost: platform.cheese\r\n\r\n")
+        assert json.loads(answer.split(b"\r\n\r\n", 1)[1]) == {
+            "token": "room-fixture-token"
+        }
+        server.assert_healthy()
+    finally:
+        platform.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    # A request that carries neither a token nor the socket's mark is not the
+    # room's, and the handler refuses it on a server of its own: this is what
+    # the call looked like before the socket above existed — the room had no
+    # token to send, and the failure was a dropped connection whose reason
+    # survives only in the receipt.
+    server = model.Server(("127.0.0.1", 0), room.handler(model.Handler))
+    server.state = {"dir": tmp_path}
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        direct = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            direct.request("GET", "/projects/project/git/tasks/task")
+            with pytest.raises(RemoteDisconnected):
+                direct.getresponse()
+        finally:
+            direct.close()
+    finally:
+        server.shutdown()
+        thread.join()
+        with pytest.raises(AssertionError, match="X-Cheese-Token"):
+            server.server_close()
 
 
 def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
