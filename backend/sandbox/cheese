@@ -18,7 +18,10 @@
   CHEESE_TOPIC   当前对话 id：频道主线的、支线的，或者任务自己的会话里是任务的
   CHEESE_DOCUMENT 当前文档 id（对着一份文档开的会话才有；没有时用任务的实况文档）
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
-  CHEESE_TOKEN   会话凭据，每个请求都带上（X-Cheese-Token）；后端凭它认出是谁
+  CHEESE_PLATFORM_SOCKET 机器上的平台 socket；有它时平台调用都经它走，不带
+                 凭据，平台按这台机器当前的租约认出是哪个会话
+  CHEESE_TOKEN   会话凭据，没有平台 socket 时每个请求都带上（X-Cheese-Token）；
+                 git 和超过 30 MiB 的上传眼下仍凭它直连平台
   CHEESE_TURN    可选的一轮 id；平台每次检查点单独给它一个（那一轮 sync），
                  有就让块和同步失败的记录归到这一轮
 
@@ -50,6 +53,8 @@ import re
 import runpy
 import shlex
 import shutil
+import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -70,7 +75,108 @@ if sys.platform != "win32":
 # whose only python3 is the command line tools' 3.9.
 UTC = timezone.utc  # noqa: UP017
 
-API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
+#: The host name a request to the sandbox's platform socket is addressed to; it
+#: names no machine and is never resolved.
+_SOCKET_HOST = "platform.cheese"
+
+
+def _platform_socket(environ=None) -> str:
+    """The sandbox's platform socket (``CHEESE_PLATFORM_SOCKET``), when there is
+    one to dial: the platform knows whose a request on it is without a token."""
+    path = (os.environ if environ is None else environ).get(
+        "CHEESE_PLATFORM_SOCKET", ""
+    )
+    try:
+        return path if path and stat.S_ISSOCK(os.stat(path).st_mode) else ""
+    except OSError:
+        return ""
+
+
+class _SocketConnection(http.client.HTTPConnection):
+    def __init__(self, host, *, socket_path, **kwargs):
+        super().__init__(host, **kwargs)
+        self._socket_path = socket_path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+class _ToThePlatformSocket(urllib.request.BaseHandler):
+    """Sends a request addressed to ``_SOCKET_HOST`` down the platform socket,
+    ahead of any proxy the environment names (`ProxyHandler` is 100)."""
+
+    handler_order = 50
+
+    def __init__(self, socket_path: str):
+        self._socket_path = socket_path
+
+    def http_open(self, req):
+        if req.host != _SOCKET_HOST:
+            return None
+        body = req.data
+        if isinstance(body, bytes) and len(body) > _SOCKET_BODY_LIMIT and TOKEN:
+            # The socket holds a request whole and refuses one this large; it
+            # goes straight to the platform on the token while there is one.
+            direct = urllib.request.Request(
+                DIRECT_API + req.selector.removeprefix("/api"),
+                data=body,
+                method=req.get_method(),
+                headers={**dict(req.header_items()), "X-Cheese-Token": TOKEN},
+            )
+            return urllib.request.build_opener().open(direct, timeout=req.timeout)
+        # The socket says whose the request is; a token is not sent down it.
+        for headers in (req.headers, req.unredirected_hdrs):
+            for name in [n for n in headers if n.lower() == "x-cheese-token"]:
+                del headers[name]
+        handler = urllib.request.AbstractHTTPHandler()
+        return handler.do_open(
+            lambda host, **kwargs: _SocketConnection(
+                host, socket_path=self._socket_path, **kwargs
+            ),
+            req,
+        )
+
+
+#: The largest request body sent down the socket: the device link holds a
+#: request whole and refuses one over 32 MiB, its head included
+#: (`device_hub.machine.MAX_REQUEST_BYTES`); this stays under that.
+_SOCKET_BODY_LIMIT = 30 * 1024 * 1024
+
+#: The platform's own address, for what does not go through its socket yet: git
+#: and the task backup's bundle, which the socket does not carry (a request on
+#: it is held whole, up to 32 MiB).
+DIRECT_API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip(
+    "/"
+)
+PLATFORM_SOCKET = _platform_socket()
+# This CLI's own: the file is also read as a module by processes whose urllib
+# is theirs (`remote_execution/client.py`), so nothing is installed globally.
+_OPENER = (
+    urllib.request.build_opener(_ToThePlatformSocket(PLATFORM_SOCKET))
+    if PLATFORM_SOCKET
+    else None
+)
+
+
+def _urlopen(request, *args, **kwargs):
+    """`urllib.request.urlopen`, through the platform socket when there is one."""
+    if _OPENER is None:
+        return urllib.request.urlopen(request, *args, **kwargs)
+    return _OPENER.open(request, *args, **kwargs)
+
+
+API = f"http://{_SOCKET_HOST}/api" if PLATFORM_SOCKET else DIRECT_API
+
+
+def _direct_api() -> str:
+    """The platform's own address, for what the socket does not carry: the
+    same as `API` when there is no socket."""
+    return DIRECT_API if PLATFORM_SOCKET else API
+
+
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
@@ -390,17 +496,27 @@ ENVIRONMENT_SPEC_DESCRIPTION = (
 
 
 def _own_session(env) -> str:
-    """This session's id, as its credential names it (``session`` in the
-    claims ``cxss_<base64 json>.<signature>`` carries)."""
+    """This session's id: as its credential names it (``session`` in the
+    claims ``cxss_<base64 json>.<signature>`` carries), or, with no credential
+    to read, as the platform socket answers it. Only ``ValueError`` when
+    neither says."""
     body = env.get("CHEESE_TOKEN", "").rpartition(".")[0].removeprefix("cxss_")
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
         claims = None
     session = claims.get("session") if isinstance(claims, dict) else None
-    if not session:
-        raise ValueError("This credential names no session")
-    return str(session)
+    if session:
+        return str(session)
+    if _OPENER is not None and _platform_socket(env) == PLATFORM_SOCKET:
+        try:
+            with _urlopen(f"http://{_SOCKET_HOST}/whoami", timeout=20) as response:
+                session = json.load(response).get("session")
+        except (OSError, ValueError):
+            session = None
+        if session:
+            return str(session)
+    raise ValueError("Neither this credential nor the platform socket names a session")
 
 
 _CONTRIBUTOR = {
@@ -590,14 +706,21 @@ PLATFORM_TOOLS = ToolTable(
                         "message_id": _text("消息 id"),
                         **_CHAT_SCOPE,
                         "offset": {"type": "integer", "description": "从第几个字开始"},
-                        "length": {"type": "integer", "description": "最多读多少字，1..12000"},
+                        "length": {
+                            "type": "integer",
+                            "description": "最多读多少字，1..12000",
+                        },
                     },
                     ["message_id"],
                 ),
                 "replies": _verb(
                     "列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 id 再读。"
                     + _CHAT_READ,
-                    {"message_id": _text("被回复的消息 id"), **_CHAT_SCOPE, **_CHAT_PAGE},
+                    {
+                        "message_id": _text("被回复的消息 id"),
+                        **_CHAT_SCOPE,
+                        **_CHAT_PAGE,
+                    },
                     ["message_id"],
                 ),
                 "edit": _verb(
@@ -700,9 +823,13 @@ PLATFORM_TOOLS = ToolTable(
                     "不给 app 时新建，返回整个块的写法，由你放进文档或聊天消息；给出 app 时修改该小程序，"
                     "保存为新版本，并同步更新所属文档中的版本号，已发到聊天里的不变。",
                     {
-                        "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
+                        "code": _text(
+                            "小程序的 Vue 单文件组件：<script setup> 加 <template>"
+                        ),
                         "title": _text("新建时：小程序的标题，十个字左右"),
-                        "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
+                        "app": _text(
+                            "改已有的小程序时：它的短号（文档里 :::app 后面那串）"
+                        ),
                         "note": _text("这一版改了什么，一句话"),
                         "document": _DOCUMENT_ARG,
                     },
@@ -713,7 +840,10 @@ PLATFORM_TOOLS = ToolTable(
                     "说了它做什么。",
                     {
                         "app": _text("小程序的短号（文档里 :::app 后面那串）"),
-                        "version": {"type": "integer", "description": "第几版；省略读最新一版"},
+                        "version": {
+                            "type": "integer",
+                            "description": "第几版；省略读最新一版",
+                        },
                     },
                     ["app"],
                 ),
@@ -766,11 +896,25 @@ PLATFORM_TOOLS = ToolTable(
                                     "card": _text("要改、挪、删的格子：编号或 ref"),
                                     "ref": _text("add：新格子的名字"),
                                     "content": _text("add、update：格子里的 Markdown"),
-                                    "task": _text("add、update：关联的任务编号；空字符串取消"),
-                                    "x": {"type": "number", "description": "左上角横坐标"},
-                                    "y": {"type": "number", "description": "左上角纵坐标"},
-                                    "width": {"type": "number", "description": "宽，像素"},
-                                    "height": {"type": "number", "description": "高，像素"},
+                                    "task": _text(
+                                        "add、update：关联的任务编号；空字符串取消"
+                                    ),
+                                    "x": {
+                                        "type": "number",
+                                        "description": "左上角横坐标",
+                                    },
+                                    "y": {
+                                        "type": "number",
+                                        "description": "左上角纵坐标",
+                                    },
+                                    "width": {
+                                        "type": "number",
+                                        "description": "宽，像素",
+                                    },
+                                    "height": {
+                                        "type": "number",
+                                        "description": "高，像素",
+                                    },
                                     "from": _text("connect、disconnect：起点格子"),
                                     "to": _text("connect、disconnect：终点格子"),
                                     "label": _text("connect：线上的一句话"),
@@ -893,9 +1037,13 @@ PLATFORM_TOOLS = ToolTable(
                         "body": _text(
                             "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
                         ),
-                        "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
+                        "artifact": _text(
+                            "产物清单上那一项的 id，照抄系统提示里的清单"
+                        ),
                         "new_artifact": _text("清单上还没有的东西的真名"),
-                        "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
+                        "about": _text(
+                            "这样东西是什么、给谁的；第 1 版和第 20 版都得成立"
+                        ),
                         "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                         "deliver_url": _text("交出去的地址"),
                         "completes_task": {
@@ -947,11 +1095,15 @@ PLATFORM_TOOLS = ToolTable(
                     "提交用 cheese push-fix。卡已经有了结果的，重新递卡。deliver 和 "
                     "deliver_url 给一样。",
                     {
-                        "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
+                        "deliver": _text(
+                            "换成的文件，任务工作目录里的相对路径，当场留快照"
+                        ),
                         "deliver_url": _text("换成的地址"),
                     },
                 ),
-                "ready": _verb("把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"),
+                "ready": _verb(
+                    "把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"
+                ),
             },
         ),
         _tool(
@@ -1031,7 +1183,12 @@ PLATFORM_TOOLS = ToolTable(
                     "查看或更换你自己的执行环境：后续文件和命令操作跑在什么样的沙箱里。"
                     "只换你自己，这里的其他队友不受影响；只能选项目能用的规格。更换前平台"
                     "在原来那里尽力把改动推送到分支一次，推没推上去都会换；新环境从分支拉代码。",
-                    {"spec": {"type": "string", "description": ENVIRONMENT_SPEC_DESCRIPTION}},
+                    {
+                        "spec": {
+                            "type": "string",
+                            "description": ENVIRONMENT_SPEC_DESCRIPTION,
+                        }
+                    },
                 ),
                 "wait": _verb(
                     "执行环境还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
@@ -1048,7 +1205,10 @@ PLATFORM_TOOLS = ToolTable(
                     "给同一个 handle 的另一条线程留一张便条。它直接递给那条线程里"
                     "正在干活的队友，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
                     "跟别的 handle 说话只有 chat 一条路。",
-                    {"thread": _text("那条线程的 topic id"), "content": {"type": "string"}},
+                    {
+                        "thread": _text("那条线程的 topic id"),
+                        "content": {"type": "string"},
+                    },
                     ["thread", "content"],
                 ),
                 "deliver_at": _verb(
@@ -1187,7 +1347,10 @@ PLATFORM_TOOLS = ToolTable(
                         },
                         "author": _text("只看这个人（handle）提的"),
                         "since": _text("只看这个时刻之后提的，ISO-8601"),
-                        "offset": {"type": "integer", "description": "跳过前几条，翻页用"},
+                        "offset": {
+                            "type": "integer",
+                            "description": "跳过前几条，翻页用",
+                        },
                     },
                 ),
                 "get": _verb(
@@ -1251,7 +1414,9 @@ PLATFORM_TOOLS = ToolTable(
                     "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
                     {
                         "title": _text("规则名字，一句话；不写就由你照目标起一个"),
-                        "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
+                        "instructions": _text(
+                            "目标：到点要做的事，写清做什么、交出什么"
+                        ),
                         "note": _text(
                             "补充说明：还有什么要它知道的；不写就没有这一项"
                             "（用哪些资料、结果放哪，每次开工它自己定，不用在这里写）"
@@ -1342,7 +1507,11 @@ PLATFORM_TOOLS = ToolTable(
                     "大小写和连字符要对得上）。\n"
                     "读只是能读：**它不表示可以安装或运行这个技能**。把技能装到机器上、"
                     "或者让它跑起来，一律由人在连接器里采纳，并按它自己写的步骤来做。",
-                    {"name": _text("技能名，从 cheese_skill(action=search) 的结果里来")},
+                    {
+                        "name": _text(
+                            "技能名，从 cheese_skill(action=search) 的结果里来"
+                        )
+                    },
                     ["name"],
                 ),
                 "propose": _verb(
@@ -1358,7 +1527,9 @@ PLATFORM_TOOLS = ToolTable(
                     "一个会话最多提一次。写成做法，不抄聊天记录：先写判断点和理由、踩过的坑、"
                     "产出格式，通用步骤少写；这次的具体文件名、数字、人名写成「用户给的某某」。",
                     {
-                        "name": _text("文件夹名，小写字母、数字、连字符，如 weekly-report"),
+                        "name": _text(
+                            "文件夹名，小写字母、数字、连字符，如 weekly-report"
+                        ),
                         "title": _text("名称"),
                         "description": _text(
                             "什么情况下用它，一句话。决定以后会不会被想起来，写用户会怎么说"
@@ -1662,7 +1833,9 @@ DELEGATED_TOOLS = ToolTable(
                     "结果写明原因。",
                     {
                         "ref": _text("待办里那件事的编号"),
-                        "choice": _text("选项原文，或 accept / decline / allow / refuse"),
+                        "choice": _text(
+                            "选项原文，或 accept / decline / allow / refuse"
+                        ),
                         "confirm": _CONFIRM,
                     },
                     ["ref", "choice"],
@@ -1784,7 +1957,10 @@ DELEGATED_TOOLS = ToolTable(
                     {
                         "where": _text("项目短名或频道编号"),
                         "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
-                        "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
+                        "role": {
+                            "type": "string",
+                            "enum": ["admin", "member", "mentor"],
+                        },
                         "remove": {"type": "boolean"},
                         "confirm": _CONFIRM,
                     },
@@ -2006,7 +2182,9 @@ DELEGATED_TOOLS = ToolTable(
                     "里）。返回它在电脑上的路径。",
                     {
                         "ref": _text("资料库里的编号，如 library/成绩.xlsx"),
-                        "path": _text("放到电脑上的哪里；默认工作目录下的 files/，用原名"),
+                        "path": _text(
+                            "放到电脑上的哪里；默认工作目录下的 files/，用原名"
+                        ),
                     },
                     ["ref"],
                 ),
@@ -2864,9 +3042,7 @@ class PlatformHTTPError(RuntimeError):
         self.body = body
 
 
-def run_platform_tool(
-    tool: str, args: dict, host, *, delegated: bool = False
-) -> str:
+def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -> str:
     """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
     text, what came of it.
 
@@ -2887,15 +3063,13 @@ def run_platform_tool(
     table = next((t for t in tables if tool in t), None)
     if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
-    if (
-        f"{tool}.{args.get('action')}" == COMPACT_TOOL
-        and not switched_on(getattr(host, "environ", None))
+    if f"{tool}.{args.get('action')}" == COMPACT_TOOL and not switched_on(
+        getattr(host, "environ", None)
     ):
         _, _, compact = COMPACT_TOOL.partition(".")
         offered = [verb for verb in table.actions(tool) or () if verb != compact]
         raise PlatformToolError(
-            "这个部署没有给这个座位打开主动压缩上下文；"
-            + ask_for_action(tool, offered)
+            "这个部署没有给这个座位打开主动压缩上下文；" + ask_for_action(tool, offered)
         )
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
     actions = table.actions(tool)
@@ -3266,7 +3440,9 @@ def _doc_edit(args: dict, host) -> str:
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
             + _searched(args, host, document["CHEESE_DOCUMENT"])
-            + _EDIT_NEXT.get(reason, "先 cheese_doc(action=get) 重读，照读到的原文改好再试。")
+            + _EDIT_NEXT.get(
+                reason, "先 cheese_doc(action=get) 重读，照读到的原文改好再试。"
+            )
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []
@@ -4133,7 +4309,9 @@ def _feedback_get(args: dict, host) -> str:
     if item.get("assignee_handle"):
         lines.append(f"这一条 {item['assignee_handle']} 领着；不是你的就不要修。")
     elif item.get("can_claim"):
-        lines.append(f'要修它，先 cheese_feedback(action=claim, feedback="{shown}") 领下来。')
+        lines.append(
+            f'要修它，先 cheese_feedback(action=claim, feedback="{shown}") 领下来。'
+        )
     return "\n".join(lines)
 
 
@@ -4557,16 +4735,18 @@ _DELEGATED_STEPS = {
     "cheese_web.fetch": _web_fetch,
     # 个人芝士的通知发给用户本人；房间的发进项目的通知。
     "cheese_notify": lambda args, host: (
-        host.request(
-            {
-                "method": "POST",
-                "path": "/assistant/agent/notify-me",
-                "body": _given(args, "text"),
-            }
-        ).get("data")
-        or {}
-    ).get("text")
-    or "",
+        (
+            host.request(
+                {
+                    "method": "POST",
+                    "path": "/assistant/agent/notify-me",
+                    "body": _given(args, "text"),
+                }
+            ).get("data")
+            or {}
+        ).get("text")
+        or ""
+    ),
 }
 
 
@@ -5147,7 +5327,9 @@ _SAY = {
         if (d or {}).get("delivered")
         else "那条线程这会儿没在干活,便条没人接住。"
     ),
-    "cheese_session.deliver_at": lambda a, d, e: f"到 {(d or {}).get('at')} 会把它递给你。",
+    "cheese_session.deliver_at": lambda a, d, e: (
+        f"到 {(d or {}).get('at')} 会把它递给你。"
+    ),
     "cheese_routine.create": _say_routine_draft,
     "cheese_routine.list": _say_routine_list,
     "cheese_routine.update": _say_routine_update,
@@ -5176,7 +5358,11 @@ class LocalHost:
         self.doc_versions = {} if doc_versions is None else doc_versions
 
     def request(self, plan: dict) -> dict:
-        api = self.environ.get("CHEESE_API", "").rstrip("/")
+        api = (
+            f"http://{_SOCKET_HOST}/api"
+            if PLATFORM_SOCKET and _platform_socket(self.environ) == PLATFORM_SOCKET
+            else self.environ.get("CHEESE_API", "").rstrip("/")
+        )
         body = plan.get("body")
         req = urllib.request.Request(
             api + plan["path"],
@@ -5196,7 +5382,7 @@ class LocalHost:
         # ladder of fetch strategies ending in a real browser, which measured
         # 22 s on a page that answered and longer on one that tried every rung.
         try:
-            with urllib.request.urlopen(req, timeout=240) as response:
+            with _urlopen(req, timeout=240) as response:
                 return json.loads(response.read() or b"{}")
         except urllib.error.HTTPError as exc:
             raise PlatformHTTPError(
@@ -5245,7 +5431,7 @@ def _call(
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _urlopen(req, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raw = e.read().decode(errors="replace")
@@ -5472,7 +5658,7 @@ def _flush_pre_push_reports() -> None:
     )
     try:
         message = _RoomMessage(content)
-        if API and TOPIC and TOKEN:
+        if API and TOPIC and (TOKEN or PLATFORM_SOCKET):
             message.tell_room()
         else:
             # Nobody to tell: a checkout with no room has no author to reach.
@@ -5509,7 +5695,7 @@ def _git_credential(operation: str) -> None:
 
 
 def _forge_git_relay(repository: str) -> str:
-    return f"{API}/sandbox/forge/{_need('CHEESE_PROJECT', PROJECT)}/{repository}.git"
+    return f"{_direct_api()}/sandbox/forge/{_need('CHEESE_PROJECT', PROJECT)}/{repository}.git"
 
 
 def _configure_git_transport(repo: Path, data: dict) -> None:
@@ -5526,7 +5712,7 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
         root = data["remote"].rsplit("/", 2)[0]
         probe = root + ("/api/v1/version" if data["forge_kind"] == "forgejo" else "/")
         request = urllib.request.Request(probe)
-        with urllib.request.urlopen(request, timeout=5):
+        with _urlopen(request, timeout=5):
             pass
     except urllib.error.HTTPError:
         reachable = False
@@ -6187,7 +6373,7 @@ def _report_sync_failure(
     cannot help and a person has to choose — so that one is still said in the
     room.
     """
-    if not (API and TOPIC and TOKEN):
+    if not (API and TOPIC and (TOKEN or PLATFORM_SOCKET)):
         return  # A human using the CLI directly already receives its exit status.
     where = branch or f"任务 {task_id}"
     if queued_pr:
@@ -6230,7 +6416,7 @@ def _tell_site(content: str) -> bool:
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with _urlopen(req, timeout=30):
             pass
     except Exception:
         return False
@@ -6251,7 +6437,7 @@ def _tell_room(content: str) -> bool:
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Cheese-Token", TOKEN)
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with _urlopen(req, timeout=30):
             pass
     except Exception:
         return False
@@ -6382,7 +6568,7 @@ def _tell_room_left_out(
     told_file = admin / "cheese-backup-left-out"
     told = set(told_file.read_text().splitlines()) if told_file.exists() else set()
     new = [path for path, _ in dropped if path not in told]
-    if not (new and API and TOPIC and TOKEN):
+    if not (new and API and TOPIC and (TOKEN or PLATFORM_SOCKET)):
         return
     budget = _UNTRACKED_BACKUP_BUDGET // 1024 // 1024
     if _tell_room(
@@ -6733,7 +6919,7 @@ def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
     )
     request.add_header("X-Cheese-Token", TOKEN)
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with _urlopen(request, timeout=20) as response:
             latest = json.load(response)["data"]
         if latest["head_sha"] != head:
             return False
@@ -6788,13 +6974,15 @@ def _backup_task_snapshot(worktree, data, head, snapshot):
                 digest.update(chunk)
         path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
         with bundle.open("rb") as stream:
-            request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
+            request = urllib.request.Request(
+                f"{_direct_api()}{path}", data=stream, method="PUT"
+            )
             request.add_header("Content-Type", "application/x-git-bundle")
             request.add_header("Content-Length", str(bundle.stat().st_size))
             request.add_header("X-Cheese-Token", TOKEN)
             request.add_header("X-Cheese-Head", head)
             request.add_header("X-Content-SHA256", digest.hexdigest())
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with _urlopen(request, timeout=120) as response:
                 receipt = json.load(response)["data"]
         if receipt["digest"] != digest.hexdigest():
             raise RuntimeError("Task backup acknowledgement did not match the bundle")
@@ -7263,7 +7451,7 @@ def _raw_request(
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _urlopen(req, timeout=30) as r:
             payload = r.read()
     except urllib.error.HTTPError as e:
         # Surface the backend's error body (auth failures, validation, etc.)
@@ -7307,7 +7495,8 @@ def _library_get(project: str, name: str, out: str) -> None:
         size = int(link["bytes"])
         url = link["url"]
         if url.startswith("/"):
-            url = f"{API}{url}"
+            # A signed link: curl dials the platform itself.
+            url = f"{_direct_api()}{url}"
         done = subprocess.run(
             ["curl", "-sSf", "--retry", "3", "-C", "-", "-o", partial, url],
             capture_output=True,
@@ -7430,9 +7619,7 @@ def _probe_app(port: int) -> int | None:
         f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
     )
     try:
-        with urllib.request.urlopen(
-            request, timeout=_SERVE_PROBE_TIMEOUT_S
-        ) as response:
+        with _urlopen(request, timeout=_SERVE_PROBE_TIMEOUT_S) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
@@ -8014,7 +8201,7 @@ def main() -> None:
         )
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _urlopen(req, timeout=60) as r:
             body = r.read()
         parent = os.path.dirname(a.path)
         if parent:
@@ -8041,7 +8228,7 @@ def main() -> None:
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with _urlopen(req, timeout=60) as r:
                 body = r.read()
                 version = r.headers.get("X-Cheese-Version") or ""
         except urllib.error.HTTPError as e:
