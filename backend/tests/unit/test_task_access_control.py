@@ -291,7 +291,7 @@ class TestCreateTaskEntityDomainResolution:
             # 这两个用例测的是 domain group 的解析，不是权限；发布收权那道门在这里
             # 直接放行，免得拿 AsyncMock 的 session 去撞它。
             patch(
-                "app.api.routes.tasks._common.may_publish_in_space",
+                "app.api.routes.tasks._common.space_seats.may",
                 new=AsyncMock(return_value=True),
             ),
             patch(
@@ -361,7 +361,7 @@ class TestCreateTaskEntityDomainResolution:
             ),
             # 与上一个用例同理：这里是解析逻辑的单元测试，不是权限测试。
             patch(
-                "app.api.routes.tasks._common.may_publish_in_space",
+                "app.api.routes.tasks._common.space_seats.may",
                 new=AsyncMock(return_value=True),
             ),
             patch(

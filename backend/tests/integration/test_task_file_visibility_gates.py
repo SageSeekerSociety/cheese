@@ -110,11 +110,11 @@ def test_an_unapproved_task_does_not_hand_out_its_list_to_a_board_member(
     )
     assert added.status_code == 201, added.text
 
-    # 前提：这道题本身对成员就是 403。
-    assert _detail(api_client, task_id, member_token).status_code == 403
+    # 前提：这道题对成员还不存在（404）。
+    assert _detail(api_client, task_id, member_token).status_code == 404
 
     status, _ = _list(api_client, task_id, member_token)
-    assert status == 403, "清单跟着题目走：题是 403，清单不许 200"
+    assert status == 404, "清单跟着题目走：题不存在，清单也不存在"
 
     # 出题人是这道题的作者，两道门都为他开着。
     assert _detail(api_client, task_id, board["creator_token"]).status_code == 200
@@ -149,9 +149,9 @@ def test_a_stranger_gets_nothing_from_an_unapproved_task(
     task_id = _create_task(api_client, board, name="草稿题", approve=False)
     _upload_to_task(api_client, task_id, board["creator_token"])
 
-    assert _detail(api_client, task_id, stranger_token).status_code == 403
+    assert _detail(api_client, task_id, stranger_token).status_code == 404
     status, _ = _list(api_client, task_id, stranger_token)
-    assert status == 403, "不是这块板的人，连草稿题的名字都不该从材料清单里读出来"
+    assert status == 404, "不是这块板的人，连草稿题的名字都不该从材料清单里读出来"
 
 
 def test_a_task_over_the_board_limit_hides_its_list_too(

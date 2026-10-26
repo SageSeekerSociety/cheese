@@ -18,8 +18,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import is_space_admin
 from app.core.errors import NotFoundError
+from app.domain.space import permissions as space_seats
 from app.domain.space.models import (
     Space,
     SpaceAnnouncement,
@@ -38,9 +38,7 @@ LISTED = 50
 async def managed(session: AsyncSession, user_id: int, space_id: int) -> Space:
     """The space, when the person manages it; not found otherwise."""
     space = await session.get(Space, space_id)
-    if space is None or not await is_space_admin(
-        session, space_id=space_id, user_id=user_id
-    ):
+    if space is None or not await space_seats.runs(session, space_id, user_id):
         raise NotFoundError.for_resource("space", str(space_id))
     return space
 

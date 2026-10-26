@@ -51,6 +51,9 @@ const READER_INPUT_MS = 500
 /** 时间线内容改写之后多久内，没人动却往上挪的那一下算改写挪的（ms）。 */
 const REWRITE_MS = 500
 
+/** 我们自己发起的那一下滚动，安静多久算停下了（ms）。平滑滚动每一帧都发滚动事件。 */
+const OWN_SCROLL_IDLE_MS = 150
+
 export interface ChatScroll {
   /** 绑在可滚动的那个容器上。 */
   scrollRef: Ref<HTMLElement | null>
@@ -67,6 +70,11 @@ export interface ChatScroll {
   noteFrame(): void
   /** 记下这个话题现在停在哪，并刷新 `atBottom`（滚动事件里、以及切走时调）。 */
   rememberScroll(topicId: string | undefined): void
+  /**
+   * 说一声「接下来这一下滚动是我们自己发的」（跳到某一条）。这一阵里不把往上的移动
+   * 当成读者往上翻，也不当成浏览器锚定夹的；停下之后再按落点定「在不在底部」。
+   */
+  beginOwnScroll(): void
   /** 还原这个话题上次停的地方。 */
   restoreScroll(topicId: string): void
   /** 这个话题再打开时会不会停在底部。 */
@@ -93,7 +101,8 @@ export function useChatScroll(
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
-  const topicId = options.topicId ?? (() => undefined)
+  /** 此刻这一栏读的是哪一段对话。`rememberScroll` 的入参是「要记哪一段」，是两件事。 */
+  const currentTopicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
 
@@ -149,6 +158,7 @@ export function useChatScroll(
   const readerTookOver = () => {
     touched()
     settlePending()
+    cancelOwnScroll()
   }
   for (const type of ['wheel', 'touchmove'] as const)
     useEventListener(scrollRef, type, readerTookOver, { passive: true })
@@ -319,7 +329,7 @@ export function useChatScroll(
       const sc = scrollRef.value
       if (!sc || !sc.clientHeight) return
       atBottom.value = isAtBottom(sc)
-      const id = showingNewest() ? topicId() : undefined
+      const id = showingNewest() ? currentTopicId() : undefined
       if (id) scrollMemory.set(id, { top: sc.scrollTop, atBottom: atBottom.value, anchor: anchorNow(sc) })
     }, PENDING_SETTLE_MS)
   }
@@ -360,6 +370,9 @@ export function useChatScroll(
         if (pending === null && !atBottom.value && showingNewest()) holdPending({ top: lastTop })
         return
       }
+      // 我们自己发的那一下还在滚（跳到某一条）：这一阵不跟随，落到哪一条由停下来的
+      // 那一刻说了算。
+      if (ownScrollTimer !== null) return
       // 回填还没落到位：内容此刻比记下时短（行是分批挂上来的），放不进去。「卡在当前
       // 末端」不是「他本来就停在底部」——把它当后者正是「退出支线被甩到最底」的来路。
       // 目标留着，等长够了再放；在这之前也不跟新消息。
@@ -402,9 +415,11 @@ export function useChatScroll(
   // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
     settlePending()
+    // 要的就是底部：正在进行的「跳到某一条」到此为止，别等它停下来的那一拍再改口。
+    cancelOwnScroll()
     // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
     // 把它记成「停在底部」会盖掉它自己记下的位置。
-    const id = topicId()
+    const id = currentTopicId()
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
@@ -418,7 +433,7 @@ export function useChatScroll(
   // 只在用户没往上翻时跟随新消息。重放追赶期间逐帧的调用被压住，由 `noteFrame`
   // 在这一阵静下来之后滚一次。
   function autoScroll() {
-    if (catchingUp || !showingNewest()) return
+    if (catchingUp || ownScrollTimer !== null || !showingNewest()) return
     if (atBottom.value) scrollToBottom()
   }
 
@@ -426,6 +441,18 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
+    // 我们自己发的那一下还在滚（跳到某一条）：这一阵里「在不在底部」和记下的位置都由
+    // 停下来的那一刻说了算（`settleOwnScroll`）。半路上判，头几帧还在底部、后面又被
+    // `clamped` 那条兜底读成锚定，人就被钉回原处。
+    if (ownScrollTimer !== null) {
+      if (currentTopicId() === ownScrollTopic) {
+        armOwnScroll()
+        return
+      }
+      // 滚到一半切走了话题：离开的这一段该照常记下它此刻停在哪（回来要落在那儿），
+      // 而这一跳不算「我们自己发的」了。
+      cancelOwnScroll()
+    }
     // 回填还没落到位：这期间的「位置」都是它自己一次次试着放的结果（而且没放进去），
     // 读它只会把「还没到」记成「就在这里」。目标还等着，先不记——除非这一下滚动是读的
     // 人自己弄的（刚刚在这一栏里滚过轮/触过屏/按过会翻页的键）。他的手才是准的，目标作废。
@@ -482,6 +509,88 @@ export function useChatScroll(
     })
   }
 
+  // ── 我们自己发起的滚动（跳到某一条）──────────────────────────────────────
+  //
+  // 它既不是读的人在滚，也不是浏览器被就地改写夹的。可两条判据都把它当成后两者：
+  // 平滑滚动的头几帧离底部还不到一屏，照位置算会把「跟新消息」重新打开；而只要这一栏
+  // 在跳转前后被就地改写过一次（展开浮条、跳过去时离屏的行成批挂上来、agent 在跑时
+  // 输入框上方那行「用时」每秒跳），上面那条 `clamped` 兜底就把这次往上的移动读成
+  // 锚定，当场钉回底部。真机 2026-10-26：停在对话最底下点左上角书签，被拽回来，
+  // 到不了设为书签的那一条。
+  //
+  // 所以这一阵里 `atBottom` 先不动；滚到停下来（安静一个 OWN_SCROLL_IDLE_MS）再按
+  // 真正停下的位置定它——跳到最后一条时跟新消息要照常接上。
+  let ownScrollTimer: ReturnType<typeof setTimeout> | null = null
+  // 这一跳是给哪个话题发的：到点时按它落账，不是按「此刻这一栏读的是哪个」——
+  // 150ms 里切走了话题，读的是新话题，落到它头上的会是一个指着别的内容的位置。
+  // `scrollToBottom` 出于同一个理由先抓住话题 id。
+  let ownScrollTopic: string | undefined
+
+  function armOwnScroll() {
+    if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
+    ownScrollTimer = setTimeout(() => {
+      ownScrollTimer = null
+      settleOwnScroll()
+    }, OWN_SCROLL_IDLE_MS)
+  }
+
+  /** 这一下滚完了：落点在哪就按哪定。 */
+  function settleOwnScroll() {
+    const el = scrollRef.value
+    // 没有布局（`v-show` 藏着、另一个页签在前）：这一跳本来就没能挪动它，位置没变，
+    // 不用落账，`atBottom` 也还是跳之前那个值。
+    if (!el || !el.clientHeight) return
+    // 跳到一半切走了话题：这一跳不算数，别把新话题按旧落点写掉。`atBottom` 从头到尾
+    // 没被改过，新话题自己记下的那份还在。
+    if (ownScrollTopic !== undefined && currentTopicId() !== ownScrollTopic) return
+    lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
+    atBottom.value = isAtBottom(el)
+    const id = showingNewest() ? ownScrollTopic : undefined
+    if (id)
+      scrollMemory.set(id, {
+        top: el.scrollTop,
+        atBottom: atBottom.value,
+        anchor: atBottom.value ? undefined : anchorNow(el),
+      })
+  }
+
+  /** 往后的滚动是我们自己发的（跳到某一条、闪一下那一下落位）。 */
+  function beginOwnScroll() {
+    // 读的人点名要去某一条，回填中的目标就作废了。
+    settlePending()
+    // 这一阵里**不动** `atBottom`：它只在停下来那一刻按落点重定一次。曾经在这里把它
+    // 设成 false 来挡住跟随，于是每个出口（切话题、没有布局、读者接手、又跳一次）都得
+    // 记得改回来，漏一个就永远卡在 false 上——三轮自审各抓到一个。不设就没有这么多
+    // 出口：跟随由 `ownScrollTimer` 自己挡（见下面观察者与 `autoScroll`）。
+    ownScrollTopic = currentTopicId()
+    armOwnScroll()
+  }
+
+  /**
+   * 不算我们自己发的了：读的人接了手，或者又要钉回底部。
+   *
+   * 撤的时候按此刻的位置把「在不在底部」定回来，`lastTop`/`lastHeight` 也一起刷新。
+   * 这两件事必须在这里做：窗口里 `atBottom` 一直没动（跳之前停在底部的话，它还是
+   * true），而 `rememberScroll` 的窗口分支也不再刷新那两把尺子。读者在 150ms 里滚轮
+   * 接手、滚出去之后，下一个滚动事件拿「跳之前的 `lastHeight`」去比，会算成
+   * `relaid=true`（跳过去时离屏的行刚按真实高度铺开），于是一路往上的移动被当成浏览器
+   * 锚定，`atBottom` 留在 true：药丸不出现，下一条消息一到就被拽回底部——正是这个窗口
+   * 要挡的那件事。
+   */
+  function cancelOwnScroll() {
+    // 没有窗口在滚的时候它什么也不用做：读的人每一帧滚轮都会走到这里，别让热路径
+    // 白白量三次布局、再写一次 `atBottom`。
+    if (ownScrollTimer === null) return
+    clearTimeout(ownScrollTimer)
+    ownScrollTimer = null
+    const el = scrollRef.value
+    if (!el || !el.clientHeight) return
+    lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
+    atBottom.value = isAtBottom(el)
+  }
+
   /** 不再记这个话题停在哪：再打开时落到底部。 */
   function forgetScroll(topicId: string) {
     scrollMemory.delete(topicId)
@@ -496,6 +605,7 @@ export function useChatScroll(
   onScopeDispose(() => {
     if (catchUpTimer) clearTimeout(catchUpTimer)
     catchUpTimer = null
+    cancelOwnScroll()
     clearPendingSettle()
     contentObserver?.disconnect()
     contentObserver = null
@@ -510,6 +620,7 @@ export function useChatScroll(
     beginCatchUp,
     noteFrame,
     rememberScroll,
+    beginOwnScroll,
     restoreScroll,
     restoresToBottom,
     forgetScroll,

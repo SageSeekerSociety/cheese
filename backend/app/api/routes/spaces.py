@@ -27,7 +27,6 @@ from app.api.space_payloads import (
 from app.api.write_access import ROUTE_DECIDES, needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import is_space_admin
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -35,6 +34,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.space import permissions as space_seats
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.permissions import Permission as SpacePermission
@@ -232,8 +232,8 @@ async def get_space(
 
     # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
     # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
-    may_manage = auth_user.user_id > 0 and await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
+    may_manage = auth_user.user_id > 0 and await space_seats.runs(
+        db, space_id, auth_user.user_id
     )
 
     categories = None
