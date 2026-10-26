@@ -10,6 +10,7 @@ takes the action, asks the gate and hands back the pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel
@@ -19,7 +20,10 @@ from app.api.awaiting_deps import all_waiting
 from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent.personal import reading, space_desk
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.assistant import gate, refs
+from app.domain.project import address
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.space.services import SpaceLabels
 from app.domain.team.services import team_service
@@ -67,6 +71,24 @@ DOORS = {
     "space_remove": "app.api.routes.spaces.delete_space_member",
     "space_admin_add": "app.api.routes.spaces_organization.add_space_admin",
     "space_admin_remove": "app.api.routes.spaces_organization.delete_space_admin",
+    "space_set": "app.api.routes.spaces.patch_space",
+    "announce": "app.api.routes.space_announcements.publish_announcement",
+    "announce_edit": "app.api.routes.space_announcements.patch_announcement",
+    "announce_delete": "app.api.routes.space_announcements.delete_announcement",
+    "category_add": "app.api.routes.spaces_organization.create_space_category",
+    "category_edit": "app.api.routes.spaces_organization.patch_space_category",
+    "category_delete": "app.api.routes.spaces_organization.delete_space_category",
+    "category_archive": "app.api.routes.spaces_organization.archive_space_category",
+    "category_unarchive": "app.api.routes.spaces_organization.unarchive_space_category",
+    "code_add": "app.api.routes.spaces_invite_codes.create_space_invite_code",
+    "code_edit": "app.api.routes.spaces_invite_codes.patch_space_invite_code",
+    "code_revoke": "app.api.routes.spaces_invite_codes.revoke_space_invite_code",
+    "problem_review": "app.api.routes.tasks.lifecycle.patch_task",
+    "channel_manager": "app.api.routes.project_channels.hand_over_channel",
+    "project_slug": "app.api.routes.addresses.set_project_slug",
+    "task_naming": "app.api.routes.projects.set_task_naming",
+    "default_agent": "app.api.routes.projects_agents.set_project_default_agent",
+    "default_model": "app.api.routes.projects_run_config.save_default_model",
 }
 #: How a role is named to the person.
 ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
@@ -97,6 +119,12 @@ class ActIn(BaseModel):
         "member",
         "channel",
         "fetch",
+        "project_set",
+        "space_set",
+        "announce",
+        "category",
+        "invite_code",
+        "problem_review",
     ]
     #: A message: where (a channel or a task) and what. A task: in which
     #: channel, its title and what it is for (``text``).
@@ -116,6 +144,16 @@ class ActIn(BaseModel):
     #: A web page, and what to learn from it.
     url: str = ""
     prompt: str = ""
+    #: A setting: which one (``key``) and what it becomes (``value``).
+    key: str = ""
+    value: str = ""
+    #: An announcement kept at the top of its space.
+    pinned: bool | None = None
+    #: A category put away, or brought back.
+    archived: bool | None = None
+    #: An invite code: how many may use it, and how many days it lasts.
+    max_uses: int | None = None
+    days: int | None = None
     #: Put it to the person if the gate stops it, rather than hand it back:
     #: 芝士 has nothing to put right, only the person's yes is missing.
     confirm: bool = False
@@ -427,4 +465,369 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
         [(DOORS["space_add"], sid)],
         card=("act", {}),
         done=f"已把 {shown} 加入空间「{space.name}」。",
+    )
+
+
+def _space_id(where: str) -> int:
+    ref = refs.parse(need(where, "where"))
+    if ref is None or ref.kind != "space" or not (ref.id or "").isdigit():
+        raise BadRequestError(say("assistantRefUnknown", ref=where))
+    return int(ref.id or 0)
+
+
+def _id(raw: str) -> int:
+    if not raw.strip().isdigit():
+        raise BadRequestError(say("assistantRefUnknown", ref=raw))
+    return int(raw)
+
+
+#: What of a space's own settings 芝士 changes: its name for the person, and
+#: the field the space's settings page sends.
+_SPACE_KEYS = {
+    "name": ("名称", "name"),
+    "intro": ("简介", "intro"),
+    "visible_limit": ("每位出题人可见的题目上限", "visibleTaskLimit"),
+}
+
+
+async def space_set(db, me: Person, body: ActIn) -> Plan:
+    sid = _space_id(body.where)
+    space = await space_desk.managed(db, me.user_id, sid)
+    if body.key not in _SPACE_KEYS:
+        raise BadRequestError(
+            say("assistantActNeeds", what="key: " + " / ".join(_SPACE_KEYS))
+        )
+    label, field = _SPACE_KEYS[body.key]
+    value: object = need(body.value, "value")
+    if body.key == "visible_limit":
+        value = _id(str(value))
+    return Plan(
+        gate.Action("settings", f"把空间「{space.name}」的{label}改为「{value}」"),
+        [{"method": "PATCH", "path": f"/spaces/{sid}", "body": {field: value}}],
+        [(DOORS["space_set"], str(sid))],
+        card=("act", {}),
+        done=f"已把空间「{space.name}」的{label}改为「{value}」。",
+    )
+
+
+async def announce(db, me: Person, body: ActIn) -> Plan:
+    """An announcement published to everyone in a space, changed, or taken
+    down."""
+    sid = _space_id(body.where)
+    space = await space_desk.managed(db, me.user_id, sid)
+    base = f"/spaces/{sid}/announcements"
+    if body.ref:
+        aid = _id(body.ref)
+        title = await space_desk.announcement_title(db, sid, aid)
+        if body.remove:
+            return Plan(
+                gate.Action(
+                    "announce",
+                    f"删除空间「{space.name}」的公告「{title}」",
+                    ("delete",),
+                ),
+                [{"method": "DELETE", "path": f"{base}/{aid}"}],
+                [(DOORS["announce_delete"], str(sid))],
+                card=("act", {}),
+                done=f"已删除公告「{title}」。",
+            )
+        change = {
+            k: v
+            for k, v in (
+                ("title", body.title or None),
+                ("content", body.text or None),
+                ("pinned", body.pinned),
+            )
+            if v is not None
+        }
+        if not change:
+            raise BadRequestError(
+                say("assistantActNeeds", what="title / text / pinned")
+            )
+        said = "，".join(
+            {
+                "title": f"标题改为「{body.title}」",
+                "content": f"正文改为：{body.text}",
+                "pinned": "置顶" if body.pinned else "取消置顶",
+            }[k]
+            for k in change
+        )
+        return Plan(
+            gate.Action(
+                "announce", f"修改空间「{space.name}」的公告「{title}」：{said}"
+            ),
+            [{"method": "PATCH", "path": f"{base}/{aid}", "body": change}],
+            [(DOORS["announce_edit"], str(sid))],
+            card=("act", {}),
+            done=f"已修改公告「{title}」。",
+        )
+    title = need(body.title, "title")
+    return Plan(
+        gate.Action(
+            "announce",
+            f"在空间「{space.name}」发布公告「{title}」，发给空间里所有人"
+            + ("，置顶" if body.pinned else "")
+            + (f"：{body.text}" if body.text else ""),
+            ("to_everyone",),
+        ),
+        [
+            {
+                "method": "POST",
+                "path": base,
+                "body": {
+                    "title": title,
+                    "content": body.text,
+                    "pinned": bool(body.pinned),
+                },
+            }
+        ],
+        [(DOORS["announce"], str(sid))],
+        card=("act", {}),
+        done=f"已在空间「{space.name}」发布公告「{title}」。",
+    )
+
+
+async def category(db, me: Person, body: ActIn) -> Plan:
+    """A category of a space: made, renamed, put away or brought back, or
+    deleted."""
+    sid = _space_id(body.where)
+    space = await space_desk.managed(db, me.user_id, sid)
+    base = f"/spaces/{sid}/categories"
+    if not body.ref:
+        name = need(body.title, "title")
+        return Plan(
+            gate.Action(
+                "category", f"在空间「{space.name}」新建分类「{name}」", low=True
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": base,
+                    "body": {"name": name, "description": body.text or None},
+                }
+            ],
+            [(DOORS["category_add"], str(sid))],
+            card=("act", {}),
+            done=f"已新建分类「{name}」。",
+        )
+    cid = _id(body.ref)
+    name = await space_desk.category_name(db, sid, cid)
+    if body.remove:
+        return Plan(
+            gate.Action(
+                "category", f"删除空间「{space.name}」的分类「{name}」", ("delete",)
+            ),
+            [{"method": "DELETE", "path": f"{base}/{cid}"}],
+            [(DOORS["category_delete"], str(sid))],
+            card=("act", {}),
+            done=f"已删除分类「{name}」。",
+        )
+    if body.archived is not None:
+        verb = "归档" if body.archived else "取消归档"
+        return Plan(
+            gate.Action("category", f"{verb}空间「{space.name}」的分类「{name}」"),
+            [
+                {
+                    "method": "POST" if body.archived else "DELETE",
+                    "path": f"{base}/{cid}/archive",
+                }
+            ],
+            [
+                (
+                    DOORS[
+                        "category_archive" if body.archived else "category_unarchive"
+                    ],
+                    str(sid),
+                )
+            ],
+            card=("act", {}),
+            done=f"已{verb}分类「{name}」。",
+        )
+    title = need(body.title, "title")
+    return Plan(
+        gate.Action(
+            "category", f"把空间「{space.name}」的分类「{name}」改名为「{title}」"
+        ),
+        [{"method": "PATCH", "path": f"{base}/{cid}", "body": {"name": title}}],
+        [(DOORS["category_edit"], str(sid))],
+        card=("act", {}),
+        done=f"已把分类「{name}」改名为「{title}」。",
+    )
+
+
+def _expires(days: int | None) -> int | None:
+    if days is None:
+        return None
+    return int((datetime.now(UTC) + timedelta(days=days)).timestamp() * 1000)
+
+
+async def invite_code(db, me: Person, body: ActIn) -> Plan:
+    """An invite code of a space: made, changed, or stopped."""
+    sid = _space_id(body.where)
+    space = await space_desk.managed(db, me.user_id, sid)
+    base = f"/spaces/{sid}/invite-codes"
+    terms = "，".join(
+        t
+        for t in (
+            f"可用 {body.max_uses} 次" if body.max_uses else "",
+            f"{body.days} 天后过期" if body.days else "",
+            f"说明：{body.text}" if body.text else "",
+        )
+        if t
+    )
+    change = {
+        k: v
+        for k, v in (
+            ("maxUses", body.max_uses),
+            ("expiresAt", _expires(body.days)),
+            ("note", body.text or None),
+        )
+        if v is not None
+    }
+    if not body.ref:
+        return Plan(
+            gate.Action(
+                "invite_code",
+                f"为空间「{space.name}」新建一个邀请码"
+                + (f"（{terms}）" if terms else ""),
+            ),
+            [{"method": "POST", "path": base, "body": change}],
+            [(DOORS["code_add"], str(sid))],
+            card=("act", {}),
+            done=f"已为空间「{space.name}」新建邀请码。",
+        )
+    cid = _id(body.ref)
+    code = await space_desk.code_text(db, sid, cid)
+    if body.remove:
+        return Plan(
+            gate.Action(
+                "invite_code",
+                f"停用空间「{space.name}」的邀请码 {code}",
+                ("delete",),
+            ),
+            [{"method": "DELETE", "path": f"{base}/{cid}"}],
+            [(DOORS["code_revoke"], str(sid))],
+            card=("act", {}),
+            done=f"已停用邀请码 {code}。",
+        )
+    if not change:
+        raise BadRequestError(say("assistantActNeeds", what="max_uses / days / text"))
+    return Plan(
+        gate.Action("invite_code", f"修改空间「{space.name}」的邀请码 {code}：{terms}"),
+        [{"method": "PATCH", "path": f"{base}/{cid}", "body": change}],
+        [(DOORS["code_edit"], str(sid))],
+        card=("act", {}),
+        done=f"已修改邀请码 {code}。",
+    )
+
+
+async def problem_review(db, me: Person, body: ActIn) -> Plan:
+    """A problem waiting for review on a space the person manages, passed or
+    sent back with why."""
+    ref = refs.parse(need(body.ref, "ref"))
+    if ref is None or ref.kind != "problem" or not ref.within:
+        raise BadRequestError(say("assistantRefUnknown", ref=body.ref))
+    sid, tid = int(ref.within), int(ref.id or 0)
+    space = await space_desk.managed(db, me.user_id, sid)
+    name, setter = await space_desk.problem(db, sid, tid)
+    if body.choice not in ("accept", "decline"):
+        raise BadRequestError(say("assistantActNeeds", what="choice: accept / decline"))
+    yes = body.choice == "accept"
+    why = body.text.strip()
+    if not yes and not why:
+        raise BadRequestError(say("assistantActNeeds", what="text"))
+    return Plan(
+        gate.Action(
+            "problem_review",
+            f"{'通过' if yes else '退回'} {setter} 在空间「{space.name}」提交的题目「{name}」"
+            + (f"，理由：{why}" if why else ""),
+        ),
+        [
+            {
+                "method": "PATCH",
+                "path": f"/tasks/{tid}",
+                "body": {"approved": "APPROVED"}
+                if yes
+                else {"approved": "DISAPPROVED", "rejectReason": why},
+            }
+        ],
+        [(DOORS["problem_review"], str(tid))],
+        card=("act", {}),
+        done=f"已{'通过' if yes else '退回'}题目「{name}」。",
+    )
+
+
+#: What of a project's settings 芝士 changes, by name: the person's word for
+#: it, the route's door and path under the project, and the body it sends.
+_PROJECT_KEYS = ("slug", "task_naming", "default_agent", "default_model")
+_NAMING = {"auto": "自动命名", "manual": "手动命名"}
+
+
+async def project_set(db, access, body: ActIn) -> Plan:
+    """A project's address, how its tasks are named, the teammate and model
+    new channels start with; or who manages one of its channels."""
+    ref = refs.parse(need(body.where, "where"))
+    if ref is not None and ref.kind == "channel":
+        if body.key != "manager":
+            raise BadRequestError(say("assistantActNeeds", what="key: manager"))
+        project, found = await reading.numbered(db, ref, address.Numbered.channel)
+        place = await access.topic(found.id)
+        who, shown = await named(db, need(body.value, "value").lstrip("@"))
+        room = place.room
+        return Plan(
+            gate.Action(
+                "settings",
+                f"把频道「{room.title}」（项目「{project.name}」）的负责人换成 {shown}",
+            ),
+            [
+                {
+                    "method": "PUT",
+                    "path": f"/projects/{project.id}/channels/{room.id}/manager",
+                    "body": {"handle": who},
+                }
+            ],
+            [(DOORS["channel_manager"], str(room.id))],
+            card=("act", {}),
+            done=f"已把频道「{room.title}」的负责人换成 {shown}。",
+        )
+    if ref is None or ref.kind != "project":
+        raise BadRequestError(say("assistantRefUnknown", ref=body.where))
+    project = await address.project_by_ref(db, ref.slug or "")
+    if project is None:
+        raise NotFoundError.for_resource("project", ref.slug or "")
+    await access.project(project.id)
+    if body.key not in _PROJECT_KEYS:
+        raise BadRequestError(
+            say("assistantActNeeds", what="key: " + " / ".join(_PROJECT_KEYS))
+        )
+    value = need(body.value, "value")
+    pid = str(project.id)
+    if body.key == "slug":
+        said, path, sent = f"短名改为 {value}", "slug", {"slug": value}
+    elif body.key == "task_naming":
+        if value not in _NAMING:
+            raise BadRequestError(say("assistantActNeeds", what="value: auto / manual"))
+        said, path, sent = (
+            f"任务命名改为{_NAMING[value]}",
+            "task-naming",
+            {"mode": value},
+        )
+    elif body.key == "default_model":
+        said, path, sent = f"默认模型改为 {value}", "default-model", {"model": value}
+    else:
+        agents = await AgentInstanceService(db).list_for_project(project.id)
+        agent = next((a for a in agents if a.handle == value.lstrip("@")), None)
+        if agent is None:
+            raise NotFoundError(say("assistantWhoUnknown", who=value))
+        said, path, sent = (
+            f"默认 AI 队友改为 {agent.handle}",
+            "default-agent",
+            {"instance_id": str(agent.id)},
+        )
+    return Plan(
+        gate.Action("settings", f"把项目「{project.name}」的{said}"),
+        [{"method": "PUT", "path": f"/projects/{pid}/{path}", "body": sent}],
+        [(DOORS[body.key], pid)],
+        card=("act", {}),
+        done=f"已把项目「{project.name}」的{said}。",
     )

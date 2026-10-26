@@ -55,7 +55,7 @@ vi.mock('@/stores/agent', () => ({ openAgentConversation: vi.fn() }))
 
 const CATEGORIES = [
   { code: 'remove_member', label: '移除成员' },
-  { code: 'to_everyone', label: '在综合频道发消息' },
+  { code: 'to_everyone', label: '发给所有人的消息' },
 ]
 
 const ROUTINE = {
@@ -114,7 +114,7 @@ beforeEach(() => {
         summary: '在频道「综合」（项目「P」）发消息：\n收到',
         verdict: 'asked',
         stage: 'rule',
-        reason: '你设置了「在综合频道发消息」需要确认',
+        reason: '你设置了「发给所有人的消息」需要确认',
         at: new Date().toISOString(),
       },
       {

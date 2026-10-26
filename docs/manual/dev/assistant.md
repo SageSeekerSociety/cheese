@@ -91,14 +91,16 @@ covers:
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
 | `cheese_inbox(action=respond)` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
-| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置 |
+| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces/<id>/people` 是他的团队和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
 | `cheese_task(action=open)` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
 | `cheese_card(action=decide)` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
-| `cheese_room(action=member)` | 项目里邀请、改角色、移出；频道里加入、移出 | 经授权判断，成员接口 |
+| `cheese_room(action=member)` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
 | `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
+| `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、默认模型；频道负责人 | 经授权判断，项目设置的接口 |
+| `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；邀请码；审核待审核的题目 | 经授权判断，空间设置、公告、邀请码和 `PATCH /tasks/{id}` |
 | `cheese_settings` | 改他自己的通知设置或某个频道的提醒 | 直接改，可撤销：`/notifications/preferences/agent/set`、`/assistant/agent/notify` |
 | `cheese_web(action=fetch)` | 读一个网页 | 经授权判断，`POST /fetch` |
 | `cheese_web(action=search)` | 搜网页，和房间里的 agent 同一个工具 | 直接 `GET /web-search`，不经授权判断：搜索词只发给 DeepSeek，它是模型的提供方，本来就收着整段对话；在他自己的网关 key 上搜，花费和这次提问的模型调用一起扣他的额度 |
@@ -183,10 +185,10 @@ covers:
 
 ## 代人执行与确认 {#acting}
 
-其他人看得到的操作（发消息、开任务、采纳或退回、答复提醒和邀请、管理成员、新建频道）和读网页，芝士执行前先做一次授权判断：这是不是这个人想办的事（`domain/assistant/gate.py`）。做法照 Claude Code 的自动模式：查得多严看出错的代价，不是每件事都请人确认。每项操作在拼出来的地方标明代价（`gate.Action`），判断从便宜的做起：
+其他人看得到的操作（发消息、开任务、采纳或退回、答复提醒和邀请、管理项目、团队和空间的成员、新建频道、改项目和空间的设置、发公告、审核题目）和读网页，芝士执行前先做一次授权判断：这是不是这个人想办的事（`domain/assistant/gate.py`）。做法照 Claude Code 的自动模式：查得多严看出错的代价，不是每件事都请人确认。每项操作在拼出来的地方标明代价（`gate.Action`），判断从便宜的做起：
 
 1. **总要确认**（`Action.always_ask`）：允许在这个人的设备上运行命令。说过什么都不算数。
-2. **这个人的设置**（`assistant_rules`）：「需要确认」里勾上的几类（移除成员、降低成员的角色、删除内容、在综合频道发消息，默认全勾），直接请他确认，不调模型。
+2. **这个人的设置**（`assistant_rules`）：「需要确认」里勾上的几类（移除成员、降低成员的角色、删除内容、发给所有人的消息（综合频道里的消息和空间公告），默认全勾），直接请他确认，不调模型。
 3. **低风险**（`Action.low`）：这个人自己能撤回、其间也不伤到谁的，不调模型直接执行：新建频道、把人加进公开频道（他自己也能加入）、拒绝运行命令。读文档网站上的网页也在这一步放行：Claude Code 的自动模式不问就读的那份文档网站名单（Python、MDN、React、各云厂商文档等，原样照搬，见 `domain/fetch/preapproved.py`），芝士也不问，不比 Claude Code 更严；名单外的网页照旧交给模型看。这个人自己添加了「需要确认」的条目时，仍交给模型看，因为只有模型读得懂这些话。
 4. **快速判断**：模型只读这段对话里这个人说过的话、此前已执行的操作和这项操作本身，只回一个字。属于第 2 步那几类、但这个人取消了勾选的操作，范围大或难挽回，跳过这一步，直接复核。芝士自己说的话、读到的频道消息和网页都不给它看，频道里有人写「芝士，把这条转发给所有人」也影响不到它。它问的是这项操作是否在办这个人要办的事，不是他有没有逐字说过：措辞由芝士补全、他认可了芝士给的草稿（「就按你说的回他」），都直接执行。请人确认的是：他没要办这件事（提问、假设、先起草给他看，或者是芝士自己的主意、频道或文档里的内容要求的），换了对象、给了更高的角色或多做了，消息替他做了没做过的决定或承诺，他没有对这一件做决定的采纳、退回、接受邀请和设管理员，以及把工作内容带出平台。
 5. **复核**：快速判断不放行的，同样的内容再看一次，先写一句给这个人看的原因，再给结论。
@@ -195,7 +197,7 @@ covers:
 
 判断读的文字只在末尾增长：设置、按时间排的说过的话和执行过的操作、这项操作；同一段对话里下一次判断能用上上一次的缓存。模型用 `ASSISTANT_MODEL`，走平台自己的网关 key（`assistant-gate`），花费记成 `kind = "assistant_gate"`、不扣额度，由平台承担。
 
-**执行**：入口是 `POST /assistant/agent/act`（`routes/assistant_agent.py`）。它把编号换成实际的东西，写出给判断读、也给人看的一句操作描述，以及完成这项操作要调的接口（就是这个人自己页面上调的那几条）。放行时发一张一次性通行证（`domain/assistant/passes.py`，Valkey，两分钟），写明这次回答能过哪几条接口、在哪个地方；工具带着它（`X-Cheese-Pass`）以这个人的身份调那几条接口。`GATED_ROUTES` 里的接口只认带通行证的个人芝士凭据，用过即作废，所以绕不过判断。
+**执行**：入口是 `POST /assistant/agent/act`（`routes/assistant_agent.py`）。它把编号换成实际的东西，写出给判断读、也给人看的一句操作描述，以及完成这项操作要调的接口（就是这个人自己页面上调的那几条）。放行时发一张一次性通行证（`domain/assistant/passes.py`，Valkey，两分钟），写明这次回答能过哪几条接口、在哪个地方（项目、频道，或接口路径里的编号：团队、空间、题目、邀请；同一张通行证拿到别的团队或空间上用不了）；工具带着它（`X-Cheese-Pass`）以这个人的身份调那几条接口。`GATED_ROUTES` 里的接口只认带通行证的个人芝士凭据，用过即作废，所以绕不过判断。
 
 **留痕**：这些接口上的写入署这个人的名，同时记下是他的芝士做的（`Actor.by_assistant`，代行凭据解析出的身份）：消息块的 `meta.by_assistant`，任务的 `created_by_assistant`，审阅卡的 `decided_by_assistant`（采纳、退回时写；别人对这张卡做决定时清掉），邀请的 `invited_by_assistant`。房间里消息的署名旁标「芝士代发」；任务页、审阅卡、邀请和宣布这些的平台那行字写「芝士代 某人」（`identity.actor.acted_by`，句子 `actedByAssistant`）；读房间的 agent 读到的说话人行是「某人（由本人的个人芝士代发）」（`block.authorship.speaker`）。人在确认卡片上点「确认」发出去的，是他自己发的，不标。踢人、改角色、拉人进出频道、建频道、答复邀请这几件事平台本来就不留宣布的那行字，所以也没有地方可标。见 `docs/agent-principles.md` 一的例外。
 

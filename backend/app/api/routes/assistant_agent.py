@@ -31,10 +31,16 @@ from app.api.assistant_acts import (
     ActIn,
     Person,
     Plan,
+    announce,
+    category,
+    invite_code,
     named,
     need,
+    problem_review,
+    project_set,
     respond,
     space_member,
+    space_set,
     team_member,
 )
 from app.api.assistant_deps import (
@@ -56,7 +62,7 @@ from app.auth.project_roles import standing
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.personal import reading, rosters
+from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
 from app.domain.assistant import memory as assistant_memory
@@ -278,6 +284,19 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     people = _SPACE_PEOPLE.fullmatch(text)
     if people:
         return ok({"text": await rosters.space(db, me.user_id, int(people[1]))})
+    desk = _SPACE_DESK.fullmatch(text)
+    if desk:
+        return ok({"text": await space_desk.desk(db, me.user_id, int(desk[1]))})
+    if text.endswith("/settings") and (
+        found := refs.parse(text.removesuffix("/settings"))
+    ):
+        if found.kind == "project":
+            project = await address.project_by_ref(db, found.slug or "")
+            if project is None:
+                raise NotFoundError.for_resource("project", found.slug or "")
+            channels = await ProjectPages(db, resolver).channels(project.id)
+            said = await project_desk.settings(db, project, channels)
+            return ok({"text": said})
     ref = refs.parse(body.ref)
     if ref is not None and ref.kind == "team" and (ref.id or "").isdigit():
         return ok({"text": await rosters.team(db, me.user_id, int(ref.id or 0))})
@@ -292,6 +311,8 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
 
 #: Who is in a space: its managers and members (`rosters.space`).
 _SPACE_PEOPLE = re.compile(r"spaces/(\d{1,9})/people")
+#: What a space's manager sees of it (`space_desk.desk`).
+_SPACE_DESK = re.compile(r"spaces/(\d{1,9})/manage")
 
 #: The refs of what waits on the person, by the kind ``refs.parse`` names:
 #: they are read from the inbox, which is where they live.
@@ -634,6 +655,16 @@ def _fetch(body: ActIn) -> Plan:
     )
 
 
+#: What 芝士 does on a space the person manages (`assistant_acts`).
+_SPACE_ACTS = {
+    "space_set": space_set,
+    "announce": announce,
+    "category": category,
+    "invite_code": invite_code,
+    "problem_review": problem_review,
+}
+
+
 @router.post("/act", include_in_schema=False)
 async def agent_act(
     body: ActIn,
@@ -665,6 +696,10 @@ async def agent_act(
         plan = await _member(db, access, body, me)
     elif body.kind == "channel":
         plan = await _channel(db, access, body, me)
+    elif body.kind == "project_set":
+        plan = await project_set(db, access, body)
+    elif body.kind in _SPACE_ACTS:
+        plan = await _SPACE_ACTS[body.kind](db, me, body)
     else:
         plan = _fetch(body)
     conversation = uuid.UUID(claims.conversation) if claims.conversation else None

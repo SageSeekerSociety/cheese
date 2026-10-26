@@ -1794,6 +1794,91 @@ DELEGATED_TOOLS = ToolTable(
                     },
                     ["where", "who"],
                 ),
+                "set": _verb(
+                    "以用户的名义改项目或频道的一项设置，改之前先用 cheese_read 读「项目短名/"
+                    "settings」看现在的值和能选的值。where 给项目短名时 key 为 slug（短名）、"
+                    "task_naming（auto 自动命名 / manual 手动命名）、default_agent（新频道默认的 "
+                    "AI 队友，value 写它的 handle）或 default_model（默认模型，value 写模型 id）；"
+                    "where 给频道编号时 key 为 manager，value 写新负责人的 handle 或名字。",
+                    {
+                        "where": _text("项目短名或频道编号"),
+                        "key": _text("哪一项"),
+                        "value": _text("改成什么"),
+                        "confirm": _CONFIRM,
+                    },
+                    ["where", "key", "value"],
+                ),
+            },
+        ),
+        _object(
+            "cheese_space",
+            "用户管理的空间（课程的题目版）",
+            {
+                "set": _verb(
+                    "改空间的一项设置：key 为 name（名称）、intro（简介）或 visible_limit（每位"
+                    "出题人对成员可见的已通过题目上限，整数）。改之前可以先用 cheese_read 读 "
+                    "spaces/4/manage 看现在的设置。",
+                    {
+                        "where": _text("spaces/空间 id"),
+                        "key": _text("哪一项"),
+                        "value": _text("改成什么"),
+                        "confirm": _CONFIRM,
+                    },
+                    ["where", "key", "value"],
+                ),
+                "announce": _verb(
+                    "发公告给空间里所有人（title 标题、text 正文、pinned 置顶）；ref 给公告编号时"
+                    "改这条公告，ref 加 remove 为 true 时删除它。发公告默认要用户确认。",
+                    {
+                        "where": _text("spaces/空间 id"),
+                        "title": _text("标题"),
+                        "text": _text("正文"),
+                        "pinned": {"type": "boolean"},
+                        "ref": _text("要改或删的公告编号，见 spaces/4/manage"),
+                        "remove": {"type": "boolean"},
+                        "confirm": _CONFIRM,
+                    },
+                    ["where"],
+                ),
+                "category": _verb(
+                    "管空间的分类：不给 ref 时新建（title 名称、text 说明）；ref 给分类编号时，"
+                    "title 是改名，archived 为 true 归档、false 取消归档，remove 为 true 删除。",
+                    {
+                        "where": _text("spaces/空间 id"),
+                        "ref": _text("分类编号，见 spaces/4/manage"),
+                        "title": _text("名称"),
+                        "text": _text("说明"),
+                        "archived": {"type": "boolean"},
+                        "remove": {"type": "boolean"},
+                        "confirm": _CONFIRM,
+                    },
+                    ["where"],
+                ),
+                "code": _verb(
+                    "管空间的邀请码：不给 ref 时新建一个（max_uses 可用次数、days 几天后过期、"
+                    "text 说明这张码给谁）；ref 给邀请码编号时改这几项，remove 为 true 时停用它。",
+                    {
+                        "where": _text("spaces/空间 id"),
+                        "ref": _text("邀请码编号，见 spaces/4/manage"),
+                        "max_uses": {"type": "integer"},
+                        "days": {"type": "integer"},
+                        "text": _text("说明"),
+                        "remove": {"type": "boolean"},
+                        "confirm": _CONFIRM,
+                    },
+                    ["where"],
+                ),
+                "review": _verb(
+                    "审核空间里待审核的题目：ref 给题目编号（spaces/4/tasks/87，见 "
+                    "spaces/4/manage），choice 为 accept 通过、decline 退回，退回时 text 写理由。",
+                    {
+                        "ref": _text("题目编号"),
+                        "choice": {"type": "string", "enum": ["accept", "decline"]},
+                        "text": _text("退回的理由"),
+                        "confirm": _CONFIRM,
+                    },
+                    ["ref", "choice"],
+                ),
             },
         ),
         _tool(
@@ -4557,6 +4642,18 @@ _DELEGATED_STEPS = {
     "chat_send": _acting("message", "where", "content:text"),
     "cheese_room.member": _acting("member", "where", "who", "role", "remove"),
     "cheese_room.create": _acting("channel", "where", "title", "text", "members_only"),
+    "cheese_room.set": _acting("project_set", "where", "key", "value"),
+    "cheese_space.set": _acting("space_set", "where", "key", "value"),
+    "cheese_space.announce": _acting(
+        "announce", "where", "title", "text", "pinned", "ref", "remove"
+    ),
+    "cheese_space.category": _acting(
+        "category", "where", "ref", "title", "text", "archived", "remove"
+    ),
+    "cheese_space.code": _acting(
+        "invite_code", "where", "ref", "max_uses", "days", "text", "remove"
+    ),
+    "cheese_space.review": _acting("problem_review", "ref", "choice", "text"),
     # 个人芝士读网页要过授权判断；房间的读网页直接打 /fetch。
     "cheese_web.fetch": _web_fetch,
     # 个人芝士的通知发给用户本人；房间的发进项目的通知。
