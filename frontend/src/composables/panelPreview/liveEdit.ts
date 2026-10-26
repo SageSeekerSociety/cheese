@@ -117,10 +117,9 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
 
   /** 能在预览格里同编的：是 markdown、是这个房间的文件、正文读得出来。
    *
-   *  判据和另一边（`textEdit` 那一套的旧判据）同源：`content` 不是 null（二进制、太大
-   *  的读不出正文），不是资料库原件或消息附件（那两样不是这个房间的文件），并且已经有
-   *  不为空的版本（文件在，且读的时候它的版本拿得到）。这样「编辑」按钮不会摆在一个
-   *  后端必然拒的文件上。 */
+   *  判据和 office 那条同源：`content` 不是 null（二进制、太大的读不出正文），不是
+   *  资料库原件或消息附件（那两样不是这个房间的文件），并且已经有不为空的版本（文件在，
+   *  且读的时候它的版本拿得到）。这样「编辑」按钮不会摆在一个后端必然拒的文件上。 */
   const canEdit = computed(() => {
     const file = state.previewFile.value
     if (!file || !props.topicId) return false
