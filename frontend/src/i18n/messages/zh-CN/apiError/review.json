@@ -1,7 +1,7 @@
 {
   "acceptBlocked": "现在不能采纳（合并态：{state}）：{detail}",
   "acceptBranchNoCommits": "采纳未完成：这棵树的分支（{branch}）上没有任何提交，无法开 PR。改动可能在别的分支上；把提交推上 {branch} 后重试采纳",
-  "acceptConflicted": "采纳未完成：PR #{pr} 和目标分支冲突了，GitHub 现在合不了它。冲突要在任务目录里解掉、检查绿了之后再重新采纳",
+  "acceptConflicted": "采纳未完成：PR #{pr} 和目标分支冲突了，代码托管服务现在合不了它。冲突要在任务目录里解掉、检查绿了之后再重新采纳",
   "acceptFocusTooLong": "审阅重点最多 {items} 条、合计 {chars} 字以内，每条一句，写审阅时要确认什么。测试结果和验证过程写进 body",
   "acceptNeedsViewedCommit": "采纳需要已查看版本的提交编号",
   "acceptPrNotMerged": "采纳未完成：PR 未能合并（{why}）。处理后重试采纳",

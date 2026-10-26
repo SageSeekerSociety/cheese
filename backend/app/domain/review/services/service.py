@@ -483,10 +483,10 @@ class AcceptService:
             ref=ref,
         )
 
-    def _write_merge_mirror(
+    async def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
     ) -> None:
-        return merge_queue._write_merge_mirror(
+        return await merge_queue._write_merge_mirror(
             self, card=card, verdict=verdict, who=who, head_sha=head_sha
         )
 
@@ -871,8 +871,12 @@ class AcceptService:
             self, card=card, topic=topic, reason=reason
         )
 
-    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
-        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
+    async def _stop_accept_conflict(
+        self, card: AcceptCard, topic: Topic, status: PullRequestStatus
+    ) -> NoReturn:
+        return await _accept._stop_accept_conflict(
+            self, card=card, topic=topic, status=status
+        )
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str

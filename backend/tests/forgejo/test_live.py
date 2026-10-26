@@ -226,6 +226,26 @@ async def _indexed_branch_head(project_id, session, branch):
     return head
 
 
+async def _push_reached_pr(client, repo, number, sha):
+    """Wait until Forgejo has taken the push of `sha` into PR `number`.
+
+    Forgejo handles a push after it returns: a moment later it queues the PR
+    for its merge check and records the push on the PR's timeline, in that
+    order. Until then the PR can still read `mergeable: true` from the check
+    of its previous head."""
+    async with asyncio.timeout(10):
+        while True:
+            response = await client.get(f"/repos/{repo}/issues/{number}/timeline")
+            response.raise_for_status()
+            if any(
+                sha in json.loads(row.get("body") or "{}").get("commit_ids", [])
+                for row in response.json()
+                if row["type"] == "pull_push"
+            ):
+                return
+            await asyncio.sleep(0.1)
+
+
 async def test_legacy_repository_migration_preserves_all_refs(
     db_factory, monkeypatch, tmp_path
 ):
@@ -786,11 +806,13 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
         stale = await publisher.client.merge_pull_request(**args, sha=reviewed)
         assert stale.stale_head and stale.sha is None
-        for _ in range(30):
-            status = await publisher.client.pull_request_status(**args)
-            if status.mergeable:
-                break
-            await asyncio.sleep(0.2)
+        await _push_reached_pr(client, binding.repo, draft["number"], latest)
+        # From here a `true` is Forgejo's check of `latest`, not of the old head.
+        async with asyncio.timeout(10):
+            while not (
+                status := await publisher.client.pull_request_status(**args)
+            ).mergeable:
+                await asyncio.sleep(0.1)
         verdict = compute_merge_state(
             github_mergeable_state=status.mergeable_state,
             github_mergeable=status.mergeable,

@@ -173,7 +173,7 @@ async def _poll_pr_card(
             # 没人再看这张卡，把机器收掉，而轮询其实一直在看，回头又要叫醒这条线
             # 重建环境、重读文档。只推 `checked_at` 到此刻：state、reasons 说的都还
             # 是入队时那份判定，没有任何一条更新。
-            _write_merge_mirror(
+            await _write_merge_mirror(
                 self,
                 card,
                 MergeVerdict(
