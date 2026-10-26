@@ -49,7 +49,7 @@ def test_registration_locking_guidance_and_attachments_land_in_their_fields():
     fields = drafts.from_agent(
         {
             "registration_start": "2026-11-01 08:00",
-            "team_locking": "报名通过后锁定",
+            "team_locking": "申请通过后锁定",
             "ai_guidance": "先让学生写清需求再写代码",
             "attachments": [12],
         },
@@ -96,6 +96,7 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
         fields={
             "name": "eBPF 延迟分析",
             "submitterType": "TEAM",
+            "startMode": "APPLY",
             "teamLockingPolicy": "LOCK_ON_APPROVAL",
             "mentors": ["wangli"],
             "accessControlEnabled": True,
@@ -106,7 +107,7 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
 
     view = drafts.agent_view(row, SPACE, private=True)
 
-    assert "team_locking: 报名通过后锁定" in view
+    assert "team_locking: 申请通过后锁定" in view
     assert "mentors: 王立（wangli）" in view
     assert "access: 本校邮箱" in view
     assert "课题说明.pdf（files/12）" in view
@@ -225,3 +226,25 @@ def test_the_edit_page_changes_the_task_it_is_open_on():
 
     assert "修改题目页" in told and "「Lab 3 缓存模拟器」" in told
     assert "不新建草稿" in told
+
+
+def test_cheese_says_a_task_started_directly_locks_its_team_when_it_starts():
+    """No application on a task started directly: the team locks when it
+    starts, and that is what 芝士 reads back."""
+    row = TaskDraft(
+        id=6,
+        user_id=1,
+        space_id=7,
+        version=1,
+        fields={
+            "name": "eBPF 延迟分析",
+            "submitterType": "TEAM",
+            "startMode": "DIRECT",
+            "teamLockingPolicy": "LOCK_ON_APPROVAL",
+        },
+    )
+
+    view = drafts.agent_view(row, SPACE, private=True)
+
+    assert "team_locking: 开始做这道题后锁定" in view
+    assert "申请通过" not in view and "报名通过" not in view

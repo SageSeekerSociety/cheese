@@ -29,7 +29,8 @@ const percent = (value: number) => `${Math.round((value || 0) * 100)}%`
 const stats = computed(() => {
   const task = props.task
   return [
-    t('spaces.detail.tasks.published.claimed', { n: task.participantCount }),
+    // 直接开始的题没有申请：每一份领取当场就是参与，不说「申请 N」。
+    ...(task.startMode === 'DIRECT' ? [] : [t('spaces.detail.tasks.published.claimed', { n: task.participantCount })]),
     t('spaces.detail.tasks.published.approved', { n: task.approvedParticipantCount }),
     t('spaces.detail.tasks.published.submitted', { n: task.submittedParticipantCount }),
     t('spaces.detail.tasks.published.passed', { n: task.successfulParticipantCount }),

@@ -52,6 +52,8 @@ const props = withDefaults(
     defaultMentor?: string
     /** 芝士正在写的那一格（它的字段名）：收起的「更多设置」里的就展开。 */
     agentWriting?: string | null
+    /** 改题时已经有人申请或开始做：开始方式不能再改。 */
+    startModeLocked?: boolean
     /** 改题页：删掉一个阶段之后能不能存，不能就是服务端那句拒绝（`TaskFormStages`）。 */
     stageRemovalRefusal?: (stages: TaskStage[]) => Promise<string | null>
   }>(),
@@ -65,6 +67,7 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     agentWriting: null,
+    startModeLocked: false,
     stageRemovalRefusal: undefined,
   }
 )
@@ -253,6 +256,7 @@ defineExpose({
         :registration-start-at-control="registrationStartAtProps"
         :deadline-control="deadlineProps"
         :default-deadline-control="defaultDeadlineProps"
+        :start-mode-locked="startModeLocked"
       />
 
       <TaskFormClassify

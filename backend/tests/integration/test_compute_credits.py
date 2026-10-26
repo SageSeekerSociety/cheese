@@ -15,7 +15,12 @@ import time
 import pytest
 
 from app.domain.usage.credits import CREDIT_USD
-from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
+from tests.conftest import (
+    seed_task_with_protocol,
+    seed_user,
+    start_task_project,
+    wait_work_idle,
+)
 from tests.integration.conftest import (
     free_plan_credits,
     in_thread,
@@ -45,48 +50,18 @@ def _priced(monkeypatch):
 
 
 def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> str:
-    """A project. With `from_task`, created FROM that 赛题 — which is how a
-    project accepts its 项目集's protocol and receives the 资源包 (#370).
+    """A project of `u1`'s. With `from_task`, `u1` starts that 赛题 — which is
+    how a project accepts its 项目集's protocol and receives the 资源包 (#370).
 
-    资源包只发给**过审的报名者**，所以从赛题建项目前先给 `u1` 补一条已通过的
-    报名：这条路径（报名 → 过审 → 拿到额度）是产品的正路，缺了它建出来的项目是
-    「与这道赛题无关的人随手建的项目」，本来就不该有额度。
+    资源包只发给**过审的报名者**开始做的那个项目：这条路径（报名 → 过审 → 开始
+    → 拿到额度）是产品的正路，与这道赛题无关的人随手建的项目本来就不该有额度。
     """
     client.headers["Authorization"] = f"Bearer {seed_user(client, 'u1')}"
-    body: dict = {"name": name}
     if from_task is not None:
-        _approve(client, from_task, "u1")
-        body["external_task_id"] = from_task
-    r = post_project(client, json=body)
+        return start_task_project(client, from_task, handle="u1")
+    r = post_project(client, json={"name": name})
     assert r.status_code == 200
     return r.json()["data"]["id"]
-
-
-def _approve(client, task_id: int, handle: str) -> None:
-    """`handle` 在这道赛题上的报名，状态为已通过（``ApproveType.APPROVED = 0``）。"""
-    import asyncio as _asyncio
-    from datetime import UTC, datetime
-
-    from app.domain.task.models import TaskMembership
-    from app.domain.user.repositories import UserRepository
-
-    async def _seed() -> None:
-        async with client.test_factory() as session:  # type: ignore[attr-defined]
-            user = await UserRepository(session).get_by_username(handle)
-            assert user is not None, handle
-            session.add(
-                TaskMembership(
-                    task_id=task_id,
-                    member_id=user.id,
-                    is_team=False,
-                    approved=0,
-                    created_at=datetime.now(UTC),
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            await session.commit()
-
-    _asyncio.run(_seed())
 
 
 def _mk_task(client, *, compute_credits: float | None) -> int:

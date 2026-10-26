@@ -21,20 +21,19 @@ from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
-from app.core.sentences import say
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
+from app.domain.task import claims
 from app.domain.task.inputs import (
     APPROVE_DISAPPROVED,
-    START_APPLY,
     START_DIRECT,
     map_start_mode,
     map_submitter_type,
 )
-from app.domain.task.mentors import mentors_of, require_consent, set_mentors
+from app.domain.task.mentors import require_consent, set_mentors
 from app.domain.task.rubric import rubric_lines
 from app.domain.task.services import (
     TaskService,
@@ -59,9 +58,10 @@ class CreateTaskRequest(BaseModel):
     space: int
     participant_limit: int | None = Field(default=None, alias="participantLimit")
     default_deadline: int = Field(default=30, alias="defaultDeadline")
-    # How a claim starts: ``DIRECT`` (straight away, by ``deadline``) or
-    # ``APPLY`` (on approval, ``defaultDeadline`` days from then).
-    start_mode: str = Field(default="APPLY", alias="startMode")
+    # How a claim starts: ``DIRECT`` (straight away; ``deadline``, when set,
+    # is everyone's) or ``APPLY`` (on approval, ``defaultDeadline`` days from
+    # then). A new task starts directly unless its publisher says otherwise.
+    start_mode: str = Field(default="DIRECT", alias="startMode")
     deadline: int | None = None
     registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
     require_real_name: bool = Field(default=False, alias="requireRealName")
@@ -295,7 +295,7 @@ async def _create_task_entity(
             default_deadline = int(default_deadline_raw)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
-        start_mode = map_start_mode(str(payload.get("startMode") or START_APPLY))
+        start_mode = map_start_mode(str(payload.get("startMode") or START_DIRECT))
 
         deadline_ms = payload.get("deadline")
         registration_start_ms = payload.get("registrationStartAt")
@@ -385,8 +385,6 @@ async def _create_task_entity(
             deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-    if start_mode == START_DIRECT and deadline_dt is None:
-        raise BadRequestError(say("taskDirectNeedsDeadline"))
 
     registration_start_dt: datetime | None = None
     if registration_start_ms is not None:
@@ -497,20 +495,17 @@ async def set_task_mentors(
     await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
 
 
-async def mentors_agreed(
+async def consent_before_a_direct_start(
     db, membership_service, *, task, member_id: int, is_team: bool, agreed: bool
-) -> list[str]:
-    """The task's mentors this claim agrees to, recorded on a new claim and
-    seated in the project it opens (``TaskMembership.agreed_mentors``).
-
-    A task with mentors is claimed only by someone who agreed to them
-    (``require_consent``). Asking again for a claim already held records
-    nothing and asks for nothing: what it agreed to was recorded when it was
-    made."""
+) -> None:
+    """A new claim on a task started directly is approved and started in the
+    same request, so the mentor consent that starting asks for
+    (``task_claims.start_claim``) is checked before the claim, and the place
+    it takes, are written. A claim already held asks nothing here."""
+    if not claims.starts_now(task):
+        return
     held = await membership_service.get_membership_by_task_and_member(
         task_id=task.id, member_id=member_id, is_team=is_team
     )
-    if held is not None and held.approved != APPROVE_DISAPPROVED:
-        return []
-    await require_consent(db, task=task, agreed=agreed)
-    return await mentors_of(db, task.id)
+    if held is None or held.approved == APPROVE_DISAPPROVED:
+        await require_consent(db, task=task, agreed=agreed)

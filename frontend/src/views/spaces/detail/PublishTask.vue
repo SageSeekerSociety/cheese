@@ -372,7 +372,7 @@ const stripItems = computed<StripItem[]>(() => {
       id: d.id,
       name: d.id === here ? live.value.name ?? d.name : d.name,
       writing: !!target && target.draft === d.id,
-      missing: (d.id === here ? missingOf(live.value) : d.missing).map(fieldLabel),
+      missing: (d.id === here ? missingOf(live.value) : d.missing).map((key) => fieldLabel(key)),
       published: false,
     }))
   for (const done of publishedInGroup.value)

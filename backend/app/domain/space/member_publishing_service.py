@@ -376,6 +376,8 @@ class SpaceMemberPublishingService:
             "publishedAt": self._to_timestamp_ms(getattr(task, "published_at", None)),
             "endedAt": self._to_timestamp_ms(getattr(task, "ended_at", None)),
             "deadline": self._to_timestamp_ms(task.deadline),
+            # 怎么开始：直接开始的题没有申请，行上不说「申请 N」。
+            "startMode": task.start_mode,
             # 领取人数上限。**库里用 0 表示不限，这里一律折成 null** —— 「不限」与
             # 「上限是 0」在界面上是两句话（前者不画上限，后者一个人也领不了），
             # 而 0 这个值正好两种意思都说得通，交给客户端猜不如在这里说清。

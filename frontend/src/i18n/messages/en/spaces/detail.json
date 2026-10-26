@@ -29,7 +29,8 @@
     "teamContest": "Team challenge",
     "teamLockingPolicyLockOnApproval": "Team locked on approval",
     "teamLockingPolicyNoLock": "Team changes allowed",
-    "title": "Challenges awaiting review"
+    "title": "Challenges awaiting review",
+    "teamLockingPolicyLockOnStart": "Team locked once it starts"
   },
   "confirmDeleteSpace": "Delete the space \"{name}\"? It disappears for everyone and can't be undone.",
   "data": {

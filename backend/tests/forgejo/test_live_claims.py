@@ -63,7 +63,8 @@ def test_one_team_claiming_twice_at_once_makes_one_forgejo_repository(
                 task_terms=TaskTerms(session),
             ).for_participation(
                 task=as_brief(task),
-                claim=Claim(member_id=user_id, is_team=False, approved=False),
+                # Only an approved claim is started, and starting makes the project.
+                claim=Claim(member_id=user_id, is_team=False, approved=True),
                 owner_handle=handle,
             )
             await session.commit()

@@ -130,7 +130,7 @@ const props = defineProps<{ task: Task }>()
 const { t } = useI18n()
 
 function reasonText(code: string | undefined): string {
-  return t(eligibilityReasonKey(code))
+  return t(eligibilityReasonKey(code, props.task.startMode === 'DIRECT'))
 }
 
 const deadlinePassed = computed(() => props.task.deadline != null && props.task.deadline < Date.now())

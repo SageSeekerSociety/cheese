@@ -71,7 +71,7 @@ describe('previewOf：参与、时间和更多设置', () => {
       {
         draft: 41,
         mentors: ['王立', '@wangli', '不认识的人'],
-        team_locking: '报名通过后锁定',
+        team_locking: '开始做这道题后锁定',
         registration_start: '2026-11-01 08:00',
         access: ['本校邮箱'],
         ai_guidance: '先写需求说明',

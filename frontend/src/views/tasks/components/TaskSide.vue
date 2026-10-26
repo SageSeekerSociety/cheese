@@ -34,17 +34,6 @@
             <v-icon size="14">mdi-folder-outline</v-icon>
             <span>{{ p.name }}</span>
           </router-link>
-          <!-- 先列已有的项目再给「新建」：直接给一颗会默默再建一个的按钮，人会建出第二个、第三个同样的项目。 -->
-          <BaseButton
-            v-if="!projectsLoading && !projectsFailed"
-            kind="ghost"
-            size="sm"
-            prepend-icon="mdi-plus"
-            class="ts__new"
-            @click="createProject"
-          >
-            {{ t('tasks.side.newProject') }}
-          </BaseButton>
         </template>
       </div>
     </section>
@@ -110,8 +99,6 @@ import dayjs from 'dayjs'
 
 import { deadlineState } from '@/utils/tasks'
 
-import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
-
 import { useTaskInheritance } from '../composables/useTaskInheritance'
 
 import TaskInheritance from './TaskInheritance.vue'
@@ -133,8 +120,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ leave: [] }>()
 
-// 「会继承什么」常驻在这里 (#944)：建项目之后，同一份说明还看得到 —— 从这道题
-// 新建项目就在下面这颗按钮上，两份说明放一起，人不必回头找。
+// 「会继承什么」常驻在这里 (#944)：开始做之后，同一份说明还看得到。用这道题新建项目
+// 只有一条路：页头的「开始做这道题」。
 const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.task.id)
 
 const mineActions = computed<MenuAction[]>(() => [
@@ -237,27 +224,16 @@ const claimedText = computed(() => {
 // ── 从这道题开出来的项目 ─────────────────────────────────────────────────────────
 
 const projects = ref<Project[]>([])
-const projectsLoading = ref(false)
 const projectsFailed = ref(false)
-const { show: showNewProjectDialog } = useNewProjectDialog()
 
 async function loadProjects() {
-  projectsLoading.value = true
   projectsFailed.value = false
   try {
     projects.value = (await listProjectsForTask(props.task.id)).data
   } catch {
     projects.value = []
     projectsFailed.value = true
-  } finally {
-    projectsLoading.value = false
   }
-}
-
-/** 用团队领的，新项目就挂在那个团队下；个人领的让人在对话框里选。 */
-function createProject() {
-  const teamId = props.identity?.type === 'TEAM' ? props.identity.memberId : null
-  showNewProjectDialog(teamId, { id: props.task.id, name: props.task.name })
 }
 
 watch(
@@ -376,12 +352,6 @@ watch(
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.ts__new {
-  align-self: flex-start;
-  margin: 4px 0 0 -8px;
-  color: var(--muted);
 }
 
 .ts__note {

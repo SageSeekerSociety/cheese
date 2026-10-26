@@ -149,11 +149,21 @@ const full = computed(() => limit.value !== null && participantCount.value >= li
 
 /** 直接开始的题点了就开始；申请制的题先申请，出题人通过才开始。 */
 const startsDirectly = computed(() => taskData.value?.startMode === 'DIRECT')
-/** 我（或我的团队）从这道题来的项目：有它，主操作就是「继续做」，打开它。 */
+/** 我（或我的团队）从这道题来的项目：有它，主操作就是「继续做」，打开它。申请还在等的
+ *  不给（接口只对通过了的领取给它）：早先的版本申请时就开了项目，等通过前只显示在等。 */
 const myProject = computed(() => taskData.value?.myProject ?? null)
 const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.value.id}` : ''))
-/** 通过了却还没有项目（建仓库那一步上次没成）：入口仍是「开始做这道题」，点了打开它。 */
+/** 通过了还没有项目（申请制的题刚通过，或上次建仓库没成）：主操作是「开始做这道题」，
+ *  开始做就是用这道题新建项目。 */
 const approvedWithoutProject = computed(() => joined.value && !myProject.value)
+
+/** 我这一份走到哪了，挂在题目名旁边：等通过、没通过、在做。没领过就没有。 */
+const myState = computed(() => {
+  if (joined.value) return { label: t('tasks.page.mine.doing'), tone: 'ok' }
+  if (myClaimPending.value) return { label: t('tasks.page.mine.pending'), tone: 'muted' }
+  if (myClaimRejected.value) return { label: t('tasks.page.mine.rejected'), tone: 'danger' }
+  return null
+})
 
 /** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
 const taskState = computed(() => {
@@ -162,13 +172,18 @@ const taskState = computed(() => {
   return { label: t(`tasks.page.state.${state.key}`), tone: state.tone }
 })
 
-/** 领取那颗按钮。领不了的时候按钮还在，灰着，字写清为什么。 */
+/** 领取那颗按钮。领不了的时候按钮还在，灰着，字写清为什么。申请在等或没通过的没有这颗：
+ *  那件事写在题目名旁边（`myState`）。 */
 const claim = computed(() => {
   const task = taskData.value
   if (!task) return null
-  if (approvedWithoutProject.value) return { label: t('tasks.page.claim.start'), disabled: false }
-  if (myClaimPending.value) return { label: t('tasks.page.claim.pending'), disabled: true }
-  if (myClaimRejected.value) return { label: t('tasks.page.claim.rejected'), disabled: true }
+  // 过了整道题的截止，或者过了我自己的截止，就不能再开始做：开始只会建出一个已经判了未通过的项目。
+  const mine = myIdentity.value?.deadline
+  if (approvedWithoutProject.value)
+    return deadlinePassed.value || (mine != null && mine < Date.now())
+      ? { label: t('tasks.page.state.closed'), disabled: true }
+      : { label: t('tasks.page.claim.start'), disabled: false }
+  if (myClaimPending.value || myClaimRejected.value) return null
   if (task.approved !== 'APPROVED')
     return {
       label: startsDirectly.value ? t('tasks.page.claim.notApprovedStart') : t('tasks.page.claim.notApproved'),
@@ -181,12 +196,12 @@ const claim = computed(() => {
 })
 
 /** 这一颗按钮不自己发请求：发 `join-clicked`，由 `TaskDialogs` 与 `useTaskParticipation` 接着走
- *  （实名确认、团队选择都在里面）。 */
+ *  （实名确认、团队选择都在里面）。通过了还没开始的，打开开始的确认框。 */
 function onClaim() {
   if (claim.value?.disabled) return
   const approved = myIdentity.value
   if (approvedWithoutProject.value && approved?.approved === 'APPROVED') {
-    void openApprovedClaim({ type: approved.type, memberId: approved.memberId })
+    openApprovedClaim({ type: approved.type, memberId: approved.memberId })
     return
   }
   events.emit('join-clicked')
@@ -348,6 +363,17 @@ onMounted(() => {
       <span class="td__crumb-here" data-user-content>{{ taskData?.name ?? '' }}</span>
     </nav>
     <template #actions>
+      <BaseButton
+        kind="ghost"
+        class="td__ask"
+        :active="agentOpen"
+        data-testid="task-ask"
+        :aria-label="t('tasks.assistant.ask')"
+        :title="t('tasks.assistant.ask')"
+        @click="toggleAgent"
+      >
+        <CheeseAvatar :size="20" />
+      </BaseButton>
       <template v-if="canManage">
         <BaseButton kind="secondary" prepend-icon="mdi-pencil-outline" @click="editTask">{{
           t('tasks.page.edit')
@@ -374,6 +400,9 @@ onMounted(() => {
           <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`">
             {{ taskState.label }}
           </span>
+          <span v-if="myState" class="td__mine" :class="`td__mine--${myState.tone}`" data-testid="my-claim-state">
+            {{ myState.label }}
+          </span>
         </div>
         <p class="td__by t-meta-read">
           <span>{{ t('tasks.page.publishedBy', { name: publisherName, date: publishedOn }) }}</span>
@@ -386,16 +415,22 @@ onMounted(() => {
         <p v-if="intro.summary" class="td__summary" data-user-content>{{ intro.summary }}</p>
       </div>
 
-      <div class="td__act">
-        <BaseButton kind="secondary" class="td__ask" :active="agentOpen" data-testid="task-ask" @click="toggleAgent">
-          <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
-          {{ t('tasks.assistant.ask') }}
+      <!-- One main action: start / apply / continue. Handing in is a quieter text button beside it. -->
+      <div v-if="myProject || claim || submitAction" class="td__act">
+        <BaseButton
+          v-if="submitAction"
+          kind="ghost"
+          prepend-icon="mdi-plus"
+          data-testid="task-submit"
+          :to="{ name: routeNames.submit, params }"
+        >
+          {{ submitAction }}
         </BaseButton>
         <BaseButton v-if="myProject" kind="primary" data-testid="task-continue" :to="myProjectTo">
           {{ t('tasks.page.claim.continue') }}
         </BaseButton>
         <BaseButton
-          v-if="!myProject && claim && (!joined || approvedWithoutProject)"
+          v-else-if="claim"
           class="td__claim"
           data-testid="task-claim"
           :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
@@ -403,14 +438,6 @@ onMounted(() => {
           @click="onClaim"
         >
           {{ claim.label }}
-        </BaseButton>
-        <BaseButton
-          v-if="submitAction"
-          :kind="myProject || approvedWithoutProject ? 'secondary' : 'primary'"
-          prepend-icon="mdi-plus"
-          :to="{ name: routeNames.submit, params }"
-        >
-          {{ submitAction }}
         </BaseButton>
       </div>
     </header>
@@ -631,9 +658,32 @@ onMounted(() => {
   padding-top: 2px;
 }
 
-.td__ask-mark {
-  display: inline-flex;
-  margin-right: 6px;
+.td__ask {
+  min-width: 36px;
+  padding: 0 8px;
+}
+
+.td__mine {
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+}
+
+.td__mine--ok {
+  color: var(--ok-ink);
+  background: var(--ok-wash);
+}
+
+.td__mine--muted {
+  color: var(--muted);
+  background: var(--fill-2);
+}
+
+.td__mine--danger {
+  color: var(--danger-ink);
+  background: var(--danger-wash);
 }
 
 .td-ask :deep(.v-navigation-drawer__content) {

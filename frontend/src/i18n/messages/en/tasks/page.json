@@ -5,7 +5,6 @@
     "notApproved": "Can be applied for once approved",
     "notApprovedStart": "Can be started once approved",
     "pending": "Applied, awaiting approval",
-    "rejected": "Application not approved",
     "start": "Start this task"
   },
   "dateFormat": "MMM D",
@@ -34,5 +33,10 @@
     "mine": "My submissions",
     "roster": "Participants",
     "versions": "Version history"
+  },
+  "mine": {
+    "doing": "In progress",
+    "pending": "Waiting for approval",
+    "rejected": "Not approved"
   }
 }

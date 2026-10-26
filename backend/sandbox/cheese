@@ -1456,17 +1456,20 @@ TASK_WRITE_DESCRIPTION = (
     "分了阶段时 submission 和 rubric 的每一项用 stage 写它属于哪个阶段（阶段的 id 或名称）；"
     "form 个人或团队；"
     "team_min、team_max 团队人数；difficulty 初级、中级或高级；participant_limit "
-    "人数上限（0 是不限）；start_mode 怎么开始：直接开始（点「开始做这道题」就开始，"
-    "所有人都按 deadline 交）或申请制（出题人通过申请才开始，从通过那天起限时 "
-    "days_to_submit 天）；deadline 截止时间，写用户时区的「YYYY-MM-DD HH:MM」；"
+    "人数上限（0 是不限）；start_mode 怎么开始，新题目默认直接开始：直接开始（点"
+    "「开始做这道题」就开始，设了 deadline 所有人都按它交，不设就没有截止）或申请制"
+    "（出题人通过申请后，学生点「开始做这道题」才开始，从通过那天起限时 "
+    "days_to_submit 天）；有人领了这道题之后 start_mode 不能再改；deadline 截止时间，"
+    "写用户时区的「YYYY-MM-DD HH:MM」；"
     "days_to_submit 申请制下限时几天，从申请通过那天算起；category 分类名称；tags 标签名称；"
     "real_name 是否要求实名；registration_start 报名开始时间，格式同 deadline；"
-    "team_locking 队伍成员在申请通过后能否变更；mentors 导师，把他们加入每个参与者的"
+    "team_locking 队伍成员开始后能否变更（直接开始的题是开始做这道题后，申请制的题是"
+    "申请通过后）；mentors 导师，把他们加入每个参与者的"
     "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人做这道题，"
     "空列表是空间全部成员都能做；attachments 题目附件，写用户交给你的文件 id，"
     "新题目整组替换，已发布的题目保存时追加上去；"
-    "starter 起始代码，写用户交给你的一个 .zip 文件 id：领题时解开作为项目代码仓库的"
-    "第一个提交，已发布的题目保存时换上这一份；"
+    "starter 起始代码，写用户交给你的一个 .zip 文件 id：开始做这道题建项目时解开作为"
+    "项目代码仓库的第一个提交，已发布的题目保存时换上这一份；"
     "「AI 的设置」几格写的是从这道题建出的项目里 AI 队友怎么帮学生：ai_teammate "
     "默认队友（写预设名称，或沿用上层设置）；"
     "ai_mode AI 队友怎么帮学生（引导为主、讲解与示例、先明确需求再实现、不加限制，"
@@ -1570,7 +1573,10 @@ TASK_WRITE_FIELDS = {
     "tags": {"type": "array", "items": {"type": "string"}},
     "real_name": {"type": "boolean"},
     "registration_start": _text("YYYY-MM-DD HH:MM，用户时区；空字符串是立即开始"),
-    "team_locking": {"type": "string", "enum": ["允许变更", "报名通过后锁定"]},
+    "team_locking": {
+        "type": "string",
+        "enum": ["允许变更", "申请通过后锁定", "开始做这道题后锁定"],
+    },
     "mentors": {
         "type": "array",
         "items": {"type": "string"},

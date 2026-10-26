@@ -64,6 +64,8 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "resubmittable": True,
             "editable": True,
             "defaultDeadline": 30,
+            # The notices are about an application waiting on the publisher.
+            "startMode": "APPLY",
             "deadline": int(time.time() * 1000) + 7 * 86400 * 1000,
             "submissionSchema": [{"prompt": "源码", "type": "FILE"}],
         },

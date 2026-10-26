@@ -62,10 +62,11 @@
   "rank": "难度",
   "start": {
     "apply": "申请制",
-    "applyHint": "出题人通过申请后才开始，限时从通过那天算起",
+    "applyHint": "出题人通过申请后才能开始做，限时从通过那天算起",
     "direct": "直接开始",
-    "directHint": "点「开始做这道题」就开始，所有人在截止日期前提交",
-    "label": "开始方式"
+    "directHint": "点「开始做这道题」就开始；设了截止日期，所有人在这天之前提交",
+    "label": "开始方式",
+    "locked": "已经有人申请或开始做这道题，开始方式不能再改"
   },
   "registration": "报名时间",
   "registrationEnd": "截止日期",
@@ -86,7 +87,6 @@
     "lockedHintStart": "以开始做这道题时的名单为准",
     "lockedStart": "开始做这道题后锁定"
   },
-  "teamLockingPolicyLockOnApproval": "报名通过后锁定",
   "teamSize": "每队人数",
   "teamSizeUnit": "人",
   "time": "时间",
@@ -96,7 +96,6 @@
   "validation": {
     "categoryRequired": "未选择分类",
     "completionRequired": "未填写完成期限",
-    "dueRequired": "未填写截止日期",
     "nameRequired": "未填写名称",
     "rankRequired": "未选择难度",
     "submitterTypeRequired": "未选择参与方式",
@@ -105,7 +104,7 @@
   "mentor": {
     "require": "把导师加入参与者的项目",
     "label": "导师",
-    "hint": "学生同意导师加入后才能申请或开始做。导师能看到项目里的公开频道、文档和文件"
+    "hint": "学生同意导师加入后才能开始做。导师能看到项目里的公开频道、文档和文件"
   },
   "grading": {
     "title": "提交与评分",
@@ -157,5 +156,6 @@
     "ai": "AI 的设置",
     "aiHint": "用于从本题建出的项目",
     "publish": "发布设置"
-  }
+  },
+  "dueNone": "不设截止"
 }

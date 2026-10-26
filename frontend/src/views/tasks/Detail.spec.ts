@@ -3,7 +3,7 @@
 // - 领取那颗按钮点不点得动，由接口给的事实决定（审核、截止、开始、人数、我的申请）；
 // - 领了之后主操作变成交作业，多出「我的提交」；
 // - 领取者和数据两个页签只给出题人和管理员，别人连名单接口都不问；
-// - 领了才能用这道题新建项目；
+// - 用这道题新建项目只有一条路：开始做这道题；
 // - 我的进度按我最新那一版提交与它的评审算。
 //
 // 接口在 API 层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
@@ -42,15 +42,11 @@ vi.mock('@/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 「我的进度」里的项目：从这道题开出来的项目，以及「用这道题新建项目」。
+// 「我的进度」里的项目：从这道题开出来的项目。
 const listProjectsForTask = vi.fn()
 vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
   listProjectsForTask: (...a: unknown[]) => listProjectsForTask(...a),
-}))
-const showNewProjectDialog = vi.fn()
-vi.mock('@/composables/useNewProjectDialog', () => ({
-  useNewProjectDialog: () => ({ show: (...a: unknown[]) => showNewProjectDialog(...a) }),
 }))
 
 vi.mock('@/composables/usePageTitle', () => ({
@@ -233,8 +229,6 @@ describe('题目详情', () => {
     ['已截止', { deadline: Date.now() - DAY }, {}],
     ['还没开始', { registrationStartAt: Date.now() + DAY }, {}],
     ['人数已满', { participants: { total: 3, approved: 3, examples: [] }, participantLimit: 3 }, {}],
-    ['我的申请还在等批', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] }],
-    ['我的申请被拒了', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'DISAPPROVED' }] }],
   ])('%s：领取按钮点不动', async (_, task, participation) => {
     const { container } = await mount(task, participation)
 
@@ -242,9 +236,38 @@ describe('题目详情', () => {
   })
 
   it.each([
+    ['直接开始', 'DIRECT'],
+    ['申请制', 'APPLY'],
+  ])('%s的题人数已满：按钮写「人数已满」，点不动', async (_, startMode) => {
+    const { container } = await mount({
+      startMode,
+      participants: { total: 4, approved: 3, examples: [] },
+      participantLimit: 3,
+    })
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.full'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it.each([
+    ['还在等批', 'NONE', 'tasks.page.mine.pending'],
+    ['被拒了', 'DISAPPROVED', 'tasks.page.mine.rejected'],
+  ])('我的申请%s：题目名旁边写明，页头没有开始、继续或交作业', async (_, approved, said) => {
+    const { container } = await mount(
+      { startMode: 'APPLY', joined: approved === 'NONE', submittable: false },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
+    )
+
+    expect(container.querySelector('[data-testid="my-claim-state"]')?.textContent).toContain(t(said))
+    expect(claimButton(container)).toBeNull()
+    expect(container.querySelector('[data-testid="task-continue"]')).toBeNull()
+    expect(buttonWith(container, t('tasks.page.submit.first'))).toBeNull()
+  })
+
+  it.each([
     ['个人', { submitterType: 'USER' }, { id: 11, type: 'USER', approved: 'NONE' }],
     ['团队', { submitterType: 'TEAM' }, { id: 12, type: 'TEAM', approved: 'NONE', teamName: '红队' }],
-  ])('%s领取还在等批：没有「提交作业」，按钮灰着写明在等批，也没有「我的提交」', async (_, task, identity) => {
+  ])('%s领取还在等批：没有「提交作业」，题目名旁边写明在等通过，也没有「我的提交」', async (_, task, identity) => {
     // 接口对等批的报名也回 `joined: true`，只有 `submittable` 是 false。
     const { container } = await mount(
       { ...task, joined: true, submittable: false },
@@ -253,9 +276,9 @@ describe('题目详情', () => {
 
     expect(buttonWith(container, t('tasks.page.submit.first'))).toBeNull()
     expect(hrefs(container)).not.toContain(`${BASE}/submit`)
-    const btn = claimButton(container)!
-    expect(btn.disabled).toBe(true)
-    expect(btn.textContent).toContain(t('tasks.page.claim.pending'))
+    expect(container.querySelector('[data-testid="my-claim-state"]')?.textContent).toContain(
+      t('tasks.page.mine.pending')
+    )
     expect(hrefs(container)).not.toContain(`${BASE}/submissions`)
   })
 
@@ -270,32 +293,57 @@ describe('题目详情', () => {
   })
 
   it.each([
-    ['我的申请通过了', { joined: true, submittable: true }, APPROVED_ME],
-    // 早先的版本申请时就建了项目，这样的项目还在：照样进去。
-    [
-      '我的申请还在等，但早先已经有了项目',
-      { joined: true, submittable: false },
-      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] },
-    ],
-  ])('%s：主操作是「继续做」，打开从这道题来的那个项目', async (_, task, participation) => {
-    const { container } = await mount({ ...task, myProject: { id: 'p-7', name: '红黑树' } }, participation)
+    ['整道题已经截止', { deadline: Date.now() - DAY }, null],
+    ['我自己的截止已经过了', {}, Date.now() - DAY],
+  ])('申请通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, task, mine) => {
+    const { container } = await mount(
+      { startMode: 'APPLY', joined: true, submittable: true, myProject: null, ...task },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }] }
+    )
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it('我的申请通过了：主操作是「继续做」，打开从这道题来的那个项目', async () => {
+    const { container } = await mount(
+      { joined: true, submittable: true, myProject: { id: 'p-7', name: '红黑树' } },
+      APPROVED_ME
+    )
 
     const go = container.querySelector('[data-testid="task-continue"]')
     expect(go?.textContent).toContain(t('tasks.page.claim.continue'))
     expect(go?.getAttribute('href')).toBe('/projects/p-7')
     expect(claimButton(container)).toBeNull()
+    expect(container.querySelector('[data-testid="my-claim-state"]')?.textContent).toContain(t('tasks.page.mine.doing'))
   })
 
-  it('批过了却还没有项目（上次没建成）：入口是「开始做这道题」，点了进到它打开的项目', async () => {
+  it('申请通过了还没有项目：「开始做这道题」先问一遍（导师在这时同意），按了「开始做」才建项目并进去', async () => {
     join.mockResolvedValue({ participant: { id: 11 }, project: { id: 'p-9', name: '红黑树' } })
-    const { container, router } = await mount({ joined: true, submittable: true, myProject: null }, APPROVED_ME)
+    const { container, router } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        mentors: [{ handle: 'cai', nickname: '蔡老师' }],
+      },
+      APPROVED_ME
+    )
+    const events = useEvents()
+    const asked = vi.fn()
+    events.on('start-dialog-open', asked)
 
     const btn = claimButton(container)!
     expect(btn.disabled).toBe(false)
     expect(btn.textContent).toContain(t('tasks.page.claim.start'))
     await fireEvent.click(btn)
 
+    expect(asked).toHaveBeenCalledWith(true)
+    expect(join).not.toHaveBeenCalled()
+    events.emit('start-confirmed', undefined)
     await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p-9'))
+    expect(join).toHaveBeenCalledWith(TASK_ID, { agreeMentors: true }, undefined)
   })
 
   it('批过之后：有「提交作业」', async () => {
@@ -512,34 +560,33 @@ describe('题目详情', () => {
     expect(roster?.textContent?.trim()).toBe(`${t('tasks.page.tabs.roster')}1`)
   })
 
-  it('没领这道题：不能用它新建项目', async () => {
-    const { container } = await mount()
+  it('没领这道题：右栏不列从它来的项目', async () => {
+    await mount()
 
-    expect(buttonWith(container, t('tasks.side.newProject'))).toBeNull()
     expect(listProjectsForTask).not.toHaveBeenCalled()
   })
 
-  it('领了这道题：用它新建项目，带着这道题；已经开出来的项目点得进去', async () => {
+  it('领了这道题：已经开出来的项目点得进去，右栏没有第二条新建项目的路', async () => {
     listProjectsForTask.mockResolvedValue({ data: [{ id: 'p-1', name: '红黑树小组的项目' }] })
-    const { container } = await mount({}, APPROVED_ME)
+    const { container } = await mount({ myProject: { id: 'p-1', name: '红黑树小组的项目' } }, APPROVED_ME)
 
     await waitFor(() => expect(hrefs(container)).toContain('/projects/p-1'))
-    await fireEvent.click(buttonWith(container, t('tasks.side.newProject'))!)
-    expect(showNewProjectDialog).toHaveBeenCalledWith(null, { id: TASK_ID, name: '把红黑树插一遍' })
+    const side = container.querySelector('.ts')!
+    expect(side.textContent).not.toContain('新建项目')
   })
 
-  it('用团队领的：新项目挂在那个团队下', async () => {
-    const { container } = await mount(
-      { submitterType: 'TEAM' },
-      {
-        hasParticipation: true,
-        identities: [{ id: 11, type: 'TEAM', memberId: 55, teamName: '红黑树小组', approved: 'APPROVED' }],
-      }
-    )
+  it.each([
+    ['DIRECT', '这道题还没开放'],
+    ['APPLY', '还没到报名时间'],
+  ])('%s 的题还没开放：领不了的原因按开始方式说', async (startMode, said) => {
+    const { container } = await mount({
+      startMode,
+      participationEligibility: {
+        user: { eligible: false, reasons: [{ code: 'REGISTRATION_NOT_STARTED', message: 'not yet' }] },
+      },
+    })
 
-    await waitFor(() => expect(buttonWith(container, t('tasks.side.newProject'))).not.toBeNull())
-    await fireEvent.click(buttonWith(container, t('tasks.side.newProject'))!)
-    expect(showNewProjectDialog).toHaveBeenCalledWith(55, { id: TASK_ID, name: '把红黑树插一遍' })
+    expect(container.textContent).toContain(said)
   })
 
   it('领不了的原因说中文：认得出的按原因说，认不出的给一句通用的，不露后端的英文', async () => {

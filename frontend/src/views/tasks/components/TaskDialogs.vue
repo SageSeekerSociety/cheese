@@ -2,8 +2,8 @@
   <!-- Real-name verification dialog -->
   <AdaptiveDialog
     :model-value="verifyInfoDialogOpen"
-    :title="taskData?.requireRealName ? t('tasks.verifyDialog.titleRealName') : t('tasks.verifyDialog.title')"
-    :primary-label="t('tasks.verifyDialog.confirmJoin')"
+    :title="startsDirectly ? t('tasks.verifyDialog.titleStart') : t('tasks.verifyDialog.titleApply')"
+    :primary-label="startsDirectly ? t('tasks.verifyDialog.confirmStart') : t('tasks.verifyDialog.confirmApply')"
     persistent
     @update:model-value="handleCloseVerify"
     @primary="submitVerifyForm"
@@ -56,11 +56,7 @@
                 <v-icon icon="mdi-lock-check" color="surface" size="18"></v-icon>
               </v-avatar>
               <div class="flex-grow-1">
-                <i18n-t scope="global" :keypath="said.lockNotice" tag="span" class="text-body-2">
-                  <template #policy>
-                    <strong>{{ t('tasks.form.teamLockingPolicyLockOnApproval') }}</strong>
-                  </template>
-                </i18n-t>
+                <span class="text-body-2">{{ t(said.lockNotice) }}</span>
               </div>
               <v-icon size="small" color="info">mdi-information-outline</v-icon>
             </div>
@@ -153,18 +149,26 @@
       </v-checkbox>
     </div>
 
-    <!-- The task's mentors join the project the claim opens (#3830): said before
-         confirming, which is the claimer's agreement. -->
-    <TaskMentorNotice
-      v-if="taskData?.mentors?.length"
-      :names="mentorNames"
-      :starts-directly="startsDirectly"
-      class="mb-4"
-    />
+    <!-- The task's mentors join the project starting makes (#3830): asked when
+         starting, which on a task applied for is after approval, not here. -->
+    <TaskMentorNotice v-if="startsDirectly && taskData?.mentors?.length" :names="mentorNames" class="mb-4" />
 
     <!-- Before confirming, lay out what will be inherited (#944): the resource
          pack, the composed guidance (and which layer it came from), and the
          materials that will be carried. This is the page to see before deciding. -->
+    <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
+  </AdaptiveDialog>
+
+  <!-- Starting an approved application: this makes the project, so the mentors are asked here. -->
+  <AdaptiveDialog
+    :model-value="startDialogOpen"
+    :title="t('tasks.verifyDialog.titleStart')"
+    :primary-label="t('tasks.verifyDialog.confirmStart')"
+    @update:model-value="startDialogOpen = $event"
+    @primary="confirmStart"
+  >
+    <p class="text-body-1 mb-4">{{ t('tasks.verifyDialog.startIntro') }}</p>
+    <TaskMentorNotice v-if="taskData?.mentors?.length" :names="mentorNames" class="mb-4" />
     <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
   </AdaptiveDialog>
 
@@ -269,7 +273,7 @@ const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => pr
 // 这道题点名的导师，按昵称连成一句（#3830）。
 /** 直接开始的题没有申请：不问申请理由，队伍在开始做的那一刻锁定、记名单。 */
 const startsDirectly = computed(() => props.taskData?.startMode === 'DIRECT')
-/** 每一句按开始方式取：直接开始的题说「开始做这道题后」，申请制的题说「审核通过后」。 */
+/** 每一句按开始方式取：直接开始的题说「开始做这道题后」，申请制的题说「申请通过后」。 */
 const said = computed(() =>
   startsDirectly.value
     ? {
@@ -292,6 +296,7 @@ const said = computed(() =>
 
 const mentorNames = computed(() => (props.taskData?.mentors ?? []).map((m) => m.nickname).join('、'))
 const verifyInfoDialogOpen = ref(false)
+const startDialogOpen = ref(false)
 const privacyDialogOpen = ref(false)
 const teamSelectionDialogOpen = ref(false)
 const leaveTeamDialogOpen = ref(false)
@@ -305,6 +310,10 @@ const verifyInfoFormRef = ref<InstanceType<typeof VerifyInfoFormComponent> | nul
 onMounted(() => {
   events.on('verify-dialog-open', (value) => {
     verifyInfoDialogOpen.value = value
+  })
+
+  events.on('start-dialog-open', (value) => {
+    startDialogOpen.value = value
   })
 
   events.on('privacy-dialog-open', (value) => {
@@ -367,6 +376,12 @@ const submitVerifyForm = async () => {
 const handleSubmitVerify = (data: any) => {
   events.emit('submit-verify', data)
   verifyInfoDialogOpen.value = false
+}
+
+// 开始做：确认框里列出了导师，按下「开始做」就是同意他们加入项目。
+const confirmStart = () => {
+  startDialogOpen.value = false
+  events.emit('start-confirmed', undefined)
 }
 
 // 确认隐私协议

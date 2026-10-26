@@ -821,13 +821,12 @@ def test_a_stage_edit_is_a_new_version_of_the_task(api_client, board):
     task_id = _publish(api_client, board)
     _claim(api_client, board, task_id)
     student = _headers(board["student"])
+    # 开始做这道题：从题目来的项目就是这样开的。
     resp = api_client.post(
-        "/projects",
-        json={"name": "staged project", "external_task_id": task_id},
-        headers=student,
+        f"/tasks/{task_id}/participations/user", json={}, headers=student
     )
     assert resp.status_code == 200, resp.text
-    project_id = resp.json()["data"]["id"]
+    project_id = resp.json()["data"]["project"]["id"]
 
     first, second = _read(api_client, board, task_id)["stages"]
     resp = api_client.patch(

@@ -12,7 +12,7 @@
   "draftFormChoice": "Participation must be individual or team, as the form names them",
   "draftIncomplete": "The draft is not complete yet; missing: {fields}",
   "draftKeepsASubmissionItem": "Keep at least one submission item",
-  "draftLockingChoice": "Team changes must be either allowed or locked once approved",
+  "draftLockingChoice": "Team changes must be allowed, locked once the application is approved, or locked once the team starts",
   "draftMentorChoice": "{name} cannot be a mentor; the choices are: {names}",
   "draftNameLength": "The name cannot be empty and is at most 100 characters",
   "draftNeedsSpace": "A new draft needs a space",
@@ -32,7 +32,7 @@
   "draftTooLarge": "The draft is too long to save",
   "draftTooMany": "A space keeps at most {max} drafts per person; delete ones you no longer need",
   "draftUnknownFields": "The draft has no such fields: {fields}",
-  "mentorConsentRequired": "This task has mentors; agree to them joining your project to apply",
+  "mentorConsentRequired": "This task has mentors; agree to them joining your project to start it",
   "mentorNotSpaceAdmin": "{handle} is not an admin of this space and cannot be a mentor",
   "rubricLineNeedsName": "Every rubric line needs a criterion name",
   "rubricLineTooLong": "A rubric line is too long: names are up to {item} characters, standards up to {criteria}",
@@ -55,7 +55,6 @@
   "taskFilesForTakers": "Only the publisher, a space admin or someone working on this task can download its materials",
   "taskPlacesFull": "All {limit} places on this task are taken",
   "taskLockingPolicyInvalid": "The team membership setting is not valid",
-  "taskDirectNeedsDeadline": "A task that starts directly needs a deadline; everyone hands in by it",
   "taskStartModeInvalid": "How a task starts is either start directly or apply first",
   "taskOpeningNotFailed": "The AI teammate didn't fail when it took on this task; there is nothing to retry",
   "taskOwnSessionCloses": "Only the task's owner, its collaborators, or the AI teammate working in the task's conversation can close it",
@@ -77,5 +76,10 @@
   "starterPushGaveUp": "The code repository service kept refusing the starter code, so the platform stopped trying",
   "starterMainTaken": "The code repository's main branch already had other commits before the starter code could be added",
   "stageEffectFailing": "Participants with a stage past its due date and nothing handed in: {n}. Saving marks them as failed",
-  "stageEffectReopening": "Participants going from failed back to in progress: {n}"
+  "stageEffectReopening": "Participants going from failed back to in progress: {n}",
+  "taskStartModeLocked": "Someone has already applied for or started this task, so how it starts can no longer change",
+  "claimHasNewerApplication": "This application has a newer one; decide the newer one instead",
+  "taskClosedForStart": "This task has closed; it can no longer be applied for or started",
+  "claimDeadlinePassedForStart": "Your hand-in deadline has passed, so you can no longer start this task",
+  "claimBeingChanged": "This application is being changed. Try again in a moment"
 }

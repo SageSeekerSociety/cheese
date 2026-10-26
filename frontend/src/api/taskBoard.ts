@@ -135,7 +135,7 @@ export namespace TaskBoardApi {
   export const join = (taskId: number, data: AddTaskParticipantRequestData, teamId?: number) =>
     axiosRequest<{
       participant: TaskMembership
-      /** 开始了才有：直接开始的题当场建出来；申请制的题申请还在等通过时是 null。 */
+      /** 开始了才有：直接开始的题当场建出来；申请制的题申请时是 null，通过后再开始才建。 */
       project: { id: string; name: string; root_topic_id: string; team_id: number } | null
     }>(
       {

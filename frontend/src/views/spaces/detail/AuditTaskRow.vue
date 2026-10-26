@@ -29,7 +29,9 @@ const facts = computed(() => {
       ? t(
           task.teamLockingPolicy === 'NO_LOCK'
             ? 'spaces.detail.auditTasks.teamLockingPolicyNoLock'
-            : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
+            : task.startMode === 'DIRECT'
+              ? 'spaces.detail.auditTasks.teamLockingPolicyLockOnStart'
+              : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
         )
       : '',
     task.requireRealName ? t('spaces.detail.auditTasks.requireRealName') : '',

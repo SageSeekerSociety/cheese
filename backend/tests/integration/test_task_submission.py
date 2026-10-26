@@ -70,12 +70,14 @@ class TestTaskSubmissionIntegration:
         suffix: int,
         resubmittable: bool = True,
         editable: bool = True,
+        start_mode: str = "DIRECT",
     ) -> int:
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_resp = api_client.post(
             "/tasks",
             json={
                 "name": f"Submission Test Task ({suffix})",
+                "startMode": start_mode,
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": resubmittable,
@@ -461,6 +463,7 @@ class TestTaskSubmissionIntegration:
             data["space_id"],
             data["category_id"],
             data["suffix"],
+            start_mode="APPLY",
         )
 
         join_resp = api_client.post(

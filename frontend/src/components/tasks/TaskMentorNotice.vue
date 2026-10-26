@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// 领取确认框里的「这道题要有导师」（#3830）：领题前说清导师是谁、能看到什么、看不到什么、
-// 怎么移出。学生勾了同意才能领。
+// 开始做这道题时的「这道题要有导师」（#3830）：开始前说清导师是谁、能看到什么、看不到
+// 什么、怎么移出。开始做就是用这道题新建项目，导师在那一刻加入，所以在那一刻问：直接开始
+// 的题在开始的确认框里，申请制的题在通过之后的开始确认框里，申请时不问。
 import { useI18n } from 'vue-i18n'
 
-/** `startsDirectly`：直接开始的题开始做就有项目，申请制的题要等申请通过。 */
-defineProps<{ names: string; startsDirectly?: boolean }>()
+defineProps<{ names: string }>()
 
 const { t } = useI18n()
 </script>
@@ -13,11 +13,7 @@ const { t } = useI18n()
   <section class="mentor-notice">
     <div class="mentor-notice__head">
       <v-icon size="18" class="mentor-notice__icon">mdi-account-tie-outline</v-icon>
-      <span class="mentor-notice__title">{{
-        startsDirectly
-          ? t('tasks.verifyDialog.mentor.titleStart', { names })
-          : t('tasks.verifyDialog.mentor.title', { names })
-      }}</span>
+      <span class="mentor-notice__title">{{ t('tasks.verifyDialog.mentor.title', { names }) }}</span>
     </div>
     <ul class="mentor-notice__list">
       <li>{{ t('tasks.verifyDialog.mentor.sees') }}</li>

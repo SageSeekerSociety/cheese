@@ -24,7 +24,6 @@ from app.domain.task import teaching as teaching_context
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
-    post_project,
     unique_int,
 )
 
@@ -117,8 +116,8 @@ def _publish_task(
 def _project_under(
     api_client: TestClient, user_client: UserCreator, board: dict, *, task_id: int
 ) -> str:
-    """A project built on this task: approve it, the student joins the 题目板,
-    claims the task, then `POST /projects` with the task linked."""
+    """A project built on this task: approve it, the student joins the 题目板
+    and starts the task, which makes the project."""
     student = user_client.create_user()
     student_token = user_client.login(api_client, student.username, student.password)
     approved = api_client.patch(
@@ -133,26 +132,12 @@ def _project_under(
         headers=_auth(board["token"]),
     )
     assert joined.status_code in (201, 409), joined.text
-    claimed = api_client.post(
+    # 开始做这道题 (a task starts directly by default): the claim opens its project.
+    started = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(student_token)
     )
-    assert claimed.status_code in (200, 201), claimed.text
-    decided = api_client.patch(
-        f"/tasks/{task_id}/participants/{claimed.json()['data']['participant']['id']}",
-        json={"approved": "APPROVED"},
-        headers=_auth(board["token"]),
-    )
-    assert decided.status_code == 200, decided.text
-    resp = post_project(
-        api_client,
-        json={
-            "name": "学生的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["id"]
+    assert started.status_code in (200, 201), started.text
+    return started.json()["data"]["project"]["id"]
 
 
 def _for_project(portal, session, project_id: str):

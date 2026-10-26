@@ -10,10 +10,10 @@ publisher may move it afterwards. Three readers have to name the same moment:
 2. what a person's 芝士 reads about their challenges (``GET /tasks/joined``)
    carries that same deadline, and every time is on the person's own clock
    (the time zone their browser reported), offset included;
-3. the project a claim opens on approval carries that claim's deadline live
-   (``GET /projects/{id}``): the publisher may move it afterwards, so none is
-   written into its overview text, and one fixed string cannot be on every
-   reader's clock anyway.
+3. the project the claimant starts once approved carries that claim's
+   deadline live (``GET /projects/{id}``): the publisher may move it
+   afterwards, so none is written into its overview text, and one fixed
+   string cannot be on every reader's clock anyway.
 """
 
 from __future__ import annotations
@@ -99,6 +99,7 @@ def _task(
         "/tasks",
         json={
             "name": f"题 {unique_int()}",
+            "startMode": "APPLY",
             "intro": "题",
             "description": '{"type":"doc","content":[]}',
             "space": board["space_id"],

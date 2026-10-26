@@ -266,13 +266,17 @@ async def _enrich_task_models(
     # ``total`` 数每一份没删的申请（等批准的、被拒的都算）；``approved`` 只数申请
     # 通过的 —— 页面上的「参与人数」和名额满没满都按它：还在等批准的人不是参与者，
     # 也不占名额（通过时才数，``TaskMembershipService.update_membership``）。
+    # ``live`` 数还算数的领取（通过的、等批准的）：有一份，开始方式就不能再改。
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     approved_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    live_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     for membership in memberships:
         if membership.task_id in participant_counts:
             participant_counts[membership.task_id] += 1
             if membership.approved == 0:
                 approved_counts[membership.task_id] += 1
+            if membership.approved != 1:
+                live_counts[membership.task_id] += 1
 
     for task_model in task_models:
         creator_id = task_model.get("creator", {}).get("id")
@@ -307,6 +311,7 @@ async def _enrich_task_models(
         task_model["participants"] = {
             "total": participant_counts.get(task_model["id"], 0),
             "approved": approved_counts.get(task_model["id"], 0),
+            "live": live_counts.get(task_model["id"], 0),
             "examples": [],
         }
 

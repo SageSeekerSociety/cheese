@@ -6,7 +6,6 @@
   "forgeGithubHint": "创建后在项目设置中连接 GitHub。托管服务在项目创建后不可更改。",
   "forgeHint": "托管服务在项目创建后不可更改",
   "forgeHosted": "平台托管（默认）",
-  "fromTask": "来自题目：{task}",
   "intent": "你打算做什么（可选）",
   "intentExample": "例如：帮我把这学期的课程材料整理成一份大纲",
   "name": "项目名称",
