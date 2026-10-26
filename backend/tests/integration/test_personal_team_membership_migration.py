@@ -1,9 +1,10 @@
 """What e3f9a1c62b47 does to a personal team that was never one person's.
 
 A user's personal team existed before anyone wrote the rule down (#2249), so
-some of them hold a second person, a pending invitation, or a join token. The
-migration ends the members, closes the applications, clears the token, and then
-makes the rule hold in the database: a *new* live row the trigger refuses.
+some of them hold a second person, a pending invitation, a join token, or an
+open recruitment post. The migration ends the members, closes the applications,
+clears the token, withdraws the ad, and then makes the rule hold in the
+database: a *new* live row the trigger refuses.
 
 The last case is the point of the exercise — a deliberate violation written
 straight into the table, the way a script or a path added later would, must be
@@ -69,6 +70,15 @@ def _seed(db: ReplayDatabase) -> dict[str, int]:
             team,
             f"token-{n}",
         )
+        # An ad the owner put up asking people to join it. The plaza lists
+        # posts by status alone, so an OPEN one keeps offering this team.
+        await conn.execute(
+            "INSERT INTO team_recruitment_post (team_id, title, content,"
+            " status, created_by, created_at, updated_at)"
+            " VALUES ($1, 'Join us', 'Please', 'OPEN', $2, now(), now())",
+            team,
+            owner,
+        )
         return {"owner": owner, "friend": friend, "team": team}
 
     return db.run(work)
@@ -108,7 +118,7 @@ def test_the_extra_member_is_ended_and_the_owner_stays():
         )
 
 
-def test_the_pending_applications_are_closed_and_the_token_is_gone():
+def test_the_pending_applications_are_closed_the_token_is_gone_and_the_ad_withdrawn():
     with database_at(BEFORE) as db:
         seeded = _seed(db)
 
@@ -126,6 +136,15 @@ def test_the_pending_applications_are_closed_and_the_token_is_gone():
         assert (
             db.fetchval("SELECT join_token FROM team WHERE id = $1", seeded["team"])
             is None
+        )
+        # The plaza lists posts by status alone, so an OPEN one on this team
+        # would keep offering it after everything else here stopped.
+        assert (
+            db.fetchval(
+                "SELECT status FROM team_recruitment_post WHERE team_id = $1",
+                seeded["team"],
+            )
+            == "CLOSED"
         )
 
 

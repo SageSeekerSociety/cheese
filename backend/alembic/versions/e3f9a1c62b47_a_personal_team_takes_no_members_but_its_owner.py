@@ -19,7 +19,10 @@ What it cleans up, all of it data the rule never allowed:
   personal team — nothing can answer them yes, and a pending invitation would
   wait in its recipient's list for good;
 - a join token on a personal team, if one ever got there: that team is reached
-  by its owner's handle, never by a link.
+  by its owner's handle, never by a link;
+- open recruitment posts on a personal team: the plaza lists posts by status
+  and never looks at the team, so an OPEN one keeps offering a door that is not
+  there.
 
 The previous release keeps serving during the deploy and is not broken by any
 of this: since #2249 it already refuses these same writes.
@@ -43,7 +46,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with_lock_retries("team, team_user_relation, team_membership_application")
+    with_lock_retries(
+        "team, team_user_relation, team_membership_application, team_recruitment_post"
+    )
     # 1. Anyone who got in before the rule existed is out. Ending the row
     #    (deleted_at) keeps it as history; the trigger below is what says it can
     #    never come back.
@@ -87,7 +92,22 @@ def upgrade() -> None:
           AND join_token IS NOT NULL
         """
     )
-    # 4. The rule, where no code path can go around it.
+    # 4. An ad on a personal team asks people into a team that takes nobody.
+    #    Withdrawn like the invitations above: the plaza lists posts by status
+    #    and never looks at the team, so an OPEN one keeps offering a door that
+    #    is not there.
+    op.execute(
+        """
+        UPDATE team_recruitment_post p
+        SET status = 'CLOSED', updated_at = now()
+        FROM team t
+        WHERE p.team_id = t.id
+          AND t.personal_owner_user_id IS NOT NULL
+          AND p.status = 'OPEN'
+          AND p.deleted_at IS NULL
+        """
+    )
+    # 5. The rule, where no code path can go around it.
     op.execute(
         """
         CREATE FUNCTION team_membership_respects_personal_teams()
