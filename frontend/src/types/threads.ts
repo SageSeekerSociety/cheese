@@ -44,6 +44,8 @@ export interface ThreadSummary {
   /** 收起来的时刻（`thread/recycle.py`），开着的是 null。收起来的支线仍然读得到，
    *  只是从默认那一栏挪到了「已回收」。 */
   recycled_at?: string | null
+  /** 开这条支线的人：收起来之后，他是能点「恢复」的人之一（还有频道管理员）。 */
+  created_by?: string
 }
 
 /** 一条支线本身，以及它挂着的那条主线消息。 */

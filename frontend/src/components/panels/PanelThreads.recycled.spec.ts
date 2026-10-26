@@ -31,7 +31,7 @@ beforeAll(() => {
   }
 })
 
-function row(id: string, recycled: string | null = null): ThreadRow {
+function row(id: string, recycled: string | null = null, openedBy = 'alice'): ThreadRow {
   return {
     id,
     room_id: 'room1',
@@ -39,7 +39,8 @@ function row(id: string, recycled: string | null = null): ThreadRow {
     reply_count: 2,
     last_reply_at: '2026-10-20T00:00:00Z',
     last_reply: null,
-    participants: ['alice'],
+    participants: ['bob', 'alice'],
+    created_by: openedBy,
     tasks: [],
     root: null,
     unread: false,

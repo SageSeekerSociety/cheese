@@ -78,7 +78,9 @@ export function useTopicConversation(opts: {
   function canRestoreThread(row: ThreadRow): boolean {
     if (!myHandle()) return false
     if (opts.room()?.can_manage) return true
-    return row.participants[0] === myHandle()
+    // 开这条支线的人（`threads.created_by`），不是「说话的第一个人」：
+    // `participants` 的头一个是挂着的那条消息的作者，两者常常不是同一个人。
+    return row.created_by === myHandle()
   }
   async function restoreAThread(threadId: string) {
     restoringThread.value = true

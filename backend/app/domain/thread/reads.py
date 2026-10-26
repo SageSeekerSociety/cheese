@@ -205,6 +205,10 @@ def _summary(thread: Thread, last: Block | None) -> dict:
         if thread.last_reply_at
         else None,
         "last_reply": _reply(last),
+        # 开这条支线的人（`threads.created_by`）：收起来之后能把它放回来的人之一
+        # （`thread/recycle.py`）。不在 `participants` 里推 —— 那个列表是「谁说过
+        # 话」，头一个是挂着的那条消息的作者，和「谁开的」是两回事。
+        "created_by": thread.created_by,
         # 收起来的时刻（`thread/recycle.py`）；开着的是 None。
         "recycled_at": thread.recycled_at.isoformat() if thread.recycled_at else None,
     }
