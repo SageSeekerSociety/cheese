@@ -71,7 +71,7 @@ async def test_a_token_that_states_no_handle_is_resolved_through_its_user_id(
 async def test_an_id_that_names_nobody_stays_a_handle_nobody_holds(monkeypatch) -> None:
     """Authorization must still deny — and must not read as an anonymous caller.
 
-    Returning None here would make ``may_access_project`` answer 401 for a
+    Returning None here would make the workspace file routes answer 401 for a
     credential that was in fact readable; keeping the value leaves the caller
     unauthorized, which is what a token whose user is gone should get.
     """

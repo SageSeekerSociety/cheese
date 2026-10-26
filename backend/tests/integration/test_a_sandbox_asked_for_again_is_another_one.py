@@ -29,6 +29,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost
 from app.domain.machine.sandbox_wait import DISK_FULL
+from app.domain.user.tokens import digest_token
 from tests.executor_release import running
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
@@ -81,7 +82,7 @@ def _enrolled(cloud, *device_ids: str) -> None:
                         team_id=await enrollment_team(sql_device_service(db), owner.id),
                         device_id=device_id,
                         name=device_id,
-                        token=f"token-{device_id}",
+                        token_digest=digest_token(f"token-{device_id}"),
                         owner_user_id=owner.id,
                         supply=Supply.cloud,
                         created_at=datetime.now(UTC),

@@ -19,6 +19,7 @@ from app.domain.device.models import (
     ModelCredentialHost,
 )
 from app.domain.team.services import team_service
+from app.domain.user.tokens import digest_token
 
 DOMAIN = b"cheese:model-credential-login:v1"
 
@@ -61,29 +62,32 @@ async def register(db, ticket: str, transport_token: str, computer_name: str):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
     if await db.get(DeviceClaudeLoginRow, claims["id"]) is not None:
         raise ConflictError(say("modelLoginAuthorizationUsed"))
+    digest = digest_token(transport_token) if transport_token else None
     device = (
-        await db.scalar(select(DeviceRow).where(DeviceRow.token == transport_token))
-        if transport_token
+        await db.scalar(select(DeviceRow).where(DeviceRow.token_digest == digest))
+        if digest
         else None
     )
     host = (
         await db.scalar(
             select(ModelCredentialHost).where(
-                ModelCredentialHost.token == transport_token
+                ModelCredentialHost.token_digest == digest
             )
         )
-        if transport_token
+        if digest
         else None
     )
+    # The machine keeps the token it came with; a computer that came with none
+    # (or one nobody knows) is given its own, here, once.
+    token = transport_token if (device or host) else secrets.token_urlsafe(48)
     if host is None:
         host = ModelCredentialHost(
             id=device.device_id if device else uuid.uuid4().hex,
-            token=device.token if device else secrets.token_urlsafe(48),
+            token_digest=digest_token(token),
             name=device.name if device else computer_name,
         )
         db.add(host)
         await db.flush()
-    transport = device or host
     row = DeviceClaudeLoginRow(
         id=claims["id"],
         local_id=claims["id"],
@@ -100,18 +104,19 @@ async def register(db, ticket: str, transport_token: str, computer_name: str):
     await db.commit()
     return dict(
         login_id=row.local_id,
-        token=transport.token,
+        token=token,
         device_id=row.transport_id,
         credential_host=device is None,
     )
 
 
 async def refresh(db, token: str) -> bool:
+    digest = digest_token(token)
     device = await db.scalar(
-        select(DeviceRow.device_id).where(DeviceRow.token == token)
+        select(DeviceRow.device_id).where(DeviceRow.token_digest == digest)
     )
     host = await db.scalar(
-        select(ModelCredentialHost.id).where(ModelCredentialHost.token == token)
+        select(ModelCredentialHost.id).where(ModelCredentialHost.token_digest == digest)
     )
     target = device or host
     if not target:

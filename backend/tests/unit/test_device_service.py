@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService, DeviceStatus
 from app.domain.device.supply import Supply
@@ -46,7 +46,9 @@ async def test_start_then_poll_pending_then_approved():
     )
     poll = await service.poll(code)
     assert poll["status"] == DeviceStatus.APPROVED
-    assert poll["token"] == device.token
+    assert (
+        await service.verify_token(poll["token"] or "")
+    ).device_id == device.device_id
     assert poll["device_id"] == device.device_id
     assert device.owner_user_id == owner
     # A device is pure compute — it carries no agent identity.
@@ -100,7 +102,8 @@ async def test_verify_token_identifies_device_only_when_valid():
         supply=Supply.self_hosted,
         team_id=await enrollment_team(service, uuid.uuid4()),
     )
-    assert (await service.verify_token(device.token)).device_id == device.device_id
+    token = (await service.poll(code))["token"] or ""
+    assert (await service.verify_token(token)).device_id == device.device_id
     assert await service.verify_token("nope") is None
     assert await service.verify_token("") is None
 
@@ -122,7 +125,54 @@ async def test_approve_is_idempotent_same_token():
         team_id=await enrollment_team(service, owner),
     )
     assert d1.device_id == d2.device_id
-    assert d1.token == d2.token  # never mints a second credential
+
+
+async def test_the_token_is_handed_out_once():
+    """The poll that brings the approval hands the machine its token; the same
+    code polled again gets nothing, so a code seen later cannot be turned into
+    a second copy of the machine's credential."""
+    service, _ = _service()
+    owner = uuid.uuid4()
+    code = await service.start("m")
+    await service.approve(
+        code,
+        owner_user_id=owner,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
+    )
+    assert (await service.poll(code))["token"]
+    with pytest.raises(NotFoundError):
+        await service.poll(code)
+
+
+async def test_only_a_machine_the_platform_provisioned_gets_a_new_token():
+    """Replacing a token cuts off whatever holds the old one: the platform does
+    it for its own machines as it bootstraps them, never for a person's."""
+    service, _ = _service()
+    owner = uuid.uuid4()
+    code = await service.start("mine")
+    mine = await service.approve(
+        code,
+        owner_user_id=owner,
+        supply=Supply.self_hosted,
+        team_id=await enrollment_team(service, owner),
+    )
+    held = (await service.poll(code))["token"] or ""
+    with pytest.raises(ForbiddenError):
+        await service.bootstrap_token(mine.device_id)
+    assert (await service.verify_token(held)).device_id == mine.device_id
+
+    code = await service.start("cloud")
+    cloud = await service.approve(
+        code,
+        owner_user_id=owner,
+        supply=Supply.cloud,
+        team_id=await enrollment_team(service, owner),
+    )
+    first = await service.bootstrap_token(cloud.device_id)
+    second = await service.bootstrap_token(cloud.device_id)
+    assert await service.verify_token(first) is None
+    assert (await service.verify_token(second)).device_id == cloud.device_id
 
 
 async def test_expired_code_is_rejected():

@@ -23,5 +23,7 @@
   "askSkipNotYours": "这道题不在等你回答，你不能跳过它",
   "optionsDistinct": "选项不能重复",
   "quoteNeedsMessage": "引用要配上你自己写的话",
-  "quoteTooLong": "消息和引用加起来不能超过 {limit} 个字符"
+  "quoteTooLong": "消息和引用加起来不能超过 {limit} 个字符",
+  "askLifetimeNumber": "期限要写成一个小时数（0 是不设限）",
+  "askLifetimeTooLong": "期限最多 {limit} 小时"
 }

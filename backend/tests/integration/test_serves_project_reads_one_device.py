@@ -16,6 +16,7 @@ from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.models import Project
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import a_team
 
 pytestmark = pytest.mark.anyio
@@ -39,7 +40,7 @@ async def _project_with_machines(session, count):
         DeviceRow(
             device_id=did,
             name=did,
-            token=f"tok-{did}",
+            token_digest=digest_token(f"tok-{did}"),
             team_id=team_id,
             owner_user_id=owner.id,
             created_at=datetime.now(UTC),

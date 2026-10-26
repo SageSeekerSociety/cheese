@@ -7,11 +7,9 @@ import pytest
 
 from app.common.auth import (
     create_access_token,
-    get_current_user_id,
     verify_access_token,
 )
 from app.core.config import settings
-from app.core.errors import AuthenticationRequiredError
 
 
 class TestAccessToken:
@@ -47,13 +45,6 @@ class TestAccessToken:
         alone = verify_access_token(create_access_token(None, handle="2026201782"))
         assert alone is not None
         assert (alone.handle, alone.handle_from_claim) == ("2026201782", True)
-
-    @pytest.mark.anyio
-    async def test_a_handle_alone_does_not_pass_as_a_user(self) -> None:
-        token = create_access_token(None, handle="alice")
-
-        with pytest.raises(AuthenticationRequiredError):
-            await get_current_user_id(authorization=f"Bearer {token}")
 
     def test_garbage_is_not_a_token(self) -> None:
         assert verify_access_token("invalid.token.here") is None

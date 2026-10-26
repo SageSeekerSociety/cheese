@@ -23,5 +23,7 @@
   "askWithdrawNotYours": "Only the teammate that asked this question can take it back",
   "optionsDistinct": "Options can't repeat",
   "quoteNeedsMessage": "A quote needs a message of your own",
-  "quoteTooLong": "The message and the quote together can't be longer than {limit} characters"
+  "quoteTooLong": "The message and the quote together can't be longer than {limit} characters",
+  "askLifetimeNumber": "The lifetime has to be a number of hours (0 means no deadline)",
+  "askLifetimeTooLong": "A question's lifetime is at most {limit} hours"
 }
