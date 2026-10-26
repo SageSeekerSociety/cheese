@@ -25,19 +25,33 @@ export function taskState(
   return { key: task.startMode === 'DIRECT' ? 'openToStart' : 'open', tone: 'ok' }
 }
 
+type TaskForViewer = Parameters<typeof taskState>[0] & Pick<Task, 'submittable' | 'userDeadline' | 'endedAt'>
+
 /**
- * 这道题对所有人截止了，对我还开着：我有一份通过了的领取，自己的截止还没过，还能开始做或者正在做。
- * 申请制的题，题目的截止是申请截止，只挡申请；直接开始的题，题目的截止是所有人的，过了就对谁都
- * 截止。和服务端列表分组的 `TaskRepository.still_open_to` 是同一条判据：这样的题不收进「已截止」
- * 那一组，标题旁和列表那一行也不写「已截止」。
+ * 我手上那份通过了的领取还能不能动：开始做，或者在自己的截止之前接着做、交。自己的截止过了、题目
+ * 结束了都不能；直接开始的题，题目的截止是所有人的，过了也不能。申请制的题，题目的截止是申请截止，
+ * 只挡申请，不挡通过了的人。只对持有通过了的领取（`submittable`）的人有意义。
  */
-export function openToMe(
-  task: Pick<Task, 'submittable' | 'userDeadline' | 'startMode' | 'deadline' | 'endedAt'>,
-  now = Date.now()
-): boolean {
-  if (!task.submittable || task.endedAt != null) return false
+export function canStillAct(task: TaskForViewer, now = Date.now()): boolean {
+  if (task.endedAt != null) return false
   if (task.userDeadline != null && task.userDeadline <= now) return false
   return task.startMode !== 'DIRECT' || !deadlineState(task.deadline, now)?.passed
+}
+
+/**
+ * 这道题对正在看的人是什么状态。没有通过了的领取的人，看的是题目对所有人的状态（`taskState`）。
+ * 有一份的人，开着还是截止只看自己还能不能动（`canStillAct`）：动不了就是「已截止」，哪怕题目还在
+ * 收申请；还能动就不写「已截止」，哪怕题目对别人已经截止。和服务端列表分组
+ * （`TaskRepository._apply_lifecycle_filter` 按看的人算）是同一条判据。
+ */
+export function taskStateFor(
+  task: TaskForViewer,
+  now = Date.now()
+): { key: TaskStateKey; tone: 'ok' | 'muted' | 'danger' } | null {
+  const state = taskState(task, now)
+  if (!task.submittable) return state
+  if (!canStillAct(task, now)) return { key: 'closed', tone: 'muted' }
+  return state.key === 'closed' ? null : state
 }
 
 /**

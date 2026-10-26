@@ -13,7 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
-import { openToMe, taskState as taskStateOf } from '@/utils/tasks'
+import { canStillAct, taskStateFor } from '@/utils/tasks'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -165,20 +165,15 @@ const myState = computed(() => {
   return null
 })
 
-/** 通过了还没开始的这一份还能不能开始。过了我自己的截止就不能：开始只会建出一个已经判了未通过的
- *  项目。直接开始的题，题目的截止是所有人的，过了也不能；申请制的题，题目的截止是申请截止，只挡
- *  申请，通过了的照样开始。 */
-const startClosed = computed(() => {
-  const mine = myIdentity.value?.deadline
-  return (startsDirectly.value && deadlinePassed.value) || (mine != null && mine < Date.now())
-})
-/** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。只有一个例外：题目对我还开着
- *  （`openToMe`：申请截止之后通过了、还能开始或正在做）就不写「已截止」，那一枚对我不成立，我这一份
- *  的状态在旁边那一枚里。 */
+/** 通过了还没开始的这一份能不能开始，和标题旁那一枚同一条判据（`canStillAct`）：过了我自己的截止
+ *  就不能，开始只会建出一个已经判了未通过的项目；直接开始的题过了题目的截止也不能。 */
+const startClosed = computed(() => !taskData.value || !canStillAct(taskData.value))
+/** 题目名旁边那一枚：这道题此刻对我是什么状态（`taskStateFor`）。没领的人看题目对所有人的状态；
+ *  有一份通过了的领取的人，看自己还能不能开始或接着做。 */
 const taskState = computed(() => {
   if (!taskData.value) return null
-  const state = taskStateOf(taskData.value)
-  if (state.key === 'closed' && openToMe(taskData.value)) return null
+  const state = taskStateFor(taskData.value)
+  if (!state) return null
   return { label: t(`tasks.page.state.${state.key}`), tone: state.tone }
 })
 

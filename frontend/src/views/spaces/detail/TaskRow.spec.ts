@@ -91,4 +91,23 @@ describe('题目列表的一行', () => {
 
     view.getByText(t('tasks.page.state.closed'))
   })
+
+  it('申请制的题还在收申请、我的截止已经过了：这一行写「已截止」，不写「可申请」', () => {
+    const view = show({
+      startMode: 'APPLY',
+      deadline: Date.now() + 7 * DAY,
+      joined: true,
+      submittable: true,
+      userDeadline: Date.now() - DAY,
+    })
+
+    view.getByText(t('tasks.page.state.closed'))
+    expect(view.queryByText(t('tasks.page.state.open'))).toBeNull()
+  })
+
+  it('没有领取的人：还在收申请的题写「可申请」', () => {
+    const view = show({ startMode: 'APPLY', deadline: Date.now() + 7 * DAY })
+
+    view.getByText(t('tasks.page.state.open'))
+  })
 })

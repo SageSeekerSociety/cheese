@@ -78,21 +78,15 @@ class TaskRepository:
         )
 
     @staticmethod
-    def still_open_to(user_id: int):
-        """The tasks still open to ``user_id`` through a claim of their own
-        (or their team's) once they have closed to everyone else: the claim is
-        approved and its own deadline has not passed, so they can still start
-        it or are working on it. On a task applied for, the task's deadline is
-        申请截止 and closes applying only; on a task started directly it is
-        everyone's, so past it nobody holds the task open."""
-        own_deadline_ahead = or_(
-            TaskMembership.deadline.is_(None), TaskMembership.deadline > func.now()
-        )
+    def _approved_claim_of(user_id: int, *conditions):
+        """Whether ``user_id`` holds an approved claim of the task, their own on
+        an individual task or one of their teams' on a team task, that also
+        meets ``conditions``."""
         live_approved = and_(
             TaskMembership.task_id == Task.id,
             TaskMembership.deleted_at.is_(None),
             TaskMembership.approved == APPROVE_APPROVED,
-            own_deadline_ahead,
+            *conditions,
         )
         user_claim = exists().where(live_approved, TaskMembership.member_id == user_id)
         team_claim = exists().where(
@@ -101,6 +95,19 @@ class TaskRepository:
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
         )
+        return or_(
+            and_(Task.submitter_type == 0, user_claim),
+            and_(Task.submitter_type == 1, team_claim),
+        )
+
+    @classmethod
+    def can_still_act(cls, user_id: int):
+        """Whether ``user_id``'s approved claim can still be acted on: started,
+        or worked on and handed in, before its own deadline, on a task that has
+        not ended. On a task started directly the task's deadline is
+        everyone's, so past it nobody can; on a task applied for it is 申请截止
+        and closes applying only. The frontend's ``canStillAct`` is the same
+        rule."""
         return and_(
             Task.ended_at.is_(None),
             or_(
@@ -108,9 +115,12 @@ class TaskRepository:
                 Task.deadline.is_(None),
                 Task.deadline > func.now(),
             ),
-            or_(
-                and_(Task.submitter_type == 0, user_claim),
-                and_(Task.submitter_type == 1, team_claim),
+            cls._approved_claim_of(
+                user_id,
+                or_(
+                    TaskMembership.deadline.is_(None),
+                    TaskMembership.deadline > func.now(),
+                ),
             ),
         )
 
@@ -412,9 +422,14 @@ class TaskRepository:
                 ),
             )
             if viewer_id:
-                # A task the viewer can still start or is working on stays in
-                # front of them, not among the closed ones.
-                open_ = or_(open_, self.still_open_to(viewer_id))
+                # For a viewer holding an approved claim, the task is open or
+                # closed by whether they can still act on it, whatever it is to
+                # everyone else; for anyone else it is the task's own state.
+                holds = self._approved_claim_of(viewer_id)
+                open_ = or_(
+                    and_(not_(holds), open_),
+                    and_(holds, self.can_still_act(viewer_id)),
+                )
             return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 
