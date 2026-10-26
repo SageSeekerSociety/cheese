@@ -111,8 +111,8 @@ result next to it (the `result` field); read that file.
 
 What the script handles, so you do not: it pins the OCR version, checks the
 binary's sha256, installs it into a per-version cache when it is not there, and
-points it at this platform's model channel (`$CHEESE_API/llm` with the
-sandbox's own token). Only models the gateway allows for this project work.
+points it at this platform's model channel through the sandbox's platform
+socket (`CHEESE_PLATFORM_SOCKET`), which needs no token. Only models the gateway allows for this project work.
 
 What you have to know about running it:
 

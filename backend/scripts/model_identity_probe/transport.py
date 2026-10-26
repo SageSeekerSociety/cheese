@@ -13,8 +13,10 @@ about a turn when it goes where the turn goes:
            credential is the CONNECT scoped token -- ``HTTPS_PROXY``'s password
            in direct mode, or the tunnel's ``cheese-tunnel.token`` /
            ``CHEESE_CONNECT_TOKEN`` when the transport rides the tunnel helper.
-  gateway  ``POST {backend}/llm/v1/messages`` with the seat's own scoped cheese
-           token as the Bearer. This is the platform's machine path for
+  gateway  ``POST /llm/v1/messages``: in a sandbox through its platform socket
+           (``CHEESE_PLATFORM_SOCKET``), which says whose the call is and needs
+           no token; elsewhere on ``{backend}`` with the seat's own scoped
+           cheese token as the Bearer. This is the platform's machine path for
            harnesses that cannot be steered by HTTPS_PROXY (``llm_proxy.py``):
            the backend swaps in the project's virtual gateway key and streams
            the upstream response back. The model is the request body's -- this
@@ -70,7 +72,11 @@ def gateway_client(timeout: float) -> tuple[httpx.Client, str, dict[str, str]]:
     socket_path = platform_socket()
     if socket_path:
         transport = httpx.HTTPTransport(uds=socket_path)
-        return httpx.Client(transport=transport, timeout=timeout), "http://cheese", {}
+        return (
+            httpx.Client(transport=transport, timeout=timeout, trust_env=False),
+            "http://cheese",
+            {},
+        )
     token = os.environ.get("CHEESE_TOKEN", "")
     base = os.environ.get("CHEESE_API") or "http://172.17.0.1:8081"
     return (
@@ -141,6 +147,9 @@ class Endpoint:
     #: listener is at when the token came from a file rather than the proxy URL.
     credential_source: str = ""
     connect_host: str = ""
+    #: The platform socket a gateway endpoint goes through, resolved once when
+    #: the endpoint is built so every request of a run takes the same road.
+    socket: str | None = None
 
     # ---- construction helpers ------------------------------------------------
     @classmethod
@@ -153,6 +162,7 @@ class Endpoint:
             mode="gateway",
             model=model,
             backend=backend or os.environ.get("CHEESE_API") or "http://172.17.0.1:8081",
+            socket=platform_socket(),
         )
 
     @classmethod
@@ -214,8 +224,12 @@ class Endpoint:
                 timeout=DEFAULT_TIMEOUT_S,
                 trust_env=False,
             )
-        if self.mode == "gateway" and platform_socket():
-            return gateway_client(DEFAULT_TIMEOUT_S)[0]
+        if self.mode == "gateway" and self.socket:
+            return httpx.Client(
+                transport=httpx.HTTPTransport(uds=self.socket),
+                timeout=DEFAULT_TIMEOUT_S,
+                trust_env=False,
+            )
         return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
 
     def _url(self) -> str:
@@ -223,7 +237,7 @@ class Endpoint:
             path = (
                 "/chat/completions" if self.protocol == "openai-chat" else "/messages"
             )
-            base = "http://cheese" if platform_socket() else self.backend.rstrip("/")
+            base = "http://cheese" if self.socket else self.backend.rstrip("/")
             return f"{base}/llm/v1{path}"
         if self.mode == "direct":
             path = (
@@ -242,7 +256,7 @@ class Endpoint:
         }
         if self.protocol == "openai-chat":
             headers = {"content-type": "application/json"}
-        if self.mode == "gateway" and platform_socket():
+        if self.mode == "gateway" and self.socket:
             pass  # the socket says whose the call is
         elif self.mode in ("gateway", "proxy", "seat"):
             token = os.environ.get(self.connector_token_env, "")

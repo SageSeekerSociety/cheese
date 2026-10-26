@@ -188,14 +188,36 @@ def verify_scoped_token(
     return True
 
 
+#: The claim that says an execution machine holds the credential
+#: (`for_a_machine`).
+_MACHINE_CLAIM = "held"
+
+
+def for_a_machine(token: str) -> str:
+    """``token``, re-issued as the copy an execution machine is handed: the
+    same claims, marked as held there. The session host's own copy of the
+    same credential is not marked; it is what Codex and Pi call the model
+    route with, and it never leaves the platform's machine."""
+    claims = scoped_token_claims(token)
+    if claims is None:
+        raise ValueError("A valid scoped credential is required")
+    claims[_MACHINE_CLAIM] = "machine"
+    raw = json.dumps(claims, separators=(",", ":")).encode()
+    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    if "session" in claims:
+        body = "cxss_" + body
+    return f"{body}.{sign_body(_SECRET, body)}"
+
+
 def held_by_a_machine(claims: dict) -> bool:
-    """Whether a verified scoped credential is one an execution machine holds:
-    bound to a session's sandbox (``bind_resource_token`` with a session). The
-    model routes refuse it: a sandbox asks for a model on its platform socket,
-    where the platform knows whose it is without a token (``/machine/llm``),
-    and a copy of this one taken anywhere else would otherwise be a key to the
-    project's model pool for as long as it lives."""
-    return "session" in claims
+    """Whether a verified scoped credential is the copy an execution machine
+    was handed (`for_a_machine`). The model routes refuse it: a sandbox asks
+    for a model on its platform socket, where the platform knows whose it is
+    without a token (``/machine/llm``), and a copy of this one taken anywhere
+    else would otherwise be a key to the project's model pool for as long as
+    it lives. Being bound to a session says nothing of where a credential is:
+    the session host's harness holds a session-bound one too."""
+    return claims.get(_MACHINE_CLAIM) == "machine"
 
 
 def scoped_token_claims(token: str) -> dict | None:
