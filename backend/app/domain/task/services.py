@@ -453,7 +453,6 @@ class TaskMembershipService:
         registration_not_started = (
             task.registration_start_at is not None and now < task.registration_start_at
         )
-        registration_closed = False
 
         # Rank 规则只看题目所属的空间，与候选团队无关：两条路径共用，进分支前读一次。
         space: _RankSpace | None = None
@@ -482,14 +481,6 @@ class TaskMembershipService:
                     {
                         "code": "REGISTRATION_NOT_STARTED",
                         "message": "Registration has not started yet.",
-                    }
-                )
-
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
                     }
                 )
 
@@ -585,13 +576,6 @@ class TaskMembershipService:
                     {
                         "code": "REGISTRATION_NOT_STARTED",
                         "message": "Registration has not started yet.",
-                    }
-                )
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
                     }
                 )
 

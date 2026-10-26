@@ -5,7 +5,6 @@
 const REASON_KEYS: Record<string, string> = {
   TASK_NOT_APPROVED: 'tasks.eligibility.TASK_NOT_APPROVED',
   REGISTRATION_NOT_STARTED: 'tasks.eligibility.REGISTRATION_NOT_STARTED',
-  REGISTRATION_CLOSED: 'tasks.eligibility.REGISTRATION_CLOSED',
   PARTICIPANT_LIMIT_REACHED: 'tasks.eligibility.PARTICIPANT_LIMIT_REACHED',
   ALREADY_PARTICIPATING: 'tasks.eligibility.ALREADY_PARTICIPATING',
   MEMBER_ALREADY_PARTICIPATING: 'tasks.eligibility.MEMBER_ALREADY_PARTICIPATING',
@@ -21,7 +20,6 @@ const REASON_KEYS: Record<string, string> = {
 const DIRECT_REASON_KEYS: Record<string, string> = {
   TASK_NOT_APPROVED: 'tasks.eligibility.direct.TASK_NOT_APPROVED',
   REGISTRATION_NOT_STARTED: 'tasks.eligibility.direct.REGISTRATION_NOT_STARTED',
-  REGISTRATION_CLOSED: 'tasks.eligibility.direct.REGISTRATION_CLOSED',
   ALREADY_PARTICIPATING: 'tasks.eligibility.direct.ALREADY_PARTICIPATING',
   MEMBER_ALREADY_PARTICIPATING: 'tasks.eligibility.direct.MEMBER_ALREADY_PARTICIPATING',
 }
