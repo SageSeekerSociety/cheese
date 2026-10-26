@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.response import ok
 from app.api.space_deps import require_reviewed_space
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -114,7 +114,7 @@ def _to_api(view: AnnouncementView, *, chosen_avatar_ids: dict[int, int]) -> dic
 @router.get(
     "/{spaceId}/announcements",
     summary="List a space's announcements",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def list_announcements(
     space_id: SpaceId,
@@ -146,7 +146,7 @@ async def list_announcements(
     "/{spaceId}/announcements",
     summary="Publish an announcement",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[needs(SpacePermission.announce, on="spaceId")],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def publish_announcement(
     space_id: SpaceId,
@@ -169,7 +169,7 @@ async def publish_announcement(
 @router.patch(
     "/{spaceId}/announcements/{announcementId}",
     summary="Update an announcement",
-    dependencies=[needs(SpacePermission.announce, on="spaceId")],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def patch_announcement(
     space_id: SpaceId,
@@ -195,7 +195,7 @@ async def patch_announcement(
     "/{spaceId}/announcements/{announcementId}",
     summary="Delete an announcement",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(SpacePermission.announce, on="spaceId")],
+    dependencies=[Can(SpacePermission.announce)],
 )
 async def delete_announcement(
     space_id: SpaceId,

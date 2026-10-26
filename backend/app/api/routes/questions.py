@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.deps import get_discussion_service
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES, needs
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
@@ -225,7 +225,7 @@ async def unfollow_question(
 @router.put(
     "/{question_id}/acceptance",
     summary="Accept Answer",
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def accept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -240,7 +240,7 @@ async def accept_answer(
 @router.delete(
     "/{question_id}/accept",
     summary="Unaccept Answer",
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def unaccept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -385,7 +385,7 @@ async def delete_question_comment(
 @router.put(
     "/{question_id}",
     summary="Update Question",
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def update_question(
     question_id: Annotated[int, Path()],
@@ -426,7 +426,7 @@ async def update_question(
     "/{question_id}",
     summary="Delete Question",
     status_code=204,
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def delete_question(
     question_id: Annotated[int, Path()],
@@ -476,7 +476,7 @@ async def follow_question_put(
 @router.put(
     "/{question_id}/bounty",
     summary="Set Question Bounty",
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def set_question_bounty(
     question_id: Annotated[int, Path(ge=0)],
@@ -627,7 +627,7 @@ async def get_invitation_detail(
 @router.delete(
     "/{question_id}/invitations/{invitation_id}",
     summary="Delete Invitation",
-    dependencies=[needs(QuestionPermission.manage, on="question_id")],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def delete_invitation(
     question_id: Annotated[int, Path(ge=0)],

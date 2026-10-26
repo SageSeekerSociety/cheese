@@ -187,7 +187,7 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
     ``body.team_id`` 以前原样送到 ``ProjectService.create``，于是任何人都能把项目
     种进别人的团队：它会出现在那个团队的 ``GET /projects?team_id=`` 列表里，挂着
     那个团队的名字和调用方自己的 ``owner_handle``。团队域的路由用
-    ``needs(TeamPermission.x, on="teamId")`` 回答同一个问题；
+    ``Can(TeamPermission.x)`` 回答同一个问题；
     这里团队是**请求体**里给的、不是路径里的，所以同一个判断得显式做一遍。
 
     和 ``ActorResolver.authorize_team`` 的关键区别：这里**不挂**

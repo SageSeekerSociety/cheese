@@ -163,7 +163,9 @@ async def _zone(db, user_id: int) -> str | None:
 
 
 async def _publishable_space(db, space_id: int, user_id: int) -> None:
-    if not await space_seats.may(db, space_id, user_id, space_seats.Permission.publish):
+    if not await space_seats.SPACE.allows(
+        db, space_id, user_id, space_seats.Permission.publish
+    ):
         raise NotFoundError.for_resource("space", space_id)
 
 

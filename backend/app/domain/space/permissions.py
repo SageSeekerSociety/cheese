@@ -3,11 +3,11 @@
 A space has one owner, admins (a course's teachers) and members. The owner and
 admins are rows in ``space_admin_relation``; a member is a ``space_member`` row.
 Each seat holds a fixed set of the permissions below; the owner holds all of
-them. :func:`seat_of` says where a person sits and :func:`may` whether that seat
+them. ``seat_of`` says where a person sits and :data:`SPACE` whether that seat
 holds a permission; a route declares what it needs and ``app.auth.can`` asks
 these. The space's services keep only the space's own rules.
 
-Anyone with no seat does not see the space at all (:func:`sees`): what you
+Anyone with no seat does not see the space at all: what you
 cannot see does not exist for you.
 """
 
@@ -16,6 +16,7 @@ import enum
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.policy import SeatPolicy
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -93,19 +94,25 @@ async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | 
     return Seat.member if member is not None else None
 
 
-async def may(
-    session: AsyncSession, space_id: int, user_id: int, permission: Permission
-) -> bool:
-    space = await session.get(Space, space_id)
-    if space is None or space.deleted_at is not None:
-        return False
-    seat = await seat_of(session, space_id, user_id)
-    return seat is not None and permission in GRANTS[seat]
+class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
+    """Anyone with no seat does not see the space at all."""
+
+    kind = "space"
+    path_param = "spaceId"
+    permissions = Permission
+    grants = GRANTS
+
+    async def load(self, session: AsyncSession, id: int) -> Space | None:
+        space = await session.get(Space, id)
+        return None if space is None or space.deleted_at is not None else space
+
+    async def seat(
+        self, session: AsyncSession, obj: Space, user_id: int
+    ) -> Seat | None:
+        return await seat_of(session, obj.id, user_id)
 
 
-async def sees(session: AsyncSession, space_id: int, user_id: int) -> bool:
-    """Whether the space exists for this person: they hold a seat in it."""
-    return await may(session, space_id, user_id, Permission.view)
+SPACE = SpacePolicy()
 
 
 async def runs(

@@ -123,7 +123,7 @@ async def _task(reader: Reader, page_id: str) -> Shown:
             claim=await claim_of(reader.session, task=task, user_id=reader.user_id),
             timezone=reader.timezone,
             materials=[f.name for f in files],
-            materials_readable=await task_seats.allows(
+            materials_readable=await task_seats.TASK.may(
                 reader.session, task, reader.user_id, task_seats.Permission.download
             ),
         ),

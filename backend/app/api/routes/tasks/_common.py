@@ -407,7 +407,7 @@ async def _create_task_entity(
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
     # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
     # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
-    if not await space_seats.may(
+    if not await space_seats.SPACE.allows(
         db, space_id, creator_user_id, space_seats.Permission.publish
     ):
         raise ForbiddenError("Only a member of this board can publish tasks here")

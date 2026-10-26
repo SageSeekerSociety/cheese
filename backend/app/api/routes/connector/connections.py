@@ -160,7 +160,7 @@ async def _team_access(db, resolver, team_id: int, *, manage: bool = False) -> i
     teams = TeamRepository(db)
     if not await teams.is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
-    if manage and not await team_seats.may(
+    if manage and not await team_seats.TEAM.allows(
         db, team_id, user_id, TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
@@ -186,7 +186,7 @@ async def team_model_connections(
     connections = await model_connections.of_team(db, team_id, device_hub, user_id)
     held = await account_connections.of_team(db, team_id)
     views = [account_connections.view(r) | {"home_team_id": r.team_id} for r in held]
-    may_manage = await team_seats.may(
+    may_manage = await team_seats.TEAM.allows(
         db, team_id, user_id, TeamPermission.manage_machines
     )
     owners = await usernames_by_ids(
@@ -510,7 +510,7 @@ async def team_devices(
     if not await teams.is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
     devices = await service.list_devices_for_team(team_id)
-    may_manage = await team_seats.may(
+    may_manage = await team_seats.TEAM.allows(
         db, team_id, user_id, TeamPermission.manage_machines
     )
     by_device = _screens_by_device()

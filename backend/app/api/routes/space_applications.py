@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.response import ok
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -36,7 +36,7 @@ async def list_my_applications(
 
 @router.post(
     "/{space_id}/resubmit",
-    dependencies=[needs(SpacePermission.resubmit, on="space_id")],
+    dependencies=[Can(SpacePermission.resubmit, at="space_id")],
 )
 async def resubmit_space(
     space_id: int,

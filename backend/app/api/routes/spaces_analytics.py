@@ -48,7 +48,7 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.task_deps import get_task_submission_service
-from app.api.write_access import ROUTE_DECIDES, needs
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -76,7 +76,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/analytics/overview",
     summary="Get Space Analytics Overview",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_overview(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -107,7 +107,7 @@ async def get_space_analytics_overview(
 @router.get(
     "/{spaceId}/analytics/alerts",
     summary="Get Space Analytics Alerts",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_alerts(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -124,7 +124,7 @@ async def get_space_analytics_alerts(
 @router.get(
     "/{spaceId}/analytics/publishers",
     summary="Get Space Analytics Publishers",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_publishers(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -155,7 +155,7 @@ async def get_space_analytics_publishers(
 @router.get(
     "/{spaceId}/analytics/participants",
     summary="Get Space Analytics Participants",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -195,7 +195,7 @@ async def get_space_analytics_participants(
 @router.get(
     "/{spaceId}/analytics/people",
     summary="Get Space Analytics People",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_analytics_people(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -212,7 +212,7 @@ async def get_space_analytics_people(
 @router.get(
     "/{spaceId}/analytics/participants/export",
     summary="Export Space Analytics Participants",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_participants(
     request: Request,
@@ -318,7 +318,7 @@ async def get_space_submission_service(
 @router.get(
     "/{spaceId}/submissions",
     summary="Get Space Submission Queue",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_submissions(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -393,7 +393,7 @@ def _learning_handle(actor) -> str | None:
 @router.get(
     "/{spaceId}/analytics/learning/filters",
     summary="Get Space Learning Filters",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def get_space_learning_filters(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -501,7 +501,7 @@ async def build_space_learning_outline(
 @router.get(
     "/{spaceId}/analytics/tasks/export",
     summary="Export Space Analytics Tasks",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_tasks(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -540,7 +540,7 @@ async def export_space_analytics_tasks(
 @router.get(
     "/{spaceId}/analytics/publishers/export",
     summary="Export Space Analytics Publishers",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_analytics_publishers(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

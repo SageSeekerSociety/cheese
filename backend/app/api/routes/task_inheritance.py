@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, Path
 from app.api.response import ok
 from app.api.space_payloads import teaching_to_api
 from app.api.task_deps import _require_task
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -117,7 +117,7 @@ def _to_api(
 @router.get(
     "/{taskId}/inheritance",
     summary="Get Task Inheritance",
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task_inheritance(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

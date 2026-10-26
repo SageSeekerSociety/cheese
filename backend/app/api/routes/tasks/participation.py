@@ -23,7 +23,7 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _membership_to_api_model,
 )
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -135,7 +135,7 @@ async def _participation_response(
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
-    dependencies=[needs(TaskPermission.take_up, on="taskId")],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -236,7 +236,7 @@ async def create_task_participant(
 @router.post(
     "/{taskId}/participations/user",
     summary="Join Task as User (self-join)",
-    dependencies=[needs(TaskPermission.take_up, on="taskId")],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_user(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -303,7 +303,7 @@ async def join_task_as_user(
 @router.post(
     "/{taskId}/participations/team",
     summary="Join Task as Team",
-    dependencies=[needs(TaskPermission.take_up, on="taskId")],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_team(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -371,7 +371,7 @@ async def join_task_as_team(
 @router.patch(
     "/{taskId}/participants/{participantId}",
     summary="Update TaskMembership",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

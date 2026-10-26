@@ -115,7 +115,7 @@ async def update_task(
 
     # 「审批/驳回」只认教这块板的人，出题者不可自审 —— 比「教这道题」更窄，
     # 不能拿 ``teaches`` 顶。
-    is_space_admin = await task_seats.may(
+    is_space_admin = await task_seats.TASK.allows(
         db, task.id, user_id, task_seats.Permission.approve
     )
 
