@@ -187,6 +187,7 @@ async def build(url: str, sessions) -> World:
         await _chatter(world, s)
         await _cards(world, s)
         await _documents(world, s)
+        await _approve_space(world, s)
         await s.commit()
     return world
 
@@ -399,6 +400,18 @@ async def _space(world: World, http) -> None:
         )
     )
     world.space_id = made["space"]["id"] if "space" in made else made["id"]
+
+
+async def _approve_space(world: World, s) -> None:
+    """Her course space has passed the platform's review, as a running course's
+    has: a space still under review answers every request but its own page as
+    if it did not exist."""
+    from sqlalchemy import text
+
+    await s.execute(
+        text("update space set review_status = 'APPROVED' where id = :i"),
+        {"i": world.space_id},
+    )
 
 
 async def _say(s, project_id, room, author: str, text: str, at: datetime) -> None:
