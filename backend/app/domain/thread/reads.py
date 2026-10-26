@@ -205,6 +205,8 @@ def _summary(thread: Thread, last: Block | None) -> dict:
         if thread.last_reply_at
         else None,
         "last_reply": _reply(last),
+        # 收起来的时刻（`thread/recycle.py`）；开着的是 None。
+        "recycled_at": thread.recycled_at.isoformat() if thread.recycled_at else None,
     }
 
 
@@ -328,11 +330,21 @@ async def _unread(
 
 async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
-) -> list[dict]:
-    """A channel's 支线 that have replies or a failed turn, the latest first:
-    the message each hangs under, its last reply, who took part, the tasks
-    made from it, and whether something new is waiting for ``viewer``. One
-    that became a task is listed with the channel's tasks, not here."""
+) -> dict:
+    """A channel's 支线, in two lists: the open ones, and the recycled ones.
+
+    ``{"open": [...], "recycled": [...]}``. An open one has replies or a failed
+    turn, latest first: the message each hangs under, its last reply, who took
+    part, the tasks made from it, and whether something new is waiting for
+    ``viewer``. One that became a task is listed with the channel's tasks, not
+    here.
+
+    A recycled one is a 支线 nobody came back to after it broke
+    (`thread/recycle.py`): it has left the list it used to sit in and does not
+    count towards the channel's red light, but it is still readable — nothing
+    was deleted — so it is handed back in a list of its own, most recently
+    recycled first. Its rows are the same shape plus ``recycled_at``.
+    """
     failed_turn = (
         select(Block.id)
         .where(
@@ -347,6 +359,7 @@ async def in_room(
             select(Thread)
             .where(
                 Thread.room_id == room_id,
+                Thread.recycled_at.is_(None),
                 or_(Thread.reply_count > 0, failed_turn),
                 ~_became_a_task(),
             )
@@ -354,9 +367,23 @@ async def in_room(
             .limit(limit)
         )
     )
-    if not threads:
-        return []
-    return await _describe(session, threads, viewer=viewer)
+    recycled = list(
+        await session.scalars(
+            select(Thread)
+            .where(
+                Thread.room_id == room_id,
+                Thread.recycled_at.is_not(None),
+                ~_became_a_task(),
+            )
+            .order_by(Thread.recycled_at.desc(), Thread.id)
+            .limit(limit)
+        )
+    )
+    return {
+        "open": await _describe(session, threads, viewer=viewer),
+        # 收起来的那几条一起读：它们和开着的一样有回复、有最后一句、有参与的人。
+        "recycled": await _describe(session, recycled, viewer=None),
+    }
 
 
 async def _describe(

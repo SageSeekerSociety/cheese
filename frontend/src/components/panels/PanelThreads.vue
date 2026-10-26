@@ -5,6 +5,8 @@
 import type { RefNames } from '../../lib/refChip'
 import type { ThreadReply, ThreadRow } from '../../types/threads'
 
+import { ref } from 'vue'
+
 import { replyBlock, replySnippet } from '../../lib/blockDisplay'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
@@ -14,6 +16,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   rows: ThreadRow[]
+  /** 收起来的那些（`thread/recycle.py`）：报错满三天、没人回来的支线，点开还能读。 */
+  recycled: ThreadRow[]
   loading: boolean
   error: string | null
   refs: RefNames
@@ -21,6 +25,8 @@ const props = defineProps<{
   fmtTime: (iso: string) => string
   /** 我能不能在这个频道里开支线（外部协作者不能，见后端 `threadOpenedByPerson`）。 */
   canCreate: boolean
+  /** 我能不能把收起来的放回来（开这条支线的人，或频道管理员；后端同一条判据）。 */
+  canRestore?: (row: ThreadRow) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +35,12 @@ const emit = defineEmits<{
   // 两处「新建支线」点了都走这里（顶上常驻那一颗、空态里那一颗，清单第 4、12 条）：
   // 这一格只画，开对话框、发请求由拿着这个频道的父级做。
   (e: 'new'): void
+  /** 把一条收起来的支线放回来；请求由父级发（它拿着这个频道）。 */
+  (e: 'restore', threadId: string): void
 }>()
+
+/** 「已回收」那一栏开着没有：平时收着，不占地方。 */
+const showingRecycled = ref(false)
 
 function said(reply: ThreadReply | null, max: number): string {
   if (!reply) return ''
@@ -44,6 +55,12 @@ function people(row: ThreadRow): string {
     replies: t('work.room.thread.replies', { count: row.reply_count }),
     names: row.participants.map(props.nameOf).join(t('work.room.roster.listSeparator')),
   })
+}
+
+/** 这一条我放不放得回来：开这条支线的人，或者频道管理员（后端 `threadRestoreNotYours`
+ *  同一条）。看的人是谁这里不知道，父级会给一个判据；不给就是能。 */
+function mayRestore(row: ThreadRow): boolean {
+  return props.canRestore ? props.canRestore(row) : true
 }
 </script>
 
@@ -102,6 +119,47 @@ function people(row: ThreadRow): string {
         </li>
       </ul>
     </template>
+    <!-- 已回收（`thread/recycle.py`）：报错满三天、没人回来的支线。平时收着，要看才点开；
+         每一行读得到、也点得进去，能恢复的旁边有一颗「恢复」。 -->
+    <template v-if="recycled.length">
+      <button
+        type="button"
+        class="threads__recycled-head t-meta"
+        :aria-expanded="showingRecycled"
+        data-testid="recycled-toggle"
+        @click="showingRecycled = !showingRecycled"
+      >
+        {{ t('work.room.thread.recycled') }} · {{ recycled.length }}
+      </button>
+      <template v-if="showingRecycled">
+        <p class="threads__caption t-meta">{{ t('work.room.thread.recycledCaption') }}</p>
+        <ul class="threads__list">
+          <li v-for="row in recycled" :key="row.id">
+            <div class="thread-row thread-row--recycled">
+              <button type="button" class="thread-row__body" data-testid="recycled-row" @click="emit('open', row.id)">
+                <span class="thread-row__head">
+                  <span class="thread-row__root">{{ said(row.root, 80) }}</span>
+                  <span v-if="row.recycled_at" class="thread-row__time t-meta">{{
+                    t('work.room.thread.recycledAt', { time: fmtTime(row.recycled_at) })
+                  }}</span>
+                </span>
+                <span v-if="row.last_reply" class="thread-row__last">{{ said(row.last_reply, 200) }}</span>
+                <span class="thread-row__people t-meta">{{ people(row) }}</span>
+              </button>
+              <BaseButton
+                v-if="mayRestore(row)"
+                kind="ghost"
+                size="sm"
+                data-testid="restore-thread"
+                @click="emit('restore', row.id)"
+              >
+                {{ t('work.room.thread.restore') }}
+              </BaseButton>
+            </div>
+          </li>
+        </ul>
+      </template>
+    </template>
   </div>
 </template>
 
@@ -144,6 +202,41 @@ function people(row: ThreadRow): string {
 }
 .thread-row:hover {
   background: var(--fill);
+}
+/* 已回收那一栏的头：一行 13px 的字，点开点合，画得比行还安静。 */
+.threads__recycled-head {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 16px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.threads__recycled-head:hover {
+  color: var(--text);
+}
+/* 已回收的一行：同一个形状，头里那颗「恢复」在右边而不是压着整行。 */
+.thread-row--recycled {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 0;
+}
+.thread-row__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
 }
 .thread-row__head {
   display: flex;

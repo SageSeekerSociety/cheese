@@ -123,9 +123,10 @@ export function useThreadLines(opts: {
     refreshing = (async () => {
       try {
         // 和概览里那一格读同一份；那边正在读就等它。
-        const rows = await queryClient.fetchQuery({ ...threadsQuery(room), staleTime: 0 })
+        const lists = await queryClient.fetchQuery({ ...threadsQuery(room), staleTime: 0 })
         if (opts.roomId() !== room) return
-        for (const row of rows) {
+        // 只画开着的那些：收起来的支线不再挂在它那条消息下面（`thread/recycle.py`）。
+        for (const row of lists.open) {
           const shown = opts.timeline.find(row.root_block_id)
           if (!shown) continue
           const summary: ThreadSummary = {

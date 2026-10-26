@@ -236,6 +236,12 @@ async def persist_human_message(
             )
             anchor_id = user_block.id
             created_blocks.append(user_block)
+            # 收起来的支线里说了话就是放回来了（`thread/recycle.py`）：它当场回到默认
+            # 那一栏，红灯从这一刻重算 —— 「在里面说一句」是这个界面给出的路，和人点
+            # 「恢复」是同一条。收起来的一栏本来就是只读的，所以每次写到这儿都是一次
+            # 「回来」，不用再问是谁说的。
+            if place.thread is not None and place.thread.recycled_at is not None:
+                place.thread.recycled_at = None
         # 图片输入: each image = an attachment block. content = the worktree
         # path (a REAL file, uploaded before this message), mime_type = how
         # to render it — structured fields, never parsed out of prose.

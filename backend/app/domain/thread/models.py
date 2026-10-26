@@ -48,6 +48,16 @@ class Thread(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    #: 这条支线被收起来了（`thread.services.recycle`）：它报的错拖过了时限而没人回来
+    #: 修，于是不再点亮它那间频道，也从默认的支线列表里挪开。块一条不删 —— 翻得到、
+    #: 搜得到，在里面说一句或者点「恢复」就放回来。NULL = 开着。
+    recycled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    @property
+    def recycled(self) -> bool:
+        return self.recycled_at is not None
 
     @staticmethod
     async def of_root(session, block_id: uuid.UUID) -> "Thread | None":

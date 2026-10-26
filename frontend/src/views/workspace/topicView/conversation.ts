@@ -15,6 +15,7 @@
 // 刚请进来的队友在「现场」那一格也要叫得出名字。
 import type { Topic, TopicMemberRow } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
+import type { ThreadRow } from '@/types/threads'
 import type { TopicPlace } from './shared'
 
 import { computed, ref, watch } from 'vue'
@@ -23,7 +24,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { useChannelThreads } from '@/composables/useChannelThreads'
 
-import { newThread } from '@/api/threads'
+import { newThread, restoreThread } from '@/api/threads'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { dayStamp } from '@/lib/dateText'
@@ -69,6 +70,25 @@ export function useTopicConversation(opts: {
       store.reportError(e, t('work.room.thread.createFailed'))
     } finally {
       creatingThread.value = false
+    }
+  }
+  // 把一条收起来的支线放回来（`thread/recycle.py`）。只有开这条支线的人和频道管理员
+  // 点得动，后端是最后一道（`threadRestoreNotYours`）；这里只是把按钮少画给不能的人。
+  const restoringThread = ref(false)
+  function canRestoreThread(row: ThreadRow): boolean {
+    if (!myHandle()) return false
+    if (opts.room()?.can_manage) return true
+    return row.participants[0] === myHandle()
+  }
+  async function restoreAThread(threadId: string) {
+    restoringThread.value = true
+    try {
+      await restoreThread(threadId)
+      channelThreads.markRestored(threadId)
+    } catch (e) {
+      store.reportError(e, t('work.room.thread.restoreFailed'))
+    } finally {
+      restoringThread.value = false
     }
   }
   /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
@@ -148,6 +168,9 @@ export function useTopicConversation(opts: {
     creatingThread,
     canOpenThread,
     createThread,
+    restoringThread,
+    canRestoreThread,
+    restoreAThread,
     threadTime,
     AUTHOR,
     projectPeople,

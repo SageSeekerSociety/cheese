@@ -155,6 +155,8 @@ const {
   creatingThread,
   canOpenThread,
   createThread,
+  canRestoreThread,
+  restoreAThread,
   threadTime,
   AUTHOR,
   taskPage,
@@ -518,6 +520,8 @@ void openPlace()
             <template v-if="!taskId" #threads>
               <PanelThreads
                 :rows="channelThreads.rows.value"
+                :recycled="channelThreads.recycled.value"
+                :can-restore="canRestoreThread"
                 :loading="channelThreads.loading.value"
                 :error="channelThreads.error.value"
                 :refs="{ mentionNames: memberNames, topicTitles: {} }"
@@ -527,6 +531,7 @@ void openPlace()
                 @open="showThread"
                 @open-task="onOpenCard"
                 @new="newThreadOpen = true"
+                @restore="restoreAThread"
               />
             </template>
             <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->

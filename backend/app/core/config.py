@@ -848,6 +848,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The deadline itself is 72 hours, so the minute a sweep lands on is not
     # something a reader notices.
     question_expiry_sweep_interval_s: int = 300
+    # How long until a dead 支线 is recycled (`thread/recycle.py`). The bound it
+    # measures is three days, so this only decides how late the sweep may be;
+    # an hour costs one scan of the open 支线 with a failure in them per run.
+    thread_recycle_interval_s: int = 3600
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit
