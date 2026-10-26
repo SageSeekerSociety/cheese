@@ -638,6 +638,23 @@ export const THREAD_ROWS: ThreadRow[] = [
   },
 ]
 
+/** 一条收起来的支线（`thread/recycle.py`）：报错满三天、没人回来的那条。
+ *  「已回收」那一栏画的就是它，和开着的那些同一个形状，多一个收起来的时刻。 */
+export const RECYCLED_THREAD_ROW: ThreadRow = {
+  id: 'thread-recycled',
+  room_id: DEMO_TOPIC,
+  root_block_id: 'root-3',
+  reply_count: 1,
+  last_reply_at: NOTE_REPLY.created_at,
+  last_reply: NOTE_REPLY,
+  participants: ['wang', 'cheese'],
+  created_by: 'wang',
+  tasks: [],
+  root: NOTE_ROOT,
+  unread: false,
+  recycled_at: '2026-10-24T02:00:00Z',
+}
+
 /** 支线行上的时刻：和话题页的写法一样，今天的写时分，更早的写月日。 */
 export function threadTime(iso: string): string {
   const at = new Date(iso)

@@ -31,6 +31,5 @@
   "recycledCaption": "Threads nobody came back to after three days of holding an error",
   "recycledAt": "Recycled {time}",
   "restore": "Restore",
-  "restoreFailed": "Could not restore it. Try again later",
-  "restored": "Back in the thread list"
+  "restoreFailed": "Could not restore it. Try again later"
 }

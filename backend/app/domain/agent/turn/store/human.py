@@ -242,8 +242,9 @@ async def persist_human_message(
             # 那间房要再红，得是之后又有一次没人恢复的失败（`waits` 会往后看）。
             # 收起来的一栏本来就是只读的，所以每次写到这儿都是一次「回来」，不用再问
             # 是谁说的。
-            if place.thread is not None and place.thread.recycled_at is not None:
-                place.thread.recycled_at = None
+            thread = getattr(place, "thread", None)
+            if thread is not None and thread.recycled_at is not None:
+                thread.recycled_at = None
         # 图片输入: each image = an attachment block. content = the worktree
         # path (a REAL file, uploaded before this message), mime_type = how
         # to render it — structured fields, never parsed out of prose.

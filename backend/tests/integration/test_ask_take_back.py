@@ -101,12 +101,15 @@ def test_the_agent_takes_its_own_question_back_and_it_leaves_the_person_s_list(
     before = len(_blocks(client, room))
 
     response = client.delete(
-        f"/blocks/{question['id']}/question", headers=_its_author(client, room, question["id"])
+        f"/blocks/{question['id']}/question",
+        headers=_its_author(client, room, question["id"]),
     )
 
     assert response.status_code == 200, response.text
     assert _waiting_questions(client, "alice") == []
-    assert _answer_log(client, room, question["id"]) == [("withdrawn", _seat(client, room))]
+    assert _answer_log(client, room, question["id"]) == [
+        ("withdrawn", _seat(client, room))
+    ]
     # Nothing new was said in the room: the question's own message is what it was.
     assert len(_blocks(client, room)) == before
     assert _question_out(client, room, question["id"])["content"] == question["content"]
@@ -129,12 +132,15 @@ def test_taking_a_question_back_settles_its_notice(client, stub_hooks, monkeypat
 
     assert notice()["read"] is False
     client.delete(
-        f"/blocks/{question['id']}/question", headers=_its_author(client, room, question["id"])
+        f"/blocks/{question['id']}/question",
+        headers=_its_author(client, room, question["id"]),
     )
     assert notice()["read"] is True
 
 
-def test_a_person_cannot_take_the_agent_s_question_back(client, stub_hooks, monkeypatch):
+def test_a_person_cannot_take_the_agent_s_question_back(
+    client, stub_hooks, monkeypatch
+):
     """Only the teammate that asked it can: anyone else is refused by name."""
     pid, room, _ = _room(client)
     seed_user(client, "bob")
@@ -172,7 +178,8 @@ def test_an_answered_question_cannot_be_taken_back_by_its_asker(
     _click(client, room, question["id"], "bob")
 
     refused = client.delete(
-        f"/blocks/{question['id']}/question", headers=_its_author(client, room, question["id"])
+        f"/blocks/{question['id']}/question",
+        headers=_its_author(client, room, question["id"]),
     )
 
     assert refused.status_code == 409, refused.text
@@ -187,7 +194,8 @@ def test_taking_a_question_back_does_not_run_anyone_s_turn(
     prompts = _prompts(stub_hooks, monkeypatch)
 
     client.delete(
-        f"/blocks/{question['id']}/question", headers=_its_author(client, room, question["id"])
+        f"/blocks/{question['id']}/question",
+        headers=_its_author(client, room, question["id"]),
     )
     wait_work_idle()
 
@@ -257,7 +265,9 @@ def test_a_question_past_its_deadline_leaves_the_list_on_its_own(
     wait_work_idle()
 
     assert _waiting_questions(client, "alice") == []
-    assert _answer_log(client, room, question["id"]) == [("expired", _seat(client, room))]
+    assert _answer_log(client, room, question["id"]) == [
+        ("expired", _seat(client, room))
+    ]
 
 
 def test_an_unexpired_question_stays(client, stub_hooks, monkeypatch):
@@ -302,7 +312,8 @@ def test_a_question_taken_back_can_no_longer_be_answered(
     _, room = _with_bob(client)
     question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
     client.delete(
-        f"/blocks/{question['id']}/question", headers=_its_author(client, room, question["id"])
+        f"/blocks/{question['id']}/question",
+        headers=_its_author(client, room, question["id"]),
     )
 
     response = _click(client, room, question["id"], "bob")

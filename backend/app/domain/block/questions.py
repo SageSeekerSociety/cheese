@@ -307,7 +307,9 @@ async def withdraw_question(session, *, question: Block, by: str) -> Block:
     return question
 
 
-async def expire_question(session, *, question: Block, at: datetime | None = None) -> Block:
+async def expire_question(
+    session, *, question: Block, at: datetime | None = None
+) -> Block:
     """到点了还没人答：把这道题收掉（`block.asked.EXPIRED`）。
 
     和撤回同一套效果——不再等人、离开列表与黄灯、题卡收起选项并说明——只是理由

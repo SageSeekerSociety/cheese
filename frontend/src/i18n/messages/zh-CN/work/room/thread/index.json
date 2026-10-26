@@ -31,6 +31,5 @@
   "recycledCaption": "报错满三天、没人回来的支线收在这里，点开还能读",
   "recycledAt": "收于 {time}",
   "restore": "恢复",
-  "restoreFailed": "恢复失败，稍后重试",
-  "restored": "已放回支线列表"
+  "restoreFailed": "恢复失败，稍后重试"
 }

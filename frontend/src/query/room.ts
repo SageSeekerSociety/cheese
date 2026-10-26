@@ -4,7 +4,7 @@ import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRo
 import type { ChannelPin } from '@/types/channels'
 import type { ChapterRow } from '@/types/chapters'
 import type { TopicEnvironment } from '@/types/compute'
-import type { Thread, ThreadLists } from '@/types/threads'
+import type { Thread, ThreadLists, ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
