@@ -150,6 +150,16 @@ it('shows a png in the frame instead of calling it unreadable', async () => {
   expect(screen.getByText('image/png')).toBeTruthy()
 })
 
+it('shows a video deliverable in the video viewer instead of calling it unreadable', async () => {
+  getPreview.mockResolvedValue(artifact('output/演示.mp4', 'video/mp4'))
+  readPreviewFile.mockResolvedValue(binaryFile('output/演示.mp4'))
+
+  mount()
+
+  await waitFor(() => expect(screen.getByRole('button', { name: '打开视频' })).toBeTruthy())
+  expect(screen.queryByText('这个文件不是文本')).toBeNull()
+})
+
 it('still says a file the browser cannot draw is not text', async () => {
   getPreview.mockResolvedValue(artifact('output/模型权重.bin', 'application/octet-stream'))
   readPreviewFile.mockResolvedValue(binaryFile('output/模型权重.bin'))

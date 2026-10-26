@@ -31,7 +31,9 @@ import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
+import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
+import AttachmentVideo from '../AttachmentVideo.vue'
 
 import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
@@ -124,6 +126,7 @@ async function fullscreen() {
 
 // 文档那一档的实例：钉在页上的一处要它当时那张图，换文件时又要它把那个钉撤掉。
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
+const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
 
 const {
   locator,
@@ -345,7 +348,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-file="previewFile"
       :displayed-frame="displayedFrame"
       :fullscreen-supported="fullscreenSupported"
-      :is-image-artifact="isImageArtifact"
+      :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
       @fullscreen="fullscreen"
@@ -488,6 +491,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @cancel="clearLocator"
       @mark="openAnchor"
     />
+    <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
+      <AttachmentVideo :topic-id="topicId" :path="previewFile.path" @download="emit('download')" />
+    </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>{{ t('work.room.preview.notText') }}</div>
@@ -589,6 +595,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 .panel-preview:fullscreen {
   width: 100%;
   height: 100%;
+}
+.panel-preview__video {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--preview-min);
+  padding: 16px;
 }
 
 /* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */
