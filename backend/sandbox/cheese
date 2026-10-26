@@ -1890,7 +1890,8 @@ DELEGATED_TOOLS = ToolTable(
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
             "library/成绩.xlsx；me 是用户申请过、在做的题目和各自的截止时间，"
             "settings 是用户的通知设置；teams 是用户所在的团队，teams/9 是一个团队的成员"
-            "和角色，spaces/4/people 是一个空间的管理员和成员。"
+            "和角色；spaces 是用户所在和管理的空间，spaces/4/people 是一个空间的管理员和"
+            "成员。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
             {
@@ -2004,7 +2005,10 @@ DELEGATED_TOOLS = ToolTable(
             "role 为 admin 设为管理员，已是管理员的人 role 为 member 撤掉管理员。remove 为 "
             "true 时从这一处移出。只能做用户自己有权限做的；移出、降低权限默认要用户确认。",
             {
-                "where": _text("项目短名、频道编号、teams/团队 id 或 spaces/空间 id"),
+                "where": _text(
+                    "项目短名、频道编号、teams/团队 id 或 spaces/空间 id；不知道 id 先用 "
+                    "cheese_read 读 teams 或 spaces"
+                ),
                 "who": _text("对方的 handle 或名字"),
                 "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
                 "remove": {"type": "boolean", "description": "true 时移出"},
@@ -2021,7 +2025,9 @@ DELEGATED_TOOLS = ToolTable(
                     "出题人对成员可见的已通过题目上限，value 写整数）。改之前可以先用 cheese_read "
                     "读 spaces/4/manage 看现在的设置。空间的成员和管理员用 cheese_people。",
                     {
-                        "where": _text("spaces/空间 id"),
+                        "where": _text(
+                            "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
+                        ),
                         "key": {
                             "type": "string",
                             "enum": ["name", "intro", "visible_limit"],
@@ -2035,7 +2041,9 @@ DELEGATED_TOOLS = ToolTable(
                     "发公告给空间里所有人（title 标题、content 正文、pinned 置顶）；ref 给公告编号"
                     "时改这条公告的这几项，ref 加 remove 为 true 时删除它。发公告默认要用户确认。",
                     {
-                        "where": _text("spaces/空间 id"),
+                        "where": _text(
+                            "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
+                        ),
                         "title": _text("公告标题"),
                         "content": _text("公告正文"),
                         "pinned": {"type": "boolean"},
@@ -2049,7 +2057,9 @@ DELEGATED_TOOLS = ToolTable(
                     "管空间的分类：不给 ref 时新建（name 名称、note 说明）；ref 给分类编号时，"
                     "name 是改名，archived 为 true 归档、false 取消归档，remove 为 true 删除。",
                     {
-                        "where": _text("spaces/空间 id"),
+                        "where": _text(
+                            "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
+                        ),
                         "ref": _text("分类编号，见 spaces/4/manage"),
                         "name": _text("分类名称"),
                         "note": _text("分类说明"),
@@ -2064,7 +2074,9 @@ DELEGATED_TOOLS = ToolTable(
                     "note 写这张码给谁用）；ref 给邀请码编号时改这几项，remove 为 true 时停用它"
                     "（停用后这张码不能再用）。",
                     {
-                        "where": _text("spaces/空间 id"),
+                        "where": _text(
+                            "spaces/空间 id；不知道 id 先用 cheese_read 读 spaces"
+                        ),
                         "ref": _text("邀请码编号，见 spaces/4/manage"),
                         "max_uses": {"type": "integer"},
                         "days": {"type": "integer"},

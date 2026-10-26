@@ -44,7 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
 from app.api.space_deps import require_reviewed_space
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -53,6 +53,7 @@ from app.core.sentences import say, size_text
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.space.material_service import SpaceMaterialService
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.task.teaching import count_material_references
 from app.domain.user.services import user_service
 
@@ -74,6 +75,7 @@ async def get_space_material_service(db=Depends(get_db)) -> SpaceMaterialService
 @router.get(
     "/{spaceId}/materials",
     summary="List Space Materials",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def list_space_materials(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -103,7 +105,7 @@ async def list_space_materials(
     "/{spaceId}/materials",
     summary="Upload Space Material",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
 )
 async def upload_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -135,7 +137,7 @@ async def upload_space_material(
 @router.patch(
     "/{spaceId}/materials/{materialId}",
     summary="Patch Space Material",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
 )
 async def patch_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -157,7 +159,7 @@ async def patch_space_material(
     "/{spaceId}/materials/{materialId}",
     summary="Delete Space Material",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
 )
 async def delete_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -173,6 +175,7 @@ async def delete_space_material(
 @router.get(
     "/{spaceId}/materials/{materialId}/download",
     summary="Download Space Material",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def download_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

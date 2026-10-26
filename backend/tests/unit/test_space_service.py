@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.models import SpaceAdminRole
 from app.domain.space.services import SpaceService
 
@@ -579,7 +579,6 @@ class TestCreateCategory:
             name="Tasks",
             description="Task category",
             display_order=1,
-            actor_user_id=42,
         )
 
         assert result is new_cat
@@ -595,7 +594,6 @@ class TestCreateCategory:
                 name="   ",
                 description=None,
                 display_order=0,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -611,7 +609,6 @@ class TestCreateCategory:
                 name="General",
                 description=None,
                 display_order=0,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -622,7 +619,10 @@ class TestCreateCategory:
 
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
         await svc.create_category(
-            space_id=1, name="Cat", description=None, display_order=0, actor_user_id=42
+            space_id=1,
+            name="Cat",
+            description=None,
+            display_order=0,
         )
 
         call_kwargs = cat_repo.create_category.call_args.kwargs
@@ -640,7 +640,6 @@ class TestCreateCategory:
             name="Cat",
             description="  padded  ",
             display_order=0,
-            actor_user_id=42,
         )
 
         call_kwargs = cat_repo.create_category.call_args.kwargs
@@ -660,7 +659,6 @@ class TestUpdateCategory:
         result = await svc.update_category(
             space_id=1,
             category_id=10,
-            actor_user_id=42,
             name="New",
             description="Updated desc",
             display_order=5,
@@ -682,9 +680,7 @@ class TestUpdateCategory:
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
 
         with pytest.raises(BadRequestError, match="Category name cannot be empty"):
-            await svc.update_category(
-                space_id=1, category_id=10, actor_user_id=42, name="   "
-            )
+            await svc.update_category(space_id=1, category_id=10, name="   ")
 
     @pytest.mark.anyio
     async def test_duplicate_name_raises(self):
@@ -696,9 +692,7 @@ class TestUpdateCategory:
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
 
         with pytest.raises(BadRequestError, match="Category name already exists"):
-            await svc.update_category(
-                space_id=1, category_id=10, actor_user_id=42, name="Taken"
-            )
+            await svc.update_category(space_id=1, category_id=10, name="Taken")
 
     @pytest.mark.anyio
     async def test_same_name_skips_uniqueness_check(self):
@@ -708,9 +702,7 @@ class TestUpdateCategory:
         cat_repo.save.side_effect = lambda c: c
 
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
-        result = await svc.update_category(
-            space_id=1, category_id=10, actor_user_id=42, name="Same"
-        )
+        result = await svc.update_category(space_id=1, category_id=10, name="Same")
 
         assert result.name == "Same"
         cat_repo.exists_unarchived_name.assert_not_awaited()
@@ -723,9 +715,7 @@ class TestUpdateCategory:
         cat_repo.save.side_effect = lambda c: c
 
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
-        result = await svc.update_category(
-            space_id=1, category_id=10, actor_user_id=42, archived=False
-        )
+        result = await svc.update_category(space_id=1, category_id=10, archived=False)
 
         assert result.archived_at is None
 
@@ -737,9 +727,7 @@ class TestUpdateCategory:
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
 
         with pytest.raises(NotFoundError, match="Space category not found"):
-            await svc.update_category(
-                space_id=1, category_id=999, actor_user_id=42, name="X"
-            )
+            await svc.update_category(space_id=1, category_id=999, name="X")
 
 
 class TestDeleteCategory:
@@ -760,7 +748,10 @@ class TestDeleteCategory:
         svc = _build_service(
             repo=repo, category_repo=cat_repo, admin_repo=None, task_repo=task_repo
         )
-        await svc.delete_category(space_id=1, category_id=20, actor_user_id=42)
+        await svc.delete_category(
+            space_id=1,
+            category_id=20,
+        )
 
         assert cat.deleted_at is not None
         assert cat.updated_at is not None
@@ -778,7 +769,10 @@ class TestDeleteCategory:
         svc = _build_service(repo=repo, category_repo=cat_repo, admin_repo=None)
 
         with pytest.raises(BadRequestError, match="Cannot delete the default category"):
-            await svc.delete_category(space_id=1, category_id=10, actor_user_id=42)
+            await svc.delete_category(
+                space_id=1,
+                category_id=10,
+            )
 
     @pytest.mark.anyio
     async def test_category_with_tasks_raises(self):
@@ -799,7 +793,10 @@ class TestDeleteCategory:
         with pytest.raises(
             BadRequestError, match="Cannot delete a category that contains tasks"
         ):
-            await svc.delete_category(space_id=1, category_id=20, actor_user_id=42)
+            await svc.delete_category(
+                space_id=1,
+                category_id=20,
+            )
 
     @pytest.mark.anyio
     async def test_space_not_found_raises(self):
@@ -812,7 +809,10 @@ class TestDeleteCategory:
         svc = _build_service(repo=repo, category_repo=cat_repo, admin_repo=None)
 
         with pytest.raises(NotFoundError, match="Resource space not found"):
-            await svc.delete_category(space_id=1, category_id=20, actor_user_id=42)
+            await svc.delete_category(
+                space_id=1,
+                category_id=20,
+            )
 
     @pytest.mark.anyio
     async def test_without_task_repo_skips_task_count(self):
@@ -829,7 +829,10 @@ class TestDeleteCategory:
         svc = _build_service(
             repo=repo, category_repo=cat_repo, admin_repo=None, task_repo=None
         )
-        await svc.delete_category(space_id=1, category_id=20, actor_user_id=42)
+        await svc.delete_category(
+            space_id=1,
+            category_id=20,
+        )
 
         assert cat.deleted_at is not None
 
@@ -844,7 +847,9 @@ class TestSetCategoryArchived:
 
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
         result = await svc.set_category_archived(
-            space_id=1, category_id=10, archived=True, actor_user_id=42
+            space_id=1,
+            category_id=10,
+            archived=True,
         )
 
         assert result.archived_at is not None
@@ -858,7 +863,9 @@ class TestSetCategoryArchived:
 
         svc = _build_service(category_repo=cat_repo, admin_repo=None)
         result = await svc.set_category_archived(
-            space_id=1, category_id=10, archived=False, actor_user_id=42
+            space_id=1,
+            category_id=10,
+            archived=False,
         )
 
         assert result.archived_at is None
@@ -895,15 +902,15 @@ class TestAddAdmin:
     async def test_happy_path_add_new_admin(self):
         admin_repo = AsyncMock()
         admin_repo.get_relation.side_effect = [
-            # First call: _ensure_admin for actor (OWNER)
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
-            # Second call: check if target already exists
+            # Whether the target is already an admin
             None,
         ]
 
         svc = _build_service(admin_repo=admin_repo)
         await svc.add_admin(
-            space_id=1, target_user_id=99, role=SpaceAdminRole.ADMIN, actor_user_id=42
+            space_id=1,
+            target_user_id=99,
+            role=SpaceAdminRole.ADMIN,
         )
 
         admin_repo.add_admin.assert_awaited_once_with(
@@ -913,13 +920,11 @@ class TestAddAdmin:
     @pytest.mark.anyio
     async def test_admin_repo_none_raises(self):
         svc = _build_service(admin_repo=None)
-        # Without admin_repo, _ensure_admin returns immediately, then we hit the None check
         with pytest.raises(BadRequestError, match="Space admin repository unavailable"):
             await svc.add_admin(
                 space_id=1,
                 target_user_id=99,
                 role=SpaceAdminRole.ADMIN,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -929,7 +934,6 @@ class TestAddAdmin:
             user_id=99, role=SpaceAdminRole.ADMIN.value, deleted_at=None
         )
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             existing,
         ]
 
@@ -940,7 +944,6 @@ class TestAddAdmin:
                 space_id=1,
                 target_user_id=99,
                 role=SpaceAdminRole.ADMIN,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -953,7 +956,6 @@ class TestAddAdmin:
             user_id=42, role=SpaceAdminRole.OWNER.value, deleted_at=None
         )
         admin_repo.get_relation.side_effect = [
-            current_owner,  # _ensure_admin for actor
             existing_admin,  # check if target exists
         ]
         admin_repo.get_owner.return_value = current_owner
@@ -961,7 +963,9 @@ class TestAddAdmin:
 
         svc = _build_service(admin_repo=admin_repo)
         await svc.add_admin(
-            space_id=1, target_user_id=99, role=SpaceAdminRole.OWNER, actor_user_id=42
+            space_id=1,
+            target_user_id=99,
+            role=SpaceAdminRole.OWNER,
         )
 
         # The current owner should be demoted to ADMIN
@@ -976,7 +980,6 @@ class TestAddAdmin:
             user_id=42, role=SpaceAdminRole.OWNER.value, deleted_at=None
         )
         admin_repo.get_relation.side_effect = [
-            current_owner,  # _ensure_admin for actor
             None,  # target doesn't exist
         ]
         admin_repo.get_owner.return_value = current_owner
@@ -984,7 +987,9 @@ class TestAddAdmin:
 
         svc = _build_service(admin_repo=admin_repo)
         await svc.add_admin(
-            space_id=1, target_user_id=99, role=SpaceAdminRole.OWNER, actor_user_id=42
+            space_id=1,
+            target_user_id=99,
+            role=SpaceAdminRole.OWNER,
         )
 
         assert current_owner.role == SpaceAdminRole.ADMIN.value
@@ -996,14 +1001,15 @@ class TestAddAdmin:
     async def test_add_new_owner_no_existing_owner(self):
         admin_repo = AsyncMock()
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             None,  # target doesn't exist
         ]
         admin_repo.get_owner.return_value = None
 
         svc = _build_service(admin_repo=admin_repo)
         await svc.add_admin(
-            space_id=1, target_user_id=99, role=SpaceAdminRole.OWNER, actor_user_id=42
+            space_id=1,
+            target_user_id=99,
+            role=SpaceAdminRole.OWNER,
         )
 
         admin_repo.add_admin.assert_awaited_once_with(
@@ -1017,12 +1023,14 @@ class TestRemoveAdmin:
         admin_repo = AsyncMock()
         relation = _make_admin_relation(user_id=99, role=SpaceAdminRole.ADMIN.value)
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             relation,
         ]
 
         svc = _build_service(admin_repo=admin_repo)
-        await svc.remove_admin(space_id=1, target_user_id=99, actor_user_id=42)
+        await svc.remove_admin(
+            space_id=1,
+            target_user_id=99,
+        )
 
         admin_repo.remove_admin.assert_awaited_once_with(relation)
 
@@ -1031,33 +1039,40 @@ class TestRemoveAdmin:
         svc = _build_service(admin_repo=None)
 
         with pytest.raises(BadRequestError, match="Space admin repository unavailable"):
-            await svc.remove_admin(space_id=1, target_user_id=99, actor_user_id=42)
+            await svc.remove_admin(
+                space_id=1,
+                target_user_id=99,
+            )
 
     @pytest.mark.anyio
     async def test_relation_not_found_raises(self):
         admin_repo = AsyncMock()
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             None,
         ]
 
         svc = _build_service(admin_repo=admin_repo)
 
         with pytest.raises(NotFoundError, match="Space admin relation not found"):
-            await svc.remove_admin(space_id=1, target_user_id=99, actor_user_id=42)
+            await svc.remove_admin(
+                space_id=1,
+                target_user_id=99,
+            )
 
     @pytest.mark.anyio
     async def test_cannot_remove_owner_raises(self):
         admin_repo = AsyncMock()
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             _make_admin_relation(user_id=99, role=SpaceAdminRole.OWNER.value),
         ]
 
         svc = _build_service(admin_repo=admin_repo)
 
         with pytest.raises(BadRequestError, match="Cannot remove space owner"):
-            await svc.remove_admin(space_id=1, target_user_id=99, actor_user_id=42)
+            await svc.remove_admin(
+                space_id=1,
+                target_user_id=99,
+            )
 
 
 class TestUpdateAdminRole:
@@ -1071,7 +1086,6 @@ class TestUpdateAdminRole:
             user_id=42, role=SpaceAdminRole.OWNER.value
         )
         admin_repo.get_relation.side_effect = [
-            current_owner,  # _ensure_admin for actor
             target_relation,  # get relation for target
         ]
         admin_repo.get_owner.return_value = current_owner
@@ -1082,7 +1096,6 @@ class TestUpdateAdminRole:
             space_id=1,
             target_user_id=99,
             new_role=SpaceAdminRole.OWNER,
-            actor_user_id=42,
         )
 
         assert current_owner.role == SpaceAdminRole.ADMIN.value
@@ -1095,7 +1108,6 @@ class TestUpdateAdminRole:
             user_id=99, role=SpaceAdminRole.ADMIN.value
         )
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             target_relation,
         ]
 
@@ -1104,7 +1116,6 @@ class TestUpdateAdminRole:
             space_id=1,
             target_user_id=99,
             new_role=SpaceAdminRole.ADMIN,
-            actor_user_id=42,
         )
 
         admin_repo.save.assert_not_awaited()
@@ -1118,14 +1129,12 @@ class TestUpdateAdminRole:
                 space_id=1,
                 target_user_id=99,
                 new_role=SpaceAdminRole.ADMIN,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
     async def test_relation_not_found_raises(self):
         admin_repo = AsyncMock()
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             None,
         ]
 
@@ -1136,7 +1145,6 @@ class TestUpdateAdminRole:
                 space_id=1,
                 target_user_id=99,
                 new_role=SpaceAdminRole.ADMIN,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -1146,7 +1154,6 @@ class TestUpdateAdminRole:
             user_id=99, role=SpaceAdminRole.OWNER.value
         )
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             owner_relation,
         ]
 
@@ -1157,7 +1164,6 @@ class TestUpdateAdminRole:
                 space_id=1,
                 target_user_id=99,
                 new_role=SpaceAdminRole.ADMIN,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -1172,7 +1178,6 @@ class TestUpdateAdminRole:
             user_id=99, role=2
         )  # hypothetical role=2
         admin_repo.get_relation.side_effect = [
-            _make_admin_relation(user_id=42, role=SpaceAdminRole.OWNER.value),
             target_relation,
         ]
         admin_repo.save.side_effect = lambda r: r
@@ -1182,7 +1187,6 @@ class TestUpdateAdminRole:
             space_id=1,
             target_user_id=99,
             new_role=SpaceAdminRole.ADMIN,
-            actor_user_id=42,
         )
 
         assert target_relation.role == SpaceAdminRole.ADMIN.value
@@ -1203,7 +1207,7 @@ class TestDeleteSpace:
         )
 
         svc = _build_service(repo=repo, admin_repo=admin_repo)
-        await svc.delete_space(space_id=1, actor_user_id=42)
+        await svc.delete_space(space_id=1)
 
         assert space.deleted_at is not None
         assert space.updated_at is not None
@@ -1217,76 +1221,7 @@ class TestDeleteSpace:
         svc = _build_service(repo=repo)
 
         with pytest.raises(NotFoundError, match="Resource space not found"):
-            await svc.delete_space(space_id=999, actor_user_id=42)
-
-
-# ===========================================================================
-# _ensure_admin helper
-# ===========================================================================
-
-
-class TestEnsureAdmin:
-    @pytest.mark.anyio
-    async def test_no_admin_repo_allows_all(self):
-        svc = _build_service(admin_repo=None)
-        # Should not raise
-        await svc._ensure_admin(1, 42, allow_admin=True)
-
-    @pytest.mark.anyio
-    async def test_none_user_id_raises(self):
-        admin_repo = AsyncMock()
-        svc = _build_service(admin_repo=admin_repo)
-
-        with pytest.raises(ForbiddenError, match="Authentication required"):
-            await svc._ensure_admin(1, None, allow_admin=True)
-
-    @pytest.mark.anyio
-    async def test_no_relation_raises(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = None
-
-        svc = _build_service(admin_repo=admin_repo)
-
-        with pytest.raises(
-            ForbiddenError, match="Only space admins can perform this action"
-        ):
-            await svc._ensure_admin(1, 42, allow_admin=True)
-
-    @pytest.mark.anyio
-    async def test_admin_allowed_when_allow_admin_true(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = _make_admin_relation(
-            role=SpaceAdminRole.ADMIN.value
-        )
-
-        svc = _build_service(admin_repo=admin_repo)
-        # Should not raise
-        await svc._ensure_admin(1, 42, allow_admin=True)
-
-    @pytest.mark.anyio
-    async def test_admin_forbidden_when_allow_admin_false(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = _make_admin_relation(
-            role=SpaceAdminRole.ADMIN.value
-        )
-
-        svc = _build_service(admin_repo=admin_repo)
-
-        with pytest.raises(
-            ForbiddenError, match="Only space owner can perform this action"
-        ):
-            await svc._ensure_admin(1, 42, allow_admin=False)
-
-    @pytest.mark.anyio
-    async def test_owner_allowed_when_allow_admin_false(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = _make_admin_relation(
-            role=SpaceAdminRole.OWNER.value
-        )
-
-        svc = _build_service(admin_repo=admin_repo)
-        # Should not raise
-        await svc._ensure_admin(1, 42, allow_admin=False)
+            await svc.delete_space(space_id=999)
 
 
 # ===========================================================================

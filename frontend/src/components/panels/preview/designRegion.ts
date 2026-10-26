@@ -1,5 +1,8 @@
 export type Point = { x: number; y: number }
 export type RasterRegion = { x: number; y: number; width: number; height: number }
+/** 图上框出来的一处评论：id 用来打开那一串，矩形是**原图像素**——和框选发出去的那份
+ *  引用同一套坐标，显示时按屏幕上的缩放换算。 */
+export type ImageRegionMark = { id: string; region: RasterRegion }
 export type RasterSelection = {
   region: RasterRegion
   identity: string

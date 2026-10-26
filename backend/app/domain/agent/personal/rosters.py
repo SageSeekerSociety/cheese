@@ -1,7 +1,7 @@
 """Who is in a team or a space, written out for a person's 芝士.
 
-What 芝士 reads before it manages people for the person: the teams they are
-in and their role in each, a team's members, a space's managers and members.
+What 芝士 reads before it manages people for the person: the teams and
+spaces they are in and their role in each, a team's members, a space's managers and members.
 Each names people by their name and handle, and each team or space by the ref
 that acts on it (``teams/9``, ``spaces/4``). Only what the person may see on
 the site: a team they are in, a space they are in or run.
@@ -63,6 +63,19 @@ async def my_teams(session: AsyncSession, user_id: int) -> str:
         role = _TEAM_ROLE.get(held.role, "成员") if held is not None else "成员"
         lines.append(f"- 团队「{team.name}」（teams/{team.id}），你是{role}")
     return "\n".join(lines) if lines else "你不在任何团队里。"
+
+
+async def my_spaces(session: AsyncSession, user_id: int) -> str:
+    """The spaces the person is in or runs, and whether they run each."""
+    spaces = SpaceService.for_routes(session)
+    lines: list[str] = []
+    for found in await spaces.list_spaces(limit=LISTED, member_user_id=user_id):
+        runs = await is_space_admin(session, space_id=found.id, user_id=user_id)
+        lines.append(
+            f"- 空间「{found.name}」（spaces/{found.id}），"
+            + ("你是管理员" if runs else "你是成员")
+        )
+    return "\n".join(lines) if lines else "你不在任何空间里。"
 
 
 async def team(session: AsyncSession, user_id: int, team_id: int) -> str:

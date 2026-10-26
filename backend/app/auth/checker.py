@@ -104,8 +104,6 @@ class PermissionChecker:
             Resource.TASK: "task",
             Resource.TASK_PARTICIPANT: "task",
             Resource.TASK_SUBMISSION: "task",
-            Resource.SPACE: "space",
-            Resource.SPACE_CATEGORY: "space",
             Resource.PROJECT: "project",
             Resource.PROJECT_MEMBERSHIP: "project",
             Resource.DISCUSSION: "discussion",

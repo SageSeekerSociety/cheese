@@ -95,6 +95,13 @@ class Outcome:
     memories: list[str] = field(default_factory=list)
     #: The asker's rules after the task: (trigger, what the person said, spec).
     routines: list[tuple[str, str, dict]] = field(default_factory=list)
+    #: Her course space after the task: its name, live categories, live invite
+    #: codes as (max uses, note), and announcement titles.
+    space: dict = field(default_factory=dict)
+    #: Each team's people after the task: team name → {handle: role}.
+    teams: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: How each project names its tasks after the task: project → auto / manual.
+    naming: dict[str, str] = field(default_factory=dict)
 
     @property
     def answer(self) -> str:
@@ -313,6 +320,44 @@ async def read_outcome(
         ):
             if str(topic) in rooms:
                 members.setdefault(rooms[str(topic)], []).append(handle)
+        sid = world.space_id
+        space = {
+            "name": (await q("select name from space where id = :i", i=sid)).scalar(),
+            "categories": [
+                str(n)
+                for (n,) in await q(
+                    "select name from space_categories where space_id = :i "
+                    "and deleted_at is null",
+                    i=sid,
+                )
+            ],
+            "codes": [
+                (int(m), str(n or ""))
+                for m, n in await q(
+                    "select max_uses, note from space_invite_code where space_id = :i "
+                    "and deleted_at is null",
+                    i=sid,
+                )
+            ],
+            "announcements": [
+                str(t)
+                for (t,) in await q(
+                    "select title from space_announcement where space_id = :i", i=sid
+                )
+            ],
+        }
+        roles = {0: "owner", 1: "admin", 2: "member"}
+        teams: dict[str, dict[str, str]] = {}
+        for name, handle, role in await q(
+            "select t.name, u.username, r.role from team_user_relation r "
+            'join team t on t.id = r.team_id join "user" u on u.id = r.user_id '
+            "where r.deleted_at is null and t.personal_owner_user_id is null"
+        ):
+            teams.setdefault(str(name), {})[str(handle)] = roles.get(role, str(role))
+        naming = {
+            projects.get(str(p), str(p)): str((st or {}).get("task_naming") or "auto")
+            for p, st in await q("select id, settings from projects")
+        }
     assert set(CARDS) <= set(cards)
     return Outcome(
         turns,
@@ -332,6 +377,9 @@ async def read_outcome(
         members,
         memories,
         routines,
+        space,
+        teams,
+        naming,
     )
 
 
