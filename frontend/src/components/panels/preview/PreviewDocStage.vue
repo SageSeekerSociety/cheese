@@ -151,9 +151,6 @@ const stage = computed(() =>
     stale: !!props.docError && !!docShown.value,
     rendererMissing: props.docRendererMissing,
     cannotRender: !!props.docError,
-    // 这一档看的是文件字节，没有「应用连接」那一步。
-    app: false,
-    connected: true,
   })
 )
 
@@ -241,7 +238,7 @@ defineExpose({ snapshot, clearMark })
     <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
       {{ downloadError }}
     </v-alert>
-    <v-alert v-else-if="docError && docShown" type="warning" density="compact" class="mx-3 mb-2">
+    <v-alert v-else-if="stage.stage === 'updated'" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
     <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，
