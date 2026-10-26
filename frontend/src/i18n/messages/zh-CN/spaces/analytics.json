@@ -218,9 +218,9 @@
   "publishers": {
     "col": {
       "approvedParticipantCount": "参与主体",
-      "avgParticipantsPerTask": "平均每题申请/开始",
+      "avgParticipantsPerTask": "每题申请/开始",
       "lastTaskCreatedAt": "最近发题",
-      "participantCount": "申请/开始主体",
+      "participantCount": "申请/开始",
       "publisherName": "出题人",
       "submissionConversionRate": "提交转化率",
       "submittedParticipantCount": "提交主体",
@@ -266,7 +266,7 @@
       "category": "分类",
       "createdAt": "创建时间",
       "deadline": "截止时间",
-      "participantCount": "申请/开始主体",
+      "participantCount": "申请/开始",
       "pendingParticipantApprovalCount": "待审核申请",
       "pendingReviewCount": "待评审",
       "publisher": "出题人",

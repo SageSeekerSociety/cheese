@@ -218,7 +218,7 @@
   "publishers": {
     "col": {
       "approvedParticipantCount": "Participants",
-      "avgParticipantsPerTask": "Applied/started per challenge",
+      "avgParticipantsPerTask": "Avg. applied/started",
       "lastTaskCreatedAt": "Last published",
       "participantCount": "Applied/started",
       "publisherName": "Publisher",
