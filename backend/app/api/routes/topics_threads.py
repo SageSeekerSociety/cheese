@@ -168,7 +168,7 @@ async def get_thread(
     if thread is None and place.task is not None:
         return ok(await _task_as_thread(db, place.task))
     if thread is None:
-        raise NotFoundError("Thread not found")
+        raise NotFoundError(say("threadNotFound"))
     root = await reads.root_of(db, thread)
     files = await files_sent_with(db, root) if root is not None else []
     return ok(
@@ -212,10 +212,10 @@ async def restore_thread(
     place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
-        raise AuthenticationRequiredError("Sign in to restore a 支线")
+        raise AuthenticationRequiredError(say("threadRestoreSignIn"))
     thread = await thread_of(db, topic_id)
     if thread is None or place.task is not None:
-        raise NotFoundError("Thread not found")
+        raise NotFoundError(say("threadNotFound"))
     if thread.recycled:
         managed = await TopicMemberService(db).managed_topic_ids(
             [place.room], actor.handle

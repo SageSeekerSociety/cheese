@@ -303,7 +303,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/topics_pins.py": 1,
     "app/api/routes/topics_preview.py": 1,
     "app/api/routes/topics_side_routes.py": 1,
-    "app/api/routes/topics_threads.py": 2,
+    "app/api/routes/topics_threads.py": 1,
     "app/api/routes/users/_common.py": 8,
     "app/api/routes/users/account.py": 10,
     "app/api/routes/users/auth.py": 29,
