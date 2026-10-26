@@ -7,6 +7,7 @@ repository standing in for the forge serves both (`uploadpack.allowFilter`,
 """
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,3 +65,31 @@ def proposal(root: Path, *, conflicting: bool) -> Proposal:
     _git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
     _git(origin, "fetch", "-q", str(work), "task:task")
     return Proposal(url=origin.as_uri(), base=base, head=head)
+
+
+def repositories(root: Path, count: int) -> list[Proposal]:
+    """``count`` repositories, each at its own address, holding the same clean
+    proposal (copies of one, which is faster than building each)."""
+    pr = proposal(root / "first", conflicting=False)
+    first = root / "first" / "origin.git"
+    copies = []
+    for i in range(count):
+        copy = root / f"copy-{i}.git"
+        shutil.copytree(first, copy)
+        copies.append(Proposal(url=copy.as_uri(), base=pr.base, head=pr.head))
+    return copies
+
+
+def proposals_over_time(root: Path, count: int) -> tuple[str, str, list[str]]:
+    """One repository whose task branch was pushed ``count`` times: its base,
+    and the head of each push, every one of which merges cleanly."""
+    pr = proposal(root, conflicting=False)
+    work = root / "work"
+    _git(work, "checkout", "-q", "task")
+    heads = [pr.head]
+    for i in range(count - 1):
+        (work / "TASK.md").write_text(f"task {i}\n")
+        _git(work, "commit", "-qam", f"push {i}")
+        heads.append(_git(work, "rev-parse", "HEAD"))
+    _git(root / "origin.git", "fetch", "-q", str(work), "+task:task")
+    return pr.url, pr.base, heads

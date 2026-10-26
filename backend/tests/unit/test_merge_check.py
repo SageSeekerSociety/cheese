@@ -8,6 +8,7 @@ repository) there is none — never a conflict.
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -16,7 +17,7 @@ from app.core import background
 from app.core.config import settings
 from app.domain.review import merge_check
 from app.domain.review.forgejo_pr import ForgejoClient
-from tests.support.git_origin import proposal
+from tests.support.git_origin import proposal, proposals_over_time, repositories
 
 
 @pytest.fixture(autouse=True)
@@ -89,8 +90,13 @@ async def test_forgejo_refusing_is_settled_by_the_test_merge(
     assert (later.mergeable, later.mergeable_state) == settled
 
 
+#: A cap small enough that one repository's cache is over it.
+_SMALL_CAP = 20 * 1024
+
+
 def _bytes_on_disk(path) -> int:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    """What everything under ``path`` takes on disk, in whole blocks."""
+    return sum(f.lstat().st_blocks * 512 for f in path.rglob("*"))
 
 
 class _Killed(BaseException):
@@ -119,19 +125,39 @@ def test_a_check_cut_short_while_setting_up_does_not_strand_the_repository(
 def test_a_repository_larger_than_the_cap_is_checked_but_not_kept(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", 4096)
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
     pr = proposal(tmp_path / "repo", conflicting=False)
 
     assert merge_check.decide(pr.url, "token", pr.base, pr.head) == "clean"
     assert merge_check.answer(pr.url, pr.base, pr.head) == "clean"
-    assert _bytes_on_disk(tmp_path / "workspace") <= 4096
+    assert _bytes_on_disk(tmp_path / "workspace") <= _SMALL_CAP
 
 
 def test_a_check_that_fails_still_keeps_the_caches_under_the_cap(tmp_path, monkeypatch):
     earlier = proposal(tmp_path / "earlier", conflicting=False)
     assert merge_check.decide(earlier.url, "t", earlier.base, earlier.head) == "clean"
-    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", 4096)
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
 
     missing = (tmp_path / "nowhere.git").as_uri()
     assert merge_check.decide(missing, "t", "a" * 40, "b" * 40) is None
-    assert _bytes_on_disk(tmp_path / "workspace") <= 4096
+    assert _bytes_on_disk(tmp_path / "workspace") <= _SMALL_CAP
+
+
+def test_answers_count_against_the_cap_and_make_way_for_newer_ones(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
+    url, base, heads = proposals_over_time(tmp_path / "repo", 6)
+    for head in heads:
+        assert merge_check.decide(url, "t", base, head) == "clean"
+    assert _bytes_on_disk(tmp_path / "workspace") <= _SMALL_CAP
+
+
+def test_checks_running_at_once_under_the_cap_all_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
+    prs = repositories(tmp_path, 24)
+    with ThreadPoolExecutor(max_workers=len(prs)) as pool:
+        answers = list(
+            pool.map(lambda pr: merge_check.decide(pr.url, "t", pr.base, pr.head), prs)
+        )
+    assert answers == ["clean"] * len(prs)

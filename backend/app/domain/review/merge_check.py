@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 import signal
+import stat
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -185,13 +186,13 @@ def decide(url: str, token: str, base: str, head: str) -> Answer | None:
         found = answer(url, base, head)
         if found is not None:
             return found
-        _evict(holding=cache)
+        _evict(holding=cache, answering=_answer_file(url, base, head))
         try:
             return _test_merge(cache, url, token, base, head)
         finally:
             if cache.is_dir():
                 os.utime(cache)
-            _evict(holding=cache)
+            _evict(holding=cache, answering=_answer_file(url, base, head))
 
 
 def _test_merge(
@@ -225,57 +226,84 @@ def _test_merge(
     return result
 
 
-def _size(path: Path) -> int:
-    total = 0
-    for folder, _, files in os.walk(path):
-        for name in files:
-            with contextlib.suppress(OSError):
-                total += os.lstat(os.path.join(folder, name)).st_size
+def _allocated(path: Path) -> int:
+    """The bytes the filesystem gives ``path`` (a file, or a directory with all
+    it holds), counted in blocks: a five-byte answer takes a whole block. What
+    vanishes meanwhile counts as nothing."""
+    try:
+        own = os.lstat(path)
+    except OSError:
+        return 0
+    total = own.st_blocks * 512
+    if stat.S_ISDIR(own.st_mode):
+        for folder, dirs, files in os.walk(path):
+            for name in (*dirs, *files):
+                with contextlib.suppress(OSError):
+                    total += os.lstat(os.path.join(folder, name)).st_blocks * 512
     return total
 
 
-def _evict(*, holding: Path) -> None:
+def _evict(*, holding: Path, answering: Path) -> None:
     """Bring everything under `_root()` back under `CACHE_LIMIT_BYTES`.
 
-    Counted: every cache, complete or left half-built, and the answers. Removed
-    first: half-built caches, then the caches checked least recently. The
-    cache of the check that calls this (``holding``, whose lock it holds) goes
-    last, and goes too when it alone is over the limit: that repository was
-    checked in a cache that is not kept, which the log says. A cache another
-    check holds right now is left to that check, which evicts when it ends."""
+    Counted: all of it, by the blocks it takes: caches, caches left half-built,
+    answers, the directories holding them. Removed in this order: half-built
+    caches; then caches and answers, least recently used first (losing an
+    answer only costs another test merge); the cache of the check that calls
+    this (``holding``, whose lock it holds) last, even when it alone is over
+    the limit: that repository was checked in a cache that is not kept, which
+    the log says. The answer this check is about (``answering``) is kept: it
+    is what the check is for. A cache another check holds right now is skipped, never
+    waited for; that check evicts when it ends. Other checks add and remove
+    entries while this runs, so an entry that vanished is simply passed over.
+    """
     root = _root()
-    entries = [p for p in root.iterdir() if p.is_dir() and p.name != "answers"]
-    sizes = {p: _size(p) for p in entries}
-    total = sum(sizes.values()) + _size(root / "answers")
+    total = _allocated(root)
     if total <= CACHE_LIMIT_BYTES:
         return
-
-    def order(path: Path) -> tuple[int, float]:
-        own = path in (holding, holding.with_name(holding.name + _BUILDING))
-        return (
-            2 if own else 0 if path.name.endswith(_BUILDING) else 1,
-            path.stat().st_mtime,
-        )
-
-    for entry in sorted(entries, key=order):
+    own = {holding, holding.with_name(holding.name + _BUILDING)}
+    candidates: list[tuple[int, float, Path]] = []
+    with contextlib.suppress(OSError):
+        for entry in root.iterdir():
+            if entry.name == "answers":
+                for folder, _, files in os.walk(entry):
+                    for name in files:
+                        found = Path(folder) / name
+                        if found == answering:
+                            continue
+                        with contextlib.suppress(OSError):
+                            candidates.append((1, found.lstat().st_mtime, found))
+                continue
+            with contextlib.suppress(OSError):
+                if not stat.S_ISDIR(entry.lstat().st_mode):
+                    continue
+                rank = 2 if entry in own else 0 if entry.name.endswith(_BUILDING) else 1
+                candidates.append((rank, entry.lstat().st_mtime, entry))
+    for _, _, entry in sorted(candidates, key=lambda c: (c[0], c[1])):
         if total <= CACHE_LIMIT_BYTES:
             return
-        mine = entry in (holding, holding.with_name(holding.name + _BUILDING))
-        if mine:
+        size = _allocated(entry)
+        if entry.parent != root:  # an answer
+            with contextlib.suppress(OSError):
+                entry.unlink()
+                total -= size
+            with contextlib.suppress(OSError):
+                entry.parent.rmdir()  # once it holds no answer
+            continue
+        if entry in own:
             shutil.rmtree(entry, ignore_errors=True)
-            total -= sizes[entry]
+            total -= size
             if entry == holding:
                 logger.warning(
-                    "merge check: cache of %s is %d bytes, over the %d-byte "
+                    "merge check: cache of %s takes %d bytes, over the %d-byte "
                     "limit; checked without keeping it",
                     entry.name,
-                    sizes[entry],
+                    size,
                     CACHE_LIMIT_BYTES,
                 )
             continue
-        name = entry.name.removesuffix(_BUILDING)
-        with _locked(root / name) as held:
+        with _locked(root / entry.name.removesuffix(_BUILDING)) as held:
             if not held:
                 continue
             shutil.rmtree(entry, ignore_errors=True)
-            total -= sizes[entry]
+            total -= size
