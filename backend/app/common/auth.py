@@ -7,7 +7,6 @@ import jwt
 from fastapi import Header
 
 from app.core.config import settings
-from app.core.errors import AuthenticationRequiredError, BaseError
 
 
 def _utcnow() -> datetime:
@@ -23,11 +22,11 @@ def create_access_token(
 ) -> str:
     """Create a short-lived access token for the given user.
 
-    ``handle`` (= the user's username) is embedded as an extra claim so the ONE
-    token also satisfies the 2.0 layer, which keys on handle. The numeric layer
-    reads the user id from ``sub``. With no ``user_id`` the token names the
-    handle alone: the handle-keyed layer accepts it and the numeric one treats
-    its bearer as a guest.
+    ``handle`` (= the user's username) is embedded as an extra claim: every
+    authorization key is the handle, and a token that states it is named by it
+    (`app.auth.caller.handle_named_by`). ``sub`` carries the user id. With no
+    ``user_id`` the token names the handle alone, and a request resolves the
+    user id from that handle (`ActorResolver.person`).
 
     ``sid`` names the sign-in session the token was issued under, so a request
     can tell which session is its own. Nothing looks the session up per
@@ -370,60 +369,9 @@ def _bearer_claims(authorization: str | None) -> AccessClaims | None:
     return verify_access_token(token)
 
 
-async def get_current_user_id(
-    x_user_id: Annotated[
-        int | None, Header(alias="X-User-Id", convert_underscores=False)
-    ] = None,
-    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> int:
-    """Resolve current user ID from Authorization bearer token or X-User-Id header.
-
-    - Preferred: `Authorization: Bearer <accessToken>` issued by Python auth flow.
-    - Fallback: `X-User-Id` header, a local-development convenience. Refused on
-      any deployment: one started by the deploy compose file, whatever
-      `environment` reads, and any whose `environment` is not development/test.
-    """
-    if authorization:
-        claims = _bearer_claims(authorization)
-        if claims is None or claims.user_id is None:
-            raise AuthenticationRequiredError("Invalid or expired token")
-        return claims.user_id
-
-    if x_user_id is not None:
-        if settings.deployed_via_compose or settings.environment not in (
-            "development",
-            "test",
-        ):
-            raise AuthenticationRequiredError(
-                "X-User-Id header is not allowed on a deployment"
-            )
-        return x_user_id
-
-    raise AuthenticationRequiredError("Authorization header is required")
-
-
 async def get_current_session_id(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> uuid.UUID | None:
     """The sign-in session the caller's access token was issued under."""
     claims = _bearer_claims(authorization)
     return claims.sid if claims is not None else None
-
-
-async def get_optional_user_id(
-    x_user_id: Annotated[
-        int | None, Header(alias="X-User-Id", convert_underscores=False)
-    ] = None,
-    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> int | None:
-    """Best-effort variant of get_current_user_id that returns None instead of 401.
-
-    用于那些「可选」依赖当前用户上下文的查询（例如 task 列表的 joined 过滤），
-    不强制要求调用方携带认证信息。
-    """
-    try:
-        return await get_current_user_id(
-            x_user_id=x_user_id, authorization=authorization
-        )
-    except (AuthenticationRequiredError, BaseError):
-        return None

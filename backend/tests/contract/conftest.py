@@ -15,7 +15,7 @@ anyio drives the test body on ("attached to a different loop"). The agent user h
 a real profile, so it satisfies endpoints that join the user.
 
 The token is the same shape the main auth flow issues: ``create_access_token``
-embeds ``sub`` = int user id, which ``get_current_user_id`` reads (it validates the
+embeds ``sub`` = int user id, which ``ActorResolver.person`` reads (it validates the
 JWT, not the user row). We do NOT POST ``/users/auth/login`` because that route
 depends on Redis (rate-limiter / 2FA session store), which this harness does not
 run.

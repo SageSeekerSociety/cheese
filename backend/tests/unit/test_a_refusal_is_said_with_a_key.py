@@ -326,7 +326,7 @@ _BASELINE: dict[str, int] = {
     "app/api/task_teaching.py": 2,
     "app/api/write_access.py": 3,
     "app/auth/checker.py": 2,
-    "app/common/auth.py": 4,
+    "app/common/auth.py": 1,
     "app/core/config.py": 16,
     "app/core/crypto.py": 1,
     "app/core/db.py": 1,

@@ -33,12 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import auth as pkg
 from app.auth.audience import rooms_its_audience_may_read
 from app.auth.audience import seats_only as _private
+from app.auth.caller import handle_named_by
 from app.auth.project_access import (
     may_read_project,
     may_write_project,
     outsiders_reading,
 )
 from app.auth.project_roles import may
+from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -400,17 +402,7 @@ class ActorResolver:
                     "call a route that names the project or room"
                 )
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
-        actor = await self._recover_numeric_handle(actor)
-        # An authenticated actor whose credential carried no int PK: look the
-        # row up by handle, because int-keyed rows (device.owner_user_id) cannot
-        # be bound without it. Asked of every such actor rather than only of the
-        # agents — the caller's KIND was never what made the id missing (a
-        # legacy cheesex token puts the handle in ``sub`` and carries no id
-        # either), so branching on it just left those callers unbound.
-        if actor.authenticated and actor.user_id is None:
-            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
-            if user is not None:
-                actor = replace(actor, user_id=user.id)
+        actor = await self._bound(actor)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
         # screen carries that screen's token. It is a per-screen capability that proves
         # the call runs as that screen's agent — so it acts as the device agent-user
@@ -641,31 +633,59 @@ class ActorResolver:
             _log.info("credential_scope_violation", got=claims.project_id)
             raise ForbiddenError(say("credentialOtherProject"))
 
+    async def _bound(self, actor: Actor) -> Actor:
+        """``actor`` named by both its handle and its user id.
+
+        An authenticated actor whose credential carried no int PK: look the
+        row up by handle, because int-keyed rows (device.owner_user_id) cannot
+        be bound without it. Asked of every such actor rather than only of the
+        agents — the caller's KIND was never what made the id missing (a
+        legacy cheesex token puts the handle in ``sub`` and carries no id
+        either), so branching on it just left those callers unbound."""
+        actor = await self._recover_numeric_handle(actor)
+        if actor.authenticated and actor.user_id is None:
+            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
+            if user is not None:
+                actor = replace(actor, user_id=user.id)
+        return actor
+
+    def presented_sign_in(self) -> bool:
+        """Whether the request carried a person's sign-in at all — verified or
+        not. A route that answers per caller turns a failed one into a 401
+        rather than an anonymous answer (`reject_failed_credential`)."""
+        return bool(self._bearer)
+
+    async def person(self) -> Actor | None:
+        """The person this request acts as, for the routes that know only
+        people (a team, a space, an account): their own sign-in, or their 芝士
+        on a route listed for it (`resolve` judges that, and refuses the rest).
+        An AI teammate's credential and the development override name no
+        person here; neither does a sign-in that does not verify."""
+        if looks_like_delegated_credential(self._cheese_token):
+            actor = await self.resolve()
+        elif self._bearer:
+            identity = pkg._token_verifier(self._bearer)
+            if identity is None:
+                return None
+            actor = await self._bound(
+                Actor(handle=identity.handle, user_id=identity.user_id, via="token")
+            )
+        else:
+            return None
+        return actor if actor.user_id is not None else None
+
     async def _recover_numeric_handle(self, actor: Actor) -> Actor:
-        """Repair a token actor whose handle degraded into the int User PK.
-
-        ``_token_verifier`` falls back to the ``sub`` claim when a main-minted
-        token carries no ``handle``; ``sub`` is the int PK, so the actor ends up
-        named e.g. ``"470"``. Every authorization key in the platform is the
-        handle STRING (``topic_memberships.member_handle``, ``member.user_handle``,
-        ``project.owner_handle``) — a numeric handle therefore matches no roster
-        and no project membership, and the caller silently loses every permission
-        they actually hold. Resolve the real username from the id instead.
-
-        A user we cannot resolve keeps the numeric handle (authorization still
-        denies, as it must) but is logged loudly — the previous behaviour failed
-        silently, which is what made this class of bug so hard to trace.
-        """
-        if actor.via != "token" or actor.user_id is None:
+        """A token actor named the way every reader names one
+        (`app.auth.caller.handle_named_by`): by the handle its token states, or,
+        for a token that states none, by the user its id points at. Every
+        authorization key in the platform is the handle STRING, so a token
+        named by its int PK would match no roster."""
+        if actor.via != "token" or not self._bearer:
             return actor
-        if not actor.handle.isdigit():
+        claims = verify_access_token(self._bearer)
+        if claims is None:
             return actor
-        user = await pkg.UserRepository(self._session).get_by_id(actor.user_id)
-        if user is None:
-            _log.warning("token_handle_unresolved", user_id=actor.user_id)
-            return actor
-        _log.info("token_handle_recovered", user_id=actor.user_id, handle=user.username)
-        return replace(actor, handle=user.username)
+        return replace(actor, handle=await handle_named_by(self._session, claims))
 
     async def authorize_topic(
         self,
