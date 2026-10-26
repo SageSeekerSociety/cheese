@@ -157,6 +157,16 @@ def _recall(path):
     return None
 
 
+#: What the HTTP client raises besides OSError when an answer breaks off: a
+#: platform socket that stopped answering, as much as one that never did.
+_CLIENT_ERRORS = (
+    http.client.IncompleteRead,
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.ImproperConnectionState,
+)
+
+
 class _UnixConnection(http.client.HTTPConnection):
     def __init__(self, path, timeout):
         super().__init__("platform.cheese", timeout=timeout)
@@ -182,7 +192,7 @@ def _ask_socket(path, target, timeout=30):
         connection.request("GET", target)
         response = connection.getresponse()
         body = response.read()
-    except http.client.HTTPException as exc:
+    except _CLIENT_ERRORS as exc:
         raise OSError(
             f"the platform socket broke off: {exc}"  # i18n-exempt: machine log
         ) from exc

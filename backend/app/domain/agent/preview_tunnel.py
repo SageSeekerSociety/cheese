@@ -420,6 +420,16 @@ class TokenSource:
             raise PreviewError(f"could not read {self._path}: {exc}") from exc
 
 
+#: What the HTTP client raises besides OSError when an answer breaks off: a
+#: platform socket that stopped answering, as much as one that never did.
+_CLIENT_ERRORS = (
+    http.client.IncompleteRead,
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.ImproperConnectionState,
+)
+
+
 class _UnixConnection(http.client.HTTPConnection):
     def __init__(self, path: str, timeout: float) -> None:
         super().__init__("platform.cheese", timeout=timeout)
@@ -447,7 +457,7 @@ class SocketTokenSource:
             connection.request("GET", "/credential")
             response = connection.getresponse()
             body = response.read()
-        except (OSError, http.client.HTTPException) as exc:
+        except (OSError, *_CLIENT_ERRORS) as exc:
             # Nothing answered (the connector or the platform is away): worth
             # waiting out, as any other absence of the tunnel's far end.
             raise PreviewError(
