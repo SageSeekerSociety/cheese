@@ -15,10 +15,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.exceptions import ExceptionMiddleware
 from starlette.types import Receive, Scope, Send
 
 from app.api.machine_caller import Caller
-from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db, release_read_session
 from app.core.errors import ForbiddenError, NotFoundError
@@ -26,19 +26,39 @@ from app.domain.machine.caller import credential_of
 
 router = APIRouter(prefix="/machine", tags=["machine"], include_in_schema=False)
 
-#: What a sandbox's request may not carry into the route it asks: whatever
-#: says who is calling is the platform's to say.
-_CALLER_HEADERS = frozenset(
-    name.lower().encode()
-    for name in (
-        "x-cheese-token",
-        "authorization",
-        "cookie",
-        DEVICE_HEADER,
-        STATE_HEADER,
-        SECRET_HEADER,
-    )
+#: The platform's own headers a sandbox's request keeps: what the machine's
+#: CLI sends besides who it is (`sandbox/cheese`). Every other ``x-`` header,
+#: and the standard ones that say who is calling, are dropped: a header such
+#: as ``x-cheese-screen`` would otherwise change whom the route serves.
+_KEPT = frozenset(
+    {
+        b"x-cheese-turn",
+        b"x-cheese-pass",
+        b"x-cheese-head",
+        b"x-cheese-version",
+        b"x-content-sha256",
+    }
 )
+_DROPPED = frozenset({b"authorization", b"cookie", b"proxy-authorization"})
+
+
+def _kept(name: bytes) -> bool:
+    name = name.lower()
+    if name in _DROPPED:
+        return False
+    return not name.startswith(b"x-") or name in _KEPT
+
+
+def _routes(app):
+    """The app below its middleware: where the request has already been
+    through it once (limits, metrics, hosts), but still with the exception
+    handlers that turn a refusal into its answer."""
+    layer = getattr(app, "middleware_stack", None)
+    while layer is not None and not isinstance(layer, ExceptionMiddleware):
+        layer = getattr(layer, "app", None)
+    return layer or app
+
+
 #: The first segments of the platform's API a sandbox does not reach here: the
 #: model routes, which it asks on ``/machine/llm`` under a key of its own, and
 #: these routes themselves.
@@ -68,11 +88,7 @@ class _AsTheSession(Response):
         self._credential = credential
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        headers = [
-            (name, value)
-            for name, value in scope["headers"]
-            if name.lower() not in _CALLER_HEADERS
-        ]
+        headers = [(name, value) for name, value in scope["headers"] if _kept(name)]
         headers.append((b"x-cheese-token", self._credential.encode()))
         inner = {
             **scope,
@@ -84,7 +100,7 @@ class _AsTheSession(Response):
             # off this one's.
             "state": dict(scope.get("state") or {}),
         }
-        await self._request.app(inner, receive, send)
+        await _routes(self._request.app)(inner, receive, send)
 
 
 @router.api_route(
