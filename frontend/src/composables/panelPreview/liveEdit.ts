@@ -15,11 +15,10 @@ import type { PanelPreviewProps } from './types'
 
 import { computed, ref, watch } from 'vue'
 
-import type { DocTicket } from '@/api/docCollab'
+import { type DocLiveSource, useDocCollab } from '../useDocCollab'
+
 import { openRoomFileLive } from '@/api/roomFileCollab'
 import { t } from '@/i18n'
-
-import { useDocCollab, type DocLiveSource } from '../useDocCollab'
 
 export interface LiveEditDeps {
   props: PanelPreviewProps
@@ -34,7 +33,7 @@ export interface PanelPreviewLiveEdit {
   canEdit: ComputedRef<boolean>
   /** 正开着的那一份的路径；没开着时是空串（用于横条上的标题）。 */
   editingPath: ComputedRef<string>
-  /** 这一份打不开（二进制、太大、部署没接协作服务）：一句给读者看的话；空串是能开。 */
+  /** 这一份开不了协同（二进制、太大、部署没接）：一句给读者看的话；空串是能开。 */
   refused: Ref<string>
   /** 打开着的这一份，交给编辑器绑在它上面；还没连上时是 null。 */
   session: Ref<DocSession | null>
@@ -44,14 +43,14 @@ export interface PanelPreviewLiveEdit {
   /** 只读：服务端照它拒写。 */
   readOnly: Ref<boolean>
   peers: Ref<DocPeer[]>
-  /** 打开失败（网络、读不出来的那一份）：一句给读者看的话；空串是没有。 */
+  /** 没能连上、或打开本身没成：一句给读者看的话；空串是没有。 */
   error: ComputedRef<string>
   /** 页面用的文档 schema 和服务对不上：得刷新。 */
   outdated: Ref<boolean>
   /** 这一份已经被删了。 */
   deleted: Ref<boolean>
   /** 开始编辑当前这一份。 */
-  begin: () => Promise<void>
+  begin: () => void
   /** 收起编辑。 */
   end: () => void
 }
@@ -63,30 +62,26 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
   /** 现在开着协同编辑的那一份（房间 + 路径钉在打开的那一刻）。 */
   const pinned = ref<{ room: string; path: string } | null>(null)
   const editingPath = computed(() => pinned.value?.path ?? '')
-  /** 打开时后端说的话：开不成的理由（给读者看的一句人话）。 */
+  /** 这一份开不了协同的理由（给读者看的一句人话）；空串是能开。 */
   const refused = ref('')
   /** 那一句说的是哪一份文件：切到别的文件时它就不作数了。 */
   const refusedPath = ref('')
-  /** 这一次打开本身没成（网络、没权限）：和连接里报的错并成一句。 */
-  const beginError = ref('')
-  /** `begin()` 已经拿到的那张票；连接首次开口就用它，不必再要一遍。 */
-  let first: DocTicket | null = null
 
   const source: DocLiveSource = {
     // 开着的是哪一份：`房间\u0000路径` 变了就重开。关着时给 null。
     watch: () => (pinned.value ? `${pinned.value.room}\u0000${pinned.value.path}` : null),
+    // 每次开口都要一张新票（票只活两分钟，重连也要重新要）。开不成时把话记下来、
+    // 把这一份收起来——一条连不上的会话不该继续挂在屏幕上。
     open: async () => {
-      // 首次开口用 `begin()` 已经要来的那张票；重连时才重新要（票只活两分钟）。
-      if (first) {
-        const use = first
-        first = null
-        return use
-      }
       const target = pinned.value
       if (!target) throw new Error(t('work.room.preview.fileReadFailed'))
       const live = await openRoomFileLive(target.room, target.path)
       if (!live.enabled || !live.document || live.ticket === undefined) {
-        throw new Error(refusalText(live.reason))
+        const said = refusalText(live.reason)
+        pinned.value = null
+        refusedPath.value = target.path
+        refused.value = said
+        throw new Error(said)
       }
       return { document: live.document, ticket: live.ticket, read_only: !!live.read_only, suggest_only: false }
     },
@@ -130,39 +125,24 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
     return state.documentType.value?.view === 'markdown'
   })
 
-  async function begin() {
+  function begin() {
     const file = state.previewFile.value
     const room = props.topicId
-    // 已经开着：这一下按的是同一个「编辑」，不再开一遍（重开会把这张票换掉）。
+    // 已经开着：这一下按的是同一个「编辑」，不再开一遍。
     if (pinned.value || !room || !file) return
-    beginError.value = ''
     refused.value = ''
-    try {
-      const live = await openRoomFileLive(room, file.path)
-      if (!live.enabled || !live.document || live.ticket === undefined) {
-        // 开不成：把理由摆出来，不挂一条连不上的会话。
-        refused.value = refusalText(live.reason)
-        refusedPath.value = file.path
-        return
-      }
-      first = { document: live.document, ticket: live.ticket, read_only: !!live.read_only, suggest_only: false }
-      pinned.value = { room, path: file.path }
-    } catch (cause) {
-      beginError.value = cause instanceof Error ? cause.message : t('work.room.preview.fileReadFailed')
-    }
+    // 先钉住、让编辑器上屏（显示「正在连上」），要票和连接交给 `source`——它开不成
+    // 会自己把话记在 `refused` 上并收起这一份。
+    pinned.value = { room, path: file.path }
   }
 
   function end() {
     pinned.value = null
-    first = null
-    refused.value = ''
-    refusedPath.value = ''
-    beginError.value = ''
     // 连接由 `useDocCollab` 看着 watch 的结果自己收。
   }
 
-  /** 屏幕上要说的那一句：打开本身没成，或者连接报的错（票过期、服务不在）。 */
-  const error = computed(() => beginError.value || collab.error.value || '')
+  /** 屏幕上要说的那一句：打开被拒的理由优先，其次是连接报的错（票过期、服务不在）。 */
+  const error = computed(() => refused.value || collab.error.value || '')
 
   return {
     canEdit,

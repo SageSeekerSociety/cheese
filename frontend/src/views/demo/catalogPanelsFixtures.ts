@@ -38,8 +38,6 @@ import type { ThreadReply, ThreadRow } from '@/types/threads'
 
 import { computed, reactive, ref, shallowRef, unref } from 'vue'
 
-import { localDocSession } from '@/lib/docLocalSession'
-
 import { useDocPeople } from '@/composables/useDocPeople'
 
 import { memoryCanvas } from './catalogCanvasFixtures'
@@ -57,6 +55,7 @@ import { SCENES } from './scenes'
 
 import { buildFileRows } from '@/lib/changesTree'
 import { DIFF_WINDOW, parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { localDocSession } from '@/lib/docLocalSession'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, pageViewOf, suffixOf } from '@/lib/fileKind'
 import { groupByTurn } from '@/lib/siteLog'
 

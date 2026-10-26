@@ -87,6 +87,12 @@ vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
   },
 }))
 
+// 那一包协同会话开的是一条真 socket（`useDocCollab`），这一只面板的用例不装它：
+// 换成一只什么都不连的替身。面板这一半要的只是「哪一份开着」那两件读得到。
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
+
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
 // 那个约定：改完、恢复完，面板按新版本重取这一页。两者的手势各按自己那一半的接口
 // 做：历史那一边叫取数那一包（`fileHistory.restore`，和真组件一样），编辑器那一边

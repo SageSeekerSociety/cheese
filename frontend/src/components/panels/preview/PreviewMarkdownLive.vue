@@ -9,11 +9,10 @@
 //
 // 编辑器只在会话到了之后建：`Collaboration` 扩展只在建编辑器时认一次文档，所以文档
 // 换了就整个重建（`watch` 里 destroy 再 build）。
-import type { Editor } from '@tiptap/vue-3'
-import type { DocSession } from '../../../composables/useDocCollab'
 import type { PanelPreviewLiveEdit } from '../../../composables/panelPreview/liveEdit'
+import type { DocSession } from '../../../composables/useDocCollab'
 
-import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { onBeforeUnmount, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 
