@@ -70,6 +70,10 @@ class RecruitmentRepository:
                 TeamRecruitmentPost.status == RecruitmentStatus.OPEN.value,
                 TeamRecruitmentPost.deleted_at.is_(None),
                 Team.personal_owner_user_id.is_(None),
+                # Disbanding a team ends its memberships but not its ad
+                # (TeamService.delete_team), so it would otherwise keep
+                # offering a team the plaza can no longer even name.
+                Team.deleted_at.is_(None),
             )
         )
         if keyword:
