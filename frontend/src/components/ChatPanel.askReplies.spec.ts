@@ -83,6 +83,20 @@ function question(
   } as unknown as Block
 }
 
+/** 提问方收起的一道题：撤回（不再等人答）或过期（还能答）。 */
+function closedByAsker(topic: string, kind: 'withdrawn' | 'expired'): Block {
+  const open = question(topic)
+  return {
+    ...open,
+    meta: {
+      ...open.meta,
+      answer_log: [
+        { kind, option: null, note: null, by: 'agent', at: '2026-08-02T00:00:00Z', reply_id: null },
+      ],
+    },
+  } as unknown as Block
+}
+
 let vuetify: ReturnType<typeof createVuetify>
 let history: Block[] = []
 let sent: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -240,6 +254,34 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
+  })
+
+  it('芝士把题收回去了：选项收起，说它收回了', async () => {
+    history = [closedByAsker('t-taken-back', 'withdrawn')]
+    const { container, queryByRole } = await open('t-taken-back')
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      { timeout: 5_000 }
+    )
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+    expect(container.querySelector('.ask-replies__other')).toBeNull()
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('芝士收回了这道题')
+    // 收起了就没人答得成：点不了，题上也不会多出一条答复。
+    expect(container.querySelector('.ask-replies__skip')).toBeNull()
+  })
+
+  it('题过了时效：还摆在下面，说它过期了，照样能答', async () => {
+    history = [closedByAsker('t-expired', 'expired')]
+    const { container, getByRole } = await open('t-expired')
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      { timeout: 5_000 }
+    )
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('这道题过期了，仍可以回答')
+    await fireEvent.click(getByRole('button', { name: /按项目/ }))
+    await until(() => sent.length > 0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].body.reply_to).toBe('q-t-expired')
   })
 
   it('有人答过之后，快捷回复收成谁说了什么', async () => {

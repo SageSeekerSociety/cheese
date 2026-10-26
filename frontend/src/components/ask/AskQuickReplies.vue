@@ -13,6 +13,12 @@
  * any more (its task closed, its channel archived) the question stays as it was
  * asked and says it no longer waits for an answer.
  *
+ * A question also stops waiting without anybody answering it: the teammate that
+ * asked takes it back (`withdrawn`), or its deadline passes (`expired`). The
+ * card then carries that line instead of the options. Taken back is final —
+ * there is nothing to answer. Expired is only the clock: the options stay,
+ * because a late answer still counts.
+ *
  * Whoever asked fixed the options, so the answer someone most needs to give is
  * often the one that is not among them. The last row is a field for that, there
  * from the start like the options above it (as in Claude's own ask-a-question
@@ -59,7 +65,7 @@ import type { Block } from '../../cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { t } from '../../i18n'
-import { askAnswers, askOptions } from '../../lib/blockDisplay'
+import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
 
@@ -94,6 +100,9 @@ const meta = computed(() => (props.block.meta ?? {}) as { asked?: string[]; aske
 const asked = computed(() => meta.value.asked ?? [])
 const askedAll = computed(() => !!meta.value.asked_all)
 const responses = computed(() => askAnswers(props.block))
+/** 提问方把题收起来了：撤回（不再等人答）或过期（还能答）。 */
+const closedByAsker = computed(() => askClosedByAsker(props.block))
+const withdrawn = computed(() => closedByAsker.value === 'withdrawn')
 /** 真正的回答（不是跳过）：有一条，题就对所有人了结了。 */
 const answers = computed(() => responses.value.filter((a) => !a.skipped))
 const skips = computed(() => responses.value.filter((a) => a.skipped))
@@ -147,8 +156,18 @@ const whoKey = computed(() => {
   return keys.people
 })
 
-// 选项还摆在看的人面前：没人答过、没结束、没被所有人跳过、他自己也没跳过。
-const choosing = computed(() => !answers.value.length && !props.closed && !skippedByAll.value && !mySkip.value)
+// 选项还摆在看的人面前：没人答过、没结束、没被所有人跳过、他自己也没跳过，提问方
+// 也没把它收回去。过期的那条不算：过期的题还能答，选项照给。
+const choosing = computed(
+  () => !answers.value.length && !props.closed && !skippedByAll.value && !mySkip.value && !withdrawn.value
+)
+// 选项换掉之后那一行说明。提问方收起来的先说它；过期的那条只是不再等人，选项还在
+// 下面（见模板：这一行和选项可以同时出现）。
+const closedLine = computed(() => {
+  if (closedByAsker.value) return t(`ask.replies.${closedByAsker.value}`)
+  if (props.closed && !skippedByAll.value) return t('ask.replies.closed')
+  return ''
+})
 
 /**
  * 这道题的回答已经打出去了、题上还没看到它：这一段时间里选项不再收第二下。
@@ -295,8 +314,8 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           </button>
         </li>
       </ul>
-      <p v-if="closed && !skippedByAll" class="ask-replies__row ask-replies__closed">{{ t('ask.replies.closed') }}</p>
-      <div v-else-if="choosing" class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
+      <p v-if="closedLine" class="ask-replies__row ask-replies__closed">{{ closedLine }}</p>
+      <div v-if="choosing" class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
         <button
           v-for="(option, index) in options"
           :key="option.text"

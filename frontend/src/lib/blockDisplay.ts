@@ -172,15 +172,31 @@ export function askOptions(block: Block): AskOption[] | null {
   return out.length ? out : null
 }
 
+/** 提问方收回了这道题（`withdrawn`），或者它过了时效（`expired`）：题上 `answer_log`
+ *  里的那一条。两者都不是回答（`answered` 仍为假）；撤回了就不再等人答，过期了还能答。 */
+export type AskClosed = 'withdrawn' | 'expired'
+
+/** 题是不是被提问方收起来了；没有就是 null。撤回和过期只会有一条（先到的那条作数）。 */
+export function askClosedByAsker(block: Block): AskClosed | null {
+  const log = (block.meta as Record<string, unknown> | null)?.answer_log
+  if (!Array.isArray(log)) return null
+  for (const entry of log as Record<string, unknown>[]) {
+    if (entry.kind === 'withdrawn' || entry.kind === 'expired') return entry.kind as AskClosed
+  }
+  return null
+}
+
 /**
  * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话；跳过的那一条
- * 没有话，`skipped` 为真。
+ * 没有话，`skipped` 为真。提问方收起题的那一条不算回答，这里就没有它。
  * 房间里所有人看到的是同一份。
  */
 export function askAnswers(block: Block): AskAnswer[] {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return []
-  return log.map((entry: Record<string, unknown>) => ({
+  return (log as Record<string, unknown>[])
+    .filter((entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired')
+    .map((entry: Record<string, unknown>) => ({
     by: String(entry.by ?? ''),
     // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
     text:
