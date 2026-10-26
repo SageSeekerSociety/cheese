@@ -188,6 +188,16 @@ def verify_scoped_token(
     return True
 
 
+def held_by_a_machine(claims: dict) -> bool:
+    """Whether a verified scoped credential is one an execution machine holds:
+    bound to a session's sandbox (``bind_resource_token`` with a session). The
+    model routes refuse it: a sandbox asks for a model on its platform socket,
+    where the platform knows whose it is without a token (``/machine/llm``),
+    and a copy of this one taken anywhere else would otherwise be a key to the
+    project's model pool for as long as it lives."""
+    return "session" in claims
+
+
 def scoped_token_claims(token: str) -> dict | None:
     """The {p, t, exp} claims of a VALID scoped token, else None. Lets a route
     resolve the token's project without a DB lookup (signature + expiry are

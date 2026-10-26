@@ -44,7 +44,7 @@ from fastapi import APIRouter, Header, Query, WebSocket, WebSocketDisconnect
 
 from app.api.ws_pipe import _Activity, _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core.config import settings
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 
 logger = logging.getLogger("cheesex.llm_tunnel")
 
@@ -98,7 +98,10 @@ async def tunnel(
     session open for the life of the connection (#356).
     """
     claims = scoped_token_claims(x_cheese_session or token or "")
-    if not claims or not claims.get("p"):
+    # A sandbox's own credential is no tunnel credential: the tunnel carries a
+    # session host's Claude Code to the metering proxy, and a sandbox asks for
+    # a model on its platform socket (`sandbox_auth.held_by_a_machine`).
+    if not claims or not claims.get("p") or held_by_a_machine(claims):
         # Refused BEFORE accept: an unaccepted handshake is a plain HTTP 403 the
         # helper can report as "bad token", instead of a socket that opens and
         # then dies for reasons it cannot distinguish from a network fault.

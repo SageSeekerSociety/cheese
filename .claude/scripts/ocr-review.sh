@@ -15,10 +15,10 @@
 # $CHEESE_PLATFORM_SOCKET, which needs no credential: the platform knows whose
 # the call is by which socket it came in on, and charges it like any other call
 # of the session. open-code-review takes a URL, so platform_loopback.py gives
-# it one on a loopback port with a random prefix. A sandbox installed before
-# the socket existed falls back to $CHEESE_API/llm with $CHEESE_TOKEN. Either
-# base ends in `/llm`; the client appends `/v1`, so a base ending in `/llm/v1`
-# would ask for `/llm/v1/v1/messages` and get a 404. Only models the gateway
+# it one on a loopback port with a random prefix. The sandbox's $CHEESE_TOKEN
+# is refused by the model routes, so there is no other way in. The base ends
+# in `/llm`; the client appends `/v1`, so a base ending in `/llm/v1` would ask
+# for `/llm/v1/v1/messages` and get a 404. Only models the gateway
 # allows for this project work; the Claude ids are blocked on it.
 #
 # Usage:
@@ -94,18 +94,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FROM" ] && [ -n "$TO" ] || die "need --from and --to (or two positional refs)"
-if [ -S "${CHEESE_PLATFORM_SOCKET:-}" ]; then
-  # The helper lives exactly as long as this script.
-  exec {LOOPBACK}< <(exec python3 "$(dirname "${BASH_SOURCE[0]}")/platform_loopback.py")
-  LOOPBACK_PID=$!
-  trap 'kill "$LOOPBACK_PID" 2>/dev/null' EXIT
-  read -r -t 10 -u "$LOOPBACK" BASE || die "platform_loopback.py did not start"
-  LLM_URL="$BASE/llm" LLM_TOKEN="machine"
-else
-  [ -n "${CHEESE_API:-}" ] || die "CHEESE_API is not set; this repo's model channel comes from the platform environment"
-  [ -n "${CHEESE_TOKEN:-}" ] || die "CHEESE_TOKEN is not set; run inside a task sandbox"
-  LLM_URL="${CHEESE_API%/}/llm" LLM_TOKEN="$CHEESE_TOKEN"
-fi
+[ -S "${CHEESE_PLATFORM_SOCKET:-}" ] \
+  || die "no platform socket (\$CHEESE_PLATFORM_SOCKET): run inside a task sandbox; a sandbox started before the socket existed gets it when its executor is next installed"
+# The helper lives exactly as long as this script.
+exec {LOOPBACK}< <(exec python3 "$(dirname "${BASH_SOURCE[0]}")/platform_loopback.py")
+LOOPBACK_PID=$!
+trap 'kill "$LOOPBACK_PID" 2>/dev/null' EXIT
+read -r -t 10 -u "$LOOPBACK" BASE || die "platform_loopback.py did not start"
+LLM_URL="$BASE/llm" LLM_TOKEN="machine"
 
 REPO="$(git rev-parse --show-toplevel)"
 # A partial clone (blob:none) carries commits but not file contents, and fetches

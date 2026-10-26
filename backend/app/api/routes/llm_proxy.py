@@ -52,6 +52,7 @@ from app.core.errors import (
 from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
+    held_by_a_machine,
     is_global_sandbox_token,
     mint_scoped_token,
     personal_claims,
@@ -568,6 +569,8 @@ async def _forward(
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):
         raise AuthenticationRequiredError("A scoped cheese token is required")
+    if claims is not None and held_by_a_machine(claims):
+        raise ForbiddenError(say("modelCallFromMachineNeedsSocket"))
     if not settings.anthropic_base_url:
         raise GatewayUnavailableError("No model pool is configured for this deployment")
 

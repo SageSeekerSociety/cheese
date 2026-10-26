@@ -53,6 +53,33 @@ from .stats import (
 
 ANTHROPIC_VERSION = "2023-06-01"
 
+
+def platform_socket() -> str | None:
+    """The sandbox's platform socket, when this runs in a sandbox that has one.
+
+    A sandbox's own CHEESE_TOKEN calls no model (`sandbox_auth.held_by_a_machine`):
+    in a sandbox the gateway road is the socket, which needs no token."""
+    path = os.environ.get("CHEESE_PLATFORM_SOCKET", "")
+    return path if path and Path(path).is_socket() else None
+
+
+def gateway_client(timeout: float) -> tuple[httpx.Client, str, dict[str, str]]:
+    """A client for the platform's model route, its base, and its auth header:
+    through the platform socket in a sandbox, else on CHEESE_API with the
+    seat's own token."""
+    socket_path = platform_socket()
+    if socket_path:
+        transport = httpx.HTTPTransport(uds=socket_path)
+        return httpx.Client(transport=transport, timeout=timeout), "http://cheese", {}
+    token = os.environ.get("CHEESE_TOKEN", "")
+    base = os.environ.get("CHEESE_API") or "http://172.17.0.1:8081"
+    return (
+        httpx.Client(timeout=timeout, trust_env=False),
+        base,
+        {"authorization": f"Bearer {token}"},
+    )
+
+
 #: Headers worth keeping as evidence. The pool discriminator is deliberate:
 #: Anthropic's own listener answers with ``anthropic-ratelimit-*``/``request-id``
 #: and LiteLLM's gateway answers with ``x-litellm-*``; a turn that claims the
@@ -187,6 +214,8 @@ class Endpoint:
                 timeout=DEFAULT_TIMEOUT_S,
                 trust_env=False,
             )
+        if self.mode == "gateway" and platform_socket():
+            return gateway_client(DEFAULT_TIMEOUT_S)[0]
         return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
 
     def _url(self) -> str:
@@ -194,7 +223,8 @@ class Endpoint:
             path = (
                 "/chat/completions" if self.protocol == "openai-chat" else "/messages"
             )
-            return f"{self.backend.rstrip('/')}/llm/v1{path}"
+            base = "http://cheese" if platform_socket() else self.backend.rstrip("/")
+            return f"{base}/llm/v1{path}"
         if self.mode == "direct":
             path = (
                 "/chat/completions"
@@ -212,7 +242,9 @@ class Endpoint:
         }
         if self.protocol == "openai-chat":
             headers = {"content-type": "application/json"}
-        if self.mode in ("gateway", "proxy", "seat"):
+        if self.mode == "gateway" and platform_socket():
+            pass  # the socket says whose the call is
+        elif self.mode in ("gateway", "proxy", "seat"):
             token = os.environ.get(self.connector_token_env, "")
             headers["authorization"] = f"Bearer {token}"
         elif self.mode == "direct":

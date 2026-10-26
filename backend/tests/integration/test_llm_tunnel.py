@@ -19,6 +19,7 @@ that way. The listener therefore owns a thread and a loop of its own.
 
 import socket
 import threading
+import uuid
 
 import pytest
 
@@ -131,3 +132,21 @@ def test_a_meter_that_is_down_closes_rather_than_hanging(client, monkeypatch):
     with pytest.raises(Exception):  # noqa: B017 — starlette raises on close
         with client.websocket_connect(f"/llm/tunnel?token={token}") as ws:
             ws.receive_bytes()
+
+
+def test_a_sandboxs_own_credential_opens_no_tunnel(client, monkeypatch):
+    """The tunnel carries a session host's Claude Code to the meter; the
+    credential a sandbox holds is refused before anything is dialled."""
+    from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+
+    held = bind_resource_token(
+        mint_scoped_token(project_id=str(uuid.uuid4()), topic_id=str(uuid.uuid4())),
+        "resource",
+        session_id=str(uuid.uuid4()),
+    )
+    with _FakeListener() as listener:
+        _point_at(monkeypatch, listener.port)
+        with pytest.raises(Exception):  # noqa: B017 — starlette raises on close
+            with client.websocket_connect(f"/llm/tunnel?token={held}") as ws:
+                ws.receive_bytes()
+        assert not listener.received

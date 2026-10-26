@@ -69,6 +69,8 @@ from scripts.model_identity_probe.tokenizer_fp import (
 from scripts.model_identity_probe.transport import (
     Endpoint,
     detect_adapter,
+    gateway_client,
+    platform_socket,
 )
 
 
@@ -228,11 +230,11 @@ def read_declared_binding(args: argparse.Namespace) -> DeclaredBinding:
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
-    with httpx.Client(timeout=60, trust_env=False) as client:
-        response = client.get(
-            f"{_backend().rstrip('/')}/llm/v1/models",
-            headers={"authorization": f"Bearer {_token()}"},
-        )
+    if not platform_socket():
+        _token()  # says why when there is neither road
+    client, base, auth = gateway_client(60)
+    with client:
+        response = client.get(f"{base.rstrip('/')}/llm/v1/models", headers=auth)
     if response.status_code != 200:
         print(
             f"gateway refused the catalog: HTTP {response.status_code} "
