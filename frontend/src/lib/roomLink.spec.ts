@@ -26,7 +26,7 @@ class FakeLink {
   static OPEN = 1
   readyState = 0
   onopen: (() => void) | null = null
-  onclose: (() => void) | null = null
+  onclose: ((event: { code: number }) => void) | null = null
   onerror: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
   sent: Record<string, unknown>[] = []
@@ -157,7 +157,7 @@ describe('一个页面一条房间连接', () => {
     const a = watch('room-a')
     const b = watch('room-b')
     links[0].up()
-    links[0].onclose?.()
+    links[0].onclose?.({ code: 1006 })
     expect(a.events).toEqual(['close'])
     expect(b.events).toEqual(['close'])
 
@@ -189,7 +189,7 @@ describe('连接一直连不上', () => {
   // 一样；连不上几次之后就该问问这一页是不是落后了。
   function failOnce(topic: string) {
     watch(topic)
-    links[links.length - 1].onclose?.()
+    links[links.length - 1].onclose?.({ code: 1006 })
   }
 
   it('连还没连上就断了三次，问一次这一页是不是落后了', () => {
@@ -205,7 +205,7 @@ describe('连接一直连不上', () => {
     failOnce('room-a')
     watch('room-a')
     links[links.length - 1].up()
-    links[links.length - 1].onclose?.()
+    links[links.length - 1].onclose?.({ code: 1006 })
     failOnce('room-a')
     failOnce('room-a')
     expect(pwa.reloadIfBehind).not.toHaveBeenCalled()

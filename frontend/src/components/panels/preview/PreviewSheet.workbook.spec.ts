@@ -38,6 +38,11 @@ function grid(container: Element): string[][] {
   )
 }
 
+/** 按从左到右、从上到下的顺序排好的格子，点哪一格就取第几个。 */
+function cellBoxes(container: Element): Element[] {
+  return Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+}
+
 it('带图表的工作簿也读得出格子，而不是整份显示不出来', async () => {
   const { container } = mountWorkbook()
 
@@ -67,4 +72,33 @@ it('标记按工作表名归属：只有它自己那张表上才画', async () =
 
   await fireEvent.click(await screen.findByRole('button', { name: '汇总' }))
   await waitFor(() => expect(container.querySelectorAll('.ps__cmt')).toHaveLength(1))
+})
+
+it('切到另一张表：上一张表上圈的那一片不带过去', async () => {
+  // 地址只在它自己那张表里有意义：`B2` 在这一张和那一张里是两格。留着高亮，屏幕上
+  // 那句「引用了 A1:B2」就落在了它没说的那张表上。
+  const { container } = mountWorkbook()
+
+  await waitFor(() => expect(grid(container).length).toBeGreaterThan(1))
+  const cells = cellBoxes(container)
+  await fireEvent.mouseDown(cells[0]!)
+  await fireEvent.mouseEnter(cells[1]!)
+  await fireEvent.mouseUp(cells[1]!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(2))
+
+  await fireEvent.click(await screen.findByRole('button', { name: '汇总' }))
+
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(0))
+})
+
+it('切到另一张表：上一张表上点的那一格也不带过去', async () => {
+  const { container } = mountWorkbook()
+
+  await waitFor(() => expect(grid(container).length).toBeGreaterThan(1))
+  await fireEvent.click(cellBoxes(container)[0]!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--on')).toHaveLength(1))
+
+  await fireEvent.click(await screen.findByRole('button', { name: '汇总' }))
+
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--on')).toHaveLength(0))
 })

@@ -1003,13 +1003,12 @@ def test_a_stage_missed_with_nothing_handed_in_reads_failed_to_its_claim(
     assert mine["stages"] == ["MISSED", "NOT_SUBMITTED"]
 
 
-def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
-    api_client, board
-):
+def test_the_publisher_hears_who_a_stage_change_fails_or_reopens(api_client, board):
     """Before saving, the publisher asks what the stages they are about to save
     would do: moving an empty stage's due date into the past fails the claim,
-    moving it back takes the claim out of failed. Asking writes nothing, and
-    only whoever may change the task may ask."""
+    moving it back takes the claim out of failed. The answer names the
+    participants and the stage they would miss, not only how many. Asking
+    writes nothing, and only whoever may change the task may ask."""
     task_id = _publish(api_client, board)
     membership_id = _claim(api_client, board, task_id)
     stages = _read(api_client, board, task_id)["stages"]
@@ -1022,11 +1021,19 @@ def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
             headers=_headers(user),
         )
 
+    student = board["student"].nickname
     asked = effect(overdue)
     assert asked.status_code == 200, asked.text
-    assert asked.json()["data"] == {"failing": 1, "reopening": 0}
+    assert asked.json()["data"] == {
+        "failing": 1,
+        "reopening": 0,
+        "failingNames": [student],
+        "reopeningNames": [],
+        "failingStages": ["需求分析"],
+    }
     assert _completion(api_client, board, task_id, membership_id) == "NOT_SUBMITTED"
-    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 0}
+    unchanged = effect(stages).json()["data"]
+    assert (unchanged["failing"], unchanged["reopening"]) == (0, 0)
 
     saved = api_client.patch(
         f"/tasks/{task_id}",
@@ -1035,7 +1042,9 @@ def test_the_publisher_hears_how_many_claims_a_stage_change_fails_or_reopens(
     )
     assert saved.status_code == 200, saved.text
     assert _completion(api_client, board, task_id, membership_id) == "FAILED"
-    assert effect(stages).json()["data"] == {"failing": 0, "reopening": 1}
+    back = effect(stages).json()["data"]
+    assert (back["failing"], back["reopening"]) == (0, 1)
+    assert back["reopeningNames"] == [student]
 
     assert effect(stages, board["student"]).status_code == 403
 

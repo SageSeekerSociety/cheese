@@ -26,6 +26,7 @@
 import type { RoomSnapshot } from '@/query/snapshot'
 
 import { authToken, BASE } from '@/api/http'
+import { apiGenerationQuery, askToReload, CLIENT_OUTDATED_CLOSE } from '@/lib/apiGeneration'
 import { reloadIfBehind } from '@/pwa'
 
 const OPEN = 1
@@ -60,8 +61,11 @@ interface Frame {
 function linkUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   // 浏览器不能给 WebSocket 设 Authorization 头，token 只能放在 ?token= 里。
+  // 这一页是照哪一代接口造的也放在查询串里（lib/apiGeneration.ts）：发版后连接断了重连时，
+  // 落后的页面在这一下就被告知。
   const token = authToken()
-  const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  const params = [token ? `token=${encodeURIComponent(token)}` : '', apiGenerationQuery()].filter(Boolean)
+  const q = params.length ? `?${params.join('&')}` : ''
   // BASE，不手写 '/api'：网关正好剥掉一个 '/api'，手写一份就会对不上路由。
   return `${proto}://${window.location.host}${BASE}/rooms/live${q}`
 }
@@ -163,8 +167,9 @@ class Link {
     socket.onerror = () => {
       if (this.socket === socket) for (const room of this.rooms.values()) room.onerror?.()
     }
-    socket.onclose = () => {
+    socket.onclose = (event: CloseEvent) => {
       if (this.socket !== socket) return
+      if (event.code === CLIENT_OUTDATED_CLOSE) askToReload()
       const opened = this.ready
       this.forget(socket)
       this.endAll(false)

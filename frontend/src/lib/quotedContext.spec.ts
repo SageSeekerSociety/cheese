@@ -7,6 +7,7 @@
 import type {
   PagePinQuote,
   SheetCellQuote,
+  SheetRangeQuote,
   SlidePageQuote,
   TextRangeQuote,
   WebElementQuote,
@@ -46,6 +47,18 @@ const cell: SheetCellQuote = {
   sheet: '预算',
   address: 'B7',
   value: '1200',
+}
+
+const sheetArea: SheetRangeQuote = {
+  kind: 'sheet-range',
+  path: 'budget.xlsx',
+  source: 'committed',
+  version: 'v7',
+  task_id: null,
+  sheet: '预算',
+  start: 'B2',
+  end: 'D4',
+  text: '90\t80\n70\t60',
 }
 
 const range: TextRangeQuote = {
@@ -106,6 +119,15 @@ it('表格一格：地址不能空，工作表名可以是空的（CSV），不�
   expect(isQuotedContext({ ...cell, sheet: 2 })).toBe(false)
   expect(isQuotedContext({ ...cell, value: undefined })).toBe(false)
   expect(isQuotedContext({ ...cell, kind: 'grid' })).toBe(false)
+  expect(isQuotedContext(sheetArea)).toBe(true)
+  // CSV 没有工作表名；一片里的内容可以是空；两个角各自都要有。
+  expect(isQuotedContext({ ...sheetArea, sheet: '' })).toBe(true)
+  expect(isQuotedContext({ ...sheetArea, text: '' })).toBe(true)
+  expect(isQuotedContext({ ...sheetArea, start: '' })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, end: '' })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, start: undefined })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, sheet: 2 })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, kind: 'grid' })).toBe(false)
 })
 
 it('正文一段：标题可以是空（文件开头），原文和前后文必须在', () => {
@@ -129,7 +151,7 @@ it('幻灯片选中一段也带前后文：可选，但带上就得是字符串'
 })
 
 it('文件身份那一半对四种形状一视同仁', () => {
-  for (const quote of [page, pin, cell, range]) {
+  for (const quote of [page, pin, cell, sheetArea, range]) {
     expect(isQuotedContext({ ...quote, path: '' })).toBe(false)
     expect(isQuotedContext({ ...quote, path: undefined })).toBe(false)
     expect(isQuotedContext({ ...quote, version: '' })).toBe(false)

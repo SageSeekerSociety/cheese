@@ -212,12 +212,15 @@ export namespace TaskBoardApi {
   export const progress = (taskId: number) =>
     axiosRequest<TaskProgress>({ url: `/tasks/${taskId}/progress`, method: 'GET' }, true)
 
-  /** 把题目的阶段存成 `stages` 会让几条领取被判未通过、几条从未通过回来（只算不写）。 */
+  /** 把题目的阶段存成 `stages` 会让哪些领取被判未通过、哪些从未通过回来，因为哪几个阶段（只算不写）。 */
   export const stageEffect = (taskId: number, stages: TaskStage[]) =>
-    axiosRequest<{ failing: number; reopening: number }>(
-      { url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } },
-      true
-    )
+    axiosRequest<{
+      failing: number
+      reopening: number
+      failingNames: string[]
+      reopeningNames: string[]
+      failingStages: string[]
+    }>({ url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } }, true)
 
   export const updateSubmission = (
     taskId: number,

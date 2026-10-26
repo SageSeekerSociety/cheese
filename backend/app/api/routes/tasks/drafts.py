@@ -20,7 +20,7 @@ A draft is the person's own. Somebody else's reads as missing.
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.api.auth import ActorResolverDep
@@ -262,6 +262,41 @@ async def start_draft(
     return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
+class StarterUploadedOut(BaseModel):
+    """The starter code, kept as the person's own attachment: its id goes into
+    the draft as ``starterAttachmentId``."""
+
+    id: int
+
+
+@router.post(
+    "/starter",
+    status_code=201,
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(StarterUploadedOut),
+)
+async def upload_starter(
+    resolver: ActorResolverDep,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+) -> dict:
+    """The publish page sends the starter code the moment it is chosen. It is
+    checked first, with the check the 题目 runs when the archive is put in: a
+    bad one is refused with the reason and nothing is stored, rather than
+    finding out after the 题目 is published."""
+    user_id = await _person(resolver)
+    attachment_id = await package.upload_starter(
+        _attachment_service(db),
+        by=user_id,
+        file=file.file,
+        filename=file.filename or "starter.zip",
+    )
+    # Commit before answering: the id is saved into the draft on the page's
+    # next request, which must find the row.
+    await db.commit()
+    return ok({"id": attachment_id})
+
+
 @router.get("/{draftId:int}", **typed_response(TaskDraftOut))
 async def read_draft(
     draft_id: Annotated[int, Path(ge=1, alias="draftId")],
@@ -296,6 +331,15 @@ async def save_draft(
     """The person changed these fields on the page."""
     user_id = await _person(resolver)
     row = await drafts.mine(db, user_id, draft_id)
+    # The publish copies the starter only from the person's own upload; a draft
+    # holds no other, so a foreign one is refused here, not at publish.
+    starter = body.fields.get("starterAttachmentId")
+    if starter is not None:
+        if not isinstance(starter, int) or isinstance(starter, bool):
+            raise BadRequestError(say("draftFileNotYours"))
+        await package.refuse_unless_own_uploads(
+            _attachment_service(db), [starter], user_id
+        )
     drafts.person_writes(row, body.fields)
     await db.commit()
     return ok({"version": row.version, "updatedAt": row.updated_at.isoformat()})

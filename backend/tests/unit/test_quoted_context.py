@@ -60,6 +60,19 @@ CELL = {
     "value": "1200",
 }
 
+# 表格里的一片：两个角都是文件自己给的地址，加上摊平的那份内容。
+SHEET_AREA = {
+    "kind": "sheet-range",
+    "path": "room/预算.xlsx",
+    "source": "committed",
+    "version": "version-e",
+    "task_id": None,
+    "sheet": "预算",
+    "start": "B2",
+    "end": "D4",
+    "text": "90\t80\n70\t60",
+}
+
 RANGE = {
     "kind": "text-range",
     "path": "room/说明.md",
@@ -231,6 +244,33 @@ class QuotedContextTest(unittest.TestCase):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
+    def test_a_sheet_area_keeps_both_corners_and_rejects_a_cornerged_shape(self):
+        import uuid
+
+        body = {
+            "content": "这一片都不对",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": SHEET_AREA,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), SHEET_AREA)
+        # CSV has no sheet name: an empty one is the shape, not a missing field.
+        csv = ChatMessageIn.model_validate(
+            {**body, "quoted_context": {**SHEET_AREA, "sheet": ""}}
+        )
+        self.assertEqual(csv.quoted_context.sheet, "")
+        for quote in (
+            {**SHEET_AREA, "start": ""},
+            {**SHEET_AREA, "end": ""},
+            {k: v for k, v in SHEET_AREA.items() if k != "start"},
+            {k: v for k, v in SHEET_AREA.items() if k != "end"},
+            # An area has no page of its own; extra="forbid" refuses a smuggled one.
+            {**SHEET_AREA, "page": 2},
+            {**SHEET_AREA, "kind": "sheet-cells"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
     def test_a_text_range_keeps_its_passage_and_its_optional_heading(self):
         import uuid
 
@@ -258,7 +298,7 @@ class QuotedContextTest(unittest.TestCase):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
     def test_new_quote_kinds_reach_the_model_as_the_same_data(self):
-        for quote in (CELL, RANGE):
+        for quote in (CELL, SHEET_AREA, RANGE):
             with self.subTest(kind=quote["kind"]):
                 block = SimpleNamespace(
                     kind=BlockKind.message,

@@ -9,6 +9,7 @@
 // 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，**装完才
 // 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
 // `?categoryId=`（从某个分类的列表过来）在这里读。
+import type { UploadProgress } from '@/api/partUpload'
 import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
@@ -25,13 +26,13 @@ import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
+import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskDraftsApi } from '@/api/taskDrafts'
-import { setTaskStarter } from '@/api/taskFiles'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
@@ -142,48 +143,23 @@ const teachingOwn = ref(false)
 /** 这道题指定的默认队友（#944）：`''` = 不指定（继承项目集 / 空间）。新题没有自己的可清，
  *  所以草稿里存的是预设名或 `null`。 */
 const defaultRole = ref('')
-const uploads = useAttachmentUploads({
-  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
+/** 传成游离的附件（`POST /attachments`），浏览器报得出传了多少，这一格写百分比。 */
+async function uploadLoose(file: File, progress: UploadProgress): Promise<number> {
+  const { id } = await AttachmentsApi.upload({ type: 'file', file }, (event) =>
+    progress(event.loaded, event.total ?? file.size)
+  )
+  return id
+}
+const uploads = useAttachmentUploads({ upload: uploadLoose })
+/** 起始代码：选完就交给服务端，先查能不能作为起始代码（和放进题目时同一个检查），合格
+ *  才存成附件；不合格的这里就说原因、什么都不存，发布前就知道。合格的随草稿存着、随草稿
+ *  发布，和芝士替人写进草稿的那一份走同一条路。 */
+const starter = useStarterUpload<number>({
+  upload: async (file, progress) => {
+    const { id } = await TaskDraftsApi.uploadStarter(file, (event) => progress(event.loaded, event.total ?? file.size))
+    return { id, name: file.name, size: file.size }
+  },
 })
-/** 起始代码。人在这一页选的压缩包可能有几百 MB，走题目资料库那条分段上传；题目建好之前
- *  还没有资料库可放，所以先留在页面上，发布之后再传（`starterLocal`），不进草稿。芝士替人
- *  写进草稿的是人交给它的一份附件（`starterStaged`），随草稿一起发布。两样只会有一样。 */
-const starterLocal = ref<File | null>(null)
-const starterStaged = ref<{ id: number; name: string; size: number } | null>(null)
-const starterUploading = ref(false)
-const starterShown = computed(() =>
-  starterLocal.value ? { name: starterLocal.value.name, size: starterLocal.value.size } : starterStaged.value
-)
-
-function pickStarter(file: File) {
-  starterLocal.value = file
-  starterStaged.value = null
-}
-
-function removeStarter() {
-  starterLocal.value = null
-  starterStaged.value = null
-}
-
-/** 发布之后把页面上选的起始代码传上去。传不成（压缩包不合格、断网），题目已经发布了：
- *  说清楚原因，起始代码到改题页再传。 */
-async function sendStarter(taskId: number) {
-  const file = starterLocal.value
-  if (!file) return
-  starterUploading.value = true
-  try {
-    await setTaskStarter(taskId, file)
-    starterLocal.value = null
-  } catch (error) {
-    toast.error(
-      t('spaces.detail.publishTask.starterNotSent', {
-        error: error instanceof Error ? error.message : t('tasks.submit.unknownError'),
-      })
-    )
-  } finally {
-    starterUploading.value = false
-  }
-}
 
 function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
@@ -192,8 +168,7 @@ function fill(fields: TaskDraftFields) {
   defaultRole.value = fields.defaultRole ?? ''
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
-  starterLocal.value = null
-  starterStaged.value = fields.starterFile ?? null
+  starter.reset(fields.starterFile ?? null)
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
@@ -275,7 +250,7 @@ watch(
   { deep: true }
 )
 
-watch(starterStaged, (file) => draft.changed({ starterAttachmentId: file?.id ?? null, starterFile: file }))
+watch(starter.file, (file) => draft.changed({ starterAttachmentId: file?.id ?? null, starterFile: file }))
 
 // --- 芝士 --------------------------------------------------------------------------
 
@@ -304,8 +279,7 @@ function pageApply(fields: TaskDraftFields): TaskDraftFields {
     shown.attachmentIds = files.map((f) => f.id)
   }
   if ('starterFile' in fields) {
-    starterLocal.value = null
-    starterStaged.value = fields.starterFile ?? null
+    starter.reset(fields.starterFile ?? null)
     shown.starterFile = fields.starterFile ?? null
     shown.starterAttachmentId = fields.starterFile?.id ?? null
   }
@@ -361,6 +335,13 @@ function onFormReady(fields: TaskDraftFields) {
   live.value = { ...fields }
   draft.baseline(fields)
 }
+
+/** 「默认队友」沿用的那一位：表单上选中的项目集设的；还没选项目集时不知道。 */
+const inheritedRole = computed(() => {
+  const id = live.value.categoryId ?? preselectedCategoryId.value
+  const category = activeCategories.value.find((c) => c.id === id)
+  return category ? category.defaultRole ?? null : undefined
+})
 
 /** 这一组里已经发出去的（发布后草稿就没了，这一排还留着它，标「已发布」）。 */
 const publishedInGroup = ref<{ id: number; name: string; conversationId: string }[]>([])
@@ -435,7 +416,7 @@ async function removeDraft(id: number) {
 /** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
 async function publishAll() {
   if (publishingAll.value || publishing.value) return
-  if (uploads.uploading.value || starterUploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -459,8 +440,7 @@ async function publishAll() {
         continue
       }
       try {
-        const { task } = await TaskDraftsApi.publish(item.id as number)
-        if (item.id === draft.id.value) await sendStarter(task.id)
+        await TaskDraftsApi.publish(item.id as number)
         sent += 1
         publishedInGroup.value = [
           ...publishedInGroup.value,
@@ -501,7 +481,7 @@ const mentorChoices = computed(() => {
 async function publish(form: TaskFormSubmitData) {
   if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
-  if (uploads.uploading.value || starterUploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -519,12 +499,11 @@ async function publish(form: TaskFormSubmitData) {
         teachingOwn: teachingOwn.value,
         defaultRole: defaultRole.value || null,
         attachmentIds: uploads.ids.value,
-        starterAttachmentId: starterStaged.value?.id ?? null,
-        starterFile: starterStaged.value,
+        starterAttachmentId: starter.file.value?.id ?? null,
+        starterFile: starter.file.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
-    await sendStarter(task.id)
     const { approved } = task
     draft.gone()
     toast.success(
@@ -588,9 +567,11 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :templates="templates.map((template, index) => ({ index, name: template.name, description: template.description }))"
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
+    :upload-percent="uploads.percent.value"
     :max-file-bytes="uploads.maxFileBytes.value"
-    :starter="starterShown"
-    :starter-uploading="starterUploading"
+    :starter="starter.file.value"
+    :starter-uploading="starter.uploading.value"
+    :starter-percent="starter.percent.value"
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
@@ -599,6 +580,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :agent-types-failed="agentTypesFailed"
     :skill-catalog="skillCatalog"
     :skill-catalog-failed="skillCatalogFailed"
+    :inherited-role="inheritedRole"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"
@@ -614,8 +596,8 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
-    @pick-starter="pickStarter"
-    @remove-starter="removeStarter"
+    @pick-starter="starter.pick"
+    @remove-starter="starter.remove"
     @submit="publish"
     @change="onFormChange"
     @form-ready="onFormReady"

@@ -30,7 +30,7 @@ import SituationCard from '@/components/overview/SituationCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
-import { revisionSummary } from '@/lib/taskRevision'
+import { revisionSummary, STARTER_FILE, TASK_FOLDER } from '@/lib/taskRevision'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
@@ -108,6 +108,8 @@ const emit = defineEmits<{
   'retry-progress': []
   /** 看题目的第几版：题目页上的历史版本。 */
   'open-task-version': [version: number]
+  /** 打开项目资料库里的「题目」文件夹。 */
+  'open-task-folder': []
 }>()
 
 // Only a project from a staged task shows the timeline, so the overview loads it
@@ -177,6 +179,10 @@ function progressTitle(item: ProgressItem): string {
   if (item.kind === 'revised')
     return t('work.overview.revisedOf', { version: item.version ?? 0, changes: revisionSummary(item.changes) })
   return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
+}
+/** 「题目更新」那一行，看的人点不到题目的历史版本页。 */
+function opensNothing(item: ProgressItem): boolean {
+  return item.kind === 'revised' && !props.taskLinked
 }
 function openProgress(item: ProgressItem) {
   if (item.kind === 'version' && item.artifactId) emit('open-artifact', item.artifactId)
@@ -255,6 +261,21 @@ function stateOf(task: RoomTask): TaskState {
           <p v-if="starterText" class="ov-deadline t-body" data-testid="overview-starter">
             {{ starterText }}
           </p>
+          <p v-if="starter?.state === 'failed'" class="ov-deadline t-body c-muted" data-testid="overview-starter-next">
+            <i18n-t keypath="work.overview.starterFailedNext" tag="span">
+              <template #folder>
+                <button
+                  type="button"
+                  class="ov-inline-link"
+                  data-testid="overview-task-folder"
+                  @click="emit('open-task-folder')"
+                >
+                  {{ t('work.overview.starterFolder', { folder: TASK_FOLDER }) }}
+                </button>
+              </template>
+              <template #file>{{ STARTER_FILE }}</template>
+            </i18n-t>
+          </p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />
@@ -315,11 +336,13 @@ function stateOf(task: RoomTask): TaskState {
               <h3 class="ov-day__label t-meta c-faint">{{ group.day }}</h3>
               <ul class="ov-events">
                 <li v-for="item in group.items" :key="`${item.kind}:${item.taskId ?? item.artifactId}:${item.at}`">
-                  <button
-                    type="button"
+                  <!-- A 题目更新 row the reader cannot open is plain text, not a dead button. -->
+                  <component
+                    :is="opensNothing(item) ? 'div' : 'button'"
+                    :type="opensNothing(item) ? undefined : 'button'"
                     class="ov-event"
-                    :disabled="item.kind === 'revised' && !taskLinked"
-                    @click="openProgress(item)"
+                    :class="{ 'ov-event--still': opensNothing(item) }"
+                    @click="opensNothing(item) || openProgress(item)"
                   >
                     <span class="ov-event__kind" :class="`ov-event__kind--${item.kind}`">
                       {{ t(`work.overview.kind.${item.kind}`) }}
@@ -336,7 +359,7 @@ function stateOf(task: RoomTask): TaskState {
                       >
                     </span>
                     <span class="ov-event__when t-meta c-faint">{{ relTime(item.at) }}</span>
-                  </button>
+                  </component>
                 </li>
               </ul>
             </div>
@@ -559,10 +582,23 @@ function stateOf(task: RoomTask): TaskState {
 .ov-event:hover {
   background: var(--fill);
 }
-.ov-event:disabled {
+.ov-inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ov-inline-link:hover {
+  text-decoration: underline;
+}
+
+.ov-event--still {
   cursor: default;
 }
-.ov-event:disabled:hover {
+.ov-event--still:hover {
   background: transparent;
 }
 .ov-event__kind {

@@ -281,20 +281,21 @@ def failures(needs, expected_tier):
 
 def api_selected(outputs, tier):
     """Whether the ``api`` job must run: a run past the draft tier whose diff
-    reached the backend, where the paths alone have not already brought the frontend suite.
+    reached the backend.
 
-    The frontend compiles against the backend's OpenAPI document, and the
-    document is a function of backend files the path map cannot tell apart from
-    any other backend file. So the paths select the frontend suite for frontend
-    files, and for a backend change the ``api`` job answers instead: it prints
-    the document at the base and at the change and says whether they differ.
-    The same condition is the job's ``if:`` in required-ci.yml.
+    The job answers two questions about the backend's OpenAPI document, which
+    is a function of backend files the path map cannot tell apart from any
+    other backend file. Did it move? The frontend compiles against it, so a
+    move runs the frontend suite even when no frontend path did. Did it move in
+    a way that breaks a page built against the base, without the API
+    generation rising (api_compat.py)? That one matters most when the same
+    change edits the frontend too, so the job runs whatever else the paths
+    selected. The same condition is the job's ``if:`` in required-ci.yml.
     """
-    return (
-        tier != "draft"
-        and outputs.get("backend") == "true"
-        and outputs.get("frontend") != "true"
-    )
+    # A main push with no base to compare against (no `main-green` anchor,
+    # or one that could not be read) has every path in scope and nothing to
+    # print a base document from; the full frontend suite runs on the paths.
+    return tier != "draft" and outputs.get("backend") == "true" and bool(outputs.get("base"))
 
 
 def api_failures(needs, outputs, tier):

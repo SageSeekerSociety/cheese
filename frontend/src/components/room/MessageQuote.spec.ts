@@ -184,3 +184,48 @@ it('网页框选：只报网址，不装作有文件身份', () => {
   expect(container.querySelector('.message-quote__identity')).toBeNull()
   expect(container.textContent).not.toContain('undefined')
 })
+
+it('表格一片：报出表格软件那个 A1:C3，和这片里的内容', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'sheet-range' as const,
+        path: 'budget.xlsx',
+        source: 'committed' as const,
+        version: 'v7',
+        task_id: null,
+        sheet: 'Sheet1',
+        start: 'B2',
+        end: 'D4',
+        text: '90\t80\n70\t60',
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('引用区域 Sheet1!B2:D4')
+  expect(container.textContent).toContain('budget.xlsx')
+  expect(container.textContent).toContain('90')
+})
+
+it('表格一片：CSV 没有工作表名，区域就是它自己', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'sheet-range' as const,
+        path: '名单.csv',
+        source: 'live' as const,
+        version: 'v7',
+        task_id: null,
+        sheet: '',
+        start: 'A1',
+        end: 'C3',
+        // 表格里圈一片空格子，摊平出来的就是这个形状：几个制表符和换行。
+        text: '\t\t\n\t\t',
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('引用区域 A1:C3')
+  // 一片里什么都没有时不装作有内容 —— 几个制表符不是「有内容」。
+  expect(container.textContent).toContain('（空）')
+})

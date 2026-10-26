@@ -29,6 +29,7 @@ import { renderNoticeMessage } from '@/lib/noticeText'
 import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { TASK_FOLDER } from '@/lib/taskRevision'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
@@ -164,6 +165,10 @@ function openArtifact(artifactId: string) {
 }
 // 项目来自的那道题（`GET /projects/{id}` 的 `task`）：看的人看得到它的 `题目/` 才有。
 const fromTask = computed(() => project.data.value?.task ?? null)
+/** 起始代码没放成时那句下一步里的「题目」文件夹：项目资料库里的那一层。 */
+function openTaskFolder() {
+  void router.push({ name: 'project-library', params: { projectId: props.projectId }, query: { dir: TASK_FOLDER } })
+}
 function openTaskVersion(version: number) {
   const task = fromTask.value
   if (!task) return
@@ -233,6 +238,7 @@ function allTasks() {
     @press-task="pressTask"
     @open-artifact="openArtifact"
     @open-task-version="openTaskVersion"
+    @open-task-folder="openTaskFolder"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"
   />

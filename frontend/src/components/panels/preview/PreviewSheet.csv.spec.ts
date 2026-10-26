@@ -193,3 +193,119 @@ it('正打开的那一条画得显眼些', async () => {
   await waitFor(() => expect(grid(container).length).toBe(2))
   expect(markAt(container, 'B2')!.classList.contains('is-active')).toBe(true)
 })
+
+/** 地址（`B2`）那一格本身。 */
+function cellAt(container: Element, address: string): Element | null {
+  const td = Array.from(container.querySelectorAll('tbody tr')).flatMap((tr) => Array.from(tr.querySelectorAll('td')))
+  return td[gridIndex(container, address)] ?? null
+}
+
+it('拖过一片格子：发的是两个角，加上这一片摊平的内容', async () => {
+  // 表格一直只能指单格；一片（比如「这一列的数」）以前得靠一句话说清是哪几格。地址
+  // 本来就在文件里，两个角就够指回来了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+  await fireEvent.mouseUp(cellAt(container, 'B3')!)
+
+  expect(emitted().range).toEqual([[{ sheet: '', start: 'A1', end: 'B3', text: '姓名\t分数\n张三\t90\n李四\t85' }]])
+  // 单击那一格不能同时发出去。
+  expect(emitted().cell).toBeUndefined()
+})
+
+it('从右下往左上拖也一样：两个角摆回左上、右下', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'B3')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A1')!)
+  await fireEvent.mouseUp(cellAt(container, 'A1')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('B3')
+})
+
+it('一片的内容太长就截在上限，两个角照旧指得回整片', async () => {
+  // 一格几千字跟着消息跑没有意义；截断只是不搬内容，地址还是整片的地址。
+  const { container, emitted } = mount(utf8(`说明\n${'字'.repeat(3000)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ start: string; end: string; text: string }]
+  expect(payload.start).toBe('A1')
+  expect(payload.end).toBe('A2')
+  expect(payload.text).toHaveLength(2000)
+})
+
+it('截在上限时不把一个 emoji 劈成半个', async () => {
+  // 按 UTF-16 下标切会把代理对切开，屏幕上那个字变成一个问号。
+  const { container, emitted } = mount(utf8(`表情\n${'😀'.repeat(2500)}\n`))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'A2')!)
+  await fireEvent.mouseUp(cellAt(container, 'A2')!)
+
+  const [payload] = emitted().range![0] as [{ text: string }]
+  expect([...payload.text]).toHaveLength(2000)
+  expect(payload.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+})
+
+it('按在同一格上松开是单击，不是一片', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.click(cellAt(container, 'B2')!)
+
+  expect(emitted().range).toBeUndefined()
+  expect(emitted().cell).toEqual([[{ address: 'B2', value: '90', sheet: '' }]])
+})
+
+it('松开之后指针路过别的格子，画着的还是刚才发出去的那一片', async () => {
+  // 松开那一刻这一片就说定了；再跟着指针走，屏幕上画的就不是消息里写的那一片了。
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B3')!)
+
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+  expect(emitted().range).toHaveLength(1)
+})
+
+it('在表外面松开也算数：拖到边上那一下不会白拖', async () => {
+  const { container, emitted } = mount(utf8('姓名,分数\n张三,90\n'))
+  await waitFor(() => expect(grid(container).length).toBe(2))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  // 行号那一列在表格里、但不是格子：拖到最后一列之后手常常落在这里。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+
+  expect(emitted().range).toHaveLength(1)
+  // 松开之后再来一下不会把同一片再发一次。
+  await fireEvent.mouseUp(container.querySelector('tbody th')!)
+  expect(emitted().range).toHaveLength(1)
+})
+
+it('拖的时候那一片有底色，松开之后留着；单击不留', async () => {
+  const { container } = mount(utf8('姓名,分数\n张三,90\n李四,85\n'))
+  await waitFor(() => expect(grid(container).length).toBe(3))
+
+  await fireEvent.mouseDown(cellAt(container, 'A1')!)
+  await fireEvent.mouseEnter(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+
+  await fireEvent.mouseUp(cellAt(container, 'B2')!)
+  await waitFor(() => expect(container.querySelectorAll('.ps__cell--in')).toHaveLength(4))
+})

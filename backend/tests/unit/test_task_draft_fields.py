@@ -82,7 +82,7 @@ def test_guidance_adds_to_what_the_task_has_and_names_the_way_of_helping():
     assert fields["teachingOwn"] is True
 
     cleared = drafts.from_agent(
-        {"ai_mode": "沿用空间设置", "ai_guidance": ""}, SPACE, {}
+        {"ai_mode": "沿用上层设置", "ai_guidance": ""}, SPACE, {}
     )
     assert cleared["teachingOwn"] is False
 

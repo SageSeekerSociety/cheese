@@ -29,7 +29,7 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
     scrollable
     @update:model-value="(open: boolean) => !open && emit('close')"
   >
-    <section v-if="file" class="tfp" data-testid="task-file-preview">
+    <section v-if="file" class="tfp" :class="{ 'tfp--fit': tooLarge }" data-testid="task-file-preview">
       <header class="tfp__head">
         <h2 class="tfp__name t-title" data-user-content>{{ file.name }}</h2>
         <span class="tfp__size t-meta-read t-num">{{ fmtBytes(file.size) }}</span>
@@ -65,6 +65,15 @@ const tooLarge = computed(() => (props.file ? tooLargeToPreview(props.file.size)
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+}
+
+/* Too large to preview: only a sentence, so the box is as tall as that sentence. */
+.tfp--fit {
+  height: auto;
+}
+
+.tfp--fit .tfp__body {
+  flex: none;
 }
 
 .tfp__head {

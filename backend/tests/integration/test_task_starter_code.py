@@ -21,9 +21,10 @@ from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
+from app.domain.attachment.models import Attachment
 from app.domain.project.models import Project, ProjectStarterPush
 from app.domain.task import package, starter_jobs
 from tests.integration.conftest import UserCreator
@@ -394,6 +395,71 @@ def test_a_bad_archive_picked_on_the_publish_page_publishes_nothing(
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+
+
+def _attachments(db_session, portal) -> int:
+    """附件表里一共有几份。"""
+    return portal.call(db_session.scalar, select(func.count()).select_from(Attachment))
+
+
+def _send_starter(api_client: TestClient, token: str, data: bytes):
+    """发题页那条路：选完起始代码就交上来，查过才留下。"""
+    return api_client.post(
+        "/task-drafts/starter",
+        headers=_auth(token),
+        files={"file": ("lab.zip", io.BytesIO(data), "application/zip")},
+    )
+
+
+def test_a_starter_refused_on_the_publish_page_leaves_nothing_stored(
+    api_client: TestClient, user_client: UserCreator, db_session, _portal
+):
+    """发题页上选完压缩包就查：不合格的当场说原因（和放进题目时同一句），什么都不存下；
+    合格的存成这个人的一份附件，交回它的 id。"""
+    board = new_board(user_client, api_client)
+    token = board["creator_token"]
+    before = _attachments(db_session, _portal)
+
+    refused = _send_starter(api_client, token, _TRAVERSAL)
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "starterUnsafeEntry"
+    assert _attachments(db_session, _portal) == before
+
+    accepted = _send_starter(api_client, token, _lab())
+    assert accepted.status_code == 201, accepted.text
+    assert _attachments(db_session, _portal) == before + 1
+
+
+def test_a_draft_refuses_someone_elses_upload_as_its_starter(
+    api_client: TestClient, user_client: UserCreator
+):
+    """草稿只存这个人自己传的起始代码：别人的附件在存的那一下就拒，不等到发布；
+    自己的照存。"""
+    board = new_board(user_client, api_client)
+    token = board["creator_token"]
+    _, stranger = _member_of(user_client, api_client, board)
+    theirs = _upload_loose(api_client, stranger, "lab.zip", _lab())
+    mine = _upload_loose(api_client, token, "lab.zip", _lab())
+    draft = api_client.post(
+        "/task-drafts", json={"space": board["space_id"]}, headers=_auth(token)
+    ).json()["data"]
+
+    foreign = api_client.patch(
+        f"/task-drafts/{draft['id']}",
+        json={"fields": {"starterAttachmentId": theirs}},
+        headers=_auth(token),
+    )
+    assert foreign.status_code == 403, foreign.text
+    kept = api_client.get(f"/task-drafts/{draft['id']}", headers=_auth(token))
+    assert kept.json()["data"]["fields"].get("starterAttachmentId") is None
+
+    own = api_client.patch(
+        f"/task-drafts/{draft['id']}",
+        json={"fields": {"starterAttachmentId": mine}},
+        headers=_auth(token),
+    )
+    assert own.status_code == 200, own.text
 
 
 # --- 上传时收下的，领题时一定放得进仓库 ---------------------------------------------

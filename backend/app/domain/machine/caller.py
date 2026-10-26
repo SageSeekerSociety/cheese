@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
+from app.domain.machine.session_work import session_author
+from app.domain.project.services import ProjectService
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,9 @@ class MachineCaller:
     session_id: str
     project_id: str
     conversation_id: str
+    #: The seat the session acts under, as its own launch credential names it
+    #: (`session_work.session_author`): its teammate's handle, not the key the
+    #: session row is stored under.
     agent_handle: str
 
 
@@ -41,15 +46,25 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
         .where(AgentSession.work_lease["device_id"].as_string() == device)
     )
-    for session, project_id in rows:
-        lease = session.work_lease or {}
-        if lease.get("status", "ready") != "ready" or not lease.get("state"):
-            continue
-        if _names(lease["state"], state):
-            return MachineCaller(
-                session_id=str(session.id),
-                project_id=str(project_id),
-                conversation_id=str(session.conversation_id),
-                agent_handle=session.agent_handle,
-            )
-    return None
+    held = next(
+        (
+            (session, project_id)
+            for session, project_id in rows
+            if (session.work_lease or {}).get("status", "ready") == "ready"
+            and (session.work_lease or {}).get("state")
+            and _names(session.work_lease["state"], state)
+        ),
+        None,
+    )
+    if held is None:
+        return None
+    session, project_id = held
+    project = await ProjectService(db).get(project_id)
+    if project is None:
+        return None
+    return MachineCaller(
+        session_id=str(session.id),
+        project_id=str(project_id),
+        conversation_id=str(session.conversation_id),
+        agent_handle=await session_author(db, project, session.agent_handle),
+    )

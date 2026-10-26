@@ -29,7 +29,7 @@ describe('authenticated file download', () => {
     })
     await downloadFile('/api/topics/t/attachments/raw?path=uploads/test.pdf', '需求 文档.pdf')
     expect(fetch).toHaveBeenCalledWith('/api/topics/t/attachments/raw?path=uploads/test.pdf&download=true', {
-      headers: { Authorization: 'Bearer test-download-token' },
+      headers: expect.objectContaining({ Authorization: 'Bearer test-download-token' }),
     })
     expect(create).toHaveBeenCalledWith(blob)
     expect(click).toHaveBeenCalledOnce()
