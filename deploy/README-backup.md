@@ -156,13 +156,19 @@ production's `prod-uploads/` on purpose: the dev runner is where the
 one drill do not skip the other R2 drills. All recovery destinations are
 throwaway; the live DB and uploads directory are never opened for writing.
 
-`db-restore-test.sh` resolves its default image from the `postgres` service in
-`docker-compose.yml` and preloads `pg_search`. It fails if the dump TOC lacks
-the extension, if the extension is not restored, on any `pg_restore` error,
-on an incomplete schema, or on zero rows across the critical `user`,
-`projects`, `topics`, and `blocks` tables. `CHEESE_PG_IMAGE` is an explicit
-experiment override, not a second default. Containers publish no ports and
-have no network access. Restore logs and TOC remain in `.tmp/restore-tests/`.
+`db-restore-test.sh` resolves the image and the startup command from the
+`postgres` service in `docker-compose.yml`, so the drill preloads exactly what
+dev does — including `pg_cron`, which the image's entrypoint needs and which a
+hand-written `-c shared_preload_libraries` would replace rather than extend. It
+restores with `--clean --if-exists`, as production restores do, because the
+throwaway database is initialised by that same entrypoint and already carries
+the `paradedb` schema and pg_search the dump also creates. It fails if the dump
+TOC lacks the extension, if the extension is not restored, on any `pg_restore`
+error, on an incomplete schema, or on zero rows across the critical `user`,
+`projects`, `topics`, and `blocks` tables, and it reports the container's own
+log when the throwaway postgres exits before it listens. `CHEESE_PG_IMAGE` is an
+explicit experiment override, not a second default. Containers publish no ports
+and have no network access. Restore logs and TOC remain in `.tmp/restore-tests/`.
 
 The daily freshness workflow checks the local DB success at 26h and, if R2 is
 configured, both off-site and uploads success markers at 6h. It also reads R2

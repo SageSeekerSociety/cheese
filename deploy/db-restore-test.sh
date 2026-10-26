@@ -3,7 +3,7 @@
 #
 # Restores the latest local pg_dump into a THROWAWAY postgres container, checks
 # the schema is migrated and has data, then tears it down. Touches nothing real:
-# the ephemeral container is `--rm` and stopped on exit. Run by the
+# the ephemeral container is removed on exit. Run by the
 # backup-restore-test workflow on a box that has docker + the local dumps.
 #
 # Usage: db-restore-test.sh [dump-file]   (default: newest ~/backups/cheese-*.dump)
@@ -16,14 +16,29 @@ ALLOW_EMPTY="${CHEESE_RESTORE_ALLOW_EMPTY:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${CHEESE_RESTORE_LOG_DIR:-$SCRIPT_DIR/../.tmp/restore-tests}"
 TEST_DB="restore_$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)_$$"
-# Resolve the default from the same composition as dev, including future pins.
+# Resolve the server from the same composition as dev, including future pins:
+# both the image AND the command. The command has to come from Compose too. The
+# image's own entrypoint runs pg_cron, which only loads through
+# shared_preload_libraries, so naming pg_search in a `-c` of our own REPLACES
+# the composed list (pg_cron,pg_search) instead of adding to it -- the entrypoint
+# then fails and the container exits before it ever listens. CHEESE_PG_IMAGE
+# remains an explicit experiment override.
+PGCMD=()
 if [ -n "${CHEESE_PG_IMAGE:-}" ]; then
   PGIMG="$CHEESE_PG_IMAGE"
-elif ! PGIMG="$(docker compose -f "$SCRIPT_DIR/../docker-compose.yml" config \
+elif ! COMPOSED="$(docker compose -f "$SCRIPT_DIR/../docker-compose.yml" config \
   --no-interpolate --format json | python3 -c \
-  'import json, sys; print(json.load(sys.stdin)["services"]["postgres"]["image"])')"; then
+  'import json, sys
+s = json.load(sys.stdin)["services"]["postgres"]
+print(s["image"])
+for arg in s.get("command", []):
+    print(arg)')"; then
   echo "RESTORE-TEST FAIL: could not resolve the database image from docker-compose.yml"
   exit 1
+else
+  mapfile -t COMPOSED_LINES <<< "$COMPOSED"
+  PGIMG="${COMPOSED_LINES[0]}"
+  PGCMD=("${COMPOSED_LINES[@]:1}")
 fi
 
 case "$MIN_TABLES" in
@@ -39,21 +54,41 @@ mkdir -p "$LOG_DIR"
 RESTORE_LOG="$LOG_DIR/restore-$(date -u '+%Y%m%dT%H%M%SZ')-$$.log"
 echo "restore-testing $DUMP ($(du -h "$DUMP" | cut -f1)) into throwaway $PGIMG"
 
-if ! CID="$(docker run -d --rm --network none -e POSTGRES_PASSWORD=test \
-  -e "POSTGRES_DB=$TEST_DB" "$PGIMG" -c shared_preload_libraries=pg_search)"; then
+# No `--rm`: the container is removed by the trap below, not by Docker on exit.
+# A throwaway postgres that dies on startup has to stay inspectable long enough
+# for its log to be read — otherwise a dead container and a slow one look the
+# same, which is exactly how a broken preload hid behind "never became ready".
+if ! CID="$(docker run -d --network none -e POSTGRES_PASSWORD=test \
+  -e "POSTGRES_DB=$TEST_DB" "$PGIMG" ${PGCMD[@]+"${PGCMD[@]}"})"; then
   echo "RESTORE-TEST FAIL: could not start throwaway $PGIMG"
   exit 1
 fi
-cleanup() { docker stop "$CID" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-# wait for the container's postgres to accept connections
+# Wait for postgres to accept connections, but stop waiting the moment the
+# container is gone: it will not come back, and its own log explains why.
+container_running() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$CID" 2>/dev/null)" = "true" ]
+}
+container_died() {
+  container_running && return 1
+  echo "RESTORE-TEST FAIL: throwaway postgres exited before it accepted connections; last log lines:"
+  docker logs --tail 20 "$CID" 2>&1 || true
+  exit 1
+}
 ready=0
 for _ in $(seq 1 30); do
+  container_died
   if docker exec "$CID" pg_isready -h 127.0.0.1 -U postgres -d "$TEST_DB" >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
-[ "$ready" = 1 ] || { echo "ERROR: throwaway postgres never became ready"; exit 1; }
+if [ "$ready" != 1 ]; then
+  container_died
+  echo "RESTORE-TEST FAIL: throwaway postgres never became ready within 30s; last log lines:"
+  docker logs --tail 20 "$CID" 2>&1 || true
+  exit 1
+fi
 
 if ! docker cp "$DUMP" "$CID":/tmp/restore.dump >> "$RESTORE_LOG" 2>&1; then
   echo "RESTORE-TEST FAIL: could not copy dump; log retained at $RESTORE_LOG"
@@ -69,11 +104,18 @@ if ! grep -Eq ' EXTENSION - pg_search([[:space:]]|$)' "$RESTORE_LOG.toc"; then
   exit 1
 fi
 echo "dump contains pg_search; restoring with preload enabled"
+# --clean --if-exists, as production restores (see README-backup.md): the
+# throwaway database is initialised by the image's own entrypoint, which already
+# loads pg_search and creates the paradedb schema -- the same objects the dump
+# carries. Without --clean the first `CREATE SCHEMA paradedb` collides with the
+# pre-created one and the restore aborts.
+#
 # A partial restore can contain enough schema to fool every query below. The
 # restore process result is therefore authoritative; warnings remain in the log.
 restore_status=0
-docker exec "$CID" pg_restore --exit-on-error --no-owner --no-privileges \
-  -U postgres -d "$TEST_DB" /tmp/restore.dump > "$RESTORE_LOG" 2>&1 \
+docker exec "$CID" pg_restore --exit-on-error --clean --if-exists \
+  --no-owner --no-privileges -U postgres -d "$TEST_DB" /tmp/restore.dump \
+  > "$RESTORE_LOG" 2>&1 \
   || restore_status=$?
 if [ "$restore_status" -ne 0 ]; then
   echo "RESTORE-TEST FAIL: pg_restore exited $restore_status; log retained at $RESTORE_LOG"
