@@ -184,7 +184,7 @@
     "metric": {
       "approved": {
         "hint": "Approved applications and direct starts",
-        "label": "Participants"
+        "label": "Participating"
       },
       "claims": {
         "hint": "A person or a team counts once; pending and declined applications included",
@@ -217,7 +217,7 @@
   },
   "publishers": {
     "col": {
-      "approvedParticipantCount": "Participants",
+      "approvedParticipantCount": "Participating",
       "avgParticipantsPerTask": "Avg. applied/started",
       "lastTaskCreatedAt": "Last published",
       "participantCount": "Applied/started",

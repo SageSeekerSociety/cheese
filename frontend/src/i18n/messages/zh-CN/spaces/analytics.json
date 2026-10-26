@@ -218,7 +218,7 @@
   "publishers": {
     "col": {
       "approvedParticipantCount": "参与主体",
-      "avgParticipantsPerTask": "每题申请/开始",
+      "avgParticipantsPerTask": "平均申请/开始",
       "lastTaskCreatedAt": "最近发题",
       "participantCount": "申请/开始",
       "publisherName": "出题人",
