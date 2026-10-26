@@ -9,7 +9,7 @@ fully self-governing.
 import enum
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -21,6 +21,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Select,
     String,
     Text,
@@ -574,6 +575,68 @@ class RoomFileRevision(UuidPk, Timestamps, Base):
     #: (each 「保存」, then on close), and its own previous save is not somebody
     #: else's change — this is how the second save tells the two apart.
     editor_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class RoomFileCollab(UuidPk, Base):
+    """A room file's collaborative (Yjs) state — what several people editing it
+    at once are all looking at.
+
+    A room file has no id of its own: it is ``(room_id, path)``, and its
+    version is a content hash. The collaboration service names a document once
+    and expects that name to keep opening the same live document, so each one
+    being edited together gets this row and its own id (``id``), which is what
+    the service's name carries. The row is created by opening the file in a
+    live editor, not by the file existing.
+
+    The state is only ever a step toward a version. What a reader sees — the
+    preview, the history, a restore — is still the file's own revision
+    (``room_file_revisions``): each store arrives here and becomes a new
+    revision through ``room_files.save_room_file``. This row is the editing
+    session; the revisions are the file.
+
+    ``content`` trails the state by one store: it is the Markdown the service
+    last exported, kept so a reopen hands the service the text it recognises
+    instead of re-converting a document it already has (a second conversion of
+    the same text is a structurally different document, and merging it in
+    would double everything).
+    """
+
+    __tablename__ = "room_file_collab"
+    __table_args__ = (
+        UniqueConstraint("room_id", "path", name="uq_room_file_collab_room_path"),
+        Index("ix_room_file_collab_room_path", "room_id", "path"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_room_file_collab_project_id_projects",
+        ),
+        index=True,
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "topics.id", ondelete="CASCADE", name="fk_room_file_collab_room_id_topics"
+        )
+    )
+    path: Mapped[str] = mapped_column(String(512))
+    state: Mapped[bytes] = mapped_column(LargeBinary)
+    #: The Markdown the service last exported from ``state``.
+    content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: Every suggestion still waiting for a decision: ``{id, author, old, new,
+    #: reason}``, as the service reported them. Rooms keep the shape documents
+    #: do, so a decision here needs no second implementation.
+    suggestions: Mapped[list] = mapped_column(JSONB, default=list)
+    #: When this state was last stored. Assigned on every write in Python
+    #: rather than left to the database: a store mutates the row in place, and
+    #: a column whose name says "last edited" must not keep reading its
+    #: creation time.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class ProjectSlug(Base):
