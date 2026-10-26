@@ -222,17 +222,26 @@ async def read_mode_for_claim(session: AsyncSession, task: Task) -> None:
     )
 
 
-def refuse_start_after_deadline(
-    task: Task, claim: TaskMembership | None, now: datetime
-) -> None:
-    """Nobody starts a task, or applies for it, once the whole task's deadline
-    has passed; nor starts their own claim once its own deadline has passed
-    (a project made then would only read failed)."""
+def refuse_claim_after_deadline(task: Task, now: datetime) -> None:
+    """Nobody makes a new claim once the task's deadline has passed: no
+    application to a task applied for (its deadline is 申请截止), no start of
+    a task started directly (its deadline is everyone's)."""
     if task.deadline is not None and task.deadline <= now:
         raise BadRequestError(say("taskClosedForStart"))
+
+
+def refuse_start_after_deadline(
+    task: Task, claim: TaskMembership, now: datetime
+) -> None:
+    """An approved claim is not started once its own deadline has passed (a
+    project made then would only read failed). On a task started directly the
+    task's deadline is everyone's, so it closes starting too; on a task
+    applied for it closes applying only, and an application approved after it
+    is started until the claim's own deadline."""
+    if starts_now(task) and task.deadline is not None and task.deadline <= now:
+        raise BadRequestError(say("taskClosedForStart"))
     if (
-        claim is not None
-        and claim.approved == APPROVE_APPROVED
+        claim.approved == APPROVE_APPROVED
         and claim.deadline is not None
         and claim.deadline <= now
     ):

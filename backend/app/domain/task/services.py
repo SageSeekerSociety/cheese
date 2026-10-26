@@ -229,7 +229,7 @@ class TaskMembershipService:
         # 开始方式在这份领取写下之前重读，并且锁住不让它变（改开始方式的那一边
         # 等这里提交）；题目整个截止了，不再收新的领取。
         await claims.read_mode_for_claim(self._repo._session, task)
-        claims.refuse_start_after_deadline(task, None, now)
+        claims.refuse_claim_after_deadline(task, now)
 
         # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
         if is_team:

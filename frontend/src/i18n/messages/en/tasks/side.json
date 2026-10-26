@@ -9,6 +9,7 @@
   "closedAgo": "Closed {n} days ago",
   "daysLeft": "{n} days left",
   "deadline": "Deadline",
+  "deadlineApply": "Applications close",
   "deadlineNone": "None",
   "dueIn": "Closes in {n} days",
   "dueToday": "Due today",

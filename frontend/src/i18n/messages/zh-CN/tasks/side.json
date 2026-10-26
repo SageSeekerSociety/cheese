@@ -9,6 +9,7 @@
   "closedAgo": "已截止 {n} 天",
   "daysLeft": "还剩 {n} 天",
   "deadline": "截止",
+  "deadlineApply": "申请截止",
   "deadlineNone": "不限",
   "dueIn": "{n} 天后截止",
   "dueToday": "今天截止",
