@@ -160,6 +160,28 @@ describe('who decides that the reader is at the end', () => {
     expect(stick.following.value, '松手后的那一次归布局，读数不动').toBe(false)
   })
 
+  it('keeps the press when a field inside the page loses focus', async () => {
+    // 失焦只作废窗口自己那一次。页面里一个输入框失焦（点到别处）也冒一次 blur，
+    // 那跟「读者松手了没有」毫无关系；把它也算上，拖着滚动条时焦点一动，这一笔就
+    // 被抹掉，页面又会被当成读者滚走了。
+    const box = { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 }
+    const el = pane(box)
+    const { stick } = await mount(el)
+    el.dispatchEvent(new Event('scroll'))
+
+    const input = document.createElement('input')
+    document.body.append(input)
+    input.focus()
+    el.dispatchEvent(new Event('pointerdown'))
+    input.blur()
+    // 按住期间视口被挪（拖动），同时内容变高。
+    box.scrollHeight = 3000
+    box.scrollTop = 1200
+    el.dispatchEvent(new Event('scroll'))
+
+    expect(stick.following.value, '输入框失焦不等于读者松手').toBe(false)
+  })
+
   it('drops the claim when the window loses focus mid-press', async () => {
     // 按着的时候切走窗口，这一页再也收不到 pointerup；不作废的话这一笔挂到下一次
     // 按下，同一个「点一下就被当成滚走」的 bug 只是更难碰上。
